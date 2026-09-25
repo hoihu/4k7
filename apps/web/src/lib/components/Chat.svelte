@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from '../app.svelte.ts';
+  import { bridge } from '../bridge.svelte.ts';
   import ChangesetCard from './ChangesetCard.svelte';
 
   let scroller: HTMLDivElement | undefined = $state();
@@ -51,7 +52,15 @@
           <p><b>Describe what you want to build.</b> The agent designs through the kernel's operations; every change comes back here as a changeset to review.</p>
           <p class="muted">Click parts on the canvas to reference them. Hints like “make C2 100µF” or “put C1 left of U1” are recorded in the ledger and kept on every re-layout.</p>
           {#if app.isDemo}
-            <p class="demo">Offline demo: no API key set. <button class="linkbtn" onclick={() => (app.view = 'set')}>Add your key</button> to use a real model.</p>
+            <p class="demo">
+              Offline demo (scripted). To use a real model, run <code>npm run bridge</code> and open its pairing link to chat with your
+              <b>Claude Code</b>, or <button class="linkbtn" onclick={() => (app.view = 'set')}>add an API key</button>.
+            </p>
+          {:else if app.settings.provider === 'claude-code' && bridge.status !== 'connected'}
+            <p class="demo">
+              The chat uses your Claude Code, but the bridge is {bridge.status === 'elsewhere' ? 'connected in another tab' : 'not connected'}.
+              {#if bridge.status === 'elsewhere'}<button class="linkbtn" onclick={() => bridge.useThisTab()}>Use this tab</button>{:else}Run <code>npm run bridge</code> and open its pairing link.{/if}
+            </p>
           {/if}
         </div>
       {/if}

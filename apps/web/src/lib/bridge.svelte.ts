@@ -12,7 +12,11 @@ import {
   type TabToBridge,
 } from '@tracewise/schema';
 
-export type BridgeStatus = 'off' | 'connecting' | 'connected' | 'waiting';
+/** 'elsewhere': another tab of the app took over the bridge; this tab stops retrying. */
+export type BridgeStatus = 'off' | 'connecting' | 'connected' | 'waiting' | 'elsewhere';
+
+/** Close code the bridge uses when a newer tab replaces this one. */
+const REPLACED = 4000;
 
 export interface BridgeHandler {
   (tool: string, input: unknown): Promise<{ isError: boolean; content: BridgeContent[] }>;
@@ -101,9 +105,9 @@ class BridgeClient {
       const timer = setTimeout(() => done(false), 1500);
       ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, code: this.#code, client: 'tracewise-web' } satisfies TabToBridge));
       ws.onerror = () => done(false);
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (!settled) done(false);
-        else if (this.#ws === ws) this.#lost();
+        else if (this.#ws === ws) this.#lost(ev.code);
       };
       ws.onmessage = (e) => {
         const msg = JSON.parse(String(e.data)) as BridgeToTab;
@@ -142,14 +146,37 @@ class BridgeClient {
     this.#ws?.send(JSON.stringify({ type: 'chat_cancel', id } satisfies TabToBridge));
   }
 
-  #lost() {
+  #lost(code?: number) {
     for (const [id, l] of this.#chatListeners) l({ kind: 'done', ok: false, error: 'The bridge disconnected.' });
     this.#chatListeners.clear();
     this.#onLost?.();
     this.#ws = null;
     this.agent = null;
+    if (code === REPLACED) {
+      // Another tab paired with the bridge. Retrying would kick it out again (ping-pong),
+      // so this tab steps back until the user asks for it.
+      this.#wanted = false;
+      this.status = 'elsewhere';
+      this.error = 'Claude Code is connected to this app in another browser tab.';
+      return;
+    }
     this.status = this.#wanted ? 'waiting' : 'off';
     this.#scheduleRetry();
+  }
+
+  /** Take the bridge back from another tab. */
+  useThisTab() {
+    if (this.#code) void this.connect(this.#code);
+  }
+
+  /** Another tab announced that it holds the bridge connection. */
+  heldElsewhere(code: string) {
+    if (this.status === 'connected' || this.status === 'connecting') return;
+    this.#code = code;
+    this.#wanted = false;
+    if (this.#retry) clearTimeout(this.#retry);
+    this.status = 'elsewhere';
+    this.error = 'Claude Code is connected to this app in another browser tab.';
   }
 
   async #call(ws: WebSocket, id: number, tool: string, input: unknown) {

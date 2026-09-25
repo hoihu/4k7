@@ -93,11 +93,21 @@ class AppState {
       }
     }
     this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget });
+    this.settingsChannel?.addEventListener('message', (e: MessageEvent<{ type: string; code?: string }>) => {
+      if (e.data?.type === 'bridge-held' && e.data.code) bridge.heldElsewhere(e.data.code);
+      else void this.reloadSettings();
+    });
     this.applyTheme();
     await this.refresh();
     bridge.init(
       (tool, input) => this.handleBridgeCall(tool, input),
-      (code, port) => void this.updateSettings({ bridgeCode: code, bridgePort: port }),
+      (code, port) => {
+        // pairing with a bridge that can run Claude Code makes it the chat provider, unless the user has an API key set up
+        const useClaude = bridge.chat?.available && this.settings.provider === 'demo';
+        void this.updateSettings({ bridgeCode: code, bridgePort: port, ...(useClaude ? { provider: 'claude-code' as const } : {}) });
+        this.settingsChannel?.postMessage({ type: 'bridge-held', code });
+        if (useClaude) this.flash('Paired: the chat now runs on your Claude Code');
+      },
       () => {
         // the external agent went away: close its open activity block
         for (const c of this.chat) if (c.source && c.status === 'streaming') c.status = 'done';
@@ -497,6 +507,17 @@ class AppState {
       this.apiKey = apiKey.trim();
       await saveApiKey('anthropic', this.apiKey);
     }
+    this.agent?.setProvider(this.makeProvider());
+    this.applyTheme();
+    this.settingsChannel?.postMessage({ type: 'settings' });
+  }
+
+  /** Tabs of the app tell each other about settings changes and who holds the bridge. */
+  private settingsChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('tracewise-settings') : null;
+
+  private async reloadSettings() {
+    this.settings = await loadSettings();
+    this.apiKey = await loadApiKey('anthropic');
     this.agent?.setProvider(this.makeProvider());
     this.applyTheme();
   }

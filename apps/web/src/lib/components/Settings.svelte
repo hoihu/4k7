@@ -157,6 +157,7 @@
       {#if bridge.status === 'connected'}<span class="tag ok">connected · {bridge.agent ?? 'MCP client'} · :{bridge.port}</span>
       {:else if bridge.status === 'connecting'}<span class="tag info">connecting…</span>
       {:else if bridge.status === 'waiting'}<span class="tag warn">waiting for bridge</span>
+      {:else if bridge.status === 'elsewhere'}<span class="tag warn">connected in another tab</span> <button class="btn" onclick={() => bridge.useThisTab()}>Use this tab</button>
       {:else}<span class="tag">off</span>{/if}
     </div>
     <div class="pb">
