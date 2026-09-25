@@ -2,7 +2,10 @@
   "name": "tracewise",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "dev": "npm run dev -w @tracewise/web",
     "build": "npm run build -w @tracewise/web",
@@ -12,6 +15,7 @@
   },
   "devDependencies": {
     "typescript": "^5.9.3",
+    "vite": "^8.3.1",
     "vitest": "^5.0.2"
   }
 }
