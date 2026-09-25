@@ -10,6 +10,7 @@ import { join } from 'node:path';
 export interface BridgeConfig {
   code: string;
   origins: string[];
+  appUrl: string;
 }
 
 export function configPath(): string {
@@ -30,7 +31,8 @@ export function loadConfig(): BridgeConfig {
     mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 });
     writeFileSync(path, JSON.stringify({ code, origins: cfg.origins ?? [] }, null, 2) + '\n', { mode: 0o600 });
   }
-  return { code, origins };
+  const appUrl = process.env.TRACEWISE_APP_URL ?? (cfg as { appUrl?: string }).appUrl ?? 'http://localhost:5173';
+  return { code, origins, appUrl };
 }
 
 function newCode(): string {

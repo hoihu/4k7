@@ -42,18 +42,21 @@ Add an Anthropic API key in **Settings** to use a real model. It is encrypted in
 
 ## Driving it with Claude Code (no API key needed)
 
-The local bridge (`tools/bridge`) exposes the app as an MCP server, so Claude Code can design with your existing plan:
+The local bridge (`tools/bridge`) exposes the app as an MCP server, so Claude Code can design with your existing plan.
+Setup happens on Claude Code's side, because Claude Code is the program that starts the bridge (a web page cannot
+register tools on your machine).
 
-```sh
-claude mcp add --scope user tracewise -- node /absolute/path/to/this/repo/tools/bridge/src/main.ts
-```
+1. Run the app (`npm run dev`).
+2. Start `claude` **in this repository** and approve the `tracewise` server from `.mcp.json`.
+   To use it from any folder, register it once instead:
+   `claude mcp add --scope user tracewise -- node /absolute/path/to/this/repo/tools/bridge/src/main.ts`
+3. Ask Claude to *“connect to Tracewise”*. It gives you a pairing link (`http://localhost:5173/#pair=123456`): open it and
+   the tab pairs itself. The 6-digit code can also be entered under **Settings → Claude Code bridge**. It is stored in
+   `~/.tracewise/bridge.json`, so you pair once; set `TRACEWISE_APP_URL` if the app runs elsewhere.
 
-1. Run the app (`npm run dev`) and open **Settings → Claude Code bridge** (it shows the exact command for your checkout).
-2. Start `claude` anywhere and ask it to *“connect to Tracewise”*. It answers with a 6-digit pairing code
-   (also stored in `~/.tracewise/bridge.json`, so you only pair once).
-3. Enter the code in the app. Claude Code now works through `get_context`, `design_query`, `design_edit`, `calc`,
-   `get_schematic_image`, `propose` and `wait_for_review`. Its changes show up as a changeset in the chat for you to review;
-   `propose` is refused while the design has open errors.
+Claude Code then works through `get_context`, `design_query`, `design_edit`, `calc`, `get_schematic_image`, `propose` and
+`wait_for_review`. Its changes show up as a changeset in the chat for you to review; `propose` is refused while the design
+has open errors.
 
 The bridge binds to `127.0.0.1`, only accepts pages served from localhost, and needs the pairing code before any call is
 forwarded. Stdout is reserved for MCP; logs go to stderr.

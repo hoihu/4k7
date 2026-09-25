@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tracewise": {
+      "command": "node",
+      "args": ["tools/bridge/src/main.ts"]
+    }
+  }
+}

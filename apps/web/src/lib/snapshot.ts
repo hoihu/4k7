@@ -53,7 +53,7 @@ export async function renderSchematicPng(width: number): Promise<{ data: string;
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = bg && bg !== 'rgba(0, 0, 0, 0)' ? bg : '#fbfaf7';
+    ctx.fillStyle = bg && bg !== 'rgba(0, 0, 0, 0)' ? bg : '#f1f5fa';
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
     const dataUrl = canvas.toDataURL('image/png');

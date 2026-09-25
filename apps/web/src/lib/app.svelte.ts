@@ -23,6 +23,9 @@ import { createKernel } from './kernelClient.ts';
 import { renderSchematicPng } from './snapshot.ts';
 import { DEFAULT_SETTINGS, loadApiKey, loadProject, loadSettings, saveApiKey, saveProject, saveSettings, type Settings } from './persist.ts';
 
+/** A pairing link (#pair=123456) opened from the terminal; read before the router rewrites the hash. */
+const pairFromLink = /^#pair=(\d{6})$/.exec(location.hash)?.[1] ?? null;
+
 export type View = 'sch' | 'lay' | 'parts' | 'set';
 export type InspectorTab = 'issues' | 'ledger' | 'history' | 'sel';
 
@@ -95,7 +98,12 @@ class AppState {
         for (const c of this.chat) if (c.source && c.status === 'streaming') c.status = 'done';
       },
     );
-    if (this.settings.bridgeCode) void bridge.connect(this.settings.bridgeCode, { silent: true, preferPort: this.settings.bridgePort });
+    if (pairFromLink) {
+      history.replaceState(null, '', '#sch');
+      void bridge.connect(pairFromLink).then((ok) => this.flash(ok ? `Paired with ${bridge.agent ?? 'the bridge'}` : (bridge.error ?? 'Pairing failed')));
+    } else if (this.settings.bridgeCode) {
+      void bridge.connect(this.settings.bridgeCode, { silent: true, preferPort: this.settings.bridgePort });
+    }
     this.ready = true;
   }
 

@@ -21,6 +21,8 @@ export interface BridgeOptions {
   /** Extra allowed page origins besides localhost / 127.0.0.1 (e.g. a deployed app URL). */
   origins?: string[];
   callTimeoutMs?: number;
+  /** Where the app runs; used to give the user a one-click pairing link. */
+  appUrl?: string;
   log?: (msg: string) => void;
 }
 
@@ -85,6 +87,10 @@ export class Bridge {
     this.#send({ type: 'agent', name });
   }
 
+  pairingLink(): string {
+    return `${(this.#opts.appUrl ?? 'http://localhost:5173').replace(/\/$/, '')}/#pair=${this.code}`;
+  }
+
   status() {
     return { port: this.port, connected: this.connected, code: this.code, agent: this.#agent };
   }
@@ -94,8 +100,9 @@ export class Bridge {
     if (!this.#tab) {
       return Promise.resolve(
         errorResult(
-          `The Tracewise app is not connected to this bridge. Ask the user to open the app, go to Settings → Claude Code bridge, ` +
-            `and enter pairing code ${this.code} (bridge on port ${this.port}).`,
+          `The Tracewise app is not connected to this bridge. Give the user this link to open (it pairs the app in one click): ` +
+            `${this.pairingLink()}\n` +
+            `Alternatively they can enter pairing code ${this.code} under Settings → Claude Code bridge in the app (bridge on port ${this.port}).`,
         ),
       );
     }

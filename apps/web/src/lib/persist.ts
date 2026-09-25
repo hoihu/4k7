@@ -70,21 +70,28 @@ export const DEFAULT_SETTINGS: Settings = {
   effort: 'high',
   mode: 'review',
   fixBudget: 5,
-  theme: 'system',
+  theme: 'dark',
   bridgeCode: '',
   bridgePort: null,
 };
 
+/** Bumped when a default changes in a way existing users should get (v2: dark blue theme). */
+const SETTINGS_VERSION = 2;
+
 export async function loadSettings(): Promise<Settings> {
   try {
-    return { ...DEFAULT_SETTINGS, ...((await get<Partial<Settings>>('settings', 'settings')) ?? {}) };
+    const saved = (await get<Partial<Settings> & { version?: number }>('settings', 'settings')) ?? {};
+    const merged = { ...DEFAULT_SETTINGS, ...saved };
+    // v1 stored theme "system" without the user ever choosing it
+    if ((saved.version ?? 1) < 2 && saved.theme === 'system') merged.theme = DEFAULT_SETTINGS.theme;
+    return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
 }
 
 export async function saveSettings(s: Settings): Promise<void> {
-  await put('settings', 'settings', { ...s });
+  await put('settings', 'settings', { ...s, version: SETTINGS_VERSION });
 }
 
 /* ---------------------------------- API key -------------------------------- */

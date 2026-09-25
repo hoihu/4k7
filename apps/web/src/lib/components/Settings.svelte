@@ -129,15 +129,16 @@
       {:else}<span class="tag">off</span>{/if}
     </div>
     <div class="pb">
-      <p class="lead">Let Claude Code (or any MCP client) drive this app with your existing plan: no API key in the browser. Its changes arrive here as changesets for you to review.</p>
+      <p class="lead">Let Claude Code (or any MCP client) drive this app with your existing plan: no API key in the browser. Its changes arrive here as changesets for you to review. Setup happens on Claude Code's side, since it is the program that starts the bridge; a web page cannot register tools on your machine.</p>
       <ol class="steps">
         <li>
-          Register the bridge once, in a terminal:
+          Start <code>claude</code> in this repository and approve the <b>tracewise</b> MCP server it offers (from <code>.mcp.json</code>).
+          To use it from any folder, register it once in a terminal instead:
           <div class="cmd"><code>{mcpCommand}</code><button class="ib" onclick={copyCommand}>{copied ? 'copied' : 'copy'}</button></div>
         </li>
-        <li>Start <code>claude</code> and ask it to <i>“connect to Tracewise”</i>. It replies with a 6-digit pairing code (also in <code>~/.tracewise/bridge.json</code>).</li>
+        <li>Ask Claude to <i>“connect to Tracewise”</i>. It gives you a pairing link: open it and this tab pairs itself.</li>
         <li>
-          Enter the code:
+          Or enter the 6-digit code by hand (also in <code>~/.tracewise/bridge.json</code>):
           <div class="row">
             <input class="text mono code" bind:value={pairCode} inputmode="numeric" maxlength="6" placeholder="123456" aria-label="Pairing code" />
             {#if bridge.status === 'connected' || bridge.status === 'waiting'}

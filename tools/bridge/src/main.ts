@@ -16,9 +16,9 @@ const log = (msg: string) => process.stderr.write(`[tracewise-bridge] ${msg}\n`)
 
 async function main() {
   const cfg = loadConfig();
-  const bridge = new Bridge({ code: cfg.code, origins: cfg.origins, log });
+  const bridge = new Bridge({ code: cfg.code, origins: cfg.origins, appUrl: cfg.appUrl, log });
   const port = await bridge.start();
-  log(`v${VERSION} listening on ws://127.0.0.1:${port} · pairing code ${cfg.code} (${configPath()})`);
+  log(`v${VERSION} listening on ws://127.0.0.1:${port} · pairing code ${cfg.code} · ${bridge.pairingLink()} (${configPath()})`);
 
   const server = createMcpServer(bridge);
   const transport = new StdioServerTransport();
