@@ -40,26 +40,33 @@ Without an API key the app runs an **offline demo** (a scripted agent that goes 
 try “12 V to 3.3 V buck, 2 A. Put C1 left of U1.”, answer the question, review the changeset, then “make C2 100uF”.
 Add an Anthropic API key in **Settings** to use a real model. It is encrypted in your browser and sent only to `api.anthropic.com`.
 
-## Driving it with Claude Code (no API key needed)
+## Using Claude Code (no API key needed)
 
-The local bridge (`tools/bridge`) exposes the app as an MCP server, so Claude Code can design with your existing plan.
-Setup happens on Claude Code's side, because Claude Code is the program that starts the bridge (a web page cannot
-register tools on your machine).
+The local bridge (`tools/bridge`) connects the app to the Claude Code on your computer, so it runs on your existing plan.
 
-1. Run the app (`npm run dev`).
-2. Start `claude` **in this repository** and approve the `tracewise` server from `.mcp.json`.
-   To use it from any folder, register it once instead:
-   `claude mcp add --scope user tracewise -- node /absolute/path/to/this/repo/tools/bridge/src/main.ts`
-3. Ask Claude to *“connect to Tracewise”*. It gives you a pairing link (`http://localhost:5173/#pair=123456`): open it and
-   the tab pairs itself. The 6-digit code can also be entered under **Settings → Claude Code bridge**. It is stored in
-   `~/.tracewise/bridge.json`, so you pair once; set `TRACEWISE_APP_URL` if the app runs elsewhere.
+**Chat in the app (recommended).**
 
-Claude Code then works through `get_context`, `design_query`, `design_edit`, `calc`, `get_schematic_image`, `propose` and
-`wait_for_review`. Its changes show up as a changeset in the chat for you to review; `propose` is refused while the design
-has open errors.
+```sh
+npm run dev       # the app
+npm run bridge    # in a second terminal; prints a pairing link
+```
 
-The bridge binds to `127.0.0.1`, only accepts pages served from localhost, and needs the pairing code before any call is
-forwarded. Stdout is reserved for MCP; logs go to stderr.
+Open the pairing link, then choose **Settings → AI provider → Claude Code on this computer**. Messages you type in
+the app's chat are answered by `claude -p` running headlessly with **only** the Tracewise tools (no shell, files or web),
+connected back to the bridge through a token-protected MCP endpoint. Follow-up messages continue the same session.
+
+**Or chat in the Claude Code CLI.** Start `claude` in this repository and approve the `tracewise` server from
+`.mcp.json` (or register it for every folder with
+`claude mcp add --scope user tracewise -- node /absolute/path/to/this/repo/tools/bridge/src/main.ts`). Ask Claude to
+*“connect to Tracewise”* and open the pairing link it gives you.
+
+Either way Claude works through `get_context`, `design_query`, `design_edit`, `calc`, `get_schematic_image` and `propose`
+(the CLI also gets `wait_for_review`), and its changes arrive as a changeset for you to review. `propose` is refused
+while the design has open errors.
+
+The pairing code lives in `~/.tracewise/bridge.json`, so you pair once. The bridge binds to `127.0.0.1`, only accepts
+pages served from localhost, and needs the pairing code before anything is forwarded. Set `TRACEWISE_APP_URL` if the app
+runs elsewhere and `TRACEWISE_CLAUDE_BIN` if `claude` is not on your PATH.
 
 ## Repository layout
 
@@ -70,7 +77,7 @@ forwarded. Stdout is reserved for MCP; logs go to stderr.
 | `packages/kernel` | Transactions, ERC + datasheet checks, constraint ledger, schematic auto-layout, changesets, canonical JSON |
 | `packages/agent` | Agent loop with kernel verification, calculators, Anthropic + offline providers |
 | `apps/web` | Svelte 5 app: schematic workspace (chat + canvas + inspector), parts, settings. The kernel runs in a Web Worker |
-| `tools/bridge` | Local relay: MCP server over stdio ↔ WebSocket ↔ browser tab, with pairing and origin checks |
+| `tools/bridge` | Local relay to Claude Code: MCP over stdio (CLI drives the app) or headless `claude -p` for the app chat, WebSocket to the tab, pairing and origin checks |
 
 ## Status
 

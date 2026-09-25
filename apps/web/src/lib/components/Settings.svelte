@@ -81,11 +81,41 @@
           <td>Provider</td>
           <td>
             <select class="text" value={app.settings.provider} onchange={(e) => set('provider', (e.currentTarget as HTMLSelectElement).value as Settings['provider'])}>
-              <option value="anthropic">Anthropic (your API key)</option>
+              <option value="claude-code">Claude Code on this computer (your plan, via bridge)</option>
+              <option value="anthropic">Anthropic API (your API key)</option>
               <option value="demo">Offline demo (scripted, no key)</option>
             </select>
           </td>
         </tr>
+        {#if app.settings.provider === 'claude-code'}
+        <tr>
+          <td>Status</td>
+          <td>
+            {#if bridge.status === 'connected' && bridge.chat?.available}
+              <span class="tag ok">ready</span> <span class="muted">{bridge.chat.version} · the chat runs your local Claude Code with only the Tracewise tools</span>
+            {:else if bridge.status === 'connected'}
+              <span class="tag warn">bridge connected, chat unavailable</span>
+              <div class="hint">{bridge.chat?.reason ?? 'This bridge is too old for the app chat. Restart it.'}</div>
+            {:else}
+              <span class="tag warn">not connected</span>
+              <div class="hint">Start the bridge in a terminal with <code>npm run bridge</code> (in this repository), open the pairing link it prints, or pair below under <a href="#bridge">Claude Code bridge</a>.</div>
+            {/if}
+          </td>
+        </tr>
+        <tr>
+          <td>Model</td>
+          <td>
+            <select class="text" value={app.settings.claudeModel} onchange={(e) => set('claudeModel', (e.currentTarget as HTMLSelectElement).value)}>
+              <option value="">Claude Code default</option>
+              <option value="opus">opus</option>
+              <option value="sonnet">sonnet</option>
+              <option value="fable">fable</option>
+              <option value="haiku">haiku</option>
+            </select>
+            <span class="hint inline">uses your Claude Code login and plan</span>
+          </td>
+        </tr>
+        {:else}
         <tr>
           <td>API key</td>
           <td>
@@ -115,6 +145,7 @@
           </td>
         </tr>
         <tr><td>Session spend</td><td class="mono">${app.spend.toFixed(3)} <span class="muted">(estimate from token usage)</span></td></tr>
+        {/if}
       </tbody>
     </table>
   </section>
@@ -129,14 +160,15 @@
       {:else}<span class="tag">off</span>{/if}
     </div>
     <div class="pb">
-      <p class="lead">Let Claude Code (or any MCP client) drive this app with your existing plan: no API key in the browser. Its changes arrive here as changesets for you to review. Setup happens on Claude Code's side, since it is the program that starts the bridge; a web page cannot register tools on your machine.</p>
+      <p class="lead">Use Claude Code with your existing plan, no API key in the browser. Two ways: chat <b>here</b> (choose “Claude Code on this computer” as provider above; start the bridge with <code>npm run bridge</code>), or chat in the <b>Claude Code CLI</b> and let it drive this tab. Either way, changes arrive as changesets for you to review.</p>
       <ol class="steps">
         <li>
-          Start <code>claude</code> in this repository and approve the <b>tracewise</b> MCP server it offers (from <code>.mcp.json</code>).
-          To use it from any folder, register it once in a terminal instead:
+          Chat here: run <code>npm run bridge</code> in this repository and open the pairing link it prints.
+          Chat in the CLI: start <code>claude</code> in this repository and approve the <b>tracewise</b> MCP server it offers (from <code>.mcp.json</code>);
+          to use it from any folder, register it once instead:
           <div class="cmd"><code>{mcpCommand}</code><button class="ib" onclick={copyCommand}>{copied ? 'copied' : 'copy'}</button></div>
         </li>
-        <li>Ask Claude to <i>“connect to Tracewise”</i>. It gives you a pairing link: open it and this tab pairs itself.</li>
+        <li>In the CLI, ask Claude to <i>“connect to Tracewise”</i>: it gives you the pairing link. Opening the link pairs this tab.</li>
         <li>
           Or enter the 6-digit code by hand (also in <code>~/.tracewise/bridge.json</code>):
           <div class="row">

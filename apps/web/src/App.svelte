@@ -89,8 +89,8 @@
         <button aria-pressed={app.settings.mode === 'review'} onclick={() => app.updateSettings({ mode: 'review' })}>Review</button>
       </div>
       <button class="chipbtn model" onclick={() => (app.view = 'set')} title="AI provider and session spend">
-        <span class="mono">{app.isDemo ? 'demo' : app.settings.model.replace('claude-', '')}</span>
-        {#if !app.isDemo}<span class="muted">${app.spend.toFixed(2)}</span>{/if}
+        <span class="mono">{app.settings.provider === 'claude-code' ? 'claude code' : app.isDemo ? 'demo' : app.settings.model.replace('claude-', '')}</span>
+        {#if app.settings.provider === 'anthropic' && !app.isDemo}<span class="muted">${app.spend.toFixed(2)}</span>{/if}
       </button>
       <button class="ib" title="Undo last commit (⌘Z)" disabled={!app.k?.canUndo || !!app.k?.proposal} onclick={() => app.undo()}>↶</button>
     </div>

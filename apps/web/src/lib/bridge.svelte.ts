@@ -2,7 +2,15 @@
  * Browser side of the Claude Code bridge (tools/bridge). Connects to the local relay over a
  * WebSocket, pairs with the code, and executes forwarded tool calls against the kernel.
  */
-import { BRIDGE_PORTS, BRIDGE_PROTOCOL, type BridgeContent, type BridgeToTab, type TabToBridge } from '@tracewise/schema';
+import {
+  BRIDGE_PORTS,
+  BRIDGE_PROTOCOL,
+  type BridgeContent,
+  type BridgeToTab,
+  type ChatCapability,
+  type ChatEvent,
+  type TabToBridge,
+} from '@tracewise/schema';
 
 export type BridgeStatus = 'off' | 'connecting' | 'connected' | 'waiting';
 
@@ -18,6 +26,9 @@ class BridgeClient {
   agent = $state<string | null>(null);
   error = $state<string | null>(null);
   calls = $state(0);
+  /** Whether the bridge can answer the app's chat with the local Claude Code. */
+  chat = $state<ChatCapability | null>(null);
+  #chatListeners = new Map<string, (e: ChatEvent) => void>();
 
   #ws: WebSocket | null = null;
   #code = '';
@@ -102,6 +113,7 @@ class BridgeClient {
           this.#ws = ws;
           this.port = port;
           this.agent = msg.agent;
+          this.chat = msg.chat ?? null;
           this.status = 'connected';
           this.error = null;
           this.#onPaired?.(this.#code, port);
@@ -110,11 +122,29 @@ class BridgeClient {
         }
         if (msg.type === 'agent') this.agent = msg.name;
         if (msg.type === 'call') void this.#call(ws, msg.id, msg.tool, msg.input);
+        if (msg.type === 'chat_event') {
+          this.#chatListeners.get(msg.id)?.(msg.event);
+          if (msg.event.kind === 'done') this.#chatListeners.delete(msg.id);
+        }
       };
     });
   }
 
+  /** Send a chat message to the local Claude Code; events stream to `onEvent` until 'done'. */
+  sendChat(msg: Omit<Extract<TabToBridge, { type: 'chat' }>, 'type'>, onEvent: (e: ChatEvent) => void): boolean {
+    if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) return false;
+    this.#chatListeners.set(msg.id, onEvent);
+    this.#ws.send(JSON.stringify({ type: 'chat', ...msg } satisfies TabToBridge));
+    return true;
+  }
+
+  cancelChat(id: string) {
+    this.#ws?.send(JSON.stringify({ type: 'chat_cancel', id } satisfies TabToBridge));
+  }
+
   #lost() {
+    for (const [id, l] of this.#chatListeners) l({ kind: 'done', ok: false, error: 'The bridge disconnected.' });
+    this.#chatListeners.clear();
     this.#onLost?.();
     this.#ws = null;
     this.agent = null;

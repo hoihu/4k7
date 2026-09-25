@@ -1,3 +1,4 @@
-export { Bridge, type BridgeOptions, type CallResult } from './bridge.ts';
-export { createMcpServer, VERSION } from './mcp.ts';
-export { loadConfig, configPath } from './config.ts';
+export { Bridge, type BridgeOptions, type CallResult, type ChatMessage } from './bridge.ts';
+export { createMcpServer, mcpHttpHandler, VERSION } from './mcp.ts';
+export { ChatRunner, detectClaude } from './chat.ts';
+export { loadConfig, configPath, configDir } from './config.ts';

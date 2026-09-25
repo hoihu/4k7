@@ -49,7 +49,7 @@ export async function saveProject(json: string): Promise<void> {
 
 /* -------------------------------- settings -------------------------------- */
 
-export type ProviderKind = 'anthropic' | 'demo';
+export type ProviderKind = 'anthropic' | 'claude-code' | 'demo';
 export type Mode = 'auto' | 'review';
 
 export interface Settings {
@@ -62,6 +62,8 @@ export interface Settings {
   /** Claude Code bridge pairing, remembered so the tab reconnects by itself. */
   bridgeCode: string;
   bridgePort: number | null;
+  /** Model alias for Claude Code in the app chat ('' = Claude Code's default). */
+  claudeModel: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -73,6 +75,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
   bridgeCode: '',
   bridgePort: null,
+  claudeModel: '',
 };
 
 /** Bumped when a default changes in a way existing users should get (v2: dark blue theme). */

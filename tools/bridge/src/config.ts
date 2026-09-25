@@ -13,8 +13,12 @@ export interface BridgeConfig {
   appUrl: string;
 }
 
+export function configDir(): string {
+  return process.env.TRACEWISE_HOME ?? join(homedir(), '.tracewise');
+}
+
 export function configPath(): string {
-  return join(process.env.TRACEWISE_HOME ?? join(homedir(), '.tracewise'), 'bridge.json');
+  return join(configDir(), 'bridge.json');
 }
 
 export function loadConfig(): BridgeConfig {

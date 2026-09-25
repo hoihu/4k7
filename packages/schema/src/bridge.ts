@@ -11,13 +11,30 @@ export const BRIDGE_PORTS = [7777, 7778, 7779, 7780, 7781] as const;
 
 export type TabToBridge =
   | { type: 'hello'; protocol: number; code: string; client: string }
-  | { type: 'result'; id: number; isError: boolean; content: BridgeContent[] };
+  | { type: 'result'; id: number; isError: boolean; content: BridgeContent[] }
+  /** A message typed into the app's chat, to be answered by the local Claude Code. */
+  | { type: 'chat'; id: string; text: string; session: string | null; model?: string; autonomy: 'auto' | 'review' }
+  | { type: 'chat_cancel'; id: string };
+
+/** Whether the bridge can run the local Claude Code for the app's chat. */
+export interface ChatCapability {
+  available: boolean;
+  version?: string;
+  reason?: string;
+}
+
+export type ChatEvent =
+  | { kind: 'session'; session: string }
+  | { kind: 'text'; text: string }
+  | { kind: 'thinking'; text: string }
+  | { kind: 'done'; ok: boolean; error?: string; costUsd?: number; session?: string };
 
 export type BridgeToTab =
-  | { type: 'welcome'; protocol: number; agent: string }
+  | { type: 'welcome'; protocol: number; agent: string; chat: ChatCapability }
   | { type: 'denied'; reason: string }
   | { type: 'call'; id: number; tool: string; input: unknown }
-  | { type: 'agent'; name: string | null };
+  | { type: 'agent'; name: string | null }
+  | { type: 'chat_event'; id: string; event: ChatEvent };
 
 export type BridgeContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
 
@@ -37,9 +54,13 @@ export const ImageInput = z.object({
   width: z.number().int().min(400).max(2400).default(1400),
 });
 
-/** The MCP tool surface. Same op catalogue as the in-app agent, plus review hand-off. */
-export function bridgeTools(): ToolDefinition[] {
-  return [
+/**
+ * The MCP tool surface. Same op catalogue as the in-app agent, plus review hand-off.
+ * In chat mode (Claude Code answering the app's chat) the user reviews after the turn,
+ * so there is no wait_for_review.
+ */
+export function bridgeTools(opts: { chat?: boolean } = {}): ToolDefinition[] {
+  const all: ToolDefinition[] = [
     {
       name: 'get_context',
       description:
@@ -87,6 +108,20 @@ export function bridgeTools(): ToolDefinition[] {
       input_schema: schemaOf(WaitForReviewInput),
     },
   ];
+  return opts.chat ? all.filter((t) => t.name !== 'wait_for_review') : all;
+}
+
+/** Appended to Claude Code's system prompt when it answers the app's chat. */
+export function chatModePrompt(): string {
+  return `You are answering messages typed into the chat panel of Tracewise, a browser-based AI-first PCB schematic tool, through its MCP tools (mcp__tracewise__*). You have no other tools: no shell, no files, no web. Work only through the Tracewise tools.
+
+${BRIDGE_INSTRUCTIONS}
+
+Chat-mode rules:
+- Start each request with get_context.
+- When your changes are complete and error-free, call propose once, then end your turn with a short reply (2–5 sentences). The user reviews the changeset in the app after your turn; do not wait for it.
+- If you need a decision from the user, ask one concrete question in your reply (offer 2–4 options) and end your turn.
+- Keep replies short; the app shows your tool calls and the diff separately.`;
 }
 
 export const BRIDGE_INSTRUCTIONS = `Tracewise is a browser-based, AI-first PCB schematic tool. You drive it through these tools; a deterministic kernel in the user's browser turns your semantic operations into schematic geometry, validates every change and runs electrical and datasheet checks.

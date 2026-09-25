@@ -123,4 +123,10 @@ claude mcp add --scope user tracewise -- node <repo>/tools/bridge/src/main.ts
   user accepts or rejects).
 - The in-app agent and an external agent never edit at the same time: bridge calls are refused while the in-app agent runs.
 - Server `instructions` carry the workflow rules (the external agent's equivalent of the system prompt).
+- **App chat via Claude Code** (`npm run bridge`): the tab sends chat messages over the WebSocket; the bridge runs
+  `claude -p --output-format stream-json --include-partial-messages --tools "" --strict-mcp-config --mcp-config <http>
+  --allowedTools mcp__tracewise --permission-mode dontAsk --append-system-prompt <chat rules> [--resume <session>]` in a
+  neutral working directory and streams text back. The headless Claude reaches the Tracewise tools through the bridge's
+  `/mcp` (Streamable HTTP) endpoint, which only accepts the bearer token issued to that run and refuses browser origins.
+  No `wait_for_review` in chat mode: the user reviews after the turn.
 - Not yet: proxying the user's stdio MCP servers and CORS-blocked providers through the relay.

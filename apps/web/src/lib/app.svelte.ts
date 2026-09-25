@@ -75,6 +75,11 @@ class AppState {
   private abort: AbortController | null = null;
   private seq = 1;
   private reviewWaiters: ((result: string) => void)[] = [];
+  /** The in-app agent is running (external agents must wait). */
+  private inAppBusy = false;
+  /** Claude Code answering the app chat through the bridge: session and current run. */
+  private claudeSession: string | null = null;
+  private claudeRun: { id: string; item: ChatItem } | null = null;
 
   async init() {
     this.settings = await loadSettings();
@@ -181,6 +186,7 @@ class AppState {
 
   /** The chat item that collects an external agent's activity; one per burst of work. */
   private externalItem(): ChatItem {
+    if (this.claudeRun) return this.claudeRun.item; // tool calls of the chat turn in progress
     const agent = bridge.agent ?? 'External agent';
     const last = this.chat[this.chat.length - 1];
     if (last?.role === 'agent' && last.source === agent && last.status === 'streaming') return last;
@@ -191,7 +197,7 @@ class AppState {
   /** Execute one tool call forwarded by the Claude Code bridge. */
   async handleBridgeCall(tool: string, input: unknown): Promise<{ isError: boolean; content: BridgeContent[] }> {
     const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
-    if (this.running) return text('The in-app agent is working on this design right now. Try again when it has finished.', true);
+    if (this.inAppBusy) return text('The in-app agent is working on this design right now. Try again when it has finished.', true);
 
     // the activity block is created lazily, so waiting for review does not open a new one
     let current: ChatItem | null = null;
@@ -263,7 +269,7 @@ class AppState {
         }
         const it = item();
         it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') });
-        it.status = 'done';
+        if (this.claudeRun?.item !== it) it.status = 'done';
         it.changeset = { state: 'pending' };
         if (this.settings.mode === 'auto') {
           await this.accept();
@@ -339,10 +345,12 @@ class AppState {
   }
 
   get providerLabel() {
+    if (this.settings.provider === 'claude-code') return 'Claude Code';
     return this.agent?.provider.label ?? '';
   }
 
   get isDemo() {
+    if (this.settings.provider === 'claude-code') return false;
     return !(this.settings.provider === 'anthropic' && this.apiKey);
   }
 
@@ -358,18 +366,26 @@ class AppState {
     const refs = [...this.selection];
     this.chat.push({ id: this.seq++, role: 'user', text: trimmed, refs, segments: [], status: 'done' });
     for (const q of this.chat) for (const s of q.segments) if (s.type === 'question' && !s.answered) s.answered = trimmed;
-    this.chat.push({ id: this.seq++, role: 'agent', segments: [], status: 'streaming' });
+    const viaClaude = this.settings.provider === 'claude-code';
+    this.chat.push({ id: this.seq++, role: 'agent', segments: [], status: 'streaming', ...(viaClaude ? { source: 'Claude Code' } : {}) });
     const item = this.chat[this.chat.length - 1]!;
 
     this.running = true;
-    this.abort = new AbortController();
     try {
-      await this.agent.run(trimmed, { selection: refs }, (e) => this.onEvent(item, e), this.abort.signal);
+      if (viaClaude) {
+        await this.runClaudeCode(trimmed, item);
+      } else {
+        this.inAppBusy = true;
+        this.abort = new AbortController();
+        await this.agent.run(trimmed, { selection: refs }, (e) => this.onEvent(item, e), this.abort.signal);
+      }
     } catch (e) {
       item.segments.push({ type: 'error', text: (e as Error).message });
     } finally {
       item.status = 'done';
       this.running = false;
+      this.inAppBusy = false;
+      this.claudeRun = null;
       this.abort = null;
       await this.refresh();
       if (this.k?.proposal) {
@@ -380,7 +396,59 @@ class AppState {
   }
 
   stop() {
+    if (this.claudeRun) bridge.cancelChat(this.claudeRun.id);
     this.abort?.abort();
+  }
+
+  /** One chat turn answered by the local Claude Code through the bridge. */
+  private async runClaudeCode(text: string, item: ChatItem): Promise<void> {
+    const fail = (t: string) => item.segments.push({ type: 'error', text: t });
+    if (bridge.status !== 'connected') {
+      fail('Claude Code is not connected. Start the bridge (npm run bridge) and pair this tab under Settings → Claude Code bridge.');
+      return;
+    }
+    if (!bridge.chat?.available) {
+      fail(bridge.chat?.reason ?? 'This bridge cannot run Claude Code for the chat. Update the bridge (restart it).');
+      return;
+    }
+    const id = crypto.randomUUID();
+    this.claudeRun = { id, item };
+    await new Promise<void>((resolve) => {
+      const sent = bridge.sendChat(
+        {
+          id,
+          text,
+          session: this.claudeSession,
+          ...(this.settings.claudeModel ? { model: this.settings.claudeModel } : {}),
+          autonomy: this.settings.mode,
+        },
+        (e) => {
+          const last = item.segments[item.segments.length - 1];
+          switch (e.kind) {
+            case 'session':
+              this.claudeSession = e.session;
+              break;
+            case 'text':
+              if (last?.type === 'text') last.text += e.text;
+              else if (e.text.trim()) item.segments.push({ type: 'text', text: e.text.replace(/^\s+/, '') });
+              break;
+            case 'thinking':
+              if (last?.type === 'thinking') last.text += e.text;
+              else item.segments.push({ type: 'thinking', text: e.text });
+              break;
+            case 'done':
+              if (e.session) this.claudeSession = e.session;
+              if (!e.ok && e.error) fail(e.error);
+              resolve();
+              break;
+          }
+        },
+      );
+      if (!sent) {
+        fail('The bridge connection is not open.');
+        resolve();
+      }
+    });
   }
 
   private onEvent(item: ChatItem, e: AgentEvent) {
@@ -434,6 +502,7 @@ class AppState {
   }
 
   clearChat() {
+    this.claudeSession = null;
     this.agent.reset();
     this.chat = [];
   }

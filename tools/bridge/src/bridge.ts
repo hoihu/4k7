@@ -1,13 +1,21 @@
 /**
- * The relay core: a WebSocket server on 127.0.0.1 that one paired browser tab connects to.
- * Tool calls from the MCP side are forwarded to the tab, which executes them against its kernel.
+ * The relay core: an HTTP + WebSocket server on 127.0.0.1. One paired browser tab connects over
+ * the WebSocket; tool calls (from stdio MCP or the HTTP /mcp endpoint) are forwarded to the tab,
+ * which executes them against its kernel. Chat messages from the tab go to a chat handler.
  *
- * Security: binds to loopback only, accepts only local http(s) origins (so arbitrary websites
- * cannot connect), and requires the pairing code before any call is forwarded.
+ * Security: binds to loopback only, accepts only local http(s) origins on the WebSocket (so
+ * arbitrary websites cannot connect), and requires the pairing code before anything is forwarded.
  */
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { IncomingMessage } from 'node:http';
-import { BRIDGE_PORTS, BRIDGE_PROTOCOL, type BridgeContent, type BridgeToTab, type TabToBridge } from '@tracewise/schema';
+import {
+  BRIDGE_PORTS,
+  BRIDGE_PROTOCOL,
+  type BridgeContent,
+  type BridgeToTab,
+  type ChatCapability,
+  type TabToBridge,
+} from '@tracewise/schema';
 
 export interface CallResult {
   isError: boolean;
@@ -26,6 +34,9 @@ export interface BridgeOptions {
   log?: (msg: string) => void;
 }
 
+export type HttpHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+export type ChatMessage = Extract<TabToBridge, { type: 'chat' | 'chat_cancel' }>;
+
 interface Pending {
   resolve: (r: CallResult) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -36,8 +47,12 @@ const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 export class Bridge {
   readonly code: string;
   #opts: BridgeOptions;
+  #http: HttpServer | null = null;
   #wss: WebSocketServer | null = null;
   #tab: WebSocket | null = null;
+  #httpHandler: HttpHandler | null = null;
+  #chatHandler: ((msg: ChatMessage) => void) | null = null;
+  #chat: ChatCapability = { available: false, reason: 'chat not enabled' };
   #pending = new Map<number, Pending>();
   #seq = 0;
   #agent: string | null = null;
@@ -56,20 +71,53 @@ export class Bridge {
     this.#opts.log?.(msg);
   }
 
-  /** Listen on the first free port of the range. */
+  /** Listen on the first free port of the range (HTTP and WebSocket share it). */
   async start(): Promise<number> {
     const ports = this.#opts.ports ?? BRIDGE_PORTS;
     for (const port of ports) {
       try {
-        this.#wss = await listen(port, this.#opts.host ?? '127.0.0.1');
+        this.#http = await listen(port, this.#opts.host ?? '127.0.0.1', (req, res) => this.#onHttp(req, res));
         this.port = port;
+        this.#wss = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
         this.#wss.on('connection', (ws, req) => this.#onConnection(ws, req));
+        this.#http.on('upgrade', (req, socket, head) => this.#wss!.handleUpgrade(req, socket, head, (ws) => this.#wss!.emit('connection', ws, req)));
         return port;
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw e;
       }
     }
     throw new Error(`All bridge ports are in use (${ports.join(', ')}). Is another Claude Code session already running the bridge?`);
+  }
+
+  /** Serve HTTP requests (the /mcp endpoint for the headless Claude Code). */
+  setHttpHandler(h: HttpHandler) {
+    this.#httpHandler = h;
+  }
+
+  /** Receive chat messages from the paired tab. */
+  setChatHandler(h: (msg: ChatMessage) => void, capability: ChatCapability) {
+    this.#chatHandler = h;
+    this.#chat = capability;
+  }
+
+  get chatCapability(): ChatCapability {
+    return this.#chat;
+  }
+
+  /** Send a message to the paired tab (no-op when none is connected). */
+  sendToTab(msg: BridgeToTab) {
+    this.#send(msg);
+  }
+
+  #onHttp(req: IncomingMessage, res: ServerResponse) {
+    if (this.#httpHandler) {
+      void Promise.resolve(this.#httpHandler(req, res)).catch((e) => {
+        this.#log(`http error: ${(e as Error).message}`);
+        if (!res.headersSent) res.writeHead(500).end();
+      });
+      return;
+    }
+    res.writeHead(404).end();
   }
 
   async stop(): Promise<void> {
@@ -79,7 +127,9 @@ export class Bridge {
     }
     this.#pending.clear();
     this.#tab?.close(1001, 'bridge stopped');
-    await new Promise<void>((resolve) => (this.#wss ? this.#wss.close(() => resolve()) : resolve()));
+    this.#wss?.close();
+    await new Promise<void>((resolve) => (this.#http ? this.#http.close(() => resolve()) : resolve()));
+    this.#http?.closeAllConnections();
   }
 
   setAgent(name: string | null) {
@@ -158,8 +208,13 @@ export class Bridge {
         paired = true;
         if (this.#tab && this.#tab !== ws) this.#tab.close(4000, 'replaced by another tab');
         this.#tab = ws;
-        ws.send(JSON.stringify({ type: 'welcome', protocol: BRIDGE_PROTOCOL, agent: this.#agent ?? 'mcp client' } satisfies BridgeToTab));
+        ws.send(JSON.stringify({ type: 'welcome', protocol: BRIDGE_PROTOCOL, agent: this.#agent ?? 'Claude Code', chat: this.#chat } satisfies BridgeToTab));
         this.#log(`tab paired (${msg.client}, origin ${origin})`);
+        return;
+      }
+      if (msg.type === 'chat' || msg.type === 'chat_cancel') {
+        if (this.#chatHandler) this.#chatHandler(msg);
+        else if (msg.type === 'chat') this.#send({ type: 'chat_event', id: msg.id, event: { kind: 'done', ok: false, error: this.#chat.reason ?? 'Chat is not available on this bridge.' } });
         return;
       }
       if (msg.type === 'result') {
@@ -189,13 +244,14 @@ function errorResult(text: string): CallResult {
   return { isError: true, content: [{ type: 'text', text }] };
 }
 
-function listen(port: number, host: string): Promise<WebSocketServer> {
+function listen(port: number, host: string, handler: (req: IncomingMessage, res: ServerResponse) => void): Promise<HttpServer> {
   return new Promise((resolve, reject) => {
-    const wss = new WebSocketServer({ port, host, maxPayload: 32 * 1024 * 1024 });
-    wss.once('listening', () => resolve(wss));
-    wss.once('error', (e) => {
-      wss.close();
+    const server = createServer(handler);
+    server.once('listening', () => resolve(server));
+    server.once('error', (e) => {
+      server.close();
       reject(e);
     });
+    server.listen(port, host);
   });
 }
