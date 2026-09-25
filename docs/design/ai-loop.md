@@ -102,16 +102,25 @@ A recipe is a small package: `recipe.json` (name, match hints, tool allow-list, 
 constraints) + `prompt.md` + optional reference sub-circuit (`.twd` fragment). Examples:
 "USB-C sink with ESD", "STM32 minimum system", "Buck, TPS5433x family", "RS-485 with isolation".
 
-## 6. Local relay (`tools/bridge`)
+## 6. Local relay (`tools/bridge`), implemented
 
 ```
-npx tracewise-bridge            # binds 127.0.0.1:7777, prints pairing code
+Claude Code ──MCP stdio──▶ tracewise-bridge (Node, 127.0.0.1:7777–7781) ──WebSocket──▶ browser tab (kernel + UI)
 ```
 
-- The tab connects over WebSocket after the user enters the pairing code.
-- **External agents → app**: exposes the ops catalogue as an MCP server (stdio and HTTP), so
-  Claude Code, Cursor etc. can drive the open project. Their changesets appear in the UI like any
-  other agent's, and they are subject to the same autonomy mode.
-- **App → local tools**: runs stdio MCP servers from a config file and proxies them to the tab.
-- **App → providers**: optional HTTP proxy for providers without browser CORS.
-- Without the relay everything else still works.
+```sh
+claude mcp add --scope user tracewise -- node <repo>/tools/bridge/src/main.ts
+```
+
+- **Pairing**: a 6-digit code is created once and kept in `~/.tracewise/bridge.json`. If the tab is not connected, every tool
+  answers with the code and asks the agent to tell the user, who enters it under Settings → Claude Code bridge. The tab
+  remembers the code and reconnects by itself when Claude Code restarts.
+- **Security**: loopback only; WebSocket connections from non-localhost origins are closed before pairing (so a website
+  cannot reach the bridge); no call is forwarded before the code matches; one paired tab at a time.
+- **Tools**: `get_context` (design state + canvas selection + pending changeset), `design_query`, `design_edit`, `calc`
+  (same schemas as the in-app agent), `get_schematic_image` (PNG of the current sheet), `propose` (hands the working copy
+  to the user; **refused while errors are open**, commits directly in Auto mode) and `wait_for_review` (blocks until the
+  user accepts or rejects).
+- The in-app agent and an external agent never edit at the same time: bridge calls are refused while the in-app agent runs.
+- Server `instructions` carry the workflow rules (the external agent's equivalent of the system prompt).
+- Not yet: proxying the user's stdio MCP servers and CORS-blocked providers through the relay.

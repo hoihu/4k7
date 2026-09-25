@@ -165,7 +165,7 @@ function makeSymbol(d: Design, c: Component, def: SymbolDef, ox: number, oy: num
 function satWidth(d: Design, c: Component, bottomLabel?: string): number {
   const text = Math.max(tw(c.refdes), tw(valueOf(d, c)));
   const below = bottomLabel ? tw(bottomLabel) / 2 + 80 : 0;
-  return Math.max(300, grid(Math.max(110 + text + 60, below + 100)));
+  return Math.max(300, grid(Math.max(140 + text + 140, below + 100))); // own text + the next part's plate
 }
 
 /* ------------------------------- decorations ------------------------------ */

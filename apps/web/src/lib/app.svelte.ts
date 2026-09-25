@@ -7,13 +7,20 @@ import {
   DEMO_FALLBACK,
   DEMO_SCRIPTS,
   ScriptedProvider,
+  compactTx,
   costUsd,
+  describeTx,
+  formatDesignContext,
+  runCalc,
   type AgentEvent,
   type Provider,
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
-import type { Design } from '@tracewise/schema';
+import { tick } from 'svelte';
+import { CalcCall, ImageInput, ProposeInput, WaitForReviewInput, type BridgeContent, type Design } from '@tracewise/schema';
+import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
+import { renderSchematicPng } from './snapshot.ts';
 import { DEFAULT_SETTINGS, loadApiKey, loadProject, loadSettings, saveApiKey, saveProject, saveSettings, type Settings } from './persist.ts';
 
 export type View = 'sch' | 'lay' | 'parts' | 'set';
@@ -34,6 +41,8 @@ export interface ChatItem {
   refs?: string[];
   segments: Segment[];
   status: 'streaming' | 'done';
+  /** External agent driving the app through the bridge (e.g. "Claude Code"). */
+  source?: string;
   /** This turn produced the proposal that is currently pending (or was decided). */
   changeset?: { state: 'pending' | 'accepted' | 'rejected' | 'superseded'; note?: string };
 }
@@ -62,6 +71,7 @@ class AppState {
   private agent!: Agent;
   private abort: AbortController | null = null;
   private seq = 1;
+  private reviewWaiters: ((result: string) => void)[] = [];
 
   async init() {
     this.settings = await loadSettings();
@@ -77,6 +87,15 @@ class AppState {
     this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget });
     this.applyTheme();
     await this.refresh();
+    bridge.init(
+      (tool, input) => this.handleBridgeCall(tool, input),
+      (code, port) => void this.updateSettings({ bridgeCode: code, bridgePort: port }),
+      () => {
+        // the external agent went away: close its open activity block
+        for (const c of this.chat) if (c.source && c.status === 'streaming') c.status = 'done';
+      },
+    );
+    if (this.settings.bridgeCode) void bridge.connect(this.settings.bridgeCode, { silent: true, preferPort: this.settings.bridgePort });
     this.ready = true;
   }
 
@@ -146,6 +165,124 @@ class AppState {
   private markChangeset(state: 'accepted' | 'rejected', note: string) {
     const item = [...this.chat].reverse().find((c) => c.changeset?.state === 'pending');
     if (item) item.changeset = { state, note };
+    const waiters = this.reviewWaiters.splice(0);
+    for (const w of waiters) w(state === 'accepted' ? `accepted: ${note}` : 'rejected by the user. Ask them what to change.');
+  }
+
+  /* ---------------------------- external agents ---------------------------- */
+
+  /** The chat item that collects an external agent's activity; one per burst of work. */
+  private externalItem(): ChatItem {
+    const agent = bridge.agent ?? 'External agent';
+    const last = this.chat[this.chat.length - 1];
+    if (last?.role === 'agent' && last.source === agent && last.status === 'streaming') return last;
+    this.chat.push({ id: this.seq++, role: 'agent', source: agent, segments: [], status: 'streaming' });
+    return this.chat[this.chat.length - 1]!;
+  }
+
+  /** Execute one tool call forwarded by the Claude Code bridge. */
+  async handleBridgeCall(tool: string, input: unknown): Promise<{ isError: boolean; content: BridgeContent[] }> {
+    const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
+    if (this.running) return text('The in-app agent is working on this design right now. Try again when it has finished.', true);
+
+    // the activity block is created lazily, so waiting for review does not open a new one
+    let current: ChatItem | null = null;
+    const item = () => (current ??= this.externalItem());
+    const log = (label: string, ok: boolean, detail: string) => item().segments.push({ type: 'tool', label, ok, detail });
+
+    switch (tool) {
+      case 'get_context': {
+        const snap = await this.kernel.port.snapshot();
+        const p = this.k?.proposal;
+        const pending = p ? `\n<pending_changeset hunks="${p.hunks.length}">${p.hunks.map((h) => `${h.change} ${h.title}`).join('; ')}</pending_changeset>` : '';
+        log('context', true, `${snap.summary.components.length} parts · ${snap.counts.errors}E ${snap.counts.warnings}W`);
+        return text(formatDesignContext({ ...snap, selection: this.selection }) + pending + `\nautonomy: ${this.settings.mode}`);
+      }
+      case 'design_query': {
+        const out = await this.kernel.query(input);
+        const isError = !!(out && typeof out === 'object' && 'error' in out);
+        log(`query · ${(input as { op?: string })?.op ?? '?'}`, !isError, isError ? String((out as { error: unknown }).error) : 'ok');
+        return text(JSON.stringify(out), isError);
+      }
+      case 'design_edit': {
+        const r = await this.kernel.transact(input);
+        const tx = input as { summary?: string; ops?: unknown[]; dry_run?: boolean };
+        log(`${tx.dry_run ? 'dry-run' : 'edit'} · ${tx.ops?.length ?? 0} ops · ${tx.summary ?? ''}`, r.status === 'ok', describeTx(r));
+        await this.refresh();
+        return text(JSON.stringify(compactTx(r)), r.status !== 'ok');
+      }
+      case 'calc': {
+        const parsed = CalcCall.safeParse(input);
+        if (!parsed.success) return text(`Invalid calc input: ${parsed.error.message}`, true);
+        try {
+          const out = runCalc(parsed.data);
+          log(`calc · ${parsed.data.fn}`, true, Object.entries(out).filter(([k]) => k !== 'note').map(([k, v]) => `${k}=${v}`).join(', '));
+          return text(JSON.stringify(out));
+        } catch (e) {
+          return text((e as Error).message, true);
+        }
+      }
+      case 'get_schematic_image': {
+        const args = ImageInput.parse(input ?? {});
+        if (this.view !== 'sch') {
+          this.view = 'sch';
+          await tick();
+        }
+        if (args.sheet) {
+          const i = this.k?.view.sheets.findIndex((s) => s.name.toLowerCase() === args.sheet!.toLowerCase()) ?? -1;
+          if (i >= 0) this.sheet = i;
+          await tick();
+        }
+        await new Promise((r) => requestAnimationFrame(() => r(null)));
+        const img = await renderSchematicPng(args.width);
+        log('schematic image', true, `${args.width}px`);
+        return { isError: false, content: [{ type: 'image', ...img }] };
+      }
+      case 'propose': {
+        const args = ProposeInput.safeParse(input);
+        if (!args.success) return text(args.error.message, true);
+        await this.refresh();
+        const p = this.k?.proposal;
+        if (!p) return text('Nothing to propose: the working copy has no changes.', true);
+        const errors = this.k!.diagnostics.filter((d) => d.severity === 'error' && !d.waivedBy);
+        if (errors.length) {
+          log('propose', false, `refused: ${errors.length} open error(s)`);
+          return text(
+            `Refused: the design has ${errors.length} open error(s). Fix them (or waive intended ones with a reason) first:\n` +
+              errors.map((d) => `- ${d.code} ${d.entities.join(',')}: ${d.message}`).join('\n'),
+            true,
+          );
+        }
+        const it = item();
+        it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') });
+        it.status = 'done';
+        it.changeset = { state: 'pending' };
+        if (this.settings.mode === 'auto') {
+          await this.accept();
+          return text(`Committed (autonomy is Auto): ${p.hunks.length} changes.`);
+        }
+        this.flash(`${bridge.agent ?? 'External agent'} proposed ${p.hunks.length} changes`);
+        return text(`Proposed ${p.hunks.length} changes for review. Call wait_for_review to get the user's decision.`);
+      }
+      case 'wait_for_review': {
+        const args = WaitForReviewInput.parse(input ?? {});
+        if (!this.k?.proposal) return text('Nothing is pending review.');
+        const result = await new Promise<string>((resolve) => {
+          const timer = setTimeout(() => {
+            this.reviewWaiters = this.reviewWaiters.filter((w) => w !== done);
+            resolve('still pending: the user has not decided yet. Call wait_for_review again or continue talking to the user.');
+          }, args.timeout_s * 1000);
+          const done = (r: string) => {
+            clearTimeout(timer);
+            resolve(r);
+          };
+          this.reviewWaiters.push(done);
+        });
+        return text(result);
+      }
+      default:
+        return text(`Unknown tool ${tool}`, true);
+    }
   }
 
   private async persist() {

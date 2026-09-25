@@ -31,10 +31,42 @@ export interface ToolDefinition {
   input_schema: Record<string, unknown>;
 }
 
-function schemaOf(t: z.ZodType): Record<string, unknown> {
-  const s = z.toJSONSchema(t, { io: 'input', unrepresentable: 'any' }) as Record<string, unknown>;
+type Json = Record<string, unknown>;
+
+/**
+ * JSON Schema for a tool input. Tool APIs (Anthropic, MCP) require a plain top-level
+ * `{"type": "object"}`; a top-level union (e.g. the query ops) is flattened into one object
+ * whose discriminator becomes an enum. The kernel still validates inputs exactly with zod.
+ */
+export function schemaOf(t: z.ZodType): Json {
+  const s = z.toJSONSchema(t, { io: 'input', unrepresentable: 'any' }) as Json;
   delete s.$schema;
-  return s;
+  const variants = (s.anyOf ?? s.oneOf) as Json[] | undefined;
+  if (s.type === 'object' || !variants) return s;
+  return flattenUnion(variants);
+}
+
+function flattenUnion(variants: Json[]): Json {
+  const properties: Record<string, Json> = {};
+  const discriminators = new Map<string, unknown[]>();
+  const requiredEverywhere = new Set<string>((variants[0]?.required as string[] | undefined) ?? []);
+  for (const v of variants) {
+    const req = new Set((v.required as string[] | undefined) ?? []);
+    for (const k of [...requiredEverywhere]) if (!req.has(k)) requiredEverywhere.delete(k);
+    for (const [k, p] of Object.entries((v.properties as Record<string, Json>) ?? {})) {
+      if ('const' in p) {
+        discriminators.set(k, [...(discriminators.get(k) ?? []), p.const]);
+        continue;
+      }
+      const prev = properties[k];
+      if (!prev) properties[k] = { ...p };
+      else if (p.description && prev.description && !String(prev.description).includes(String(p.description))) {
+        prev.description = `${prev.description} | ${p.description}`;
+      }
+    }
+  }
+  for (const [k, values] of discriminators) properties[k] = { type: 'string', enum: values };
+  return { type: 'object', properties, required: [...requiredEverywhere], additionalProperties: false };
 }
 
 export const TOOL_NAMES = {

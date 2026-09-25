@@ -28,7 +28,7 @@
             onmouseleave={() => (app.hoverHunk = null)}
           >
             <span class="gl {h.change}">{h.change === 'add' ? '+' : h.change === 'remove' ? '−' : '~'}</span>
-            <span class="grow trunc">{h.title}{#if h.kind !== 'component'} <span class="d">{h.kind}</span>{/if}</span>
+            <span class="grow trunc">{h.title}{#if h.kind !== 'component'}&nbsp;<span class="d">· {h.kind}</span>{/if}</span>
             <span class="yn">
               <button class="y" aria-pressed={!off} aria-label="Accept {h.title}" onclick={() => delete app.hunkOff[h.id]}>✓</button>
               <button class="n" aria-pressed={off} aria-label="Reject {h.title}" onclick={() => (app.hunkOff[h.id] = true)}>✕</button>

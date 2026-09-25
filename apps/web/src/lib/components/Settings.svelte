@@ -2,6 +2,7 @@
   import { ANTHROPIC_MODELS } from '@tracewise/agent';
   import type { Design } from '@tracewise/schema';
   import { app } from '../app.svelte.ts';
+  import { bridge } from '../bridge.svelte.ts';
   import type { Settings } from '../persist.ts';
 
   let key = $state(app.apiKey);
@@ -39,6 +40,33 @@
     } catch (err) {
       app.flash(`Import failed: ${(err as Error).message}`);
     }
+  }
+
+  let pairCode = $state(app.settings.bridgeCode);
+  const mcpCommand = `claude mcp add --scope user tracewise -- node ${__REPO_ROOT__}/tools/bridge/src/main.ts`;
+  let copied = $state(false);
+
+  async function copyCommand() {
+    try {
+      await navigator.clipboard.writeText(mcpCommand);
+      copied = true;
+      setTimeout(() => (copied = false), 1500);
+    } catch {
+      app.flash('Copy failed; select the command and copy it manually.');
+    }
+  }
+
+  async function pair() {
+    if (!/^\d{6}$/.test(pairCode.trim())) {
+      bridge.error = 'The pairing code has 6 digits.';
+      return;
+    }
+    if (await bridge.connect(pairCode)) app.flash(`Connected to ${bridge.agent ?? 'the bridge'}`);
+  }
+
+  function unpair() {
+    bridge.disconnect();
+    void app.updateSettings({ bridgeCode: '', bridgePort: null });
   }
 
   const modelInfo = $derived(ANTHROPIC_MODELS.find((m) => m.id === app.settings.model));
@@ -89,6 +117,39 @@
         <tr><td>Session spend</td><td class="mono">${app.spend.toFixed(3)} <span class="muted">(estimate from token usage)</span></td></tr>
       </tbody>
     </table>
+  </section>
+
+  <section class="card" id="bridge">
+    <div class="ph">
+      <b>Claude Code bridge</b>
+      <span class="grow"></span>
+      {#if bridge.status === 'connected'}<span class="tag ok">connected · {bridge.agent ?? 'MCP client'} · :{bridge.port}</span>
+      {:else if bridge.status === 'connecting'}<span class="tag info">connecting…</span>
+      {:else if bridge.status === 'waiting'}<span class="tag warn">waiting for bridge</span>
+      {:else}<span class="tag">off</span>{/if}
+    </div>
+    <div class="pb">
+      <p class="lead">Let Claude Code (or any MCP client) drive this app with your existing plan: no API key in the browser. Its changes arrive here as changesets for you to review.</p>
+      <ol class="steps">
+        <li>
+          Register the bridge once, in a terminal:
+          <div class="cmd"><code>{mcpCommand}</code><button class="ib" onclick={copyCommand}>{copied ? 'copied' : 'copy'}</button></div>
+        </li>
+        <li>Start <code>claude</code> and ask it to <i>“connect to Tracewise”</i>. It replies with a 6-digit pairing code (also in <code>~/.tracewise/bridge.json</code>).</li>
+        <li>
+          Enter the code:
+          <div class="row">
+            <input class="text mono code" bind:value={pairCode} inputmode="numeric" maxlength="6" placeholder="123456" aria-label="Pairing code" />
+            {#if bridge.status === 'connected' || bridge.status === 'waiting'}
+              <button class="btn" onclick={unpair}>Disconnect</button>
+            {/if}
+            <button class="btn pri" onclick={pair} disabled={bridge.status === 'connecting'}>Connect</button>
+          </div>
+        </li>
+      </ol>
+      {#if bridge.error}<div class="err">{bridge.error}</div>{/if}
+      <div class="hint">The bridge listens on 127.0.0.1 only and accepts pages from localhost. The tab reconnects by itself when Claude Code restarts.</div>
+    </div>
   </section>
 
   <section class="card">
@@ -156,7 +217,7 @@
     <ul class="soon">
       <li><b>M1</b> Datasheet PDF → verified part (Parts view)</li>
       <li><b>M2</b> Board, stack-up and placement (Layout view)</li>
-      <li><b>M4</b> MCP servers and the local relay for external agents</li>
+      <li><b>M4</b> Your own MCP servers as tools for the in-app agent</li>
       <li>OpenAI-compatible and local (Ollama) providers</li>
     </ul>
   </section>
@@ -173,6 +234,13 @@
   .hint { font-size: 11px; color: var(--txt-3); margin-top: 4px; }
   .hint.inline { margin-left: 6px; }
   select.text { max-width: 100%; }
+  .pb { padding: 8px 12px 12px; font-size: 12.5px; }
+  .lead { margin: 0 0 6px; color: var(--txt-2); }
+  .steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; }
+  .cmd { display: flex; align-items: center; gap: 4px; margin-top: 4px; background: var(--panel-2); border-radius: 6px; padding: 4px 4px 4px 8px; }
+  .cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 11.5px; }
+  .code { width: 90px; letter-spacing: .15em; }
+  .err { color: var(--err); margin-top: 6px; font-size: 12px; }
   .soon { margin: 0; padding: 8px 10px 10px 28px; color: var(--txt-2); font-size: 12.5px; }
   .soon li { margin: 3px 0; }
 </style>

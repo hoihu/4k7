@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { app, type View } from './lib/app.svelte.ts';
+  import { bridge } from './lib/bridge.svelte.ts';
   import Chat from './lib/components/Chat.svelte';
   import Inspector from './lib/components/Inspector.svelte';
   import SchematicCanvas from './lib/components/SchematicCanvas.svelte';
@@ -76,6 +77,11 @@
         <button class="chipbtn" onclick={openIssues} title="Open issues">
           <span class="n e"><i></i>{counts.errors}</span><span class="n w"><i></i>{counts.warnings}</span>
         </button>
+      {/if}
+      {#if bridge.status === 'connected'}
+        <button class="chipbtn ext" onclick={() => (app.view = 'set')} title="Connected to the Claude Code bridge on port {bridge.port}">⇄ {bridge.agent ?? 'bridge'}</button>
+      {:else if bridge.status === 'waiting'}
+        <button class="chipbtn" onclick={() => (app.view = 'set')} title="Waiting for the Claude Code bridge">⇄ <span class="muted">offline</span></button>
       {/if}
       <div class="seg mode" title="Autonomy">
         <button aria-pressed={app.settings.mode === 'auto'} onclick={() => app.updateSettings({ mode: 'auto' })}>Auto</button>
@@ -157,6 +163,7 @@
   .nav button { border: 0; background: transparent; padding: 5px 10px; border-radius: 6px; color: var(--txt-2); }
   .nav button[aria-current="true"] { background: var(--panel-2); color: var(--txt); font-weight: 600; }
   .nav button:hover { background: var(--hover); }
+  .ext { color: var(--info); border-color: var(--info-soft); }
   .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
   main { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
   .loading { display: grid; place-items: center; color: var(--txt-3); }

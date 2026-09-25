@@ -59,6 +59,9 @@ export interface Settings {
   mode: Mode;
   fixBudget: number;
   theme: 'system' | 'light' | 'dark';
+  /** Claude Code bridge pairing, remembered so the tab reconnects by itself. */
+  bridgeCode: string;
+  bridgePort: number | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -68,6 +71,8 @@ export const DEFAULT_SETTINGS: Settings = {
   mode: 'review',
   fixBudget: 5,
   theme: 'system',
+  bridgeCode: '',
+  bridgePort: null,
 };
 
 export async function loadSettings(): Promise<Settings> {

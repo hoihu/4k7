@@ -63,6 +63,7 @@
           </div>
         {:else}
           <div class="m a">
+            {#if m.source}<div class="src"><span class="ext">⇄</span> {m.source} <span class="muted">via bridge</span></div>{/if}
             {#each m.segments as s, i (i)}
               {#if s.type === 'text'}
                 <div class="txt">{s.text}</div>
@@ -85,7 +86,7 @@
                 <div class="err">{s.text}</div>
               {/if}
             {/each}
-            {#if m.status === 'streaming'}<div class="working"><span class="dot"></span>working…</div>{/if}
+            {#if m.status === 'streaming'}<div class="working"><span class="dot"></span>{m.source ? `${m.source} is editing the working copy…` : 'working…'}</div>{/if}
             <ChangesetCard item={m} />
           </div>
         {/if}
@@ -137,6 +138,8 @@
   .opt { border: 1px solid var(--line-2); background: var(--panel); border-radius: 6px; padding: 2px 8px; font-size: 12px; text-align: left; }
   .opt.chosen { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-txt); opacity: 1; }
   .err { color: var(--err); font-size: 12px; }
+  .src { font-size: 11px; color: var(--info); font-weight: 600; }
+  .ext { font-family: var(--mono); }
   .working { color: var(--txt-3); font-size: 11.5px; display: flex; align-items: center; gap: 6px; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1s infinite alternate; }
   @keyframes pulse { from { opacity: .3; } to { opacity: 1; } }

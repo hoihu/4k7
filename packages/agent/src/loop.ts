@@ -3,8 +3,9 @@
  * finish a turn while the design has open errors (within a fix budget).
  * See docs/design/ai-loop.md.
  */
-import { AskUser, CalcCall, TOOL_NAMES, toolDefinitions, type TransactionResult } from '@tracewise/schema';
+import { AskUser, CalcCall, TOOL_NAMES, toolDefinitions } from '@tracewise/schema';
 import { CalcError, runCalc } from './calc.ts';
+import { compactTx, describeTx } from './format.ts';
 import { SYSTEM_PROMPT, formatDesignContext, formatVerification } from './prompt.ts';
 import type { AgentEvent, Block, KernelPort, Message, Provider } from './types.ts';
 
@@ -196,26 +197,6 @@ export class Agent {
       return { content: `Tool failed: ${msg}`, isError: true, label: name, detail: msg };
     }
   }
-}
-
-function compactTx(r: TransactionResult) {
-  return {
-    status: r.status,
-    ...(r.dryRun ? { dry_run: true } : {}),
-    ...(r.rejection ? { rejection: r.rejection } : {}),
-    effects: r.results.map((x) => x.effect),
-    diagnostics_now: r.counts,
-    introduced: r.introduced.map((d) => ({ severity: d.severity, code: d.code, entities: d.entities, message: d.message, ...(d.fixHints ? { fix: d.fixHints } : {}) })),
-    resolved: r.resolved.map((d) => `${d.code} ${d.entities.join(',')}`),
-  };
-}
-
-function describeTx(r: TransactionResult): string {
-  if (r.status !== 'ok') return `refused op ${r.rejection!.opIndex + 1}: ${r.rejection!.code} — ${r.rejection!.message}`;
-  const parts = [`${r.results.length} applied`];
-  if (r.introduced.length) parts.push(`+${r.introduced.length} diag (${r.introduced.map((d) => d.code).join(', ')})`);
-  if (r.resolved.length) parts.push(`−${r.resolved.length} diag`);
-  return parts.join(' · ');
 }
 
 function summariseQuery(input: unknown, out: unknown): string {

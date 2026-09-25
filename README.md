@@ -40,6 +40,24 @@ Without an API key the app runs an **offline demo** (a scripted agent that goes 
 try “12 V to 3.3 V buck, 2 A. Put C1 left of U1.”, answer the question, review the changeset, then “make C2 100uF”.
 Add an Anthropic API key in **Settings** to use a real model. It is encrypted in your browser and sent only to `api.anthropic.com`.
 
+## Driving it with Claude Code (no API key needed)
+
+The local bridge (`tools/bridge`) exposes the app as an MCP server, so Claude Code can design with your existing plan:
+
+```sh
+claude mcp add --scope user tracewise -- node /absolute/path/to/this/repo/tools/bridge/src/main.ts
+```
+
+1. Run the app (`npm run dev`) and open **Settings → Claude Code bridge** (it shows the exact command for your checkout).
+2. Start `claude` anywhere and ask it to *“connect to Tracewise”*. It answers with a 6-digit pairing code
+   (also stored in `~/.tracewise/bridge.json`, so you only pair once).
+3. Enter the code in the app. Claude Code now works through `get_context`, `design_query`, `design_edit`, `calc`,
+   `get_schematic_image`, `propose` and `wait_for_review`. Its changes show up as a changeset in the chat for you to review;
+   `propose` is refused while the design has open errors.
+
+The bridge binds to `127.0.0.1`, only accepts pages served from localhost, and needs the pairing code before any call is
+forwarded. Stdout is reserved for MCP; logs go to stderr.
+
 ## Repository layout
 
 | Path | What |
@@ -49,11 +67,12 @@ Add an Anthropic API key in **Settings** to use a real model. It is encrypted in
 | `packages/kernel` | Transactions, ERC + datasheet checks, constraint ledger, schematic auto-layout, changesets, canonical JSON |
 | `packages/agent` | Agent loop with kernel verification, calculators, Anthropic + offline providers |
 | `apps/web` | Svelte 5 app: schematic workspace (chat + canvas + inspector), parts, settings. The kernel runs in a Web Worker |
+| `tools/bridge` | Local relay: MCP server over stdio ↔ WebSocket ↔ browser tab, with pairing and origin checks |
 
 ## Status
 
 **M0 (schematic)** is in progress. Working now: the full loop from prompt → typed ops → atomic transactions → checks →
 auto-layout → reviewable changeset with per-change accept, a constraint ledger that survives re-layout, undo, and local
 persistence. Deviations from the architecture for now: the kernel is TypeScript behind the same API (Rust/WASM later),
-the document is stored as plain JSON (the CRDT arrives with collaboration), and there is one real provider (Anthropic).
+the document is stored as plain JSON (the CRDT arrives with collaboration), and there is one in-app provider (Anthropic) plus the Claude Code bridge.
 See [ARCHITECTURE.md §7](docs/ARCHITECTURE.md#7-roadmap).

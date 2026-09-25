@@ -109,6 +109,7 @@
   class="sch"
   class:compact
   viewBox="{vb.x} {vb.y} {vb.w} {vb.h}"
+  data-bbox={sheet ? `${sheet.bbox.x},${sheet.bbox.y},${sheet.bbox.w},${sheet.bbox.h}` : undefined}
   preserveAspectRatio="xMidYMid meet"
   role="application"
   aria-label="Schematic"
