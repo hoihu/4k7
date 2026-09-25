@@ -64,6 +64,8 @@ export interface Settings {
   bridgePort: number | null;
   /** Model alias for Claude Code in the app chat ('' = Claude Code's default). */
   claudeModel: string;
+  /** Let Claude Code read the web (datasheets) in the app chat. */
+  claudeWeb: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -76,6 +78,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bridgeCode: '',
   bridgePort: null,
   claudeModel: '',
+  claudeWeb: false,
 };
 
 /** Bumped when a default changes in a way existing users should get (v2: dark blue theme). */

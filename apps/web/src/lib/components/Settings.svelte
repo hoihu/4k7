@@ -115,6 +115,16 @@
             <span class="hint inline">uses your Claude Code login and plan</span>
           </td>
         </tr>
+        <tr>
+          <td>Web</td>
+          <td>
+            <label class="check">
+              <input type="checkbox" checked={app.settings.claudeWeb} onchange={(e) => set('claudeWeb', (e.currentTarget as HTMLInputElement).checked)} />
+              Let Claude Code read the web (datasheets, application notes)
+            </label>
+            <div class="hint">Adds read-only WebSearch and WebFetch. Still no shell or file access; design changes stay reviewable.</div>
+          </td>
+        </tr>
         {:else}
         <tr>
           <td>API key</td>
@@ -275,6 +285,7 @@
   .cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 11.5px; }
   .code { width: 90px; letter-spacing: .15em; }
   .err { color: var(--err); margin-top: 6px; font-size: 12px; }
+  .check { display: flex; gap: 6px; align-items: center; }
   .soon { margin: 0; padding: 8px 10px 10px 28px; color: var(--txt-2); font-size: 12.5px; }
   .soon li { margin: 3px 0; }
 </style>

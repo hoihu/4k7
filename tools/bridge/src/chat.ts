@@ -7,7 +7,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { chatModePrompt, type ChatCapability, type ChatEvent } from '@tracewise/schema';
+import { CHAT_WEB_PROMPT, chatModePrompt, type ChatCapability, type ChatEvent } from '@tracewise/schema';
 import type { Bridge, ChatMessage } from './bridge.ts';
 import type { ClaudeProfile } from './config.ts';
 import { tokenMatches } from './mcp.ts';
@@ -101,13 +101,13 @@ export class ChatRunner {
       JSON.stringify(mcpConfig),
       '--strict-mcp-config',
       '--tools',
-      '', // no built-in tools: no shell, no files, no web
+      msg.web ? 'WebFetch,WebSearch' : '', // never shell or files; the web only when the user allows it
       '--allowedTools',
-      'mcp__tracewise',
+      msg.web ? 'mcp__tracewise,WebFetch,WebSearch' : 'mcp__tracewise',
       '--permission-mode',
       'dontAsk',
       '--append-system-prompt',
-      chatModePrompt(),
+      msg.web ? `${chatModePrompt()}\n\n${CHAT_WEB_PROMPT}` : chatModePrompt(),
       ...(msg.model ? ['--model', msg.model] : []),
       ...(msg.session ? ['--resume', msg.session] : []),
     ];

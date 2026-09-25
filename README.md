@@ -54,6 +54,7 @@ npm run bridge    # in a second terminal; prints a pairing link
 Open the pairing link, then choose **Settings → AI provider → Claude Code on this computer**. Messages you type in
 the app's chat are answered by `claude -p` running headlessly with **only** the Tracewise tools (no shell, files or web),
 connected back to the bridge through a token-protected MCP endpoint. Follow-up messages continue the same session.
+To let it look up datasheets, enable **Settings → Web** (adds read-only WebSearch/WebFetch; still no shell or files).
 
 **Or chat in the Claude Code CLI.** Start `claude` in this repository and approve the `tracewise` server from
 `.mcp.json` (or register it for every folder with

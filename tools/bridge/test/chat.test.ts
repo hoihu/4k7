@@ -40,9 +40,9 @@ async function setup(bin = FAKE, profile?: ClaudeProfile) {
       if (m.type === 'chat_event') events.set(m.id, [...(events.get(m.id) ?? []), m.event]);
     });
   });
-  const send = (id: string, text: string, session: string | null = null, model?: string) =>
+  const send = (id: string, text: string, session: string | null = null, model?: string, web = false) =>
     new Promise<ChatEvent[]>((resolve) => {
-      ws.send(JSON.stringify({ type: 'chat', id, text, session, autonomy: 'review', ...(model ? { model } : {}) }));
+      ws.send(JSON.stringify({ type: 'chat', id, text, session, autonomy: 'review', web, ...(model ? { model } : {}) }));
       const t = setInterval(() => {
         if (events.get(id)?.some((e) => e.kind === 'done')) {
           clearInterval(t);
@@ -97,6 +97,18 @@ describe('app chat via Claude Code', () => {
     const reply = text(await send('p1', 'hi'));
     const flags = JSON.parse(reply.slice(reply.indexOf('flags=') + 6));
     expect(flags.env).toEqual({ configDir: '/Users/someone/.claude-personal', bedrock: false, vertex: false, apiKey: false, nested: false });
+  });
+
+  it('gives Claude read-only web tools only when the user allows it', async () => {
+    const { send } = await setup();
+    const flagsOf = (es: ChatEvent[]) => {
+      const t = text(es);
+      return JSON.parse(t.slice(t.indexOf('flags=') + 6));
+    };
+    const off = flagsOf(await send('w0', 'no web'));
+    expect(off).toMatchObject({ tools: '', allowed: 'mcp__tracewise' });
+    const on = flagsOf(await send('w1', 'with web', null, undefined, true));
+    expect(on).toMatchObject({ tools: 'WebFetch,WebSearch', allowed: 'mcp__tracewise,WebFetch,WebSearch' });
   });
 
   it('resumes the session on the next message', async () => {

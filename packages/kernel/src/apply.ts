@@ -403,12 +403,14 @@ function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResul
     k.domain = 'param';
   } else if (op.kind === 'arrangement') {
     need(op.a, '"a" (one of the parts of the sub-circuit)');
-    if (op.value !== 'diamond' && op.value !== 'inline') {
-      reject({ code: 'CONSTRAINT_INVALID', message: 'arrangement: value must be "diamond" or "inline".' });
-    }
     const a = resolveComponent(d, op.a!);
-    if (requireCard(d, a).category !== 'diode') {
-      reject({ code: 'CONSTRAINT_INVALID', message: `arrangement applies to diode bridges; ${a.refdes} is not a diode.` });
+    const category = requireCard(d, a).category;
+    const allowed = category === 'diode' ? ['diamond', 'inline'] : category === 'ic' ? ['power_flow', 'compact'] : [];
+    if (!allowed.length) {
+      reject({ code: 'CONSTRAINT_INVALID', message: `arrangement applies to diode bridges and regulator ICs; ${a.refdes} is neither.` });
+    }
+    if (!allowed.includes(op.value ?? '')) {
+      reject({ code: 'CONSTRAINT_INVALID', message: `arrangement for ${a.refdes}: value must be ${allowed.map((v) => `"${v}"`).join(' or ')}.` });
     }
     k.a = a.id;
     k.value = op.value;

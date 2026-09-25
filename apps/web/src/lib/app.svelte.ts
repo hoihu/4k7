@@ -431,6 +431,7 @@ class AppState {
           session: this.claudeSession,
           ...(this.settings.claudeModel ? { model: this.settings.claudeModel } : {}),
           autonomy: this.settings.mode,
+          web: this.settings.claudeWeb,
         },
         (e) => {
           const last = item.segments[item.segments.length - 1];

@@ -85,11 +85,11 @@ export const ConstrainOp = z.object({
   op: z.literal('constrain'),
   kind: z
     .enum(['left_of', 'right_of', 'above', 'below', 'near', 'param', 'layer', 'arrangement', 'note'])
-    .describe('arrangement: how a recognised sub-circuit is drawn; a = one of its parts, value "diamond" (default for bridge rectifiers) or "inline"'),
+    .describe('arrangement: how a recognised sub-circuit is drawn; a = one of its parts. Bridge rectifier diode: "diamond" (default) | "inline". Regulator IC: "power_flow" (default, datasheet style) | "compact"'),
   a: componentRef.optional().describe('Subject component'),
   b: componentRef.optional().describe('Reference component (left_of/right_of/above/below/near)'),
   key: z.string().optional().describe('param: parameter name; layer: omit'),
-  value: z.string().optional().describe('param: required value; layer: "top"|"bottom"; arrangement: "diamond"|"inline"; note: free text'),
+  value: z.string().optional().describe('param: required value; layer: "top"|"bottom"; arrangement: see kind; note: free text'),
   max_mm: z.number().positive().optional().describe('near: maximum distance on the board in mm'),
   strength: z.enum(['hard', 'soft']).default('soft'),
   quote: z.string().optional().describe("The user's words this constraint comes from"),

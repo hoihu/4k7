@@ -41,10 +41,15 @@ export function isTwoPin(card: PartCard): boolean {
   return TWO_PIN.has(card.category) && card.pins.length === 2;
 }
 
-export function symbolFor(card: PartCard, flip = false): SymbolDef {
+export interface SymbolOptions {
+  /** Pin numbers to put first (topmost / leftmost) on their side, e.g. the power path. */
+  first?: string[];
+}
+
+export function symbolFor(card: PartCard, flip = false, opts: SymbolOptions = {}): SymbolDef {
   if (isTwoPin(card)) return twoPin(card, flip);
   if (card.category === 'diode' && card.pins.length === 4) return bridgeDiamond(card);
-  return box(card);
+  return box(card, opts.first ?? []);
 }
 
 /* ------------------------------- two-pin ---------------------------------- */
@@ -130,9 +135,10 @@ export function pinSide(pin: PartPin): PinSide {
 
 const ceilGrid = (v: number) => Math.ceil(v / GRID) * GRID;
 
-function box(card: PartCard): SymbolDef {
+function box(card: PartCard, first: string[]): SymbolDef {
   const sides: Record<PinSide, PartPin[]> = { left: [], right: [], top: [], bottom: [] };
-  for (const p of card.pins) sides[pinSide(p)].push(p);
+  const ordered = [...card.pins.filter((p) => first.includes(p.number)), ...card.pins.filter((p) => !first.includes(p.number))];
+  for (const p of ordered) sides[pinSide(p)].push(p);
 
   const isConn = card.category === 'connector';
   const showNames = !isConn;

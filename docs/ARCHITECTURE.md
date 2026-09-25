@@ -263,6 +263,7 @@ Done:
 - Op catalogue (zod → JSON Schema tools) with 14 edit ops and 8 query ops, atomic transactions, dry runs, structured rejections with candidates and fix hints
 - Checks: ERC (unconnected pins, output conflicts, power not driven, including through series parts), datasheet requirements (bootstrap cap, decoupling, pulls), ratings (capacitor voltage and derating, pin absolute max, polarity), ledger violations, waivers
 - Deterministic schematic auto-layout: anchors in rows ordered by constraints and signal flow, satellites on pins with crossing-free column order, series chains, decoupling rows, labels for everything not wired
+- Regulators (power in, power out, ground) drawn in datasheet reference style: input rail left, switch node / inductor / output rail right, shunts (caps, catch diode, feedback divider) to one common ground line, pin-to-rail parts (bootstrap cap) and pin-to-ground networks (soft-start, compensation) ordered so that no wires cross; `arrangement compact` opts out
 - Conventional sub-circuit drawings: four-diode full bridges are recognised and drawn as the classic 45° diamond (rotated symbols, diagonal wires); `constrain arrangement inline` opts out; single-package bridge part with a diamond symbol
 - Changesets: entity-level hunks, partial accept by merge, undo, canonical JSON export/import
 - Agent loop with verification, `calc` tool, `ask_user`, Anthropic provider (browser BYO key), offline scripted demo

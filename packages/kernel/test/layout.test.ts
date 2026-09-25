@@ -33,18 +33,28 @@ describe('schematic layout', () => {
     }
   });
 
-  it('only draws wires between pins of the same net', () => {
+  it('never leaves a wire end dangling', () => {
     const k = new Kernel();
     k.transact(buckTransaction());
     const s = sheetOf(k);
-    const pinAt = new Map<string, string>();
-    for (const sym of s.symbols) for (const p of sym.pins) pinAt.set(`${p.x},${p.y}`, `${sym.refdes}.${p.number}`);
-    for (const w of s.wires) {
-      const start = pinAt.get(`${w.pts[0]},${w.pts[1]}`);
-      const end = pinAt.get(`${w.pts[w.pts.length - 2]},${w.pts[w.pts.length - 1]}`);
-      expect(start, `wire ${w.pts} start`).toBeTruthy();
-      expect(end, `wire ${w.pts} end`).toBeTruthy();
-    }
+    const points = new Set<string>();
+    for (const sym of s.symbols) for (const p of sym.pins) points.add(`${p.x},${p.y}`);
+    for (const l of s.labels) points.add(`${l.x},${l.y}`);
+    for (const j of s.junctions) points.add(`${j.x},${j.y}`);
+    const onSegment = (x: number, y: number, self: number) =>
+      s.wires.some((w, i) => {
+        if (i === self) return false;
+        for (let k = 0; k + 3 < w.pts.length; k += 2) {
+          const [x1, y1, x2, y2] = [w.pts[k]!, w.pts[k + 1]!, w.pts[k + 2]!, w.pts[k + 3]!];
+          if (x >= Math.min(x1, x2) && x <= Math.max(x1, x2) && y >= Math.min(y1, y2) && y <= Math.max(y1, y2) && (x1 === x2 || y1 === y2)) return true;
+        }
+        return false;
+      });
+    s.wires.forEach((w, i) => {
+      for (const [x, y] of [[w.pts[0]!, w.pts[1]!], [w.pts.at(-2)!, w.pts.at(-1)!]] as const) {
+        expect(points.has(`${x},${y}`) || onSegment(x, y, i), `wire ${w.pts} end ${x},${y} is dangling`).toBe(true);
+      }
+    });
   });
 
   it('shows every connected pin either wired or labelled with its net', () => {
@@ -69,9 +79,14 @@ describe('schematic layout', () => {
 
   it('honours left_of hints for parts that would sit elsewhere by default', () => {
     const k = new Kernel();
-    k.transact(buckTransaction());
+    k.transact({ summary: '555 with decoupling', ops: [
+      { op: 'add_part', part: 'ti:NE555DR', refdes: 'U1' },
+      { op: 'add_part', part: 'generic:C', refdes: 'C1', params: { capacitance: '100nF', voltage: '25V' } },
+      { op: 'connect', pins: ['U1.VCC', 'C1.1'], net: '+9V' },
+      { op: 'connect', pins: ['U1.GND', 'C1.2'], net: 'GND' },
+    ] });
     const find = (ref: string) => sheetOf(k).symbols.find((x) => x.refdes === ref)!;
-    // C1 is an input decoupling cap: by default under U1
+    // a decoupling cap goes under its IC by default
     expect(find('C1').bbox.x + find('C1').bbox.w).toBeGreaterThan(find('U1').bbox.x);
     k.transact({ summary: 'hint', ops: [{ op: 'constrain', kind: 'left_of', a: 'C1', b: 'U1' }] });
     expect(find('C1').bbox.x + find('C1').bbox.w).toBeLessThanOrEqual(find('U1').bbox.x);
