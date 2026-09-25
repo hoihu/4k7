@@ -67,7 +67,7 @@ describe('bridge rectifier', () => {
 
   it('can be switched to an inline drawing with an arrangement constraint', () => {
     const k = new Kernel();
-    k.transact(rectifier([{ op: 'constrain', kind: 'arrangement', a: 'D1', value: 'inline', quote: 'draw the bridge flat' }]));
+    k.transact(rectifier([{ op: 'constrain', kind: 'arrangement', a: 'D1', value: 'inline', strength: 'soft', quote: 'draw the bridge flat' }]));
     expect(['D1', 'D2', 'D3', 'D4'].map((r) => sym(k, r).rotation ?? 0)).toEqual([0, 0, 0, 0]);
     expect(k.state().ledger.map((l) => l.text)).toEqual(['arrangement(D1) = inline']);
   });
