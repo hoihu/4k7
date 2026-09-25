@@ -1,0 +1,8 @@
+{
+  "name": "@tracewise/kernel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@tracewise/schema": "0.1.0", "@tracewise/parts": "0.1.0" }
+}

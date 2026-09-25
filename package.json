@@ -1,0 +1,17 @@
+{
+  "name": "tracewise",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "dev": "npm run dev -w @tracewise/web",
+    "build": "npm run build -w @tracewise/web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit && npm run check -w @tracewise/web"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.2"
+  }
+}
