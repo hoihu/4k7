@@ -401,6 +401,18 @@ function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResul
     k.key = op.key!;
     k.value = op.value!;
     k.domain = 'param';
+  } else if (op.kind === 'arrangement') {
+    need(op.a, '"a" (one of the parts of the sub-circuit)');
+    if (op.value !== 'diamond' && op.value !== 'inline') {
+      reject({ code: 'CONSTRAINT_INVALID', message: 'arrangement: value must be "diamond" or "inline".' });
+    }
+    const a = resolveComponent(d, op.a!);
+    if (requireCard(d, a).category !== 'diode') {
+      reject({ code: 'CONSTRAINT_INVALID', message: `arrangement applies to diode bridges; ${a.refdes} is not a diode.` });
+    }
+    k.a = a.id;
+    k.value = op.value;
+    k.domain = 'schematic';
   } else if (op.kind === 'layer') {
     need(op.a, '"a"');
     if (op.value !== 'top' && op.value !== 'bottom') reject({ code: 'CONSTRAINT_INVALID', message: 'layer: value must be "top" or "bottom".' });
@@ -421,12 +433,13 @@ function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResul
       (DIRECTIONAL.has(k.kind) && DIRECTIONAL.has(old.kind) && samePair && axis(k.kind) === axis(old.kind)) ||
       (k.kind === 'near' && old.kind === 'near' && samePair) ||
       (k.kind === 'param' && old.kind === 'param' && old.a === k.a && old.key === k.key) ||
-      (k.kind === 'layer' && old.kind === 'layer' && old.a === k.a);
+      (k.kind === 'layer' && old.kind === 'layer' && old.a === k.a) ||
+      (k.kind === 'arrangement' && old.kind === 'arrangement' && old.a === k.a);
     if (!clash) continue;
     const contradicts =
       DIRECTIONAL.has(k.kind) &&
       !((old.a === k.a && old.kind === k.kind) || (old.a === k.b && old.kind === OPPOSITE[k.kind]));
-    const valueChange = (k.kind === 'param' || k.kind === 'layer') && !sameValue(old.value ?? '', k.value ?? '');
+    const valueChange = (k.kind === 'param' || k.kind === 'layer' || k.kind === 'arrangement') && !sameValue(old.value ?? '', k.value ?? '');
     if (old.strength === 'hard' && (contradicts || valueChange)) {
       reject({
         code: 'CONSTRAINT_CONFLICT',
@@ -456,6 +469,8 @@ export function describeConstraint(d: Design, k: Constraint): string {
       return `near(${n(k.a)}, ${n(k.b)}, ≤${k.maxMm}mm)`;
     case 'layer':
       return `layer(${n(k.a)}) = ${k.value}`;
+    case 'arrangement':
+      return `arrangement(${n(k.a)}) = ${k.value}`;
     case 'note':
       return `note${k.a ? `(${n(k.a)})` : ''}: ${k.value}`;
     default:

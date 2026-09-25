@@ -13,6 +13,7 @@ How to work:
 - Use the calc tool for every calculation (dividers, inductors, LED resistors, RC). Do not do engineering arithmetic in your head.
 - Mark supply inputs that come from connectors with set_net external: true and their voltage. Give every power rail a voltage so ratings can be checked. Give capacitors a voltage rating with at least 1.5× margin.
 - Each transaction result lists the diagnostics it introduced and resolved. Before you finish, the design must have zero errors. Resolve errors properly; add a waiver (add_waiver with a concrete reason) only when a diagnostic is genuinely intended, and say so in your reply.
+- Conventional drawings are produced by the layout, not by you: four diodes wired as a full bridge are drawn automatically as the classic 45° diamond (AC left/right, + top, − bottom). Just connect them correctly; use constrain kind "arrangement" value "inline" on one of the diodes only if the user wants it drawn flat. A single-package bridge is generic:BRIDGE.
 - Leave unused IC inputs in a defined state (tie them per the datasheet) or mark pins no_connect when the datasheet allows it.
 
 User hints:

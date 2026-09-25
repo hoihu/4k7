@@ -93,7 +93,11 @@
   }
 
   const pad = 70;
-  const box = (s: SymbolView) => ({ x: s.bbox.x - pad, y: s.bbox.y - pad, w: s.bbox.w + 2 * pad, h: s.bbox.h + 2 * pad });
+  /** Highlight frame: rotated symbols get a frame that follows their body. */
+  const box = (s: SymbolView) =>
+    s.rotation && s.origin
+      ? { x: s.origin.x - 150, y: s.origin.y - 250, w: 300, h: 500, transform: `rotate(${s.rotation} ${s.origin.x} ${s.origin.y})` }
+      : { x: s.bbox.x - pad, y: s.bbox.y - pad, w: s.bbox.w + 2 * pad, h: s.bbox.h + 2 * pad, transform: undefined };
 
   function flag(l: LabelView): string {
     const w = l.text.length * 50 + 70;
@@ -173,6 +177,7 @@
     {#each sheet.symbols as s (s.componentId)}
       <g class="sym" data-ref={s.refdes}>
         <rect class="hit" x={s.bbox.x} y={s.bbox.y} width={s.bbox.w} height={s.bbox.h} />
+        <g transform={s.rotation && s.origin ? `rotate(${s.rotation} ${s.origin.x} ${s.origin.y})` : undefined}>
         {#each s.prims as p, i (i)}
           {@const q = p as Prim}
           {#if q.t === 'rect'}
@@ -187,6 +192,7 @@
             <circle class:filled={q.fill} cx={q.x} cy={q.y} r={q.r} />
           {/if}
         {/each}
+        </g>
         {#each s.pins as p (p.number)}
           {#if p.showName}
             {#if p.side === 'left'}<text class="pin-n" x={p.x + 230} y={p.y + 25}>{p.name}</text>
@@ -211,14 +217,14 @@
       {#each sheet.symbols as s (s.componentId)}
         {#if overlays[s.componentId]}
           {@const b = box(s)}
-          <rect class="ov {overlays[s.componentId]}" class:hot={hot === s.componentId} x={b.x} y={b.y} width={b.w} height={b.h} rx="40" />
+          <rect class="ov {overlays[s.componentId]}" class:hot={hot === s.componentId} x={b.x} y={b.y} width={b.w} height={b.h} rx="40" transform={b.transform} />
         {/if}
       {/each}
     {/if}
     {#each sheet.symbols as s (s.componentId)}
       {#if selection.includes(s.refdes)}
         {@const b = box(s)}
-        <rect class="selbox" x={b.x - 20} y={b.y - 20} width={b.w + 40} height={b.h + 40} rx="50" />
+        <rect class="selbox" x={b.x - 20} y={b.y - 20} width={b.w + 40} height={b.h + 40} rx="50" transform={b.transform} />
       {/if}
     {/each}
   {/if}

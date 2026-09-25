@@ -67,6 +67,7 @@ export type ConstraintKind =
   | 'near'
   | 'param'
   | 'layer'
+  | 'arrangement'
   | 'note';
 
 export type ConstraintDomain = 'schematic' | 'placement' | 'routing' | 'electrical' | 'param';

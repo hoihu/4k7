@@ -73,6 +73,9 @@ export const GENERIC_PARTS: PartCard[] = [
     category: 'diode',
     refPrefix: 'D',
     pins: [passive('1', 'K'), passive('2', 'A')],
+    notes: [
+      'Four diodes wired as a full bridge are drawn automatically as the classic 45° diamond (AC left/right, + top, − bottom). Just connect them; constrain arrangement "inline" to draw them flat.',
+    ],
     params: {
       mpn: { description: 'e.g. B340A, 1N4148W, SMBJ5.0A' },
       vr: { unit: 'V', description: 'Reverse voltage rating' },
@@ -80,6 +83,26 @@ export const GENERIC_PARTS: PartCard[] = [
       package: {},
     },
     provenance: builtin('generic'),
+  },
+  {
+    id: 'generic:BRIDGE',
+    description: 'Bridge rectifier, single package (e.g. MB6S, DB107, GBU4J). Pins AC1, AC2, +, −',
+    category: 'diode',
+    refPrefix: 'D',
+    pins: [
+      { number: '1', name: '+', type: 'pwr_out', side: 'top' },
+      { number: '2', name: 'AC1', type: 'passive', side: 'left' },
+      { number: '3', name: 'AC2', type: 'passive', side: 'right' },
+      { number: '4', name: '-', type: 'passive', side: 'bottom' },
+    ],
+    params: {
+      mpn: { description: 'e.g. MB6S, DB107S, GBU4J' },
+      vr: { unit: 'V', description: 'Repetitive reverse voltage' },
+      current: { unit: 'A', description: 'Average forward current' },
+      package: {},
+    },
+    provenance: builtin('generic; pin numbering differs per package, map to the real part before layout'),
+    notes: ['Pin numbers are generic. Use the pin names +, -, AC1, AC2.'],
   },
   {
     id: 'generic:LED',

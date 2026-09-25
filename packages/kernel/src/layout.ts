@@ -72,6 +72,7 @@ function translateScene(s: Scene, dx: number, dy: number): void {
     sym.pins = sym.pins.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy }));
     sym.refPos = { ...sym.refPos, x: sym.refPos.x + dx, y: sym.refPos.y + dy };
     sym.valuePos = { ...sym.valuePos, x: sym.valuePos.x + dx, y: sym.valuePos.y + dy };
+    if (sym.origin) sym.origin = { x: sym.origin.x + dx, y: sym.origin.y + dy };
   }
   for (const w of s.wires) w.pts = w.pts.map((v, i) => v + (i % 2 ? dy : dx));
   for (const j of s.junctions) {
@@ -222,7 +223,9 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   const comps = componentsSorted(d).filter((c) => c.sheet === sheetId && cardOf(d, c.part));
   const cardFor = (c: Component) => cardOf(d, c.part)!;
   const anchors = comps.filter((c) => !isTwoPin(cardFor(c)));
-  const twoPins = comps.filter((c) => isTwoPin(cardFor(c)));
+  const bridges = findBridges(ctx, comps.filter((c) => isTwoPin(cardFor(c))));
+  const inBridge = new Set(bridges.flatMap((b) => b.diodes.map((x) => x.comp.id)));
+  const twoPins = comps.filter((c) => isTwoPin(cardFor(c)) && !inBridge.has(c.id));
 
   const directional = Object.values(d.ledger).filter(
     (k) => k.a && k.b && (k.kind === 'left_of' || k.kind === 'right_of' || k.kind === 'above' || k.kind === 'below'),
@@ -315,12 +318,18 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
 
   /* ---- rows and order of anchors ---- */
   const rows = arrangeAnchors(d, anchors, directional);
+  if (bridges.length && !rows.length) rows.push([]);
 
   const scene = emptyScene();
   let rowTop = 0;
   let maxRight = 0;
-  for (const row of rows) {
+  for (const [ri, row] of rows.entries()) {
     const cells = row.map((a) => buildCell(ctx, plans.get(a.id)!));
+    if (ri === 0 && bridges.length) {
+      // signal flow: connector → rectifier → the rest
+      const after = row.findIndex((a) => anchorRank(d, a) > 0);
+      cells.splice(after < 0 ? cells.length : after, 0, ...bridges.map((b) => bridgeCell(ctx, b)));
+    }
     const topExtent = Math.max(0, ...cells.map((c) => -sceneBBox(c).y));
     let x = 0;
     let rowBottom = rowTop;
@@ -644,6 +653,133 @@ function freePart(ctx: Ctx, c: Component): Scene {
   const card = cardOf(ctx.d, c.part)!;
   if (isTwoPin(card)) return verticalPart(ctx, c, 0, 0);
   return buildCell(ctx, { comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [] });
+}
+
+/* ----------------------------- bridge rectifier ---------------------------- */
+
+interface BridgeDiode {
+  comp: Component;
+  /** Edge of the diamond the diode sits on: anode vertex → cathode vertex. */
+  edge: 'LT' | 'RT' | 'BL' | 'BR';
+}
+
+interface BridgeRect {
+  diodes: BridgeDiode[];
+  plus: string;
+  minus: string;
+  left: string;
+  right: string;
+}
+
+/**
+ * Find full-bridge rectifiers made of four two-pin diodes: two cathodes share the + net, two
+ * anodes share the − net, and each AC net joins one anode and one cathode. Pin 1 of a diode
+ * card is the cathode. Bridges with an `arrangement = inline` constraint are left alone.
+ */
+function findBridges(ctx: Ctx, twoPins: Component[]): BridgeRect[] {
+  const { d } = ctx;
+  const inline = new Set(Object.values(d.ledger).filter((k) => k.kind === 'arrangement' && k.value === 'inline').map((k) => k.a));
+  const diodes = twoPins
+    .filter((c) => cardOf(d, c.part)?.category === 'diode')
+    .map((c) => {
+      const card = cardOf(d, c.part)!;
+      return { comp: c, k: c.pins[card.pins[0]!.number], a: c.pins[card.pins[1]!.number] };
+    })
+    .filter((x): x is { comp: Component; k: string; a: string } => !!x.k && !!x.a && x.k !== x.a);
+
+  const used = new Set<string>();
+  const out: BridgeRect[] = [];
+  const plusNets = [...new Set(diodes.map((x) => x.k))].sort();
+  for (const plus of plusNets) {
+    const uppers = diodes.filter((x) => x.k === plus && !used.has(x.comp.id));
+    for (let i = 0; i < uppers.length; i++) {
+      for (let j = i + 1; j < uppers.length; j++) {
+        const u1 = uppers[i]!;
+        const u2 = uppers[j]!;
+        if (used.has(u1.comp.id) || used.has(u2.comp.id) || u1.a === u2.a) continue;
+        const l1s = diodes.filter((x) => x.k === u1.a && !used.has(x.comp.id));
+        const l2s = diodes.filter((x) => x.k === u2.a && !used.has(x.comp.id));
+        const pair = l1s.flatMap((l1) => l2s.filter((l2) => l2.a === l1.a && l2.comp.id !== l1.comp.id).map((l2) => [l1, l2] as const))
+          .find(([l1]) => l1.a !== plus && l1.a !== u1.a && l1.a !== u2.a);
+        if (!pair) continue;
+        const [l1, l2] = pair;
+        const members = [u1, u2, l1, l2];
+        if (members.some((m) => inline.has(m.comp.id))) continue;
+        for (const m of members) used.add(m.comp.id);
+        // stable left/right: AC nets in name order
+        const swap = natCmp(d.nets[u1.a]!.name, d.nets[u2.a]!.name) > 0;
+        const [ul, ur, ll, lr] = swap ? [u2, u1, l2, l1] : [u1, u2, l1, l2];
+        out.push({
+          plus,
+          minus: l1.a,
+          left: ul.a,
+          right: ur.a,
+          diodes: [
+            { comp: ul.comp, edge: 'LT' },
+            { comp: ur.comp, edge: 'RT' },
+            { comp: ll.comp, edge: 'BL' },
+            { comp: lr.comp, edge: 'BR' },
+          ],
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** The classic diamond: diodes on the 45° edges, AC left/right, + top, − bottom. */
+function bridgeCell(ctx: Ctx, b: BridgeRect): Scene {
+  const { d } = ctx;
+  const S = 500; // centre → vertex
+  const V = { T: { x: 0, y: -S }, R: { x: S, y: 0 }, B: { x: 0, y: S }, L: { x: -S, y: 0 } };
+  const EDGES = {
+    LT: { from: V.L, to: V.T, rot: 45 },
+    RT: { from: V.R, to: V.T, rot: -45 },
+    BL: { from: V.B, to: V.L, rot: -45 },
+    BR: { from: V.B, to: V.R, rot: 45 },
+  } as const;
+  const scene = emptyScene();
+
+  for (const bd of b.diodes) {
+    const e = EDGES[bd.edge];
+    const cx = (e.from.x + e.to.x) / 2;
+    const cy = (e.from.y + e.to.y) / 2;
+    const card = cardOf(d, bd.comp.part)!;
+    const def = symbolFor(card);
+    const rad = (e.rot * Math.PI) / 180;
+    const rot = (x: number, y: number) => ({ x: Math.round(cx + x * Math.cos(rad) - y * Math.sin(rad)), y: Math.round(cy + x * Math.sin(rad) + y * Math.cos(rad)) });
+    const sym = makeSymbol(d, bd.comp, def, cx, cy);
+    sym.rotation = e.rot;
+    sym.origin = { x: cx, y: cy };
+    sym.pins = def.pins.map((p) => ({ ...p, ...rot(p.x, p.y) }));
+    const half = 215;
+    sym.bbox = { x: cx - half, y: cy - half, w: 2 * half, h: 2 * half };
+    const leftSide = cx < 0;
+    const tx = leftSide ? cx - 200 : cx + 200;
+    const anchor = leftSide ? 'end' : 'start';
+    sym.refPos = { x: tx, y: cy - 15, anchor };
+    sym.valuePos = { x: tx, y: cy + 75, anchor };
+    scene.symbols.push(sym);
+
+    // cathode → cathode vertex, anode → anode vertex (straight continuation of the 45° line)
+    const [k, a] = [sym.pins[0]!, sym.pins[1]!];
+    const kNet = bd.comp.pins[card.pins[0]!.number]!;
+    const aNet = bd.comp.pins[card.pins[1]!.number]!;
+    scene.wires.push({ netId: kNet, pts: [k.x, k.y, e.to.x, e.to.y] });
+    scene.wires.push({ netId: aNet, pts: [a.x, a.y, e.from.x, e.from.y] });
+  }
+
+  const vertex: [Point, string, Dir][] = [
+    [V.T, b.plus, 'up'],
+    [V.B, b.minus, 'down'],
+    [V.L, b.left, 'left'],
+    [V.R, b.right, 'right'],
+  ];
+  for (const [p, net, dir] of vertex) {
+    scene.junctions.push({ ...p });
+    scene.labels.push(deco(d.nets[net]!, p.x, p.y, dir));
+  }
+  return scene;
 }
 
 /* ------------------------------ constraints ------------------------------- */

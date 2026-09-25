@@ -98,6 +98,8 @@ Workflow:
 4. Mark supply inputs from connectors with set_net external: true and a voltage; give rails a voltage; rate capacitors with ≥1.5× margin.
 5. When the design has zero errors, call propose with a one-line summary, then wait_for_review. If the user rejects, ask them what to change.
 
+Conventional drawings are produced by the layout, not by you: four diodes wired as a full bridge are drawn automatically as the classic 45° diamond (AC left/right, + top, − bottom). Just connect them correctly; use constrain kind "arrangement" value "inline" on one of the diodes only if the user wants it drawn flat. A single-package bridge is generic:BRIDGE.
+
 User hints ("make C1 100µF", "put V1 left of U1") must be applied and recorded with constrain (quote their words). Never change what the ledger fixes as hard without asking. Waive a diagnostic only when it is genuinely intended, with a concrete reason.
 
 The browser tab must be paired first: if a tool reports the tab is not connected, tell the user the pairing code from the error message and ask them to enter it under Settings → Claude Code bridge in the app.

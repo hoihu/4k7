@@ -42,7 +42,9 @@ export function isTwoPin(card: PartCard): boolean {
 }
 
 export function symbolFor(card: PartCard, flip = false): SymbolDef {
-  return isTwoPin(card) ? twoPin(card, flip) : box(card);
+  if (isTwoPin(card)) return twoPin(card, flip);
+  if (card.category === 'diode' && card.pins.length === 4) return bridgeDiamond(card);
+  return box(card);
 }
 
 /* ------------------------------- two-pin ---------------------------------- */
@@ -172,6 +174,56 @@ function box(card: PartCard): SymbolDef {
     pins,
     bbox: { x: -PIN_LEN, y: -PIN_LEN, w: w + 2 * PIN_LEN, h: h + 2 * PIN_LEN },
     // outside the top-left corner, clear of top pins and left-side wiring
+    refPos: { x: -30, y: -115, anchor: 'end' },
+    valuePos: { x: -30, y: -30, anchor: 'end' },
+  };
+}
+
+/* ------------------------------ bridge diamond ----------------------------- */
+
+/**
+ * Single-package bridge rectifier: a square turned 45° with the four diodes inside, pins on
+ * the vertices (+ top, − bottom, AC left/right). The body spans (0,0)–(600,600) like a box.
+ */
+function bridgeDiamond(card: PartCard): SymbolDef {
+  const S = 600;
+  const c = S / 2;
+  const prims: Prim[] = [{ t: 'poly', pts: [c, 0, S, c, c, S, 0, c], closed: true, fill: true }];
+  // four small diodes, cathodes towards the + (top) vertex
+  const diode = (x: number, y: number, dx: number, dy: number) => {
+    // centred on (x, y), pointing along (dx, dy) (unit, 45°)
+    const px = -dy;
+    const py = dx;
+    const t = 34;
+    const tip = { x: x + dx * t, y: y + dy * t };
+    const b1 = { x: x - dx * t + px * t, y: y - dy * t + py * t };
+    const b2 = { x: x - dx * t - px * t, y: y - dy * t - py * t };
+    prims.push({ t: 'poly', pts: [tip.x, tip.y, b1.x, b1.y, b2.x, b2.y].map(Math.round), closed: true, fill: true });
+    prims.push({ t: 'line', x1: Math.round(tip.x + px * t), y1: Math.round(tip.y + py * t), x2: Math.round(tip.x - px * t), y2: Math.round(tip.y - py * t) });
+  };
+  const r = Math.SQRT1_2;
+  diode(c / 2, c / 2, r, -r); // left → top
+  diode(c + c / 2, c / 2, -r, -r); // right → top
+  diode(c / 2, c + c / 2, -r, -r); // bottom → left
+  diode(c + c / 2, c + c / 2, r, -r); // bottom → right
+
+  const pins: SymbolPin[] = [];
+  const at: Record<string, [number, number, number, number, PinSide]> = {
+    top: [c, -PIN_LEN, c, 0, 'top'],
+    bottom: [c, S + PIN_LEN, c, S, 'bottom'],
+    left: [-PIN_LEN, c, 0, c, 'left'],
+    right: [S + PIN_LEN, c, S, c, 'right'],
+  };
+  for (const p of card.pins) {
+    const [x, y, bx, by, side] = at[pinSide(p)]!;
+    prims.push({ t: 'line', x1: x, y1: y, x2: bx, y2: by });
+    pins.push({ number: p.number, name: p.name, x, y, side, showName: false, showNumber: true });
+  }
+  return {
+    kind: 'box',
+    prims,
+    pins,
+    bbox: { x: -PIN_LEN, y: -PIN_LEN, w: S + 2 * PIN_LEN, h: S + 2 * PIN_LEN },
     refPos: { x: -30, y: -115, anchor: 'end' },
     valuePos: { x: -30, y: -30, anchor: 'end' },
   };

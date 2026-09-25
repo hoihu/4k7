@@ -155,6 +155,12 @@ export interface SymbolView {
   pins: PinView[];
   refPos: Point & { anchor: 'start' | 'middle' | 'end' };
   valuePos: Point & { anchor: 'start' | 'middle' | 'end' };
+  /**
+   * Clockwise rotation in degrees (multiples of 45) applied to `prims` around `origin`.
+   * `pins` and `bbox` are already given in rotated, absolute coordinates; text is never rotated.
+   */
+  rotation?: number;
+  origin?: Point;
 }
 
 export interface LabelView {
