@@ -48,7 +48,7 @@ The local bridge (`tools/bridge`) connects the app to the Claude Code on your co
 
 ```sh
 npm run dev       # the app
-npm run bridge    # in a second terminal; prints a pairing link
+npm run bridge    # in a second terminal; prints a pairing link, restarts itself when its code changes
 ```
 
 Open the pairing link, then choose **Settings → AI provider → Claude Code on this computer**. Messages you type in
