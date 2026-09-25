@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { BRIDGE_PROTOCOL, type BridgeToTab, type ChatEvent } from '@tracewise/schema';
-import { Bridge, ChatRunner, detectClaude, mcpHttpHandler } from '../src/index.ts';
+import { Bridge, ChatRunner, detectClaude, mcpHttpHandler, type ClaudeProfile } from '../src/index.ts';
 
 const FAKE = fileURLToPath(new URL('./fake-claude.mjs', import.meta.url));
 const cleanups: (() => unknown)[] = [];
@@ -13,13 +13,13 @@ afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
 });
 
-async function setup(bin = FAKE) {
+async function setup(bin = FAKE, profile?: ClaudeProfile) {
   const base = 40000 + Math.floor(Math.random() * 20000);
   const bridge = new Bridge({ code: '123456', ports: [base, base + 1] });
   const port = await bridge.start();
   cleanups.push(() => bridge.stop());
-  const capability = detectClaude(bin);
-  const chat = new ChatRunner({ bridge, claudeBin: bin, workDir: mkdtempSync(join(tmpdir(), 'tw-chat-')) });
+  const capability = detectClaude(bin, profile);
+  const chat = new ChatRunner({ bridge, claudeBin: bin, workDir: mkdtempSync(join(tmpdir(), 'tw-chat-')), ...(profile ? { profile } : {}) });
   bridge.setChatHandler(chat.handle, capability);
   bridge.setHttpHandler(mcpHttpHandler(bridge, (t) => chat.isValidToken(t)));
 
@@ -76,6 +76,27 @@ describe('app chat via Claude Code', () => {
     const flags = JSON.parse(reply.slice(reply.indexOf('flags=') + 6));
     expect(flags).toMatchObject({ tools: '', strict: true, allowed: 'mcp__tracewise', permission: 'dontAsk', model: 'sonnet', prompt: 'build a buck' });
     expect(flags.appended).toMatch(/^You are answering messages typed into/);
+  });
+
+  it('runs Claude with the configured profile, like a claude-personal alias', async () => {
+    // a shell set up for a business account on Bedrock, started from inside a Claude Code session
+    const saved = { ...process.env };
+    Object.assign(process.env, { CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_VERTEX: '1', ANTHROPIC_API_KEY: 'sk-test', CLAUDECODE: '1' });
+    delete process.env.CLAUDE_CONFIG_DIR;
+    cleanups.push(() => {
+      for (const k of ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'ANTHROPIC_API_KEY', 'CLAUDECODE', 'CLAUDE_CONFIG_DIR']) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+    });
+    const { send } = await setup(FAKE, {
+      configDir: '/Users/someone/.claude-personal',
+      unsetEnv: ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
+      env: {},
+    });
+    const reply = text(await send('p1', 'hi'));
+    const flags = JSON.parse(reply.slice(reply.indexOf('flags=') + 6));
+    expect(flags.env).toEqual({ configDir: '/Users/someone/.claude-personal', bedrock: false, vertex: false, apiKey: false, nested: false });
   });
 
   it('resumes the session on the next message', async () => {

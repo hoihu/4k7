@@ -33,6 +33,13 @@ const flags = {
   model: args.includes('--model') ? arg('--model') : null,
   prompt: arg('-p'),
   appended: (arg('--append-system-prompt') ?? '').slice(0, 40),
+  env: {
+    configDir: process.env.CLAUDE_CONFIG_DIR ?? null,
+    bedrock: 'CLAUDE_CODE_USE_BEDROCK' in process.env,
+    vertex: 'CLAUDE_CODE_USE_VERTEX' in process.env,
+    apiKey: 'ANTHROPIC_API_KEY' in process.env,
+    nested: 'CLAUDECODE' in process.env,
+  },
 };
 out({ type: 'stream_event', event: { type: 'message_start' } });
 for (const chunk of ['Got it. ', `tools=${tools.join(',')} `, `context=${JSON.stringify(ctx.content[0].text).slice(0, 30)} `, `flags=${JSON.stringify(flags)}`]) {

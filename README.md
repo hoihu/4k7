@@ -64,6 +64,22 @@ Either way Claude works through `get_context`, `design_query`, `design_edit`, `c
 (the CLI also gets `wait_for_review`), and its changes arrive as a changeset for you to review. `propose` is refused
 while the design has open errors.
 
+**Which Claude account the app chat uses.** The bridge starts `claude` directly, so shell aliases do not apply. If your
+shell routes Claude Code to Bedrock/Vertex or a different login (e.g. an alias like
+`claude-personal='env -u CLAUDE_CODE_USE_BEDROCK … CLAUDE_CONFIG_DIR=$HOME/.claude-personal claude'`), put the same in
+`~/.tracewise/bridge.json`:
+
+```json
+{
+  "claude": {
+    "configDir": "~/.claude-personal",
+    "unsetEnv": ["ANTHROPIC_API_KEY", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"]
+  }
+}
+```
+
+The bridge logs the profile it uses at startup (`TRACEWISE_CLAUDE_CONFIG_DIR` / `TRACEWISE_CLAUDE_UNSET` override it).
+
 The pairing code lives in `~/.tracewise/bridge.json`, so you pair once. The bridge binds to `127.0.0.1`, only accepts
 pages served from localhost, and needs the pairing code before anything is forwarded. Set `TRACEWISE_APP_URL` if the app
 runs elsewhere and `TRACEWISE_CLAUDE_BIN` if `claude` is not on your PATH.

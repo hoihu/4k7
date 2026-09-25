@@ -9,6 +9,7 @@ import { mkdirSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { chatModePrompt, type ChatCapability, type ChatEvent } from '@tracewise/schema';
 import type { Bridge, ChatMessage } from './bridge.ts';
+import type { ClaudeProfile } from './config.ts';
 import { tokenMatches } from './mcp.ts';
 
 export interface ChatRunnerOptions {
@@ -17,6 +18,8 @@ export interface ChatRunnerOptions {
   claudeBin: string;
   /** Neutral working directory for the headless sessions (no project files, no CLAUDE.md). */
   workDir: string;
+  /** Which Claude login/settings to use (like a `claude-personal` alias). */
+  profile?: ClaudeProfile;
   log?: (msg: string) => void;
 }
 
@@ -27,8 +30,8 @@ interface Run {
 }
 
 /** Probe the Claude Code CLI. */
-export function detectClaude(bin: string): ChatCapability {
-  const r = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 10_000, env: childEnv() });
+export function detectClaude(bin: string, profile?: ClaudeProfile): ChatCapability {
+  const r = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 10_000, env: childEnv(profile) });
   if (r.error || r.status !== 0) {
     return {
       available: false,
@@ -38,11 +41,17 @@ export function detectClaude(bin: string): ChatCapability {
   return { available: true, version: r.stdout.trim().split('\n')[0] ?? '' };
 }
 
-/** A headless Claude must not believe it is nested inside the session that started the bridge. */
-function childEnv(): NodeJS.ProcessEnv {
+/**
+ * Environment for the headless Claude: the profile's changes, and never the markers of the
+ * Claude Code session that may have started the bridge (it is not nested inside it).
+ */
+export function childEnv(profile?: ClaudeProfile): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
+  for (const k of profile?.unsetEnv ?? []) delete env[k];
+  if (profile?.configDir) env.CLAUDE_CONFIG_DIR = profile.configDir;
+  Object.assign(env, profile?.env ?? {});
   return env;
 }
 
@@ -103,7 +112,7 @@ export class ChatRunner {
       ...(msg.session ? ['--resume', msg.session] : []),
     ];
 
-    const child = spawn(this.#opts.claudeBin, args, { cwd: this.#opts.workDir, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(this.#opts.claudeBin, args, { cwd: this.#opts.workDir, env: childEnv(this.#opts.profile), stdio: ['ignore', 'pipe', 'pipe'] });
     const run: Run = { child, token, done: false };
     this.#runs.set(msg.id, run);
     this.#opts.log?.(`chat ${msg.id}: started claude (${msg.session ? `resume ${msg.session.slice(0, 8)}` : 'new session'})`);

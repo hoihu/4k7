@@ -446,11 +446,17 @@ class AppState {
               if (last?.type === 'thinking') last.text += e.text;
               else item.segments.push({ type: 'thinking', text: e.text });
               break;
-            case 'done':
+            case 'done': {
               if (e.session) this.claudeSession = e.session;
-              if (!e.ok && e.error) fail(e.error);
+              if (!e.ok && e.error) {
+                // Claude Code prints API errors as its reply too: show them once, as an error
+                const dup = item.segments.findLastIndex((x) => x.type === 'text' && x.text.trim() === e.error!.trim());
+                if (dup >= 0) item.segments.splice(dup, 1);
+                fail(e.error);
+              }
               resolve();
               break;
+            }
           }
         },
       );

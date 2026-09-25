@@ -7,10 +7,25 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+/**
+ * How to run the headless Claude Code for the app chat. Mirrors a shell alias such as
+ *   alias claude-personal='env -u CLAUDE_CODE_USE_BEDROCK … CLAUDE_CONFIG_DIR=$HOME/.claude-personal claude'
+ * which a spawned process cannot use.
+ */
+export interface ClaudeProfile {
+  /** CLAUDE_CONFIG_DIR for the headless Claude (which login/settings to use). "~" is expanded. */
+  configDir?: string;
+  /** Environment variables to remove, e.g. CLAUDE_CODE_USE_BEDROCK or ANTHROPIC_API_KEY. */
+  unsetEnv: string[];
+  /** Extra environment variables. */
+  env: Record<string, string>;
+}
+
 export interface BridgeConfig {
   code: string;
   origins: string[];
   appUrl: string;
+  claude: ClaudeProfile;
 }
 
 export function configDir(): string {
@@ -23,7 +38,7 @@ export function configPath(): string {
 
 export function loadConfig(): BridgeConfig {
   const path = configPath();
-  let cfg: Partial<BridgeConfig> = {};
+  let cfg: Partial<Omit<BridgeConfig, 'claude'>> & { claude?: Partial<ClaudeProfile> } = {};
   try {
     cfg = JSON.parse(readFileSync(path, 'utf8')) as Partial<BridgeConfig>;
   } catch {
@@ -33,10 +48,22 @@ export function loadConfig(): BridgeConfig {
   const origins = [...(cfg.origins ?? []), ...(process.env.TRACEWISE_ORIGINS?.split(',').filter(Boolean) ?? [])];
   if (code !== cfg.code && !process.env.TRACEWISE_BRIDGE_CODE) {
     mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 });
-    writeFileSync(path, JSON.stringify({ code, origins: cfg.origins ?? [] }, null, 2) + '\n', { mode: 0o600 });
+    // keep every other setting in the file
+    writeFileSync(path, JSON.stringify({ ...cfg, code, origins: cfg.origins ?? [] }, null, 2) + '\n', { mode: 0o600 });
   }
-  const appUrl = process.env.TRACEWISE_APP_URL ?? (cfg as { appUrl?: string }).appUrl ?? 'http://localhost:5173';
-  return { code, origins, appUrl };
+  const appUrl = process.env.TRACEWISE_APP_URL ?? cfg.appUrl ?? 'http://localhost:5173';
+  const c = (cfg.claude ?? {}) as Partial<ClaudeProfile>;
+  const configDir = process.env.TRACEWISE_CLAUDE_CONFIG_DIR ?? c.configDir;
+  const claude: ClaudeProfile = {
+    ...(configDir ? { configDir: expandHome(configDir) } : {}),
+    unsetEnv: [...(c.unsetEnv ?? []), ...(process.env.TRACEWISE_CLAUDE_UNSET?.split(',').filter(Boolean) ?? [])],
+    env: c.env ?? {},
+  };
+  return { code, origins, appUrl, claude };
+}
+
+function expandHome(p: string): string {
+  return p.replace(/^~(?=$|\/)/, homedir()).replace(/^\$HOME(?=$|\/)/, homedir());
 }
 
 function newCode(): string {
