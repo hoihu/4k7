@@ -1,0 +1,201 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { app, type View } from './lib/app.svelte.ts';
+  import Chat from './lib/components/Chat.svelte';
+  import Inspector from './lib/components/Inspector.svelte';
+  import SchematicCanvas from './lib/components/SchematicCanvas.svelte';
+  import Settings from './lib/components/Settings.svelte';
+  import Parts from './lib/components/Parts.svelte';
+  import LayoutView from './lib/components/LayoutView.svelte';
+
+  let pane = $state<'chat' | 'canvas' | 'insp'>('canvas');
+
+  onMount(() => {
+    void app.init();
+    const fromHash = () => {
+      const h = location.hash.slice(1) as View;
+      if (['sch', 'lay', 'parts', 'set'].includes(h)) app.view = h;
+    };
+    fromHash();
+    window.addEventListener('hashchange', fromHash);
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !(e.target as HTMLElement).closest('input,textarea')) {
+        e.preventDefault();
+        if (app.k?.canUndo && !app.k.proposal) void app.undo();
+      }
+      if (e.key === 'Escape') app.selection = [];
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('hashchange', fromHash);
+      window.removeEventListener('keydown', onKey);
+    };
+  });
+
+  $effect(() => {
+    if (location.hash.slice(1) !== app.view) history.replaceState(null, '', `#${app.view}`);
+  });
+
+  const views: { id: View; label: string }[] = [
+    { id: 'sch', label: 'Schematic' },
+    { id: 'lay', label: 'Layout' },
+    { id: 'parts', label: 'Parts' },
+    { id: 'set', label: 'Settings' },
+  ];
+
+  const sheet = $derived(app.k?.view.sheets[app.sheet]);
+  const overlays = $derived.by(() => {
+    const o: Record<string, 'add' | 'change'> = {};
+    for (const h of app.k?.proposal?.hunks ?? []) {
+      if (h.kind === 'component' && h.change !== 'remove' && !app.hunkOff[h.id]) o[h.entityId] = h.change === 'add' ? 'add' : 'change';
+    }
+    return o;
+  });
+  const counts = $derived(app.k?.counts);
+
+  function openIssues() {
+    app.view = 'sch';
+    app.tab = 'issues';
+    pane = 'insp';
+  }
+</script>
+
+<div class="app">
+  <header class="bar">
+    <div class="logo" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 16 16"><path d="M2 12h4l3-8h5" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    </div>
+    <span class="proj trunc" title="Project">{app.k?.summary.name ?? 'Tracewise'}</span>
+    <nav class="nav" aria-label="Workspace">
+      {#each views as v (v.id)}
+        <button aria-current={app.view === v.id} onclick={() => (app.view = v.id)}>{v.label}</button>
+      {/each}
+    </nav>
+    <div class="right">
+      {#if counts}
+        <button class="chipbtn" onclick={openIssues} title="Open issues">
+          <span class="n e"><i></i>{counts.errors}</span><span class="n w"><i></i>{counts.warnings}</span>
+        </button>
+      {/if}
+      <div class="seg mode" title="Autonomy">
+        <button aria-pressed={app.settings.mode === 'auto'} onclick={() => app.updateSettings({ mode: 'auto' })}>Auto</button>
+        <button aria-pressed={app.settings.mode === 'review'} onclick={() => app.updateSettings({ mode: 'review' })}>Review</button>
+      </div>
+      <button class="chipbtn model" onclick={() => (app.view = 'set')} title="AI provider and session spend">
+        <span class="mono">{app.isDemo ? 'demo' : app.settings.model.replace('claude-', '')}</span>
+        {#if !app.isDemo}<span class="muted">${app.spend.toFixed(2)}</span>{/if}
+      </button>
+      <button class="ib" title="Undo last commit (⌘Z)" disabled={!app.k?.canUndo || !!app.k?.proposal} onclick={() => app.undo()}>↶</button>
+    </div>
+  </header>
+
+  <main>
+    {#if !app.ready}
+      <div class="loading">Loading…</div>
+    {:else if app.view === 'sch'}
+      <section class="sch" class:nochat={!app.chatOpen} data-pane={pane}>
+        <div class="col chatcol">{#if app.chatOpen}<Chat />{/if}</div>
+        <div class="col canvas">
+          <SchematicCanvas
+            {sheet}
+            {overlays}
+            hot={app.hoverHunk}
+            showDiff={app.showDiff}
+            selection={app.selection}
+            onselect={(r, add) => app.toggleSelect(r, add)}
+            onclear={() => (app.selection = [])}
+          />
+          <div class="fl sheets">
+            {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
+            {#each app.k?.view.sheets ?? [] as s, i (s.id)}
+              <button aria-pressed={i === app.sheet} onclick={() => (app.sheet = i)}>{s.name}</button>
+            {/each}
+          </div>
+          {#if app.k?.proposal}
+            <div class="fl pend">
+              <span class="pulse"></span>
+              <span class="trunc"><b>{app.acceptedCount}</b> of {app.pendingCount} changes pending</span>
+              <button class="btn pri" disabled={app.running || app.acceptedCount === 0} onclick={() => app.accept()}>Accept</button>
+              <button class="btn" disabled={app.running} onclick={() => app.reject()}>Reject</button>
+              <button class="ib" aria-pressed={app.showDiff} onclick={() => (app.showDiff = !app.showDiff)} title="Toggle diff overlay">◧</button>
+            </div>
+          {/if}
+          {#if sheet && sheet.symbols.length === 0}
+            <div class="blank">
+              <p><b>Empty sheet.</b> Describe the circuit in the chat. The agent adds parts through the kernel, and the layout happens automatically.</p>
+            </div>
+          {/if}
+          <div class="status">
+            <span>click = reference · shift-click = add · drag = pan · wheel = zoom</span>
+            <span class="sp mono">{app.selection.join(' ') || '—'}</span>
+          </div>
+        </div>
+        <div class="col inspcol"><Inspector /></div>
+      </section>
+      <nav class="mobnav" aria-label="Pane">
+        <button aria-pressed={pane === 'chat'} onclick={() => { pane = 'chat'; app.chatOpen = true; }}>Agent</button>
+        <button aria-pressed={pane === 'canvas'} onclick={() => (pane = 'canvas')}>Canvas</button>
+        <button aria-pressed={pane === 'insp'} onclick={() => (pane = 'insp')}>Issues · Ledger</button>
+      </nav>
+    {:else if app.view === 'lay'}
+      <LayoutView />
+    {:else if app.view === 'parts'}
+      <Parts />
+    {:else}
+      <Settings />
+    {/if}
+  </main>
+  {#if app.toast}<div class="toast" role="status">{app.toast}</div>{/if}
+</div>
+
+<style>
+  .app { display: grid; grid-template-rows: 40px minmax(0, 1fr); height: 100vh; height: 100dvh; }
+  .bar { display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); min-width: 0; }
+  .logo { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; flex: none; }
+  .proj { font-weight: 600; max-width: 180px; }
+  .nav { display: flex; gap: 2px; margin-left: 6px; }
+  .nav button { border: 0; background: transparent; padding: 5px 10px; border-radius: 6px; color: var(--txt-2); }
+  .nav button[aria-current="true"] { background: var(--panel-2); color: var(--txt); font-weight: 600; }
+  .nav button:hover { background: var(--hover); }
+  .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  main { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+  .loading { display: grid; place-items: center; color: var(--txt-3); }
+
+  .sch { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr) minmax(240px, 290px); gap: 1px; background: var(--line); min-height: 0; }
+  .sch.nochat { grid-template-columns: 0 minmax(0, 1fr) minmax(240px, 290px); }
+  .col { min-height: 0; min-width: 0; background: var(--panel); }
+  .canvas { position: relative; overflow: hidden; background: var(--canvas); background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 16px 16px; }
+  .fl { position: absolute; z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
+  .sheets { top: 8px; left: 8px; display: flex; gap: 2px; padding: 2px; }
+  .sheets button[aria-pressed] { border: 0; background: transparent; border-radius: 5px; padding: 2px 8px; font-size: 12px; color: var(--txt-2); }
+  .sheets button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-txt); }
+  .pend { top: 8px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 10px; font-size: 12px; white-space: nowrap; max-width: calc(100% - 16px); }
+  .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); flex: none; }
+  .pend .ib[aria-pressed="true"] { color: var(--accent-txt); }
+  .blank { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+  .blank p { max-width: 360px; text-align: center; color: var(--txt-3); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+  .status { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; display: flex; align-items: center; gap: 12px; padding: 0 10px; font-size: 11.5px; color: var(--txt-3); background: color-mix(in srgb, var(--canvas) 85%, transparent); border-top: 1px solid var(--line); z-index: 2; white-space: nowrap; overflow: hidden; }
+  .status .sp { margin-left: auto; }
+  .toast { position: fixed; bottom: 34px; left: 50%; transform: translateX(-50%); background: var(--txt); color: var(--bg); padding: 6px 12px; border-radius: 8px; font-size: 12px; z-index: 50; box-shadow: var(--shadow); max-width: calc(100vw - 32px); }
+  .mobnav { display: none; }
+
+  @media (max-width: 1100px) {
+    .sch, .sch.nochat { grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) 0; }
+    .inspcol { display: none; }
+    .bar .model { display: none; }
+  }
+  @media (max-width: 760px) {
+    .app { grid-template-rows: auto minmax(0, 1fr); }
+    .bar { flex-wrap: wrap; padding: 6px 10px; row-gap: 6px; }
+    .nav { order: 3; width: 100%; margin: 0; overflow-x: auto; }
+    .bar .mode { display: none; }
+    .sch, .sch.nochat { grid-template-columns: minmax(0, 1fr); }
+    .sch > .col { display: none; }
+    .sch[data-pane="chat"] .chatcol, .sch[data-pane="canvas"] .canvas, .sch[data-pane="insp"] .inspcol { display: block; }
+    .mobnav { display: flex; border-top: 1px solid var(--line); background: var(--panel); height: 40px; }
+    .mobnav button { flex: 1; border: 0; background: transparent; color: var(--txt-3); font-size: 12px; }
+    .mobnav button[aria-pressed="true"] { color: var(--accent-txt); font-weight: 600; box-shadow: inset 0 2px 0 var(--accent); }
+    .pend { top: 44px; }
+    .status span:first-child { display: none; }
+  }
+</style>

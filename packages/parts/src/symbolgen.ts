@@ -171,7 +171,8 @@ function box(card: PartCard): SymbolDef {
     prims,
     pins,
     bbox: { x: -PIN_LEN, y: -PIN_LEN, w: w + 2 * PIN_LEN, h: h + 2 * PIN_LEN },
-    refPos: { x: 0, y: -40, anchor: 'start' },
-    valuePos: { x: w, y: -40, anchor: 'end' },
+    // outside the top-left corner, clear of top pins and left-side wiring
+    refPos: { x: -30, y: -115, anchor: 'end' },
+    valuePos: { x: -30, y: -30, anchor: 'end' },
   };
 }

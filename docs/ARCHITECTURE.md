@@ -257,6 +257,24 @@ the decisions, the kernel owns geometry and truth, and the UI owns review.
 | **M4 Openness** | Relay, MCP server for external agents, recipes, eval report per model | Claude Code can drive a full design via MCP |
 | **M5 Collaboration** | Multi-user sessions over CRDT sync, comments, shared libraries | Two users + two agents editing one project |
 
+### M0 progress (2026-09-25)
+
+Done:
+- Op catalogue (zod → JSON Schema tools) with 14 edit ops and 8 query ops, atomic transactions, dry runs, structured rejections with candidates and fix hints
+- Checks: ERC (unconnected pins, output conflicts, power not driven, including through series parts), datasheet requirements (bootstrap cap, decoupling, pulls), ratings (capacitor voltage and derating, pin absolute max, polarity), ledger violations, waivers
+- Deterministic schematic auto-layout: anchors in rows ordered by constraints and signal flow, satellites on pins with crossing-free column order, series chains, decoupling rows, labels for everything not wired
+- Changesets: entity-level hunks, partial accept by merge, undo, canonical JSON export/import
+- Agent loop with verification, `calc` tool, `ask_user`, Anthropic provider (browser BYO key), offline scripted demo
+- Svelte 5 schematic workspace (A + C), parts browser, settings, IndexedDB persistence with an encrypted key
+
+Deviations (deliberate, to revisit):
+- **Kernel in TypeScript** (no Rust toolchain on the dev machine yet). It sits behind the same RPC/API in a Web Worker, so the Rust/WASM kernel can replace it without touching the agent or UI.
+- **Plain JSON persistence** in IndexedDB instead of a CRDT in OPFS. The CRDT comes with branching/collaboration.
+- **Counter-based ids** (`c_1a`) instead of ULIDs, for deterministic tests and diffs.
+- **Autonomy modes**: Auto and Review. Step mode (plan approval) is not built yet.
+
+Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models, and layout quality on 30+ part designs.
+
 ## 8. Main risks
 
 | Risk | Mitigation |

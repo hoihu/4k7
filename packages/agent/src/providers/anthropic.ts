@@ -17,17 +17,25 @@ export interface AnthropicModelInfo {
   effort: boolean;
   /** Server-side refusal fallbacks recommended by default. */
   fallbacks: boolean;
+  /** USD per million tokens (input, output). Cache reads bill at 0.1×, writes at 1.25× input. */
+  price: { input: number; output: number };
 }
 
 export const ANTHROPIC_MODELS: AnthropicModelInfo[] = [
-  { id: 'claude-opus-5', label: 'Claude Opus 5', adaptive: true, effort: true, fallbacks: true },
-  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', adaptive: true, effort: true, fallbacks: false },
-  { id: 'claude-fable-5-1', label: 'Claude Fable 5.1', adaptive: true, effort: true, fallbacks: true },
-  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', adaptive: true, effort: true, fallbacks: false },
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', adaptive: false, effort: false, fallbacks: false },
+  { id: 'claude-opus-5', label: 'Claude Opus 5', adaptive: true, effort: true, fallbacks: true, price: { input: 5, output: 25 } },
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', adaptive: true, effort: true, fallbacks: false, price: { input: 4, output: 20 } },
+  { id: 'claude-fable-5-1', label: 'Claude Fable 5.1', adaptive: true, effort: true, fallbacks: true, price: { input: 10, output: 50 } },
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', adaptive: true, effort: true, fallbacks: false, price: { input: 2, output: 10 } },
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', adaptive: false, effort: false, fallbacks: false, price: { input: 1, output: 5 } },
 ];
 
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5';
+
+export function costUsd(modelId: string, u: { input: number; output: number; cacheRead: number; cacheWrite: number }): number {
+  const m = ANTHROPIC_MODELS.find((x) => modelId.startsWith(x.id));
+  if (!m) return 0;
+  return (u.input * m.price.input + u.cacheRead * m.price.input * 0.1 + u.cacheWrite * m.price.input * 1.25 + u.output * m.price.output) / 1e6;
+}
 
 export interface AnthropicOptions {
   apiKey: string;
@@ -45,7 +53,7 @@ export class AnthropicProvider implements Provider {
 
   constructor(private opts: AnthropicOptions) {
     const id = opts.model ?? DEFAULT_ANTHROPIC_MODEL;
-    this.model = ANTHROPIC_MODELS.find((m) => m.id === id) ?? { id, label: id, adaptive: true, effort: true, fallbacks: false };
+    this.model = ANTHROPIC_MODELS.find((m) => m.id === id) ?? { id, label: id, adaptive: true, effort: true, fallbacks: false, price: { input: 0, output: 0 } };
     this.label = this.model.label;
     this.client = new Anthropic({
       apiKey: opts.apiKey,

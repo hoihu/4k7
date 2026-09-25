@@ -24,4 +24,36 @@ geometry and checks every change.
 | [docs/ui/prototype.html](docs/ui/prototype.html) | Clickable prototype of the chosen UI (open in a browser) |
 | [docs/ui/proposals.html](docs/ui/proposals.html) | Earlier exploration: proposals A, B, C |
 
-Status: concept and architecture phase. No application code yet.
+## Running it
+
+Requires Node 22+.
+
+```sh
+npm install
+npm run dev        # http://localhost:5173 — the schematic workspace
+npm test           # kernel + agent tests (vitest)
+npm run typecheck  # tsc + svelte-check
+npm run build      # static build in apps/web/dist
+```
+
+Without an API key the app runs an **offline demo** (a scripted agent that goes through the real kernel):
+try “12 V to 3.3 V buck, 2 A. Put C1 left of U1.”, answer the question, review the changeset, then “make C2 100uF”.
+Add an Anthropic API key in **Settings** to use a real model. It is encrypted in your browser and sent only to `api.anthropic.com`.
+
+## Repository layout
+
+| Path | What |
+|---|---|
+| `packages/schema` | Design model, part cards, zod op catalogue, results, units, agent tool definitions |
+| `packages/parts` | Seed part library, deterministic symbol generator |
+| `packages/kernel` | Transactions, ERC + datasheet checks, constraint ledger, schematic auto-layout, changesets, canonical JSON |
+| `packages/agent` | Agent loop with kernel verification, calculators, Anthropic + offline providers |
+| `apps/web` | Svelte 5 app: schematic workspace (chat + canvas + inspector), parts, settings. The kernel runs in a Web Worker |
+
+## Status
+
+**M0 (schematic)** is in progress. Working now: the full loop from prompt → typed ops → atomic transactions → checks →
+auto-layout → reviewable changeset with per-change accept, a constraint ledger that survives re-layout, undo, and local
+persistence. Deviations from the architecture for now: the kernel is TypeScript behind the same API (Rust/WASM later),
+the document is stored as plain JSON (the CRDT arrives with collaboration), and there is one real provider (Anthropic).
+See [ARCHITECTURE.md §7](docs/ARCHITECTURE.md#7-roadmap).

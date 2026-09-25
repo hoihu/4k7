@@ -54,6 +54,10 @@ describe('schematic layout', () => {
     const labelled = new Set(s.labels.map((l) => `${l.x},${l.y}`));
     const wired = new Set(s.wires.flatMap((w) => [`${w.pts[0]},${w.pts[1]}`, `${w.pts.at(-2)},${w.pts.at(-1)}`]));
     for (const j of s.junctions) wired.add(`${j.x},${j.y}`);
+    // pins that touch another pin directly (series parts stacked in a column)
+    const pinCount = new Map<string, number>();
+    for (const sym of s.symbols) for (const p of sym.pins) pinCount.set(`${p.x},${p.y}`, (pinCount.get(`${p.x},${p.y}`) ?? 0) + 1);
+    for (const [k, n] of pinCount) if (n > 1) wired.add(k);
     const nc = new Set(s.noConnects.map((p) => `${p.x},${p.y}`));
     for (const sym of s.symbols) {
       for (const p of sym.pins) {

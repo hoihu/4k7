@@ -128,9 +128,14 @@ function sceneBBox(s: Scene): Rect {
     maxX = Math.max(maxX, r.x + r.w);
     maxY = Math.max(maxY, r.y + r.h);
   };
+  const textRect = (p: SymbolView['refPos'], text: string): Rect => {
+    const w = tw(text) + 20;
+    return { x: p.anchor === 'end' ? p.x - w : p.anchor === 'middle' ? p.x - w / 2 : p.x, y: p.y - 80, w, h: 100 };
+  };
   for (const sym of s.symbols) {
     add(sym.bbox);
-    add({ x: sym.valuePos.x, y: sym.valuePos.y - 80, w: tw(sym.value) + 20, h: 100 });
+    add(textRect(sym.refPos, sym.refdes));
+    add(textRect(sym.valuePos, sym.value));
   }
   for (const l of s.labels) add(labelRect(l));
   if (minX === Infinity) return { x: 0, y: 0, w: 0, h: 0 };
@@ -186,6 +191,8 @@ interface Sat {
   card: PartCard;
   anchorPin: string;
   net: string;
+  /** Series parts hanging below this one (e.g. R + C of a compensation network). */
+  chain: Component[];
 }
 
 interface AnchorPlan {
@@ -227,43 +234,83 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   const free: Component[] = [];
 
   /* ---- assign two-pin parts ---- */
-  for (const c of twoPins) {
-    const card = cardFor(c);
-    const nets = card.pins.map((p) => c.pins[p.number]).map((id) => (id ? d.nets[id] : undefined));
-    const side = sideHint(directional, c.id, anchors);
+  const netsOf = (c: Component) => cardFor(c).pins.map((p) => (c.pins[p.number] ? d.nets[c.pins[p.number]!] : undefined));
+  const rest: Component[] = [];
 
-    // explicit side request relative to an anchor
+  // pass 1: explicit side requests relative to an anchor, and signal satellites
+  for (const c of twoPins) {
+    const nets = netsOf(c);
+    const side = sideHint(directional, c.id, anchors);
     if (side && plans.has(side.anchor)) {
       const plan = plans.get(side.anchor)!;
       const attach = findAttach(ctx, plan, c, nets, side.side);
-      if (attach) {
-        plan[side.side].push(attach);
-      } else if (side.side === 'left') plan.extraLeft.push(c);
+      if (attach) plan[side.side].push(attach);
+      else if (side.side === 'left') plan.extraLeft.push(c);
       else plan.extraRight.push(c);
       continue;
     }
-
-    const bothPower = nets.every((n) => n && isPowerNet(n));
-    if (bothPower) {
-      const rail = nets.find((n) => n && !isGroundNet(n)) ?? nets[0];
-      const owner = rail && decapOwner(d, anchors, rail.id);
-      if (owner) plans.get(owner.id)!.decaps.push(c);
-      else free.push(c);
+    if (nets.every((n) => n && isPowerNet(n))) {
+      rest.push(c);
       continue;
     }
-
     let attached = false;
     for (const a of anchors) {
       const plan = plans.get(a.id)!;
       const at = findAttach(ctx, plan, c, nets);
       if (at) {
-        const pinSide = pinSideOf(plan, at.anchorPin);
-        (pinSide === 'left' ? plan.left : plan.right).push(at);
+        (pinSideOf(plan, at.anchorPin) === 'left' ? plan.left : plan.right).push(at);
         attached = true;
         break;
       }
     }
-    if (!attached) free.push(c);
+    if (!attached) rest.push(c);
+  }
+
+  // pass 2: chain series parts below a satellite when they share a private signal net
+  const sats = [...plans.values()].flatMap((p) => [...p.left, ...p.right]);
+  const tipNet = (s: Sat): string | undefined => {
+    const last = s.chain.at(-1) ?? s.comp;
+    const upper = s.chain.length ? s.chain.at(-2) ?? s.comp : undefined;
+    const lastCard = cardFor(last);
+    const topNet = upper ? lastCard.pins.map((p) => last.pins[p.number]).find((n) => n && Object.values(upper.pins).includes(n)) : s.net;
+    return lastCard.pins.map((p) => last.pins[p.number]).find((n) => n && n !== topNet);
+  };
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const c of [...rest]) {
+      const nets = netsOf(c);
+      if (nets.every((n) => n && isPowerNet(n))) continue;
+      for (const s of sats) {
+        const n = tipNet(s);
+        if (!n || isPowerNet(d.nets[n]!) || !nets.some((x) => x?.id === n)) continue;
+        const members = ctx.members.get(n) ?? [];
+        const tip = s.chain.at(-1) ?? s.comp;
+        if (members.length !== 2 || !members.some((m) => m.comp.id === tip.id)) continue;
+        s.chain.push(c);
+        rest.splice(rest.indexOf(c), 1);
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  // pass 3: decoupling caps to the anchor that uses the rail (directly or through its satellites)
+  for (const c of rest) {
+    const nets = netsOf(c);
+    if (!nets.every((n) => n && isPowerNet(n))) {
+      free.push(c);
+      continue;
+    }
+    const rail = nets.find((n) => n && !isGroundNet(n)) ?? nets[0];
+    let owner = rail && decapOwner(d, anchors, rail.id);
+    if (!owner && rail) {
+      const plan = [...plans.values()].find((p) =>
+        [...p.left, ...p.right].some((s) => [s.comp, ...s.chain].some((x) => Object.values(x.pins).includes(rail.id))),
+      );
+      owner = plan?.comp;
+    }
+    if (owner) plans.get(owner.id)!.decaps.push(c);
+    else free.push(c);
   }
 
   /* ---- rows and order of anchors ---- */
@@ -366,7 +413,7 @@ function findAttach(ctx: Ctx, plan: AnchorPlan, c: Component, nets: (Net | undef
       if (p.side !== 'left' && p.side !== 'right') continue;
       if (onlySide && p.side !== onlySide) continue;
       if (plan.comp.pins[p.number] === net.id) {
-        return { comp: c, card: cardOf(ctx.d, c.part)!, anchorPin: p.number, net: net.id };
+        return { comp: c, card: cardOf(ctx.d, c.part)!, anchorPin: p.number, net: net.id, chain: [] };
       }
     }
   }
@@ -490,7 +537,7 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
       for (const s of sats) {
         const otherPin = s.card.pins.find((pp) => s.comp.pins[pp.number] !== s.net) ?? s.card.pins[1]!;
         const otherNet = s.comp.pins[otherPin.number] ? d.nets[s.comp.pins[otherPin.number]!] : undefined;
-        const width = satWidth(d, s.comp, otherNet?.name);
+        const width = Math.max(satWidth(d, s.comp, otherNet?.name), ...s.chain.map((c) => satWidth(d, c, chainBottomNet(ctx, c, s)?.name)));
         if (side === 'left') {
           if (first) x = grid(pinEndX - gapLeft - width + 100);
           else x -= width;
@@ -503,7 +550,22 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
         scene.symbols.push(satSym);
         const bottom = satSym.pins.find((pp) => pp.side === 'bottom')!;
         if (s.comp.noConnect.includes(bottom.number)) scene.noConnects.push({ x: bottom.x, y: bottom.y });
-        else if (otherNet) scene.labels.push(deco(otherNet, bottom.x, bottom.y, 'down'));
+        else if (otherNet && !s.chain.length) scene.labels.push(deco(otherNet, bottom.x, bottom.y, 'down'));
+        // series parts continue straight down the same column
+        let upperNet = otherNet?.id;
+        let y = bottom.y;
+        s.chain.forEach((c, i) => {
+          const card = cardOf(d, c.part)!;
+          const topPin = card.pins.find((pp) => c.pins[pp.number] === upperNet) ?? card.pins[0]!;
+          const sym = makeSymbol(d, c, symbolFor(card, topPin.number !== card.pins[0]!.number), x, y + 200);
+          scene.symbols.push(sym);
+          const b = sym.pins.find((pp) => pp.side === 'bottom')!;
+          const bNet = c.pins[b.number] ? d.nets[c.pins[b.number]!] : undefined;
+          if (c.noConnect.includes(b.number)) scene.noConnects.push({ x: b.x, y: b.y });
+          else if (bNet && i === s.chain.length - 1) scene.labels.push(deco(bNet, b.x, b.y, 'down'));
+          upperNet = bNet?.id;
+          y = b.y;
+        });
         xs.push(x);
         if (side === 'right') x += width;
       }
@@ -546,6 +608,16 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
     rx += satWidth(d, c);
   }
   return scene;
+}
+
+/** Net at the bottom of a chained part (the one not shared with the part above). */
+function chainBottomNet(ctx: Ctx, c: Component, s: Sat): Net | undefined {
+  const card = cardOf(ctx.d, c.part)!;
+  const idx = s.chain.indexOf(c);
+  const above = idx === 0 ? s.comp : s.chain[idx - 1]!;
+  const shared = new Set(Object.values(above.pins));
+  const pin = card.pins.find((p) => c.pins[p.number] && !shared.has(c.pins[p.number]!));
+  return pin ? ctx.d.nets[c.pins[pin.number]!] : undefined;
 }
 
 /** A vertical two-pin part centred at (cx, cy) with decorations on both ends. */
