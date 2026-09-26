@@ -83,6 +83,26 @@ function brokenNets(b: ReturnType<Kernel['board']>): string[] {
   return [...padRoots.entries()].filter(([, s]) => s.size > 1).map(([net]) => b.netNames[net] ?? net);
 }
 
+describe('dragging a part (place)', () => {
+  it('moves just that part; the board keeps its frame and size', () => {
+    const k = buck();
+    const before = k.board();
+    const c2 = before.parts.find((p) => p.refdes === 'C2')!;
+    k.transact({ summary: 'drag', ops: [{ op: 'place', ref: 'C2', x_mm: c2.x + 1.5, y_mm: c2.y + 1, rot: c2.rot }] });
+    k.accept(undefined, 'user');
+    const after = k.board();
+    const moved = after.parts.find((p) => p.refdes === 'C2')!;
+    expect([moved.x, moved.y, moved.locked]).toEqual([c2.x + 1.5, c2.y + 1, true]);
+    expect(Math.abs(after.outline.w - before.outline.w)).toBeLessThanOrEqual(4);
+    expect(Math.abs(after.outline.h - before.outline.h)).toBeLessThanOrEqual(4);
+    // the other parts stay roughly where they were
+    const u1a = before.parts.find((p) => p.refdes === 'U1')!;
+    const u1b = after.parts.find((p) => p.refdes === 'U1')!;
+    expect(Math.hypot(u1a.x - u1b.x, u1a.y - u1b.y)).toBeLessThan(3);
+    expect(after.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+  });
+});
+
 describe('routing', () => {
   it('routes the buck completely, DRC-clean, and every net is one piece of copper', () => {
     const b = buck().board();

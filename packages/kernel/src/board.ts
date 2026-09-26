@@ -114,6 +114,25 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     it.rot = c?.vertical && isTwoPin(it.card) ? 90 : 0;
   });
 
+  /*
+   * With pinned parts, start from the board placed without any pins: pinned coordinates are
+   * board coordinates, so everything else must start in that frame too (a drag then moves
+   * one part and the rest adapts around it, instead of jumping to a different frame).
+   */
+  const pins = Object.values(d.ledger).filter((k) => k.kind === 'position' && k.a);
+  if (pins.length) {
+    const free: Design = { ...d, ledger: Object.fromEntries(Object.entries(d.ledger).filter(([, k]) => k.kind !== 'position')) };
+    const base = placeBoard(free, sch);
+    for (const it of items) {
+      const p = base.parts.find((x) => x.componentId === it.comp.id);
+      if (p) {
+        it.x = p.x;
+        it.y = p.y;
+        it.rot = p.rot;
+      }
+    }
+  }
+
   /* ---- pinned parts ---- */
   for (const k of Object.values(d.ledger)) {
     if (k.kind !== 'position' || !k.a) continue;

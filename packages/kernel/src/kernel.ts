@@ -259,6 +259,19 @@ export class Kernel {
       }
       case 'get_diagnostics':
         return this.analyse(d).diagnostics;
+      case 'get_board': {
+        const b = this.board();
+        return {
+          outline_mm: b.outline,
+          layers: b.layers.length,
+          rules: b.rules,
+          parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, pinned: p.locked })),
+          routing: { nets: b.stats.nets, routed: b.stats.routed, unrouted_connections: b.stats.unrouted, vias: b.stats.vias, track_mm: b.stats.trackLength },
+          drc: b.diagnostics.map((x) => `${x.severity}: ${x.message}`),
+          missing_footprints: b.missing,
+          note: 'Placement and routing are recomputed automatically from the netlist and the ledger. Pin parts with place, size the board with set_board, keep parts together with constrain near.',
+        };
+      }
       case 'get_ledger':
         return Object.values(d.ledger).map((k) => ({ id: k.id, text: describeConstraint(d, k), strength: k.strength, quote: k.source.quote }));
       case 'search_parts':

@@ -180,6 +180,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_net'), net: netName }),
   z.object({ op: z.literal('get_diagnostics') }),
   z.object({ op: z.literal('get_ledger') }),
+  z.object({ op: z.literal('get_board') }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
   z.object({
     op: z.literal('search_parts'),
     text: z.string().describe('Search text: function, MPN, category ("buck", "capacitor", "555")'),

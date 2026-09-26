@@ -16,7 +16,7 @@ describe('tool schemas', () => {
       properties: Record<string, { enum?: string[] }>;
       required: string[];
     };
-    expect(q.properties.op?.enum).toEqual(['get_summary', 'find', 'get_component', 'get_net', 'get_diagnostics', 'get_ledger', 'search_parts', 'get_part']);
+    expect(q.properties.op?.enum).toEqual(['get_summary', 'find', 'get_component', 'get_net', 'get_diagnostics', 'get_ledger', 'get_board', 'search_parts', 'get_part']);
     expect(q.required).toEqual(['op']);
     expect(Object.keys(q.properties).sort()).toEqual(['category', 'id', 'net', 'op', 'ref', 'text']);
   });

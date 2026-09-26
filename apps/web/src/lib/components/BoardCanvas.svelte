@@ -11,8 +11,14 @@
     onselect?: (refdes: string, additive: boolean) => void;
     onclear?: () => void;
     onhovernet?: (netId: string | null) => void;
+    /** Drag or rotate a part: pin it there (the place op). */
+    onplace?: (refdes: string, x: number, y: number, rot: number) => void;
   }
-  let { board, show, selection = [], hotNet = null, marker = null, onselect, onclear, onhovernet }: Props = $props();
+  let { board, show, selection = [], hotNet = null, marker = null, onselect, onclear, onhovernet, onplace }: Props = $props();
+
+  /** Part being dragged: offset in mm, snapped to 0.1 mm. */
+  let partDrag = $state<{ ref: string; sx: number; sy: number; dx: number; dy: number; moved: boolean } | null>(null);
+  const snap = (v: number) => Math.round(v * 10) / 10;
 
   let svg: SVGSVGElement | undefined = $state();
   let vb = $state({ x: -2, y: -2, w: 40, h: 30 });
@@ -46,10 +52,25 @@
   let drag: { x: number; y: number; vx: number; vy: number; moved: boolean } | null = null;
   function onpointerdown(e: PointerEvent) {
     if (e.button !== 0 && e.button !== 1) return;
-    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false };
+    const ref = e.button === 0 && onplace ? (e.target as Element).closest('[data-ref]')?.getAttribute('data-ref') : null;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    if (ref) {
+      const p = toSvg(e);
+      partDrag = { ref, sx: p.x, sy: p.y, dx: 0, dy: 0, moved: false };
+      return;
+    }
+    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false };
   }
   function onpointermove(e: PointerEvent) {
+    if (partDrag) {
+      const p = toSvg(e);
+      const dx = snap(p.x - partDrag.sx);
+      const dy = snap(p.y - partDrag.sy);
+      if (Math.abs(dx) + Math.abs(dy) >= 0.2) partDrag.moved = true;
+      partDrag.dx = dx;
+      partDrag.dy = dy;
+      return;
+    }
     if (!drag || !svg) {
       const net = (e.target as Element).closest('[data-net]')?.getAttribute('data-net') ?? null;
       onhovernet?.(net);
@@ -63,12 +84,29 @@
     vb = { ...vb, x: drag.vx - dx * s, y: drag.vy - dy * s };
   }
   function onpointerup(e: PointerEvent) {
+    if (partDrag) {
+      const d = partDrag;
+      partDrag = null;
+      const part = board?.parts.find((p) => p.refdes === d.ref);
+      if (d.moved && part) onplace?.(d.ref, Math.round((part.x + d.dx) * 1000) / 1000, Math.round((part.y + d.dy) * 1000) / 1000, part.rot);
+      else onselect?.(d.ref, e.shiftKey || e.metaKey || e.ctrlKey);
+      return;
+    }
     if (drag && !drag.moved) {
       const target = (e.target as Element).closest('[data-ref]');
       if (target) onselect?.(target.getAttribute('data-ref')!, e.shiftKey || e.metaKey || e.ctrlKey);
       else onclear?.();
     }
     drag = null;
+  }
+
+  function onkeydown(e: KeyboardEvent) {
+    if ((e.key === 'r' || e.key === 'R') && selection.length === 1 && onplace) {
+      const part = board?.parts.find((p) => p.refdes === selection[0]);
+      if (!part) return;
+      e.preventDefault();
+      onplace(part.refdes, part.x, part.y, (part.rot + 90) % 360);
+    }
   }
 
   const LAYER_CLASS: Record<CopperLayer, string> = { 'F.Cu': 'fcu', 'In1.Cu': 'in1', 'In2.Cu': 'in2', 'B.Cu': 'bcu' };
@@ -78,6 +116,8 @@
   const path = (pts: number[]) => pts.reduce((s, v, i) => s + (i % 2 ? `,${v}` : `${i ? ' L' : 'M'}${v}`), '');
 </script>
 
+<!-- an interactive canvas: pointer and keyboard (R = rotate) are the point -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <svg
   bind:this={svg}
   class="board"
@@ -90,6 +130,8 @@
   {onpointermove}
   {onpointerup}
   onpointerleave={() => onhovernet?.(null)}
+  {onkeydown}
+  tabindex="0"
 >
   {#if board}
     <rect class="substrate" x="0" y="0" width={board.outline.w} height={board.outline.h} rx="0.5" />
@@ -112,7 +154,14 @@
 
     <!-- pads (top copper + through-hole) -->
     {#each board.parts as p (p.componentId)}
-      <g class="part" class:sel={selection.includes(p.refdes)} data-ref={p.refdes}>
+      <g
+        class="part"
+        class:sel={selection.includes(p.refdes)}
+        class:locked={p.locked}
+        class:dragging={partDrag?.ref === p.refdes}
+        data-ref={p.refdes}
+        transform={partDrag?.ref === p.refdes ? `translate(${partDrag.dx} ${partDrag.dy})` : undefined}
+      >
         <rect class="hit" x={p.courtyard.x} y={p.courtyard.y} width={p.courtyard.w} height={p.courtyard.h} />
         {#each p.pads as pad, i (i)}
           {@const r = pad.shape === 'round' ? Math.min(pad.w, pad.h) / 2 : Math.min(pad.w, pad.h) * 0.15}
@@ -132,6 +181,7 @@
         {#if show.silk}
           <rect class="silk" x={p.body.x} y={p.body.y} width={p.body.w} height={p.body.h} />
           <circle class="silkdot" cx={p.pin1.x} cy={p.pin1.y} r="0.18" />
+          {#if p.locked}<circle class="pin" cx={p.courtyard.x + p.courtyard.w} cy={p.courtyard.y} r="0.3"><title>pinned</title></circle>{/if}
           <text class="ref" x={p.x} y={p.y} font-size={Math.max(0.5, Math.min(1.2, Math.min(p.body.w, p.body.h) * 0.45))}>{p.refdes}</text>
         {/if}
       </g>
@@ -184,4 +234,9 @@
   .part.sel .silk { stroke: #6fb5ff; stroke-width: 0.2; opacity: 1; }
   .part.sel .hit { fill: rgba(111, 181, 255, 0.12); }
   .marker { fill: none; stroke: #ff5a5a; stroke-width: 0.25; }
+  .board:focus { outline: none; }
+  .part { cursor: grab; }
+  .part.dragging { cursor: grabbing; opacity: 0.85; }
+  .part.dragging .hit { fill: rgba(111, 181, 255, 0.18); }
+  .pin { fill: #e0a93b; stroke: #0b0f14; stroke-width: 0.08; }
 </style>

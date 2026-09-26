@@ -24,6 +24,13 @@
     ['ratsnest', 'Ratsnest'],
   ]);
 
+  const selectedPart = $derived(app.selection.length === 1 ? (b?.parts.find((p) => p.refdes === app.selection[0]) ?? null) : null);
+  function unpin() {
+    const ref = selectedPart?.refdes;
+    const k = app.k?.ledger.find((x) => x.text.startsWith(`position(${ref})`));
+    if (k) void app.userEdit(`Unpin ${ref}`, [{ op: 'remove_constraint', id: k.id }]);
+  }
+
   /** Gerbers, drill, BOM and pick-and-place as one zip. */
   function exportFab() {
     if (!b) return;
@@ -56,6 +63,7 @@
       onselect={(r, add) => app.toggleSelect(r, add)}
       onclear={() => ((app.selection = []), (marker = null))}
       onhovernet={(n) => (hotNet = n)}
+      onplace={(ref, x, y, rot) => void app.userEdit(`Place ${ref}`, [{ op: 'place', ref, x_mm: x, y_mm: y, rot }])}
     />
     <div class="fl tl">
       {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
@@ -73,7 +81,7 @@
       <div class="blank"><p><b>No parts yet.</b> Draw the circuit in the schematic (or ask the agent); the board is placed from it automatically.</p></div>
     {/if}
     <div class="status">
-      <span>click = reference · drag = pan · wheel = zoom</span>
+      <span>click = reference · drag part = pin it there · R = rotate · drag board = pan · wheel = zoom</span>
       <span class="sp mono">{hotNet ? netName(hotNet) : app.selection.join(' ') || '—'}</span>
     </div>
   </div>
@@ -94,6 +102,11 @@
             <li><button class="r" onclick={() => focus(d)}><span class="tag {d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info'}">{d.severity[0]!.toUpperCase()}</span><span class="grow">{d.message}</span></button></li>
           {/each}
         </ul>
+        {#if selectedPart}
+          <h4>{selectedPart.refdes} <span class="muted mono">{selectedPart.pkg}</span></h4>
+          <p class="small mono">x {selectedPart.x} · y {selectedPart.y} mm · {selectedPart.rot}°{selectedPart.locked ? ' · pinned' : ' · placed automatically'}</p>
+          {#if selectedPart.locked}<button class="btn wide" onclick={unpin}>Unpin (let the placer move it)</button>{/if}
+        {/if}
         <h4>Manufacturing</h4>
         <button class="btn pri wide" onclick={exportFab} disabled={!b.parts.length}>Download fab files (.zip)</button>
         <p class="small muted">Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place.{#if errors} Fix the {errors} error{errors > 1 ? 's' : ''} first; the files would not make a working board.{/if}</p>
