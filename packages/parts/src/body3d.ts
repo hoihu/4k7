@@ -148,7 +148,7 @@ function ballGrid(pkg: PackageInfo, pinNumbers: string[], notes: string[]): Body
   const [bw, bl] = pkg.body_mm ?? [cols * pitch, rows * pitch];
   const H = pkg.height_mm ?? 1.2;
   const d = pkg.ball_mm ?? pitch * 0.5;
-  const zBall = d * 0.4; // collapsed ball height ≈ 80 % of the diameter
+  const zBall = d * 0.4; // ball centre: the ball is slightly flattened on the pad
   const present = new Set(pinNumbers.map((n) => n.toUpperCase()));
   const balls: Ball3[] = [];
   for (let r = 0; r < rows; r++) {
@@ -158,7 +158,8 @@ function ballGrid(pkg: PackageInfo, pinNumbers: string[], notes: string[]): Body
     }
   }
   return {
-    boxes: [box(-bw / 2, -bl / 2, zBall * 2, bw / 2, bl / 2, H, 'body')],
+    // the body rests on the ball tops (solids never overlap, which the viewer relies on)
+    boxes: [box(-bw / 2, -bl / 2, zBall + d / 2, bw / 2, bl / 2, H, 'body')],
     balls,
     pin1: { x: r3(-bw / 2 + Math.min(bw, bl) * 0.08), y: r3(-bl / 2 + Math.min(bw, bl) * 0.08), z: H, r: r3(Math.min(bw, bl) * 0.03) },
     height: H,
