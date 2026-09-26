@@ -49,6 +49,10 @@ export interface BoardPart {
   componentId: string;
   refdes: string;
   value: string;
+  /** Part Card id, and orderable part number when known (BOM). */
+  part: string;
+  mpn?: string;
+  manufacturer?: string;
   /** Package name ("0603", "SOIC-8", "LQFP100"). */
   pkg: string;
   x: number;

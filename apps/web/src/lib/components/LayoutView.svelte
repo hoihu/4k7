@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fabFiles, zip } from '@tracewise/fab';
   import type { BoardDiagnostic, CopperLayer } from '@tracewise/schema';
   import { app } from '../app.svelte.ts';
   import BoardCanvas from './BoardCanvas.svelte';
@@ -22,6 +23,20 @@
     ['courtyard', 'Courtyards'],
     ['ratsnest', 'Ratsnest'],
   ]);
+
+  /** Gerbers, drill, BOM and pick-and-place as one zip. */
+  function exportFab() {
+    if (!b) return;
+    const name = app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : 'tracewise-board';
+    const files = fabFiles(b, name);
+    const url = URL.createObjectURL(new Blob([zip(files) as BlobPart], { type: 'application/zip' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${name.replace(/[^\w.-]+/g, '_')}-fab.zip`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}`);
+  }
 
   function focus(d: BoardDiagnostic) {
     marker = d.at ?? null;
@@ -79,6 +94,9 @@
             <li><button class="r" onclick={() => focus(d)}><span class="tag {d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info'}">{d.severity[0]!.toUpperCase()}</span><span class="grow">{d.message}</span></button></li>
           {/each}
         </ul>
+        <h4>Manufacturing</h4>
+        <button class="btn pri wide" onclick={exportFab} disabled={!b.parts.length}>Download fab files (.zip)</button>
+        <p class="small muted">Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place.{#if errors} Fix the {errors} error{errors > 1 ? 's' : ''} first; the files would not make a working board.{/if}</p>
         <h4>Layers</h4>
         <ul class="layers">
           {#each layerNames as [key, label] (key)}
@@ -114,6 +132,7 @@
   .stats span { font-size: 11px; color: var(--txt-3); }
   h4 { margin: 12px 0 4px; font-size: 12px; display: flex; gap: 4px; align-items: center; }
   .small { font-size: 11.5px; margin: 2px 0 6px; }
+  .wide { width: 100%; margin: 2px 0 4px; }
   .diags, .layers { list-style: none; margin: 0; padding: 0; }
   .diags .r { width: 100%; display: flex; gap: 6px; align-items: flex-start; text-align: left; border: 0; background: none; padding: 3px 2px; font-size: 12px; color: var(--txt-2); cursor: pointer; border-radius: 4px; }
   .diags .r:hover { background: var(--hover); }

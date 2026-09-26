@@ -15,7 +15,8 @@
     "@tracewise/parts": "0.1.0",
     "@tracewise/schema": "0.1.0",
     "pdfjs-dist": "^6.3.289",
-    "three": "^0.181.2"
+    "three": "^0.181.2",
+    "@tracewise/fab": "0.1.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
