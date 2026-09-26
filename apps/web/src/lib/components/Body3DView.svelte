@@ -36,11 +36,12 @@
     const rot = (x: number, y: number, z: number) => [x * ca - y * sa, x * sa + y * ca, z] as const;
     const project = (x: number, y: number, z: number) => {
       const [x1, y1, z1] = rot(x, y, z);
-      return { sx: x1, sy: y1 * se - z1 * ce, depth: -y1 * ce + z1 * se };
+      return { sx: x1, sy: y1 * se - z1 * ce, depth: y1 * ce + z1 * se };
     };
-    const view = [0, -ce, se] as const; // towards the viewer, in rotated coordinates
-    const viewWorld = [-sa * ce, -ca * ce, se]; // the same direction in world coordinates
-    const light = normalize([0.35 * ca + 0.2, -ce + 0.2, se + 0.5]);
+    // towards the viewer, in rotated coordinates: +y is nearer (drawn lower on screen), +z is up
+    const view = [0, ce, se] as const;
+    const viewWorld = [sa * ce, ca * ce, se]; // the same direction in world coordinates
+    const light = normalize([0.35, ce * 0.6, se + 0.6]);
     const shade = (rgb: readonly number[], n: readonly [number, number, number]) => {
       const k = 0.5 + 0.5 * Math.max(0, n[0] * light[0] + n[1] * light[1] + n[2] * light[2]);
       return `rgb(${rgb.map((c) => Math.round(c * k)).join(',')})`;
