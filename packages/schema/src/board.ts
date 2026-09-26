@@ -1,3 +1,5 @@
+import type { PackageInfo } from './ingest.ts';
+
 /**
  * The board: settings stored in the design, and the derived board view (placement, routing,
  * DRC) the kernel computes from the netlist and the constraint ledger. Millimetres, origin at
@@ -55,6 +57,8 @@ export interface BoardPart {
   manufacturer?: string;
   /** Package name ("0603", "SOIC-8", "LQFP100"). */
   pkg: string;
+  /** Package data the footprint was built from (3D bodies come from the same). */
+  pkgInfo: PackageInfo;
   x: number;
   y: number;
   /** Clockwise, degrees (0/90/180/270). */

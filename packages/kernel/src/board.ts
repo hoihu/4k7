@@ -21,6 +21,7 @@ import {
   type Component,
   type CopperLayer,
   type Design,
+  type PackageInfo,
   type PartCard,
   type RatsLine,
   type SchematicView,
@@ -38,6 +39,7 @@ interface Item {
   card: PartCard;
   fp: Footprint;
   pkg: string;
+  info: PackageInfo;
   x: number;
   y: number;
   rot: number;
@@ -84,7 +86,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       missing.push(comp.refdes);
       continue;
     }
-    items.push({ comp, card, fp: fp.footprint, pkg: pkg.name, x: 0, y: 0, rot: 0, fixed: false, cw: fp.footprint.courtyard.w, ch: fp.footprint.courtyard.h });
+    items.push({ comp, card, fp: fp.footprint, pkg: pkg.name, info: pkg, x: 0, y: 0, rot: 0, fixed: false, cw: fp.footprint.courtyard.w, ch: fp.footprint.courtyard.h });
   }
 
   /* ---- start from the schematic ---- */
@@ -465,6 +467,7 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     ...((it.comp.params.mpn ?? it.card.mpn) ? { mpn: it.comp.params.mpn ?? it.card.mpn } : {}),
     ...(it.card.manufacturer ? { manufacturer: it.card.manufacturer } : {}),
     pkg: it.pkg,
+    pkgInfo: it.info,
     x: r3(it.x),
     y: r3(it.y),
     rot: it.rot,

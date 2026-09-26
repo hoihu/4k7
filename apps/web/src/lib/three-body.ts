@@ -1,14 +1,15 @@
 /**
- * three.js scene for a generated package body (Body3D from @tracewise/parts). Loaded on demand;
- * the board's 3D view will build its meshes from the same Body3D data.
+ * three.js views, loaded on demand: a single package body (Parts view) and the assembled board
+ * (Layout view). Both are built from Body3D data (@tracewise/parts) and the board view model.
  *
- * Body3D coordinates: millimetres, x right and y down as in the footprint's top view, z up.
- * three.js is y-up, so (x, y, z) → (x, z, y); a camera above, looking down, then shows the part
- * exactly like the footprint (pin 1 top left).
+ * Body3D and board coordinates: millimetres, x right and y down as in the top view, z up.
+ * three.js is y-up, so (x, y, z) → (x, z, y); a camera above, looking down, then shows the
+ * part or board exactly like the footprint / 2D layout (pin 1 top left).
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Body3D } from '@tracewise/parts';
+import type { BoardView } from '@tracewise/schema';
 
 export type ViewPreset = 'iso' | 'top' | 'bottom' | 'front';
 
@@ -19,13 +20,40 @@ export interface BodyViewer {
   dispose(): void;
 }
 
-const COLORS = { body: 0x2e3137, lead: 0xc9ccd2, mark: 0x8a8e96 };
+export interface BoardViewer {
+  /** Keeps the camera when only the content changes (same board size). */
+  setBoard(board: BoardView, bodies: Map<string, Body3D>): void;
+  view(preset: ViewPreset): void;
+  resize(width: number, height: number): void;
+  dispose(): void;
+}
 
-export function createBodyViewer(canvas: HTMLCanvasElement): BodyViewer {
+const THICKNESS = 1.6;
+const CU = 0.035;
+
+/** Geometry and materials shared by everything one viewer draws. */
+function resources() {
+  return {
+    unitBox: new THREE.BoxGeometry(1, 1, 1),
+    ball: new THREE.SphereGeometry(1, 20, 14),
+    cyl: new THREE.CylinderGeometry(1, 1, 1, 24),
+    body: new THREE.MeshStandardMaterial({ color: 0x2e3137, roughness: 0.75, metalness: 0.05 }),
+    lead: new THREE.MeshStandardMaterial({ color: 0xc9ccd2, roughness: 0.35, metalness: 0.75 }),
+    mark: new THREE.MeshStandardMaterial({ color: 0x8a8e96, roughness: 0.9 }),
+    mask: new THREE.MeshStandardMaterial({ color: 0x1d5a33, roughness: 0.55, metalness: 0.05 }),
+    cuUnderMask: new THREE.MeshStandardMaterial({ color: 0x2f7f4c, roughness: 0.5, metalness: 0.1 }),
+    pad: new THREE.MeshStandardMaterial({ color: 0xd6aa55, roughness: 0.3, metalness: 0.85 }),
+    hole: new THREE.MeshBasicMaterial({ color: 0x07090c }),
+    edge: new THREE.MeshStandardMaterial({ color: 0xc9b98a, roughness: 0.8 }),
+  };
+}
+type Res = ReturnType<typeof resources>;
+
+/** A viewer core: renderer, lights, camera and orbit controls around one content group. */
+function viewerCore(canvas: HTMLCanvasElement) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-
   const scene = new THREE.Scene();
   scene.add(new THREE.HemisphereLight(0xe8eefc, 0x1a1d24, 1.6));
   const key = new THREE.DirectionalLight(0xffffff, 2.2);
@@ -34,84 +62,26 @@ export function createBodyViewer(canvas: HTMLCanvasElement): BodyViewer {
   const rim = new THREE.DirectionalLight(0x9fb4ff, 0.8);
   rim.position.set(4, 3, -5);
   scene.add(rim);
-  const under = new THREE.DirectionalLight(0xd8e0ff, 1.1); // so the underside (BGA balls) is readable
+  const under = new THREE.DirectionalLight(0xd8e0ff, 1.1); // so undersides (BGA balls, bottom copper) are readable
   under.position.set(2, -6, 3);
   scene.add(under);
 
   const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 1000);
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = false;
-  controls.maxPolarAngle = Math.PI * 0.95; // allow a look underneath (BGA balls), not a full flip
+  controls.maxPolarAngle = Math.PI * 0.95;
   const render = () => renderer.render(scene, camera);
   controls.addEventListener('change', render);
-
-  const mats = {
-    body: new THREE.MeshStandardMaterial({ color: COLORS.body, roughness: 0.75, metalness: 0.05 }),
-    lead: new THREE.MeshStandardMaterial({ color: COLORS.lead, roughness: 0.35, metalness: 0.75 }),
-    mark: new THREE.MeshStandardMaterial({ color: COLORS.mark, roughness: 0.9 }),
-  };
-  const unitBox = new THREE.BoxGeometry(1, 1, 1);
-  const ballGeo = new THREE.SphereGeometry(1, 20, 14);
+  const res = resources();
   let group = new THREE.Group();
   scene.add(group);
   let radius = 10;
 
-  function clear() {
-    scene.remove(group);
-    group.traverse((o) => {
+  function disposeGroup(g: THREE.Group) {
+    g.traverse((o) => {
       if (o instanceof THREE.InstancedMesh) o.dispose();
-      if (o instanceof THREE.Mesh && o.geometry !== unitBox && o.geometry !== ballGeo) o.geometry.dispose();
+      if (o instanceof THREE.Mesh && ![res.unitBox, res.ball, res.cyl].includes(o.geometry as never)) o.geometry.dispose();
     });
-    group = new THREE.Group();
-    scene.add(group);
-  }
-
-  function setBody(body: Body3D) {
-    clear();
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    // boxes, one instanced mesh per material (hundreds of leads are one draw call)
-    for (const mat of ['body', 'lead', 'mark'] as const) {
-      const boxes = body.boxes.filter((b) => b.mat === mat);
-      if (!boxes.length) continue;
-      const mesh = new THREE.InstancedMesh(unitBox, mats[mat], boxes.length);
-      boxes.forEach((b, i) => {
-        const [x0, y0, z0] = b.min;
-        const [x1, y1, z1] = b.max;
-        m.compose(
-          new THREE.Vector3((x0 + x1) / 2, (z0 + z1) / 2, (y0 + y1) / 2),
-          q,
-          new THREE.Vector3(Math.max(x1 - x0, 1e-4), Math.max(z1 - z0, 1e-4), Math.max(y1 - y0, 1e-4)),
-        );
-        mesh.setMatrixAt(i, m);
-      });
-      group.add(mesh);
-    }
-    if (body.balls.length) {
-      const mesh = new THREE.InstancedMesh(ballGeo, mats.lead, body.balls.length);
-      body.balls.forEach((b, i) => {
-        m.compose(new THREE.Vector3(b.c[0], b.c[2], b.c[1]), q, new THREE.Vector3(b.r, b.r * 0.85, b.r)); // slightly flattened
-        mesh.setMatrixAt(i, m);
-      });
-      group.add(mesh);
-    }
-    // pin-1 mark: a shallow dimple disc on the top face
-    const p = body.pin1;
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(p.r, 24), mats.mark);
-    disc.rotation.x = -Math.PI / 2;
-    disc.position.set(p.x, p.z + 0.002, p.y);
-    group.add(disc);
-
-    const box = new THREE.Box3().setFromObject(group);
-    const sphere = box.getBoundingSphere(new THREE.Sphere());
-    radius = Math.max(sphere.radius, 0.5);
-    controls.target.copy(sphere.center);
-    controls.minDistance = radius * 0.6;
-    controls.maxDistance = radius * 12;
-    camera.near = radius / 100;
-    camera.far = radius * 50;
-    camera.updateProjectionMatrix();
-    view('iso');
   }
 
   function view(preset: ViewPreset) {
@@ -127,26 +97,182 @@ export function createBodyViewer(canvas: HTMLCanvasElement): BodyViewer {
     render();
   }
 
-  function resize(width: number, height: number) {
-    if (width < 1 || height < 1) return;
-    renderer.setSize(width, height, false);
-    camera.aspect = width / height;
-    camera.updateProjectionMatrix();
-    render();
-  }
-
   return {
-    setBody,
+    res,
+    /** Replace the content; refit the camera unless `keepView`. */
+    setContent(next: THREE.Group, keepView = false) {
+      scene.remove(group);
+      disposeGroup(group);
+      group = next;
+      scene.add(group);
+      if (!keepView) {
+        const sphere = new THREE.Box3().setFromObject(group).getBoundingSphere(new THREE.Sphere());
+        radius = Math.max(sphere.radius, 0.5);
+        controls.target.copy(sphere.center);
+        controls.minDistance = radius * 0.3;
+        controls.maxDistance = radius * 12;
+        camera.near = radius / 100;
+        camera.far = radius * 50;
+        camera.updateProjectionMatrix();
+        view('iso');
+      } else render();
+    },
     view,
-    resize,
+    resize(width: number, height: number) {
+      if (width < 1 || height < 1) return;
+      renderer.setSize(width, height, false);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      render();
+    },
     dispose() {
       controls.removeEventListener('change', render);
       controls.dispose();
-      clear();
-      unitBox.dispose();
-      ballGeo.dispose();
-      for (const mt of Object.values(mats)) mt.dispose();
+      disposeGroup(group);
+      for (const v of Object.values(res)) (v as { dispose(): void }).dispose();
       renderer.dispose();
     },
+  };
+}
+
+/** Meshes of one package body, in its own coordinates (origin = package centre, board surface at 0). */
+function bodyGroup(body: Body3D, res: Res): THREE.Group {
+  const group = new THREE.Group();
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  for (const mat of ['body', 'lead', 'mark'] as const) {
+    const boxes = body.boxes.filter((b) => b.mat === mat);
+    if (!boxes.length) continue;
+    const mesh = new THREE.InstancedMesh(res.unitBox, res[mat], boxes.length);
+    boxes.forEach((b, i) => {
+      const [x0, y0, z0] = b.min;
+      const [x1, y1, z1] = b.max;
+      m.compose(new THREE.Vector3((x0 + x1) / 2, (z0 + z1) / 2, (y0 + y1) / 2), q, new THREE.Vector3(Math.max(x1 - x0, 1e-4), Math.max(z1 - z0, 1e-4), Math.max(y1 - y0, 1e-4)));
+      mesh.setMatrixAt(i, m);
+    });
+    group.add(mesh);
+  }
+  if (body.balls.length) {
+    const mesh = new THREE.InstancedMesh(res.ball, res.lead, body.balls.length);
+    body.balls.forEach((b, i) => {
+      m.compose(new THREE.Vector3(b.c[0], b.c[2], b.c[1]), q, new THREE.Vector3(b.r, b.r * 0.85, b.r));
+      mesh.setMatrixAt(i, m);
+    });
+    group.add(mesh);
+  }
+  const p = body.pin1;
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(p.r, 24), res.mark);
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.set(p.x, p.z + 0.002, p.y);
+  group.add(disc);
+  return group;
+}
+
+/** The assembled board: substrate with solder mask, copper, holes and every part body. */
+function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res): THREE.Group {
+  const group = new THREE.Group();
+  const { w, h } = b.outline;
+  const board = new THREE.Mesh(res.unitBox, [res.edge, res.edge, res.mask, res.mask, res.edge, res.edge]);
+  board.scale.set(w, THICKNESS, h);
+  board.position.set(w / 2, -THICKNESS / 2, h / 2);
+  group.add(board);
+
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const surfaceY = (layer: string) => (layer === 'B.Cu' ? -THICKNESS - CU / 2 : CU / 2);
+  const onBottom = (layer: string) => layer === 'B.Cu';
+  const layerY = (layer: string) => (onBottom(layer) ? -THICKNESS : 0);
+
+  /* pads (exposed copper) */
+  const rects: THREE.Matrix4[] = [];
+  const rounds: THREE.Matrix4[] = [];
+  const holes: THREE.Matrix4[] = [];
+  for (const part of b.parts) {
+    for (const p of part.pads) {
+      const layers = p.drill ? ['F.Cu', 'B.Cu'] : p.layers.filter((l) => l === 'F.Cu' || l === 'B.Cu');
+      for (const l of layers) {
+        const y = surfaceY(l);
+        const mm = new THREE.Matrix4();
+        if (p.shape === 'round') rounds.push(mm.compose(new THREE.Vector3(p.x, y, p.y), q, new THREE.Vector3(Math.min(p.w, p.h) / 2, CU, Math.min(p.w, p.h) / 2)));
+        else rects.push(mm.compose(new THREE.Vector3(p.x, y, p.y), q, new THREE.Vector3(p.w, CU, p.h)));
+        if (p.drill) holes.push(new THREE.Matrix4().compose(new THREE.Vector3(p.x, layerY(l) + (onBottom(l) ? -CU - 0.002 : CU + 0.002), p.y), q, new THREE.Vector3(p.drill / 2, 0.001, p.drill / 2)));
+      }
+    }
+  }
+  const instanced = (geo: THREE.BufferGeometry, mat: THREE.Material, list: THREE.Matrix4[]) => {
+    if (!list.length) return;
+    const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach((mx, i) => mesh.setMatrixAt(i, mx));
+    group.add(mesh);
+  };
+  instanced(res.unitBox, res.pad, rects);
+  instanced(res.cyl, res.pad, rounds);
+
+  /* tracks (under the solder mask) */
+  const segs: THREE.Matrix4[] = [];
+  const joints: THREE.Matrix4[] = [];
+  for (const t of b.tracks) {
+    if (t.layer !== 'F.Cu' && t.layer !== 'B.Cu') continue; // inner layers are hidden inside the board
+    const y = surfaceY(t.layer);
+    for (let i = 0; i + 3 < t.pts.length; i += 2) {
+      const [ax, ay, bx, by] = [t.pts[i]!, t.pts[i + 1]!, t.pts[i + 2]!, t.pts[i + 3]!];
+      const len = Math.hypot(bx - ax, by - ay);
+      if (len < 1e-6) continue;
+      const rot = new THREE.Quaternion().setFromAxisAngle(up, -Math.atan2(by - ay, bx - ax));
+      segs.push(new THREE.Matrix4().compose(new THREE.Vector3((ax + bx) / 2, y, (ay + by) / 2), rot, new THREE.Vector3(len, CU * 0.9, t.width)));
+      // round joints so bends look continuous
+      joints.push(new THREE.Matrix4().compose(new THREE.Vector3(bx, y, by), q, new THREE.Vector3(t.width / 2, CU * 0.9, t.width / 2)));
+      if (i === 0) joints.push(new THREE.Matrix4().compose(new THREE.Vector3(ax, y, ay), q, new THREE.Vector3(t.width / 2, CU * 0.9, t.width / 2)));
+    }
+  }
+  instanced(res.unitBox, res.cuUnderMask, segs);
+  instanced(res.cyl, res.cuUnderMask, joints);
+
+  /* vias: tented rings on both sides, hole in the middle */
+  const vias: THREE.Matrix4[] = [];
+  for (const v of b.vias) {
+    for (const l of ['F.Cu', 'B.Cu']) {
+      vias.push(new THREE.Matrix4().compose(new THREE.Vector3(v.x, surfaceY(l), v.y), q, new THREE.Vector3(v.pad / 2, CU, v.pad / 2)));
+      holes.push(new THREE.Matrix4().compose(new THREE.Vector3(v.x, layerY(l) + (onBottom(l) ? -CU - 0.002 : CU + 0.002), v.y), q, new THREE.Vector3(v.drill / 2, 0.001, v.drill / 2)));
+    }
+  }
+  instanced(res.cyl, res.cuUnderMask, vias);
+  instanced(res.cyl, res.hole, holes);
+
+  /* parts */
+  for (const part of b.parts) {
+    const body = bodies.get(part.componentId);
+    if (!body) continue;
+    const g = bodyGroup(body, res);
+    g.rotation.y = -(part.rot * Math.PI) / 180; // clockwise in the top view
+    g.position.set(part.x, CU, part.y);
+    group.add(g);
+  }
+  return group;
+}
+
+export function createBodyViewer(canvas: HTMLCanvasElement): BodyViewer {
+  const core = viewerCore(canvas);
+  return {
+    setBody: (body) => core.setContent(bodyGroup(body, core.res)),
+    view: core.view,
+    resize: core.resize,
+    dispose: core.dispose,
+  };
+}
+
+export function createBoardViewer(canvas: HTMLCanvasElement): BoardViewer {
+  const core = viewerCore(canvas);
+  let size = '';
+  return {
+    setBoard(board, bodies) {
+      const key = `${board.outline.w}x${board.outline.h}`;
+      core.setContent(boardGroup(board, bodies, core.res), key === size);
+      size = key;
+    },
+    view: core.view,
+    resize: core.resize,
+    dispose: core.dispose,
   };
 }

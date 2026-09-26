@@ -2,6 +2,7 @@
   import { fabFiles, zip } from '@tracewise/fab';
   import type { BoardDiagnostic, CopperLayer } from '@tracewise/schema';
   import { app } from '../app.svelte.ts';
+  import Board3DView from './Board3DView.svelte';
   import BoardCanvas from './BoardCanvas.svelte';
   import Chat from './Chat.svelte';
 
@@ -13,6 +14,7 @@
   const b = $derived(app.board);
   let show = $state<Record<string, boolean>>({ 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true });
   let hotNet = $state<string | null>(null);
+  let mode = $state<'2d' | '3d'>('2d');
   let marker = $state<{ x: number; y: number } | null>(null);
   const netName = (id: string | null) => (id ? (b?.netNames[id] ?? id) : '');
   const errors = $derived(b?.diagnostics.filter((d) => d.severity === 'error').length ?? 0);
@@ -54,6 +56,8 @@
 <section class="lay" class:nochat={!app.chatOpen}>
   <div class="col chatcol">{#if app.chatOpen}<Chat />{/if}</div>
   <div class="col canvas">
+    {#if mode === '3d' && b}<Board3DView board={b} />{/if}
+    <div class="stage2d" class:hidden={mode === '3d'}>
     <BoardCanvas
       board={b}
       {show}
@@ -65,8 +69,10 @@
       onhovernet={(n) => (hotNet = n)}
       onplace={(ref, x, y, rot) => void app.userEdit(`Place ${ref}`, [{ op: 'place', ref, x_mm: x, y_mm: y, rot }])}
     />
+    </div>
     <div class="fl tl">
       {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
+      <div class="seg"><button aria-pressed={mode === '2d'} onclick={() => (mode = '2d')}>2D</button><button aria-pressed={mode === '3d'} onclick={() => (mode = '3d')}>3D</button></div>
       {#if app.boardBusy}<span class="busy">updating…</span>{/if}
     </div>
     {#if app.k?.proposal}
@@ -81,7 +87,7 @@
       <div class="blank"><p><b>No parts yet.</b> Draw the circuit in the schematic (or ask the agent); the board is placed from it automatically.</p></div>
     {/if}
     <div class="status">
-      <span>click = reference · drag part = pin it there · R = rotate · drag board = pan · wheel = zoom</span>
+      <span>{mode === '3d' ? 'drag = rotate · right-drag = pan · wheel = zoom' : 'click = reference · drag part = pin it there · R = rotate · drag board = pan · wheel = zoom'}</span>
       <span class="sp mono">{hotNet ? netName(hotNet) : app.selection.join(' ') || '—'}</span>
     </div>
   </div>
@@ -130,7 +136,14 @@
   .col { background: var(--panel); min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   .canvas { position: relative; background: var(--canvas); }
   .fl { position: absolute; display: flex; gap: 6px; align-items: center; }
-  .tl { top: 8px; left: 8px; }
+  .tl { top: 8px; left: 8px; z-index: 2; }
+  .stage2d { position: absolute; inset: 0; }
+  .stage2d.hidden { visibility: hidden; }
+  .seg { display: inline-flex; }
+  .seg button { border: 1px solid var(--line-2); background: var(--panel); color: var(--txt-2); padding: 2px 10px; font-size: 12px; cursor: pointer; }
+  .seg button:first-child { border-radius: 6px 0 0 6px; }
+  .seg button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
+  .seg button[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent-txt); }
   .busy { font-size: 11px; color: var(--txt-3); background: var(--panel); padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); }
   .pend { top: 8px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px 4px 10px; box-shadow: var(--shadow); font-size: 12px; max-width: calc(100% - 24px); }
   .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex: none; }
