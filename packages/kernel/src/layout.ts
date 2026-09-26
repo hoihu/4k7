@@ -187,8 +187,15 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   const scene = emptyScene();
   let rowTop = 0;
   let maxRight = 0;
-  for (const [ri, row] of rows.entries()) {
+  for (let [ri, row] of rows.entries()) {
     const cells = row.map((a) => (flows.has(a.id) ? flowCell(ctx, flows.get(a.id)!) : buildCell(ctx, plans.get(a.id)!)));
+    // connectors stack in one column, one below the other, where the first of them is
+    const connectorIdx = row.flatMap((a, i) => (cardFor(a).category === 'connector' ? [i] : []));
+    if (connectorIdx.length > 1) {
+      cells.splice(connectorIdx[0]!, 1, stackCells(connectorIdx.map((i) => cells[i]!)));
+      for (const i of connectorIdx.slice(1).reverse()) cells.splice(i, 1);
+      row = row.filter((_, i) => !connectorIdx.slice(1).includes(i));
+    }
     if (ri === 0 && bridges.length) {
       // signal flow: connector → rectifier → the rest
       const after = row.findIndex((a) => anchorRank(d, a) > 0);
@@ -235,6 +242,23 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     ...scene,
   };
 }
+
+/** Stack cells vertically (their anchors share the local origin, so they line up). */
+function stackCells(cells: Scene[]): Scene {
+  const out = emptyScene();
+  let y: number | null = null;
+  for (const cell of cells) {
+    const bb = sceneBBox(cell);
+    const dy: number = y === null ? 0 : y - bb.y;
+    translateScene(cell, 0, dy);
+    y = bb.y + dy + bb.h + STACK_GAP;
+    mergeScene(out, cell);
+  }
+  return out;
+}
+
+/** Space between stacked cells (connectors). */
+const STACK_GAP = 200;
 
 /* ------------------------------ assignment -------------------------------- */
 
