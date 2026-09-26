@@ -8,6 +8,7 @@ geometry and checks every change.
 - **Bring your own AI**: Anthropic, OpenAI-compatible (incl. OpenRouter), Gemini, or local models (Ollama / LM Studio).
 - **Bring your own tools**: attach any MCP server (distributor stock, company part DB, simulation…).
 - **Parts from datasheets**: drop a manufacturer PDF (Parts → Import from datasheet); your local Claude Code extracts the pin table and package, the app checks it, and deterministic generators build the symbol and footprint.
+- **Schematic to manufacturing files**: the board is placed and routed automatically from the schematic (with a ground pour), checked by DRC, shown in 2D and 3D, and exported as Gerber, drill, BOM and pick-and-place. Steer it in words ("make the board 30 × 20 mm", "put J1 at the left edge") or drag parts to pin them.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
 - **Local-first**: runs entirely in the browser. Your designs and API keys stay on your machine.
 
@@ -90,15 +91,16 @@ runs elsewhere and `TRACEWISE_CLAUDE_BIN` if `claude` is not on your PATH.
 | Path | What |
 |---|---|
 | `packages/schema` | Design model, part cards, zod op catalogue, results, units, agent tool definitions |
-| `packages/parts` | Seed part library, deterministic symbol generator |
-| `packages/kernel` | Transactions, ERC + datasheet checks, constraint ledger, schematic auto-layout, changesets, canonical JSON |
+| `packages/parts` | Seed part library, deterministic symbol, footprint and 3D-body generators, standard packages, datasheet import checks |
+| `packages/kernel` | Transactions, ERC + datasheet checks, constraint ledger, schematic auto-layout, board placement, autorouter + ground pour, copper DRC, changesets, canonical JSON |
+| `packages/fab` | Gerber X2, Excellon drill, BOM, pick-and-place, zip |
 | `packages/agent` | Agent loop with kernel verification, calculators, Anthropic + offline providers |
 | `apps/web` | Svelte 5 app: schematic workspace (chat + canvas + inspector), parts, settings. The kernel runs in a Web Worker |
 | `tools/bridge` | Local relay to Claude Code: MCP over stdio (CLI drives the app) or headless `claude -p` for the app chat, WebSocket to the tab, pairing and origin checks |
 
 ## Status
 
-**M0 (schematic)** is in progress. Working now: the full loop from prompt → typed ops → atomic transactions → checks →
+**M0 (schematic)** is in progress, and a first slice of **M2/M3 (board, routing, fab)** works end to end for small boards (see [ARCHITECTURE.md](docs/ARCHITECTURE.md#m2m3-first-slice-board-routing-fab-2026-09-26)). Working now: the full loop from prompt → typed ops → atomic transactions → checks →
 auto-layout → reviewable changeset with per-change accept, a constraint ledger that survives re-layout, undo, and local
 persistence. Deviations from the architecture for now: the kernel is TypeScript behind the same API (Rust/WASM later),
 the document is stored as plain JSON (the CRDT arrives with collaboration), and there is one in-app provider (Anthropic) plus the Claude Code bridge.

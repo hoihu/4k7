@@ -218,7 +218,7 @@
   .substrate { fill: #0f2a22; }
   .edge { fill: none; stroke: #e0c341; stroke-width: 0.15; }
   .layer path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-  .layer path.zone { stroke: none; opacity: 0.28; }
+  .layer path.zone { stroke: none; opacity: 0.16; }
   .fcu path.zone { fill: #c9463d; }
   .bcu path.zone { fill: #3f7fd6; }
   .in1 path.zone { fill: #c9a13d; }

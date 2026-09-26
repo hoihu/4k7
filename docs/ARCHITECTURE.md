@@ -279,6 +279,18 @@ Pulled forward from M4: the **Claude Code bridge** (`tools/bridge`), an MCP serv
 
 Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models, and layout quality on 30+ part designs.
 
+### M2/M3 first slice: board, routing, fab (2026-09-26)
+
+The schematic-to-manufacturing path works end to end for small boards:
+- **Footprints for every part**: standard packages (chip sizes, SOD/SMA, SOT-23/-5/-6/-223, SOIC, pin headers) plus imported package data (QFP/QFN/DFN/SO*/BGA/DIP) through one generator; the part's `package` parameter selects the size.
+- **Board model**: `Design.board` (outline or sized to fit, 2/4 layers, rules), ops `set_board` and `place` (a hard `position` constraint), query `get_board`. Placement and routing are derived, like the schematic.
+- **Placer** (`kernel/board.ts`): starts from the schematic grouping, relaxes with net springs (supply/ground weak), one decoupling cap per supply pin, `near` constraints, courtyard separation; best rotation for two-pin parts; pinned parts are fixed and the rest stays in the board frame (and inside a fixed outline).
+- **Router** (`kernel/router.ts`): grid maze router (0.1 mm, 45°, vias) with clearance built into per-width maps, MST connection order, reserved fine-pitch escapes, retries; ground pour on B.Cu (In1.Cu on 4 layers) with via drops. Independent copper DRC (`kernel/drc.ts`).
+- **Fab outputs** (`packages/fab`): Gerber X2 (copper, mask, paste, silkscreen, outline, pours as regions), Excellon, BOM, pick-and-place, one zip; verified with tracespace's parser/renderer.
+- **Layout workspace**: 2D board (pads, tracks, pours, ratsnest, silk), drag to pin, R to rotate, unpin, DRC list, fab download, and a three.js 3D board built from the same package bodies as the Parts view.
+
+Not yet: bottom-side placement, differential pairs and length/impedance rules, thermal reliefs, non-rectangular outlines, a push-and-shove router for dense boards (the maze router is order-sensitive), and a real fab order as the exit test.
+
 ## 8. Main risks
 
 | Risk | Mitigation |
