@@ -112,6 +112,14 @@ export const RemoveWaiverOp = z.object({
   id: z.string(),
 });
 
+export const SetSymbolOp = z.object({
+  op: z.literal('set_symbol'),
+  ref: componentRef.describe('A component using the part, e.g. "U3"'),
+  style: z
+    .enum(['single', 'units'])
+    .describe('units: draw a big IC as several symbols (U1A power/system, U1B… two GPIO ports each); single: one symbol. Pins, nets and refdes stay the same; applies to every component of that part.'),
+});
+
 export const EditOp = z.discriminatedUnion('op', [
   AddPartOp,
   RemoveOp,
@@ -127,6 +135,7 @@ export const EditOp = z.discriminatedUnion('op', [
   RemoveConstraintOp,
   AddWaiverOp,
   RemoveWaiverOp,
+  SetSymbolOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
 export type EditOpName = EditOp['op'];

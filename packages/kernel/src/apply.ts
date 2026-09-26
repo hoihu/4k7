@@ -12,7 +12,7 @@ import {
   type OpResult,
   type PartCard,
 } from '@tracewise/schema';
-import { searchParts } from '@tracewise/parts';
+import { isTwoPin, planUnits, searchParts } from '@tracewise/parts';
 import {
   allocRefdes,
   cardOf,
@@ -22,6 +22,7 @@ import {
   findNet,
   isAutoNet,
   mergeNet,
+  natCmp,
   nextId,
   pinLabel,
   reject,
@@ -65,6 +66,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       d.waivers[id] = { id, code: op.code, entities: [...op.entities], reason: op.reason, by: 'agent' };
       return { op: op.op, effect: `waived ${op.code} for ${op.entities.join(', ')}`, ids: [id] };
     }
+    case 'set_symbol':
+      return setSymbol(d, op.ref, op.style);
     case 'remove_waiver': {
       if (!d.waivers[op.id]) reject({ code: 'WAIVER_UNKNOWN', message: `No waiver ${op.id}.`, candidates: Object.keys(d.waivers) });
       delete d.waivers[op.id];
@@ -74,6 +77,22 @@ export function applyOp(d: Design, op: EditOp): OpResult {
 }
 
 /* --------------------------------- parts ---------------------------------- */
+
+/** Draw a part as one symbol or as units. Changes the design's copy of the part card only. */
+function setSymbol(d: Design, ref: string, style: 'single' | 'units'): OpResult {
+  const comp = resolveComponent(d, ref);
+  const card = cardOf(d, comp.part)!;
+  if (style === 'units' && (isTwoPin(card) || card.pins.length < 12)) {
+    reject({ code: 'SYMBOL_STYLE', message: `${comp.refdes} (${card.id}) has ${card.pins.length} pins; only large ICs can be split into units.` });
+  }
+  const users = Object.values(d.components).filter((c) => c.part === card.id).map((c) => c.refdes).sort(natCmp);
+  const copy: PartCard = structuredClone(card);
+  if (style === 'units') copy.units = planUnits(copy.pins);
+  else delete copy.units;
+  d.parts[card.id] = copy;
+  const what = style === 'units' ? `${copy.units!.length} units (${copy.units!.map((u) => `${u.name}: ${u.title}`).join('; ')})` : 'one symbol';
+  return { op: 'set_symbol', effect: `${users.join(', ')} drawn as ${what}`, ids: [card.id] };
+}
 
 function lookupCard(d: Design, id: string): PartCard {
   const card = cardOf(d, id);

@@ -41,6 +41,25 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     }
   }
 
+  /* part cards drawn differently (set_symbol); cards come and go with their components */
+  for (const id of Object.keys(draft.parts)) {
+    const a = base.parts[id];
+    const b = draft.parts[id]!;
+    if (!a) continue;
+    const ua = a.units?.length ?? 0;
+    const ub = b.units?.length ?? 0;
+    if (ua === ub && JSON.stringify(a.units ?? null) === JSON.stringify(b.units ?? null)) continue;
+    const users = Object.values(draft.components).filter((c) => c.part === id).map((c) => c.refdes).sort(natCmp);
+    hunks.push({
+      id: `part:${id}`,
+      kind: 'part',
+      change: 'change',
+      entityId: id,
+      title: `${users.join(', ') || id} symbol: ${ua ? `${ua} units` : 'single'} → ${ub ? `${ub} units` : 'single'}`,
+      details: [id, ...(b.units?.map((u) => `${u.name}: ${u.title}`) ?? [])],
+    });
+  }
+
   /* nets: attribute and name changes only (membership is carried by components) */
   for (const id of new Set([...Object.keys(base.nets), ...Object.keys(draft.nets)])) {
     const a = base.nets[id];
@@ -76,7 +95,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     if (!base.sheets[id]) hunks.push({ id: `sheet:${id}`, kind: 'sheet', change: 'add', entityId: id, title: `sheet ${draft.sheets[id]!.name}`, details: [] });
   }
 
-  const order = { component: 0, net: 1, sheet: 2, constraint: 3, waiver: 4 };
+  const order = { component: 0, part: 1, net: 2, sheet: 3, constraint: 4, waiver: 5 };
   const changeOrder = { add: 0, change: 1, remove: 2 };
   return hunks.sort((x, y) => order[x.kind] - order[y.kind] || changeOrder[x.change] - changeOrder[y.change] || natCmp(x.title, y.title));
 }
@@ -142,6 +161,9 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
         d.components[entity] = copy;
         break;
       }
+      case 'part':
+        if (draft.parts[entity]) d.parts[entity] = clone(draft.parts[entity]!);
+        break;
       case 'constraint':
         if (draft.ledger[entity]) d.ledger[entity] = clone(draft.ledger[entity]!);
         else delete d.ledger[entity];

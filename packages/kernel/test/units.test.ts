@@ -27,8 +27,12 @@ function mcu(split: boolean): PartCard {
 }
 
 const split = mcu(true);
-registerUserParts([split]);
-afterAll(() => unregisterUserPart(split.id));
+const single = mcu(false);
+registerUserParts([split, single]);
+afterAll(() => {
+  unregisterUserPart(split.id);
+  unregisterUserPart(single.id);
+});
 
 describe('split symbols', () => {
   it('draws each unit as its own symbol and attaches parts to the unit that has the pin', () => {
@@ -62,5 +66,38 @@ describe('split symbols', () => {
     // the decap sits under the power unit (A)
     const c1 = sheet.symbols.find((s) => s.refdes === 'C1')!;
     expect(c1.bbox.x).toBeLessThan(unitB.bbox.x);
+  });
+
+  it('switches a placed, wired part to units and back without touching its wiring (set_symbol)', () => {
+    const k = new Kernel();
+    const pa0 = single.pins.find((p) => p.name === 'PA0')!.number;
+    k.transact({
+      summary: 'mcu',
+      ops: [
+        { op: 'add_part', part: single.id, refdes: 'U3' },
+        { op: 'add_part', part: 'generic:R', refdes: 'R1', params: { resistance: '10k' } },
+        { op: 'connect', pins: [`U3.${pa0}`, 'R1.1'], net: 'LED' },
+        { op: 'connect', pins: ['R1.2', 'U3.23', 'U3.35', 'U3.47', 'U3.8'], net: 'GND' },
+        { op: 'connect', pins: ['U3.24', 'U3.36', 'U3.48', 'U3.9', 'U3.1'], net: '+3V3' },
+      ],
+    });
+    k.accept();
+    const before = k.exportDesign();
+    const pinsOf = (json: string) => JSON.stringify(Object.values(JSON.parse(json).components as Record<string, { refdes: string; pins: unknown }>).map((c) => [c.refdes, c.pins]));
+
+    k.transact({ summary: 'split U3', ops: [{ op: 'set_symbol', ref: 'U3', style: 'units' }] });
+    const p = k.proposal()!;
+    expect(p.hunks.map((h) => [h.kind, h.title])).toEqual([['part', 'U3 symbol: single → 3 units']]);
+    k.accept([p.hunks[0]!.id], 'user');
+    const units = k.state().view.sheets[0]!.symbols.filter((s) => s.refdes === 'U3');
+    expect(units.map((s) => s.unit)).toEqual(['A', 'B', 'C']);
+    expect(pinsOf(k.exportDesign())).toBe(pinsOf(before)); // same components, same connections
+
+    k.transact({ summary: 'single again', ops: [{ op: 'set_symbol', ref: 'U3', style: 'single' }] });
+    k.accept();
+    expect(k.state().view.sheets[0]!.symbols.filter((s) => s.refdes === 'U3')).toHaveLength(1);
+
+    const r = k.transact({ summary: 'split a resistor', ops: [{ op: 'set_symbol', ref: 'R1', style: 'units' }] });
+    expect(JSON.stringify(r)).toContain('SYMBOL_STYLE');
   });
 });
