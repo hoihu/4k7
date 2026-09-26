@@ -158,3 +158,34 @@ describe('routing', () => {
     expect(d.some((x) => x.code === 'DRC.SHORT' && x.message.includes('U1.1'))).toBe(true);
   });
 });
+
+describe('planes', () => {
+  it('uses GND and the main supply as inner planes on 4 layers, connected through vias', () => {
+    const k = buck();
+    k.transact({ summary: '4 layers', ops: [{ op: 'set_board', layers: 4 }] });
+    const b = k.board();
+    expect(b.planes.map((p) => [b.netNames[p.netId], p.layer, p.auto])).toEqual([['GND', 'In1.Cu', true], ['+12V', 'In2.Cu', true]]);
+    // no tracks on dedicated planes, and none for the plane nets
+    expect(b.tracks.filter((t) => t.layer === 'In1.Cu' || t.layer === 'In2.Cu')).toEqual([]);
+    expect(b.zones.map((z) => [b.netNames[z.netId], z.layer])).toEqual([['GND', 'In1.Cu'], ['+12V', 'In2.Cu']]);
+    expect(b.stats.unrouted).toBe(0);
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(brokenNets(b)).toEqual([]);
+  });
+
+  it('lets the agent choose planes per layer and refuses layers the board does not have', () => {
+    const k = buck();
+    const r2 = k.transact({ summary: 'x', ops: [{ op: 'set_plane', layer: 'In1.Cu', net: 'GND' }] });
+    expect(JSON.stringify(r2)).toContain('does not exist on a 2-layer board');
+    k.transact({ summary: 'planes', ops: [{ op: 'set_board', layers: 4 }, { op: 'set_plane', layer: 'In2.Cu', net: '+3V3' }] });
+    const b = k.board();
+    expect(b.planes.map((p) => [b.netNames[p.netId], p.layer, p.auto])).toEqual([['GND', 'In1.Cu', false], ['+3V3', 'In2.Cu', false]]);
+    expect(b.stats.unrouted).toBe(0);
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(brokenNets(b)).toEqual([]);
+    k.transact({ summary: 'no plane', ops: [{ op: 'set_plane', layer: 'In2.Cu', net: null }] });
+    expect(k.board().planes.map((p) => p.layer)).toEqual(['In1.Cu']);
+    k.transact({ summary: 'auto', ops: [{ op: 'set_plane', auto: true }] });
+    expect(k.board().planes.every((p) => p.auto)).toBe(true);
+  });
+});

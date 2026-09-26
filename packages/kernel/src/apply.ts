@@ -12,8 +12,10 @@ import {
   type OpResult,
   type PartCard,
   type BoardSettings,
+  type CopperLayer,
   DEFAULT_BOARD,
 } from '@tracewise/schema';
+import { autoPlanes } from './board.ts';
 import { isTwoPin, planUnits, searchParts } from '@tracewise/parts';
 import {
   allocRefdes,
@@ -74,6 +76,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return setBoard(d, op);
     case 'place':
       return place(d, op);
+    case 'set_plane':
+      return setPlane(d, op);
     case 'remove_waiver': {
       if (!d.waivers[op.id]) reject({ code: 'WAIVER_UNKNOWN', message: `No waiver ${op.id}.`, candidates: Object.keys(d.waivers) });
       delete d.waivers[op.id];
@@ -116,6 +120,34 @@ function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): OpResult
   if (!out.length) reject({ code: 'BOARD_INVALID', message: 'set_board needs at least one setting.' });
   d.board = b;
   return { op: 'set_board', effect: `board: ${out.join(', ')}`, ids: ['board'] };
+}
+
+/** Choose the net of a copper plane (or pour) per layer, or go back to automatic planes. */
+function setPlane(d: Design, op: Extract<EditOp, { op: 'set_plane' }>): OpResult {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  if (op.auto) {
+    delete b.planes;
+    d.board = b;
+    return { op: 'set_plane', effect: 'planes: automatic', ids: ['board'] };
+  }
+  if (!op.layer) reject({ code: 'BOARD_INVALID', message: 'set_plane needs a layer (or auto: true).' });
+  const layers = b.layers === 4 ? ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'] : ['F.Cu', 'B.Cu'];
+  if (!layers.includes(op.layer!)) {
+    reject({ code: 'BOARD_INVALID', message: `${op.layer} does not exist on a ${b.layers}-layer board; use set_board layers: 4 for inner planes.`, candidates: layers });
+  }
+  // explicit from now on: start from the automatic planes currently in effect
+  const planes = b.planes ?? autoPlanes(d, b.layers).map(({ netId, layer }) => ({ netId, layer }));
+  const rest = planes.filter((p) => p.layer !== op.layer);
+  if (op.net === null || op.net === undefined) {
+    b.planes = rest;
+    d.board = b;
+    return { op: 'set_plane', effect: `no plane on ${op.layer}`, ids: ['board'] };
+  }
+  const net = findNet(d, op.net);
+  if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${op.net}".`, candidates: Object.values(d.nets).map((n) => n.name) });
+  b.planes = [...rest, { netId: net!.id, layer: op.layer! as CopperLayer }];
+  d.board = b;
+  return { op: 'set_plane', effect: `${net!.name} plane on ${op.layer}${op.layer === 'F.Cu' || op.layer === 'B.Cu' ? ' (pour)' : ' (dedicated)'}`, ids: ['board'] };
 }
 
 /** Pin a part on the board: a hard position constraint (one per part, replaced on re-place). */

@@ -361,6 +361,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     tracks: [],
     vias: [],
     zones: [],
+    planes: settingsPlanes(d, layers.length as 2 | 4),
     ratsnest: ratsnest(parts),
     diagnostics,
     stats: { nets: 0, routed: 0, unrouted: 0, trackLength: 0, vias: 0 },
@@ -374,19 +375,14 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   const b = placeBoard(d, sch);
   if (!b.parts.length) return b;
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
-  // ground plane: the ground net with the most pads, poured on the bottom (2 layers) or In1 (4 layers)
-  const padCount = new Map<string, number>();
-  for (const p of b.parts) for (const pad of p.pads) if (pad.netId) padCount.set(pad.netId, (padCount.get(pad.netId) ?? 0) + 1);
-  const ground = Object.values(d.nets)
-    .filter((n) => isGroundNet(n) && (padCount.get(n.id) ?? 0) >= 2)
-    .sort((x, y) => (padCount.get(y.id) ?? 0) - (padCount.get(x.id) ?? 0) || x.name.localeCompare(y.name))[0];
-  const pour = ground ? { netId: ground.id, layer: (b.layers.length === 4 ? 'In1.Cu' : 'B.Cu') as CopperLayer } : undefined;
-  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, ...(pour ? { pour } : {}), ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
+  const planes = settingsPlanes(d, b.layers.length as 2 | 4);
+  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, planes: planes.map(({ netId, layer }) => ({ netId, layer })), ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
   const routed: BoardView = {
     ...b,
     tracks: r.tracks,
     vias: r.vias,
     zones: r.zones,
+    planes,
     ratsnest: ratsnest(b.parts, r.connected),
     stats: {
       nets: r.netsTotal,
@@ -645,3 +641,34 @@ function placementChecks(parts: BoardPart[], w: number, h: number, edge: number)
   return out;
 }
 
+
+/**
+ * Automatic planes: GND (the ground net with the most pins) on B.Cu for 2 layers; on 4 layers
+ * GND on In1.Cu and the supply net with the most pins on In2.Cu (the usual stack-up).
+ */
+export function autoPlanes(d: Design, layers: 2 | 4): { netId: string; layer: CopperLayer; auto: boolean }[] {
+  const pins = new Map<string, number>();
+  for (const c of Object.values(d.components)) for (const n of Object.values(c.pins)) pins.set(n, (pins.get(n) ?? 0) + 1);
+  const most = (ok: (n: Design['nets'][string]) => boolean) =>
+    Object.values(d.nets)
+      .filter((n) => ok(n) && (pins.get(n.id) ?? 0) >= 2)
+      .sort((x, y) => (pins.get(y.id) ?? 0) - (pins.get(x.id) ?? 0) || x.name.localeCompare(y.name))[0];
+  const ground = most(isGroundNet);
+  const out: { netId: string; layer: CopperLayer; auto: boolean }[] = [];
+  if (layers === 2) {
+    if (ground) out.push({ netId: ground.id, layer: 'B.Cu', auto: true });
+    return out;
+  }
+  if (ground) out.push({ netId: ground.id, layer: 'In1.Cu', auto: true });
+  const supply = most((n) => isPowerNet(n) && !isGroundNet(n));
+  if (supply) out.push({ netId: supply.id, layer: 'In2.Cu', auto: true });
+  return out;
+}
+
+/** Planes in effect: the explicit ones from set_plane, else automatic. */
+function settingsPlanes(d: Design, layers: 2 | 4): { netId: string; layer: CopperLayer; auto: boolean }[] {
+  const explicit = d.board?.planes;
+  if (!explicit) return autoPlanes(d, layers);
+  const valid = new Set<CopperLayer>(layers === 4 ? ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'] : ['F.Cu', 'B.Cu']);
+  return explicit.filter((p) => valid.has(p.layer) && d.nets[p.netId]).map((p) => ({ ...p, auto: false }));
+}

@@ -138,6 +138,13 @@ export const PlaceOp = z.object({
   rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation'),
 });
 
+export const SetPlaneOp = z.object({
+  op: z.literal('set_plane'),
+  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Copper layer; inner layers (4-layer boards) become dedicated planes, outer layers get a pour around the tracks'),
+  net: netName.nullable().optional().describe('Net to pour on that layer (e.g. "GND", "+3V3"); null removes the plane from the layer'),
+  auto: z.boolean().optional().describe('true: back to the automatic planes (GND on B.Cu; on 4 layers GND on In1.Cu and the main supply on In2.Cu)'),
+});
+
 export const EditOp = z.discriminatedUnion('op', [
   AddPartOp,
   RemoveOp,
@@ -156,6 +163,7 @@ export const EditOp = z.discriminatedUnion('op', [
   SetSymbolOp,
   SetBoardOp,
   PlaceOp,
+  SetPlaneOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
 export type EditOpName = EditOp['op'];

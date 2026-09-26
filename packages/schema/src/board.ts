@@ -25,6 +25,12 @@ export interface BoardSettings {
   height?: number;
   layers: 2 | 4;
   rules: BoardRules;
+  /**
+   * Copper planes, one net per layer: inner layers are dedicated planes, outer layers get a
+   * pour. Absent = automatic (2 layers: GND on B.Cu; 4 layers: GND on In1.Cu, the main supply
+   * on In2.Cu).
+   */
+  planes?: { netId: string; layer: CopperLayer }[];
 }
 
 export const DEFAULT_RULES: BoardRules = { clearance: 0.2, track: 0.25, powerTrack: 0.5, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 };
@@ -121,6 +127,8 @@ export interface BoardView {
   tracks: Track[];
   vias: Via[];
   zones: Zone[];
+  /** Planes in effect (net, layer; automatic or set with set_plane). */
+  planes: { netId: string; layer: CopperLayer; auto: boolean }[];
   /** Connections not (yet) made by copper. */
   ratsnest: RatsLine[];
   diagnostics: BoardDiagnostic[];
@@ -139,10 +147,11 @@ export function boardSummary(b: BoardView, routed = true) {
     rules: b.rules,
     parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, pinned: p.locked })),
     routing: routed
-      ? { nets: b.stats.nets, routed: b.stats.routed, unrouted_connections: b.stats.unrouted, vias: b.stats.vias, track_mm: b.stats.trackLength, ground_pour: b.zones.length > 0 }
+      ? { nets: b.stats.nets, routed: b.stats.routed, unrouted_connections: b.stats.unrouted, vias: b.stats.vias, track_mm: b.stats.trackLength }
       : 'not computed here (see the Layout view)',
+    planes: b.planes.map((p) => ({ net: b.netNames[p.netId] ?? p.netId, layer: p.layer, dedicated: p.layer !== 'F.Cu' && p.layer !== 'B.Cu', automatic: p.auto })),
     drc: b.diagnostics.map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
-    note: 'Placement and routing are recomputed automatically from the netlist and the ledger. Pin parts with place, size the board with set_board, keep parts together with constrain near.',
+    note: 'Placement and routing are recomputed automatically from the netlist and the ledger. Pin parts with place, size the board with set_board, keep parts together with constrain near, choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
   };
 }

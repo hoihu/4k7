@@ -20,7 +20,11 @@
   const errors = $derived(b?.diagnostics.filter((d) => d.severity === 'error').length ?? 0);
   const warnings = $derived(b?.diagnostics.filter((d) => d.severity === 'warning').length ?? 0);
   const layerNames: [string, string][] = $derived([
-    ...(b?.layers ?? ['F.Cu', 'B.Cu']).map((l: CopperLayer): [string, string] => [l, l === 'F.Cu' ? 'Top copper' : l === 'B.Cu' ? 'Bottom copper' : l]),
+    ...(b?.layers ?? ['F.Cu', 'B.Cu']).map((l: CopperLayer): [string, string] => {
+      const plane = b?.planes.find((p) => p.layer === l);
+      const name = l === 'F.Cu' ? 'Top copper' : l === 'B.Cu' ? 'Bottom copper' : `Inner ${l.slice(2, 3)}`;
+      return [l, plane ? `${name} · ${b!.netNames[plane.netId] ?? plane.netId} ${l === 'F.Cu' || l === 'B.Cu' ? 'pour' : 'plane'}` : name];
+    }),
     ['silk', 'Silkscreen'],
     ['courtyard', 'Courtyards'],
     ['ratsnest', 'Ratsnest'],
@@ -122,6 +126,15 @@
             <li><label><input type="checkbox" bind:checked={show[key]} /><span class="sw {key.replace('.', '')}"></span>{label}</label></li>
           {/each}
         </ul>
+        <h4>Planes</h4>
+        {#if b.planes.length}
+          <ul class="plain small">
+            {#each b.planes as p (p.layer)}
+              <li><span class="mono">{b.netNames[p.netId] ?? p.netId}</span> on {p.layer} · {p.layer === 'F.Cu' || p.layer === 'B.Cu' ? 'pour around the tracks' : 'dedicated plane'}{p.auto ? ' · automatic' : ''}</li>
+            {/each}
+          </ul>
+        {:else}<p class="small muted">None.</p>{/if}
+        <p class="small muted">Ask the agent, e.g. “4 layers with GND on In1 and +3V3 on In2”.</p>
         <h4>Rules</h4>
         <p class="small mono muted">clearance {b.rules.clearance} · track {b.rules.track} / {b.rules.powerTrack} · via {b.rules.viaPad}/{b.rules.viaDrill} mm</p>
         <p class="small muted">Ask the agent for board changes, e.g. “make the board 40 × 30 mm”, “put J1 at the left edge”, “use 4 layers”.</p>
@@ -159,6 +172,7 @@
   h4 { margin: 12px 0 4px; font-size: 12px; display: flex; gap: 4px; align-items: center; }
   .small { font-size: 11.5px; margin: 2px 0 6px; }
   .wide { width: 100%; margin: 2px 0 4px; }
+  .plain { margin: 0; padding-left: 16px; color: var(--txt-2); }
   .diags, .layers { list-style: none; margin: 0; padding: 0; }
   .diags .r { width: 100%; display: flex; gap: 6px; align-items: flex-start; text-align: left; border: 0; background: none; padding: 3px 2px; font-size: 12px; color: var(--txt-2); cursor: pointer; border-radius: 4px; }
   .diags .r:hover { background: var(--hover); }

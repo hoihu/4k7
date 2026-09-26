@@ -22,8 +22,11 @@ export interface RouteInput {
   parts: BoardPart[];
   /** Nets drawn with power width when their pads allow it. */
   powerNets: Set<string>;
-  /** Pour this net over the free area of this layer (ground plane) and drop its pads onto it. */
-  pour?: { netId: string; layer: CopperLayer };
+  /**
+   * Planes: an inner layer dedicated to one net (no tracks there), or a pour on an outer layer
+   * filling what the tracks leave. Pads of the net drop onto their plane with a via.
+   */
+  planes?: { netId: string; layer: CopperLayer }[];
   /** Stop routing after this many milliseconds; what is left is reported unrouted. */
   budgetMs?: number;
 }
@@ -48,25 +51,30 @@ interface Conn {
   len: number;
 }
 
-export function route(input: RouteInput, passes = 5): RouteResult {
+export function route(input: RouteInput, passes = 8): RouteResult {
   const pads: BoardPad[] = input.parts.flatMap((p) => p.pads);
   const owner = input.parts.flatMap((p) => p.pads.map(() => p));
   const conns = connections(pads);
   let best: ReturnType<typeof routeOnce> | null = null;
-  let order = [...conns].sort((x, y) => x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
+  // nets with a dedicated (inner) plane are connected through it, not with tracks
+  const dedicated = new Set((input.planes ?? []).filter((pl) => !OUTER.has(pl.layer)).map((pl) => pl.netId));
+  const planeOnly = conns.filter((c) => dedicated.has(c.netId));
+  let order = conns.filter((c) => !dedicated.has(c.netId)).sort((x, y) => x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
   const t0 = now();
   const deadline = t0 + (input.budgetMs ?? 15_000);
   for (let pass = 0; pass < passes; pass++) {
-    const r = routeOnce(input, pads, owner, order, deadline);
+    const r = routeOnce(input, pads, owner, order, deadline, planeOnly);
     if (!best || r.failed.length < best.failed.length) best = r;
     if (!r.failed.length || r.timedOut) break;
     // another pass only if one fits comfortably in the budget
     if (now() + (now() - t0) / (pass + 1) > deadline) break;
-    // failures first, then the rest in the old order
+    // failures first; the rest alternately in the old order and longest first (a different
+    // order gives the router different room; the best pass wins)
     const failed = new Set(r.failed);
-    order = [...order.filter((c) => failed.has(c)), ...order.filter((c) => !failed.has(c))];
+    const rest = order.filter((c) => !failed.has(c));
+    order = [...order.filter((c) => failed.has(c)), ...(pass % 2 ? [...rest].sort((x, y) => y.len - x.len || x.netId.localeCompare(y.netId)) : rest)];
   }
-  const r = best ?? routeOnce(input, pads, owner, order, deadline);
+  const r = best ?? routeOnce(input, pads, owner, order, deadline, planeOnly);
   const nets = new Set(conns.map((c) => c.netId));
   const failedNets = new Set(r.failed.map((c) => c.netId));
   return {
@@ -113,7 +121,7 @@ function connections(pads: BoardPad[]): Conn[] {
   return out;
 }
 
-function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], order: Conn[], deadline: number) {
+function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], order: Conn[], deadline: number, planeOnly: Conn[] = []) {
   const { rules, layers } = input;
   const W = Math.ceil(input.outline.w / G) + 1;
   const H = Math.ceil(input.outline.h / G) + 1;
@@ -193,6 +201,13 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     }
   }
   pads.forEach((p, i) => stampPad(p, padNet[i]!));
+  // dedicated plane layers carry no tracks (vias still pass through, with clearance)
+  for (const pl of input.planes ?? []) {
+    const l = layerIdx.get(pl.layer);
+    if (l === undefined || OUTER.has(pl.layer)) continue;
+    maps[0]![l]!.fill(EDGE);
+    maps[1]![l]!.fill(EDGE);
+  }
 
   // copper cells per pad (inside the pad), for starts and goals
   const padCells = pads.map((p) => {
@@ -232,15 +247,18 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const reach = rules.clearance + rules.track / 2;
     // neighbours alternate short and long stubs, so their jogs onto the grid never face each other
     const long = Number.parseInt(p.number.replace(/\D/g, '') || '0', 10) % 2 === 0;
-    const p1 = alongX ? { x: p.x + dir * (half + reach + (long ? 0.5 : 0)), y: p.y } : { x: p.x, y: p.y + dir * (half + reach + (long ? 0.5 : 0)) };
-    for (let extra = 0.1; extra <= 0.45; extra += 0.1) {
-      const ex = alongX ? p1.x + dir * extra : p1.x;
-      const ey = alongX ? p1.y : p1.y + dir * extra;
-      const i = Math.round(ex / G);
-      const j = Math.round(ey / G);
-      if (i < 0 || j < 0 || i >= W || j >= H) return null;
-      const v = maps[0]![l]![j * W + i]!;
-      if (v === 0 || v === padNet[idx]) return { state: l * N + j * W + i, p1, l, ex: i * G, ey: j * G };
+    // the preferred length first; if something sits there (a cap close to the chip), the other
+    for (const stub of long ? [0.5, 0] : [0, 0.5]) {
+      const p1 = alongX ? { x: p.x + dir * (half + reach + stub), y: p.y } : { x: p.x, y: p.y + dir * (half + reach + stub) };
+      for (let extra = 0.1; extra <= 0.45; extra += 0.1) {
+        const ex = alongX ? p1.x + dir * extra : p1.x;
+        const ey = alongX ? p1.y : p1.y + dir * extra;
+        const i = Math.round(ex / G);
+        const j = Math.round(ey / G);
+        if (i < 0 || j < 0 || i >= W || j >= H) break;
+        const v = maps[0]![l]![j * W + i]!;
+        if (v === 0 || v === padNet[idx]) return { state: l * N + j * W + i, p1, l, ex: i * G, ey: j * G };
+      }
     }
     return null;
   });
@@ -339,10 +357,13 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     }
     let reached = -1;
     let expanded = 0;
-    // bounded: an impossible connection must not search the whole board for long
-    const LIMIT = Math.min(S * 4, 400_000);
+    // bounded per connection (turn costs allow some re-expansion); the overall time budget
+    // protects big boards
+    const LIMIT = S * 3;
     while (heap.size) {
       const s = heap.pop();
+      // outdated entry: this state was reached more cheaply since it was pushed
+      if (heap.lastPrio - h(s) > cost[s]! + 1e-6) continue;
       if (isGoal(s) && (usable(s) || !goalFits)) {
         reached = s;
         break;
@@ -388,7 +409,9 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         }
       }
     }
-    if (reached < 0) return null;
+    if (reached < 0) {
+      return null;
+    }
     const path: number[] = [];
     for (let s = reached; s >= 0; s = from[s]!) path.push(s);
     return path.reverse();
@@ -470,19 +493,24 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     groupCells.get(find(c.a))!.push(...path);
   }
 
-  /* ---- copper pour (ground plane) ---- */
+  /*
+   * Planes and pours. Inner planes are dedicated to their net (no tracks there); pours on outer
+   * layers fill what the tracks leave. Every group of a plane net that does not reach its plane
+   * drops onto it (short track + via). Order: provisional plane areas → drops for all planes →
+   * final areas (now clear of every drop via of other nets) → connectivity.
+   */
   const zones: Zone[] = [];
-  const pour = input.pour;
-  const pl = pour ? layerIdx.get(pour.layer) : undefined;
-  if (pour && pl !== undefined && netNum.has(pour.netId)) {
-    const pnet = numOf(pour.netId);
+  const planes = (input.planes ?? []).filter((pl) => layerIdx.has(pl.layer) && netNum.has(pl.netId));
+  const margin = G * 0.75; // a cell stands for a G × G square: keep its corners clear
+  const region = (pl: { netId: string; layer: CopperLayer }) => {
+    const l = layerIdx.get(pl.layer)!;
+    const pnet = numOf(pl.netId);
     const ok = new Uint8Array(N);
-    const margin = G * 0.75; // a cell stands for a G × G square: keep its corners clear
+    const keep = rules.edgeClearance + margin;
     for (let j = 0; j < H; j++) {
       for (let i = 0; i < W; i++) {
         const x = i * G;
         const y = j * G;
-        const keep = rules.edgeClearance + margin;
         ok[j * W + i] = x >= keep && y >= keep && x <= input.outline.w - keep && y <= input.outline.h - keep ? 1 : 0;
       }
     }
@@ -494,19 +522,17 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     };
     pads.forEach((p, idx) => {
       if (padNet[idx] === pnet) return;
-      if (!p.drill && !p.layers.includes(pour.layer)) return;
+      if (!p.drill && !p.layers.includes(pl.layer)) return;
       clearAround(p.x - p.w / 2, p.y - p.h / 2, p.x + p.w / 2, p.y + p.h / 2, 0, padDist(p));
     });
     for (const t of tracks) {
-      if (t.netId === pour.netId || t.layer !== pour.layer) continue;
+      if (t.netId === pl.netId || t.layer !== pl.layer) continue;
       for (let q = 0; q + 3 < t.pts.length; q += 2) {
         const [ax, ay, bx, by] = [t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!];
         clearAround(Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by), t.width / 2, segDist(ax, ay, bx, by));
       }
     }
-    const clearVia = (v: Via) => clearAround(v.x, v.y, v.x, v.y, v.pad / 2, (x, y) => Math.hypot(x - v.x, y - v.y));
-    for (const v of vias) if (v.netId !== pour.netId) clearVia(v);
-
+    for (const v of vias) if (v.netId !== pl.netId) clearAround(v.x, v.y, v.x, v.y, v.pad / 2, (x, y) => Math.hypot(x - v.x, y - v.y));
     // islands (4-connected)
     const island = new Int32Array(N).fill(-1);
     const sizes: number[] = [];
@@ -528,91 +554,108 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       }
       sizes.push(n);
     }
-    // which islands the net's copper on the pour layer touches
-    const touchedBy = (root: number | null) => {
-      const hit = new Set<number>();
-      for (const [r, cells] of groupCells) {
-        if (padNet[r] !== pnet || (root !== null && r !== root)) continue;
-        for (const st of cells) if (Math.floor(st / N) === pl && island[st % N]! >= 0) hit.add(island[st % N]!);
-      }
-      return hit;
-    };
-    const touched = touchedBy(null);
+    // islands touched by the net's copper on this layer (pads, tracks) and by its vias
+    const touched = new Set<number>();
+    for (const [r, cells] of groupCells) {
+      if (padNet[r] !== pnet) continue;
+      for (const st of cells) if (Math.floor(st / N) === l && island[st % N]! >= 0) touched.add(island[st % N]!);
+    }
+    pads.forEach((p, idx) => {
+      if (padNet[idx] !== pnet || !(p.drill || p.layers.includes(pl.layer))) return;
+      const c = Math.round(p.x / G) + Math.round(p.y / G) * W;
+      if (island[c]! >= 0) touched.add(island[c]!);
+    });
+    for (const v of vias) {
+      if (v.netId !== pl.netId) continue;
+      const c = Math.round(v.x / G) + Math.round(v.y / G) * W;
+      if (island[c]! >= 0) touched.add(island[c]!);
+    }
     const candidates = [...(touched.size ? touched : sizes.keys())];
     const main = candidates.sort((x, y) => sizes[y]! - sizes[x]! || x - y)[0];
-    if (main !== undefined && sizes[main]! * G * G >= 1) {
-      // drop every ground group that does not reach the main island onto it (track + via)
-      const joined = new Set<number>();
-      const roots = [...new Set(pads.map((_, idx) => find(idx)).filter((r) => padNet[r] === pnet))];
-      for (const r of roots) {
-        const reach = touchedBy(r);
-        if (reach.has(main)) {
-          joined.add(r);
-          continue;
+    return { l, pnet, island, sizes, main, touched };
+  };
+
+  // 1. provisional areas; 2. drops of every group that does not reach its plane
+  const dropVias = new Map<number, { x: number; y: number }[]>(); // pad root → drop vias
+  for (const pl of planes) {
+    const rg = region(pl);
+    if (rg.main === undefined || rg.sizes[rg.main]! * G * G < 1) continue;
+    const roots = [...new Set(pads.map((_, idx) => find(idx)).filter((r) => padNet[r] === rg.pnet))];
+    for (const r of roots) {
+      if (timedOut || now() > deadline) break;
+      const reaches = groupCells.get(r)!.some((st) => Math.floor(st / N) === rg.l && rg.island[st % N] === rg.main);
+      if (reaches) continue;
+      const starts = groupCells.get(r)!.filter((st) => Math.floor(st / N) !== rg.l);
+      if (!starts.length) continue;
+      const path = search(rg.pnet, 0, starts, (st) => {
+        // a via site well inside the main area (the via then joins the plane)
+        if (Math.floor(st / N) === rg.l) return false;
+        const i = st % N;
+        if (rg.island[i] !== rg.main || !viaFreeFor(rg.pnet)(i)) return false;
+        const vx = (i % W) * G;
+        const vy = Math.floor(i / W) * G;
+        const rr = rules.viaPad / 2 + margin + rules.clearance;
+        for (const [dx, dy] of [[rr, 0], [-rr, 0], [0, rr], [0, -rr]] as const) {
+          const ii = Math.round((vx + dx) / G) + Math.round((vy + dy) / G) * W;
+          if (rg.island[ii] !== rg.main) return false;
         }
-        const starts = groupCells.get(r)!.filter((st) => Math.floor(st / N) !== pl);
-        const pad0 = pads[r]!;
-        const path = starts.length
-          ? search(pnet, 0, starts, (st) => {
-              // a via site in the main island (the via then joins the plane)
-              if (Math.floor(st / N) === pl) return false;
-              const i = st % N;
-              if (island[i] !== main || !viaFreeFor(pnet)(i)) return false;
-              const vx = (i % W) * G;
-              const vy = Math.floor(i / W) * G;
-              const rr = rules.viaPad / 2 + margin;
-              for (const [dx, dy] of [[rr, 0], [-rr, 0], [0, rr], [0, -rr]] as const) {
-                const ii = Math.round((vx + dx) / G) + Math.round((vy + dy) / G) * W;
-                if (island[ii] !== main) return false;
-              }
-              return true;
-            }, pad0)
-          : null;
-        if (!path) continue;
-        commit(pour.netId, pnet, rules.track, path, padAt(r, path[0]!), -1, true);
-        groupCells.get(r)!.push(...path);
-        joined.add(r);
-      }
-      // everything that reaches the plane is one piece of copper
-      const js = [...joined];
-      for (let q = 1; q < js.length; q++) union(js[0]!, js[q]!);
-      // keep islands that touch the net's copper (pads, tracks, vias); the rest would be dead copper
-      const alive = new Set<number>([main, ...touchedBy(null)]);
-      for (const v of vias) {
-        if (v.netId !== pour.netId) continue;
-        const i = Math.round(v.x / G) + Math.round(v.y / G) * W;
-        if (island[i]! >= 0) alive.add(island[i]!);
-      }
-      // row runs, merged with identical runs of the rows below into taller rectangles
-      const rects: number[] = [];
-      let open = new Map<string, { i0: number; i1: number; j0: number }>();
-      const close = (o: { i0: number; i1: number; j0: number }, j: number) => rects.push(r3(o.i0 * G - G / 2), r3(o.j0 * G - G / 2), r3((o.i1 - o.i0) * G), r3((j - o.j0) * G));
-      for (let j = 0; j <= H; j++) {
-        const next = new Map<string, { i0: number; i1: number; j0: number }>();
-        if (j < H) {
-          let start = -1;
-          for (let i = 0; i <= W; i++) {
-            const on = i < W && island[j * W + i]! >= 0 && alive.has(island[j * W + i]!);
-            if (on && start < 0) start = i;
-            if (!on && start >= 0) {
-              const key = `${start}:${i}`;
-              next.set(key, open.get(key) ?? { i0: start, i1: i, j0: j });
-              start = -1;
-            }
-          }
-        }
-        for (const [key, o] of open) if (!next.has(key)) close(o, j);
-        open = next;
-      }
-      zones.push({ netId: pour.netId, layer: pour.layer, rects });
-      // connections of the poured net are made through the plane where both ends reach it
-      for (let q = failed.length - 1; q >= 0; q--) if (find(failed[q]!.a) === find(failed[q]!.b)) failed.splice(q, 1);
+        return true;
+      }, pads[r]!);
+      if (!path) continue;
+      commit(pl.netId, rg.pnet, rules.track, path, padAt(r, path[0]!), -1, true);
+      groupCells.get(r)!.push(...path);
+      const end = path.at(-1)! % N;
+      dropVias.set(r, [...(dropVias.get(r) ?? []), { x: (end % W) * G, y: Math.floor(end / W) * G }]);
     }
   }
+
+  // 3. final areas, clear of all drops; 4. what reaches the main area is connected through it
+  for (const pl of planes) {
+    const rg = region(pl);
+    if (rg.main === undefined || rg.sizes[rg.main]! * G * G < 1) continue;
+    const roots = [...new Set(pads.map((_, idx) => find(idx)).filter((r) => padNet[r] === rg.pnet))];
+    const inMain = (x: number, y: number) => rg.island[Math.round(x / G) + Math.round(y / G) * W] === rg.main;
+    const joined = roots.filter(
+      (r) =>
+        groupCells.get(r)!.some((st) => Math.floor(st / N) === rg.l && rg.island[st % N] === rg.main) ||
+        (dropVias.get(r) ?? []).some((v) => inMain(v.x, v.y)) ||
+        pads.some((p, idx) => find(idx) === r && (p.drill || p.layers.includes(pl.layer)) && inMain(p.x, p.y)),
+    );
+    for (let q = 1; q < joined.length; q++) union(joined[0]!, joined[q]!);
+    // keep areas touched by the net's copper; the rest would be dead copper
+    const alive = new Set<number>([rg.main, ...rg.touched]);
+    const rects: number[] = [];
+    let open = new Map<string, { i0: number; i1: number; j0: number }>();
+    const close = (o: { i0: number; i1: number; j0: number }, j: number) => rects.push(r3(o.i0 * G - G / 2), r3(o.j0 * G - G / 2), r3((o.i1 - o.i0) * G), r3((j - o.j0) * G));
+    for (let j = 0; j <= H; j++) {
+      const next = new Map<string, { i0: number; i1: number; j0: number }>();
+      if (j < H) {
+        let start = -1;
+        for (let i = 0; i <= W; i++) {
+          const on = i < W && rg.island[j * W + i]! >= 0 && alive.has(rg.island[j * W + i]!);
+          if (on && start < 0) start = i;
+          if (!on && start >= 0) {
+            const key = `${start}:${i}`;
+            next.set(key, open.get(key) ?? { i0: start, i1: i, j0: j });
+            start = -1;
+          }
+        }
+      }
+      for (const [key, o] of open) if (!next.has(key)) close(o, j);
+      open = next;
+    }
+    zones.push({ netId: pl.netId, layer: pl.layer, rects });
+  }
+  // connections made through a plane count as routed
+  for (let q = failed.length - 1; q >= 0; q--) if (find(failed[q]!.a) === find(failed[q]!.b)) failed.splice(q, 1);
+  // plane nets were not routed as tracks: their connections are open unless the plane joined them
+  const planeNets = new Set(planes.filter((pl) => !OUTER.has(pl.layer)).map((pl) => pl.netId));
+  for (const c of planeOnly) if (planeNets.has(c.netId) && find(c.a) !== find(c.b)) failed.push(c);
   return { tracks, vias, failed, find, zones, timedOut };
 }
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
+const OUTER = new Set<CopperLayer>(['F.Cu', 'B.Cu']);
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 /** Drop collinear points and duplicates from a flat polyline. */
@@ -661,10 +704,13 @@ class Heap {
       i = up;
     }
   }
+  /** Priority of the entry returned by the last pop(). */
+  lastPrio = 0;
   pop(): number {
     const s = this.s;
     const p = this.p;
     const top = s[0]!;
+    this.lastPrio = p[0]!;
     const ls = s.pop()!;
     const lp = p.pop()!;
     if (s.length) {
