@@ -3,6 +3,7 @@
  * schematic and board geometry are derived views plus constraints.
  * See docs/design/data-model.md.
  */
+import type { BoardSettings } from './board.ts';
 import type { PartCard } from './part.ts';
 
 export const DESIGN_FORMAT_VERSION = 1;
@@ -19,6 +20,8 @@ export interface Design {
   sheets: Record<string, Sheet>;
   ledger: Record<string, Constraint>;
   waivers: Record<string, Waiver>;
+  /** Board settings (outline, layers, rules); absent = defaults, outline sized to fit. */
+  board?: BoardSettings;
 }
 
 export interface Component {
@@ -68,6 +71,7 @@ export type ConstraintKind =
   | 'param'
   | 'layer'
   | 'arrangement'
+  | 'position'
   | 'note';
 
 export type ConstraintDomain = 'schematic' | 'placement' | 'routing' | 'electrical' | 'param';
@@ -86,6 +90,10 @@ export interface Constraint {
   value?: string;
   /** For `near`: maximum distance in mm (board). */
   maxMm?: number;
+  /** For `position`: pinned board position of `a` (centre, mm) and clockwise rotation. */
+  xMm?: number;
+  yMm?: number;
+  rot?: number;
   domain: ConstraintDomain;
   strength: 'hard' | 'soft';
   source: ConstraintSource;

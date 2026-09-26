@@ -17,7 +17,7 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { CalcCall, ImageInput, ProposeInput, WaitForReviewInput, type BridgeContent, type Design } from '@tracewise/schema';
+import { CalcCall, ImageInput, ProposeInput, WaitForReviewInput, type BoardView, type BridgeContent, type Design } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { IngestState } from './ingest.svelte.ts';
@@ -82,6 +82,9 @@ class AppState {
   toast = $state<string | null>(null);
   input = $state('');
   persistent = $state<boolean | null>(null);
+  /** Board view of the working copy, computed when the Layout view is open. */
+  board = $state.raw<BoardView | null>(null);
+  boardBusy = $state(false);
 
   private kernel = createKernel();
   /** Datasheet import (Parts view). */
@@ -149,6 +152,19 @@ class AppState {
     const ids = new Set(this.k.proposal?.hunks.map((h) => h.id) ?? []);
     for (const id of Object.keys(this.hunkOff)) if (!ids.has(id)) delete this.hunkOff[id];
     if (this.sheet >= (this.k.view.sheets.length || 1)) this.sheet = 0;
+    if (this.view === 'lay') void this.refreshBoard();
+  }
+
+  /** Recompute the board (placement, routing, DRC) in the worker. */
+  async refreshBoard() {
+    this.boardBusy = true;
+    try {
+      this.board = await this.kernel.board();
+    } catch (e) {
+      this.flash(`Board layout failed: ${(e as Error).message}`);
+    } finally {
+      this.boardBusy = false;
+    }
   }
 
   get pendingCount() {

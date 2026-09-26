@@ -20,6 +20,8 @@ const methods = {
   exportDesign: () => kernel.exportDesign(),
   rename: (name: string) => kernel.rename(name),
   hasPending: () => kernel.hasPending(),
+  /** Placement, routing and DRC of the working copy (computed on demand). */
+  board: () => kernel.board(),
   /** Imported parts, so the agent can find and place them. */
   registerParts: (cards: PartCard[]) => registerUserParts(cards),
   unregisterPart: (id: string) => unregisterUserPart(id),

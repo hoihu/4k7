@@ -16,6 +16,7 @@ import {
   type Rejection,
   type SchematicView,
   type TransactionResult,
+  type BoardView,
 } from '@tracewise/schema';
 import { searchParts } from '@tracewise/parts';
 import { applyOp, describeConstraint } from './apply.ts';
@@ -23,6 +24,7 @@ import { countDiagnostics, diagKey, runChecks } from './checks.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, natCmp, netMembers, valueOf } from './doc.ts';
 import { layoutSchematic } from './layout.ts';
+import { placeBoard } from './board.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 
 interface Analysis {
@@ -46,6 +48,7 @@ export class Kernel {
   private committed: Design;
   private draft: Design;
   private cache = new WeakMap<Design, Analysis>();
+  private boards = new WeakMap<Design, BoardView>();
   private undoStack: { design: Design; entry: HistoryEntry }[] = [];
   private history: HistoryEntry[] = [];
   private historySeq = 1;
@@ -70,6 +73,18 @@ export class Kernel {
 
   private invalidate(d: Design) {
     this.cache.delete(d);
+    this.boards.delete(d);
+  }
+
+  /** The board of the working copy: placement, routing and DRC (computed on demand, cached). */
+  board(): BoardView {
+    const d = this.draft;
+    let b = this.boards.get(d);
+    if (!b) {
+      b = placeBoard(d, this.analyse(d).view);
+      this.boards.set(d, b);
+    }
+    return b;
   }
 
   /* ---------------------------- transactions ------------------------------ */

@@ -33,6 +33,7 @@ export type RejectionCode =
   | 'REF_UNKNOWN'
   | 'PART_UNKNOWN'
   | 'SYMBOL_STYLE'
+  | 'BOARD_INVALID'
   | 'PIN_UNKNOWN'
   | 'REFDES_TAKEN'
   | 'PIN_ALREADY_CONNECTED'
@@ -86,7 +87,7 @@ export interface TransactionResult {
 
 /* ------------------------------- changesets ------------------------------- */
 
-export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'sheet';
+export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'sheet' | 'board';
 
 export interface Hunk {
   /** Stable id: "<kind>:<entity id>". */

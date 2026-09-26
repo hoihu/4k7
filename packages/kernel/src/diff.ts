@@ -60,6 +60,19 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     });
   }
 
+  /* board settings */
+  if (JSON.stringify(base.board ?? null) !== JSON.stringify(draft.board ?? null)) {
+    const b = draft.board;
+    hunks.push({
+      id: 'board:board',
+      kind: 'board',
+      change: base.board ? 'change' : 'add',
+      entityId: 'board',
+      title: `board ${b?.width && b?.height ? `${b.width} × ${b.height} mm` : 'sized to fit'}, ${b?.layers ?? 2} layers`,
+      details: b ? [`clearance ${b.rules.clearance} mm`, `track ${b.rules.track} / ${b.rules.powerTrack} mm`] : [],
+    });
+  }
+
   /* nets: attribute and name changes only (membership is carried by components) */
   for (const id of new Set([...Object.keys(base.nets), ...Object.keys(draft.nets)])) {
     const a = base.nets[id];
@@ -95,7 +108,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     if (!base.sheets[id]) hunks.push({ id: `sheet:${id}`, kind: 'sheet', change: 'add', entityId: id, title: `sheet ${draft.sheets[id]!.name}`, details: [] });
   }
 
-  const order = { component: 0, part: 1, net: 2, sheet: 3, constraint: 4, waiver: 5 };
+  const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6 };
   const changeOrder = { add: 0, change: 1, remove: 2 };
   return hunks.sort((x, y) => order[x.kind] - order[y.kind] || changeOrder[x.change] - changeOrder[y.change] || natCmp(x.title, y.title));
 }
@@ -161,6 +174,10 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
         d.components[entity] = copy;
         break;
       }
+      case 'board':
+        if (draft.board) d.board = clone(draft.board);
+        else delete d.board;
+        break;
       case 'part':
         if (draft.parts[entity]) d.parts[entity] = clone(draft.parts[entity]!);
         break;

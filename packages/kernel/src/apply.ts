@@ -11,6 +11,8 @@ import {
   type EditOp,
   type OpResult,
   type PartCard,
+  type BoardSettings,
+  DEFAULT_BOARD,
 } from '@tracewise/schema';
 import { isTwoPin, planUnits, searchParts } from '@tracewise/parts';
 import {
@@ -68,6 +70,10 @@ export function applyOp(d: Design, op: EditOp): OpResult {
     }
     case 'set_symbol':
       return setSymbol(d, op.ref, op.style);
+    case 'set_board':
+      return setBoard(d, op);
+    case 'place':
+      return place(d, op);
     case 'remove_waiver': {
       if (!d.waivers[op.id]) reject({ code: 'WAIVER_UNKNOWN', message: `No waiver ${op.id}.`, candidates: Object.keys(d.waivers) });
       delete d.waivers[op.id];
@@ -77,6 +83,60 @@ export function applyOp(d: Design, op: EditOp): OpResult {
 }
 
 /* --------------------------------- parts ---------------------------------- */
+
+/* --------------------------------- board ---------------------------------- */
+
+function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): OpResult {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const out: string[] = [];
+  const size = (key: 'width' | 'height', v: number | null | undefined) => {
+    if (v === undefined) return;
+    if (v === null) delete b[key];
+    else {
+      if (v < 5 || v > 500) reject({ code: 'BOARD_INVALID', message: `Board ${key} ${v} mm is outside 5–500 mm.` });
+      b[key] = v;
+    }
+    out.push(`${key} ${v === null ? 'fit to parts' : `${v} mm`}`);
+  };
+  size('width', op.width_mm);
+  size('height', op.height_mm);
+  if (op.layers) {
+    b.layers = op.layers;
+    out.push(`${op.layers} layers`);
+  }
+  const rule = (key: keyof BoardSettings['rules'], v: number | undefined, label: string) => {
+    if (v === undefined) return;
+    if (v < 0.075 || v > 5) reject({ code: 'BOARD_INVALID', message: `${label} ${v} mm is not manufacturable (0.075–5 mm).` });
+    b.rules[key] = v;
+    out.push(`${label} ${v} mm`);
+  };
+  rule('clearance', op.clearance_mm, 'clearance');
+  rule('track', op.track_mm, 'track');
+  rule('powerTrack', op.power_track_mm, 'power track');
+  if (!out.length) reject({ code: 'BOARD_INVALID', message: 'set_board needs at least one setting.' });
+  d.board = b;
+  return { op: 'set_board', effect: `board: ${out.join(', ')}`, ids: ['board'] };
+}
+
+/** Pin a part on the board: a hard position constraint (one per part, replaced on re-place). */
+function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
+  const comp = resolveComponent(d, op.ref);
+  for (const k of Object.values(d.ledger)) if (k.kind === 'position' && k.a === comp.id) delete d.ledger[k.id];
+  const id = nextId(d, 'k');
+  const r = (v: number) => Math.round(v * 1000) / 1000;
+  d.ledger[id] = {
+    id,
+    kind: 'position',
+    a: comp.id,
+    xMm: r(op.x_mm),
+    yMm: r(op.y_mm),
+    rot: op.rot ?? 0,
+    domain: 'placement',
+    strength: 'hard',
+    source: { type: 'user' },
+  };
+  return { op: 'place', effect: `${comp.refdes} pinned at (${r(op.x_mm)}, ${r(op.y_mm)}) mm${op.rot ? `, ${op.rot}°` : ''}`, ids: [id] };
+}
 
 /** Draw a part as one symbol or as units. Changes the design's copy of the part card only. */
 function setSymbol(d: Design, ref: string, style: 'single' | 'units'): OpResult {
@@ -518,6 +578,8 @@ export function describeConstraint(d: Design, k: Constraint): string {
       return `layer(${n(k.a)}) = ${k.value}`;
     case 'arrangement':
       return `arrangement(${n(k.a)}) = ${k.value}`;
+    case 'position':
+      return `position(${n(k.a)}) = (${k.xMm}, ${k.yMm}) mm${k.rot ? ` ${k.rot}°` : ''}`;
     case 'note':
       return `note${k.a ? `(${n(k.a)})` : ''}: ${k.value}`;
     default:

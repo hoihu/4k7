@@ -120,6 +120,24 @@ export const SetSymbolOp = z.object({
     .describe('units: draw a big IC as several symbols (U1A power/system, U1B… two GPIO ports each); single: one symbol. Pins, nets and refdes stay the same; applies to every component of that part.'),
 });
 
+export const SetBoardOp = z.object({
+  op: z.literal('set_board'),
+  width_mm: z.number().positive().nullable().optional().describe('Board width; null = size to fit the parts'),
+  height_mm: z.number().positive().nullable().optional().describe('Board height; null = size to fit the parts'),
+  layers: z.union([z.literal(2), z.literal(4)]).optional(),
+  clearance_mm: z.number().positive().optional().describe('Copper clearance (default 0.2)'),
+  track_mm: z.number().positive().optional().describe('Signal track width (default 0.25)'),
+  power_track_mm: z.number().positive().optional().describe('Supply/ground track width (default 0.5)'),
+});
+
+export const PlaceOp = z.object({
+  op: z.literal('place'),
+  ref: componentRef,
+  x_mm: z.number().describe('Centre x on the board, from the left edge'),
+  y_mm: z.number().describe('Centre y on the board, from the top edge'),
+  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation'),
+});
+
 export const EditOp = z.discriminatedUnion('op', [
   AddPartOp,
   RemoveOp,
@@ -136,6 +154,8 @@ export const EditOp = z.discriminatedUnion('op', [
   AddWaiverOp,
   RemoveWaiverOp,
   SetSymbolOp,
+  SetBoardOp,
+  PlaceOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
 export type EditOpName = EditOp['op'];
