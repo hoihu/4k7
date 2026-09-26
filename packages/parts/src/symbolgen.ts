@@ -44,12 +44,14 @@ export function isTwoPin(card: PartCard): boolean {
 export interface SymbolOptions {
   /** Pin numbers to put first (topmost / leftmost) on their side, e.g. the power path. */
   first?: string[];
+  /** Swap left and right pins, e.g. for an output connector at the right edge facing the circuit. */
+  mirror?: boolean;
 }
 
 export function symbolFor(card: PartCard, flip = false, opts: SymbolOptions = {}): SymbolDef {
   if (isTwoPin(card)) return twoPin(card, flip);
   if (card.category === 'diode' && card.pins.length === 4) return bridgeDiamond(card);
-  return box(card, opts.first ?? []);
+  return box(card, opts.first ?? [], opts.mirror ?? false);
 }
 
 /* ------------------------------- two-pin ---------------------------------- */
@@ -135,10 +137,11 @@ export function pinSide(pin: PartPin): PinSide {
 
 const ceilGrid = (v: number) => Math.ceil(v / GRID) * GRID;
 
-function box(card: PartCard, first: string[]): SymbolDef {
+function box(card: PartCard, first: string[], mirror: boolean): SymbolDef {
   const sides: Record<PinSide, PartPin[]> = { left: [], right: [], top: [], bottom: [] };
   const ordered = [...card.pins.filter((p) => first.includes(p.number)), ...card.pins.filter((p) => !first.includes(p.number))];
-  for (const p of ordered) sides[pinSide(p)].push(p);
+  const flipSide = (s: PinSide): PinSide => (!mirror ? s : s === 'left' ? 'right' : s === 'right' ? 'left' : s);
+  for (const p of ordered) sides[flipSide(pinSide(p))].push(p);
 
   const isConn = card.category === 'connector';
   const showNames = !isConn;
@@ -179,9 +182,9 @@ function box(card: PartCard, first: string[]): SymbolDef {
     prims,
     pins,
     bbox: { x: -PIN_LEN, y: -PIN_LEN, w: w + 2 * PIN_LEN, h: h + 2 * PIN_LEN },
-    // outside the top-left corner, clear of top pins and left-side wiring
-    refPos: { x: -30, y: -115, anchor: 'end' },
-    valuePos: { x: -30, y: -30, anchor: 'end' },
+    // outside the top corner on the side without pins (top-left normally, top-right when mirrored)
+    refPos: mirror && !sides.right.length ? { x: w + 30, y: -115, anchor: 'start' } : { x: -30, y: -115, anchor: 'end' },
+    valuePos: mirror && !sides.right.length ? { x: w + 30, y: -30, anchor: 'start' } : { x: -30, y: -30, anchor: 'end' },
   };
 }
 

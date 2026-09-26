@@ -243,3 +243,55 @@ export function valueOf(d: Design, c: Component): string {
   }
   return card?.mpn ?? card?.id.split(':')[1] ?? c.part;
 }
+
+/** Two-pin parts that pass power through them (for "is this net supplied" questions). */
+const SERIES = new Set(['inductor', 'resistor', 'diode']);
+
+/**
+ * Nets the circuit itself supplies: reachable from a power output pin (a regulator's VOUT or
+ * switch node) through series parts. External inputs are not included.
+ */
+export function circuitSuppliedNets(d: Design): Set<string> {
+  const out = new Set<string>();
+  const edges = new Map<string, string[]>();
+  for (const c of Object.values(d.components)) {
+    const card = cardOf(d, c.part);
+    if (!card) continue;
+    for (const p of card.pins) if (p.type === 'pwr_out' && c.pins[p.number]) out.add(c.pins[p.number]!);
+    if (SERIES.has(card.category) && card.pins.length === 2) {
+      const [a, b] = card.pins.map((p) => c.pins[p.number]);
+      if (a && b && a !== b) {
+        edges.set(a, [...(edges.get(a) ?? []), b]);
+        edges.set(b, [...(edges.get(b) ?? []), a]);
+      }
+    }
+  }
+  const queue = [...out];
+  while (queue.length) {
+    const n = queue.shift()!;
+    for (const m of edges.get(n) ?? []) {
+      if (!out.has(m) && !d.nets[m]?.attrs.external) {
+        out.add(m);
+        queue.push(m);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Connector role by the supplies on its pins: 'input' brings a supply into the circuit
+ * (external, or one nothing on the board produces); 'output' only carries supplies the
+ * circuit produces; anything else (signals, ground only) is 'neutral'.
+ */
+export function connectorRole(d: Design, c: Component, supplied: Set<string>): 'input' | 'output' | 'neutral' {
+  let feeds = false;
+  let takes = false;
+  for (const id of Object.values(c.pins)) {
+    const net = d.nets[id];
+    if (!net || isGroundNet(net) || !isPowerNet(net)) continue;
+    if (net.attrs.external || !supplied.has(id)) feeds = true;
+    else takes = true;
+  }
+  return feeds ? 'input' : takes ? 'output' : 'neutral';
+}

@@ -16,7 +16,7 @@
  */
 import type { Component, Constraint, Design, Net, PartCard, Point, Rect, SchematicView, SheetView } from '@tracewise/schema';
 import { isTwoPin, symbolFor } from '@tracewise/parts';
-import { cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
+import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
 import {
   deco,
@@ -57,7 +57,11 @@ interface AnchorPlan {
   decaps: Component[];
   extraLeft: Component[];
   extraRight: Component[];
+  /** Pins drawn on the opposite side (output connectors at the right edge face the circuit). */
+  mirror?: boolean;
 }
+
+const anchorSymbol = (plan: AnchorPlan) => symbolFor(plan.card, false, { mirror: plan.mirror ?? false });
 
 interface Ctx {
   d: Design;
@@ -95,8 +99,11 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     (k) => k.a && k.b && (k.kind === 'left_of' || k.kind === 'right_of' || k.kind === 'above' || k.kind === 'below'),
   );
 
+  // connectors that only carry supplies the circuit produces are outputs: right edge, mirrored
+  const supplied = circuitSuppliedNets(d);
+  const outputConn = new Set(anchors.filter((c) => cardFor(c).category === 'connector' && connectorRole(d, c, supplied) === 'output').map((c) => c.id));
   const plans = new Map<string, AnchorPlan>(
-    anchors.map((c) => [c.id, { comp: c, card: cardFor(c), left: [], right: [], decaps: [], extraLeft: [], extraRight: [] }]),
+    anchors.map((c) => [c.id, { comp: c, card: cardFor(c), left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror: outputConn.has(c.id) }]),
   );
   const free: Component[] = [];
 
@@ -189,7 +196,12 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   let maxRight = 0;
   for (let [ri, row] of rows.entries()) {
     const cells = row.map((a) => (flows.has(a.id) ? flowCell(ctx, flows.get(a.id)!) : buildCell(ctx, plans.get(a.id)!)));
-    // connectors stack in one column, one below the other, where the first of them is
+    // output connectors: one column at the right end of the row
+    const outIdx = row.flatMap((a, i) => (outputConn.has(a.id) ? [i] : []));
+    const outColumn = outIdx.length ? stackCells(outIdx.map((i) => cells[i]!)) : null;
+    for (const i of [...outIdx].reverse()) cells.splice(i, 1);
+    row = row.filter((a) => !outputConn.has(a.id));
+    // input (and other) connectors: one column where the first of them is
     const connectorIdx = row.flatMap((a, i) => (cardFor(a).category === 'connector' ? [i] : []));
     if (connectorIdx.length > 1) {
       cells.splice(connectorIdx[0]!, 1, stackCells(connectorIdx.map((i) => cells[i]!)));
@@ -201,6 +213,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
       const after = row.findIndex((a) => anchorRank(d, a) > 0);
       cells.splice(after < 0 ? cells.length : after, 0, ...bridges.map((b) => bridgeCell(ctx, b)));
     }
+    if (outColumn) cells.push(outColumn);
     const topExtent = Math.max(0, ...cells.map((c) => -sceneBBox(c).y));
     let x = 0;
     let rowBottom = rowTop;
@@ -298,12 +311,12 @@ function decapOwner(d: Design, anchors: Component[], railId: string): Component 
 }
 
 function pinSideOf(plan: AnchorPlan, pinNumber: string) {
-  return symbolFor(plan.card).pins.find((p) => p.number === pinNumber)?.side;
+  return anchorSymbol(plan).pins.find((p) => p.number === pinNumber)?.side;
 }
 
 /** Find an anchor left/right pin sharing a non-power net with the part. */
 function findAttach(ctx: Ctx, plan: AnchorPlan, c: Component, nets: (Net | undefined)[], onlySide?: 'left' | 'right'): Sat | undefined {
-  const sym = symbolFor(plan.card);
+  const sym = anchorSymbol(plan);
   for (const net of nets) {
     if (!net || isPowerNet(net)) continue;
     for (const p of sym.pins) {
@@ -379,7 +392,7 @@ function topoOrder(members: Component[], edges: [string, string][]): Component[]
 function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
   const { d, members } = ctx;
   const scene = emptyScene();
-  const def = symbolFor(plan.card);
+  const def = anchorSymbol(plan);
   const sym = makeSymbol(d, plan.comp, def, 0, 0);
   scene.symbols.push(sym);
   const bodyW = def.bbox.w - 400;
