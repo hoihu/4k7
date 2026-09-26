@@ -301,13 +301,30 @@ export const BUILTIN_PARTS: PartCard[] = [...GENERIC_PARTS, ...IC_PARTS];
 
 const byId = new Map(BUILTIN_PARTS.map((p) => [p.id, p]));
 
-export function getBuiltinPart(id: string): PartCard | undefined {
-  return byId.get(id);
+/** Parts the user imported (e.g. from datasheets); registered at startup from local storage. */
+const userParts = new Map<string, PartCard>();
+
+export function registerUserParts(cards: PartCard[]): void {
+  for (const c of cards) userParts.set(c.id, c);
 }
 
-/** Simple ranked text search over the library. */
+export function unregisterUserPart(id: string): void {
+  userParts.delete(id);
+}
+
+export function listUserParts(): PartCard[] {
+  return [...userParts.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** Look up a library part: the user's own parts first, then the built-in ones. */
+export function getBuiltinPart(id: string): PartCard | undefined {
+  return userParts.get(id) ?? byId.get(id);
+}
+
+/** Simple ranked text search over the library (user parts and built-in parts). */
 export function searchParts(text: string, extra: PartCard[] = []): PartCard[] {
-  const all = [...extra.filter((p) => !byId.has(p.id)), ...BUILTIN_PARTS];
+  const known = new Set([...byId.keys(), ...userParts.keys()]);
+  const all = [...extra.filter((p) => !known.has(p.id)), ...userParts.values(), ...BUILTIN_PARTS];
   const terms = text.toLowerCase().split(/\s+/).filter(Boolean);
   if (!terms.length) return all;
   const scored = all

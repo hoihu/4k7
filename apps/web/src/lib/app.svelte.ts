@@ -20,6 +20,7 @@ import { tick } from 'svelte';
 import { CalcCall, ImageInput, ProposeInput, WaitForReviewInput, type BridgeContent, type Design } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
+import { IngestState } from './ingest.svelte.ts';
 import { renderSchematicPng } from './snapshot.ts';
 import {
   DEFAULT_SETTINGS,
@@ -83,6 +84,8 @@ class AppState {
   persistent = $state<boolean | null>(null);
 
   private kernel = createKernel();
+  /** Datasheet import (Parts view). */
+  ingest = new IngestState(this.kernel);
   private agent!: Agent;
   private abort: AbortController | null = null;
   private seq = 1;
@@ -104,6 +107,7 @@ class AppState {
         this.flash(`Could not load the saved project: ${(e as Error).message}`);
       }
     }
+    await this.ingest.init().catch((e: Error) => this.flash(`Could not load imported parts: ${e.message}`));
     this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget });
     this.settingsChannel?.addEventListener('message', (e: MessageEvent<{ type: string; code?: string }>) => {
       if (e.data?.type === 'bridge-held' && e.data.code) bridge.heldElsewhere(e.data.code);
@@ -235,6 +239,7 @@ class AppState {
   /** Execute one tool call forwarded by the Claude Code bridge. */
   async handleBridgeCall(tool: string, input: unknown): Promise<{ isError: boolean; content: BridgeContent[] }> {
     const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
+    if (tool === 'submit_part') return this.ingest.submit(input); // datasheet import, not a design change
     if (this.inAppBusy) return text('The in-app agent is working on this design right now. Try again when it has finished.', true);
 
     // the activity block is created lazily, so waiting for review does not open a new one

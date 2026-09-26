@@ -22,7 +22,9 @@ out({ type: 'system', subtype: 'init', session_id: session, mcp_servers: [{ name
 const client = new Client({ name: 'claude-code', version: 'fake' });
 await client.connect(new StreamableHTTPClientTransport(new URL(tw.url), { requestInit: { headers: tw.headers } }));
 const tools = (await client.listTools()).tools.map((t) => t.name);
-const ctx = await client.callTool({ name: 'get_context', arguments: {} });
+const ctx = tools.includes('get_context')
+  ? await client.callTool({ name: 'get_context', arguments: {} })
+  : await client.callTool({ name: 'submit_part', arguments: { mpn: 'FAKE1' } });
 await client.close();
 
 const flags = {
@@ -33,6 +35,7 @@ const flags = {
   model: args.includes('--model') ? arg('--model') : null,
   prompt: arg('-p'),
   appended: (arg('--append-system-prompt') ?? '').slice(0, 40),
+  files: (await import('node:fs')).readdirSync('.').sort(),
   env: {
     configDir: process.env.CLAUDE_CONFIG_DIR ?? null,
     bedrock: 'CLAUDE_CODE_USE_BEDROCK' in process.env,
@@ -42,10 +45,15 @@ const flags = {
   },
 };
 out({ type: 'stream_event', event: { type: 'message_start' } });
+if (!tools.includes('get_context')) {
+  // the importer writes its part as one long tool call
+  out({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'tool_use', name: 'mcp__tracewise__submit_part' } } });
+  for (let i = 1; i <= 45; i++) out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: `{"number":"${i}",` } } });
+}
 for (const chunk of ['Got it. ', `tools=${tools.join(',')} `, `context=${JSON.stringify(ctx.content[0].text).slice(0, 30)} `, `flags=${JSON.stringify(flags)}`]) {
   out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: chunk } } });
 }
-out({ type: 'assistant', message: { content: [{ type: 'text', text: 'Got it. (full message)' }] } });
+out({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'pages/page-001.txt' } }, { type: 'text', text: 'Got it. (full message)' }] } });
 if (flags.prompt === 'please fail') {
   out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'boom', session_id: session });
 } else {

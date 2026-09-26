@@ -1,0 +1,112 @@
+import { describe, expect, it } from 'vitest';
+import type { PackageInfo, PartDraft } from '@tracewise/schema';
+import { bgaRowName, draftToCard, footprintFor, symbolFor } from '../src/index.ts';
+
+const lqfp100: PackageInfo = { name: 'LQFP100', family: 'QFP', pins: 100, pitch_mm: 0.5, body_mm: [14, 14], span_mm: [16, 16], lead_length_mm: 0.6, lead_width_mm: 0.22 };
+
+/** A plausible 100-pin MCU draft: 5 ports of 16 + supplies, grounds and system pins. */
+function mcuDraft(overrides: Partial<PartDraft> = {}): PartDraft {
+  const pins: PartDraft['pins'] = [];
+  const special: Record<number, [string, PartDraft['pins'][number]['type']]> = {
+    6: ['VBAT', 'pwr_in'], 10: ['VSS', 'pwr_in'], 11: ['VDD', 'pwr_in'], 14: ['NRST', 'in'], 19: ['VSSA', 'pwr_in'], 20: ['VREF+', 'pwr_in'],
+    21: ['VDDA', 'pwr_in'], 27: ['VSS', 'pwr_in'], 28: ['VDD', 'pwr_in'], 49: ['VCAP1', 'passive'], 50: ['VDD', 'pwr_in'], 73: ['VCAP2', 'passive'],
+    74: ['VSS', 'pwr_in'], 75: ['VDD', 'pwr_in'], 94: ['BOOT0', 'in'], 99: ['VSS', 'pwr_in'], 100: ['VDD', 'pwr_in'],
+  };
+  const ports = ['A', 'B', 'C', 'D', 'E'];
+  let io = 0;
+  for (let n = 1; n <= 100; n++) {
+    const s = special[n];
+    if (s) pins.push({ number: String(n), name: s[0], type: s[1] });
+    else {
+      pins.push({ number: String(n), name: `P${ports[Math.floor(io / 17) % 5]}${io % 17}`, type: 'bidir' });
+      io++;
+    }
+  }
+  return { mpn: 'TESTMCU100', manufacturer: 'Test Semi', description: 'Test MCU, LQFP100', category: 'ic', package: lqfp100, pins, ...overrides };
+}
+
+describe('footprints', () => {
+  it('numbers an LQFP100 counter-clockwise from the top of the left side', () => {
+    const r = footprintFor(lqfp100);
+    if (!r.ok) throw new Error(r.reason);
+    const pad = (n: number) => r.footprint.pads.find((p) => p.number === String(n))!;
+    expect(r.footprint.pads).toHaveLength(100);
+    expect(pad(1).x).toBeLessThan(0); // left side
+    expect(pad(1).y).toBeLessThan(pad(25).y); // top → bottom
+    expect(pad(26).y).toBeGreaterThan(0); // bottom side
+    expect(pad(26).x).toBeLessThan(pad(50).x); // left → right
+    expect(pad(51).x).toBeGreaterThan(0); // right side, bottom → top
+    expect(pad(76).y).toBeLessThan(0); // top side
+    expect(pad(76).x).toBeGreaterThan(pad(100).x); // right → left
+    // pitch and a pad that sits across the lead foot
+    expect(Math.abs(pad(2).y - pad(1).y)).toBeCloseTo(0.5, 6);
+    expect(pad(1).x - pad(1).w / 2).toBeLessThan(-8); // reaches past the lead tips (span 16)
+    expect(pad(1).x + pad(1).w / 2).toBeGreaterThan(-7.5); // and in under the foot
+  });
+
+  it('builds SOIC-8 and a QFN with its exposed pad', () => {
+    const so = footprintFor({ name: 'SOIC-8', family: 'SOIC', pins: 8, pitch_mm: 1.27, body_mm: [3.9, 4.9], span_mm: [6, 4.9] });
+    expect(so.ok && so.footprint.pads.map((p) => p.number)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
+    const qfn = footprintFor({ name: 'UFQFPN48', family: 'QFN', pins: 48, pitch_mm: 0.5, body_mm: [7, 7], exposed_pad_mm: [5.6, 5.6] }, [...Array.from({ length: 48 }, (_, i) => String(i + 1)), '49']);
+    expect(qfn.ok && qfn.footprint.pads).toHaveLength(49);
+    expect(qfn.ok && qfn.footprint.pads.at(-1)).toMatchObject({ number: '49', x: 0, y: 0, w: 5.6 });
+  });
+
+  it('names BGA rows the JEDEC way and only places listed balls', () => {
+    // A B C D E F G H J K L M N P R T U V W Y, then AA …
+    expect([0, 7, 8, 11, 12, 13, 19, 20].map(bgaRowName)).toEqual(['A', 'H', 'J', 'M', 'N', 'P', 'Y', 'AA']);
+    const r = footprintFor({ name: 'TFBGA100', family: 'BGA', pins: 3, pitch_mm: 0.8, grid: { rows: 10, cols: 10 } }, ['A1', 'J10', 'K5']);
+    expect(r.ok && r.footprint.pads.map((p) => p.number)).toEqual(['A1', 'J10', 'K5']);
+  });
+
+  it('explains what is missing', () => {
+    const r = footprintFor({ name: 'LQFP64', family: 'QFP', pins: 64 });
+    expect(r).toEqual({ ok: false, reason: 'needs pitch_mm, body_mm from the package drawing' });
+  });
+});
+
+describe('draft → part card', () => {
+  it('accepts a consistent draft and lays out the symbol like an MCU', () => {
+    const { card, issues } = draftToCard(mcuDraft());
+    expect(issues.filter((i) => i.severity === 'error')).toEqual([]);
+    expect(card?.id).toBe('test:TESTMCU100');
+    const layout = card!.symbolLayout!;
+    // repeated supplies are stacked into one position each
+    expect(layout.top.find((s) => s && s.length === 5)).toBeTruthy(); // VDD ×5
+    expect(layout.bottom.find((s) => s && s.length === 4)).toBeTruthy(); // VSS ×4
+    const sym = symbolFor(card!);
+    expect(sym.pins).toHaveLength(100); // every pin exists, stacked ones share a position
+    const vdd = sym.pins.filter((p) => p.name === 'VDD');
+    expect(new Set(vdd.map((p) => `${p.x},${p.y}`)).size).toBe(1);
+    expect(vdd.filter((p) => p.showName)).toHaveLength(1);
+    // ports grouped, with gaps between groups on a side
+    expect(layout.left.includes(null) || layout.right.includes(null)).toBe(true);
+    expect(card!.packageInfo?.name).toBe('LQFP100');
+  });
+
+  it('reports missing and duplicate pins instead of producing a card', () => {
+    const d = mcuDraft();
+    d.pins = d.pins.filter((p) => p.number !== '37' && p.number !== '38');
+    d.pins.push({ number: '5', name: 'PX1', type: 'bidir' });
+    const { card, issues } = draftToCard(d);
+    expect(card).toBeNull();
+    const text = issues.map((i) => i.message).join('\n');
+    expect(text).toContain('Duplicate pin numbers: 5');
+    expect(text).toContain('Missing pin numbers: 37–38');
+    expect(text).toContain('has 100 pins but the draft lists 99');
+  });
+
+  it('rejects impossible BGA ball names', () => {
+    const d = mcuDraft({ package: { name: 'TFBGA100', family: 'BGA', pins: 100, pitch_mm: 0.8, grid: { rows: 10, cols: 10 } } });
+    d.pins = d.pins.map((p, i) => ({ ...p, number: `${'ABCDEFGHJK'[Math.floor(i / 10)]}${(i % 10) + 1}` }));
+    d.pins[0] = { ...d.pins[0]!, number: 'I1' };
+    const { issues } = draftToCard(d);
+    expect(issues.find((i) => i.message.includes('Ball names not valid'))?.message).toContain('I1');
+  });
+
+  it('turns schema problems into readable issues', () => {
+    const { card, issues } = draftToCard({ mpn: 'X', pins: [] });
+    expect(card).toBeNull();
+    expect(issues.length).toBeGreaterThan(0);
+  });
+});

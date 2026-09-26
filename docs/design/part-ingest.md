@@ -6,6 +6,38 @@ The most dangerous failure in an AI-driven EDA tool is a **silently wrong part**
 footprint off by 0.2 mm ruins a board. So the pipeline follows one rule: **the LLM extracts
 parameters, deterministic code makes geometry, and every value can be traced back to the PDF.**
 
+## 0. What is implemented (first M1 slice)
+
+Parts → **Import from datasheet…**: part number plus a PDF (dropped) or a link. The import runs on
+the user's local Claude Code through the bridge, like the app chat.
+
+1. **Bridge** (`tools/bridge/src/chat.ts`, `pdf.ts`): downloads or receives the PDF and makes a
+   fresh folder `~/.tracewise/ingest/<job>/` with `datasheet.pdf`, `pages/page-NNN.txt` (text,
+   table cells separated by ` | `) and `index.txt` (page → first heading). Then it starts
+   `claude -p` in that folder with `--tools Read,Grep,Glob`, `--permission-mode dontAsk` and an MCP
+   token whose server exposes a single tool, `submit_part`. Reads outside the folder are denied
+   (verified), and there is no shell, no web access and no design tools. The folder is deleted
+   when the job ends.
+2. **Claude Code** decodes the ordering code (e.g. `STM32F777VIT6` → LQFP100), finds the pin table
+   column for that package and the package drawing, and submits a `PartDraft`
+   (`packages/schema/src/ingest.ts`): pins with number, name, type and alternate functions, plus
+   package family and nominal dimensions, decoupling notes and absolute-maximum supply.
+3. **The tab checks every submission** with `draftToCard` (`packages/parts/src/ingest.ts`):
+   schema, duplicate numbers, pin count against the package (exposed pad excluded), numbering 1…N
+   for leaded packages, valid JEDEC ball names for BGA, supply/ground presence, and whether a
+   footprint can be generated with a pad for every pin. Errors go back to Claude as the tool
+   result ("Missing pin numbers: 37–38"), and it resubmits.
+4. **Generators** (`symbolgen.ts`, `footprint.ts`): symbols for big ICs follow
+   `planSymbolLayout` (supplies on top, stacked by name; grounds at the bottom; system pins on the
+   left; GPIO ports grouped and balanced between left and right). Footprints are generated for
+   QFP/QFN, SOIC/SSOP/TSSOP/MSOP/DFN, BGA/CSP and DIP with IPC-7351-style nominal rules.
+5. **Review**: symbol, footprint (hovering a pin highlights its pad) and the pin table, next to the
+   check results. **Add to library** stores the card in IndexedDB (`library` store) and registers
+   it with the kernel, so the agent can find and place it. Designs embed the cards they use.
+
+Not yet: two-pass reconciliation, per-field page/bbox provenance, the datasheet overlay in review,
+multi-unit symbols, and 3D bodies.
+
 ## 1. Pipeline
 
 ```mermaid

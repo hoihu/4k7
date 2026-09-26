@@ -7,7 +7,7 @@ geometry and checks every change.
 
 - **Bring your own AI**: Anthropic, OpenAI-compatible (incl. OpenRouter), Gemini, or local models (Ollama / LM Studio).
 - **Bring your own tools**: attach any MCP server (distributor stock, company part DB, simulation…).
-- **Parts from datasheets**: drop a manufacturer PDF; the AI reads the parameters and deterministic generators build the symbol, footprint and 3D body.
+- **Parts from datasheets**: drop a manufacturer PDF (Parts → Import from datasheet); your local Claude Code extracts the pin table and package, the app checks it, and deterministic generators build the symbol and footprint.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
 - **Local-first**: runs entirely in the browser. Your designs and API keys stay on your machine.
 

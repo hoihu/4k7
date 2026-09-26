@@ -2,10 +2,11 @@
  * Local-first persistence in IndexedDB. The API key is encrypted with a non-extractable
  * AES-GCM key that never leaves this browser profile.
  */
-import type { Design } from '@tracewise/schema';
+import type { Design, PartCard } from '@tracewise/schema';
 
 const DB = 'tracewise';
-const VERSION = 1;
+/** v2: 'library' store for imported parts. */
+const VERSION = 2;
 
 /** Last storage problem in this browser, for diagnostics ('ok' when saving works). */
 export let storageHealth = 'ok';
@@ -30,7 +31,7 @@ function open(): Promise<IDBDatabase> {
     };
     req.onupgradeneeded = () => {
       const db = req.result;
-      for (const s of ['projects', 'settings', 'keys']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+      for (const s of ['projects', 'settings', 'keys', 'library']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
     };
     req.onsuccess = () => {
       clearTimeout(timer);
@@ -83,6 +84,25 @@ export async function saveProject(json: string): Promise<void> {
   } catch (e) {
     storageHealth = `saving the project failed: ${(e as Error).message}`;
   }
+}
+
+/* ------------------------------ part library ------------------------------ */
+
+/** Parts imported from datasheets, kept in this browser. */
+export async function loadLibrary(): Promise<PartCard[]> {
+  try {
+    return (await tx<PartCard[]>('library', 'readonly', (s) => s.getAll() as IDBRequest<PartCard[]>)) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveLibraryPart(card: PartCard): Promise<void> {
+  await put('library', card.id, JSON.parse(JSON.stringify(card)) as PartCard); // plain data, never a Svelte proxy
+}
+
+export async function deleteLibraryPart(id: string): Promise<void> {
+  await tx('library', 'readwrite', (s) => s.delete(id));
 }
 
 /* -------------------------------- settings -------------------------------- */

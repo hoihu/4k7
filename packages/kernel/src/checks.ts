@@ -20,6 +20,8 @@ import { sameValue, describeConstraint } from './apply.ts';
 import { allocRefdes, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 
 const DRIVERS = new Set(['out', 'bidir', 'tri', 'pwr_out', 'oc', 'passive']);
+/** IC pin types that may stay unconnected without being an error. */
+const IO = new Set(['bidir', 'out', 'tri', 'oc']);
 const SERIES_CATEGORIES = new Set(['inductor', 'resistor', 'diode']);
 
 interface Ctx {
@@ -76,8 +78,14 @@ function pinChecks(ctx: Ctx) {
       push(ctx, 'error', 'LIB.PART_MISSING', [c.refdes], `${c.refdes}: part card ${c.part} is missing.`);
       continue;
     }
+    // unused I/O on ICs is normal (an MCU rarely uses every GPIO): one note, not an error per pin
+    const unusedIo = card.category === 'ic' ? card.pins.filter((p) => IO.has(p.type) && !c.pins[p.number] && !c.noConnect.includes(p.number)) : [];
+    if (unusedIo.length) {
+      push(ctx, 'info', 'ERC.IO_UNUSED', [c.refdes], `${c.refdes}: ${unusedIo.length} I/O pin${unusedIo.length === 1 ? '' : 's'} unused (${unusedIo.slice(0, 6).map((p) => p.name).join(', ')}${unusedIo.length > 6 ? ', …' : ''}).`);
+    }
     for (const pin of card.pins) {
       const net = c.pins[pin.number];
+      if (unusedIo.includes(pin)) continue;
       if (!net && pin.type !== 'nc' && !c.noConnect.includes(pin.number)) {
         const hint = pin.description ? ` (${pin.description})` : '';
         const fixHints: EditOp[] | undefined =

@@ -1,3 +1,5 @@
+import type { PackageInfo, SymbolLayout } from './ingest.ts';
+
 /**
  * Part Cards: the library format. A card describes a part logically (pins, parameters,
  * datasheet requirements). Geometry (symbol, later footprint) is generated from it.
@@ -100,4 +102,8 @@ export interface PartCard {
   provenance: Provenance;
   /** Short hints that help the agent use the part correctly. */
   notes?: string[];
+  /** Mechanical package data (from the datasheet); footprints are generated from it. */
+  packageInfo?: PackageInfo;
+  /** Explicit symbol arrangement (generated for large ICs such as MCUs). */
+  symbolLayout?: SymbolLayout;
 }

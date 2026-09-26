@@ -41,9 +41,9 @@ async function main() {
   // chat in the app, answered by the local Claude Code
   const claudeBin = process.env.TRACEWISE_CLAUDE_BIN ?? 'claude';
   const capability = detectClaude(claudeBin, cfg.claude);
-  const chat = new ChatRunner({ bridge, claudeBin, workDir: join(configDir(), 'claude-workspace'), profile: cfg.claude, log });
+  const chat = new ChatRunner({ bridge, claudeBin, workDir: join(configDir(), 'claude-workspace'), ingestDir: join(configDir(), 'ingest'), profile: cfg.claude, log });
   bridge.setChatHandler(chat.handle, capability);
-  bridge.setHttpHandler(mcpHttpHandler(bridge, (t) => chat.isValidToken(t)));
+  bridge.setHttpHandler(mcpHttpHandler(bridge, (t) => chat.modeFor(t)));
 
   log(`v${VERSION} on 127.0.0.1:${port} · pairing code ${cfg.code} (${configPath()})`);
   log(`app chat via Claude Code: ${capability.available ? `yes (${capability.version})` : `no, ${capability.reason}`}`);

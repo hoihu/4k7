@@ -147,6 +147,14 @@ class BridgeClient {
     return true;
   }
 
+  /** Import a part from a datasheet with the local Claude Code; events stream like chat. */
+  sendIngest(msg: Omit<Extract<TabToBridge, { type: 'ingest' }>, 'type'>, onEvent: (e: ChatEvent) => void): boolean {
+    if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) return false;
+    this.#chatListeners.set(msg.id, onEvent);
+    this.#ws.send(JSON.stringify({ type: 'ingest', ...msg } satisfies TabToBridge));
+    return true;
+  }
+
   cancelChat(id: string) {
     this.#ws?.send(JSON.stringify({ type: 'chat_cancel', id } satisfies TabToBridge));
   }

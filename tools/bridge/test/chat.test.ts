@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
@@ -19,9 +19,10 @@ async function setup(bin = FAKE, profile?: ClaudeProfile) {
   const port = await bridge.start();
   cleanups.push(() => bridge.stop());
   const capability = detectClaude(bin, profile);
-  const chat = new ChatRunner({ bridge, claudeBin: bin, workDir: mkdtempSync(join(tmpdir(), 'tw-chat-')), ...(profile ? { profile } : {}) });
+  const ingestDir = mkdtempSync(join(tmpdir(), 'tw-ingest-'));
+  const chat = new ChatRunner({ bridge, claudeBin: bin, workDir: mkdtempSync(join(tmpdir(), 'tw-chat-')), ingestDir, ...(profile ? { profile } : {}) });
   bridge.setChatHandler(chat.handle, capability);
-  bridge.setHttpHandler(mcpHttpHandler(bridge, (t) => chat.isValidToken(t)));
+  bridge.setHttpHandler(mcpHttpHandler(bridge, (t) => chat.modeFor(t)));
 
   // a tab that answers tool calls
   const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: 'http://localhost:5173' } });
@@ -35,7 +36,8 @@ async function setup(bin = FAKE, profile?: ClaudeProfile) {
       if (m.type === 'welcome') resolve(m);
       if (m.type === 'call') {
         calls.push(m.tool);
-        ws.send(JSON.stringify({ type: 'result', id: m.id, isError: false, content: [{ type: 'text', text: '<design_state>empty</design_state>' }] }));
+        const answer = m.tool === 'submit_part' ? `checked ${(m.input as { mpn: string }).mpn}` : '<design_state>empty</design_state>';
+        ws.send(JSON.stringify({ type: 'result', id: m.id, isError: false, content: [{ type: 'text', text: answer }] }));
       }
       if (m.type === 'chat_event') events.set(m.id, [...(events.get(m.id) ?? []), m.event]);
     });
@@ -50,7 +52,17 @@ async function setup(bin = FAKE, profile?: ClaudeProfile) {
         }
       }, 20);
     });
-  return { bridge, port, welcome, calls, send };
+  const run = (msg: Record<string, unknown>) =>
+    new Promise<ChatEvent[]>((resolve) => {
+      ws.send(JSON.stringify(msg));
+      const t = setInterval(() => {
+        if (events.get(msg.id as string)?.some((e) => e.kind === 'done')) {
+          clearInterval(t);
+          resolve(events.get(msg.id as string)!);
+        }
+      }, 20);
+    });
+  return { bridge, port, welcome, calls, send, run, ingestDir };
 }
 
 const text = (es: ChatEvent[]) => es.filter((e) => e.kind === 'text').map((e) => (e as { text: string }).text).join('');
@@ -138,5 +150,67 @@ describe('app chat via Claude Code', () => {
     expect((await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { ...headers, authorization: 'Bearer nope' }, body })).status).toBe(401);
     expect((await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { ...headers, origin: 'https://evil.example' }, body })).status).toBe(403);
     expect((await fetch(`http://127.0.0.1:${port}/other`)).status).toBe(404);
+  });
+});
+
+/** A one-page PDF with the given line of text. */
+function tinyPdf(line: string): string {
+  const stream = `BT /F1 12 Tf 72 720 Td (${line}) Tj ET`;
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objs.forEach((o, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf, 'latin1').toString('base64');
+}
+
+describe('datasheet import via Claude Code', () => {
+  it('unpacks the PDF into a private folder and gives Claude only files + submit_part', async () => {
+    const { run, calls, ingestDir } = await setup();
+    const es = await run({ type: 'ingest', id: 'i1', mpn: 'STM32F777VIT6', pdf: { name: 'ds.pdf', base64: tinyPdf('Table 11. Pin definitions') }, model: 'sonnet' });
+    expect(es.at(-1)).toMatchObject({ kind: 'done', ok: true });
+    expect(es).toContainEqual({ kind: 'status', text: 'Datasheet: 1 pages, 0.0 MB' });
+    expect(es).toContainEqual({ kind: 'status', text: 'Reading page 1' });
+    const writing = es.filter((e) => e.kind === 'status' && e.text.startsWith('Writing')).map((e) => (e as { text: string }).text);
+    expect(writing).toEqual(['Writing the part…', 'Writing the part: 20 pins…', 'Writing the part: 40 pins…']);
+    expect(calls).toEqual(['submit_part']);
+    const reply = text(es);
+    expect(reply).toContain('tools=submit_part ');
+    const flags = JSON.parse(reply.slice(reply.indexOf('flags=') + 6));
+    expect(flags).toMatchObject({ tools: 'Read,Grep,Glob', strict: true, allowed: 'mcp__tracewise', permission: 'dontAsk', model: 'sonnet' });
+    expect(flags.prompt).toBe('Create the part for STM32F777VIT6 (datasheet: ds.pdf).');
+    expect(flags.appended).toMatch(/^You extract a part definition/);
+    expect(flags.files).toEqual(['datasheet.pdf', 'index.txt', 'pages']);
+    // the job folder is removed afterwards
+    await new Promise((r) => setTimeout(r, 100));
+    expect(readdirSync(ingestDir)).toEqual([]);
+    expect(existsSync(join(ingestDir, 'i1'))).toBe(false);
+  });
+
+  it('extracts page text with table cells kept apart', async () => {
+    const { pdfPages } = await import('../src/index.ts');
+    const pages = await pdfPages(new Uint8Array(Buffer.from(tinyPdf('PC0 | I/O'), 'base64')));
+    expect(pages).toEqual(['PC0 | I/O']);
+    const data = new Uint8Array(Buffer.from(tinyPdf('x'), 'base64'));
+    await pdfPages(data);
+    expect(data.byteLength).toBeGreaterThan(0); // the caller's buffer is left intact
+  });
+
+  it('rejects files that are not PDFs', async () => {
+    const { run, calls } = await setup();
+    const es = await run({ type: 'ingest', id: 'i2', mpn: 'X', pdf: { name: 'x.pdf', base64: Buffer.from('hello').toString('base64') } });
+    expect(es.at(-1)).toMatchObject({ kind: 'done', ok: false, error: 'That is not a PDF file.' });
+    expect(calls).toEqual([]);
   });
 });

@@ -35,7 +35,7 @@ export interface BridgeOptions {
 }
 
 export type HttpHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
-export type ChatMessage = Extract<TabToBridge, { type: 'chat' | 'chat_cancel' }>;
+export type ChatMessage = Extract<TabToBridge, { type: 'chat' | 'ingest' | 'chat_cancel' }>;
 
 interface Pending {
   resolve: (r: CallResult) => void;
@@ -216,9 +216,9 @@ export class Bridge {
         );
         return;
       }
-      if (msg.type === 'chat' || msg.type === 'chat_cancel') {
+      if (msg.type === 'chat' || msg.type === 'ingest' || msg.type === 'chat_cancel') {
         if (this.#chatHandler) this.#chatHandler(msg);
-        else if (msg.type === 'chat') this.#send({ type: 'chat_event', id: msg.id, event: { kind: 'done', ok: false, error: this.#chat.reason ?? 'Chat is not available on this bridge.' } });
+        else if (msg.type !== 'chat_cancel') this.#send({ type: 'chat_event', id: msg.id, event: { kind: 'done', ok: false, error: this.#chat.reason ?? 'Chat is not available on this bridge.' } });
         return;
       }
       if (msg.type === 'result') {

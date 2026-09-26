@@ -410,9 +410,13 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
     const id = plan.comp.pins[num];
     return id && !satsByPin.has(num) && !plan.comp.noConnect.includes(num) ? supplyDir(d.nets[id]!) : null;
   });
+  const decorated = new Set<string>(); // stacked pins (repeated VDD) share one position
   for (const p of sym.pins) {
     const netId = plan.comp.pins[p.number];
     const net = netId ? d.nets[netId] : undefined;
+    const at = `${p.x},${p.y}`;
+    if (decorated.has(at)) continue;
+    if (net || plan.comp.noConnect.includes(p.number)) decorated.add(at);
     if (plan.comp.noConnect.includes(p.number)) {
       scene.noConnects.push({ x: p.x, y: p.y });
       continue;

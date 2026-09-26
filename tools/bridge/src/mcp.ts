@@ -6,17 +6,21 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { BRIDGE_INSTRUCTIONS, bridgeTools, chatModePrompt } from '@tracewise/schema';
+import { BRIDGE_INSTRUCTIONS, bridgeTools, chatModePrompt, ingestPrompt, ingestTools } from '@tracewise/schema';
 import type { Bridge, HttpHandler } from './bridge.ts';
 
 export const VERSION = '0.1.0';
 
-export function createMcpServer(bridge: Bridge, opts: { chat?: boolean } = {}): Server {
+/** 'cli': Claude Code CLI drives the app; 'chat': it answers the app's chat; 'ingest': it imports a datasheet. */
+export type McpMode = 'cli' | 'chat' | 'ingest';
+
+export function createMcpServer(bridge: Bridge, opts: { mode?: McpMode } = {}): Server {
+  const mode = opts.mode ?? 'cli';
   const server = new Server(
     { name: 'tracewise', version: VERSION },
-    { capabilities: { tools: {} }, instructions: opts.chat ? chatModePrompt() : BRIDGE_INSTRUCTIONS },
+    { capabilities: { tools: {} }, instructions: mode === 'chat' ? chatModePrompt() : mode === 'ingest' ? ingestPrompt() : BRIDGE_INSTRUCTIONS },
   );
-  const tools = bridgeTools(opts);
+  const tools = mode === 'ingest' ? ingestTools() : bridgeTools({ chat: mode === 'chat' });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema as { type: 'object' } })),
@@ -31,7 +35,7 @@ export function createMcpServer(bridge: Bridge, opts: { chat?: boolean } = {}): 
     return { isError: r.isError, content: r.content };
   });
 
-  if (!opts.chat) {
+  if (mode === 'cli') {
     server.oninitialized = () => {
       const client = server.getClientVersion();
       bridge.setAgent(client ? prettyAgent(client.name) : null);
@@ -45,7 +49,7 @@ export function createMcpServer(bridge: Bridge, opts: { chat?: boolean } = {}): 
  * app's chat. Stateless: one server + transport per request. Only requests carrying a token
  * issued to a running chat process are accepted; browsers (any Origin header) are refused.
  */
-export function mcpHttpHandler(bridge: Bridge, isValidToken: (token: string) => boolean): HttpHandler {
+export function mcpHttpHandler(bridge: Bridge, modeForToken: (token: string) => McpMode | null): HttpHandler {
   return async (req: IncomingMessage, res: ServerResponse) => {
     if ((req.url ?? '').split('?')[0] !== '/mcp') {
       res.writeHead(404).end();
@@ -56,7 +60,8 @@ export function mcpHttpHandler(bridge: Bridge, isValidToken: (token: string) => 
       return;
     }
     const token = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1] ?? '';
-    if (!token || !isValidToken(token)) {
+    const mode = token ? modeForToken(token) : null;
+    if (!mode) {
       res.writeHead(401).end('missing or invalid token');
       return;
     }
@@ -65,7 +70,7 @@ export function mcpHttpHandler(bridge: Bridge, isValidToken: (token: string) => 
       return;
     }
     const body = await readJson(req);
-    const server = createMcpServer(bridge, { chat: true });
+    const server = createMcpServer(bridge, { mode });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => {
       void transport.close();

@@ -1,0 +1,128 @@
+/**
+ * From an AI-extracted datasheet draft to a Part Card, with deterministic cross-checks.
+ * The checks are what makes extraction trustworthy: a wrong pin count, a duplicate or
+ * missing pin number or an impossible ball name is reported back to the AI (and the user)
+ * instead of silently becoming a broken symbol.
+ */
+import { PartDraft, type IngestIssue, type PartCard, type PartRequirement } from '@tracewise/schema';
+import { bgaRowName, footprintFor } from './footprint.ts';
+import { planSymbolLayout } from './symbolgen.ts';
+
+export interface IngestResult {
+  card: PartCard | null;
+  issues: IngestIssue[];
+}
+
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'part';
+
+export function draftToCard(input: unknown): IngestResult {
+  const parsed = PartDraft.safeParse(input);
+  if (!parsed.success) {
+    return {
+      card: null,
+      issues: parsed.error.issues.slice(0, 12).map((i) => ({ severity: 'error' as const, message: `${i.path.join('.') || '(draft)'}: ${i.message}` })),
+    };
+  }
+  const draft = parsed.data;
+  const issues: IngestIssue[] = [];
+  const err = (message: string) => issues.push({ severity: 'error', message });
+  const warn = (message: string) => issues.push({ severity: 'warning', message });
+  const pkg = draft.package;
+
+  /* ---- pin numbers ---- */
+  const seen = new Map<string, number>();
+  for (const p of draft.pins) seen.set(p.number.toUpperCase(), (seen.get(p.number.toUpperCase()) ?? 0) + 1);
+  const dups = [...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k);
+  if (dups.length) err(`Duplicate pin numbers: ${dups.slice(0, 20).join(', ')}.`);
+
+  const isEp = (n: string) => /^(EP|PAD)$/i.test(n) || (!!pkg.exposed_pad_mm && Number(n) === pkg.pins + 1);
+  const counted = draft.pins.filter((p) => !isEp(p.number));
+  if (counted.length !== pkg.pins) {
+    err(`${pkg.name} has ${pkg.pins} pins but the draft lists ${counted.length}${counted.length < pkg.pins ? ' (some are missing)' : ' (too many)'}.`);
+  }
+
+  const grid = pkg.family === 'BGA' || pkg.family === 'CSP';
+  if (grid) {
+    const valid = new Set<string>();
+    if (pkg.grid) for (let r = 0; r < pkg.grid.rows; r++) for (let c = 1; c <= pkg.grid.cols; c++) valid.add(`${bgaRowName(r)}${c}`);
+    const bad = counted.map((p) => p.number.toUpperCase()).filter((n) => !/^[A-Z]{1,2}\d{1,2}$/.test(n) || (valid.size > 0 && !valid.has(n)));
+    if (bad.length) err(`Ball names not valid for ${pkg.name}${pkg.grid ? ` (${pkg.grid.rows}×${pkg.grid.cols}, rows skip I O Q S X Z)` : ''}: ${bad.slice(0, 15).join(', ')}.`);
+  } else {
+    const nums = counted.map((p) => Number(p.number));
+    if (nums.some((n) => !Number.isInteger(n))) {
+      err(`Pin numbers of a ${pkg.family} package must be integers; got ${counted.filter((p) => !Number.isInteger(Number(p.number))).slice(0, 10).map((p) => p.number).join(', ')}.`);
+    } else {
+      const have = new Set(nums);
+      const missing: number[] = [];
+      for (let i = 1; i <= pkg.pins; i++) if (!have.has(i)) missing.push(i);
+      const extra = nums.filter((n) => n < 1 || n > pkg.pins);
+      if (missing.length) err(`Missing pin numbers: ${compress(missing)}.`);
+      if (extra.length) err(`Pin numbers outside 1–${pkg.pins}: ${compress(extra)}.`);
+    }
+  }
+
+  /* ---- names and types ---- */
+  const supplies = draft.pins.filter((p) => p.type === 'pwr_in' && !/^(VSS|GND|V-|VREF-)/i.test(p.name));
+  const grounds = draft.pins.filter((p) => /^(VSS|GND|EP|PAD)/i.test(p.name));
+  if (draft.category === 'ic' && !supplies.length) warn('No supply pins (type pwr_in) found; check VDD/VCC pins.');
+  if (draft.category === 'ic' && !grounds.length) warn('No ground pins (VSS/GND) found.');
+  const mistyped = grounds.filter((p) => p.type !== 'pwr_in' && p.type !== 'passive');
+  if (mistyped.length) warn(`Ground pins should have type pwr_in: ${mistyped.slice(0, 8).map((p) => `${p.number} ${p.name}`).join(', ')}.`);
+
+  /* ---- footprint ---- */
+  const fp = footprintFor(pkg, draft.pins.map((p) => p.number));
+  if (!fp.ok) warn(`Footprint not generated: ${fp.reason}.`);
+  else if (!grid) {
+    const padNums = new Set(fp.footprint.pads.map((p) => p.number.toUpperCase()));
+    const noPad = draft.pins.filter((p) => !padNums.has(p.number.toUpperCase()));
+    if (noPad.length) err(`Pins without a pad in the generated ${pkg.name} footprint: ${noPad.slice(0, 10).map((p) => p.number).join(', ')}.`);
+  }
+
+  /* ---- card ---- */
+  const requirements: PartRequirement[] = (draft.decoupling ?? []).map((r) => ({
+    kind: 'decouple',
+    pin: r.pin,
+    min: r.min,
+    ...(r.note ? { note: r.note } : {}),
+    src: { source: 'datasheet', ...(draft.datasheet ? { document: draft.datasheet } : {}) },
+  }));
+  const pins = draft.pins.map((p) => ({
+    number: p.number,
+    name: p.name,
+    type: p.type,
+    ...(p.functions?.length || p.description ? { description: [p.description, p.functions?.length ? `alt: ${p.functions.join(', ')}` : ''].filter(Boolean).join(' · ') } : {}),
+    ...(draft.supply_max_v && p.type === 'pwr_in' && !/^(VSS|GND)/i.test(p.name) ? { maxVoltage: draft.supply_max_v } : {}),
+  }));
+  const card: PartCard = {
+    id: `${slug(draft.manufacturer.split(/\s/)[0]!)}:${draft.mpn}`,
+    mpn: draft.mpn,
+    manufacturer: draft.manufacturer,
+    description: draft.description,
+    category: draft.category,
+    refPrefix: draft.category === 'connector' ? 'J' : draft.category === 'transistor' ? 'Q' : draft.category === 'crystal' ? 'Y' : 'U',
+    package: pkg.name,
+    pins,
+    params: {},
+    ...(requirements.length ? { requirements } : {}),
+    ...(draft.datasheet ? { datasheet: draft.datasheet } : {}),
+    provenance: { source: 'datasheet', ...(draft.datasheet ? { document: draft.datasheet } : {}), ...(draft.pages?.pinout?.[0] ? { page: draft.pages.pinout[0] } : {}) },
+    ...(draft.notes?.length ? { notes: draft.notes } : {}),
+    packageInfo: pkg,
+    // large ICs get the conventional arrangement (supplies top, grounds bottom, ports grouped)
+    ...(pins.length >= 12 ? { symbolLayout: planSymbolLayout(pins) } : {}),
+  };
+  return { card: issues.some((i) => i.severity === 'error') ? null : card, issues };
+}
+
+/** 1,2,3,7,9,10 → "1–3, 7, 9–10" */
+function compress(nums: number[]): string {
+  const s = [...new Set(nums)].sort((a, b) => a - b);
+  const out: string[] = [];
+  for (let i = 0; i < s.length; ) {
+    let j = i;
+    while (j + 1 < s.length && s[j + 1] === s[j]! + 1) j++;
+    out.push(i === j ? String(s[i]) : `${s[i]}–${s[j]}`);
+    i = j + 1;
+  }
+  return out.slice(0, 20).join(', ') + (out.length > 20 ? ' …' : '');
+}

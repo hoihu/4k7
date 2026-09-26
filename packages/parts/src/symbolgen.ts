@@ -7,7 +7,7 @@
  *  - box symbols (ICs, connectors, transistors): body rectangle from (0, 0) to (w, h),
  *    pins sticking out 200 mils on each side.
  */
-import type { PartCard, PartPin, PinSide, Prim } from '@tracewise/schema';
+import type { PartCard, PartPin, PinSide, Prim, SymbolLayout } from '@tracewise/schema';
 
 export const GRID = 100;
 export const PIN_LEN = 200;
@@ -137,15 +137,41 @@ export function pinSide(pin: PartPin): PinSide {
 
 const ceilGrid = (v: number) => Math.ceil(v / GRID) * GRID;
 
-function box(card: PartCard, first: string[], mirror: boolean): SymbolDef {
-  const sides: Record<PinSide, PartPin[]> = { left: [], right: [], top: [], bottom: [] };
-  const ordered = [...card.pins.filter((p) => first.includes(p.number)), ...card.pins.filter((p) => !first.includes(p.number))];
-  const flipSide = (s: PinSide): PinSide => (!mirror ? s : s === 'left' ? 'right' : s === 'right' ? 'left' : s);
-  for (const p of ordered) sides[flipSide(pinSide(p))].push(p);
+/** One position on a side: pins stacked there (repeated supplies share one), or a gap. */
+type Slot = PartPin[] | null;
 
+function slotsFor(card: PartCard, first: string[], mirror: boolean): Record<PinSide, Slot[]> {
+  const flipSide = (s: PinSide): PinSide => (!mirror ? s : s === 'left' ? 'right' : s === 'right' ? 'left' : s);
+  const out: Record<PinSide, Slot[]> = { left: [], right: [], top: [], bottom: [] };
+  const layout = card.symbolLayout;
+  if (layout) {
+    const byNumber = new Map(card.pins.map((p) => [p.number, p]));
+    const placed = new Set<string>();
+    for (const side of ['left', 'right', 'top', 'bottom'] as PinSide[]) {
+      for (const entry of layout[side]) {
+        if (entry === null) {
+          out[flipSide(side)].push(null);
+          continue;
+        }
+        const stack = entry.map((n) => byNumber.get(n)).filter((p): p is PartPin => !!p);
+        stack.forEach((p) => placed.add(p.number));
+        if (stack.length) out[flipSide(side)].push(stack);
+      }
+    }
+    // pins the layout forgot still get drawn, so that nothing becomes unconnectable
+    for (const p of card.pins) if (!placed.has(p.number)) out[flipSide(pinSide(p))].push([p]);
+    return out;
+  }
+  const ordered = [...card.pins.filter((p) => first.includes(p.number)), ...card.pins.filter((p) => !first.includes(p.number))];
+  for (const p of ordered) out[flipSide(pinSide(p))].push([p]);
+  return out;
+}
+
+function box(card: PartCard, first: string[], mirror: boolean): SymbolDef {
+  const sides = slotsFor(card, first, mirror);
   const isConn = card.category === 'connector';
   const showNames = !isConn;
-  const labelLen = (ps: PartPin[]) => (showNames ? Math.max(0, ...ps.map((p) => p.name.length)) : 0);
+  const labelLen = (slots: Slot[]) => (showNames ? Math.max(0, ...slots.map((s) => (s ? s[0]!.name.length : 0))) : 0);
 
   const topPad = sides.top.length ? 200 : 100;
   const botPad = sides.bottom.length ? 200 : 100;
@@ -160,32 +186,98 @@ function box(card: PartCard, first: string[], mirror: boolean): SymbolDef {
 
   const prims: Prim[] = [{ t: 'rect', x: 0, y: 0, w, h, fill: true }];
   const pins: SymbolPin[] = [];
-  const add = (p: PartPin, side: PinSide, x: number, y: number, bx: number, by: number) => {
+  const add = (slot: Slot, side: PinSide, x: number, y: number, bx: number, by: number) => {
+    if (!slot) return;
     prims.push({ t: 'line', x1: x, y1: y, x2: bx, y2: by });
-    pins.push({ number: p.number, name: p.name, x, y, side, showName: showNames, showNumber: true });
+    // stacked pins share the position; only the first shows its name (numbers would collide)
+    slot.forEach((p, i) =>
+      pins.push({ number: p.number, name: p.name, x, y, side, showName: showNames && i === 0, showNumber: slot.length === 1 }),
+    );
   };
 
-  sides.left.forEach((p, i) => add(p, 'left', -PIN_LEN, topPad + i * GRID, 0, topPad + i * GRID));
-  sides.right.forEach((p, i) => add(p, 'right', w + PIN_LEN, topPad + i * GRID, w, topPad + i * GRID));
+  sides.left.forEach((slot, i) => add(slot, 'left', -PIN_LEN, topPad + i * GRID, 0, topPad + i * GRID));
+  sides.right.forEach((slot, i) => add(slot, 'right', w + PIN_LEN, topPad + i * GRID, w, topPad + i * GRID));
   const tbStart = (n: number) => ceilGrid((w - (n - 1) * tbPitch) / 2 - GRID / 2);
-  sides.top.forEach((p, i) => {
+  sides.top.forEach((slot, i) => {
     const x = tbStart(sides.top.length) + i * tbPitch;
-    add(p, 'top', x, -PIN_LEN, x, 0);
+    add(slot, 'top', x, -PIN_LEN, x, 0);
   });
-  sides.bottom.forEach((p, i) => {
+  sides.bottom.forEach((slot, i) => {
     const x = tbStart(sides.bottom.length) + i * tbPitch;
-    add(p, 'bottom', x, h + PIN_LEN, x, h);
+    add(slot, 'bottom', x, h + PIN_LEN, x, h);
   });
 
+  const nameRight = mirror && !sides.right.length;
   return {
     kind: 'box',
     prims,
     pins,
     bbox: { x: -PIN_LEN, y: -PIN_LEN, w: w + 2 * PIN_LEN, h: h + 2 * PIN_LEN },
     // outside the top corner on the side without pins (top-left normally, top-right when mirrored)
-    refPos: mirror && !sides.right.length ? { x: w + 30, y: -115, anchor: 'start' } : { x: -30, y: -115, anchor: 'end' },
-    valuePos: mirror && !sides.right.length ? { x: w + 30, y: -30, anchor: 'start' } : { x: -30, y: -30, anchor: 'end' },
+    refPos: nameRight ? { x: w + 30, y: -115, anchor: 'start' } : { x: -30, y: -115, anchor: 'end' },
+    valuePos: nameRight ? { x: w + 30, y: -30, anchor: 'start' } : { x: -30, y: -30, anchor: 'end' },
   };
+}
+
+/* ------------------------------- MCU symbols ------------------------------- */
+
+const SUPPLY = /^(VBAT|VDD\w*|VCC\w*|AVDD|DVDD|VDDA|VREF\+|VREFP|V\+|VIN|VCAP\w*)$/i;
+const GROUND = /^(VSS\w*|GND\w*|AGND|DGND|PGND|VSSA|VREF-|VREFN|V-|EP|PAD)$/i;
+const PORT = /^P([A-Z])(\d+)$/;
+
+/** Main name without alternate-function suffixes: "PA0-WKUP" → "PA0", "PB5/RESET" → "PB5". */
+function baseName(name: string): string {
+  return name.split(/[-/ (]/)[0]!.toUpperCase();
+}
+
+/**
+ * Arrange a large IC the conventional way (as in the usual MCU library symbols): supplies on
+ * top and grounds at the bottom (repeated names stacked), system pins at the top left, then
+ * the ports PA, PB, PC… in groups on the left and right, balanced by height. NC pins stack
+ * at the end of the right side.
+ */
+export function planSymbolLayout(pins: PartPin[]): SymbolLayout {
+  const stacks = (ps: PartPin[]) => {
+    const byName = new Map<string, string[]>();
+    for (const p of ps) byName.set(p.name.toUpperCase(), [...(byName.get(p.name.toUpperCase()) ?? []), p.number]);
+    return [...byName.entries()].sort(([a], [b]) => supplyRank(a) - supplyRank(b) || a.localeCompare(b, 'en', { numeric: true })).map(([, n]) => n);
+  };
+  const isPower = (p: PartPin) => p.type === 'pwr_in' || p.type === 'pwr_out' || SUPPLY.test(p.name) || GROUND.test(p.name);
+  const ground = pins.filter((p) => GROUND.test(p.name));
+  const supply = pins.filter((p) => !GROUND.test(p.name) && isPower(p) && p.type !== 'pwr_out');
+  const nc = pins.filter((p) => p.type === 'nc');
+  const rest = pins.filter((p) => !ground.includes(p) && !supply.includes(p) && !nc.includes(p));
+
+  const ports = new Map<string, PartPin[]>();
+  const system: PartPin[] = [];
+  for (const p of rest) {
+    const m = PORT.exec(baseName(p.name));
+    if (m) ports.set(m[1]!, [...(ports.get(m[1]!) ?? []), p]);
+    else system.push(p);
+  }
+  const portNo = (p: PartPin) => Number(PORT.exec(baseName(p.name))![2]);
+  const groups = [...ports.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, ps]) => ps.sort((a, b) => portNo(a) - portNo(b)));
+
+  const left: (string[] | null)[] = system.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true })).map((p) => [p.number]);
+  const right: (string[] | null)[] = [];
+  const height = (side: (string[] | null)[]) => side.length;
+  for (const g of groups) {
+    // keep the letter order on each side; put each group where the side is shorter
+    const target = height(left) <= height(right) ? left : right;
+    if (target.length) target.push(null);
+    target.push(...g.map((p) => [p.number]));
+  }
+  if (nc.length) {
+    if (right.length) right.push(null);
+    right.push(nc.map((p) => p.number));
+  }
+  return { left, right, top: stacks(supply), bottom: stacks(ground) };
+}
+
+function supplyRank(name: string): number {
+  const order = ['VBAT', 'VDD', 'VDDA', 'VREF+', 'VDDUSB', 'VDDSDMMC', 'VDDIO2', 'VCAP1', 'VCAP2', 'VSS', 'VSSA', 'VREF-'];
+  const i = order.indexOf(name.toUpperCase());
+  return i < 0 ? order.length : i;
 }
 
 /* ------------------------------ bridge diamond ----------------------------- */

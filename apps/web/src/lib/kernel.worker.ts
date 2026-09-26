@@ -4,7 +4,8 @@
  * structured-cloneable arguments; the Rust/WASM kernel will slot in behind the same RPC.
  */
 import { Kernel } from '@tracewise/kernel';
-import type { Design } from '@tracewise/schema';
+import { registerUserParts, unregisterUserPart } from '@tracewise/parts';
+import type { Design, PartCard } from '@tracewise/schema';
 
 const kernel = new Kernel();
 
@@ -19,6 +20,9 @@ const methods = {
   exportDesign: () => kernel.exportDesign(),
   rename: (name: string) => kernel.rename(name),
   hasPending: () => kernel.hasPending(),
+  /** Imported parts, so the agent can find and place them. */
+  registerParts: (cards: PartCard[]) => registerUserParts(cards),
+  unregisterPart: (id: string) => unregisterUserPart(id),
 };
 
 export type KernelMethods = typeof methods;
