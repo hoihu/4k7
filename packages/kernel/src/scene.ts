@@ -75,15 +75,20 @@ export function mergeScene(into: Scene, s: Scene): void {
 /** Rough extent of a label decoration, for spacing and bounding boxes. */
 export function labelRect(l: LabelView): Rect {
   const w = tw(l.text) + 80;
-  if (l.kind === 'ground') {
-    const ox = l.dir === 'left' ? -100 : l.dir === 'right' ? 100 : 0;
-    return { x: l.x + ox - 80, y: l.y, w: 160, h: 260 };
+  if (l.kind !== 'net') {
+    // vertical supply symbol, possibly after a horizontal stub
+    const sx = l.x + (l.stub === 'left' ? -1 : l.stub === 'right' ? 1 : 0) * (l.stubLen ?? 100);
+    const half = l.kind === 'ground' ? 80 : Math.max(80, w / 2);
+    const sym: Rect = l.dir === 'up' ? { x: sx - half, y: l.y - 260, w: 2 * half, h: 260 } : { x: sx - half, y: l.y, w: 2 * half, h: 260 };
+    const x0 = Math.min(sym.x, l.x);
+    const x1 = Math.max(sym.x + sym.w, l.x);
+    return { x: x0, y: sym.y, w: x1 - x0, h: sym.h };
   }
   switch (l.dir) {
     case 'right':
-      return { x: l.x, y: l.y - 60, w: w + (l.kind === 'rail' ? 100 : 0), h: 120 + (l.kind === 'rail' ? 200 : 0) };
+      return { x: l.x, y: l.y - 60, w, h: 120 };
     case 'left':
-      return { x: l.x - w - (l.kind === 'rail' ? 100 : 0), y: l.y - 60, w: w + (l.kind === 'rail' ? 100 : 0), h: 120 + (l.kind === 'rail' ? 200 : 0) };
+      return { x: l.x - w, y: l.y - 60, w, h: 120 };
     case 'up':
       return { x: l.x - w / 2, y: l.y - 260, w, h: 260 };
     case 'down':
@@ -170,15 +175,55 @@ const halfGrid = (v: number) => Math.ceil(v / 50) * 50;
 
 export type Dir = LabelView['dir'];
 
-export function deco(net: Net, x: number, y: number, dir: Dir): LabelView {
+/** Negative supplies point down like ground: VSS, VEE, V-, or a negative voltage. */
+export function isNegativeRail(net: Net): boolean {
+  return (net.attrs.voltage ?? 0) < 0 || /^(-|VSS|VEE|V-|VNEG)/i.test(net.name);
+}
+
+/** Which way a net's supply symbol points, or null for signal nets. */
+export function supplyDir(net: Net): 'up' | 'down' | null {
+  if (isGroundNet(net)) return 'down';
+  if (isPowerNet(net)) return isNegativeRail(net) ? 'down' : 'up';
+  return null;
+}
+
+/**
+ * The decoration that shows which net a connection point belongs to. Signal nets get a
+ * label pointing `dir`; supplies always get a vertical symbol (up for positive rails, down for
+ * ground and negative rails), after a horizontal stub when the lead is horizontal.
+ */
+export function deco(net: Net, x: number, y: number, dir: Dir, stubLen = 100): LabelView {
   const kind: LabelView['kind'] = isGroundNet(net) ? 'ground' : isPowerNet(net) ? 'rail' : 'net';
-  return { x, y, text: net.name, netId: net.id, kind, dir };
+  const base = { x, y, text: net.name, netId: net.id, kind };
+  if (kind !== 'net' && (dir === 'left' || dir === 'right')) return { ...base, dir: supplyDir(net)!, stub: dir, stubLen };
+  return { ...base, dir };
 }
 
 /** Horizontal room a decoration at a left/right pin end needs. */
-export function decoWidth(net: Net | undefined): number {
+export function decoWidth(net: Net | undefined, stubLen = 100): number {
   if (!net) return 0;
-  if (isGroundNet(net)) return 200;
-  return tw(net.name) + 80 + (isPowerNet(net) ? 100 : 0);
+  if (supplyDir(net)) return stubLen + Math.max(80, tw(net.name) / 2 + 20);
+  return tw(net.name) + 80;
+}
+
+/**
+ * Stub lengths for supply symbols on horizontal leads, so that symbols on neighbouring pins
+ * do not run into each other: upward symbols step outwards from the top, downward ones from
+ * the bottom (pins closer than 300 mils form a run).
+ */
+export function supplyStubs(pins: { number: string; y: number; side: string }[], dirOf: (pin: string) => 'up' | 'down' | null): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const side of ['left', 'right']) {
+    const onSide = pins.filter((p) => p.side === side);
+    for (const want of ['up', 'down'] as const) {
+      const run = onSide.filter((p) => dirOf(p.number) === want).sort((a, b) => (want === 'up' ? a.y - b.y : b.y - a.y));
+      let step = 0;
+      run.forEach((p, i) => {
+        step = i > 0 && Math.abs(p.y - run[i - 1]!.y) <= 300 ? step + 1 : 0;
+        out.set(p.number, 100 + 200 * step);
+      });
+    }
+  }
+  return out;
 }
 

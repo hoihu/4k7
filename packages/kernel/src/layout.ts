@@ -21,6 +21,8 @@ import { flowCell, planFlow, type FlowPlan } from './flow.ts';
 import {
   deco,
   decoWidth,
+  supplyDir,
+  supplyStubs,
   emptyScene,
   grid,
   makeSymbol,
@@ -367,6 +369,10 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
   /* pin end decorations for pins without satellites */
   let gapRight = 200;
   let gapLeft = 200;
+  const stubs = supplyStubs(sym.pins, (num) => {
+    const id = plan.comp.pins[num];
+    return id && !satsByPin.has(num) && !plan.comp.noConnect.includes(num) ? supplyDir(d.nets[id]!) : null;
+  });
   for (const p of sym.pins) {
     const netId = plan.comp.pins[p.number];
     const net = netId ? d.nets[netId] : undefined;
@@ -388,9 +394,10 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
       continue;
     }
     const dir: Dir = p.side === 'left' ? 'left' : p.side === 'right' ? 'right' : p.side === 'top' ? 'up' : 'down';
-    scene.labels.push(deco(net, p.x, p.y, dir));
-    if (p.side === 'right') gapRight = Math.max(gapRight, decoWidth(net) + 100);
-    if (p.side === 'left') gapLeft = Math.max(gapLeft, decoWidth(net) + 100);
+    const stub = stubs.get(p.number) ?? 100;
+    scene.labels.push(deco(net, p.x, p.y, dir, stub));
+    if (p.side === 'right') gapRight = Math.max(gapRight, decoWidth(net, stub) + 100);
+    if (p.side === 'left') gapLeft = Math.max(gapLeft, decoWidth(net, stub) + 100);
   }
 
   /* satellite columns */

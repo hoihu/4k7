@@ -171,8 +171,14 @@ export interface LabelView {
   text: string;
   netId: string;
   kind: 'net' | 'ground' | 'rail';
-  /** Direction the label points away from its connection point; 'on' = text sitting on a wire. */
+  /**
+   * Direction the label points away from its connection point; 'on' = text sitting on a wire.
+   * Supply symbols (kind rail/ground) are always vertical: 'up' or 'down'.
+   */
   dir: 'left' | 'right' | 'up' | 'down' | 'on';
+  /** Supply symbol on a horizontal lead: a stub of `stubLen` mils in this direction comes first. */
+  stub?: 'left' | 'right';
+  stubLen?: number;
 }
 
 export interface WireView {

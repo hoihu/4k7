@@ -133,28 +133,21 @@
 
     <!-- labels -->
     {#each sheet.labels as l, i (i)}
-      {#if l.kind === 'ground'}
-        {@const gx = l.dir === 'left' ? l.x - 100 : l.dir === 'right' ? l.x + 100 : l.x}
-        {@const up = l.dir === 'up' ? -1 : 1}
+      {#if l.kind === 'ground' || l.kind === 'rail'}
+        <!-- supplies are always vertical; on a horizontal lead a stub comes first -->
+        {@const sx = l.x + (l.stub === 'left' ? -1 : l.stub === 'right' ? 1 : 0) * (l.stubLen ?? 100)}
+        {@const s = l.dir === 'up' ? -1 : 1}
         <g class="pwr">
-          {#if gx !== l.x}<line x1={l.x} y1={l.y} x2={gx} y2={l.y} />{/if}
-          <line x1={gx} y1={l.y} x2={gx} y2={l.y + up * 80} />
-          <line x1={gx - 70} y1={l.y + up * 80} x2={gx + 70} y2={l.y + up * 80} />
-          <line x1={gx - 45} y1={l.y + up * 115} x2={gx + 45} y2={l.y + up * 115} />
-          <line x1={gx - 20} y1={l.y + up * 150} x2={gx + 20} y2={l.y + up * 150} />
-        </g>
-      {:else if l.kind === 'rail'}
-        <g class="pwr">
-          {#if l.dir === 'up' || l.dir === 'down'}
-            {@const s = l.dir === 'up' ? -1 : 1}
-            <line x1={l.x} y1={l.y} x2={l.x} y2={l.y + s * 100} />
-            <line x1={l.x - 70} y1={l.y + s * 100} x2={l.x + 70} y2={l.y + s * 100} />
-            <text class="rail-t" x={l.x} y={l.dir === 'up' ? l.y - 135 : l.y + 195} text-anchor="middle">{l.text}</text>
+          {#if sx !== l.x}<line x1={l.x} y1={l.y} x2={sx} y2={l.y} />{/if}
+          {#if l.kind === 'ground'}
+            <line x1={sx} y1={l.y} x2={sx} y2={l.y + s * 80} />
+            <line x1={sx - 70} y1={l.y + s * 80} x2={sx + 70} y2={l.y + s * 80} />
+            <line x1={sx - 45} y1={l.y + s * 115} x2={sx + 45} y2={l.y + s * 115} />
+            <line x1={sx - 20} y1={l.y + s * 150} x2={sx + 20} y2={l.y + s * 150} />
           {:else}
-            {@const s = l.dir === 'left' ? -1 : 1}
-            <line x1={l.x} y1={l.y} x2={l.x + s * 100} y2={l.y} />
-            <line x1={l.x + s * 100} y1={l.y - 60} x2={l.x + s * 100} y2={l.y + 60} />
-            <text class="rail-t" x={l.x + s * 135} y={l.y + 27} text-anchor={s < 0 ? 'end' : 'start'}>{l.text}</text>
+            <line x1={sx} y1={l.y} x2={sx} y2={l.y + s * 100} />
+            <line x1={sx - 70} y1={l.y + s * 100} x2={sx + 70} y2={l.y + s * 100} />
+            <text class="rail-t" x={sx} y={s < 0 ? l.y - 135 : l.y + 195} text-anchor="middle">{l.text}</text>
           {/if}
         </g>
       {:else if l.dir === 'on'}

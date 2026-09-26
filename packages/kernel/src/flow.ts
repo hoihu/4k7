@@ -15,7 +15,7 @@
 import type { Component, Design, Net, PartCard, PinView } from '@tracewise/schema';
 import { isTwoPin, pinSide, symbolFor } from '@tracewise/parts';
 import { cardOf, isGroundNet, isPowerNet, natCmp, type NetPin } from './doc.ts';
-import { deco, decoWidth, emptyScene, grid, makeSymbol, satWidth, tw, type Scene } from './scene.ts';
+import { deco, decoWidth, emptyScene, grid, isNegativeRail, makeSymbol, satWidth, supplyDir, supplyStubs, tw, type Scene } from './scene.ts';
 
 /** Wire between a tap on a column and its net label, so the label never sits on a part. */
 const TAP_STUB = 200;
@@ -189,6 +189,11 @@ function shuntOrder(d: Design, c: Component): number {
 
 /* ---------------------------------- draw ----------------------------------- */
 
+/** The end of a regulator rail is a supply by construction: an upright symbol (down if negative). */
+function railEnd(n: Net, x: number, y: number) {
+  return { x, y, text: n.name, netId: n.id, kind: 'rail' as const, dir: isNegativeRail(n) ? ('down' as const) : ('up' as const) };
+}
+
 const RISE = 400; // a vertical two-pin part spans 400 mils pin to pin
 
 export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
@@ -208,6 +213,11 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
   const colPins = new Set(plan.pinCols.map((c) => c.pin));
   let gapR = 200;
   let gapL = 200;
+  const stubs = supplyStubs(ic.pins, (num) => {
+    const id = plan.comp.pins[num];
+    const skip = num === plan.inPin || num === plan.outPin || colPins.has(num) || plan.comp.noConnect.includes(num);
+    return id && !skip ? supplyDir(d.nets[id]!) : null;
+  });
   for (const p of ic.pins) {
     if (p.number === plan.inPin || p.number === plan.outPin || colPins.has(p.number)) continue;
     if (plan.comp.noConnect.includes(p.number)) {
@@ -221,9 +231,10 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
       continue;
     }
     const dir = p.side === 'left' ? 'left' : p.side === 'right' ? 'right' : p.side === 'top' ? 'up' : 'down';
-    scene.labels.push(deco(net(id), p.x, p.y, dir));
-    if (p.side === 'right') gapR = Math.max(gapR, decoWidth(net(id)) + 100);
-    if (p.side === 'left') gapL = Math.max(gapL, decoWidth(net(id)) + 100);
+    const stub = stubs.get(p.number) ?? 100;
+    scene.labels.push(deco(net(id), p.x, p.y, dir, stub));
+    if (p.side === 'right') gapR = Math.max(gapR, decoWidth(net(id), stub) + 100);
+    if (p.side === 'left') gapL = Math.max(gapL, decoWidth(net(id), stub) + 100);
   }
 
   /** Draw a vertical stack of parts starting with its top pin at (x, y); returns the bottom pin. */
@@ -335,7 +346,7 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
   const outEnd = x - 100; // the last column's margin is only needed for another part
   railPts.push(outEnd, yR);
   scene.wires.push({ netId: plan.outNet, pts: railPts });
-  scene.labels.push(deco(net(plan.outNet), outEnd, yR, 'right'));
+  scene.labels.push(railEnd(net(plan.outNet), outEnd, yR));
   for (const tx of taps) scene.junctions.push({ x: tx, y: yR });
 
   /* ----- left side: pin columns and input rail ----- */
@@ -372,7 +383,7 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
   const inEnd = Math.min(lx, inP.x - 200) - 100;
   inPts.push(inEnd, yL);
   scene.wires.push({ netId: plan.inNet, pts: inPts });
-  scene.labels.push(deco(net(plan.inNet), inEnd, yL, 'left'));
+  scene.labels.push(railEnd(net(plan.inNet), inEnd, yL));
   for (const tx of lTaps) scene.junctions.push({ x: tx, y: yL });
 
   /* ----- the common ground line ----- */
