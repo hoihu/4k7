@@ -86,8 +86,8 @@ export const ConstrainOp = z.object({
   kind: z
     .enum(['left_of', 'right_of', 'above', 'below', 'near', 'param', 'layer', 'arrangement', 'note'])
     .describe('arrangement: how a recognised sub-circuit is drawn; a = one of its parts. Bridge rectifier diode: "diamond" (default) | "inline". Regulator IC: "power_flow" (default, datasheet style) | "compact"'),
-  a: componentRef.optional().describe('Subject component'),
-  b: componentRef.optional().describe('Reference component (left_of/right_of/above/below/near)'),
+  a: componentRef.optional().describe('Subject component; for left_of/right_of/above/below also one unit of a split symbol, e.g. "U3B"'),
+  b: componentRef.optional().describe('Reference component (left_of/right_of/above/below/near), or a unit such as "U3A"'),
   key: z.string().optional().describe('param: parameter name; layer: omit'),
   value: z.string().optional().describe('param: required value; layer: "top"|"bottom"; arrangement: see kind; note: free text'),
   max_mm: z.number().positive().optional().describe('near: maximum distance on the board in mm'),

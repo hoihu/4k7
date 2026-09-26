@@ -126,7 +126,9 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     const nets = netsOf(c);
     const side = sideHint(directional, c.id, attachable);
     if (side && unitPlans.has(side.anchor)) {
-      const candidates = plansOf(side.anchor);
+      const all = plansOf(side.anchor);
+      const named = side.unit ? all.filter((p) => p.unit !== undefined && p.card.units?.[p.unit]?.name === side.unit) : [];
+      const candidates = named.length ? named : all;
       let done = false;
       for (const plan of candidates) {
         const attach = findAttach(ctx, plan, c, nets, side.side);
@@ -207,21 +209,25 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   }
 
   /* ---- rows and order of anchors ---- */
-  const rows = arrangeAnchors(d, anchors, directional);
+  // one layout node per symbol: split ICs contribute one node per unit
+  const nodes: LayoutNode[] = anchors.flatMap((c) =>
+    plansOf(c.id).map((p) => ({ key: p.unit === undefined ? c.id : `${c.id}#${p.unit}`, comp: c, plan: p })),
+  );
+  const rows = arrangeAnchors(d, nodes, directional);
   if (bridges.length && !rows.length) rows.push([]);
 
   const scene = emptyScene();
   let rowTop = 0;
   let maxRight = 0;
   for (let [ri, row] of rows.entries()) {
-    const cells = row.map((a) => (flows.has(a.id) ? flowCell(ctx, flows.get(a.id)!) : sideBySide(plansOf(a.id).map((p) => buildCell(ctx, p)))));
+    const cells = row.map((n) => (flows.has(n.comp.id) ? flowCell(ctx, flows.get(n.comp.id)!) : buildCell(ctx, n.plan)));
     // output connectors: one column at the right end of the row
-    const outIdx = row.flatMap((a, i) => (outputConn.has(a.id) ? [i] : []));
+    const outIdx = row.flatMap((n, i) => (outputConn.has(n.comp.id) ? [i] : []));
     const outColumn = outIdx.length ? stackCells(outIdx.map((i) => cells[i]!)) : null;
     for (const i of [...outIdx].reverse()) cells.splice(i, 1);
-    row = row.filter((a) => !outputConn.has(a.id));
+    row = row.filter((n) => !outputConn.has(n.comp.id));
     // input (and other) connectors: one column where the first of them is
-    const connectorIdx = row.flatMap((a, i) => (cardFor(a).category === 'connector' ? [i] : []));
+    const connectorIdx = row.flatMap((n, i) => (cardFor(n.comp).category === 'connector' ? [i] : []));
     if (connectorIdx.length > 1) {
       cells.splice(connectorIdx[0]!, 1, stackCells(connectorIdx.map((i) => cells[i]!)));
       for (const i of connectorIdx.slice(1).reverse()) cells.splice(i, 1);
@@ -229,7 +235,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     }
     if (ri === 0 && bridges.length) {
       // signal flow: connector → rectifier → the rest
-      const after = row.findIndex((a) => anchorRank(d, a) > 0);
+      const after = row.findIndex((n) => anchorRank(d, n.comp) > 0);
       cells.splice(after < 0 ? cells.length : after, 0, ...bridges.map((b) => bridgeCell(ctx, b)));
     }
     if (outColumn) cells.push(outColumn);
@@ -308,14 +314,14 @@ const STACK_GAP = 200;
 
 /* ------------------------------ assignment -------------------------------- */
 
-function sideHint(ks: Constraint[], compId: string, anchors: Component[]): { anchor: string; side: 'left' | 'right' } | undefined {
+function sideHint(ks: Constraint[], compId: string, anchors: Component[]): { anchor: string; unit?: string; side: 'left' | 'right' } | undefined {
   const anchorIds = new Set(anchors.map((a) => a.id));
   for (const k of ks) {
     if (k.a === compId && anchorIds.has(k.b!) && (k.kind === 'left_of' || k.kind === 'right_of')) {
-      return { anchor: k.b!, side: k.kind === 'left_of' ? 'left' : 'right' };
+      return { anchor: k.b!, ...(k.bUnit ? { unit: k.bUnit } : {}), side: k.kind === 'left_of' ? 'left' : 'right' };
     }
     if (k.b === compId && anchorIds.has(k.a!) && (k.kind === 'left_of' || k.kind === 'right_of')) {
-      return { anchor: k.a!, side: k.kind === 'left_of' ? 'right' : 'left' };
+      return { anchor: k.a!, ...(k.aUnit ? { unit: k.aUnit } : {}), side: k.kind === 'left_of' ? 'right' : 'left' };
     }
   }
   return undefined;
@@ -370,23 +376,46 @@ function anchorRank(d: Design, c: Component): number {
   return 2;
 }
 
-/** Rows via above/below, order within rows via left_of/right_of (topological, stable). */
-function arrangeAnchors(d: Design, anchors: Component[], ks: Constraint[]): Component[][] {
-  const ids = new Set(anchors.map((a) => a.id));
-  const base = [...anchors].sort((a, b) => anchorRank(d, a) - anchorRank(d, b) || natCmp(a.refdes, b.refdes));
+/** A symbol to place: a component, or one unit of a split symbol. */
+interface LayoutNode {
+  key: string;
+  comp: Component;
+  plan: AnchorPlan;
+}
 
-  const row = new Map(anchors.map((a) => [a.id, 0]));
+/**
+ * Rows via above/below, order within rows via left_of/right_of (topological, stable).
+ * Constraints may name a single unit ("U3B"); without a unit they apply to every unit.
+ */
+function arrangeAnchors(d: Design, nodes: LayoutNode[], ks: Constraint[]): LayoutNode[][] {
+  const unitName = (n: LayoutNode) => (n.plan.unit !== undefined ? n.plan.card.units?.[n.plan.unit]?.name : undefined);
+  const keysFor = (compId: string, unit?: string): string[] => {
+    const own = nodes.filter((n) => n.comp.id === compId);
+    const named = unit ? own.filter((n) => unitName(n) === unit) : [];
+    return (named.length ? named : own).map((n) => n.key);
+  };
+  const base = [...nodes].sort(
+    (a, b) => anchorRank(d, a.comp) - anchorRank(d, b.comp) || natCmp(a.comp.refdes, b.comp.refdes) || (a.plan.unit ?? 0) - (b.plan.unit ?? 0),
+  );
+
+  const row = new Map(nodes.map((n) => [n.key, 0]));
   const vEdges: [string, string][] = [];
   const hEdges: [string, string][] = [];
   for (const k of ks) {
-    if (!ids.has(k.a!) || !ids.has(k.b!)) continue;
-    if (k.kind === 'above') vEdges.push([k.a!, k.b!]);
-    if (k.kind === 'below') vEdges.push([k.b!, k.a!]);
-    if (k.kind === 'left_of') hEdges.push([k.a!, k.b!]);
-    if (k.kind === 'right_of') hEdges.push([k.b!, k.a!]);
+    const as = keysFor(k.a!, k.aUnit);
+    const bs = keysFor(k.b!, k.bUnit);
+    for (const a of as) {
+      for (const b of bs) {
+        if (a === b) continue;
+        if (k.kind === 'above') vEdges.push([a, b]);
+        if (k.kind === 'below') vEdges.push([b, a]);
+        if (k.kind === 'left_of') hEdges.push([a, b]);
+        if (k.kind === 'right_of') hEdges.push([b, a]);
+      }
+    }
   }
   // longest path layering (bounded iterations tolerate cycles)
-  for (let it = 0; it < anchors.length; it++) {
+  for (let it = 0; it < nodes.length; it++) {
     let changed = false;
     for (const [upper, lower] of vEdges) {
       if (row.get(lower)! <= row.get(upper)!) {
@@ -397,25 +426,25 @@ function arrangeAnchors(d: Design, anchors: Component[], ks: Constraint[]): Comp
     if (!changed) break;
   }
   const nRows = Math.max(0, ...row.values()) + 1;
-  const rows: Component[][] = [];
+  const rows: LayoutNode[][] = [];
   for (let r = 0; r < nRows; r++) {
-    const members = base.filter((a) => row.get(a.id) === r);
+    const members = base.filter((n) => row.get(n.key) === r);
     rows.push(topoOrder(members, hEdges));
   }
   return rows.filter((r) => r.length);
 }
 
-function topoOrder(members: Component[], edges: [string, string][]): Component[] {
-  const inRow = new Set(members.map((m) => m.id));
+function topoOrder(members: LayoutNode[], edges: [string, string][]): LayoutNode[] {
+  const inRow = new Set(members.map((m) => m.key));
   const es = edges.filter(([a, b]) => inRow.has(a) && inRow.has(b));
-  const out: Component[] = [];
+  const out: LayoutNode[] = [];
   const done = new Set<string>();
   while (out.length < members.length) {
     const next =
-      members.find((m) => !done.has(m.id) && !es.some(([a, b]) => b === m.id && !done.has(a))) ??
-      members.find((m) => !done.has(m.id))!; // cycle: fall back to default order
+      members.find((m) => !done.has(m.key) && !es.some(([a, b]) => b === m.key && !done.has(a))) ??
+      members.find((m) => !done.has(m.key))!; // cycle: fall back to default order
     out.push(next);
-    done.add(next.id);
+    done.add(next.key);
   }
   return out;
 }
@@ -778,6 +807,7 @@ function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['con
   for (const s of sheets) {
     for (const sym of s.symbols) {
       // a split IC occupies the union of its units
+      if (sym.unit) where.set(`${sym.componentId}#${sym.unit}`, { sheet: s.id, bbox: sym.bbox });
       const prev = where.get(sym.componentId);
       const b = sym.bbox;
       if (!prev || prev.sheet !== s.id) where.set(sym.componentId, { sheet: s.id, bbox: b });
@@ -796,8 +826,8 @@ function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['con
       if (k.kind === 'near' || k.kind === 'layer') status[k.id] = 'not_applicable';
       continue;
     }
-    const a = where.get(k.a ?? '');
-    const b = where.get(k.b ?? '');
+    const a = (k.aUnit && where.get(`${k.a}#${k.aUnit}`)) || where.get(k.a ?? '');
+    const b = (k.bUnit && where.get(`${k.b}#${k.bUnit}`)) || where.get(k.b ?? '');
     if (!a || !b || a.sheet !== b.sheet) {
       status[k.id] = 'not_applicable';
       continue;

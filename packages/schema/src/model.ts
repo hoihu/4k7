@@ -78,6 +78,9 @@ export interface Constraint {
   /** Component ids for `a`/`b`; see ops.ts for the per-kind argument shapes. */
   a?: string;
   b?: string;
+  /** Unit letters when a/b address one unit of a split symbol ("U3B" → a = U3, aUnit = "B"). */
+  aUnit?: string;
+  bUnit?: string;
   /** For `param`: the parameter name; for `layer`: "top" | "bottom". */
   key?: string;
   value?: string;

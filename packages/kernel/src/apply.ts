@@ -401,11 +401,17 @@ function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResul
   if (DIRECTIONAL.has(op.kind) || op.kind === 'near') {
     need(op.a, '"a"');
     need(op.b, '"b"');
-    const a = resolveComponent(d, op.a!);
-    const b = resolveComponent(d, op.b!);
-    if (a.id === b.id) reject({ code: 'CONSTRAINT_INVALID', message: `${op.kind}: a and b are the same component.` });
-    k.a = a.id;
-    k.b = b.id;
+    // placement on the schematic may address single units of a split symbol ("U3B")
+    const units = DIRECTIONAL.has(op.kind);
+    const a = units ? resolveUnitRef(d, op.a!) : { comp: resolveComponent(d, op.a!) };
+    const b = units ? resolveUnitRef(d, op.b!) : { comp: resolveComponent(d, op.b!) };
+    if (a.comp.id === b.comp.id && (!a.unit || !b.unit || a.unit === b.unit)) {
+      reject({ code: 'CONSTRAINT_INVALID', message: `${op.kind}: a and b are the same ${a.unit && a.unit === b.unit ? 'unit' : 'component'}.` });
+    }
+    k.a = a.comp.id;
+    k.b = b.comp.id;
+    if (a.unit) k.aUnit = a.unit;
+    if (b.unit) k.bUnit = b.unit;
     if (op.kind === 'near') {
       k.maxMm = op.max_mm ?? 3;
     }
@@ -481,8 +487,28 @@ function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResul
   };
 }
 
+/** "U3" or one unit of a split symbol, "U3B". */
+function resolveUnitRef(d: Design, ref: string): { comp: Component; unit?: string } {
+  const direct = findComponent(d, ref);
+  if (direct) return { comp: direct };
+  const m = /^(.*\d)([A-Z])$/i.exec(ref.trim());
+  const comp = m ? findComponent(d, m[1]!) : undefined;
+  const units = comp ? cardOf(d, comp.part)?.units ?? [] : [];
+  const unit = m ? units.find((u) => u.name === m[2]!.toUpperCase()) : undefined;
+  if (comp && unit) return { comp, unit: unit.name };
+  if (comp) {
+    reject({
+      code: 'REF_UNKNOWN',
+      message: units.length ? `${comp.refdes} has units ${units.map((u) => u.name).join(', ')}, not "${m![2]}".` : `${comp.refdes} is drawn as one symbol; split it first (set_symbol style "units") to place units separately.`,
+      candidates: units.map((u) => `${comp.refdes}${u.name}`),
+    });
+  }
+  return { comp: resolveComponent(d, ref) };
+}
+
 export function describeConstraint(d: Design, k: Constraint): string {
-  const n = (id?: string) => (id ? d.components[id]?.refdes ?? id : '?');
+  const ref = (id?: string) => (id ? d.components[id]?.refdes ?? id : '?');
+  const n = ref;
   switch (k.kind) {
     case 'param':
       return `${n(k.a)}.${k.key} = ${k.value}`;
@@ -495,7 +521,7 @@ export function describeConstraint(d: Design, k: Constraint): string {
     case 'note':
       return `note${k.a ? `(${n(k.a)})` : ''}: ${k.value}`;
     default:
-      return `${k.kind}(${n(k.a)}, ${n(k.b)})`;
+      return `${k.kind}(${ref(k.a)}${k.aUnit ?? ''}, ${ref(k.b)}${k.bUnit ?? ''})`;
   }
 }
 

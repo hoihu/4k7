@@ -108,4 +108,26 @@ describe('split symbols', () => {
     const r = k.transact({ summary: 'split a resistor', ops: [{ op: 'set_symbol', ref: 'R1', style: 'units' }] });
     expect(JSON.stringify(r)).toContain('SYMBOL_STYLE');
   });
+
+  it('places single units with placement constraints ("U3B below U3A")', () => {
+    const k = new Kernel();
+    k.transact({ summary: 'mcu', ops: [{ op: 'add_part', part: split.id, refdes: 'U3' }] });
+    k.accept();
+    const r = k.transact({ summary: 'move U3B down', ops: [{ op: 'constrain', kind: 'below', a: 'U3B', b: 'U3A', quote: 'U3B move down' }] });
+    expect(r.status).toBe('ok');
+    k.accept();
+    const s = k.state();
+    const sym = (u: string) => s.view.sheets[0]!.symbols.find((x) => x.refdes === 'U3' && x.unit === u)!.bbox;
+    expect(sym('B').y).toBeGreaterThan(sym('A').y + sym('A').h); // next row
+    expect(sym('C').y).toBe(sym('A').y); // C stays in the first row, next to A
+    expect(sym('C').x).toBeGreaterThan(sym('A').x);
+    expect(Object.values(s.view.constraintStatus)).toEqual(['ok']);
+    expect(s.ledger?.[0]?.text ?? JSON.stringify(s.ledger)).toContain('below(U3B, U3A)');
+
+    const bad = k.transact({ summary: 'x', ops: [{ op: 'constrain', kind: 'below', a: 'U3X', b: 'U3A' }] });
+    expect(JSON.stringify(bad)).toContain('U3 has units A, B, C');
+    k.transact({ summary: 'mcu2', ops: [{ op: 'add_part', part: single.id, refdes: 'U4' }] });
+    const one = k.transact({ summary: 'x', ops: [{ op: 'constrain', kind: 'below', a: 'U4B', b: 'U3A' }] });
+    expect(JSON.stringify(one)).toContain('split it first');
+  });
 });
