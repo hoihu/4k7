@@ -80,6 +80,24 @@ export function footprintFor(pkg: PackageInfo, pinNumbers: string[] = []): Footp
     }
     case 'DIP':
       return { ok: true, footprint: dip(pkg) };
+    case 'CHIP': {
+      const miss = need(['body_mm']);
+      if (miss) return { ok: false, reason: miss };
+      return { ok: true, footprint: chip(pkg) };
+    }
+    case 'SOD': {
+      const miss = need(['body_mm', 'span_mm']);
+      if (miss) return { ok: false, reason: miss };
+      return { ok: true, footprint: sod(pkg) };
+    }
+    case 'SOT': {
+      const miss = need(['body_mm', 'span_mm', 'pitch_mm']);
+      if (miss) return { ok: false, reason: miss };
+      const fp = sot(pkg, pinNumbers);
+      return fp ? { ok: true, footprint: fp } : { ok: false, reason: `no SOT generator for ${pkg.pins} pins` };
+    }
+    case 'HEADER':
+      return { ok: true, footprint: header(pkg) };
     default:
       return { ok: false, reason: `no generator for ${pkg.family} packages yet` };
   }
@@ -198,4 +216,107 @@ function dip(pkg: PackageInfo): Footprint {
   const bw = pkg.body_mm?.[0] ?? 6.35;
   const bl = pkg.body_mm?.[1] ?? n * pitch + 0.5;
   return { pads, body: { w: bw, h: bl }, courtyard: { w: r2(rowSpan + 1.6 + 2 * COURTYARD), h: r2(bl + 2 * COURTYARD) }, pin1: { x: r2(-rowSpan / 2 - 1.2), y: off(0) }, notes: [] };
+}
+
+/** Two-terminal chip (resistor, capacitor, moulded inductor): pads along x, pin 1 left. */
+function chip(pkg: PackageInfo): Footprint {
+  const [l, w] = pkg.body_mm!;
+  const t = pkg.lead_length_mm ?? Math.min(0.5, l * 0.2);
+  const toe = Math.min(0.35, 0.1 + l * 0.08);
+  const outer = l / 2 + toe;
+  const inner = Math.max(l / 2 - t - 0.05, Math.min(0.2, l * 0.15));
+  const len = r2(outer - inner);
+  const cx = r2((outer + inner) / 2);
+  const h = r2(w + (w < 1 ? 0.15 : 0.2));
+  return {
+    pads: [
+      { number: '1', x: -cx, y: 0, w: len, h, shape: 'rect' },
+      { number: '2', x: cx, y: 0, w: len, h, shape: 'rect' },
+    ],
+    body: { w: l, h: w },
+    courtyard: { w: r2(2 * outer + 2 * COURTYARD * 0.5), h: r2(Math.max(h, w) + 2 * COURTYARD * 0.5) },
+    pin1: { x: r2(-outer - 0.25), y: 0 },
+    notes: [],
+  };
+}
+
+/** Moulded diode packages with two leads (SOD-123, SMA …): pin 1 (cathode) left. */
+function sod(pkg: PackageInfo): Footprint {
+  const [bl, bw] = pkg.body_mm!;
+  const span = pkg.span_mm![0];
+  const lead = pkg.lead_length_mm ?? 0.5;
+  const lw = pkg.lead_width_mm ?? bw * 0.4;
+  const len = r2(lead + 0.45);
+  const cx = r2(span / 2 - lead / 2 + 0.05);
+  const h = r2(lw + 0.35);
+  const outer = cx + len / 2;
+  return {
+    pads: [
+      { number: '1', x: -cx, y: 0, w: len, h, shape: 'rect' },
+      { number: '2', x: cx, y: 0, w: len, h, shape: 'rect' },
+    ],
+    body: { w: bl, h: bw },
+    courtyard: { w: r2(2 * outer + 0.5), h: r2(Math.max(h, bw) + 0.5) },
+    pin1: { x: r2(-outer - 0.25), y: 0 },
+    notes: [],
+  };
+}
+
+/**
+ * SOT packages, leads along y (body long side along x), viewed from the top:
+ * SOT-23: 1 bottom left, 2 bottom right, 3 top middle. SOT-23-5/6: 1-2-3 bottom left→right,
+ * then 4… top right→left. SOT-223: 1-2-3 bottom, the tab on top carries pin 2 (or 4).
+ */
+function sot(pkg: PackageInfo, pinNumbers: string[]): Footprint | null {
+  const [bl, bw] = pkg.body_mm!;
+  const spanY = pkg.span_mm![1];
+  const lead = pkg.lead_length_mm ?? 0.45;
+  const lw = pkg.lead_width_mm ?? 0.4;
+  const p = pkg.pitch_mm!;
+  const padH = r2(lead + 0.5);
+  const padW = r2(lw + 0.2);
+  const cy = r2(spanY / 2 - lead / 2 + 0.05);
+  const pad = (number: string, x: number, y: number, w = padW, h = padH): Pad => ({ number, x: r2(x), y: r2(y), w, h, shape: 'rect' });
+  let pads: Pad[];
+  if (pkg.name === 'SOT-223') {
+    const tab = pinNumbers.includes('4') ? '4' : '2';
+    pads = [pad('1', -p, cy), pad('2', 0, cy), pad('3', p, cy), pad(tab, 0, -cy, 3.3, r2(lead + 1.1))];
+  } else if (pkg.pins === 3) {
+    pads = [pad('1', -p, cy), pad('2', p, cy), pad('3', 0, -cy)];
+  } else if (pkg.pins === 5 || pkg.pins === 6) {
+    pads = [pad('1', -p, cy), pad('2', 0, cy), pad('3', p, cy)];
+    if (pkg.pins === 5) pads.push(pad('4', p, -cy), pad('5', -p, -cy));
+    else pads.push(pad('4', p, -cy), pad('5', 0, -cy), pad('6', -p, -cy));
+  } else return null;
+  const maxY = Math.max(...pads.map((q) => Math.abs(q.y) + q.h / 2));
+  const maxX = Math.max(bl / 2, ...pads.map((q) => Math.abs(q.x) + q.w / 2));
+  return {
+    pads,
+    body: { w: bl, h: bw },
+    courtyard: { w: r2(2 * maxX + 0.5), h: r2(2 * maxY + 0.5) },
+    pin1: { x: r2(-p - padW), y: r2(cy + padH / 2 + 0.2) },
+    notes: [],
+  };
+}
+
+/** 2.54 mm pin header, one row along y, pin 1 (square pad) on top. */
+function header(pkg: PackageInfo): Footprint {
+  const n = pkg.pins;
+  const pitch = pkg.pitch_mm ?? 2.54;
+  const pads: Pad[] = Array.from({ length: n }, (_, i) => ({
+    number: String(i + 1),
+    x: 0,
+    y: r2((i - (n - 1) / 2) * pitch),
+    w: 1.7,
+    h: 1.7,
+    shape: i === 0 ? 'rect' : 'round',
+    drill: 1.0,
+  }));
+  return {
+    pads,
+    body: { w: 2.54, h: r2(n * pitch) },
+    courtyard: { w: 3.0, h: r2(n * pitch + 0.5) },
+    pin1: { x: -1.6, y: r2(-((n - 1) / 2) * pitch) },
+    notes: [],
+  };
 }

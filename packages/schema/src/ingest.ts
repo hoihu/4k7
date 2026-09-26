@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 
-export const PackageFamily = z.enum(['QFP', 'QFN', 'DFN', 'SOIC', 'SSOP', 'TSSOP', 'MSOP', 'SOT', 'BGA', 'CSP', 'DIP', 'other']);
+export const PackageFamily = z.enum(['QFP', 'QFN', 'DFN', 'SOIC', 'SSOP', 'TSSOP', 'MSOP', 'SOT', 'BGA', 'CSP', 'DIP', 'CHIP', 'SOD', 'HEADER', 'other']);
 export type PackageFamily = z.infer<typeof PackageFamily>;
 
 const mm = z.number().positive();

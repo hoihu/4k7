@@ -4,7 +4,7 @@
  * for a 3D preview and collision/height checks, and the basis for a STEP/GLB export later.
  */
 import type { PackageInfo } from '@tracewise/schema';
-import { bgaRowName } from './footprint.ts';
+import { bgaRowName, footprintFor, type Pad } from './footprint.ts';
 
 export interface Box3 {
   /** Min and max corners. */
@@ -70,6 +70,16 @@ export function body3dFor(pkg: PackageInfo, pinNumbers: string[] = []): Body3DRe
     }
     case 'DIP':
       return { ok: true, body: dip(pkg, notes) };
+    case 'CHIP':
+      return pkg.body_mm ? { ok: true, body: chip(pkg) } : { ok: false, reason: 'needs body_mm' };
+    case 'SOD':
+    case 'SOT': {
+      const fp = footprintFor(pkg, pinNumbers);
+      if (!fp.ok || !pkg.body_mm) return { ok: false, reason: fp.ok ? 'needs body_mm' : fp.reason };
+      return { ok: true, body: moulded(pkg, fp.footprint.pads) };
+    }
+    case 'HEADER':
+      return { ok: true, body: header(pkg) };
     default:
       return { ok: false, reason: `no 3D generator for ${pkg.family} packages yet` };
   }
@@ -193,4 +203,58 @@ function pin1Mark(_pkg: PackageInfo, bw: number, bl: number, H: number, quad: bo
   return quad
     ? { x: r3(-bw / 2 + m * 0.12), y: r3(-bl / 2 + m * 0.12), z: H, r: r3(m * 0.04) }
     : { x: r3(-bw / 2 + m * 0.2), y: r3(-bl / 2 + m * 0.15), z: H, r: r3(m * 0.06) };
+}
+
+/** Chip parts: a ceramic body with metal end caps (pin 1 at −x). */
+function chip(pkg: PackageInfo): Body3D {
+  const [l, w] = pkg.body_mm!;
+  const t = pkg.lead_length_mm ?? l * 0.2;
+  const H = pkg.height_mm ?? w * 0.7;
+  return {
+    boxes: [
+      box(-l / 2 + t, -w / 2, 0, l / 2 - t, w / 2, H, 'body'),
+      box(-l / 2, -w / 2, 0, -l / 2 + t, w / 2, H, 'lead'),
+      box(l / 2 - t, -w / 2, 0, l / 2, w / 2, H, 'lead'),
+    ],
+    balls: [],
+    pin1: { x: r3(-l / 2 + t + (l - 2 * t) * 0.15), y: 0, z: H, r: r3(Math.min(w, l) * 0.08) },
+    height: H,
+    notes: [],
+  };
+}
+
+/** Moulded packages with short leads (SOD, SOT): body plus a flat lead to each pad. */
+function moulded(pkg: PackageInfo, pads: Pad[]): Body3D {
+  const [bl, bw] = pkg.body_mm!;
+  const H = pkg.height_mm ?? 1.1;
+  const z0 = 0.05;
+  const boxes: Box3[] = [box(-bl / 2, -bw / 2, z0, bl / 2, bw / 2, H, 'body')];
+  for (const p of pads) {
+    // leads leave the body along the axis where the pad lies outside it
+    const alongX = Math.abs(p.x) - p.w / 2 >= bl / 2 - 0.3 && Math.abs(p.x) > Math.abs(p.y);
+    if (alongX) {
+      const s = Math.sign(p.x);
+      const half = Math.min(p.h, 1.4) / 2;
+      boxes.push(box(s * (bl / 2), p.y - half * 0.7, 0, p.x + s * (p.w / 2 - 0.1), p.y + half * 0.7, 0.15, 'lead'));
+    } else {
+      const s = Math.sign(p.y);
+      const half = Math.min(p.w, 3.3) / 2;
+      boxes.push(box(p.x - half * 0.8, s * (bw / 2), 0, p.x + half * 0.8, p.y + s * (p.h / 2 - 0.1), 0.15, 'lead'));
+    }
+  }
+  const lx = Math.min(...pads.map((p) => p.x));
+  return { boxes, balls: [], pin1: { x: r3(Math.max(-bl / 2 + 0.3, lx)), y: r3(bw / 4), z: H, r: r3(Math.min(bl, bw) * 0.1) }, height: H, notes: [] };
+}
+
+/** Pin header: plastic strip with square posts, pins through the board. */
+function header(pkg: PackageInfo): Body3D {
+  const n = pkg.pins;
+  const pitch = pkg.pitch_mm ?? 2.54;
+  const boxes: Box3[] = [box(-1.27, (-n * pitch) / 2, 0, 1.27, (n * pitch) / 2, 2.5, 'body')];
+  for (let i = 0; i < n; i++) {
+    const y = (i - (n - 1) / 2) * pitch;
+    boxes.push(box(-0.32, y - 0.32, -3, 0.32, y + 0.32, 2.5 - 0.001, 'lead')); // below and inside the strip
+    boxes.push(box(-0.32, y - 0.32, 2.5, 0.32, y + 0.32, (pkg.height_mm ?? 8.5), 'lead'));
+  }
+  return { boxes, balls: [], pin1: { x: -0.9, y: r3(-((n - 1) / 2) * pitch), z: 2.5, r: 0.2 }, height: pkg.height_mm ?? 8.5, notes: ['Pins shown 3 mm below the board surface.'] };
 }
