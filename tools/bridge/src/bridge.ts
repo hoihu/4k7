@@ -209,7 +209,11 @@ export class Bridge {
         if (this.#tab && this.#tab !== ws) this.#tab.close(4000, 'replaced by another tab');
         this.#tab = ws;
         ws.send(JSON.stringify({ type: 'welcome', protocol: BRIDGE_PROTOCOL, agent: this.#agent ?? 'Claude Code', chat: this.#chat } satisfies BridgeToTab));
-        this.#log(`tab paired (${msg.client}, origin ${origin})`);
+        const i = msg.info;
+        this.#log(
+          `tab paired (${msg.client}, origin ${origin})` +
+            (i ? ` · build ${i.build} · provider ${i.provider} · storage ${i.storage} · ${browserName(i.userAgent)}` : ' · old app build (reload the tab)'),
+        );
         return;
       }
       if (msg.type === 'chat' || msg.type === 'chat_cancel') {
@@ -238,6 +242,12 @@ export class Bridge {
       }
     });
   }
+}
+
+function browserName(ua: string): string {
+  const m = /(Edg|OPR|Chrome|Firefox|Version)\/([\d.]+)/.exec(ua);
+  const name = m ? (m[1] === 'Version' ? (/Safari/.test(ua) ? 'Safari/WebKit' : 'WebKit') : m[1] === 'Edg' ? 'Edge' : m[1]) : 'unknown browser';
+  return `${name}${m ? ` ${m[2]!.split('.')[0]}` : ''}${/Electron|Code\//.test(ua) ? ' (VS Code/Electron)' : ''}`;
 }
 
 function errorResult(text: string): CallResult {

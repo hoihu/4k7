@@ -12,6 +12,7 @@
  *
  * In stdio mode stdout is reserved for the MCP protocol; all logging goes to stderr.
  */
+import { appendFileSync, existsSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Bridge } from './bridge.ts';
@@ -20,7 +21,17 @@ import { configDir, configPath, loadConfig } from './config.ts';
 import { createMcpServer, mcpHttpHandler, VERSION } from './mcp.ts';
 
 const serve = process.argv.includes('--serve');
-const log = (msg: string) => process.stderr.write(`[tracewise-bridge] ${msg}\n`);
+/** Logs go to stderr and to ~/.tracewise/bridge.log (kept small), which helps diagnose pairing issues. */
+const log = (msg: string) => {
+  process.stderr.write(`[tracewise-bridge] ${msg}\n`);
+  try {
+    const file = join(configDir(), 'bridge.log');
+    if (existsSync(file) && statSync(file).size > 512 * 1024) renameSync(file, `${file}.1`);
+    appendFileSync(file, `${new Date().toISOString()} ${msg}\n`, { mode: 0o600 });
+  } catch {
+    // logging must never break the bridge
+  }
+};
 
 async function main() {
   const cfg = loadConfig();

@@ -10,7 +10,7 @@ export const BRIDGE_PROTOCOL = 1;
 export const BRIDGE_PORTS = [7777, 7778, 7779, 7780, 7781] as const;
 
 export type TabToBridge =
-  | { type: 'hello'; protocol: number; code: string; client: string }
+  | { type: 'hello'; protocol: number; code: string; client: string; info?: TabInfo }
   | { type: 'result'; id: number; isError: boolean; content: BridgeContent[] }
   /** A message typed into the app's chat, to be answered by the local Claude Code. */
   | {
@@ -24,6 +24,17 @@ export type TabToBridge =
       web?: boolean;
     }
   | { type: 'chat_cancel'; id: string };
+
+/** What a tab reports about itself when it connects (logged by the bridge for diagnosis). */
+export interface TabInfo {
+  origin: string;
+  build: string;
+  userAgent: string;
+  provider: string;
+  /** 'ok', or why settings cannot be saved in this browser. */
+  storage: string;
+  persistent: boolean | null;
+}
 
 /** Whether the bridge can run the local Claude Code for the app's chat. */
 export interface ChatCapability {

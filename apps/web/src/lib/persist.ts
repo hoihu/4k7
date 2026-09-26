@@ -7,16 +7,50 @@ import type { Design } from '@tracewise/schema';
 const DB = 'tracewise';
 const VERSION = 1;
 
+/** Last storage problem in this browser, for diagnostics ('ok' when saving works). */
+export let storageHealth = 'ok';
+
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      storageHealth = 'IndexedDB unavailable';
+      reject(new Error(storageHealth));
+      return;
+    }
+    // some managed/private browser setups never answer; don't hang the app on them
+    const timer = setTimeout(() => {
+      storageHealth = 'IndexedDB did not respond';
+      reject(new Error(storageHealth));
+    }, 3000);
     const req = indexedDB.open(DB, VERSION);
+    req.onblocked = () => {
+      clearTimeout(timer);
+      storageHealth = 'IndexedDB blocked by another tab';
+      reject(new Error(storageHealth));
+    };
     req.onupgradeneeded = () => {
       const db = req.result;
       for (const s of ['projects', 'settings', 'keys']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      clearTimeout(timer);
+      resolve(req.result);
+    };
+    req.onerror = () => {
+      clearTimeout(timer);
+      storageHealth = `IndexedDB error: ${req.error?.message ?? 'unknown'}`;
+      reject(req.error);
+    };
   });
+}
+
+/** Whether the browser keeps this site's storage (false in private windows or under some policies). */
+export async function storagePersistent(): Promise<boolean | null> {
+  try {
+    return (await navigator.storage?.persisted?.()) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function tx<T>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
@@ -44,7 +78,11 @@ export async function loadProject(): Promise<Design | undefined> {
 }
 
 export async function saveProject(json: string): Promise<void> {
-  await put('projects', 'current', json);
+  try {
+    await put('projects', 'current', json);
+  } catch (e) {
+    storageHealth = `saving the project failed: ${(e as Error).message}`;
+  }
 }
 
 /* -------------------------------- settings -------------------------------- */
@@ -97,7 +135,11 @@ export async function loadSettings(): Promise<Settings> {
 }
 
 export async function saveSettings(s: Settings): Promise<void> {
-  await put('settings', 'settings', { ...s, version: SETTINGS_VERSION });
+  try {
+    await put('settings', 'settings', { ...s, version: SETTINGS_VERSION });
+  } catch (e) {
+    storageHealth = `saving settings failed: ${(e as Error).message}`;
+  }
 }
 
 /* ---------------------------------- API key -------------------------------- */

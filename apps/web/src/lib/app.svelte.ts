@@ -21,7 +21,18 @@ import { CalcCall, ImageInput, ProposeInput, WaitForReviewInput, type BridgeCont
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { renderSchematicPng } from './snapshot.ts';
-import { DEFAULT_SETTINGS, loadApiKey, loadProject, loadSettings, saveApiKey, saveProject, saveSettings, type Settings } from './persist.ts';
+import {
+  DEFAULT_SETTINGS,
+  loadApiKey,
+  loadProject,
+  loadSettings,
+  saveApiKey,
+  saveProject,
+  saveSettings,
+  storageHealth,
+  storagePersistent,
+  type Settings,
+} from './persist.ts';
 
 /** A pairing link (#pair=123456) opened from the terminal; read before the router rewrites the hash. */
 const pairFromLink = /^#pair=(\d{6})$/.exec(location.hash)?.[1] ?? null;
@@ -69,6 +80,7 @@ class AppState {
   ready = $state(false);
   toast = $state<string | null>(null);
   input = $state('');
+  persistent = $state<boolean | null>(null);
 
   private kernel = createKernel();
   private agent!: Agent;
@@ -103,7 +115,9 @@ class AppState {
       (tool, input) => this.handleBridgeCall(tool, input),
       (code, port) => {
         // pairing with a bridge that can run Claude Code makes it the chat provider, unless the user has an API key set up
-        const useClaude = bridge.chat?.available && this.settings.provider === 'demo';
+        // "no real model configured" = offline demo, or Anthropic chosen without a key
+        const noModel = this.settings.provider === 'demo' || (this.settings.provider === 'anthropic' && !this.apiKey);
+        const useClaude = bridge.chat?.available && noModel;
         void this.updateSettings({ bridgeCode: code, bridgePort: port, ...(useClaude ? { provider: 'claude-code' as const } : {}) });
         this.settingsChannel?.postMessage({ type: 'bridge-held', code });
         if (useClaude) this.flash('Paired: the chat now runs on your Claude Code');
@@ -112,7 +126,9 @@ class AppState {
         // the external agent went away: close its open activity block
         for (const c of this.chat) if (c.source && c.status === 'streaming') c.status = 'done';
       },
+      () => this.diagnostics(),
     );
+    this.persistent = await storagePersistent();
     if (pairFromLink) {
       history.replaceState(null, '', '#sch');
       void bridge.connect(pairFromLink).then((ok) => this.flash(ok ? `Paired with ${bridge.agent ?? 'the bridge'}` : (bridge.error ?? 'Pairing failed')));
@@ -190,6 +206,18 @@ class AppState {
     if (item) item.changeset = { state, note };
     const waiters = this.reviewWaiters.splice(0);
     for (const w of waiters) w(state === 'accepted' ? `accepted: ${note}` : 'rejected by the user. Ask them what to change.');
+  }
+
+  /** What this tab reports about itself (Settings → Diagnostics, and to the bridge log). */
+  diagnostics() {
+    return {
+      origin: location.origin,
+      build: __BUILD_ID__,
+      userAgent: navigator.userAgent,
+      provider: this.settings.provider + (this.settings.provider === 'anthropic' && !this.apiKey ? ' (no key)' : ''),
+      storage: storageHealth,
+      persistent: this.persistent,
+    };
   }
 
   /* ---------------------------- external agents ---------------------------- */

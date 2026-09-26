@@ -9,6 +9,7 @@ import {
   type BridgeToTab,
   type ChatCapability,
   type ChatEvent,
+  type TabInfo,
   type TabToBridge,
 } from '@tracewise/schema';
 
@@ -42,10 +43,13 @@ class BridgeClient {
   #onLost: (() => void) | null = null;
   #wanted = false;
 
-  init(handler: BridgeHandler, onPaired: (code: string, port: number) => void, onLost?: () => void) {
+  #info: () => TabInfo = () => ({ origin: location.origin, build: '', userAgent: navigator.userAgent, provider: '', storage: '', persistent: null });
+
+  init(handler: BridgeHandler, onPaired: (code: string, port: number) => void, onLost?: () => void, info?: () => TabInfo) {
     this.#handler = handler;
     this.#onPaired = onPaired;
     this.#onLost = onLost ?? null;
+    if (info) this.#info = info;
   }
 
   /** Try the saved/entered code on every bridge port. `silent` = background reconnect. */
@@ -103,7 +107,8 @@ class BridgeClient {
         resolve(v);
       };
       const timer = setTimeout(() => done(false), 1500);
-      ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, code: this.#code, client: 'tracewise-web' } satisfies TabToBridge));
+      ws.onopen = () =>
+        ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, code: this.#code, client: 'tracewise-web', info: this.#info() } satisfies TabToBridge));
       ws.onerror = () => done(false);
       ws.onclose = (ev) => {
         if (!settled) done(false);

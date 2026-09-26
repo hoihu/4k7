@@ -69,6 +69,12 @@
     void app.updateSettings({ bridgeCode: '', bridgePort: null });
   }
 
+  const diag = $derived.by(() => {
+    void app.settings;
+    void bridge.status;
+    return app.diagnostics();
+  });
+
   const modelInfo = $derived(ANTHROPIC_MODELS.find((m) => m.id === app.settings.model));
 </script>
 
@@ -193,6 +199,21 @@
       </ol>
       {#if bridge.error}<div class="err">{bridge.error}</div>{/if}
       <div class="hint">The bridge listens on 127.0.0.1 only and accepts pages from localhost. The tab reconnects by itself when Claude Code restarts.</div>
+      <details class="diag">
+        <summary>Diagnostics for this browser</summary>
+        {#each [diag] as d (d.build)}
+          <dl>
+            <dt>Address</dt><dd>{d.origin}</dd>
+            <dt>App build</dt><dd>{d.build}</dd>
+            <dt>Chat provider</dt><dd>{d.provider}</dd>
+            <dt>Storage</dt><dd class:bad={d.storage !== 'ok'}>{d.storage}{d.persistent === true ? ' · persistent' : ' · best-effort'}</dd>
+            <dt>Bridge</dt><dd>{bridge.status}{bridge.port ? ` · port ${bridge.port}` : ''}{bridge.error ? ` · ${bridge.error}` : ''}</dd>
+            <dt>Claude Code</dt><dd>{bridge.chat ? (bridge.chat.available ? `available (${bridge.chat.version})` : `unavailable: ${bridge.chat.reason}`) : 'unknown (not connected)'}</dd>
+            <dt>Browser</dt><dd class="ua">{d.userAgent}</dd>
+          </dl>
+        {/each}
+        <p class="hint">The bridge also logs what each tab reports to <code>~/.tracewise/bridge.log</code>.</p>
+      </details>
     </div>
   </section>
 
@@ -286,6 +307,13 @@
   .code { width: 90px; letter-spacing: .15em; }
   .err { color: var(--err); margin-top: 6px; font-size: 12px; }
   .check { display: flex; gap: 6px; align-items: center; }
+  .diag { margin-top: 10px; font-size: 12px; }
+  .diag summary { cursor: pointer; color: var(--txt-3); }
+  .diag dl { display: grid; grid-template-columns: 110px 1fr; gap: 3px 8px; margin: 8px 0 4px; }
+  .diag dt { color: var(--txt-3); }
+  .diag dd { margin: 0; font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+  .diag dd.bad { color: var(--err); }
+  .diag .ua { color: var(--txt-3); }
   .soon { margin: 0; padding: 8px 10px 10px 28px; color: var(--txt-2); font-size: 12.5px; }
   .soon li { margin: 3px 0; }
 </style>
