@@ -242,7 +242,13 @@
   .sym .filled { fill: var(--sym-fill); }
   .sym polygon.filled { fill: var(--sym); }
   .sym .hit { fill: transparent; stroke: none; cursor: pointer; }
-  .sym:hover .hit { fill: var(--accent); fill-opacity: .05; }
+  /* hover highlights the part itself: brighter, slightly bolder, a soft glow */
+  .sym:hover { filter: drop-shadow(0 0 20px var(--sym-glow)); }
+  .sym:hover :global(line), .sym:hover :global(path), .sym:hover :global(polyline),
+  .sym:hover rect:not(.hit), .sym:hover polygon, .sym:hover circle { stroke: var(--sym-hover); stroke-width: 16; }
+  .sym:hover .filled { fill: var(--sym-fill-hover); }
+  .sym:hover polygon.filled { fill: var(--sym-hover); }
+  .sym:hover .ref, .sym:hover .val { fill: var(--sym-hover); }
   text { font-family: var(--mono); }
   .ref { fill: var(--sym); font-size: 88px; font-weight: 700; }
   .val { fill: var(--sch-txt); font-size: 80px; }
