@@ -150,6 +150,8 @@ export interface SymbolView {
   componentId: string;
   refdes: string;
   value: string;
+  /** The value as drawn, one entry per line (e.g. "10nF", "25V"); `valuePos` is the first line. */
+  valueLines?: string[];
   bbox: Rect;
   prims: Prim[];
   pins: PinView[];

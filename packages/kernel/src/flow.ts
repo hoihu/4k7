@@ -17,6 +17,9 @@ import { isTwoPin, pinSide, symbolFor } from '@tracewise/parts';
 import { cardOf, isGroundNet, isPowerNet, natCmp, type NetPin } from './doc.ts';
 import { deco, decoWidth, emptyScene, grid, makeSymbol, satWidth, tw, type Scene } from './scene.ts';
 
+/** Wire between a tap on a column and its net label, so the label never sits on a part. */
+const TAP_STUB = 200;
+
 interface Ctx {
   d: Design;
   members: Map<string, NetPin[]>;
@@ -235,19 +238,31 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
       bottom = s.pins.find((pp) => pp.side === 'bottom')!;
       const bNet = c.pins[bottom.number];
       // a tap between two parts that is also used elsewhere (the FB node) gets a label
-      if (labelTaps && bNet && i < col.parts.length - 1) {
-        const inColumn = new Set(col.parts.map((x) => x.id));
-        if ((members.get(bNet) ?? []).some((m) => !inColumn.has(m.comp.id))) {
-          scene.junctions.push({ x: bottom.x, y: bottom.y });
-          scene.labels.push(deco(net(bNet), bottom.x, bottom.y, 'right'));
-        }
+      if (labelTaps && bNet && i < col.parts.length - 1 && tapUsedElsewhere(col, bNet)) {
+        scene.junctions.push({ x: bottom.x, y: bottom.y });
+        scene.wires.push({ netId: bNet, pts: [bottom.x, bottom.y, bottom.x + TAP_STUB, bottom.y] });
+        scene.labels.push(deco(net(bNet), bottom.x + TAP_STUB, bottom.y, 'right'));
       }
       upper = bNet ?? '';
       y += RISE;
     });
     return bottom!;
   };
-  const colWidth = (col: Column) => Math.max(...col.parts.map((c) => satWidth(d, c)));
+  /** A net between two parts of a column that is also used elsewhere gets a label (the FB node). */
+  const tapUsedElsewhere = (col: Column, netId: string) => {
+    const inColumn = new Set(col.parts.map((x) => x.id));
+    return (members.get(netId) ?? []).some((m) => !inColumn.has(m.comp.id));
+  };
+  const colWidth = (col: Column) => {
+    let w = Math.max(...col.parts.map((c) => satWidth(d, c)));
+    let upper = col.top;
+    for (const [i, c] of col.parts.entries()) {
+      const lower = two(d, c).find((n) => n !== upper);
+      if (lower && i < col.parts.length - 1 && tapUsedElsewhere(col, lower)) w = Math.max(w, grid(TAP_STUB + decoWidth(net(lower)) + 120));
+      upper = lower ?? '';
+    }
+    return w;
+  };
   const floorGrid = (v: number) => Math.max(0, Math.floor(v / 100) * 100);
 
   /**

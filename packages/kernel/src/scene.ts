@@ -4,7 +4,7 @@
  */
 import type { Component, Design, LabelView, Net, PinView, Point, Prim, Rect, SymbolView, WireView } from '@tracewise/schema';
 import { CHAR_W, GRID, type SymbolDef } from '@tracewise/parts';
-import { isGroundNet, isPowerNet, valueOf } from './doc.ts';
+import { isGroundNet, isPowerNet, valueLinesOf, valueOf } from './doc.ts';
 
 /* --------------------------------- scene ---------------------------------- */
 
@@ -104,14 +104,14 @@ export function sceneBBox(s: Scene): Rect {
     maxX = Math.max(maxX, r.x + r.w);
     maxY = Math.max(maxY, r.y + r.h);
   };
-  const textRect = (p: SymbolView['refPos'], text: string): Rect => {
-    const w = tw(text) + 20;
-    return { x: p.anchor === 'end' ? p.x - w : p.anchor === 'middle' ? p.x - w / 2 : p.x, y: p.y - 80, w, h: 100 };
+  const textRect = (p: SymbolView['refPos'], lines: string[]): Rect => {
+    const w = Math.max(...lines.map(tw)) + 20;
+    return { x: p.anchor === 'end' ? p.x - w : p.anchor === 'middle' ? p.x - w / 2 : p.x, y: p.y - 80, w, h: 100 + LINE * (lines.length - 1) };
   };
   for (const sym of s.symbols) {
     add(sym.bbox);
-    add(textRect(sym.refPos, sym.refdes));
-    add(textRect(sym.valuePos, sym.value));
+    add(textRect(sym.refPos, [sym.refdes]));
+    add(textRect(sym.valuePos, sym.valueLines ?? [sym.value]));
   }
   for (const l of s.labels) add(labelRect(l));
   if (minX === Infinity) return { x: 0, y: 0, w: 0, h: 0 };
@@ -131,18 +131,33 @@ export function makeSymbol(d: Design, c: Component, def: SymbolDef, ox: number, 
     refPos: { ...def.refPos },
     valuePos: { ...def.valuePos },
   };
+  const lines = valueLinesOf(d, c);
+  if (lines.length > 1) {
+    sym.valueLines = lines;
+    // keep the text block centred on a two-pin part
+    if (def.kind === 'two_pin') {
+      sym.refPos.y -= (LINE * (lines.length - 1)) / 2;
+      sym.valuePos.y -= (LINE * (lines.length - 1)) / 2;
+    }
+  }
   const s = emptyScene();
   s.symbols.push(sym);
   translateScene(s, ox, oy);
   return sym;
 }
 
-/** Width a vertical two-pin satellite needs for its body and text. */
+/** Line height of stacked value text, in mils. */
+export const LINE = 85;
+
+/** Width a vertical two-pin part needs: body, its text on the right, and room for the next part's body. */
 export function satWidth(d: Design, c: Component, bottomLabel?: string): number {
-  const text = Math.max(tw(c.refdes), tw(valueOf(d, c)));
+  const text = Math.max(tw(c.refdes), ...valueLinesOf(d, c).map(tw));
   const below = bottomLabel ? tw(bottomLabel) / 2 + 80 : 0;
-  return Math.max(300, grid(Math.max(140 + text + 140, below + 100))); // own text + the next part's plate
+  return Math.max(300, grid(Math.max(TEXT_GAP + text + 120, below + 100)));
 }
+
+/** Distance from a two-pin part's axis to its text. */
+export const TEXT_GAP = 120;
 
 /* ------------------------------- decorations ------------------------------ */
 

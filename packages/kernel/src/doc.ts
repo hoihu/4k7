@@ -220,6 +220,18 @@ function levenshtein(a: string, b: string): number {
   return dp[b.length]!;
 }
 
+/**
+ * Value as displayed on the schematic, one item per line: the main value, then a rating
+ * that matters for the part (a capacitor's voltage): "10nF" / "25V".
+ */
+export function valueLinesOf(d: Design, c: Component): string[] {
+  const card = cardOf(d, c.part);
+  const p = c.params;
+  const main = p.resistance ?? p.capacitance ?? p.inductance ?? p.mpn ?? p.color;
+  if (main && card?.category === 'capacitor' && p.voltage) return [main, p.voltage];
+  return [valueOf(d, c)];
+}
+
 /** Display value of a component: its main parameter, or MPN / part name. */
 export function valueOf(d: Design, c: Component): string {
   const card = cardOf(d, c.part);

@@ -115,8 +115,8 @@ function twoPin(card: PartCard, flip: boolean): SymbolDef {
       { number: p2.number, name: p2.name, x: 0, y: Y(200), side: flip ? 'top' : 'bottom', showName: false, showNumber: false },
     ],
     bbox: { x: -100, y: -200, w: 200, h: 400 },
-    refPos: { x: 140, y: -15, anchor: 'start' },
-    valuePos: { x: 140, y: 75, anchor: 'start' },
+    refPos: { x: 120, y: -15, anchor: 'start' },
+    valuePos: { x: 120, y: 70, anchor: 'start' },
   };
 }
 

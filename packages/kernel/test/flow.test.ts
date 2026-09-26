@@ -94,7 +94,21 @@ describe('power-flow layout (datasheet reference style)', () => {
   it('shows the feedback node by name at the divider and at VSNS', () => {
     const k = new Kernel();
     k.transact(buckTransaction());
-    expect(sheetOf(k).labels.filter((l) => l.text === 'FB')).toHaveLength(2);
+    const s = sheetOf(k);
+    expect(s.labels.filter((l) => l.text === 'FB')).toHaveLength(2);
+    // at the divider the label sits at the end of a short wire, not on the resistors
+    const r1 = sym(k, 'R1');
+    const tap = s.labels.find((l) => l.text === 'FB' && Math.abs(l.x - r1.pins[0]!.x) < 1000)!;
+    const stub = s.wires.find((w) => w.pts[2] === tap.x && w.pts[3] === tap.y)!;
+    expect(stub).toBeTruthy();
+    expect(tap.x - stub.pts[0]!).toBeGreaterThanOrEqual(200);
+  });
+
+  it('stacks a capacitor value and its voltage rating on separate lines', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    expect(sym(k, 'C1').valueLines).toEqual(['10uF', '25V']);
+    expect(sym(k, 'R1').valueLines).toBeUndefined();
   });
 
   it('draws an LDO the same way (no inductor)', () => {
