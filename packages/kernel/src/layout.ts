@@ -33,6 +33,9 @@ import {
   type Scene,
 } from './scene.ts';
 
+/** Space between separate groups (e.g. a connector and a regulator), across and between rows. */
+const CELL_GAP = 400;
+
 /* --------------------------------- model ---------------------------------- */
 
 interface Sat {
@@ -195,12 +198,12 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     for (const cell of cells) {
       const bb = sceneBBox(cell);
       translateScene(cell, x - bb.x, rowTop + topExtent);
-      x += bb.w + 600;
+      x += bb.w + CELL_GAP;
       rowBottom = Math.max(rowBottom, rowTop + topExtent + bb.y + bb.h);
       mergeScene(scene, cell);
     }
     maxRight = Math.max(maxRight, x);
-    rowTop = grid(rowBottom + 600);
+    rowTop = grid(rowBottom + CELL_GAP);
   }
 
   /* ---- free parts ---- */

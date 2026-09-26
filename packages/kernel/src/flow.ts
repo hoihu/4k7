@@ -310,7 +310,7 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
     const card = cardOf(d, plan.inductor.part)!;
     const leftIsPin1 = plan.inductor.pins[card.pins[0]!.number] === plan.swNet;
     const def = symbolFor(card);
-    const cx = x + 200;
+    const cx = x + 100; // its leads run along the rail, above the previous part's text
     const s = makeSymbol(d, plan.inductor, def, cx, yR);
     const rot = leftIsPin1 ? -90 : 90;
     const rad = (rot * Math.PI) / 180;
@@ -324,7 +324,7 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
     railPts.push(cx - 200, yR);
     scene.wires.push({ netId: plan.swNet, pts: railPts.splice(0) });
     railPts.push(cx + 200, yR);
-    x = cx + 200 + Math.max(200, tw(s.value) / 2 - 100);
+    x = cx + 200 + Math.max(100, tw(s.value) / 2 - 100);
     x = grid(x);
   }
   for (const col of plan.outShunts) {
@@ -332,7 +332,7 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
     taps.push(x);
     x += colWidth(col);
   }
-  const outEnd = x;
+  const outEnd = x - 100; // the last column's margin is only needed for another part
   railPts.push(outEnd, yR);
   scene.wires.push({ netId: plan.outNet, pts: railPts });
   scene.labels.push(deco(net(plan.outNet), outEnd, yR, 'right'));
@@ -369,7 +369,7 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
     toGround.push({ col, x: cx, y0: yL });
     lTaps.push(cx);
   }
-  const inEnd = Math.min(lx, inP.x - 200) - 200;
+  const inEnd = Math.min(lx, inP.x - 200) - 100;
   inPts.push(inEnd, yL);
   scene.wires.push({ netId: plan.inNet, pts: inPts });
   scene.labels.push(deco(net(plan.inNet), inEnd, yL, 'left'));

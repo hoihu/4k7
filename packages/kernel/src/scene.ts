@@ -149,15 +149,22 @@ export function makeSymbol(d: Design, c: Component, def: SymbolDef, ox: number, 
 /** Line height of stacked value text, in mils. */
 export const LINE = 85;
 
-/** Width a vertical two-pin part needs: body, its text on the right, and room for the next part's body. */
+/** Distance from a two-pin part's axis to its text. */
+export const TEXT_GAP = 100;
+/** Widest half-body of a neighbouring two-pin part (capacitor plates, 80) plus clear air. */
+const NEXT_BODY = 140;
+
+/**
+ * Width a vertical two-pin part needs: its text on the right and room for the next part's
+ * body. Rounded to a 50-mil grid (the usual schematic grid) to keep columns tight.
+ */
 export function satWidth(d: Design, c: Component, bottomLabel?: string): number {
   const text = Math.max(tw(c.refdes), ...valueLinesOf(d, c).map(tw));
   const below = bottomLabel ? tw(bottomLabel) / 2 + 80 : 0;
-  return Math.max(300, grid(Math.max(TEXT_GAP + text + 120, below + 100)));
+  return Math.max(300, halfGrid(Math.max(TEXT_GAP + text + NEXT_BODY, below + 100)));
 }
 
-/** Distance from a two-pin part's axis to its text. */
-export const TEXT_GAP = 120;
+const halfGrid = (v: number) => Math.ceil(v / 50) * 50;
 
 /* ------------------------------- decorations ------------------------------ */
 
