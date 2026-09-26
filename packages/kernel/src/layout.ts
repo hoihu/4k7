@@ -440,16 +440,59 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
   /* pin end decorations for pins without satellites */
   let gapRight = 200;
   let gapLeft = 200;
-  const stubs = supplyStubs(sym.pins, (num) => {
+  const supplyOf = (num: string) => {
     const id = plan.comp.pins[num];
     return id && !satsByPin.has(num) && !plan.comp.noConnect.includes(num) ? supplyDir(d.nets[id]!) : null;
-  });
+  };
   const decorated = new Set<string>(); // stacked pins (repeated VDD) share one position
+
+  /* neighbouring side pins on the same supply share one bus and one supply symbol */
+  const bused = new Set<string>();
+  for (const side of ['left', 'right'] as const) {
+    const byPos = new Map<number, (typeof sym.pins)[number]>();
+    for (const p of sym.pins.filter((x) => x.side === side).sort((a, b) => a.y - b.y)) {
+      // one pin per position: the first with a connection (stacked pins share the position)
+      const have = byPos.get(p.y);
+      if (!have || (!plan.comp.pins[have.number] && plan.comp.pins[p.number])) byPos.set(p.y, p);
+    }
+    const column = [...byPos.values()];
+    for (let i = 0; i < column.length; ) {
+      const first = column[i]!;
+      const dir = supplyOf(first.number);
+      let j = i + 1;
+      while (j < column.length && supplyOf(column[j]!.number) === dir && plan.comp.pins[column[j]!.number] === plan.comp.pins[first.number]) j++;
+      const run = column.slice(i, j);
+      i = j;
+      if (!dir || run.length < 2) continue;
+      const ys = run.map((p) => p.y);
+      const [top, bottom] = [Math.min(...ys), Math.max(...ys)];
+      // the symbol sits at the end of the bus; nothing may be in its way on this side
+      const clear = column.every((p) => (dir === 'up' ? !(p.y < top && p.y >= top - 400) : !(p.y > bottom && p.y <= bottom + 400)));
+      if (!clear) continue;
+      const net = d.nets[plan.comp.pins[first.number]!]!;
+      const busX = first.x + (side === 'left' ? -100 : 100);
+      for (const p of run) {
+        scene.wires.push({ netId: net.id, pts: [p.x, p.y, busX, p.y] });
+        bused.add(`${p.x},${p.y}`);
+        // T where a stub meets the bus; the far end is a plain corner
+        if (p.y !== (dir === 'up' ? bottom : top)) scene.junctions.push({ x: busX, y: p.y });
+      }
+      scene.wires.push({ netId: net.id, pts: [busX, top, busX, bottom] });
+      scene.labels.push(deco(net, busX, dir === 'up' ? top : bottom, dir));
+      const w = 100 + Math.max(80, tw(net.name) / 2 + 20) + 100;
+      if (side === 'right') gapRight = Math.max(gapRight, w);
+      else gapLeft = Math.max(gapLeft, w);
+    }
+  }
+  const stubs = supplyStubs(
+    sym.pins.filter((p) => !bused.has(`${p.x},${p.y}`)),
+    supplyOf,
+  );
   for (const p of sym.pins) {
     const netId = plan.comp.pins[p.number];
     const net = netId ? d.nets[netId] : undefined;
     const at = `${p.x},${p.y}`;
-    if (decorated.has(at)) continue;
+    if (decorated.has(at) || bused.has(at)) continue;
     if (net || plan.comp.noConnect.includes(p.number)) decorated.add(at);
     if (plan.comp.noConnect.includes(p.number)) {
       scene.noConnects.push({ x: p.x, y: p.y });

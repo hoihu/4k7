@@ -227,6 +227,18 @@ function box(card: PartCard, first: string[], mirror: boolean, unit?: number): S
   });
 
   const nameRight = mirror && !sides.right.length;
+  // generated MCU symbols have supplies (and their bus symbols) at the top corners: name above the middle
+  const nameAbove = !!(card.symbolLayout || card.units?.length) && !sides.top.length;
+  if (nameAbove) {
+    return {
+      kind: 'box',
+      prims,
+      pins,
+      bbox: { x: -PIN_LEN, y: -PIN_LEN, w: w + 2 * PIN_LEN, h: h + 2 * PIN_LEN },
+      refPos: { x: w / 2, y: -115, anchor: 'middle' },
+      valuePos: { x: w / 2, y: -30, anchor: 'middle' },
+    };
+  }
   return {
     kind: 'box',
     prims,

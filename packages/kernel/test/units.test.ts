@@ -66,6 +66,14 @@ describe('split symbols', () => {
     // the decap sits under the power unit (A)
     const c1 = sheet.symbols.find((s) => s.refdes === 'C1')!;
     expect(c1.bbox.x).toBeLessThan(unitB.bbox.x);
+    // VBAT, VDD, VDDA on +3V3 are neighbours: one bus with one supply symbol, not three
+    const unitA = units[0]!;
+    const rails = sheet.labels.filter((l) => l.text === '+3V3' && l.kind === 'rail' && l.x < unitA.bbox.x + unitA.bbox.w && l.y < unitA.bbox.y + 400);
+    expect(rails).toHaveLength(1);
+    const busX = rails[0]!.x;
+    const vertical = sheet.wires.find((w) => w.pts[0] === busX && w.pts[2] === busX && w.pts[1] !== w.pts[3]);
+    expect(vertical).toBeTruthy();
+    expect(sheet.junctions.filter((j) => j.x === busX)).toHaveLength(2); // T joints; the bottom is a corner
   });
 
   it('switches a placed, wired part to units and back without touching its wiring (set_symbol)', () => {
