@@ -79,7 +79,9 @@ export function labelRect(l: LabelView): Rect {
     // vertical supply symbol, possibly after a horizontal stub
     const sx = l.x + (l.stub === 'left' ? -1 : l.stub === 'right' ? 1 : 0) * (l.stubLen ?? 100);
     const half = l.kind === 'ground' ? 80 : Math.max(80, w / 2);
-    const sym: Rect = l.dir === 'up' ? { x: sx - half, y: l.y - 260, w: 2 * half, h: 260 } : { x: sx - half, y: l.y, w: 2 * half, h: 260 };
+    // ground: bars 150 deep; rail: 200 stem + arrow + name
+    const h = l.kind === 'ground' ? 260 : 400;
+    const sym: Rect = l.dir === 'up' ? { x: sx - half, y: l.y - h, w: 2 * half, h } : { x: sx - half, y: l.y, w: 2 * half, h };
     const x0 = Math.min(sym.x, l.x);
     const x1 = Math.max(sym.x + sym.w, l.x);
     return { x: x0, y: sym.y, w: x1 - x0, h: sym.h };

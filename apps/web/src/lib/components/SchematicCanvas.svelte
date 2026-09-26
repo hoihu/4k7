@@ -15,6 +15,9 @@
 
   let { sheet, overlays = {}, hot = null, showDiff = true, selection = [], onselect, onclear, compact = false }: Props = $props();
 
+  /** Length of a supply symbol's stem, in mils (keep in sync with labelRect in the kernel). */
+  const RAIL_STEM = 200;
+
   let svg: SVGSVGElement | undefined = $state();
   let vb = $state({ x: 0, y: 0, w: 1000, h: 1000 });
   let fittedFor = '';
@@ -145,9 +148,10 @@
             <line x1={sx - 45} y1={l.y + s * 115} x2={sx + 45} y2={l.y + s * 115} />
             <line x1={sx - 20} y1={l.y + s * 150} x2={sx + 20} y2={l.y + s * 150} />
           {:else}
-            <line x1={sx} y1={l.y} x2={sx} y2={l.y + s * 100} />
-            <line x1={sx - 70} y1={l.y + s * 100} x2={sx + 70} y2={l.y + s * 100} />
-            <text class="rail-t" x={sx} y={s < 0 ? l.y - 135 : l.y + 195} text-anchor="middle">{l.text}</text>
+            <!-- supply rail: a long stem ending in an arrow pointing away from the circuit -->
+            <line x1={sx} y1={l.y} x2={sx} y2={l.y + s * RAIL_STEM} />
+            <polygon class="arrow" points="{sx},{l.y + s * (RAIL_STEM + 70)} {sx - 45},{l.y + s * RAIL_STEM} {sx + 45},{l.y + s * RAIL_STEM}" />
+            <text class="rail-t" x={sx} y={s < 0 ? l.y - RAIL_STEM - 100 : l.y + RAIL_STEM + 160} text-anchor="middle">{l.text}</text>
           {/if}
         </g>
       {:else if l.dir === 'on'}
@@ -245,6 +249,7 @@
   .pin-n { fill: var(--sch-txt); font-size: 70px; }
   .pin-no { fill: var(--pin-txt); font-size: 52px; }
   .pwr line { stroke: var(--wire); stroke-width: 14; stroke-linecap: round; }
+  .pwr .arrow { fill: var(--wire); stroke: var(--wire); stroke-width: 8; stroke-linejoin: round; }
   .rail-t { fill: var(--wire); font-size: 78px; font-weight: 700; }
   .net-t { fill: var(--wire); font-size: 72px; font-weight: 600; }
   .flag { fill: var(--canvas); stroke: var(--wire); stroke-width: 10; }
