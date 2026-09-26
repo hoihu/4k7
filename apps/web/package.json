@@ -14,10 +14,12 @@
     "@tracewise/kernel": "0.1.0",
     "@tracewise/parts": "0.1.0",
     "@tracewise/schema": "0.1.0",
-    "pdfjs-dist": "^6.3.289"
+    "pdfjs-dist": "^6.3.289",
+    "three": "^0.181.2"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/three": "^0.181.0",
     "svelte": "^5.57.1",
     "svelte-check": "^4.7.6",
     "vite": "^8.3.1"

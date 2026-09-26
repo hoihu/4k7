@@ -43,7 +43,8 @@ the user's local Claude Code through the bridge, like the app chat.
      switchable in review and for saved parts;
    - footprints for QFP/QFN, SOIC/SSOP/TSSOP/MSOP/DFN, BGA/CSP and DIP (IPC-7351-style nominal);
    - **3D bodies** (boxes and balls: body, gull-wing leads, no-lead terminals, BGA balls, DIP pins,
-     pin-1 mark) shown in a rotatable view. Export (STEP/GLB) comes with the board work.
+     pin-1 mark), shown with three.js (`apps/web/src/lib/three-body.ts`, loaded on demand), the same
+     renderer and data the board's 3D view will use. Export (STEP/GLB) comes with the board work.
 6. **Review**: symbol (single or units), footprint/3D and the pin table, next to the check results
    and the cross-check. With the datasheet open, clicking a pin shows its page with the row
    highlighted, and "drawing p. N" shows the package drawing. **Add to library** stores the card in
