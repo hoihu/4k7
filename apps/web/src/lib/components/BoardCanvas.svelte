@@ -113,6 +113,11 @@
   /** Draw bottom first so the top layer is on top. */
   const order: CopperLayer[] = ['B.Cu', 'In2.Cu', 'In1.Cu', 'F.Cu'];
   const tracksOn = (l: CopperLayer) => board?.tracks.filter((t) => t.layer === l) ?? [];
+  const zonePath = (r: number[]) => {
+    let d = '';
+    for (let i = 0; i + 3 < r.length; i += 4) d += `M${r[i]},${r[i + 1]}h${r[i + 2]}v${r[i + 3]}h${-r[i + 2]!}z`;
+    return d;
+  };
   const path = (pts: number[]) => pts.reduce((s, v, i) => s + (i % 2 ? `,${v}` : `${i ? ' L' : 'M'}${v}`), '');
 </script>
 
@@ -139,6 +144,9 @@
     {#each order as layer (layer)}
       {#if show[layer]}
         <g class="layer {LAYER_CLASS[layer]}" class:dim={layer !== 'F.Cu' && show['F.Cu']}>
+          {#each board.zones.filter((z) => z.layer === layer) as z, zi (zi)}
+            <path class="zone" class:hot={hotNet === z.netId} d={zonePath(z.rects)} data-net={z.netId} />
+          {/each}
           {#each tracksOn(layer) as t, i (i)}
             <path d={path(t.pts)} stroke-width={t.width} data-net={t.netId} class:hot={hotNet === t.netId} />
           {/each}
@@ -210,6 +218,12 @@
   .substrate { fill: #0f2a22; }
   .edge { fill: none; stroke: #e0c341; stroke-width: 0.15; }
   .layer path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .layer path.zone { stroke: none; opacity: 0.28; }
+  .fcu path.zone { fill: #c9463d; }
+  .bcu path.zone { fill: #3f7fd6; }
+  .in1 path.zone { fill: #c9a13d; }
+  .in2 path.zone { fill: #8e5cd6; }
+  .layer path.zone.hot { fill: #fff27a; opacity: 0.35; }
   .fcu path { stroke: #c9463d; }
   .bcu path { stroke: #3f7fd6; }
   .in1 path { stroke: #c9a13d; }

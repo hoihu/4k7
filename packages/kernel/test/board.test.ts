@@ -58,17 +58,24 @@ describe('board placement', () => {
 
 /** Nets that are not one connected piece of copper, judged from geometry only. */
 function brokenNets(b: ReturnType<Kernel['board']>): string[] {
-  type Node = { net: string; layer: string; x0: number; y0: number; x1: number; y1: number; seg?: number[]; r?: number };
+  type Node = { net: string; layer: string; x0: number; y0: number; x1: number; y1: number; seg?: number[]; r?: number; zone?: boolean };
   const nodes: Node[] = [];
   for (const p of b.parts) for (const pad of p.pads) if (pad.netId) for (const layer of pad.drill ? b.layers : pad.layers) nodes.push({ net: pad.netId, layer, x0: pad.x - pad.w / 2, y0: pad.y - pad.h / 2, x1: pad.x + pad.w / 2, y1: pad.y + pad.h / 2 });
   for (const t of b.tracks) for (let i = 0; i + 3 < t.pts.length; i += 2) nodes.push({ net: t.netId, layer: t.layer, x0: 0, y0: 0, x1: 0, y1: 0, seg: t.pts.slice(i, i + 4), r: t.width / 2 });
   for (const v of b.vias) for (const layer of b.layers) nodes.push({ net: v.netId, layer, x0: v.x - v.pad / 2, y0: v.y - v.pad / 2, x1: v.x + v.pad / 2, y1: v.y + v.pad / 2 });
+  for (const z of b.zones) for (let i = 0; i + 3 < z.rects.length; i += 4) nodes.push({ net: z.netId, layer: z.layer, x0: z.rects[i]!, y0: z.rects[i + 1]!, x1: z.rects[i]! + z.rects[i + 2]!, y1: z.rects[i + 1]! + z.rects[i + 3]!, zone: true });
   const inRect = (n: Node, x: number, y: number) => x >= n.x0 - 1e-6 && x <= n.x1 + 1e-6 && y >= n.y0 - 1e-6 && y <= n.y1 + 1e-6;
   const ends = (n: Node) => (n.seg ? [[n.seg[0]!, n.seg[1]!], [n.seg[2]!, n.seg[3]!]] : [[(n.x0 + n.x1) / 2, (n.y0 + n.y1) / 2]]);
   const touch = (a: Node, c: Node) => {
     if (a.net !== c.net) return false;
     // vias join layers
     if (a.layer !== c.layer && !(a.x1 - a.x0 > 0 && a.x0 === c.x0 && a.y0 === c.y0)) return false;
+    // pour rectangles: adjacent rows touch; anything overlapping a rectangle touches it
+    if (a.zone || c.zone) {
+      const [z, o] = a.zone ? [a, c] : [c, a];
+      if (o.seg) return ends(o).some(([x, y]) => inRect(z, x!, y!));
+      return o.x0 <= z.x1 + 1e-6 && z.x0 <= o.x1 + 1e-6 && o.y0 <= z.y1 + 1e-6 && z.y0 <= o.y1 + 1e-6;
+    }
     if (!a.seg && !c.seg) return a.x0 <= c.x1 && c.x0 <= a.x1 && a.y0 <= c.y1 && c.y0 <= a.y1;
     return ends(a).some(([x, y]) => (c.seg ? ends(c).some(([u, v]) => Math.hypot(u! - x!, v! - y!) < 1e-6) : inRect(c, x!, y!))) || ends(c).some(([x, y]) => !a.seg && inRect(a, x!, y!));
   };
@@ -79,7 +86,7 @@ function brokenNets(b: ReturnType<Kernel['board']>): string[] {
   nodes.forEach((n, i) => roots.set(n.net, (roots.get(n.net) ?? new Set()).add(find(i))));
   // pads of a net on different layers of one THT pad count once: compare pad roots only
   const padRoots = new Map<string, Set<number>>();
-  nodes.forEach((n, i) => !n.seg && roots.has(n.net) && padRoots.set(n.net, (padRoots.get(n.net) ?? new Set()).add(find(i))));
+  nodes.forEach((n, i) => !n.seg && !n.zone && roots.has(n.net) && padRoots.set(n.net, (padRoots.get(n.net) ?? new Set()).add(find(i))));
   return [...padRoots.entries()].filter(([, s]) => s.size > 1).map(([net]) => b.netNames[net] ?? net);
 }
 
@@ -100,6 +107,21 @@ describe('dragging a part (place)', () => {
     const u1b = after.parts.find((p) => p.refdes === 'U1')!;
     expect(Math.hypot(u1a.x - u1b.x, u1a.y - u1b.y)).toBeLessThan(3);
     expect(after.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+  });
+});
+
+describe('fixed outline with a pinned part', () => {
+  it('keeps every other part inside the board', () => {
+    const k = buck();
+    k.transact({ summary: 'board', ops: [
+      { op: 'set_board', width_mm: 30, height_mm: 20 },
+      { op: 'place', ref: 'J1', x_mm: 3, y_mm: 10, rot: 0 },
+    ] });
+    const b = k.board();
+    expect(b.outline).toEqual({ w: 30, h: 20 });
+    expect(b.parts.filter((p) => p.locked).map((p) => p.refdes)).toEqual(['J1']);
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(b.stats.unrouted).toBe(0);
   });
 });
 

@@ -229,6 +229,18 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res): THREE.
   instanced(res.unitBox, res.cuUnderMask, segs);
   instanced(res.cyl, res.cuUnderMask, joints);
 
+  /* copper pours (under the solder mask) */
+  const pours: THREE.Matrix4[] = [];
+  for (const z of b.zones) {
+    if (z.layer !== 'F.Cu' && z.layer !== 'B.Cu') continue;
+    const y = surfaceY(z.layer);
+    for (let i = 0; i + 3 < z.rects.length; i += 4) {
+      const [x, zz, w, h] = [z.rects[i]!, z.rects[i + 1]!, z.rects[i + 2]!, z.rects[i + 3]!];
+      pours.push(new THREE.Matrix4().compose(new THREE.Vector3(x + w / 2, y * 0.98, zz + h / 2), q, new THREE.Vector3(w, CU * 0.8, h)));
+    }
+  }
+  instanced(res.unitBox, res.cuUnderMask, pours);
+
   /* vias: tented rings on both sides, hole in the middle */
   const vias: THREE.Matrix4[] = [];
   for (const v of b.vias) {

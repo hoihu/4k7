@@ -193,6 +193,31 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     return { x: it.x + x, y: it.y + y };
   };
 
+  /*
+   * A fixed outline with pinned parts: pinned coordinates are board coordinates, so the others
+   * must stay inside the outline too (without pins, the finished placement is centred instead).
+   */
+  const margin0 = 1.5 + rules.edgeClearance;
+  const contain =
+    anyFixed && settings.width && settings.height
+      ? (it: Item) => {
+          if (it.fixed) return;
+          const e = extent(it);
+          it.x = Math.min(Math.max(it.x, margin0 + e.w / 2), settings.width! - margin0 - e.w / 2);
+          it.y = Math.min(Math.max(it.y, margin0 + e.h / 2), settings.height! - margin0 - e.h / 2);
+        }
+      : null;
+  if (contain) {
+    // start from the unpinned board centred in the outline
+    const bb0 = bounds(items.filter((it) => !it.fixed));
+    const dx = settings.width! / 2 - (bb0.x0 + bb0.x1) / 2;
+    const dy = settings.height! / 2 - (bb0.y0 + bb0.y1) / 2;
+    for (const it of items) if (!it.fixed) {
+      it.x += dx;
+      it.y += dy;
+    }
+  }
+
   /* ---- relax ---- */
   const movable = items.filter((it) => !it.fixed);
   const ITER = 160;
@@ -237,6 +262,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       it.y += f.fy * k;
     }
     separate(items, 3);
+    if (contain) for (const it of movable) contain(it);
   }
 
   /* ---- rotations of two-pin parts: shortest connections ---- */
@@ -267,8 +293,11 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     it.rot = best;
   }
   for (const it of movable) snapItem(it);
-  separate(items, 40, true);
-  for (const it of movable) snapItem(it);
+  for (let round = 0; round < (contain ? 6 : 1); round++) {
+    separate(items, 40, true);
+    if (contain) for (const it of movable) contain(it);
+    for (const it of movable) snapItem(it);
+  }
 
   /* ---- outline ---- */
   const margin = 1.5 + rules.edgeClearance;
@@ -314,6 +343,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     parts,
     tracks: [],
     vias: [],
+    zones: [],
     ratsnest: ratsnest(parts),
     diagnostics,
     stats: { nets: 0, routed: 0, unrouted: 0, trackLength: 0, vias: 0 },
@@ -327,11 +357,19 @@ export function layoutBoard(d: Design, sch: SchematicView): BoardView {
   const b = placeBoard(d, sch);
   if (!b.parts.length) return b;
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
-  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets });
+  // ground plane: the ground net with the most pads, poured on the bottom (2 layers) or In1 (4 layers)
+  const padCount = new Map<string, number>();
+  for (const p of b.parts) for (const pad of p.pads) if (pad.netId) padCount.set(pad.netId, (padCount.get(pad.netId) ?? 0) + 1);
+  const ground = Object.values(d.nets)
+    .filter((n) => isGroundNet(n) && (padCount.get(n.id) ?? 0) >= 2)
+    .sort((x, y) => (padCount.get(y.id) ?? 0) - (padCount.get(x.id) ?? 0) || x.name.localeCompare(y.name))[0];
+  const pour = ground ? { netId: ground.id, layer: (b.layers.length === 4 ? 'In1.Cu' : 'B.Cu') as CopperLayer } : undefined;
+  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, ...(pour ? { pour } : {}) });
   const routed: BoardView = {
     ...b,
     tracks: r.tracks,
     vias: r.vias,
+    zones: r.zones,
     ratsnest: ratsnest(b.parts, r.connected),
     stats: {
       nets: r.netsTotal,

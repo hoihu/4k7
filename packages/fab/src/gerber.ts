@@ -45,6 +45,13 @@ class Gerber {
     this.aperture(p.shape === 'round' ? `C,${(Math.min(w, h)).toFixed(6)}` : `R,${w.toFixed(6)}X${h.toFixed(6)}`);
     this.body.push(`${this.xy(p.x, p.y)}D03*`);
   }
+  /** Filled rectangles as regions (copper pours). */
+  regions(rects: number[]) {
+    for (let i = 0; i + 3 < rects.length; i += 4) {
+      const [x, y, w, h] = [rects[i]!, rects[i + 1]!, rects[i + 2]!, rects[i + 3]!];
+      this.body.push('G36*', `${this.xy(x, y)}D02*`, `${this.xy(x + w, y)}D01*`, `${this.xy(x + w, y + h)}D01*`, `${this.xy(x, y + h)}D01*`, `${this.xy(x, y)}D01*`, 'G37*');
+    }
+  }
   circle(x: number, y: number, d: number) {
     this.aperture(`C,${d.toFixed(6)}`);
     this.body.push(`${this.xy(x, y)}D03*`);
@@ -89,6 +96,7 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
   b.layers.forEach((layer, i) => {
     const pos = i === 0 ? 'Top' : i === n - 1 ? 'Bot' : 'Inr';
     const g = new Gerber(h, [`FileFunction,Copper,L${i + 1},${pos}`, 'FilePolarity,Positive']);
+    for (const z of b.zones) if (z.layer === layer) g.regions(z.rects);
     for (const p of pads) if (onLayer(p, layer)) g.pad(p);
     for (const v of b.vias) g.circle(v.x, v.y, v.pad);
     for (const t of b.tracks) if (t.layer === layer) g.line(t.pts, t.width);

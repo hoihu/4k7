@@ -48,6 +48,12 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
     for (const layer of b.layers) items.push({ net: v.netId, layer, shape: { kind: 'seg', ax: v.x, ay: v.y, bx: v.x, by: v.y, r }, bb: [v.x - r, v.y - r, v.x + r, v.y + r], what: `via ${b.netNames[v.netId] ?? v.netId}`, track: true });
   }
 
+  for (const z of b.zones) {
+    for (let i = 0; i + 3 < z.rects.length; i += 4) {
+      const [x, y, w, h] = [z.rects[i]!, z.rects[i + 1]!, z.rects[i + 2]!, z.rects[i + 3]!];
+      items.push({ net: z.netId, layer: z.layer, shape: { kind: 'rect', x0: x, y0: y, x1: x + w, y1: y + h }, bb: [x, y, x + w, y + h], what: `${b.netNames[z.netId] ?? z.netId} pour`, track: true });
+    }
+  }
   const c = b.rules.clearance;
   const out: BoardDiagnostic[] = [];
   const seen = new Set<string>();

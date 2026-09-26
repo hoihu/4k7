@@ -89,6 +89,13 @@ export interface Via {
   pad: number;
 }
 
+/** Copper pour (e.g. a ground plane): rectangles x, y, w, h (flattened), one net, one layer. */
+export interface Zone {
+  netId: string;
+  layer: CopperLayer;
+  rects: number[];
+}
+
 export interface RatsLine {
   netId: string;
   x1: number;
@@ -113,6 +120,7 @@ export interface BoardView {
   parts: BoardPart[];
   tracks: Track[];
   vias: Via[];
+  zones: Zone[];
   /** Connections not (yet) made by copper. */
   ratsnest: RatsLine[];
   diagnostics: BoardDiagnostic[];
