@@ -248,6 +248,22 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
     return bottom!;
   };
   const colWidth = (col: Column) => Math.max(...col.parts.map((c) => satWidth(d, c)));
+  const floorGrid = (v: number) => Math.max(0, Math.floor(v / 100) * 100);
+
+  /**
+   * Columns that end on the ground line are drawn once the line's height is known, so each
+   * part can sit in the middle between its top connection and ground (no long tail wire).
+   * `lead` is the wire that reaches the column top (from a pin), extended down to the part.
+   */
+  const toGround: { col: Column; x: number; y0: number; lead?: { net: string; pts: number[] } }[] = [];
+
+  /** A part bridging from a pin up to the rail: centred between the two. */
+  const bridge = (col: Column, x: number, yRail: number, p: PinView) => {
+    const off = floorGrid((p.y - yRail - RISE * col.parts.length) / 2);
+    if (off > 0) scene.wires.push({ netId: col.top, pts: [x, yRail, x, yRail + off] });
+    const bottom = stack(col, x, yRail + off);
+    scene.wires.push({ netId: plan.comp.pins[(col as PinColumn).pin]!, pts: [p.x, p.y, x, p.y, x, bottom.y] });
+  };
 
   /* ----- right side: pin columns, switch node, inductor, output rail ----- */
   const rightPins = plan.pinCols.filter((c) => c.side === 'right');
@@ -260,21 +276,17 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
   const taps: number[] = [];
 
   for (const col of railCols) {
-    const p = pinAt(col.pin);
-    const bottom = stack(col, x, yR);
-    // pin → column, then up into the part
-    scene.wires.push({ netId: plan.comp.pins[col.pin]!, pts: [p.x, p.y, x, p.y, x, bottom.y] });
+    bridge(col, x, yR, pinAt(col.pin));
     taps.push(x);
     x += colWidth(col);
   }
   for (const col of gndCols) {
     const p = pinAt(col.pin);
-    scene.wires.push({ netId: col.top, pts: [p.x, p.y, x, p.y] });
-    drops.push(stack(col, x, p.y));
+    toGround.push({ col, x, y0: p.y, lead: { net: col.top, pts: [p.x, p.y, x, p.y] } });
     x += colWidth(col);
   }
   for (const col of plan.swShunts) {
-    drops.push(stack(col, x, yR));
+    toGround.push({ col, x, y0: yR });
     taps.push(x);
     x += colWidth(col);
   }
@@ -301,7 +313,7 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
     x = grid(x);
   }
   for (const col of plan.outShunts) {
-    drops.push(stack(col, x, yR));
+    toGround.push({ col, x, y0: yR });
     taps.push(x);
     x += colWidth(col);
   }
@@ -328,21 +340,18 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
   };
   const lTaps: number[] = [];
   for (const col of lRailCols) {
-    const p = pinAt(col.pin);
     const cx = place(col);
-    const bottom = stack(col, cx, yL);
-    scene.wires.push({ netId: plan.comp.pins[col.pin]!, pts: [p.x, p.y, cx, p.y, cx, bottom.y] });
+    bridge(col, cx, yL, pinAt(col.pin));
     lTaps.push(cx);
   }
   for (const col of lGndCols) {
     const p = pinAt(col.pin);
     const cx = place(col);
-    scene.wires.push({ netId: col.top, pts: [p.x, p.y, cx, p.y] });
-    drops.push(stack(col, cx, p.y));
+    toGround.push({ col, x: cx, y0: p.y, lead: { net: col.top, pts: [p.x, p.y, cx, p.y] } });
   }
   for (const col of plan.inShunts) {
     const cx = place(col);
-    drops.push(stack(col, cx, yL));
+    toGround.push({ col, x: cx, y0: yL });
     lTaps.push(cx);
   }
   const inEnd = Math.min(lx, inP.x - 200) - 200;
@@ -352,8 +361,17 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
   for (const tx of lTaps) scene.junctions.push({ x: tx, y: yL });
 
   /* ----- the common ground line ----- */
+  const deepest = Math.max(def.bbox.y + def.bbox.h, ...drops.map((p) => p.y), ...toGround.map((g) => g.y0 + RISE * g.col.parts.length));
+  const yG = grid(deepest + 200);
+  for (const g of toGround) {
+    // centre the column between its top connection and the ground line
+    const off = floorGrid((yG - g.y0 - RISE * g.col.parts.length) / 2);
+    const lead = g.lead ? [...g.lead.pts] : [g.x, g.y0];
+    if (off > 0) lead.push(g.x, g.y0 + off);
+    if (lead.length >= 4) scene.wires.push({ netId: g.lead?.net ?? g.col.top, pts: lead });
+    drops.push(stack(g.col, g.x, g.y0 + off));
+  }
   if (drops.length) {
-    const yG = grid(Math.max(...drops.map((p) => p.y), def.bbox.y + def.bbox.h) + 200);
     const xs = [...new Set(drops.map((p) => p.x))].sort((a, b) => a - b);
     for (const p of drops) if (p.y < yG) scene.wires.push({ netId: plan.gnd, pts: [p.x, p.y, p.x, yG] });
     if (xs.length > 1) scene.wires.push({ netId: plan.gnd, pts: [xs[0]!, yG, xs[xs.length - 1]!, yG] });

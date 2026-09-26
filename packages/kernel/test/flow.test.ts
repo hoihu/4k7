@@ -63,6 +63,28 @@ describe('power-flow layout (datasheet reference style)', () => {
     expect(span).toBeGreaterThan(sym(k, 'U1').bbox.w * 2);
   });
 
+  it('centres parts between their supply connection and the ground line', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    const s = sheetOf(k);
+    /** Length of the vertical wire that ends at a pin (0 if the pin touches its connection directly). */
+    const lead = (x: number, y: number) => {
+      const w = s.wires.find((w) => {
+        const n = w.pts.length;
+        return (w.pts[n - 2] === x && w.pts[n - 1] === y && w.pts[n - 4] === x) || (w.pts[0] === x && w.pts[1] === y && w.pts[2] === x);
+      });
+      if (!w) return 0;
+      const n = w.pts.length;
+      return w.pts[0] === x && w.pts[1] === y ? Math.abs(w.pts[3]! - y) : Math.abs(w.pts[n - 3]! - y);
+    };
+    for (const r of ['C1', 'C2', 'C3', 'D1']) {
+      const pins = [...sym(k, r).pins].sort((a, b) => a.y - b.y);
+      const above = lead(pins[0]!.x, pins[0]!.y);
+      const below = lead(pins[1]!.x, pins[1]!.y);
+      expect(Math.abs(above - below), `${r}: ${above} above vs ${below} below`).toBeLessThanOrEqual(100);
+    }
+  });
+
   it('has no crossing wires', () => {
     const k = new Kernel();
     k.transact(buckTransaction());
