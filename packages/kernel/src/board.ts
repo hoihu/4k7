@@ -27,6 +27,8 @@ import {
 } from '@tracewise/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@tracewise/parts';
 import { cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
+import { copperDrc } from './drc.ts';
+import { route } from './router.ts';
 
 const SPACING = 0.3; // between courtyards
 const GRID_MM = 0.1;
@@ -243,11 +245,9 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }
     it.rot = best;
   }
-  for (const it of movable) {
-    it.x = snap(it.x);
-    it.y = snap(it.y);
-  }
+  for (const it of movable) snapItem(it);
   separate(items, 40, true);
+  for (const it of movable) snapItem(it);
 
   /* ---- outline ---- */
   const margin = 1.5 + rules.edgeClearance;
@@ -299,6 +299,63 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     missing,
     netNames: Object.fromEntries(Object.values(d.nets).map((n) => [n.id, n.name])),
   };
+}
+
+/** Place, then route and check the copper. */
+export function layoutBoard(d: Design, sch: SchematicView): BoardView {
+  const b = placeBoard(d, sch);
+  if (!b.parts.length) return b;
+  const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
+  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets });
+  const routed: BoardView = {
+    ...b,
+    tracks: r.tracks,
+    vias: r.vias,
+    ratsnest: ratsnest(b.parts, r.connected),
+    stats: {
+      nets: r.netsTotal,
+      routed: r.netsDone,
+      unrouted: r.failed.length,
+      trackLength: Math.round(r.tracks.reduce((s, t) => s + polyLength(t.pts), 0) * 10) / 10,
+      vias: r.vias.length,
+    },
+  };
+  const unrouted = new Map<string, number>();
+  for (const f of r.failed) unrouted.set(f.netId, (unrouted.get(f.netId) ?? 0) + 1);
+  const diags = [...b.diagnostics, ...copperDrc(routed)];
+  for (const [netId, n] of unrouted) {
+    const f = r.failed.find((x) => x.netId === netId)!;
+    diags.push({
+      code: 'DRC.UNROUTED',
+      severity: 'error',
+      message: `${n} connection${n > 1 ? 's' : ''} of ${d.nets[netId]?.name ?? netId} could not be routed.`,
+      at: { x: (f.a.x + f.b.x) / 2, y: (f.a.y + f.b.y) / 2 },
+      entities: [],
+    });
+  }
+  return { ...routed, diagnostics: diags };
+}
+
+function polyLength(pts: number[]): number {
+  let len = 0;
+  for (let i = 0; i + 3 < pts.length; i += 2) len += Math.hypot(pts[i + 2]! - pts[i]!, pts[i + 3]! - pts[i + 1]!);
+  return len;
+}
+
+/**
+ * Snap so that pad 1 lies on the grid: on fine-pitch parts every pad centre line then falls on
+ * the router's grid, which is where a track fits between two neighbouring pads.
+ */
+function snapItem(it: Item) {
+  const p = it.fp.pads[0];
+  if (!p) {
+    it.x = snap(it.x);
+    it.y = snap(it.y);
+    return;
+  }
+  const [px, py] = rotate(p.x, p.y, it.rot);
+  it.x = r3(snap(it.x + px) - px);
+  it.y = r3(snap(it.y + py) - py);
 }
 
 /** Push overlapping courtyards apart along the axis of least overlap. */

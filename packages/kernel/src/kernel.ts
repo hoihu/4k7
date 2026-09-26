@@ -24,7 +24,7 @@ import { countDiagnostics, diagKey, runChecks } from './checks.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, natCmp, netMembers, valueOf } from './doc.ts';
 import { layoutSchematic } from './layout.ts';
-import { placeBoard } from './board.ts';
+import { layoutBoard } from './board.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 
 interface Analysis {
@@ -81,7 +81,7 @@ export class Kernel {
     const d = this.draft;
     let b = this.boards.get(d);
     if (!b) {
-      b = placeBoard(d, this.analyse(d).view);
+      b = layoutBoard(d, this.analyse(d).view);
       this.boards.set(d, b);
     }
     return b;
