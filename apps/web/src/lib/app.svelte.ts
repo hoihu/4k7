@@ -17,9 +17,10 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { CalcCall, ImageInput, ProposeInput, WaitForReviewInput, type BoardView, type BridgeContent, type Design } from '@tracewise/schema';
+import { CalcCall, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
+import { BoardClient, type BoardStage } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
 import { renderSchematicPng } from './snapshot.ts';
 import {
@@ -85,6 +86,11 @@ class AppState {
   /** Board view of the working copy, computed when the Layout view is open. */
   board = $state.raw<BoardView | null>(null);
   boardBusy = $state(false);
+  boardStage = $state<BoardStage>('placed');
+  private boards = new BoardClient();
+  /** Design revision (bumped on every refresh) and the revision the shown board was computed for. */
+  private rev = 0;
+  private boardRev = -1;
 
   private kernel = createKernel();
   /** Datasheet import (Parts view). */
@@ -148,6 +154,7 @@ class AppState {
   /* -------------------------------- kernel -------------------------------- */
 
   async refresh() {
+    this.rev++;
     this.k = await this.kernel.state();
     const ids = new Set(this.k.proposal?.hunks.map((h) => h.id) ?? []);
     for (const id of Object.keys(this.hunkOff)) if (!ids.has(id)) delete this.hunkOff[id];
@@ -155,16 +162,35 @@ class AppState {
     if (this.view === 'lay') void this.refreshBoard();
   }
 
-  /** Recompute the board (placement, routing, DRC) in the worker. */
+  /** Recompute the board in the board worker: placement first (fast), then routing and DRC. */
   async refreshBoard() {
+    const rev = this.rev;
+    const design = await this.kernel.draftDesign();
     this.boardBusy = true;
-    try {
-      this.board = await this.kernel.board();
-    } catch (e) {
-      this.flash(`Board layout failed: ${(e as Error).message}`);
-    } finally {
-      this.boardBusy = false;
-    }
+    this.boardStage = 'placed';
+    this.boards.compute(
+      design,
+      (stage, board) => {
+        this.board = board;
+        this.boardStage = stage;
+        if (stage === 'routed') {
+          this.boardBusy = false;
+          this.boardRev = rev;
+        }
+      },
+      (msg) => {
+        this.boardBusy = false;
+        this.flash(`Board layout failed: ${msg}`);
+      },
+    );
+  }
+
+  /** The routed board of the current design, for agents (computed if needed). */
+  private async routedBoard(): Promise<BoardView | null> {
+    if (!this.boards.busy && this.board && this.boardStage === 'routed' && this.boardRev === this.rev) return this.board;
+    const next = this.boards.next();
+    if (!this.boards.busy) void this.refreshBoard();
+    return next;
   }
 
   get pendingCount() {
@@ -272,6 +298,12 @@ class AppState {
         return text(formatDesignContext({ ...snap, selection: this.selection }) + pending + `\nautonomy: ${this.settings.mode}`);
       }
       case 'design_query': {
+        if ((input as { op?: string })?.op === 'get_board') {
+          // routed in the board worker, so the kernel stays responsive
+          const b = await this.routedBoard();
+          log('query · get_board', !!b, b ? `${b.stats.routed}/${b.stats.nets} nets routed` : 'failed');
+          return b ? text(JSON.stringify(boardSummary(b))) : text('The board could not be computed.', true);
+        }
         const out = await this.kernel.query(input);
         const isError = !!(out && typeof out === 'object' && 'error' in out);
         log(`query · ${(input as { op?: string })?.op ?? '?'}`, !isError, isError ? String((out as { error: unknown }).error) : 'ok');

@@ -17,6 +17,7 @@ import {
   type SchematicView,
   type TransactionResult,
   type BoardView,
+  boardSummary,
 } from '@tracewise/schema';
 import { searchParts } from '@tracewise/parts';
 import { applyOp, describeConstraint } from './apply.ts';
@@ -24,7 +25,7 @@ import { countDiagnostics, diagKey, runChecks } from './checks.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, natCmp, netMembers, valueOf } from './doc.ts';
 import { layoutSchematic } from './layout.ts';
-import { layoutBoard } from './board.ts';
+import { layoutBoard, placeBoard } from './board.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 
 interface Analysis {
@@ -74,6 +75,16 @@ export class Kernel {
   private invalidate(d: Design) {
     this.cache.delete(d);
     this.boards.delete(d);
+  }
+
+  /** The working copy as a design (for the board worker, which computes the board separately). */
+  draftDesign(): Design {
+    return clone(this.draft);
+  }
+
+  /** Placement only (fast): parts, outline, ratsnest and placement checks. */
+  boardPlacement(): BoardView {
+    return placeBoard(this.draft, this.analyse(this.draft).view);
   }
 
   /** The board of the working copy: placement, routing and DRC (computed on demand, cached). */
@@ -260,17 +271,9 @@ export class Kernel {
       case 'get_diagnostics':
         return this.analyse(d).diagnostics;
       case 'get_board': {
-        const b = this.board();
-        return {
-          outline_mm: b.outline,
-          layers: b.layers.length,
-          rules: b.rules,
-          parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, pinned: p.locked })),
-          routing: { nets: b.stats.nets, routed: b.stats.routed, unrouted_connections: b.stats.unrouted, vias: b.stats.vias, track_mm: b.stats.trackLength },
-          drc: b.diagnostics.map((x) => `${x.severity}: ${x.message}`),
-          missing_footprints: b.missing,
-          note: 'Placement and routing are recomputed automatically from the netlist and the ledger. Pin parts with place, size the board with set_board, keep parts together with constrain near.',
-        };
+        // routing is expensive: use it when it has been computed, otherwise placement only
+        const routed = this.boards.get(d);
+        return routed ? boardSummary(routed) : boardSummary(this.boardPlacement(), false);
       }
       case 'get_ledger':
         return Object.values(d.ledger).map((k) => ({ id: k.id, text: describeConstraint(d, k), strength: k.strength, quote: k.source.quote }));

@@ -130,3 +130,19 @@ export interface BoardView {
   /** Net id → name. */
   netNames: Record<string, string>;
 }
+
+/** Compact board description for agents (design_query get_board). */
+export function boardSummary(b: BoardView, routed = true) {
+  return {
+    outline_mm: b.outline,
+    layers: b.layers.length,
+    rules: b.rules,
+    parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, pinned: p.locked })),
+    routing: routed
+      ? { nets: b.stats.nets, routed: b.stats.routed, unrouted_connections: b.stats.unrouted, vias: b.stats.vias, track_mm: b.stats.trackLength, ground_pour: b.zones.length > 0 }
+      : 'not computed here (see the Layout view)',
+    drc: b.diagnostics.map((x) => `${x.severity}: ${x.message}`),
+    missing_footprints: b.missing,
+    note: 'Placement and routing are recomputed automatically from the netlist and the ledger. Pin parts with place, size the board with set_board, keep parts together with constrain near.',
+  };
+}

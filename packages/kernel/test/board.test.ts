@@ -77,7 +77,17 @@ function brokenNets(b: ReturnType<Kernel['board']>): string[] {
       return o.x0 <= z.x1 + 1e-6 && z.x0 <= o.x1 + 1e-6 && o.y0 <= z.y1 + 1e-6 && z.y0 <= o.y1 + 1e-6;
     }
     if (!a.seg && !c.seg) return a.x0 <= c.x1 && c.x0 <= a.x1 && a.y0 <= c.y1 && c.y0 <= a.y1;
-    return ends(a).some(([x, y]) => (c.seg ? ends(c).some(([u, v]) => Math.hypot(u! - x!, v! - y!) < 1e-6) : inRect(c, x!, y!))) || ends(c).some(([x, y]) => !a.seg && inRect(a, x!, y!));
+    // a track end on another track (joins may be anywhere along it) or inside a pad
+    const onSeg = (x: number, y: number, n: Node) => {
+      const [ax, ay, bx, by] = n.seg!;
+      const dx = bx! - ax!;
+      const dy = by! - ay!;
+      const l2 = dx * dx + dy * dy;
+      const t = l2 ? Math.max(0, Math.min(1, ((x - ax!) * dx + (y - ay!) * dy) / l2)) : 0;
+      return Math.hypot(x - (ax! + t * dx), y - (ay! + t * dy)) < 1e-6;
+    };
+    const endTouches = (e: Node, o: Node) => ends(e).some(([x, y]) => (o.seg ? onSeg(x!, y!, o) : inRect(o, x!, y!)));
+    return (!!a.seg && endTouches(a, c)) || (!!c.seg && endTouches(c, a));
   };
   const parent = nodes.map((_, i) => i);
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i]!)));

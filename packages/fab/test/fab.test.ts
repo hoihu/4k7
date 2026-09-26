@@ -16,7 +16,8 @@ function board() {
 
 describe('fab outputs', () => {
   it('writes a complete Gerber set with valid structure', () => {
-    const files = fabFiles(board(), 'buck converter');
+    const b = board();
+    const files = fabFiles(b, 'buck converter');
     expect(files.map((f) => f.name)).toEqual([
       'buck_converter-F_Cu.gbr', 'buck_converter-B_Cu.gbr',
       'buck_converter-F_Mask.gbr', 'buck_converter-F_Paste.gbr', 'buck_converter-B_Mask.gbr', 'buck_converter-B_Paste.gbr',
@@ -39,7 +40,7 @@ describe('fab outputs', () => {
       // coordinates are inside the board (y flipped, 1e-6 mm units)
       for (const m of f.content.matchAll(/X(-?\d+)Y(-?\d+)D0[123]/g)) {
         expect(Number(m[1]) / 1e6).toBeGreaterThanOrEqual(0);
-        expect(Number(m[2]) / 1e6).toBeLessThanOrEqual(15.5 + 1e-6);
+        expect(Number(m[2]) / 1e6).toBeLessThanOrEqual(b.outline.h + 1e-6);
       }
     }
     const top = files.find((f) => f.name.endsWith('F_Cu.gbr'))!.content;
@@ -51,7 +52,8 @@ describe('fab outputs', () => {
     const drl = drill(b);
     const holes = drl.split('\n').filter((l) => /^X/.test(l));
     expect(holes).toHaveLength(b.vias.length + 2); // + the two header pins
-    expect(drl).toContain('T1C0.300');
+    if (b.vias.length) expect(drl).toContain('C0.300');
+    expect(drl).toContain('C1.000'); // header pins
     const rows = bom(b).trim().split('\n');
     expect(rows[0]).toBe('Comment,Designator,Footprint,Quantity,MPN,Manufacturer');
     expect(rows).toContain('TPS54331DR,U1,SOIC-8,1,TPS54331DR,Texas Instruments');

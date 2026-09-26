@@ -107,12 +107,17 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const area = items.reduce((s, it) => s + (it.cw + SPACING) * (it.ch + SPACING), 0);
   const sx = pts.length ? Math.max(...pts.map((p) => p.x)) - Math.min(...pts.map((p) => p.x)) : 1;
   const sy = pts.length ? Math.max(...pts.map((p) => p.y)) - Math.min(...pts.map((p) => p.y)) : 1;
-  // mm per mil so that the schematic spread becomes a comfortably packed board
-  const scale = Math.min(0.05, Math.max(0.004, Math.sqrt((area * 2.2) / Math.max(sx * sy, 1))));
+  // mm per mil so that the schematic spread becomes a comfortably packed board of a usual shape:
+  // big schematics are long rows, so x and y are scaled separately towards about 1.4 : 1
+  const targetW = Math.sqrt(area * 2.8 * 1.4);
+  const targetH = targetW / 1.4;
+  const clampScale = (v: number) => Math.min(0.05, Math.max(0.0005, v));
+  const scaleX = clampScale(targetW / Math.max(sx, 1));
+  const scaleY = clampScale(targetH / Math.max(sy, 1));
   items.forEach((it, i) => {
     const c = centre.get(it.comp.id);
-    it.x = c ? c.x * scale : i * 5;
-    it.y = c ? c.y * scale : 0;
+    it.x = c ? c.x * scaleX : i * 5;
+    it.y = c ? c.y * scaleY : 0;
     it.rot = c?.vertical && isTwoPin(it.card) ? 90 : 0;
   });
 
@@ -241,7 +246,17 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }
     for (const s of springs) {
       const a = padPos(s.it, s.px, s.py);
-      const b = padPos(s.to, s.tx, s.ty);
+      // the target: next to the supply pad, but outside the IC (BGA balls lie under the body)
+      const pad = padPos(s.to, s.tx, s.ty);
+      const e = extent(s.to);
+      const own = extent(s.it);
+      let dx = pad.x - s.to.x;
+      let dy = pad.y - s.to.y;
+      if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) dx = 1;
+      const f = Math.min(Math.abs(dx) > 1e-9 ? e.w / 2 / Math.abs(dx) : Infinity, Math.abs(dy) > 1e-9 ? e.h / 2 / Math.abs(dy) : Infinity);
+      const len = Math.hypot(dx, dy);
+      const out = Math.max(own.w, own.h) / 2 + SPACING;
+      const b = f >= 1 ? pad : { x: s.to.x + dx * f + (dx / len) * out, y: s.to.y + dy * f + (dy / len) * out };
       add(s.it, (b.x - a.x) * s.w, (b.y - a.y) * s.w);
     }
     for (const n of near) {
@@ -293,10 +308,12 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     it.rot = best;
   }
   for (const it of movable) snapItem(it);
-  for (let round = 0; round < (contain ? 6 : 1); round++) {
+  // separate and (on a fixed outline) keep inside, until both hold
+  for (let round = 0; round < (contain ? 30 : 1); round++) {
     separate(items, 40, true);
     if (contain) for (const it of movable) contain(it);
     for (const it of movable) snapItem(it);
+    if (!contain || !overlapping(items)) break;
   }
 
   /* ---- outline ---- */
@@ -353,7 +370,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
 }
 
 /** Place, then route and check the copper. */
-export function layoutBoard(d: Design, sch: SchematicView): BoardView {
+export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number } = {}): BoardView {
   const b = placeBoard(d, sch);
   if (!b.parts.length) return b;
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
@@ -364,7 +381,7 @@ export function layoutBoard(d: Design, sch: SchematicView): BoardView {
     .filter((n) => isGroundNet(n) && (padCount.get(n.id) ?? 0) >= 2)
     .sort((x, y) => (padCount.get(y.id) ?? 0) - (padCount.get(x.id) ?? 0) || x.name.localeCompare(y.name))[0];
   const pour = ground ? { netId: ground.id, layer: (b.layers.length === 4 ? 'In1.Cu' : 'B.Cu') as CopperLayer } : undefined;
-  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, ...(pour ? { pour } : {}) });
+  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, ...(pour ? { pour } : {}), ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
   const routed: BoardView = {
     ...b,
     tracks: r.tracks,
@@ -389,6 +406,14 @@ export function layoutBoard(d: Design, sch: SchematicView): BoardView {
       severity: 'error',
       message: `${n} connection${n > 1 ? 's' : ''} of ${d.nets[netId]?.name ?? netId} could not be routed.`,
       at: { x: (f.a.x + f.b.x) / 2, y: (f.a.y + f.b.y) / 2 },
+      entities: [],
+    });
+  }
+  if (r.timedOut) {
+    diags.unshift({
+      code: 'DRC.ROUTING_INCOMPLETE',
+      severity: 'warning',
+      message: `Routing stopped at its time budget with ${r.failed.length} connection${r.failed.length === 1 ? '' : 's'} left. A bigger board, 4 layers or pinning the main parts usually helps.`,
       entities: [],
     });
   }
@@ -433,10 +458,37 @@ function separate(items: Item[], passes: number, strict = false) {
         const oy = (ea.h + eb.h) / 2 + SPACING - Math.abs(a.y - b.y);
         if (ox <= 1e-6 || oy <= 1e-6) continue;
         moved = true;
+        if (!strict) {
+          // during relaxation: push apart along the line between the centres, so a cluster
+          // spreads in two dimensions instead of stacking into a column along one axis
+          let ux = b.x - a.x;
+          let uy = b.y - a.y;
+          let len = Math.hypot(ux, uy);
+          if (len < 1e-9) {
+            const ang = ((i * 7 + j * 13) % 16) * (Math.PI / 8); // deterministic direction
+            ux = Math.cos(ang);
+            uy = Math.sin(ang);
+            len = 1;
+          }
+          ux /= len;
+          uy /= len;
+          // distance along u that removes the overlap
+          const t = Math.min(Math.abs(ux) > 1e-9 ? ((ea.w + eb.w) / 2 + SPACING) / Math.abs(ux) : Infinity, Math.abs(uy) > 1e-9 ? ((ea.h + eb.h) / 2 + SPACING) / Math.abs(uy) : Infinity);
+          const need = t - (Math.abs(b.x - a.x) * Math.abs(ux) + Math.abs(b.y - a.y) * Math.abs(uy));
+          if (need <= 0) continue;
+          const [ka, kb] = share(a, b, ea, eb);
+          a.x -= ux * need * ka;
+          a.y -= uy * need * ka;
+          b.x += ux * need * kb;
+          b.y += uy * need * kb;
+          continue;
+        }
         const alongX = ox < oy;
         const amount = (alongX ? ox : oy) + (strict ? GRID_MM : 0);
         // deterministic direction when centres coincide
         const sign = alongX ? (a.x < b.x || (a.x === b.x && i < j) ? -1 : 1) : a.y < b.y || (a.y === b.y && i < j) ? -1 : 1;
+        // final clean-up on the grid: equal shares (mass weighting would let a small part
+        // oscillate against the outline next to a big one)
         const [ka, kb] = a.fixed ? [0, 1] : b.fixed ? [1, 0] : [0.5, 0.5];
         if (alongX) {
           a.x += sign * amount * ka;
@@ -459,6 +511,28 @@ function separate(items: Item[], passes: number, strict = false) {
     }
     if (!moved) break;
   }
+}
+
+/** How much of a separation each part takes: fixed parts none, otherwise the smaller part more. */
+function share(a: Item, b: Item, ea: { w: number; h: number }, eb: { w: number; h: number }): [number, number] {
+  if (a.fixed) return [0, 1];
+  if (b.fixed) return [1, 0];
+  const ma = ea.w * ea.h;
+  const mb = eb.w * eb.h;
+  return [mb / (ma + mb), ma / (ma + mb)];
+}
+
+function overlapping(items: Item[]): boolean {
+  for (let i = 0; i < items.length; i++) {
+    const a = items[i]!;
+    const ea = extent(a);
+    for (let j = i + 1; j < items.length; j++) {
+      const b = items[j]!;
+      const eb = extent(b);
+      if ((ea.w + eb.w) / 2 - Math.abs(a.x - b.x) > 1e-6 && (ea.h + eb.h) / 2 - Math.abs(a.y - b.y) > 1e-6) return true;
+    }
+  }
+  return false;
 }
 
 function bounds(items: Item[]) {
@@ -570,3 +644,4 @@ function placementChecks(parts: BoardPart[], w: number, h: number, edge: number)
   }
   return out;
 }
+

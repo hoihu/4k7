@@ -24,6 +24,8 @@ export interface RouteInput {
   powerNets: Set<string>;
   /** Pour this net over the free area of this layer (ground plane) and drop its pads onto it. */
   pour?: { netId: string; layer: CopperLayer };
+  /** Stop routing after this many milliseconds; what is left is reported unrouted. */
+  budgetMs?: number;
 }
 
 export interface RouteResult {
@@ -35,6 +37,8 @@ export interface RouteResult {
   failed: { netId: string; a: BoardPad; b: BoardPad }[];
   netsTotal: number;
   netsDone: number;
+  /** Routing stopped at the time budget. */
+  timedOut: boolean;
 }
 
 interface Conn {
@@ -50,15 +54,19 @@ export function route(input: RouteInput, passes = 5): RouteResult {
   const conns = connections(pads);
   let best: ReturnType<typeof routeOnce> | null = null;
   let order = [...conns].sort((x, y) => x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
+  const t0 = now();
+  const deadline = t0 + (input.budgetMs ?? 15_000);
   for (let pass = 0; pass < passes; pass++) {
-    const r = routeOnce(input, pads, owner, order);
+    const r = routeOnce(input, pads, owner, order, deadline);
     if (!best || r.failed.length < best.failed.length) best = r;
-    if (!r.failed.length) break;
+    if (!r.failed.length || r.timedOut) break;
+    // another pass only if one fits comfortably in the budget
+    if (now() + (now() - t0) / (pass + 1) > deadline) break;
     // failures first, then the rest in the old order
     const failed = new Set(r.failed);
     order = [...order.filter((c) => failed.has(c)), ...order.filter((c) => !failed.has(c))];
   }
-  const r = best ?? routeOnce(input, pads, owner, order);
+  const r = best ?? routeOnce(input, pads, owner, order, deadline);
   const nets = new Set(conns.map((c) => c.netId));
   const failedNets = new Set(r.failed.map((c) => c.netId));
   return {
@@ -73,6 +81,7 @@ export function route(input: RouteInput, passes = 5): RouteResult {
     failed: r.failed.map((c) => ({ netId: c.netId, a: pads[c.a]!, b: pads[c.b]! })),
     netsTotal: nets.size,
     netsDone: [...nets].filter((n) => !failedNets.has(n)).length,
+    timedOut: r.timedOut,
   };
 }
 
@@ -104,7 +113,7 @@ function connections(pads: BoardPad[]): Conn[] {
   return out;
 }
 
-function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], order: Conn[]) {
+function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], order: Conn[], deadline: number) {
   const { rules, layers } = input;
   const W = Math.ceil(input.outline.w / G) + 1;
   const H = Math.ceil(input.outline.h / G) + 1;
@@ -236,9 +245,19 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     return null;
   });
   // copper that is already a net's own (inside its pads): always usable by that net
+  // how deep inside its pad a cell lies: a track centred there stays on the pad if width/2 ≤ inset
   const ownCopper = new Int32Array(L * N);
+  const ownInset = new Float32Array(L * N);
   padCells.forEach((cells, i) => {
-    for (const s of cells) ownCopper[s] = padNet[i]!;
+    const p = pads[i]!;
+    for (const s of cells) {
+      const c = s % N;
+      const x = (c % W) * G;
+      const y = Math.floor(c / W) * G;
+      const inset = p.shape === 'round' ? Math.min(p.w, p.h) / 2 - Math.hypot(x - p.x, y - p.y) : Math.min(p.w / 2 - Math.abs(x - p.x), p.h / 2 - Math.abs(y - p.y));
+      if (ownCopper[s] !== padNet[i] || inset > ownInset[s]!) ownInset[s] = inset;
+      ownCopper[s] = padNet[i]!;
+    }
   });
   escapes.forEach((e, idx) => e && padCells[idx]!.push(e.state));
   // reserve every escape stub for its net before routing, so earlier routes cannot wall it off
@@ -282,7 +301,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
 
   const freeFor = (net: number, k: number) => (l: number, i: number) => {
     const v = maps[k]![l]![i]!;
-    return v === 0 || v === net || ownCopper[l * N + i] === net;
+    if (v === 0 || v === net) return true;
+    // inside the net's own pad: only where the track stays on the pad (no copper sticking out)
+    const st = l * N + i;
+    return ownCopper[st] === net && ownInset[st]! >= widths[k]! / 2 - 0.01;
   };
   const viaFreeFor = (net: number) => (i: number) => {
     for (let l = 0; l < L; l++) {
@@ -293,7 +315,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   };
 
   /** A* from any start state to a goal state; returns the path (start → goal) or null. */
-  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number }): number[] | null => {
+  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number }, goalFits = true): number[] | null => {
     const free = freeFor(net, k);
     const viaFree = viaFreeFor(net);
     cost.fill(Infinity);
@@ -306,7 +328,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       const dy = Math.abs(Math.floor(i / W) - ty);
       return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
     };
-    for (const s of starts) {
+    // starts and goals only where this width fits (fall back to all if none does)
+    const usable = (st: number) => free(Math.floor(st / N), st % N);
+    const seeds = starts.filter(usable);
+    for (const s of seeds.length ? seeds : starts) {
       cost[s] = 0;
       from[s] = -1;
       dirOf[s] = -1;
@@ -314,14 +339,16 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     }
     let reached = -1;
     let expanded = 0;
-    const LIMIT = S * 4;
+    // bounded: an impossible connection must not search the whole board for long
+    const LIMIT = Math.min(S * 4, 400_000);
     while (heap.size) {
       const s = heap.pop();
-      if (isGoal(s)) {
+      if (isGoal(s) && (usable(s) || !goalFits)) {
         reached = s;
         break;
       }
       if (++expanded > LIMIT) break;
+      if ((expanded & 4095) === 0 && now() > deadline) break;
       const l = Math.floor(s / N);
       const i = s % N;
       const x = i % W;
@@ -412,9 +439,15 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   };
   const padAt = (root: number, state: number) => pads.findIndex((_, idx) => find(idx) === root && padCells[idx]!.includes(state));
 
+  let timedOut = false;
   for (const c of order) {
     const net = numOf(c.netId);
     if (find(c.a) === find(c.b)) continue;
+    if (timedOut || now() > deadline) {
+      timedOut = true;
+      failed.push(c);
+      continue;
+    }
     const pa = pads[c.a]!;
     const pb = pads[c.b]!;
     // power width only where both pads can take it
@@ -423,7 +456,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     epoch++;
     const goalStamp = epoch;
     for (const st of groupCells.get(find(c.a))!) goal[st] = goalStamp;
-    const path = search(net, k, groupCells.get(find(c.b))!, (st) => goal[st] === goalStamp, pa);
+    const goalCells = groupCells.get(find(c.a))!;
+    const fits = freeFor(net, k);
+    const goalFits = goalCells.some((st) => fits(Math.floor(st / N), st % N));
+    const path = search(net, k, groupCells.get(find(c.b))!, (st) => goal[st] === goalStamp, pa, goalFits);
     if (!path) {
       failed.push(c);
       continue;
@@ -573,10 +609,11 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       for (let q = failed.length - 1; q >= 0; q--) if (find(failed[q]!.a) === find(failed[q]!.b)) failed.splice(q, 1);
     }
   }
-  return { tracks, vias, failed, find, zones };
+  return { tracks, vias, failed, find, zones, timedOut };
 }
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 /** Drop collinear points and duplicates from a flat polyline. */
 function simplify(pts: number[]): number[] {
