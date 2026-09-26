@@ -171,7 +171,7 @@
     {/each}
 
     <!-- symbols -->
-    {#each sheet.symbols as s (s.componentId)}
+    {#each sheet.symbols as s (s.componentId + (s.unit ?? ""))}
       <g class="sym" data-ref={s.refdes}>
         <rect class="hit" x={s.bbox.x} y={s.bbox.y} width={s.bbox.w} height={s.bbox.h} />
         <g transform={s.rotation && s.origin ? `rotate(${s.rotation} ${s.origin.x} ${s.origin.y})` : undefined}>
@@ -204,7 +204,7 @@
             {:else}<text class="pin-no" x={p.x + 22} y={p.y - 70}>{p.number}</text>{/if}
           {/if}
         {/each}
-        <text class="ref" x={s.refPos.x} y={s.refPos.y} text-anchor={s.refPos.anchor}>{s.refdes}</text>
+        <text class="ref" x={s.refPos.x} y={s.refPos.y} text-anchor={s.refPos.anchor}>{s.refdes}{s.unit ?? ''}</text>
         <text class="val" x={s.valuePos.x} y={s.valuePos.y} text-anchor={s.valuePos.anchor}>
           {#each s.valueLines ?? [s.value] as line, li (li)}<tspan x={s.valuePos.x} dy={li === 0 ? 0 : 85}>{line}</tspan>{/each}
         </text>
@@ -213,14 +213,14 @@
 
     <!-- overlays -->
     {#if showDiff}
-      {#each sheet.symbols as s (s.componentId)}
+      {#each sheet.symbols as s (s.componentId + (s.unit ?? ""))}
         {#if overlays[s.componentId]}
           {@const b = box(s)}
           <rect class="ov {overlays[s.componentId]}" class:hot={hot === s.componentId} x={b.x} y={b.y} width={b.w} height={b.h} rx="40" transform={b.transform} />
         {/if}
       {/each}
     {/if}
-    {#each sheet.symbols as s (s.componentId)}
+    {#each sheet.symbols as s (s.componentId + (s.unit ?? ""))}
       {#if selection.includes(s.refdes)}
         {@const b = box(s)}
         <rect class="selbox" x={b.x - 20} y={b.y - 20} width={b.w + 40} height={b.h + 40} rx="50" transform={b.transform} />

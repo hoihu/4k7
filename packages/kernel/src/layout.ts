@@ -15,7 +15,7 @@
  *    always electrically complete and correct.
  */
 import type { Component, Constraint, Design, Net, PartCard, Point, Rect, SchematicView, SheetView } from '@tracewise/schema';
-import { isTwoPin, symbolFor } from '@tracewise/parts';
+import { isTwoPin, symbolFor, unitCount } from '@tracewise/parts';
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
 import {
@@ -59,9 +59,11 @@ interface AnchorPlan {
   extraRight: Component[];
   /** Pins drawn on the opposite side (output connectors at the right edge face the circuit). */
   mirror?: boolean;
+  /** Unit of a split symbol (big ICs): each unit is its own symbol with its own satellites. */
+  unit?: number;
 }
 
-const anchorSymbol = (plan: AnchorPlan) => symbolFor(plan.card, false, { mirror: plan.mirror ?? false });
+const anchorSymbol = (plan: AnchorPlan) => symbolFor(plan.card, false, { mirror: plan.mirror ?? false, ...(plan.unit !== undefined ? { unit: plan.unit } : {}) });
 
 interface Ctx {
   d: Design;
@@ -102,9 +104,17 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   // connectors that only carry supplies the circuit produces are outputs: right edge, mirrored
   const supplied = circuitSuppliedNets(d);
   const outputConn = new Set(anchors.filter((c) => cardFor(c).category === 'connector' && connectorRole(d, c, supplied) === 'output').map((c) => c.id));
-  const plans = new Map<string, AnchorPlan>(
-    anchors.map((c) => [c.id, { comp: c, card: cardFor(c), left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror: outputConn.has(c.id) }]),
+  // one plan per symbol: split ICs get one per unit
+  const unitPlans = new Map<string, AnchorPlan[]>(
+    anchors.map((c) => {
+      const card = cardFor(c);
+      const n = unitCount(card);
+      const make = (unit?: number): AnchorPlan => ({ comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror: outputConn.has(c.id), ...(unit !== undefined ? { unit } : {}) });
+      return [c.id, n > 1 ? Array.from({ length: n }, (_, u) => make(u)) : [make()]];
+    }),
   );
+  const plansOf = (id: string) => unitPlans.get(id) ?? [];
+  const allPlans = () => [...unitPlans.values()].flat();
   const free: Component[] = [];
 
   /* ---- assign two-pin parts ---- */
@@ -115,12 +125,18 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   for (const c of twoPins) {
     const nets = netsOf(c);
     const side = sideHint(directional, c.id, attachable);
-    if (side && plans.has(side.anchor)) {
-      const plan = plans.get(side.anchor)!;
-      const attach = findAttach(ctx, plan, c, nets, side.side);
-      if (attach) plan[side.side].push(attach);
-      else if (side.side === 'left') plan.extraLeft.push(c);
-      else plan.extraRight.push(c);
+    if (side && unitPlans.has(side.anchor)) {
+      const candidates = plansOf(side.anchor);
+      let done = false;
+      for (const plan of candidates) {
+        const attach = findAttach(ctx, plan, c, nets, side.side);
+        if (attach) {
+          plan[side.side].push(attach);
+          done = true;
+          break;
+        }
+      }
+      if (!done) (side.side === 'left' ? candidates[0]!.extraLeft : candidates[0]!.extraRight).push(c);
       continue;
     }
     if (nets.every((n) => n && isPowerNet(n))) {
@@ -128,8 +144,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
       continue;
     }
     let attached = false;
-    for (const a of attachable) {
-      const plan = plans.get(a.id)!;
+    for (const plan of attachable.flatMap((a) => plansOf(a.id))) {
       const at = findAttach(ctx, plan, c, nets);
       if (at) {
         (pinSideOf(plan, at.anchorPin) === 'left' ? plan.left : plan.right).push(at);
@@ -141,7 +156,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   }
 
   // pass 2: chain series parts below a satellite when they share a private signal net
-  const sats = [...plans.values()].flatMap((p) => [...p.left, ...p.right]);
+  const sats = allPlans().flatMap((p) => [...p.left, ...p.right]);
   const tipNet = (s: Sat): string | undefined => {
     const last = s.chain.at(-1) ?? s.comp;
     const upper = s.chain.length ? s.chain.at(-2) ?? s.comp : undefined;
@@ -177,13 +192,17 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     }
     const rail = nets.find((n) => n && !isGroundNet(n)) ?? nets[0];
     let owner = rail && decapOwner(d, attachable, rail.id);
-    if (!owner && rail) {
-      const plan = [...plans.values()].find((p) =>
+    let target: AnchorPlan | undefined;
+    if (owner && rail) {
+      // the unit whose symbol has a pin on that rail (the power unit of a split IC)
+      const own = plansOf(owner.id);
+      target = own.find((p) => anchorSymbol(p).pins.some((pin) => owner!.pins[pin.number] === rail.id)) ?? own[0];
+    } else if (rail) {
+      target = allPlans().find((p) =>
         [...p.left, ...p.right].some((s) => [s.comp, ...s.chain].some((x) => Object.values(x.pins).includes(rail.id))),
       );
-      owner = plan?.comp;
     }
-    if (owner) plans.get(owner.id)!.decaps.push(c);
+    if (target) target.decaps.push(c);
     else free.push(c);
   }
 
@@ -195,7 +214,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   let rowTop = 0;
   let maxRight = 0;
   for (let [ri, row] of rows.entries()) {
-    const cells = row.map((a) => (flows.has(a.id) ? flowCell(ctx, flows.get(a.id)!) : buildCell(ctx, plans.get(a.id)!)));
+    const cells = row.map((a) => (flows.has(a.id) ? flowCell(ctx, flows.get(a.id)!) : sideBySide(plansOf(a.id).map((p) => buildCell(ctx, p)))));
     // output connectors: one column at the right end of the row
     const outIdx = row.flatMap((a, i) => (outputConn.has(a.id) ? [i] : []));
     const outColumn = outIdx.length ? stackCells(outIdx.map((i) => cells[i]!)) : null;
@@ -265,6 +284,20 @@ function stackCells(cells: Scene[]): Scene {
     const dy: number = y === null ? 0 : y - bb.y;
     translateScene(cell, 0, dy);
     y = bb.y + dy + bb.h + STACK_GAP;
+    mergeScene(out, cell);
+  }
+  return out;
+}
+
+/** Units of a split IC next to each other, top edges aligned (each unit's body starts at y = 0). */
+function sideBySide(cells: Scene[]): Scene {
+  if (cells.length === 1) return cells[0]!;
+  const out = emptyScene();
+  let x = 0;
+  for (const cell of cells) {
+    const bb = sceneBBox(cell);
+    translateScene(cell, x - bb.x, 0);
+    x += bb.w + CELL_GAP;
     mergeScene(out, cell);
   }
   return out;
@@ -394,6 +427,7 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
   const scene = emptyScene();
   const def = anchorSymbol(plan);
   const sym = makeSymbol(d, plan.comp, def, 0, 0);
+  if (plan.unit !== undefined && plan.card.units?.[plan.unit]) sym.unit = plan.card.units[plan.unit]!.name;
   scene.symbols.push(sym);
   const bodyW = def.bbox.w - 400;
 
@@ -562,7 +596,9 @@ function verticalPart(ctx: Ctx, c: Component, cx: number, cy: number): Scene {
 function freePart(ctx: Ctx, c: Component): Scene {
   const card = cardOf(ctx.d, c.part)!;
   if (isTwoPin(card)) return verticalPart(ctx, c, 0, 0);
-  return buildCell(ctx, { comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [] });
+  const n = unitCount(card);
+  const plan = (unit?: number): AnchorPlan => ({ comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [], ...(unit !== undefined ? { unit } : {}) });
+  return sideBySide(n > 1 ? Array.from({ length: n }, (_, u) => buildCell(ctx, plan(u))) : [buildCell(ctx, plan())]);
 }
 
 /* ----------------------------- bridge rectifier ---------------------------- */
@@ -696,7 +732,21 @@ function bridgeCell(ctx: Ctx, b: BridgeRect): Scene {
 
 function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['constraintStatus'] {
   const where = new Map<string, { sheet: string; bbox: Rect }>();
-  for (const s of sheets) for (const sym of s.symbols) where.set(sym.componentId, { sheet: s.id, bbox: sym.bbox });
+  for (const s of sheets) {
+    for (const sym of s.symbols) {
+      // a split IC occupies the union of its units
+      const prev = where.get(sym.componentId);
+      const b = sym.bbox;
+      if (!prev || prev.sheet !== s.id) where.set(sym.componentId, { sheet: s.id, bbox: b });
+      else {
+        const x = Math.min(prev.bbox.x, b.x);
+        const y = Math.min(prev.bbox.y, b.y);
+        const r = Math.max(prev.bbox.x + prev.bbox.w, b.x + b.w);
+        const bo = Math.max(prev.bbox.y + prev.bbox.h, b.y + b.h);
+        prev.bbox = { x, y, w: r - x, h: bo - y };
+      }
+    }
+  }
   const status: SchematicView['constraintStatus'] = {};
   for (const k of Object.values(d.ledger)) {
     if (!['left_of', 'right_of', 'above', 'below'].includes(k.kind)) {

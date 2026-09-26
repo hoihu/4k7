@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PackageInfo, PartDraft } from '@tracewise/schema';
-import { bgaRowName, draftToCard, footprintFor, symbolFor } from '../src/index.ts';
+import { bgaRowName, draftToCard, footprintFor, planUnits, symbolFor, unitOfPin } from '../src/index.ts';
 
 const lqfp100: PackageInfo = { name: 'LQFP100', family: 'QFP', pins: 100, pitch_mm: 0.5, body_mm: [14, 14], span_mm: [16, 16], lead_length_mm: 0.6, lead_width_mm: 0.22 };
 
@@ -72,7 +72,9 @@ describe('draft → part card', () => {
     expect(card?.id).toBe('test:TESTMCU100');
     const layout = card!.symbolLayout!;
     // repeated supplies are stacked into one position each
-    expect(layout.top.find((s) => s && s.length === 5)).toBeTruthy(); // VDD ×5
+    expect(layout.top).toEqual([]); // supplies on the side keep the body narrow
+    expect(layout.left[0]).toEqual(['6']); // VBAT first
+    expect(layout.left.find((s) => s && s.length === 5)).toBeTruthy(); // VDD ×5
     expect(layout.bottom.find((s) => s && s.length === 4)).toBeTruthy(); // VSS ×4
     const sym = symbolFor(card!);
     expect(sym.pins).toHaveLength(100); // every pin exists, stacked ones share a position
@@ -82,6 +84,28 @@ describe('draft → part card', () => {
     // ports grouped, with gaps between groups on a side
     expect(layout.left.includes(null) || layout.right.includes(null)).toBe(true);
     expect(card!.packageInfo?.name).toBe('LQFP100');
+  });
+
+  it('keeps the MCU body narrow: no pins on top, the width comes from the side names', () => {
+    const { card } = draftToCard(mcuDraft());
+    const sym = symbolFor(card!);
+    expect(sym.pins.some((p) => p.side === 'top')).toBe(false);
+    expect(sym.bbox.w - 400).toBeLessThanOrEqual(700); // body; was 2100 with the supplies on top
+  });
+
+  it('splits a big IC into units that cover every pin once', () => {
+    const { card } = draftToCard(mcuDraft());
+    const units = planUnits(card!.pins);
+    expect(units.map((u) => u.title)).toEqual(['Power, system', 'PA, PB', 'PC, PD', 'PE']);
+    const split = { ...card!, units };
+    const all = units.flatMap((_, i) => symbolFor(split, false, { unit: i }).pins.map((p) => p.number));
+    expect(all.sort()).toEqual(card!.pins.map((p) => p.number).sort());
+    expect(new Set(all).size).toBe(100);
+    const pa0 = card!.pins.find((p) => p.name === 'PA0')!.number;
+    expect(unitOfPin(split, pa0)).toBe(1);
+    expect(unitOfPin(split, '11')).toBe(0); // VDD
+    const power = symbolFor(split, false, { unit: 0 });
+    expect(power.pins.filter((p) => p.side === 'bottom').every((p) => /VSS/.test(p.name))).toBe(true);
   });
 
   it('reports missing and duplicate pins instead of producing a card', () => {
@@ -108,5 +132,45 @@ describe('draft → part card', () => {
     const { card, issues } = draftToCard({ mpn: 'X', pins: [] });
     expect(card).toBeNull();
     expect(issues.length).toBeGreaterThan(0);
+  });
+});
+
+describe('two-pass reconciliation', () => {
+  it('finds pin and package disagreements and merges the chosen values', async () => {
+    const { compareDrafts, mergeDrafts } = await import('../src/index.ts');
+    const a = mcuDraft();
+    const b = structuredClone(a);
+    b.pins[14] = { ...b.pins[14]!, name: 'PC1' }; // pin 15 read differently
+    b.pins[1] = { ...b.pins[1]!, name: b.pins[1]!.name.toLowerCase() }; // same name, other case: agrees
+    b.package = { ...b.package, pitch_mm: 0.5004, lead_width_mm: 0.27 };
+    b.pins[2] = { ...b.pins[2]!, name: `${b.pins[2]!.name}-OSC_IN` }; // same pin, longer name: agrees
+    const diff = compareDrafts(a, b);
+    expect(diff.map((d) => d.key)).toEqual(['pin:15', 'package:lead_width_mm']);
+    expect(diff[0]).toMatchObject({ a: `${a.pins[14]!.name} (bidir)`, b: 'PC1 (bidir)' });
+    const merged = mergeDrafts(a, b, new Set(['pin:15']));
+    expect(merged.pins[14]!.name).toBe('PC1');
+    expect(merged.package.lead_width_mm).toBe(0.22);
+    expect(compareDrafts(merged, b).map((d) => d.key)).toEqual(['package:lead_width_mm']);
+  });
+});
+
+describe('3D bodies', () => {
+  it('builds an LQFP100 with 100 gull-wing leads reaching the lead span', async () => {
+    const { body3dFor } = await import('../src/index.ts');
+    const r = body3dFor({ ...lqfp100, height_mm: 1.6 });
+    if (!r.ok) throw new Error(r.reason);
+    const leads = r.body.boxes.filter((b) => b.mat === 'lead');
+    expect(leads).toHaveLength(300); // shoulder, bend, foot per lead
+    const maxX = Math.max(...leads.map((b) => b.max[0]));
+    expect(maxX).toBeCloseTo(8, 3); // span 16 mm
+    expect(Math.min(...leads.map((b) => b.min[2]))).toBe(0); // feet on the board
+    expect(r.body.height).toBe(1.6);
+  });
+
+  it('puts BGA balls only where the pin list has them', async () => {
+    const { body3dFor } = await import('../src/index.ts');
+    const r = body3dFor({ name: 'TFBGA100', family: 'BGA', pins: 3, pitch_mm: 0.8, grid: { rows: 10, cols: 10 }, ball_mm: 0.4 }, ['A1', 'K10', 'E5']);
+    expect(r.ok && r.body.balls).toHaveLength(3);
+    expect(body3dFor({ name: 'X', family: 'QFP', pins: 64 })).toEqual({ ok: false, reason: 'needs pitch_mm, body_mm from the package drawing' });
   });
 });

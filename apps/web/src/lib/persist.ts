@@ -5,8 +5,8 @@
 import type { Design, PartCard } from '@tracewise/schema';
 
 const DB = 'tracewise';
-/** v2: 'library' store for imported parts. */
-const VERSION = 2;
+/** v2: 'library' store for imported parts; v3: 'datasheets' (PDFs by SHA-256). */
+const VERSION = 3;
 
 /** Last storage problem in this browser, for diagnostics ('ok' when saving works). */
 export let storageHealth = 'ok';
@@ -31,7 +31,7 @@ function open(): Promise<IDBDatabase> {
     };
     req.onupgradeneeded = () => {
       const db = req.result;
-      for (const s of ['projects', 'settings', 'keys', 'library']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+      for (const s of ['projects', 'settings', 'keys', 'library', 'datasheets']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
     };
     req.onsuccess = () => {
       clearTimeout(timer);
@@ -103,6 +103,24 @@ export async function saveLibraryPart(card: PartCard): Promise<void> {
 
 export async function deleteLibraryPart(id: string): Promise<void> {
   await tx('library', 'readwrite', (s) => s.delete(id));
+}
+
+/** Datasheets of imported parts, so every value can be shown on its page. */
+export interface StoredDatasheet {
+  name: string;
+  data: ArrayBuffer;
+}
+
+export async function saveDatasheet(hash: string, sheet: StoredDatasheet): Promise<void> {
+  await put('datasheets', hash, sheet);
+}
+
+export async function loadDatasheet(hash: string): Promise<StoredDatasheet | undefined> {
+  try {
+    return await get<StoredDatasheet>('datasheets', hash);
+  } catch {
+    return undefined;
+  }
 }
 
 /* -------------------------------- settings -------------------------------- */

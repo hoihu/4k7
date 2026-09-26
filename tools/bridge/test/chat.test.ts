@@ -198,6 +198,17 @@ describe('datasheet import via Claude Code', () => {
     expect(existsSync(join(ingestDir, 'i1'))).toBe(false);
   });
 
+  it('runs a second, independent pass when asked', async () => {
+    const { run, calls } = await setup();
+    const es = await run({ type: 'ingest', id: 'i3', mpn: 'X1', pdf: { name: 'ds.pdf', base64: tinyPdf('x') }, passes: 2 });
+    expect(es.filter((e) => e.kind === 'pass')).toEqual([{ kind: 'pass', n: 1, of: 2 }, { kind: 'pass', n: 2, of: 2 }]);
+    expect(calls).toEqual(['submit_part', 'submit_part']);
+    const t = text(es);
+    const flags = [...t.matchAll(/flags=(\{.*?\}\})/g)].map((m) => JSON.parse(m[1]!));
+    expect(flags.map((f) => f.verify)).toEqual([false, true]);
+    expect(es.at(-1)).toMatchObject({ kind: 'done', ok: true, costUsd: 0.024 }); // both passes
+  });
+
   it('extracts page text with table cells kept apart', async () => {
     const { pdfPages } = await import('../src/index.ts');
     const pages = await pdfPages(new Uint8Array(Buffer.from(tinyPdf('PC0 | I/O'), 'base64')));

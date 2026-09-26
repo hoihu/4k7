@@ -72,7 +72,7 @@ const other = (d: Design, c: Component, net: string) => {
 export function planFlow(ctx: Ctx, anchor: Component, available: Component[]): FlowPlan | null {
   const { d } = ctx;
   const card = cardOf(d, anchor.part)!;
-  if (card.category !== 'ic') return null;
+  if (card.category !== 'ic' || card.symbolLayout || card.units?.length) return null; // regulators, not MCUs
   if (Object.values(d.ledger).some((k) => k.kind === 'arrangement' && k.a === anchor.id && k.value === 'compact')) return null;
 
   const netOf = (num: string) => anchor.pins[num];

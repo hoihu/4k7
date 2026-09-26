@@ -36,6 +36,7 @@ export const DraftPin = z.object({
     .describe('GPIO → bidir; supply and ground pins → pwr_in; regulator outputs → pwr_out; reset/boot inputs → in; VCAP/crystal → passive; not connected → nc'),
   functions: z.array(z.string()).optional().describe('Alternate/additional functions, e.g. ["USART2_TX","TIM2_CH1"]'),
   description: z.string().optional(),
+  page: z.number().int().positive().optional().describe('PDF page (the NNN of pages/page-NNN.txt) with this pin\'s table row'),
 });
 export type DraftPin = z.infer<typeof DraftPin>;
 

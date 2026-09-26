@@ -7,7 +7,7 @@
  *  - box symbols (ICs, connectors, transistors): body rectangle from (0, 0) to (w, h),
  *    pins sticking out 200 mils on each side.
  */
-import type { PartCard, PartPin, PinSide, Prim, SymbolLayout } from '@tracewise/schema';
+import type { PartCard, PartPin, PinSide, Prim, SymbolLayout, SymbolUnit } from '@tracewise/schema';
 
 export const GRID = 100;
 export const PIN_LEN = 200;
@@ -46,12 +46,26 @@ export interface SymbolOptions {
   first?: string[];
   /** Swap left and right pins, e.g. for an output connector at the right edge facing the circuit. */
   mirror?: boolean;
+  /** Unit index of a split symbol (card.units); only that unit's pins are drawn. */
+  unit?: number;
+}
+
+/** Number of symbols a part is drawn as. */
+export function unitCount(card: PartCard): number {
+  return card.units?.length || 1;
+}
+
+/** The unit (index) a pin is drawn in; 0 for single symbols. */
+export function unitOfPin(card: PartCard, pinNumber: string): number {
+  if (!card.units?.length) return 0;
+  const i = card.units.findIndex((u) => Object.values(u.layout).some((side: (string[] | null)[]) => side.some((e) => e?.includes(pinNumber))));
+  return Math.max(0, i);
 }
 
 export function symbolFor(card: PartCard, flip = false, opts: SymbolOptions = {}): SymbolDef {
   if (isTwoPin(card)) return twoPin(card, flip);
   if (card.category === 'diode' && card.pins.length === 4) return bridgeDiamond(card);
-  return box(card, opts.first ?? [], opts.mirror ?? false);
+  return box(card, opts.first ?? [], opts.mirror ?? false, opts.unit);
 }
 
 /* ------------------------------- two-pin ---------------------------------- */
@@ -140,10 +154,12 @@ const ceilGrid = (v: number) => Math.ceil(v / GRID) * GRID;
 /** One position on a side: pins stacked there (repeated supplies share one), or a gap. */
 type Slot = PartPin[] | null;
 
-function slotsFor(card: PartCard, first: string[], mirror: boolean): Record<PinSide, Slot[]> {
+function slotsFor(card: PartCard, first: string[], mirror: boolean, unit?: number): Record<PinSide, Slot[]> {
   const flipSide = (s: PinSide): PinSide => (!mirror ? s : s === 'left' ? 'right' : s === 'right' ? 'left' : s);
   const out: Record<PinSide, Slot[]> = { left: [], right: [], top: [], bottom: [] };
-  const layout = card.symbolLayout;
+  const units = card.units?.length ? card.units : null;
+  const u = units ? Math.min(Math.max(unit ?? 0, 0), units.length - 1) : 0;
+  const layout = units ? units[u]!.layout : card.symbolLayout;
   if (layout) {
     const byNumber = new Map(card.pins.map((p) => [p.number, p]));
     const placed = new Set<string>();
@@ -158,8 +174,9 @@ function slotsFor(card: PartCard, first: string[], mirror: boolean): Record<PinS
         if (stack.length) out[flipSide(side)].push(stack);
       }
     }
-    // pins the layout forgot still get drawn, so that nothing becomes unconnectable
-    for (const p of card.pins) if (!placed.has(p.number)) out[flipSide(pinSide(p))].push([p]);
+    // pins the layout forgot still get drawn (on the first unit), so nothing becomes unconnectable
+    const covered = units ? new Set(units.flatMap((x) => Object.values(x.layout).flat(2).filter((n): n is string => !!n))) : placed;
+    if (u === 0) for (const p of card.pins) if (!covered.has(p.number)) out[flipSide(pinSide(p))].push([p]);
     return out;
   }
   const ordered = [...card.pins.filter((p) => first.includes(p.number)), ...card.pins.filter((p) => !first.includes(p.number))];
@@ -167,8 +184,8 @@ function slotsFor(card: PartCard, first: string[], mirror: boolean): Record<PinS
   return out;
 }
 
-function box(card: PartCard, first: string[], mirror: boolean): SymbolDef {
-  const sides = slotsFor(card, first, mirror);
+function box(card: PartCard, first: string[], mirror: boolean, unit?: number): SymbolDef {
+  const sides = slotsFor(card, first, mirror, unit);
   const isConn = card.category === 'connector';
   const showNames = !isConn;
   const labelLen = (slots: Slot[]) => (showNames ? Math.max(0, ...slots.map((s) => (s ? s[0]!.name.length : 0))) : 0);
@@ -182,7 +199,9 @@ function box(card: PartCard, first: string[], mirror: boolean): SymbolDef {
   const tbPitch = Math.max(GRID, ceilGrid(tbLabel * CHAR_W + 60));
   const tbCount = Math.max(sides.top.length, sides.bottom.length);
   const wSides = ceilGrid((labelLen(sides.left) + labelLen(sides.right)) * CHAR_W + 160);
-  const w = Math.max(isConn ? 200 : 400, wSides, (tbCount + 1) * tbPitch);
+  // generated (MCU) layouts only need the bottom stacks to fit; hand-made cards keep their spacing
+  const tbWidth = card.symbolLayout || card.units?.length ? tbCount * tbPitch + GRID : (tbCount + 1) * tbPitch;
+  const w = Math.max(isConn ? 200 : 400, wSides, tbWidth);
 
   const prims: Prim[] = [{ t: 'rect', x: 0, y: 0, w, h, fill: true }];
   const pins: SymbolPin[] = [];
@@ -230,13 +249,17 @@ function baseName(name: string): string {
   return name.split(/[-/ (]/)[0]!.toUpperCase();
 }
 
-/**
- * Arrange a large IC the conventional way (as in the usual MCU library symbols): supplies on
- * top and grounds at the bottom (repeated names stacked), system pins at the top left, then
- * the ports PA, PB, PC… in groups on the left and right, balanced by height. NC pins stack
- * at the end of the right side.
- */
-export function planSymbolLayout(pins: PartPin[]): SymbolLayout {
+interface PinGroups {
+  /** Positive supplies, stacked by name (VDD ×5 → one position). */
+  supply: string[][];
+  ground: string[][];
+  system: PartPin[];
+  /** GPIO ports in letter order, pins in number order. */
+  ports: { letter: string; pins: PartPin[] }[];
+  nc: PartPin[];
+}
+
+function groupPins(pins: PartPin[]): PinGroups {
   const stacks = (ps: PartPin[]) => {
     const byName = new Map<string, string[]>();
     for (const p of ps) byName.set(p.name.toUpperCase(), [...(byName.get(p.name.toUpperCase()) ?? []), p.number]);
@@ -247,7 +270,6 @@ export function planSymbolLayout(pins: PartPin[]): SymbolLayout {
   const supply = pins.filter((p) => !GROUND.test(p.name) && isPower(p) && p.type !== 'pwr_out');
   const nc = pins.filter((p) => p.type === 'nc');
   const rest = pins.filter((p) => !ground.includes(p) && !supply.includes(p) && !nc.includes(p));
-
   const ports = new Map<string, PartPin[]>();
   const system: PartPin[] = [];
   for (const p of rest) {
@@ -256,22 +278,64 @@ export function planSymbolLayout(pins: PartPin[]): SymbolLayout {
     else system.push(p);
   }
   const portNo = (p: PartPin) => Number(PORT.exec(baseName(p.name))![2]);
-  const groups = [...ports.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, ps]) => ps.sort((a, b) => portNo(a) - portNo(b)));
+  return {
+    supply: stacks(supply),
+    ground: stacks(ground),
+    system: system.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true })),
+    ports: [...ports.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([letter, ps]) => ({ letter, pins: ps.sort((a, b) => portNo(a) - portNo(b)) })),
+    nc,
+  };
+}
 
-  const left: (string[] | null)[] = system.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true })).map((p) => [p.number]);
-  const right: (string[] | null)[] = [];
-  const height = (side: (string[] | null)[]) => side.length;
-  for (const g of groups) {
+type Side = (string[] | null)[];
+const pushGroup = (side: Side, entries: string[][]) => {
+  if (!entries.length) return;
+  if (side.length) side.push(null);
+  side.push(...entries);
+};
+
+/**
+ * Arrange a large IC the conventional way (as in the usual MCU library symbols), kept as
+ * narrow as the pin names allow: supplies at the top of the left side (repeated names
+ * stacked), then the system pins, grounds stacked along the bottom, and the ports PA, PB, PC…
+ * in groups on the left and right, balanced by height. NC pins stack at the end of the right.
+ */
+export function planSymbolLayout(pins: PartPin[]): SymbolLayout {
+  const g = groupPins(pins);
+  const left: Side = [];
+  const right: Side = [];
+  pushGroup(left, g.supply);
+  pushGroup(left, g.system.map((p) => [p.number]));
+  for (const port of g.ports) {
     // keep the letter order on each side; put each group where the side is shorter
-    const target = height(left) <= height(right) ? left : right;
-    if (target.length) target.push(null);
-    target.push(...g.map((p) => [p.number]));
+    pushGroup(left.length <= right.length ? left : right, port.pins.map((p) => [p.number]));
   }
-  if (nc.length) {
-    if (right.length) right.push(null);
-    right.push(nc.map((p) => p.number));
+  if (g.nc.length) pushGroup(right, [g.nc.map((p) => p.number)]);
+  return { left, right, top: [], bottom: g.ground };
+}
+
+/**
+ * Split a big IC into units: A holds power and system pins (supplies left, system pins right,
+ * grounds bottom), the others two ports each (one per side), so every unit stays a readable size.
+ */
+export function planUnits(pins: PartPin[]): SymbolUnit[] {
+  const g = groupPins(pins);
+  const units: SymbolUnit[] = [];
+  const letter = (i: number) => String.fromCharCode(65 + i);
+  const power: SymbolLayout = { left: [], right: [], top: [], bottom: g.ground };
+  pushGroup(power.left, g.supply);
+  pushGroup(power.right, g.system.map((p) => [p.number]));
+  if (g.nc.length) pushGroup(power.right, [g.nc.map((p) => p.number)]);
+  units.push({ name: 'A', title: 'Power, system', layout: power });
+  for (let i = 0; i < g.ports.length; i += 2) {
+    const [a, b] = [g.ports[i]!, g.ports[i + 1]];
+    units.push({
+      name: letter(units.length),
+      title: [a, b].filter(Boolean).map((p) => `P${p!.letter}`).join(', '),
+      layout: { left: a.pins.map((p) => [p.number]), right: b ? b.pins.map((p) => [p.number]) : [], top: [], bottom: [] },
+    });
   }
-  return { left, right, top: stacks(supply), bottom: stacks(ground) };
+  return units;
 }
 
 function supplyRank(name: string): number {

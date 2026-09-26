@@ -29,6 +29,8 @@ export interface PartPin {
   /** Absolute maximum voltage relative to ground, used by semantic ERC. */
   maxVoltage?: number;
   description?: string;
+  /** Datasheet page this pin was read from (imported parts). */
+  page?: number;
 }
 
 export type PartCategory =
@@ -106,4 +108,17 @@ export interface PartCard {
   packageInfo?: PackageInfo;
   /** Explicit symbol arrangement (generated for large ICs such as MCUs). */
   symbolLayout?: SymbolLayout;
+  /**
+   * Split symbol for big ICs: each unit is drawn as its own symbol (U1A, U1B …) with the
+   * pins of its layout. Every pin belongs to exactly one unit. Overrides `symbolLayout`.
+   */
+  units?: SymbolUnit[];
+}
+
+export interface SymbolUnit {
+  /** Unit letter, "A", "B" … */
+  name: string;
+  /** What the unit holds, e.g. "Power", "PA, PB". */
+  title: string;
+  layout: SymbolLayout;
 }

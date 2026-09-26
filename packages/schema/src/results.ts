@@ -149,6 +149,8 @@ export interface PinView {
 export interface SymbolView {
   componentId: string;
   refdes: string;
+  /** Unit letter of a split symbol ("A" → drawn as U1A). */
+  unit?: string;
   value: string;
   /** The value as drawn, one entry per line (e.g. "10nF", "25V"); `valuePos` is the first line. */
   valueLines?: string[];

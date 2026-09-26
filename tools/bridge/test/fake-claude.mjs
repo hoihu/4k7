@@ -35,6 +35,7 @@ const flags = {
   model: args.includes('--model') ? arg('--model') : null,
   prompt: arg('-p'),
   appended: (arg('--append-system-prompt') ?? '').slice(0, 40),
+  verify: (arg('--append-system-prompt') ?? '').includes('independent verification pass'),
   files: (await import('node:fs')).readdirSync('.').sort(),
   env: {
     configDir: process.env.CLAUDE_CONFIG_DIR ?? null,
