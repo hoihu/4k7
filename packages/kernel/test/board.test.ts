@@ -209,6 +209,33 @@ describe('vias', () => {
     expect(b.stats.unrouted).toBe(0);
   });
 
+  it('keeps vias apart and connects plane vias through thermal reliefs', () => {
+    const k = buck();
+    k.transact({ summary: 'planes', ops: [{ op: 'set_board', layers: 4 }] });
+    const b = k.board();
+    for (let i = 0; i < b.vias.length; i++) {
+      for (let j = i + 1; j < b.vias.length; j++) {
+        const d = Math.hypot(b.vias[i]!.x - b.vias[j]!.x, b.vias[i]!.y - b.vias[j]!.y);
+        expect(d, `vias ${i} and ${j}`).toBeGreaterThanOrEqual(b.rules.viaPad + b.rules.clearance - 1e-6);
+      }
+    }
+    const inZone = (z: (typeof b.zones)[number], x: number, y: number) => {
+      for (let i = 0; i < z.rects.length; i += 4) if (x >= z.rects[i]! && x <= z.rects[i]! + z.rects[i + 2]! && y >= z.rects[i + 1]! && y <= z.rects[i + 1]! + z.rects[i + 3]!) return true;
+      return false;
+    };
+    let reliefs = 0;
+    for (const z of b.zones) {
+      for (const v of b.vias.filter((x) => x.netId === z.netId)) {
+        const r = v.pad / 2 + 0.15;
+        // the ring between the spokes is clear, the spokes carry copper
+        for (const a of [45, 135, 225, 315]) expect(inZone(z, v.x + r * Math.cos((a * Math.PI) / 180), v.y + r * Math.sin((a * Math.PI) / 180))).toBe(false);
+        if ([0, 90, 180, 270].some((a) => inZone(z, v.x + r * Math.cos((a * Math.PI) / 180), v.y + r * Math.sin((a * Math.PI) / 180)))) reliefs++;
+      }
+    }
+    expect(reliefs).toBeGreaterThan(3);
+    expect(brokenNets(b)).toEqual([]);
+  });
+
   it('allows vias in pads only when asked, and the DRC reports them otherwise', async () => {
     const k = buck();
     k.transact({ summary: 'planes', ops: [{ op: 'set_board', layers: 4, via_in_pad: true }] });

@@ -182,8 +182,28 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   };
   const stampSeg = (l: number, net: number, ax: number, ay: number, bx: number, by: number, width: number) =>
     stamp(l, net, Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by), width / 2, segDist(ax, ay, bx, by));
+  // vias keep a minimum spacing from every other via (same net too: drills must not crowd);
+  // a path may pass an existing via of its own net exactly (no new via is added there)
+  const viaAt = new Int32Array(W * H);
+  const viaNear = new Uint8Array(W * H);
+  const VIA_SPACING = rules.viaPad + rules.clearance;
   const stampVia = (net: number, x: number, y: number) => {
     for (let l = 0; l < L; l++) stamp(l, net, x, y, x, y, rules.viaPad / 2, (px, py) => Math.hypot(px - x, py - y));
+    const ci = Math.round(x / G);
+    const cj = Math.round(y / G);
+    viaAt[cj * W + ci] = net;
+    const r = Math.ceil(VIA_SPACING / G);
+    for (let j = Math.max(0, cj - r); j <= Math.min(H - 1, cj + r); j++) {
+      for (let i = Math.max(0, ci - r); i <= Math.min(W - 1, ci + r); i++) if (Math.hypot((i - ci) * G, (j - cj) * G) < VIA_SPACING - 1e-6) viaNear[j * W + i] = 1;
+    }
+  };
+  /** Record a via (once per place and net). */
+  const addVia = (netId: string, net: number, px: number, py: number) => {
+    const x = r3(px);
+    const y = r3(py);
+    if (vias.some((v) => v.netId === netId && Math.abs(v.x - x) < 1e-6 && Math.abs(v.y - y) < 1e-6)) return;
+    vias.push({ netId, x, y, drill: rules.viaDrill, pad: rules.viaPad });
+    stampVia(net, px, py);
   };
 
   // board edge
@@ -346,7 +366,8 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     }
   }
   const viaFreeFor = (net: number) => (i: number) => {
-    if (viaBlocked[i]) return false;
+    if (viaAt[i] === net) return true; // reuse an existing via of this net
+    if (viaBlocked[i] || viaNear[i]) return false;
     for (let l = 0; l < L; l++) {
       const v = maps[2]![l]![i]!;
       if (v !== 0 && v !== net) return false;
@@ -449,10 +470,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       const py = Math.floor(i / W) * G;
       const run = runs.at(-1);
       if (!run || run.l !== l) {
-        if (run) {
-          vias.push({ netId, x: r3(px), y: r3(py), drill: rules.viaDrill, pad: rules.viaPad });
-          stampVia(net, px, py);
-        }
+        if (run) addVia(netId, net, px, py);
         runs.push({ l, pts: [px, py] });
       } else run.pts.push(px, py);
     }
@@ -472,8 +490,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       const i = s % N;
       const px = (i % W) * G;
       const py = Math.floor(i / W) * G;
-      vias.push({ netId, x: r3(px), y: r3(py), drill: rules.viaDrill, pad: rules.viaPad });
-      stampVia(net, px, py);
+      addVia(netId, net, px, py);
     }
     for (const run of runs) {
       const pts = simplify(run.pts);
@@ -555,6 +572,30 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       }
     }
     for (const v of vias) if (v.netId !== pl.netId) clearAround(v.x, v.y, v.x, v.y, v.pad / 2, (x, y) => Math.hypot(x - v.x, y - v.y));
+    /*
+     * Thermal reliefs where the plane meets its own vias and pins: a clearance ring with four
+     * spokes (easier to solder and to rework than a solid connection).
+     */
+    const gap = Math.max(rules.clearance, 0.25);
+    const spoke = Math.min(0.4, Math.max(0.3, rules.track));
+    const relief = (cx: number, cy: number, halfW: number, halfH: number, dist: (x: number, y: number) => number) => {
+      const outer = gap + margin;
+      for (let j = Math.max(0, Math.floor((cy - halfH - outer) / G)); j <= Math.min(H - 1, Math.ceil((cy + halfH + outer) / G)); j++) {
+        for (let i = Math.max(0, Math.floor((cx - halfW - outer) / G)); i <= Math.min(W - 1, Math.ceil((cx + halfW + outer) / G)); i++) {
+          const x = i * G;
+          const y = j * G;
+          const d = dist(x, y);
+          if (d <= 0 || d >= outer) continue; // the pad itself stays; beyond the ring is plane
+          if (Math.abs(x - cx) <= spoke / 2 || Math.abs(y - cy) <= spoke / 2) continue; // spokes
+          ok[j * W + i] = 0;
+        }
+      }
+    };
+    for (const v of vias) if (v.netId === pl.netId) relief(v.x, v.y, v.pad / 2, v.pad / 2, (x, y) => Math.hypot(x - v.x, y - v.y) - v.pad / 2);
+    pads.forEach((p, idx) => {
+      if (padNet[idx] !== pnet || !(p.drill || p.layers.includes(pl.layer))) return;
+      relief(p.x, p.y, p.w / 2, p.h / 2, padDist(p));
+    });
     // islands (4-connected)
     const island = new Int32Array(N).fill(-1);
     const sizes: number[] = [];
@@ -613,6 +654,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         // a via site well inside the main area (the via then joins the plane)
         if (Math.floor(st / N) === rg.l) return false;
         const i = st % N;
+        if (viaAt[i] === rg.pnet && rg.island[i] === rg.main) return true; // join an existing via
         if (rg.island[i] !== rg.main || !viaFreeFor(rg.pnet)(i)) return false;
         const vx = (i % W) * G;
         const vy = Math.floor(i / W) * G;
