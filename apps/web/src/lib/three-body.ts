@@ -40,7 +40,7 @@ function resources() {
     body: new THREE.MeshStandardMaterial({ color: 0x2e3137, roughness: 0.75, metalness: 0.05 }),
     lead: new THREE.MeshStandardMaterial({ color: 0xc9ccd2, roughness: 0.35, metalness: 0.75 }),
     mark: new THREE.MeshStandardMaterial({ color: 0x8a8e96, roughness: 0.9 }),
-    mask: new THREE.MeshStandardMaterial({ color: 0x1d5a33, roughness: 0.55, metalness: 0.05 }),
+    mask: new THREE.MeshStandardMaterial({ color: 0x1d5a33, roughness: 0.55, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
     cuUnderMask: new THREE.MeshStandardMaterial({ color: 0x2f7f4c, roughness: 0.5, metalness: 0.1 }),
     pad: new THREE.MeshStandardMaterial({ color: 0xd6aa55, roughness: 0.3, metalness: 0.85 }),
     hole: new THREE.MeshBasicMaterial({ color: 0x07090c }),
@@ -79,6 +79,7 @@ function viewerCore(canvas: HTMLCanvasElement) {
 
   function disposeGroup(g: THREE.Group) {
     g.traverse((o) => {
+      (o.userData.dispose as (() => void) | undefined)?.();
       if (o instanceof THREE.InstancedMesh) o.dispose();
       if (o instanceof THREE.Mesh && ![res.unitBox, res.ball, res.cyl].includes(o.geometry as never)) o.geometry.dispose();
     });
@@ -133,6 +134,49 @@ function viewerCore(canvas: HTMLCanvasElement) {
       renderer.dispose();
     },
   };
+}
+
+/** A pour's exact shape drawn into an alpha texture (white = copper), ~25 px/mm. */
+function zoneTexture(z: BoardView['zones'][number], w: number, h: number): THREE.CanvasTexture | null {
+  const k = Math.min(25, 4096 / Math.max(w, h));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(w * k));
+  canvas.height = Math.max(1, Math.round(h * k));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.scale(k, k);
+  ctx.fillStyle = '#fff';
+  ctx.strokeStyle = '#fff';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const stroke = (pts: number[], width: number) => {
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(pts[0]!, pts[1]!);
+    for (let i = 2; i + 1 < pts.length; i += 2) ctx.lineTo(pts[i]!, pts[i + 1]!);
+    if (pts.length === 2) ctx.lineTo(pts[0]! + 1e-3, pts[1]!);
+    ctx.stroke();
+  };
+  if (z.shape) {
+    const [x0, y0, x1, y1] = z.shape.outline;
+    ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.globalCompositeOperation = 'destination-out';
+    for (const c of z.shape.cuts) {
+      if (c.k === 'circle') {
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, c.d / 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (c.k === 'rect') ctx.fillRect(c.x, c.y, c.w, c.h);
+      else stroke(c.pts, c.w);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    for (const a of z.shape.adds) stroke(a.pts, a.w);
+  } else {
+    for (let i = 0; i + 3 < z.rects.length; i += 4) ctx.fillRect(z.rects[i]!, z.rects[i + 1]!, z.rects[i + 2]!, z.rects[i + 3]!);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 4;
+  return tex;
 }
 
 /** Meshes of one package body, in its own coordinates (origin = package centre, board surface at 0). */
@@ -229,17 +273,24 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res): THREE.
   instanced(res.unitBox, res.cuUnderMask, segs);
   instanced(res.cyl, res.cuUnderMask, joints);
 
-  /* copper pours (under the solder mask) */
-  const pours: THREE.Matrix4[] = [];
+  /* copper pours (under the solder mask): the exact shape as a texture on a thin sheet */
   for (const z of b.zones) {
     if (z.layer !== 'F.Cu' && z.layer !== 'B.Cu') continue;
-    const y = surfaceY(z.layer);
-    for (let i = 0; i + 3 < z.rects.length; i += 4) {
-      const [x, zz, w, h] = [z.rects[i]!, z.rects[i + 1]!, z.rects[i + 2]!, z.rects[i + 3]!];
-      pours.push(new THREE.Matrix4().compose(new THREE.Vector3(x + w / 2, y * 0.98, zz + h / 2), q, new THREE.Vector3(w, CU * 0.8, h)));
-    }
+    const bottom = z.layer === 'B.Cu';
+    const tex = zoneTexture(z, w, h);
+    if (!tex) continue;
+    if (bottom) tex.flipY = false;
+    const mat = new THREE.MeshStandardMaterial({ color: 0x2f7f4c, roughness: 0.5, metalness: 0.1, alphaMap: tex, alphaTest: 0.5, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+    const sheet = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    sheet.rotation.x = bottom ? Math.PI / 2 : -Math.PI / 2;
+    // just outside the board surface, under the tracks
+    sheet.position.set(w / 2, bottom ? -THICKNESS - CU * 0.3 : CU * 0.3, h / 2);
+    sheet.userData.dispose = () => {
+      tex.dispose();
+      mat.dispose();
+    };
+    group.add(sheet);
   }
-  instanced(res.unitBox, res.cuUnderMask, pours);
 
   /* vias: tented rings on both sides, hole in the middle */
   const vias: THREE.Matrix4[] = [];
