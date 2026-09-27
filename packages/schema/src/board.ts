@@ -17,6 +17,8 @@ export interface BoardRules {
   viaPad: number;
   /** Keep copper this far from the board edge. */
   edgeClearance: number;
+  /** Allow vias in pads (off by default: vias keep clear of every pad and of small parts' land patterns). */
+  viaInPad?: boolean;
 }
 
 export interface BoardSettings {

@@ -324,7 +324,29 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const st = l * N + i;
     return ownCopper[st] === net && ownInset[st]! >= widths[k]! / 2 - 0.01;
   };
+  /*
+   * Via keep-out: no via overlapping any pad (its own net's included) or within the land pattern
+   * of a small part (between a resistor's pads), unless the board allows vias in pads.
+   */
+  const viaBlocked = new Uint8Array(N);
+  if (!rules.viaInPad) {
+    const reach = rules.viaPad / 2 + rules.clearance;
+    pads.forEach((p) => {
+      const d = padDist(p);
+      for (let j = Math.max(0, Math.floor((p.y - p.h / 2 - reach) / G)); j <= Math.min(H - 1, Math.ceil((p.y + p.h / 2 + reach) / G)); j++) {
+        for (let i = Math.max(0, Math.floor((p.x - p.w / 2 - reach) / G)); i <= Math.min(W - 1, Math.ceil((p.x + p.w / 2 + reach) / G)); i++) if (d(i * G, j * G) < reach) viaBlocked[j * W + i] = 1;
+      }
+    });
+    for (const part of input.parts) {
+      if (part.pads.length > 3) continue; // under ICs vias are fine (and needed to fan out BGAs)
+      const b = part.courtyard;
+      for (let j = Math.max(0, Math.floor(b.y / G)); j <= Math.min(H - 1, Math.ceil((b.y + b.h) / G)); j++) {
+        for (let i = Math.max(0, Math.floor(b.x / G)); i <= Math.min(W - 1, Math.ceil((b.x + b.w) / G)); i++) viaBlocked[j * W + i] = 1;
+      }
+    }
+  }
   const viaFreeFor = (net: number) => (i: number) => {
+    if (viaBlocked[i]) return false;
     for (let l = 0; l < L; l++) {
       const v = maps[2]![l]![i]!;
       if (v !== 0 && v !== net) return false;

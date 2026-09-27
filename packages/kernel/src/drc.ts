@@ -55,6 +55,24 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
     }
   }
   const c = b.rules.clearance;
+  const viaIssues: BoardDiagnostic[] = [];
+  if (!b.rules.viaInPad) {
+    for (const v of b.vias) {
+      for (const part of b.parts) {
+        const inPad = part.pads.some((p) => {
+          const dx = Math.max(Math.abs(v.x - p.x) - p.w / 2, 0);
+          const dy = Math.max(Math.abs(v.y - p.y) - p.h / 2, 0);
+          return Math.hypot(dx, dy) < v.pad / 2 - 1e-6;
+        });
+        const cy = part.courtyard;
+        const inSmall = part.pads.length <= 3 && v.x > cy.x && v.x < cy.x + cy.w && v.y > cy.y && v.y < cy.y + cy.h;
+        if (inPad || inSmall) {
+          viaIssues.push({ code: 'DRC.VIA_IN_PAD', severity: 'error', message: `Via (${b.netNames[v.netId] ?? v.netId}) inside the land pattern of ${part.refdes}; vias in pads are off for this board.`, at: { x: v.x, y: v.y }, entities: [part.refdes] });
+          break;
+        }
+      }
+    }
+  }
   const out: BoardDiagnostic[] = [];
   const seen = new Set<string>();
   const sorted = items.map((it, i) => ({ it, i })).sort((p, q) => p.it.bb[0] - q.it.bb[0]);
@@ -82,7 +100,7 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
       });
     }
   }
-  return out;
+  return [...viaIssues, ...out];
 }
 
 function centre(s: Shape) {

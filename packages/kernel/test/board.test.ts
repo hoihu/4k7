@@ -189,3 +189,35 @@ describe('planes', () => {
     expect(k.board().planes.every((p) => p.auto)).toBe(true);
   });
 });
+
+describe('vias', () => {
+  const viaInPad = (b: ReturnType<Kernel['board']>) =>
+    b.vias.filter((v) =>
+      b.parts.some(
+        (part) =>
+          part.pads.some((p) => Math.hypot(Math.max(Math.abs(v.x - p.x) - p.w / 2, 0), Math.max(Math.abs(v.y - p.y) - p.h / 2, 0)) < v.pad / 2) ||
+          (part.pads.length <= 3 && v.x > part.courtyard.x && v.x < part.courtyard.x + part.courtyard.w && v.y > part.courtyard.y && v.y < part.courtyard.y + part.courtyard.h),
+      ),
+    );
+
+  it('never places a via in a pad or a small part’s land pattern', () => {
+    const k = buck();
+    k.transact({ summary: 'planes', ops: [{ op: 'set_board', layers: 4 }] });
+    const b = k.board();
+    expect(b.vias.length).toBeGreaterThan(3); // plane drops
+    expect(viaInPad(b)).toEqual([]);
+    expect(b.stats.unrouted).toBe(0);
+  });
+
+  it('allows vias in pads only when asked, and the DRC reports them otherwise', async () => {
+    const k = buck();
+    k.transact({ summary: 'planes', ops: [{ op: 'set_board', layers: 4, via_in_pad: true }] });
+    const b = k.board();
+    expect(b.rules.viaInPad).toBe(true);
+    expect(b.diagnostics.filter((x) => x.code === 'DRC.VIA_IN_PAD')).toEqual([]);
+    const { copperDrc } = await import('../src/drc.ts');
+    const pad = b.parts.find((p) => p.refdes === 'C1')!.pads[0]!;
+    const strict = { ...b, rules: { ...b.rules, viaInPad: false }, vias: [...b.vias, { netId: pad.netId!, x: pad.x, y: pad.y, drill: 0.3, pad: 0.6 }] };
+    expect(copperDrc(strict).some((x) => x.code === 'DRC.VIA_IN_PAD' && x.entities.includes('C1'))).toBe(true);
+  });
+});

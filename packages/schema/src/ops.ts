@@ -128,6 +128,7 @@ export const SetBoardOp = z.object({
   clearance_mm: z.number().positive().optional().describe('Copper clearance (default 0.2)'),
   track_mm: z.number().positive().optional().describe('Signal track width (default 0.25)'),
   power_track_mm: z.number().positive().optional().describe('Supply/ground track width (default 0.5)'),
+  via_in_pad: z.boolean().optional().describe('Allow vias inside pads (default false; only when the user asks for it, e.g. for tight BGA fan-out or thermal pads)'),
 });
 
 export const PlaceOp = z.object({

@@ -108,7 +108,7 @@ function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): OpResult
     b.layers = op.layers;
     out.push(`${op.layers} layers`);
   }
-  const rule = (key: keyof BoardSettings['rules'], v: number | undefined, label: string) => {
+  const rule = (key: 'clearance' | 'track' | 'powerTrack', v: number | undefined, label: string) => {
     if (v === undefined) return;
     if (v < 0.075 || v > 5) reject({ code: 'BOARD_INVALID', message: `${label} ${v} mm is not manufacturable (0.075–5 mm).` });
     b.rules[key] = v;
@@ -117,6 +117,11 @@ function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): OpResult
   rule('clearance', op.clearance_mm, 'clearance');
   rule('track', op.track_mm, 'track');
   rule('powerTrack', op.power_track_mm, 'power track');
+  if (op.via_in_pad !== undefined) {
+    if (op.via_in_pad) b.rules.viaInPad = true;
+    else delete b.rules.viaInPad;
+    out.push(op.via_in_pad ? 'vias in pads allowed' : 'no vias in pads');
+  }
   if (!out.length) reject({ code: 'BOARD_INVALID', message: 'set_board needs at least one setting.' });
   d.board = b;
   return { op: 'set_board', effect: `board: ${out.join(', ')}`, ids: ['board'] };
