@@ -45,6 +45,20 @@ class Gerber {
     this.aperture(p.shape === 'round' ? `C,${(Math.min(w, h)).toFixed(6)}` : `R,${w.toFixed(6)}X${h.toFixed(6)}`);
     this.body.push(`${this.xy(p.x, p.y)}D03*`);
   }
+  /** An exact plane: the outline filled, cutouts cleared (clear polarity), spokes drawn back. */
+  plane(sh: import('@tracewise/schema').ZoneShape) {
+    const [x0, y0, x1, y1] = sh.outline;
+    this.body.push('G36*', `${this.xy(x0, y0)}D02*`, `${this.xy(x1, y0)}D01*`, `${this.xy(x1, y1)}D01*`, `${this.xy(x0, y1)}D01*`, `${this.xy(x0, y0)}D01*`, 'G37*');
+    this.body.push('%LPC*%');
+    for (const c of sh.cuts) {
+      if (c.k === 'circle') this.circle(c.x, c.y, c.d);
+      else if (c.k === 'rect') this.pad({ x: c.x + c.w / 2, y: c.y + c.h / 2, w: c.w, h: c.h, shape: 'rect' });
+      else if (c.pts.length === 2) this.circle(c.pts[0]!, c.pts[1]!, c.w);
+      else this.line(c.pts, c.w);
+    }
+    this.body.push('%LPD*%');
+    for (const a of sh.adds) this.line(a.pts, a.w);
+  }
   /** Filled rectangles as regions (copper pours). */
   regions(rects: number[]) {
     for (let i = 0; i + 3 < rects.length; i += 4) {
@@ -96,7 +110,7 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
   b.layers.forEach((layer, i) => {
     const pos = i === 0 ? 'Top' : i === n - 1 ? 'Bot' : 'Inr';
     const g = new Gerber(h, [`FileFunction,Copper,L${i + 1},${pos}`, 'FilePolarity,Positive']);
-    for (const z of b.zones) if (z.layer === layer) g.regions(z.rects);
+    for (const z of b.zones) if (z.layer === layer) (z.shape ? g.plane(z.shape) : g.regions(z.rects));
     for (const p of pads) if (onLayer(p, layer)) g.pad(p);
     for (const v of b.vias) g.circle(v.x, v.y, v.pad);
     for (const t of b.tracks) if (t.layer === layer) g.line(t.pts, t.width);

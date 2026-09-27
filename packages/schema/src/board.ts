@@ -97,11 +97,30 @@ export interface Via {
   pad: number;
 }
 
-/** Copper pour (e.g. a ground plane): rectangles x, y, w, h (flattened), one net, one layer. */
+/**
+ * Copper pour or plane of one net on one layer.
+ * `shape` is the exact geometry: the outline filled, minus the cutouts (clearances to other
+ * nets, thermal-relief rings, removed islands), plus the relief spokes. `rects` is the same
+ * area on the router's grid (x, y, w, h flattened), used for checks and the 3D view.
+ */
 export interface Zone {
   netId: string;
   layer: CopperLayer;
   rects: number[];
+  shape?: ZoneShape;
+}
+
+export type ZoneCut =
+  | { k: 'circle'; x: number; y: number; d: number }
+  | { k: 'rect'; x: number; y: number; w: number; h: number }
+  | { k: 'stroke'; pts: number[]; w: number };
+
+export interface ZoneShape {
+  /** Filled rectangle x0, y0, x1, y1. */
+  outline: [number, number, number, number];
+  cuts: ZoneCut[];
+  /** Copper drawn back after the cuts (thermal-relief spokes). */
+  adds: { pts: number[]; w: number }[];
 }
 
 export interface RatsLine {

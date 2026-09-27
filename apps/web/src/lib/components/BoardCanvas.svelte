@@ -145,7 +145,22 @@
       {#if show[layer]}
         <g class="layer {LAYER_CLASS[layer]}" class:dim={layer !== 'F.Cu' && show['F.Cu']}>
           {#each board.zones.filter((z) => z.layer === layer) as z, zi (zi)}
-            <path class="zone" class:hot={hotNet === z.netId} d={zonePath(z.rects)} data-net={z.netId} />
+            {#if z.shape}
+              {@const id = `zm-${layer}-${zi}`}
+              {@const o = z.shape.outline}
+              <mask {id} maskUnits="userSpaceOnUse" x={o[0] - 1} y={o[1] - 1} width={o[2] - o[0] + 2} height={o[3] - o[1] + 2}>
+                <rect x={o[0]} y={o[1]} width={o[2] - o[0]} height={o[3] - o[1]} fill="white" />
+                {#each z.shape.cuts as c, ci (ci)}
+                  {#if c.k === 'circle'}<circle cx={c.x} cy={c.y} r={c.d / 2} fill="black" />
+                  {:else if c.k === 'rect'}<rect x={c.x} y={c.y} width={c.w} height={c.h} fill="black" />
+                  {:else}<path d={path(c.pts)} stroke="black" stroke-width={c.w} fill="none" stroke-linecap="round" stroke-linejoin="round" />{/if}
+                {/each}
+                {#each z.shape.adds as a, ai (ai)}<path d={path(a.pts)} stroke="white" stroke-width={a.w} fill="none" />{/each}
+              </mask>
+              <rect class="zone" class:hot={hotNet === z.netId} x={o[0]} y={o[1]} width={o[2] - o[0]} height={o[3] - o[1]} mask="url(#{id})" data-net={z.netId} />
+            {:else}
+              <path class="zone" class:hot={hotNet === z.netId} d={zonePath(z.rects)} data-net={z.netId} />
+            {/if}
           {/each}
           {#each tracksOn(layer) as t, i (i)}
             <path d={path(t.pts)} stroke-width={t.width} data-net={t.netId} class:hot={hotNet === t.netId} />
@@ -218,12 +233,12 @@
   .substrate { fill: #0f2a22; }
   .edge { fill: none; stroke: #e0c341; stroke-width: 0.15; }
   .layer path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-  .layer path.zone { stroke: none; opacity: 0.16; }
-  .fcu path.zone { fill: #c9463d; }
-  .bcu path.zone { fill: #3f7fd6; }
-  .in1 path.zone { fill: #c9a13d; }
-  .in2 path.zone { fill: #8e5cd6; }
-  .layer path.zone.hot { fill: #fff27a; opacity: 0.35; }
+  .layer .zone { stroke: none; opacity: 0.16; }
+  .fcu .zone { fill: #c9463d; }
+  .bcu .zone { fill: #3f7fd6; }
+  .in1 .zone { fill: #c9a13d; }
+  .in2 .zone { fill: #8e5cd6; }
+  .layer .zone.hot { fill: #fff27a; opacity: 0.35; }
   .fcu path { stroke: #c9463d; }
   .bcu path { stroke: #3f7fd6; }
   .in1 path { stroke: #c9a13d; }

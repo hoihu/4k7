@@ -6,7 +6,7 @@
  * tree, shortest first; a connection may end on any copper already joined to its net.
  * Failed connections are routed first in the next pass (simple rip-up and retry).
  */
-import type { BoardPad, BoardPart, BoardRules, CopperLayer, Track, Via, Zone } from '@tracewise/schema';
+import type { BoardPad, BoardPart, BoardRules, CopperLayer, Track, Via, Zone, ZoneShape } from '@tracewise/schema';
 
 const G = 0.1; // grid pitch, mm
 const MULTI = -1; // near copper of two nets: nobody may route here
@@ -576,6 +576,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
      * Thermal reliefs where the plane meets its own vias and pins: a clearance ring with four
      * spokes (easier to solder and to rework than a solid connection).
      */
+    const okOthers = ok.slice(); // before the reliefs: where other nets allow copper
     const gap = Math.max(rules.clearance, 0.25);
     const spoke = Math.min(0.4, Math.max(0.3, rules.track));
     const relief = (cx: number, cy: number, halfW: number, halfH: number, dist: (x: number, y: number) => number) => {
@@ -635,7 +636,65 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     }
     const candidates = [...(touched.size ? touched : sizes.keys())];
     const main = candidates.sort((x, y) => sizes[y]! - sizes[x]! || x - y)[0];
-    return { l, pnet, island, sizes, main, touched };
+    return { l, pnet, island, sizes, main, touched, okOthers };
+  };
+
+  /** Exact plane geometry: outline minus clearances, relief rings and dead islands, plus spokes. */
+  const planeShape = (pl: { netId: string; layer: CopperLayer }, rg: ReturnType<typeof region>, alive: Set<number>): ZoneShape => {
+    const c = rules.clearance;
+    const e = rules.edgeClearance;
+    const cuts: ZoneShape['cuts'] = [];
+    const adds: ZoneShape['adds'] = [];
+    pads.forEach((p, idx) => {
+      if (padNet[idx] === rg.pnet || !(p.drill || p.layers.includes(pl.layer))) return;
+      if (p.shape === 'round') cuts.push({ k: 'circle', x: p.x, y: p.y, d: r3(Math.min(p.w, p.h) + 2 * c) });
+      else cuts.push({ k: 'rect', x: r3(p.x - p.w / 2 - c), y: r3(p.y - p.h / 2 - c), w: r3(p.w + 2 * c), h: r3(p.h + 2 * c) });
+    });
+    for (const t of tracks) if (t.netId !== pl.netId && t.layer === pl.layer) cuts.push({ k: 'stroke', pts: t.pts, w: r3(t.width + 2 * c) });
+    for (const v of vias) if (v.netId !== pl.netId) cuts.push({ k: 'circle', x: v.x, y: v.y, d: r3(v.pad + 2 * c) });
+    // thermal reliefs: a ring cut, spokes back where no other net is in the way
+    const gap = Math.max(c, 0.25);
+    const spokeW = Math.min(0.4, Math.max(0.3, rules.track));
+    const spokesOf = (x: number, y: number, hx: number, hy: number) => {
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const x1 = x + dx * (hx + gap + G);
+        const y1 = y + dy * (hy + gap + G);
+        let clear = true;
+        for (let t = 0; t <= 1.0001 && clear; t += 0.1) {
+          const i = Math.round((x + (x1 - x) * t) / G);
+          const j = Math.round((y + (y1 - y) * t) / G);
+          if (Math.hypot((x1 - x) * t, (y1 - y) * t) <= Math.min(hx, hy)) continue; // on the pad itself
+          if (i < 0 || j < 0 || i >= W || j >= H || !rg.okOthers[j * W + i]) clear = false;
+        }
+        if (clear) adds.push({ pts: [r3(x), r3(y), r3(x1), r3(y1)], w: spokeW });
+      }
+    };
+    for (const v of vias) {
+      if (v.netId !== pl.netId) continue;
+      cuts.push({ k: 'circle', x: v.x, y: v.y, d: r3(v.pad + 2 * gap) });
+      spokesOf(v.x, v.y, v.pad / 2, v.pad / 2);
+    }
+    pads.forEach((p, idx) => {
+      if (padNet[idx] !== rg.pnet || !(p.drill || p.layers.includes(pl.layer))) return;
+      if (p.shape === 'round') cuts.push({ k: 'circle', x: p.x, y: p.y, d: r3(Math.min(p.w, p.h) + 2 * gap) });
+      else cuts.push({ k: 'rect', x: r3(p.x - p.w / 2 - gap), y: r3(p.y - p.h / 2 - gap), w: r3(p.w + 2 * gap), h: r3(p.h + 2 * gap) });
+      spokesOf(p.x, p.y, p.shape === 'round' ? Math.min(p.w, p.h) / 2 : p.w / 2, p.shape === 'round' ? Math.min(p.w, p.h) / 2 : p.h / 2);
+    });
+    // islands that are not kept (no connection to the net): cut them out, grown into the
+    // clearance around them (always at least one grid cell wide)
+    for (let j = 0; j < H; j++) {
+      let start = -1;
+      for (let i = 0; i <= W; i++) {
+        const isl = i < W ? rg.island[j * W + i]! : -1;
+        const dead = isl >= 0 && !alive.has(isl);
+        if (dead && start < 0) start = i;
+        if (!dead && start >= 0) {
+          cuts.push({ k: 'rect', x: r3(start * G - G), y: r3(j * G - G), w: r3((i - start + 1) * G), h: r3(2 * G) });
+          start = -1;
+        }
+      }
+    }
+    return { outline: [e, e, r3(input.outline.w - e), r3(input.outline.h - e)], cuts, adds };
   };
 
   // 1. provisional areas; 2. drops of every group that does not reach its plane
@@ -708,7 +767,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       for (const [key, o] of open) if (!next.has(key)) close(o, j);
       open = next;
     }
-    zones.push({ netId: pl.netId, layer: pl.layer, rects });
+    zones.push({ netId: pl.netId, layer: pl.layer, rects, shape: planeShape(pl, rg, alive) });
   }
   // connections made through a plane count as routed
   for (let q = failed.length - 1; q >= 0; q--) if (find(failed[q]!.a) === find(failed[q]!.b)) failed.splice(q, 1);
