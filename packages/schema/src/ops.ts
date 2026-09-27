@@ -146,6 +146,22 @@ export const SetPlaneOp = z.object({
   auto: z.boolean().optional().describe('true: back to the automatic planes (GND on B.Cu; on 4 layers GND on In1.Cu and the main supply on In2.Cu)'),
 });
 
+export const AddHoleOp = z.object({
+  op: z.literal('add_hole'),
+  diameter_mm: z.number().positive().describe('Drill diameter, e.g. 3.2 for M3 clearance, 3.5'),
+  corner: z.enum(['top_left', 'top_right', 'bottom_left', 'bottom_right', 'all']).optional().describe('Anchor to a board corner ("all" = one in each corner); the hole follows the board size'),
+  inset_mm: z.number().positive().optional().describe('Corner holes: centre distance from both edges (default diameter + 0.5)'),
+  x_mm: z.number().optional().describe('Fixed position instead of a corner: centre x from the left edge'),
+  y_mm: z.number().optional().describe('Fixed position: centre y from the top edge'),
+  plated: z.boolean().optional().describe('Plated with an annular ring (default false: NPTH, no copper)'),
+  net: netName.optional().describe('Plated holes only: connect to this net, e.g. "GND" (chassis/earth)'),
+});
+
+export const RemoveHoleOp = z.object({
+  op: z.literal('remove_hole'),
+  id: z.string().describe('Hole id ("MH1") or "all"'),
+});
+
 export const EditOp = z.discriminatedUnion('op', [
   AddPartOp,
   RemoveOp,
@@ -165,6 +181,8 @@ export const EditOp = z.discriminatedUnion('op', [
   SetBoardOp,
   PlaceOp,
   SetPlaneOp,
+  AddHoleOp,
+  RemoveHoleOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
 export type EditOpName = EditOp['op'];

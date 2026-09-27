@@ -97,7 +97,7 @@ class Gerber {
   }
 }
 
-const onLayer = (p: BoardPad, layer: CopperLayer) => !!p.drill || p.layers.includes(layer);
+const onLayer = (p: BoardPad, layer: CopperLayer) => !p.npth && (!!p.drill || p.layers.includes(layer));
 
 export function gerbers(b: BoardView, project: string): FabFile[] {
   const { w, h } = b.outline;
@@ -120,7 +120,10 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
   /* solder mask (openings; vias are tented) and paste (SMD pads only) */
   for (const [side, layer] of [['Top', 'F.Cu'], ['Bot', 'B.Cu']] as const) {
     const mask = new Gerber(h, [`FileFunction,Soldermask,${side}`, 'FilePolarity,Negative']);
-    for (const p of pads) if (onLayer(p, layer)) mask.pad(p, MASK_MARGIN);
+    for (const p of pads) {
+      if (p.npth) mask.circle(p.x, p.y, p.drill! + 2 * MASK_MARGIN); // bare hole: no mask over it
+      else if (onLayer(p, layer)) mask.pad(p, MASK_MARGIN);
+    }
     files.push({ name: `${base}-${side === 'Top' ? 'F' : 'B'}_Mask.gbr`, content: mask.toString() });
     const paste = new Gerber(h, [`FileFunction,Paste,${side}`, 'FilePolarity,Positive']);
     for (const p of pads) if (!p.drill && p.layers.includes(layer)) paste.pad(p);
@@ -152,6 +155,7 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
   };
   const texts: { x0: number; y0: number; x1: number; y1: number }[] = [];
   for (const part of b.parts) {
+    if (part.componentId.startsWith('hole:')) continue; // mounting holes carry no silkscreen
     const r = part.body;
     clipped([r.x, r.y, r.x + r.w, r.y, r.x + r.w, r.y + r.h, r.x, r.y + r.h, r.x, r.y]);
     // pin-1 mark: a short dash next to pin 1 (a dot would disappear in the clipping)
@@ -184,17 +188,21 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
   files.push({ name: `${base}-Edge_Cuts.gbr`, content: edge.toString() });
 
   files.push({ name: `${base}-PTH.drl`, content: drill(b) });
+  if (b.parts.some((p) => p.pads.some((q) => q.npth))) files.push({ name: `${base}-NPTH.drl`, content: drill(b, false) });
   return files;
 }
 
-/** Excellon, plated holes (vias and through-hole pads), metric, decimal coordinates. */
-export function drill(b: BoardView): string {
+/**
+ * Excellon, metric, decimal coordinates: plated holes (vias, through-hole pads, plated
+ * mounting holes), or with `plated = false` the non-plated ones (mounting holes).
+ */
+export function drill(b: BoardView, plated = true): string {
   const holes: { d: number; x: number; y: number }[] = [
-    ...b.vias.map((v) => ({ d: v.drill, x: v.x, y: v.y })),
-    ...b.parts.flatMap((p) => p.pads.filter((q) => q.drill).map((q) => ({ d: q.drill!, x: q.x, y: q.y }))),
+    ...(plated ? b.vias.map((v) => ({ d: v.drill, x: v.x, y: v.y })) : []),
+    ...b.parts.flatMap((p) => p.pads.filter((q) => q.drill && !!q.npth !== plated).map((q) => ({ d: q.drill!, x: q.x, y: q.y }))),
   ];
   const sizes = [...new Set(holes.map((x) => x.d.toFixed(3)))].sort();
-  const lines = ['M48', '; Tracewise 0.1', '; FORMAT={-:-/ absolute / metric / decimal}', 'FMAT,2', 'METRIC,TZ'];
+  const lines = ['M48', '; Tracewise 0.1', `; ${plated ? 'PLATED' : 'NON-PLATED'} holes`, '; FORMAT={-:-/ absolute / metric / decimal}', 'FMAT,2', 'METRIC,TZ'];
   sizes.forEach((s, i) => lines.push(`T${i + 1}C${s}`));
   lines.push('%', 'G90', 'G05');
   sizes.forEach((s, i) => {
@@ -211,6 +219,7 @@ const csv = (rows: (string | number)[][]) => rows.map((r) => r.map((c) => (/[",\
 export function bom(b: BoardView): string {
   const groups = new Map<string, { value: string; pkg: string; mpn: string; mfr: string; refs: string[] }>();
   for (const p of b.parts) {
+    if (p.componentId.startsWith('hole:')) continue; // board features, not parts to buy
     const key = `${p.part}|${p.value}|${p.pkg}|${p.mpn ?? ''}`;
     const g = groups.get(key) ?? { value: p.value, pkg: p.pkg, mpn: p.mpn ?? '', mfr: p.manufacturer ?? '', refs: [] };
     g.refs.push(p.refdes);

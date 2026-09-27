@@ -13,6 +13,8 @@ import {
   type PartCard,
   type BoardSettings,
   type CopperLayer,
+  type HoleCorner,
+  type MountingHole,
   DEFAULT_BOARD,
 } from '@tracewise/schema';
 import { autoPlanes } from './board.ts';
@@ -78,6 +80,17 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return place(d, op);
     case 'set_plane':
       return setPlane(d, op);
+    case 'add_hole':
+      return addHole(d, op);
+    case 'remove_hole': {
+      const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+      const before = b.holes ?? [];
+      const keep = op.id.toLowerCase() === 'all' ? [] : before.filter((h) => h.id.toUpperCase() !== op.id.toUpperCase());
+      if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: `No mounting hole "${op.id}".`, candidates: before.map((h) => h.id) });
+      b.holes = keep;
+      d.board = b;
+      return { op: 'remove_hole', effect: `removed ${before.length - keep.length} mounting hole(s)`, ids: ['board'] };
+    }
     case 'remove_waiver': {
       if (!d.waivers[op.id]) reject({ code: 'WAIVER_UNKNOWN', message: `No waiver ${op.id}.`, candidates: Object.keys(d.waivers) });
       delete d.waivers[op.id];
@@ -153,6 +166,45 @@ function setPlane(d: Design, op: Extract<EditOp, { op: 'set_plane' }>): OpResult
   b.planes = [...rest, { netId: net!.id, layer: op.layer! as CopperLayer }];
   d.board = b;
   return { op: 'set_plane', effect: `${net!.name} plane on ${op.layer}${op.layer === 'F.Cu' || op.layer === 'B.Cu' ? ' (pour)' : ' (dedicated)'}`, ids: ['board'] };
+}
+
+/** Mounting holes: at fixed positions or anchored to corners (they follow the board size). */
+function addHole(d: Design, op: Extract<EditOp, { op: 'add_hole' }>): OpResult {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  if (op.diameter_mm < 0.5 || op.diameter_mm > 10) reject({ code: 'BOARD_INVALID', message: `A ${op.diameter_mm} mm hole is outside 0.5–10 mm.` });
+  const hasXY = op.x_mm !== undefined && op.y_mm !== undefined;
+  if (!op.corner && !hasXY) reject({ code: 'BOARD_INVALID', message: 'add_hole needs a corner or x_mm and y_mm.' });
+  let netId: string | undefined;
+  if (op.net) {
+    if (!op.plated) reject({ code: 'BOARD_INVALID', message: 'Only a plated hole can be on a net; add plated: true.' });
+    const net = findNet(d, op.net);
+    if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${op.net}".`, candidates: Object.values(d.nets).map((n) => n.name) });
+    netId = net!.id;
+  }
+  const holes = [...(b.holes ?? [])];
+  const nextId = () => {
+    for (let i = 1; ; i++) if (!holes.some((h) => h.id === `MH${i}`)) return `MH${i}`;
+  };
+  const corners: HoleCorner[] = op.corner === 'all' ? ['top_left', 'top_right', 'bottom_left', 'bottom_right'] : op.corner ? [op.corner] : [];
+  const added: string[] = [];
+  const base = { d: op.diameter_mm, plated: !!op.plated, ...(netId ? { netId } : {}) };
+  if (corners.length) {
+    for (const corner of corners) {
+      // one hole per corner: re-adding replaces it
+      const i = holes.findIndex((h) => h.corner === corner);
+      const hole: MountingHole = { id: i >= 0 ? holes[i]!.id : nextId(), ...base, corner, inset: op.inset_mm ?? Math.round((op.diameter_mm + 0.5) * 10) / 10 };
+      if (i >= 0) holes[i] = hole;
+      else holes.push(hole);
+      added.push(`${hole.id} ${corner.replace('_', ' ')}`);
+    }
+  } else {
+    const hole: MountingHole = { id: nextId(), ...base, x: op.x_mm!, y: op.y_mm! };
+    holes.push(hole);
+    added.push(`${hole.id} at (${op.x_mm}, ${op.y_mm}) mm`);
+  }
+  b.holes = holes;
+  d.board = b;
+  return { op: 'add_hole', effect: `mounting hole${added.length > 1 ? 's' : ''} Ø${op.diameter_mm} mm${op.plated ? ' plated' : ''}: ${added.join(', ')}`, ids: ['board'] };
 }
 
 /** Pin a part on the board: a hard position constraint (one per part, replaced on re-place). */

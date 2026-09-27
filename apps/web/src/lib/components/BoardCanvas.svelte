@@ -188,6 +188,10 @@
         <rect class="hit" x={p.courtyard.x} y={p.courtyard.y} width={p.courtyard.w} height={p.courtyard.h} />
         {#each p.pads as pad, i (i)}
           {@const r = pad.shape === 'round' ? Math.min(pad.w, pad.h) / 2 : Math.min(pad.w, pad.h) * 0.15}
+          {#if pad.npth}
+            <circle class="keepout" cx={pad.x} cy={pad.y} r={pad.w / 2} />
+            <circle class="drill npth" cx={pad.x} cy={pad.y} r={pad.drill! / 2} />
+          {:else}
           <rect
             class="pad"
             class:tht={!!pad.drill}
@@ -200,8 +204,9 @@
             data-net={pad.netId}
           />
           {#if pad.drill}<circle class="drill" cx={pad.x} cy={pad.y} r={pad.drill / 2} />{/if}
+          {/if}
         {/each}
-        {#if show.silk}
+        {#if show.silk && !p.componentId.startsWith('hole:')}
           <rect class="silk" x={p.body.x} y={p.body.y} width={p.body.w} height={p.body.h} />
           <circle class="silkdot" cx={p.pin1.x} cy={p.pin1.y} r="0.18" />
           {#if p.locked}<circle class="pin" cx={p.courtyard.x + p.courtyard.w} cy={p.courtyard.y} r="0.3"><title>pinned</title></circle>{/if}
@@ -249,6 +254,8 @@
   .pad.tht { fill: #d8a24a; }
   .pad.hot { fill: #fff27a; }
   .drill { fill: #0b0f14; }
+  .drill.npth { stroke: #9aa3ad; stroke-width: 0.08; }
+  .keepout { fill: none; stroke: #9aa3ad; stroke-width: 0.05; stroke-dasharray: 0.25 0.2; opacity: 0.7; }
   .via circle { fill: #b9bec7; }
   .via .drill { fill: #0b0f14; }
   .via.hot circle:first-child { fill: #fff27a; }

@@ -33,6 +33,26 @@ export interface BoardSettings {
    * on In2.Cu).
    */
   planes?: { netId: string; layer: CopperLayer }[];
+  /** Mounting holes (board features, not parts). */
+  holes?: MountingHole[];
+}
+
+export type HoleCorner = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
+
+export interface MountingHole {
+  /** "MH1", "MH2" … */
+  id: string;
+  /** Drill diameter, mm. */
+  d: number;
+  /** Plated (with an annular ring, optionally on a net, e.g. GND) or not plated (NPTH). */
+  plated: boolean;
+  netId?: string;
+  /** Fixed position (centre, mm from the top-left corner) … */
+  x?: number;
+  y?: number;
+  /** … or anchored to a corner, the centre `inset` mm from both edges (follows the board size). */
+  corner?: HoleCorner;
+  inset?: number;
 }
 
 export const DEFAULT_RULES: BoardRules = { clearance: 0.2, track: 0.25, powerTrack: 0.5, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 };
@@ -50,6 +70,8 @@ export interface BoardPad {
   h: number;
   shape: 'rect' | 'round';
   drill?: number;
+  /** Not plated (a mounting hole): no copper, only a keep-out of this pad's size. */
+  npth?: boolean;
   netId?: string;
   /** Copper layers the pad is on (through-hole: all). */
   layers: CopperLayer[];
@@ -171,6 +193,7 @@ export function boardSummary(b: BoardView, routed = true) {
       ? { nets: b.stats.nets, routed: b.stats.routed, unrouted_connections: b.stats.unrouted, vias: b.stats.vias, track_mm: b.stats.trackLength }
       : 'not computed here (see the Layout view)',
     planes: b.planes.map((p) => ({ net: b.netNames[p.netId] ?? p.netId, layer: p.layer, dedicated: p.layer !== 'F.Cu' && p.layer !== 'B.Cu', automatic: p.auto })),
+    mounting_holes: b.parts.filter((p) => p.componentId.startsWith('hole:')).map((p) => ({ id: p.refdes, x: p.x, y: p.y, diameter: p.pads[0]?.drill, plated: !p.pads[0]?.npth })),
     drc: b.diagnostics.map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
     note: 'Placement and routing are recomputed automatically from the netlist and the ledger. Pin parts with place, size the board with set_board, keep parts together with constrain near, choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',

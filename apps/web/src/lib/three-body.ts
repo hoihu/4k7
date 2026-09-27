@@ -236,6 +236,11 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res): THREE.
     for (const p of part.pads) {
       const layers = p.drill ? ['F.Cu', 'B.Cu'] : p.layers.filter((l) => l === 'F.Cu' || l === 'B.Cu');
       for (const l of layers) {
+        if (p.npth) {
+          // a bare hole: only the hole, no copper
+          holes.push(new THREE.Matrix4().compose(new THREE.Vector3(p.x, layerY(l) + (onBottom(l) ? -CU - 0.002 : CU + 0.002), p.y), q, new THREE.Vector3(p.drill! / 2, 0.001, p.drill! / 2)));
+          continue;
+        }
         const y = surfaceY(l);
         const mm = new THREE.Matrix4();
         if (p.shape === 'round') rounds.push(mm.compose(new THREE.Vector3(p.x, y, p.y), q, new THREE.Vector3(Math.min(p.w, p.h) / 2, CU, Math.min(p.w, p.h) / 2)));

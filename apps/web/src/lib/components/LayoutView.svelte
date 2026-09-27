@@ -100,7 +100,7 @@
     <div class="scroll">
       {#if b}
         <div class="stats">
-          <div><b>{b.parts.length}</b><span>parts</span></div>
+          <div><b>{b.parts.filter((p) => !p.componentId.startsWith('hole:')).length}</b><span>parts{#if b.parts.some((p) => p.componentId.startsWith('hole:'))} · {b.parts.filter((p) => p.componentId.startsWith('hole:')).length} holes{/if}</span></div>
           <div><b>{b.stats.routed}/{b.stats.nets}</b><span>nets routed</span></div>
           <div><b>{b.ratsnest.length}</b><span>unrouted</span></div>
           <div><b>{b.stats.vias}</b><span>vias</span></div>

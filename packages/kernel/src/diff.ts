@@ -69,7 +69,14 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
       change: base.board ? 'change' : 'add',
       entityId: 'board',
       title: `board ${b?.width && b?.height ? `${b.width} × ${b.height} mm` : 'sized to fit'}, ${b?.layers ?? 2} layers`,
-      details: b ? [`clearance ${b.rules.clearance} mm`, `track ${b.rules.track} / ${b.rules.powerTrack} mm`] : [],
+      details: b
+        ? [
+            `clearance ${b.rules.clearance} mm`,
+            `track ${b.rules.track} / ${b.rules.powerTrack} mm`,
+            ...(b.holes?.length ? [`${b.holes.length} mounting hole${b.holes.length > 1 ? 's' : ''} (${[...new Set(b.holes.map((x) => `Ø${x.d}`))].join(', ')})`] : []),
+            ...(b.planes ? [`planes: ${b.planes.map((p) => `${draft.nets[p.netId]?.name ?? p.netId} on ${p.layer}`).join(', ') || 'none'}`] : []),
+          ]
+        : [],
     });
   }
 

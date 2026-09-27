@@ -248,3 +248,48 @@ describe('vias', () => {
     expect(copperDrc(strict).some((x) => x.code === 'DRC.VIA_IN_PAD' && x.entities.includes('C1'))).toBe(true);
   });
 });
+
+describe('mounting holes', () => {
+  it('puts holes in the corners, keeps parts and copper clear, and grows an auto-sized board', () => {
+    const k = buck();
+    const before = k.board();
+    k.transact({ summary: 'holes', ops: [{ op: 'add_hole', diameter_mm: 3.5, corner: 'all' }] });
+    const b = k.board();
+    const holes = b.parts.filter((p) => p.componentId.startsWith('hole:'));
+    expect(holes.map((h) => h.refdes)).toEqual(['MH1', 'MH2', 'MH3', 'MH4']);
+    expect(holes.map((h) => [h.x, h.y])).toEqual([[4, 4], [b.outline.w - 4, 4], [4, b.outline.h - 4], [b.outline.w - 4, b.outline.h - 4]]);
+    expect(holes.every((h) => h.pads[0]!.npth && h.pads[0]!.drill === 3.5)).toBe(true);
+    expect(b.outline.w * b.outline.h).toBeGreaterThanOrEqual(before.outline.w * before.outline.h);
+    // no part in a hole's keep-out, everything routed, nothing too close to a hole
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(b.stats.unrouted).toBe(0);
+  });
+
+  it('writes non-plated holes to their own drill file and keeps them out of the BOM', async () => {
+    const { fabFiles } = await import('@tracewise/fab');
+    const k = buck();
+    k.transact({ summary: 'holes', ops: [{ op: 'add_hole', diameter_mm: 3.5, corner: 'all' }] });
+    const files = fabFiles(k.board(), 'h');
+    const npth = files.find((f) => f.name === 'h-NPTH.drl')!.content;
+    expect(npth.split('\n').filter((l) => /^X/.test(l))).toHaveLength(4);
+    expect(npth).toContain('C3.500');
+    expect(files.find((f) => f.name === 'h-PTH.drl')!.content).not.toContain('C3.500');
+    expect(files.find((f) => f.name === 'h-BOM.csv')!.content).not.toContain('MH1');
+    // no copper flashed for them
+    expect(files.find((f) => f.name === 'h-F_Cu.gbr')!.content).not.toContain('C,4.500000');
+  });
+
+  it('can plate a hole onto a net and remove holes again', () => {
+    const k = buck();
+    k.transact({ summary: 'hole', ops: [{ op: 'add_hole', diameter_mm: 3.2, x_mm: 5, y_mm: 5, plated: true, net: 'GND' }] });
+    let b = k.board();
+    const mh = b.parts.find((p) => p.refdes === 'MH1')!;
+    expect(mh.pads[0]!.npth).toBeUndefined();
+    expect(b.netNames[mh.pads[0]!.netId!]).toBe('GND');
+    expect(b.stats.unrouted).toBe(0);
+    expect(JSON.stringify(k.transact({ summary: 'x', ops: [{ op: 'add_hole', diameter_mm: 3, x_mm: 1, y_mm: 1, net: 'GND' }] }))).toContain('Only a plated hole');
+    k.transact({ summary: 'rm', ops: [{ op: 'remove_hole', id: 'all' }] });
+    b = k.board();
+    expect(b.parts.some((p) => p.componentId.startsWith('hole:'))).toBe(false);
+  });
+});

@@ -21,6 +21,7 @@ import {
   type Component,
   type CopperLayer,
   type Design,
+  type MountingHole,
   type PackageInfo,
   type PartCard,
   type RatsLine,
@@ -347,8 +348,81 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     h = Math.ceil((Math.max(b3.y1 + margin, h)) * 2) / 2;
   }
 
+  /* ---- mounting holes: fixed keep-outs; corner holes follow the outline ---- */
+  const holes = settings.holes ?? [];
+  const holeAt = (hole: MountingHole) => {
+    const inset = hole.inset ?? hole.d + 0.5;
+    if (!hole.corner) return { x: hole.x ?? 0, y: hole.y ?? 0 };
+    return { x: hole.corner.endsWith('left') ? inset : w - inset, y: hole.corner.startsWith('top') ? inset : h - inset };
+  };
+  // parts keep clear of the screw head / washer: a square of 2 × diameter
+  const keep = (hole: MountingHole) => 2 * hole.d;
+  if (holes.length && items.length) {
+    for (let round = 0; round < 20; round++) {
+      const blockers = holes.map((hole) => {
+        const at = holeAt(hole);
+        return { comp: { refdes: `~${hole.id}` }, x: at.x, y: at.y, rot: 0, fixed: true, cw: keep(hole), ch: keep(hole) } as unknown as Item;
+      });
+      const all = [...items, ...blockers];
+      if (!overlapping(all)) break;
+      separate(all, 40, true);
+      for (const it of movable) snapItem(it);
+      if (settings.width && settings.height) {
+        const inside = (it: Item) => {
+          const e = extent(it);
+          it.x = Math.min(Math.max(it.x, margin + e.w / 2), settings.width! - margin - e.w / 2);
+          it.y = Math.min(Math.max(it.y, margin + e.h / 2), settings.height! - margin - e.h / 2);
+        };
+        for (const it of movable) inside(it);
+      } else {
+        // an auto-sized board grows (and shifts) so the parts clear the holes
+        const b2 = bounds(items);
+        const sx = b2.x0 < margin ? snap(margin - b2.x0) : 0;
+        const sy = b2.y0 < margin ? snap(margin - b2.y0) : 0;
+        for (const it of movable) {
+          it.x = r3(it.x + sx);
+          it.y = r3(it.y + sy);
+        }
+        const b3 = bounds(items);
+        w = Math.ceil(Math.max(w + sx, b3.x1 + margin) * 2) / 2;
+        h = Math.ceil(Math.max(h + sy, b3.y1 + margin) * 2) / 2;
+        if (round >= 1) {
+          // still squeezed: give the corners room (grow, parts stay centred)
+          w += 1;
+          h += 1;
+          for (const it of movable) {
+            it.x = r3(it.x + 0.5);
+            it.y = r3(it.y + 0.5);
+          }
+        }
+      }
+    }
+  }
+  const holeParts: BoardPart[] = holes.map((hole) => {
+    const at = holeAt(hole);
+    const k = keep(hole);
+    const pad = hole.plated ? hole.d + 1.2 : hole.d + 1; // annular ring, or the copper keep-out
+    return {
+      componentId: `hole:${hole.id}`,
+      refdes: hole.id,
+      value: `Ø${hole.d}`,
+      part: 'board:mounting_hole',
+      pkg: `MH-${hole.d}${hole.plated ? '-PTH' : ''}`,
+      pkgInfo: { name: `MH-${hole.d}`, family: 'other', pins: 1 },
+      x: r3(at.x),
+      y: r3(at.y),
+      rot: 0,
+      side: 'top',
+      pads: [{ number: '1', x: r3(at.x), y: r3(at.y), w: pad, h: pad, shape: 'round', drill: hole.d, ...(hole.plated ? {} : { npth: true }), ...(hole.netId ? { netId: hole.netId } : {}), layers: hole.plated ? [...layers] : [] }],
+      body: { x: r3(at.x - hole.d / 2), y: r3(at.y - hole.d / 2), w: hole.d, h: hole.d },
+      courtyard: { x: r3(at.x - k / 2), y: r3(at.y - k / 2), w: k, h: k },
+      pin1: { x: r3(at.x), y: r3(at.y) },
+      locked: true,
+    };
+  });
+
   /* ---- result ---- */
-  const parts: BoardPart[] = items.map((it) => toPart(d, it, layers));
+  const parts: BoardPart[] = [...items.map((it) => toPart(d, it, layers)), ...holeParts];
   const diagnostics = placementChecks(parts, w, h, rules.edgeClearance);
   for (const ref of missing) {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board.`, entities: [ref] });
