@@ -359,9 +359,11 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     });
     for (const part of input.parts) {
       if (part.pads.length > 3) continue; // under ICs vias are fine (and needed to fan out BGAs)
+      // the whole via stays out of the land pattern (its ring too, not just its centre)
+      const r = rules.viaPad / 2;
       const b = part.courtyard;
-      for (let j = Math.max(0, Math.floor(b.y / G)); j <= Math.min(H - 1, Math.ceil((b.y + b.h) / G)); j++) {
-        for (let i = Math.max(0, Math.floor(b.x / G)); i <= Math.min(W - 1, Math.ceil((b.x + b.w) / G)); i++) viaBlocked[j * W + i] = 1;
+      for (let j = Math.max(0, Math.floor((b.y - r) / G)); j <= Math.min(H - 1, Math.ceil((b.y + b.h + r) / G)); j++) {
+        for (let i = Math.max(0, Math.floor((b.x - r) / G)); i <= Math.min(W - 1, Math.ceil((b.x + b.w + r) / G)); i++) viaBlocked[j * W + i] = 1;
       }
     }
   }
@@ -461,43 +463,108 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   };
 
   /** Turn a path into tracks and vias, reserve its copper; pad ends start/stop at pad centres. */
-  const commit = (netId: string, net: number, width: number, path: number[], startPad: number, endPad: number, endVia = false) => {
-    const runs: { l: number; pts: number[] }[] = [];
+  /**
+   * Straighten a run of grid cells on one layer into long 0/45/90° pieces (the maze path zigzags
+   * when the direction is not octilinear): from each vertex, jump to the farthest cell that one
+   * straight piece plus one diagonal piece (either order) reaches through free cells. Returns the
+   * vertices and every cell the straightened track covers.
+   */
+  const straighten = (l: number, cells: number[], free: (l: number, i: number) => boolean) => {
+    const walk = (a: number, b: number, out: number[]): boolean => {
+      let x = a % W;
+      let y = (a - x) / W;
+      const bx = b % W;
+      const by = (b - bx) / W;
+      const sx = Math.sign(bx - x);
+      const sy = Math.sign(by - y);
+      while (x !== bx || y !== by) {
+        const nx = x + sx;
+        const ny = y + sy;
+        if (!free(l, ny * W + nx)) return false;
+        if (sx && sy && (!free(l, y * W + nx) || !free(l, ny * W + x))) return false;
+        x = nx;
+        y = ny;
+        out.push(y * W + x);
+      }
+      return true;
+    };
+    const octo = (a: number, b: number): { corner: number; cells: number[] } | null => {
+      const ax = a % W;
+      const ay = (a - ax) / W;
+      const dx = (b % W) - ax;
+      const dy = (b - (b % W)) / W - ay;
+      const m = Math.min(Math.abs(dx), Math.abs(dy));
+      const diagFirst = (ay + Math.sign(dy) * m) * W + ax + Math.sign(dx) * m;
+      const straightFirst = (ay + dy - Math.sign(dy) * m) * W + ax + dx - Math.sign(dx) * m;
+      for (const corner of [diagFirst, straightFirst]) {
+        const out: number[] = [];
+        if (walk(a, corner, out) && walk(corner, b, out)) return { corner, cells: out };
+      }
+      return null;
+    };
+    const verts = [cells[0]!];
+    const covered = [cells[0]!];
+    for (let i = 0; i < cells.length - 1; ) {
+      let next = i + 1;
+      let piece: { corner: number; cells: number[] } | null = null;
+      for (let j = Math.min(cells.length - 1, i + 250); j > i + 1; j--) {
+        piece = octo(cells[i]!, cells[j]!);
+        if (piece) {
+          next = j;
+          break;
+        }
+      }
+      if (piece) {
+        if (piece.corner !== cells[i] && piece.corner !== cells[next]) verts.push(piece.corner);
+        covered.push(...piece.cells);
+      } else covered.push(cells[next]!); // the maze step itself (it was legal when found)
+      verts.push(cells[next]!);
+      i = next;
+    }
+    return { verts, covered };
+  };
+
+  /** Turn a path into tracks and vias, reserve its copper; returns the cells the copper covers. */
+  const commit = (netId: string, net: number, k: number, path: number[], startPad: number, endPad: number, endVia = false): number[] => {
+    const width = widths[k]!;
+    const free = freeFor(net, k);
+    const runs: { l: number; cells: number[] }[] = [];
     for (const s of path) {
       const l = Math.floor(s / N);
-      const i = s % N;
-      const px = (i % W) * G;
-      const py = Math.floor(i / W) * G;
       const run = runs.at(-1);
-      if (!run || run.l !== l) {
-        if (run) addVia(netId, net, px, py);
-        runs.push({ l, pts: [px, py] });
-      } else run.pts.push(px, py);
+      if (!run || run.l !== l) runs.push({ l, cells: [s % N] });
+      else run.cells.push(s % N);
     }
-    if (startPad >= 0 && runs[0]) {
+    const covered: number[] = [];
+    const lines = runs.map((run, ri) => {
+      const { verts, covered: cov } = straighten(run.l, run.cells, free);
+      for (const c of cov) covered.push(run.l * N + c);
+      const pts = verts.flatMap((c) => [(c % W) * G, Math.floor(c / W) * G]);
+      if (ri > 0) addVia(netId, net, pts[0]!, pts[1]!);
+      return { l: run.l, pts };
+    });
+    if (startPad >= 0 && lines[0]) {
       const sp = pads[startPad]!;
       const se = escapes[startPad];
-      runs[0].pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y]));
+      lines[0].pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y]));
     }
-    const last = runs.at(-1)!;
+    const last = lines.at(-1)!;
     if (endPad >= 0) {
       const ee = escapes[endPad];
       last.pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : []), pads[endPad]!.x, pads[endPad]!.y);
     }
     if (endVia) {
       // a drop to a plane: the via at the end of the path
-      const s = path.at(-1)!;
-      const i = s % N;
-      const px = (i % W) * G;
-      const py = Math.floor(i / W) * G;
-      addVia(netId, net, px, py);
+      const i = path.at(-1)! % N;
+      addVia(netId, net, (i % W) * G, Math.floor(i / W) * G);
     }
-    for (const run of runs) {
-      const pts = simplify(run.pts);
+    for (const line of lines) {
+      const pts = simplify(line.pts);
       if (pts.length < 4) continue;
-      tracks.push({ netId, layer: layers[run.l]!, width, pts: pts.map(r3) });
-      for (let q = 0; q + 3 < pts.length; q += 2) stampSeg(run.l, net, pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!, width);
+      tracks.push({ netId, layer: layers[line.l]!, width, pts: pts.map(r3) });
+      for (let q = 0; q + 3 < pts.length; q += 2) stampSeg(line.l, net, pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!, width);
     }
+    return covered;
   };
   const padAt = (root: number, state: number) => pads.findIndex((_, idx) => find(idx) === root && padCells[idx]!.includes(state));
 
@@ -527,9 +594,9 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       continue;
     }
     // (a route may also start on copper laid earlier for this net: then it starts right there)
-    commit(c.netId, net, widths[k]!, path, padAt(find(c.b), path[0]!), padAt(find(c.a), path.at(-1)!));
+    const copper = commit(c.netId, net, k, path, padAt(find(c.b), path[0]!), padAt(find(c.a), path.at(-1)!));
     union(c.a, c.b);
-    groupCells.get(find(c.a))!.push(...path);
+    groupCells.get(find(c.a))!.push(...copper);
   }
 
   /*
@@ -725,8 +792,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         return true;
       }, pads[r]!);
       if (!path) continue;
-      commit(pl.netId, rg.pnet, rules.track, path, padAt(r, path[0]!), -1, true);
-      groupCells.get(r)!.push(...path);
+      groupCells.get(r)!.push(...commit(pl.netId, rg.pnet, 0, path, padAt(r, path[0]!), -1, true));
       const end = path.at(-1)! % N;
       dropVias.set(r, [...(dropVias.get(r) ?? []), { x: (end % W) * G, y: Math.floor(end / W) * G }]);
     }

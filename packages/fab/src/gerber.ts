@@ -132,7 +132,11 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
 
   /* silkscreen: body outlines and refdes, kept off pads */
   const silk = new Gerber(h, ['FileFunction,Legend,Top', 'FilePolarity,Positive']);
-  const keepOff = pads.map((p) => ({ x0: p.x - p.w / 2 - SILK_TO_PAD - SILK_WIDTH / 2, y0: p.y - p.h / 2 - SILK_TO_PAD - SILK_WIDTH / 2, x1: p.x + p.w / 2 + SILK_TO_PAD + SILK_WIDTH / 2, y1: p.y + p.h / 2 + SILK_TO_PAD + SILK_WIDTH / 2 }));
+  const keepOff = [
+    ...pads.map((p) => ({ x0: p.x - p.w / 2 - SILK_TO_PAD - SILK_WIDTH / 2, y0: p.y - p.h / 2 - SILK_TO_PAD - SILK_WIDTH / 2, x1: p.x + p.w / 2 + SILK_TO_PAD + SILK_WIDTH / 2, y1: p.y + p.h / 2 + SILK_TO_PAD + SILK_WIDTH / 2 })),
+    // and off vias (ink on a via's ring prints badly)
+    ...b.vias.map((v) => ({ x0: v.x - v.pad / 2 - SILK_WIDTH, y0: v.y - v.pad / 2 - SILK_WIDTH, x1: v.x + v.pad / 2 + SILK_WIDTH, y1: v.y + v.pad / 2 + SILK_WIDTH })),
+  ];
   const clear = (x: number, y: number) =>
     x > SILK_WIDTH && y > SILK_WIDTH && x < w - SILK_WIDTH && y < h - SILK_WIDTH && !keepOff.some((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1);
   const clipped = (pts: number[]) => {

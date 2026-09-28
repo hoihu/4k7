@@ -65,7 +65,8 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
           return Math.hypot(dx, dy) < v.pad / 2 - 1e-6;
         });
         const cy = part.courtyard;
-        const inSmall = part.pads.length <= 3 && v.x > cy.x && v.x < cy.x + cy.w && v.y > cy.y && v.y < cy.y + cy.h;
+        const r = v.pad / 2 - 1e-6;
+        const inSmall = part.pads.length <= 3 && v.x > cy.x - r && v.x < cy.x + cy.w + r && v.y > cy.y - r && v.y < cy.y + cy.h + r;
         if (inPad || inSmall) {
           viaIssues.push({ code: 'DRC.VIA_IN_PAD', severity: 'error', message: `Via (${b.netNames[v.netId] ?? v.netId}) inside the land pattern of ${part.refdes}; vias in pads are off for this board.`, at: { x: v.x, y: v.y }, entities: [part.refdes] });
           break;

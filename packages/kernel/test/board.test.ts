@@ -148,6 +148,28 @@ describe('routing', () => {
     expect(sw.some((t) => t.width === b.rules.powerTrack)).toBe(true);
   });
 
+  it('draws tracks as straight 0/45/90° pieces, not zigzags', () => {
+    const k = buck();
+    k.transact({ summary: 'holes', ops: [{ op: 'add_hole', diameter_mm: 3.5, corner: 'all' }] });
+    const b = k.board();
+    const pads = b.parts.flatMap((p) => p.pads);
+    const nearPad = (x: number, y: number) => pads.some((p) => Math.hypot(p.x - x, p.y - y) < Math.max(p.w, p.h) / 2 + 1.4); // pad entries and escape stubs
+    let tiny = 0;
+    for (const t of b.tracks) {
+      for (let i = 2; i + 5 < t.pts.length; i += 2) {
+        const [ax, ay, bx, by] = [t.pts[i]!, t.pts[i + 1]!, t.pts[i + 2]!, t.pts[i + 3]!];
+        // octilinear everywhere away from the pad entries
+        if (!nearPad(ax, ay) && !nearPad(bx, by)) {
+          const dx = Math.abs(bx - ax);
+          const dy = Math.abs(by - ay);
+          expect(dx < 1e-6 || dy < 1e-6 || Math.abs(dx - dy) < 1e-6, `segment ${ax},${ay} → ${bx},${by}`).toBe(true);
+          if (Math.hypot(dx, dy) < 0.25) tiny++;
+        }
+      }
+    }
+    expect(tiny).toBe(0);
+  });
+
   it('the copper DRC catches a short', async () => {
     const { copperDrc } = await import('../src/drc.ts');
     const b = structuredClone(buck().board());
