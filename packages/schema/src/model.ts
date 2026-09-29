@@ -90,7 +90,7 @@ export interface Constraint {
   value?: string;
   /** For `near`: maximum distance in mm (board). */
   maxMm?: number;
-  /** For `position`: pinned board position of `a` (centre, mm) and clockwise rotation. */
+  /** For `position`: pinned board position of `a` (centre, mm) and clockwise rotation (absent: the placer picks it). */
   xMm?: number;
   yMm?: number;
   rot?: number;

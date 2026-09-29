@@ -136,7 +136,7 @@ export const PlaceOp = z.object({
   ref: componentRef,
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
-  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation'),
+  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation; omit it to let the placer choose the rotation (a rotation pinned earlier stays)'),
 });
 
 export const SetPlaneOp = z.object({

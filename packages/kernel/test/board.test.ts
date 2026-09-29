@@ -135,6 +135,22 @@ describe('fixed outline with a pinned part', () => {
   });
 });
 
+describe('pinned parts and rotation', () => {
+  it('a part pinned without a rotation still gets the best rotation; an explicit one stays', () => {
+    const k = buck();
+    const free = k.board().parts.find((p) => p.refdes === 'R1')!;
+    expect(free.rot).not.toBe(0);
+    const rotOf = () => k.board().parts.find((p) => p.refdes === 'R1')!.rot;
+    k.transact({ summary: 'pin', ops: [{ op: 'place', ref: 'R1', x_mm: free.x, y_mm: free.y }] });
+    expect(rotOf()).toBe(free.rot);
+    k.transact({ summary: 'rotate', ops: [{ op: 'place', ref: 'R1', x_mm: free.x, y_mm: free.y, rot: 0 }] });
+    expect(rotOf()).toBe(0);
+    // a drag (no rotation) keeps the rotation pinned before
+    k.transact({ summary: 'drag', ops: [{ op: 'place', ref: 'R1', x_mm: free.x + 0.5, y_mm: free.y }] });
+    expect(rotOf()).toBe(0);
+  });
+});
+
 describe('routing', () => {
   it('routes the buck completely, DRC-clean, and every net is one piece of copper', () => {
     const b = buck().board();

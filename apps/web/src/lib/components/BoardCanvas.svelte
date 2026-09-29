@@ -11,8 +11,8 @@
     onselect?: (refdes: string, additive: boolean) => void;
     onclear?: () => void;
     onhovernet?: (netId: string | null) => void;
-    /** Drag or rotate a part: pin it there (the place op). */
-    onplace?: (refdes: string, x: number, y: number, rot: number) => void;
+    /** Drag or rotate a part: pin it there (the place op). A drag leaves the rotation as it was pinned (or free). */
+    onplace?: (refdes: string, x: number, y: number, rot?: number) => void;
   }
   let { board, show, selection = [], hotNet = null, marker = null, onselect, onclear, onhovernet, onplace }: Props = $props();
 
@@ -88,7 +88,7 @@
       const d = partDrag;
       partDrag = null;
       const part = board?.parts.find((p) => p.refdes === d.ref);
-      if (d.moved && part) onplace?.(d.ref, Math.round((part.x + d.dx) * 1000) / 1000, Math.round((part.y + d.dy) * 1000) / 1000, part.rot);
+      if (d.moved && part) onplace?.(d.ref, Math.round((part.x + d.dx) * 1000) / 1000, Math.round((part.y + d.dy) * 1000) / 1000);
       else onselect?.(d.ref, e.shiftKey || e.metaKey || e.ctrlKey);
       return;
     }
@@ -209,7 +209,7 @@
         {#if show.silk && !p.componentId.startsWith('hole:')}
           <rect class="silk" x={p.body.x} y={p.body.y} width={p.body.w} height={p.body.h} />
           <circle class="silkdot" cx={p.pin1.x} cy={p.pin1.y} r="0.18" />
-          {#if p.locked}<circle class="pin" cx={p.courtyard.x + p.courtyard.w} cy={p.courtyard.y} r="0.3"><title>pinned</title></circle>{/if}
+          {#if p.locked}<circle class="pin" cx={p.courtyard.x + p.courtyard.w - 0.3} cy={p.courtyard.y + 0.3} r="0.16"><title>pinned</title></circle>{/if}
           <text class="ref" x={p.x} y={p.y} font-size={Math.max(0.5, Math.min(1.2, Math.min(p.body.w, p.body.h) * 0.45))}>{p.refdes}</text>
         {/if}
       </g>
@@ -274,5 +274,6 @@
   .part { cursor: grab; }
   .part.dragging { cursor: grabbing; opacity: 0.85; }
   .part.dragging .hit { fill: rgba(111, 181, 255, 0.18); }
-  .pin { fill: #e0a93b; stroke: #0b0f14; stroke-width: 0.08; }
+  .pin { fill: none; stroke: #9fd2ff; stroke-width: 0.06; opacity: 0.45; pointer-events: none; }
+  .part:hover .pin, .part.sel .pin { opacity: 1; }
 </style>

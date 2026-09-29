@@ -210,7 +210,13 @@ function addHole(d: Design, op: Extract<EditOp, { op: 'add_hole' }>): OpResult {
 /** Pin a part on the board: a hard position constraint (one per part, replaced on re-place). */
 function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
   const comp = resolveComponent(d, op.ref);
-  for (const k of Object.values(d.ledger)) if (k.kind === 'position' && k.a === comp.id) delete d.ledger[k.id];
+  // without a rotation, a rotation pinned before stays; if there is none, the placer picks it
+  let rot: number | undefined = op.rot;
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind !== 'position' || k.a !== comp.id) continue;
+    rot ??= k.rot;
+    delete d.ledger[k.id];
+  }
   const id = nextId(d, 'k');
   const r = (v: number) => Math.round(v * 1000) / 1000;
   d.ledger[id] = {
@@ -219,12 +225,12 @@ function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
     a: comp.id,
     xMm: r(op.x_mm),
     yMm: r(op.y_mm),
-    rot: op.rot ?? 0,
+    ...(rot !== undefined && { rot }),
     domain: 'placement',
     strength: 'hard',
     source: { type: 'user' },
   };
-  return { op: 'place', effect: `${comp.refdes} pinned at (${r(op.x_mm)}, ${r(op.y_mm)}) mm${op.rot ? `, ${op.rot}°` : ''}`, ids: [id] };
+  return { op: 'place', effect: `${comp.refdes} pinned at (${r(op.x_mm)}, ${r(op.y_mm)}) mm${rot !== undefined ? `, ${rot}°` : ''}`, ids: [id] };
 }
 
 /** Draw a part as one symbol or as units. Changes the design's copy of the part card only. */

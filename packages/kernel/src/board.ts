@@ -45,6 +45,8 @@ interface Item {
   y: number;
   rot: number;
   fixed: boolean;
+  /** Pinned without a rotation: the placer still picks the rotation. */
+  freeRot?: boolean;
   /** Courtyard size at rotation 0, centred. */
   cw: number;
   ch: number;
@@ -148,7 +150,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     if (!it) continue;
     it.x = k.xMm ?? it.x;
     it.y = k.yMm ?? it.y;
-    it.rot = k.rot ?? 0;
+    it.rot = k.rot ?? it.rot;
+    it.freeRot = k.rot === undefined;
     it.fixed = true;
   }
   const anyFixed = items.some((it) => it.fixed);
@@ -288,15 +291,30 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     const ps = ms.map((m) => padPos(m.it, m.px, m.py));
     return { x: ps.reduce((s, p) => s + p.x, 0) / ps.length, y: ps.reduce((s, p) => s + p.y, 0) / ps.length };
   };
-  for (const it of movable) {
+  // pinned parts without a pinned rotation first (only rotations that fit between the other
+  // pinned parts: they cannot move out of the way), then the movable ones. A pinned part serves
+  // its signals: its pads on plane nets drop onto the plane right there, whichever way they face.
+  const fixedItems = items.filter((it) => it.fixed);
+  const planeNets = new Set(settingsPlanes(d, layers.length as 2 | 4).map((pl) => pl.netId));
+  const clashes = (it: Item) => {
+    const e = extent(it);
+    return fixedItems.some((o) => {
+      if (o === it) return false;
+      const eo = extent(o);
+      return Math.abs(o.x - it.x) < (e.w + eo.w) / 2 - 1e-6 && Math.abs(o.y - it.y) < (e.h + eo.h) / 2 - 1e-6;
+    });
+  };
+  for (const it of [...items.filter((x) => x.fixed && x.freeRot), ...movable]) {
     if (!isTwoPin(it.card)) continue;
     let best = it.rot;
     let bestLen = Infinity;
     for (const rot of [0, 90, 180, 270]) {
       it.rot = rot;
+      if (it.fixed && clashes(it)) continue;
       let len = 0;
       for (const { pad, net } of padsOf(it)) {
-        const c = net ? netCentre(net, it) : null;
+        if (!net || (it.fixed && planeNets.has(net))) continue;
+        const c = netCentre(net, it);
         if (!c) continue;
         const p = padPos(it, pad.x, pad.y);
         len += Math.hypot(c.x - p.x, c.y - p.y);
