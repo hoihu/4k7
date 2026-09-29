@@ -55,6 +55,7 @@ function resources() {
     cuUnderMask: new THREE.MeshStandardMaterial({ color: 0x2f7f4c, roughness: 0.5, metalness: 0.1 }),
     pad: new THREE.MeshStandardMaterial({ color: 0xd6aa55, roughness: 0.3, metalness: 0.85 }),
     hole: new THREE.MeshBasicMaterial({ color: 0x07090c }),
+    barrel: new THREE.MeshStandardMaterial({ color: 0xd6aa55, roughness: 0.3, metalness: 0.85, side: THREE.DoubleSide }),
     edge: new THREE.MeshStandardMaterial({ color: 0xc9b98a, roughness: 0.8 }),
   };
 }
@@ -219,7 +220,7 @@ function viewerCore(canvas: HTMLCanvasElement) {
 }
 
 /** A pour's exact shape drawn into an alpha texture (white = copper), ~25 px/mm. */
-function zoneTexture(z: BoardView['zones'][number], w: number, h: number): THREE.CanvasTexture | null {
+function zoneTexture(z: BoardView['zones'][number], w: number, h: number, drills: { x: number; y: number; d: number }[] = []): THREE.CanvasTexture | null {
   const k = Math.min(25, 4096 / Math.max(w, h));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(w * k));
@@ -256,6 +257,14 @@ function zoneTexture(z: BoardView['zones'][number], w: number, h: number): THREE
   } else {
     for (let i = 0; i + 3 < z.rects.length; i += 4) ctx.fillRect(z.rects[i]!, z.rects[i + 1]!, z.rects[i + 2]!, z.rects[i + 3]!);
   }
+  // no copper over a drilled hole
+  ctx.globalCompositeOperation = 'destination-out';
+  for (const d of drills) {
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.d / 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
   const tex = new THREE.CanvasTexture(canvas);
   tex.anisotropy = 4;
   return tex;
@@ -301,9 +310,26 @@ function bodyGroup(body: Body3D, res: Res, mark = true): THREE.Group {
 function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res): THREE.Group {
   const group = new THREE.Group();
   const { w, h } = b.outline;
-  const board = new THREE.Mesh(res.unitBox, [res.edge, res.edge, res.mask, res.mask, res.edge, res.edge]);
-  board.scale.set(w, THICKNESS, h);
-  board.position.set(w / 2, -THICKNESS / 2, h / 2);
+  /*
+   * The substrate: the outline extruded, with every drilled hole (mounting holes, through-hole
+   * pads) cut through it. Caps get the solder mask, the outer edge and the hole walls bare FR4.
+   * (Vias stay tented: covered by the mask, as usual.)
+   */
+  const drills = b.parts.flatMap((p) => p.pads.filter((q) => q.drill).map((q) => ({ x: q.x, y: q.y, d: q.drill!, pad: q })));
+  const outline = new THREE.Shape();
+  outline.moveTo(0, 0);
+  outline.lineTo(w, 0);
+  outline.lineTo(w, h);
+  outline.lineTo(0, h);
+  outline.closePath();
+  for (const d of drills) {
+    const hole = new THREE.Path();
+    hole.absarc(d.x, d.y, d.d / 2, 0, Math.PI * 2, true);
+    outline.holes.push(hole);
+  }
+  const substrate = new THREE.ExtrudeGeometry(outline, { depth: THICKNESS, bevelEnabled: false, curveSegments: 32 });
+  substrate.rotateX(Math.PI / 2); // shape (x, y) → board (x, y): three (x, 0, y); thickness downwards
+  const board = new THREE.Mesh(substrate, [res.mask, res.edge]);
   group.add(board);
 
   const m = new THREE.Matrix4();
@@ -317,23 +343,53 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res): THREE.
   const rects: THREE.Matrix4[] = [];
   const rounds: THREE.Matrix4[] = [];
   const holes: THREE.Matrix4[] = [];
+  // drilled, plated pads: a copper ring (round or square) on both sides and a barrel through the hole
+  const ringGeos = new Map<string, THREE.BufferGeometry>();
+  const ringGeo = (p: (typeof b.parts)[number]['pads'][number]) => {
+    const key = `${p.shape}/${p.w}/${p.h}/${p.drill}`;
+    let geo = ringGeos.get(key);
+    if (!geo) {
+      const s2 = new THREE.Shape();
+      if (p.shape === 'round') s2.absarc(0, 0, Math.min(p.w, p.h) / 2, 0, Math.PI * 2, false);
+      else {
+        s2.moveTo(-p.w / 2, -p.h / 2);
+        s2.lineTo(p.w / 2, -p.h / 2);
+        s2.lineTo(p.w / 2, p.h / 2);
+        s2.lineTo(-p.w / 2, p.h / 2);
+        s2.closePath();
+      }
+      const hole = new THREE.Path();
+      hole.absarc(0, 0, p.drill! / 2, 0, Math.PI * 2, true);
+      s2.holes.push(hole);
+      geo = new THREE.ExtrudeGeometry(s2, { depth: CU, bevelEnabled: false, curveSegments: 32 });
+      geo.rotateX(Math.PI / 2); // (x, y) → (x, 0, y), CU thick downwards
+      ringGeos.set(key, geo);
+    }
+    return geo;
+  };
   for (const part of b.parts) {
     for (const p of part.pads) {
-      const layers = p.drill ? ['F.Cu', 'B.Cu'] : p.layers.filter((l) => l === 'F.Cu' || l === 'B.Cu');
-      for (const l of layers) {
-        if (p.npth) {
-          // a bare hole: only the hole, no copper
-          holes.push(new THREE.Matrix4().compose(new THREE.Vector3(p.x, layerY(l) + (onBottom(l) ? -CU - 0.002 : CU + 0.002), p.y), q, new THREE.Vector3(p.drill! / 2, 0.001, p.drill! / 2)));
-          continue;
+      if (p.drill) {
+        if (p.npth) continue; // a bare hole: cut into the substrate, no copper
+        for (const top of [true, false]) {
+          const ring = new THREE.Mesh(ringGeo(p), res.pad);
+          ring.position.set(p.x, top ? CU : -THICKNESS, p.y);
+          group.add(ring);
         }
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(p.drill / 2, p.drill / 2, THICKNESS, 32, 1, true), res.barrel);
+        barrel.position.set(p.x, -THICKNESS / 2, p.y);
+        group.add(barrel);
+        continue;
+      }
+      for (const l of p.layers.filter((x) => x === 'F.Cu' || x === 'B.Cu')) {
         const y = surfaceY(l);
         const mm = new THREE.Matrix4();
         if (p.shape === 'round') rounds.push(mm.compose(new THREE.Vector3(p.x, y, p.y), q, new THREE.Vector3(Math.min(p.w, p.h) / 2, CU, Math.min(p.w, p.h) / 2)));
         else rects.push(mm.compose(new THREE.Vector3(p.x, y, p.y), q, new THREE.Vector3(p.w, CU, p.h)));
-        if (p.drill) holes.push(new THREE.Matrix4().compose(new THREE.Vector3(p.x, layerY(l) + (onBottom(l) ? -CU - 0.002 : CU + 0.002), p.y), q, new THREE.Vector3(p.drill / 2, 0.001, p.drill / 2)));
       }
     }
   }
+  group.userData.dispose = () => ringGeos.forEach((g) => g.dispose());
   const instanced = (geo: THREE.BufferGeometry, mat: THREE.Material, list: THREE.Matrix4[]) => {
     if (!list.length) return;
     const mesh = new THREE.InstancedMesh(geo, mat, list.length);
@@ -367,7 +423,7 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res): THREE.
   for (const z of b.zones) {
     if (z.layer !== 'F.Cu' && z.layer !== 'B.Cu') continue;
     const bottom = z.layer === 'B.Cu';
-    const tex = zoneTexture(z, w, h);
+    const tex = zoneTexture(z, w, h, drills);
     if (!tex) continue;
     if (bottom) tex.flipY = false;
     const mat = new THREE.MeshStandardMaterial({ color: 0x2f7f4c, roughness: 0.5, metalness: 0.1, alphaMap: tex, alphaTest: 0.5, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
