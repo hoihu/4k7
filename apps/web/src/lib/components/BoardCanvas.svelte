@@ -21,6 +21,23 @@
   /** Part being dragged: offset in mm, snapped to 0.1 mm. */
   let partDrag = $state<{ ref: string; sx: number; sy: number; dx: number; dy: number; moved: boolean } | null>(null);
   const snap = (v: number) => Math.round(v * 10) / 10;
+  /**
+   * A part just dropped: shown where it was dropped until a board arrives in which it has moved
+   * (the edit and the placement take a moment, and boards computed before the edit may still
+   * come in; without this it would flash back to its old place meanwhile). If it never moves
+   * (the edit was refused), it goes back after a while.
+   */
+  let dropped = $state<{ ref: string; fromX: number; fromY: number; dx: number; dy: number } | null>(null);
+  let droppedTimer: ReturnType<typeof setTimeout> | undefined;
+  const stillAtOld = (ref: string) => {
+    const p = board?.parts.find((x) => x.refdes === ref);
+    return !!p && !!dropped && Math.abs(p.x - dropped.fromX) < 1e-6 && Math.abs(p.y - dropped.fromY) < 1e-6;
+  };
+  $effect(() => {
+    // the part has moved in the board: the drop is done
+    if (dropped && !stillAtOld(dropped.ref)) dropped = null;
+  });
+  const offset = (ref: string) => (partDrag?.ref === ref ? partDrag : dropped?.ref === ref && stillAtOld(ref) ? dropped : null);
 
   let svg: SVGSVGElement | undefined = $state();
   let vb = $state({ x: -2, y: -2, w: 40, h: 30 });
@@ -90,7 +107,12 @@
       const d = partDrag;
       partDrag = null;
       const part = board?.parts.find((p) => p.refdes === d.ref);
-      if (d.moved && part) onplace?.(d.ref, Math.round((part.x + d.dx) * 1000) / 1000, Math.round((part.y + d.dy) * 1000) / 1000);
+      if (d.moved && part && board) {
+        dropped = { ref: d.ref, fromX: part.x, fromY: part.y, dx: d.dx, dy: d.dy };
+        clearTimeout(droppedTimer);
+        droppedTimer = setTimeout(() => (dropped = null), 5000);
+        onplace?.(d.ref, Math.round((part.x + d.dx) * 1000) / 1000, Math.round((part.y + d.dy) * 1000) / 1000);
+      }
       else onselect?.(d.ref, e.shiftKey || e.metaKey || e.ctrlKey);
       return;
     }
@@ -189,7 +211,7 @@
         class:locked={p.locked}
         class:dragging={partDrag?.ref === p.refdes}
         data-ref={p.refdes}
-        transform={partDrag?.ref === p.refdes ? `translate(${partDrag.dx} ${partDrag.dy})` : undefined}
+        transform={offset(p.refdes) ? `translate(${offset(p.refdes)!.dx} ${offset(p.refdes)!.dy})` : undefined}
       >
         <rect class="hit" x={p.courtyard.x} y={p.courtyard.y} width={p.courtyard.w} height={p.courtyard.h} />
         {#each p.pads as pad, i (i)}
