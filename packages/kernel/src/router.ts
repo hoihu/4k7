@@ -14,6 +14,8 @@ const EDGE = -2; // too close to the board edge
 const VIA_COST = 25; // in grid steps (2.5 mm of track)
 const TURN_COST = 0.6;
 const OFF_AXIS_COST = 0.15; // prefer horizontal on F.Cu, vertical on B.Cu
+const CENTRE_COST = 0.5; // per step and grid step off the middle of the gap between two IC pins
+const CLIP_COST = 3; // a step whose copper runs half over one of the net's own pads, off its centre line
 
 export interface RouteInput {
   outline: { w: number; h: number };
@@ -297,6 +299,31 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       ownCopper[s] = padNet[i]!;
     }
   });
+  // which pad each pad cell belongs to (index + 1)
+  const padOf = new Int32Array(L * N);
+  padCells.forEach((cells, i) => {
+    for (const s of cells) padOf[s] = i + 1;
+  });
+  // an escape's end: the length of its stub (grid steps)
+  const stubCost = new Map<number, number>();
+  escapes.forEach((e, idx) => {
+    if (!e) return;
+    const p = pads[idx]!;
+    stubCost.set(e.state, (Math.hypot(e.p1.x - p.x, e.p1.y - p.y) + Math.hypot(e.ex - e.p1.x, e.ey - e.p1.y)) / G);
+  });
+  /** The cost (grid steps) of the piece from a pad cell (or escape end) to its pad centre that commit adds. */
+  const toCentre = (st: number) => {
+    const stub = stubCost.get(st);
+    if (stub !== undefined) return stub;
+    const t = padOf[st]!;
+    if (!t) return 0;
+    const p = pads[t - 1]!;
+    const i = st % N;
+    const dx = Math.abs((i % W) * G - p.x) / G;
+    const dy = Math.abs(Math.floor(i / W) * G - p.y) / G;
+    const m = Math.min(dx, dy);
+    return Math.max(dx, dy) + (Math.SQRT2 - 1) * m + (m > 1e-6 && Math.abs(dx - dy) > 1e-6 ? TURN_COST : 0);
+  };
   escapes.forEach((e, idx) => e && padCells[idx]!.push(e.state));
   // reserve every escape stub for its net before routing, so earlier routes cannot wall it off
   escapes.forEach((e, idx) => {
@@ -306,6 +333,83 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     stampSeg(e.l, padNet[idx]!, e.p1.x, e.p1.y, e.ex, e.ey, rules.track);
     ownCopper[e.state] = padNet[idx]!;
   });
+
+  /*
+   * Where a track's copper would touch one of its net's own pads without lying wholly on it: the
+   * pad that it touches. A track there should run through the pad centre (straight along the pad
+   * or diagonally at it), not half over the pad's edge.
+   */
+  const touch = [0, 1].map((k) => {
+    const out = new Int32Array(L * N);
+    const r = widths[k]! / 2;
+    pads.forEach((p, idx) => {
+      if (!p.netId) return;
+      const d = padDist(p);
+      const onLayers = p.drill ? layers.map((_, l) => l) : p.layers.map((l) => layerIdx.get(l)!).filter((l) => l !== undefined);
+      for (let j = Math.max(0, Math.floor((p.y - p.h / 2 - r) / G)); j <= Math.min(H - 1, Math.ceil((p.y + p.h / 2 + r) / G)); j++) {
+        for (let i = Math.max(0, Math.floor((p.x - p.w / 2 - r) / G)); i <= Math.min(W - 1, Math.ceil((p.x + p.w / 2 + r) / G)); i++) {
+          const dist = d(i * G, j * G);
+          if (dist > -r && dist < r) for (const l of onLayers) out[l * N + j * W + i] = idx + 1;
+        }
+      }
+    });
+    return out;
+  });
+  /*
+   * Between neighbouring pins of an IC a track runs down the middle of the gap: cells in the gap
+   * cost more the farther they are off its middle line.
+   */
+  const offMiddle = new Float32Array(L * N);
+  // the gaps (vertical: pins stacked along y, so the gap runs along x), for recentring in straighten
+  const gaps: { vertical: boolean; mid: number; x0: number; x1: number; y0: number; y1: number; layers: number[] }[] = [];
+  for (const part of input.parts) {
+    if (part.pads.length <= 3) continue;
+    for (const a of part.pads) {
+      for (const vertical of [false, true]) {
+        // a's nearest neighbour after it in its row (along x) or column (along y)
+        let c: BoardPad | undefined;
+        for (const q of part.pads) {
+          if (q.w !== a.w || q.h !== a.h || Math.abs(vertical ? q.x - a.x : q.y - a.y) > 1e-6) continue;
+          const d = vertical ? q.y - a.y : q.x - a.x;
+          if (d > 1e-6 && (!c || d < (vertical ? c.y - a.y : c.x - a.x))) c = q;
+        }
+        if (!c) continue;
+        const size = vertical ? a.h : a.w;
+        const gap = (vertical ? c.y - a.y : c.x - a.x) - size;
+        if (gap <= 0 || gap > 2) continue;
+        const mid = vertical ? (a.y + c.y) / 2 : (a.x + c.x) / 2;
+        // the gap: between the two pads, as long as the pads are
+        const [x0, x1, y0, y1] = vertical ? [a.x - a.w / 2, a.x + a.w / 2, a.y + a.h / 2, c.y - c.h / 2] : [a.x + a.w / 2, c.x - c.w / 2, a.y - a.h / 2, a.y + a.h / 2];
+        const onLayers = a.drill ? layers.map((_, l) => l) : a.layers.map((l) => layerIdx.get(l)!).filter((l) => l !== undefined);
+        gaps.push({ vertical, mid, x0, x1, y0, y1, layers: onLayers });
+        for (let j = Math.max(0, Math.ceil(y0 / G)); j <= Math.min(H - 1, Math.floor(y1 / G)); j++) {
+          for (let i = Math.max(0, Math.ceil(x0 / G)); i <= Math.min(W - 1, Math.floor(x1 / G)); i++) {
+            const v = (CENTRE_COST * Math.abs((vertical ? j : i) * G - mid)) / G;
+            for (const l of onLayers) offMiddle[l * N + j * W + i] = Math.max(offMiddle[l * N + j * W + i]!, v);
+          }
+        }
+      }
+    }
+  }
+
+  /** A step in direction (dx, dy) onto cell i of layer l runs half over an own pad, off its centre line. */
+  const clips = (net: number, k: number, l: number, i: number, dx: number, dy: number) => {
+    const t = k < 2 ? touch[k]![l * N + i]! : 0;
+    if (!t || padNet[t - 1] !== net) return false;
+    const p = pads[t - 1]!;
+    const across = dy === 0 ? p.h : dx === 0 ? p.w : Math.min(p.w, p.h);
+    const off = Math.abs((p.x - (i % W) * G) * dy - (p.y - Math.floor(i / W) * G) * dx) / Math.hypot(dx, dy);
+    return off > Math.max(0, across / 2 - widths[k]! / 2) + 0.08;
+  };
+  /** A track end on this state would sit off its pad's centre lines (at a corner or an edge). */
+  const offCentre = (net: number, k: number, st: number) => {
+    const t = k < 2 ? touch[k]![st]! : 0;
+    if (!t || padNet[t - 1] !== net) return false;
+    const p = pads[t - 1]!;
+    const i = st % N;
+    const r = widths[k]! / 2;
+    return Math.abs(Math.floor(i / W) * G - p.y) > Math.max(0, p.h / 2 - r) + 0.08 && Math.abs((i % W) * G - p.x) > Math.max(0, p.w / 2 - r) + 0.08;
+  };
 
   // union-find over pads
   const parent = pads.map((_, i) => i);
@@ -377,8 +481,15 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     return true;
   };
 
+  /** Of a group's cells, those deepest inside their pad (within half a grid step). */
+  const deepestCells = (cells: number[]) => {
+    let m = -Infinity;
+    for (const st of cells) m = Math.max(m, ownInset[st]!);
+    return cells.filter((st) => ownInset[st]! >= m - G / 2 - 1e-6);
+  };
+
   /** A* from any start state to a goal state; returns the path (start → goal) or null. */
-  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number }, goalFits = true): number[] | null => {
+  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number }, accept?: (s: number) => boolean): number[] | null => {
     const free = freeFor(net, k);
     const viaFree = viaFreeFor(net);
     cost.fill(Infinity);
@@ -391,27 +502,33 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       const dy = Math.abs(Math.floor(i / W) - ty);
       return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
     };
-    // starts and goals only where this width fits (fall back to all if none does)
+    // starts and goals only where this width fits; if none does (a track wider than its pad),
+    // the cells deepest inside the pad: on its centre line, not at a corner
     const usable = (st: number) => free(Math.floor(st / N), st % N);
-    const seeds = starts.filter(usable);
-    for (const s of seeds.length ? seeds : starts) {
-      cost[s] = 0;
+    const centred = (st: number) => usable(st) && !offCentre(net, k, st);
+    const seeds = starts.filter(centred);
+    if (!seeds.length) seeds.push(...starts.filter(usable));
+    // a start on a pad pays for the piece from the pad centre, so tracks leave near the centre
+    for (const s of seeds.length ? seeds : deepestCells(starts)) {
+      cost[s] = toCentre(s);
       from[s] = -1;
       dirOf[s] = -1;
-      heap.push(s, h(s));
+      heap.push(s, cost[s]! + h(s));
     }
     let reached = -1;
+    let best = Infinity; // the cheapest arrival so far, including the piece on to the pad centre
     let expanded = 0;
     // bounded per connection (turn costs allow some re-expansion); the overall time budget
     // protects big boards
     const LIMIT = S * 3;
     while (heap.size) {
       const s = heap.pop();
+      if (heap.lastPrio >= best - 1e-6) break;
       // outdated entry: this state was reached more cheaply since it was pushed
       if (heap.lastPrio - h(s) > cost[s]! + 1e-6) continue;
-      if (isGoal(s) && (usable(s) || !goalFits)) {
+      if (isGoal(s) && (accept ? accept(s) : usable(s)) && cost[s]! + toCentre(s) < best) {
+        best = cost[s]! + toCentre(s);
         reached = s;
-        break;
       }
       if (++expanded > LIMIT) break;
       if ((expanded & 4095) === 0 && now() > deadline) break;
@@ -432,7 +549,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         const horizontal = DY[d] === 0;
         const vertical = DX[d] === 0;
         const off = layers[l] === 'F.Cu' ? !horizontal : layers[l] === 'B.Cu' ? !vertical : false;
-        const nc = base + STEP[d]! + (dirOf[s]! >= 0 && dirOf[s] !== d ? TURN_COST : 0) + (off ? OFF_AXIS_COST : 0);
+        const nc = base + STEP[d]! + (dirOf[s]! >= 0 && dirOf[s] !== d ? TURN_COST : 0) + (off ? OFF_AXIS_COST : 0) + (clips(net, k, l, ni, DX[d]!, DY[d]!) ? CLIP_COST : 0) + offMiddle[ns]!;
         if (nc < cost[ns]!) {
           cost[ns] = nc;
           from[ns] = s;
@@ -469,7 +586,9 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
    * straight piece plus one diagonal piece (either order) reaches through free cells. Returns the
    * vertices and every cell the straightened track covers.
    */
-  const straighten = (l: number, cells: number[], free: (l: number, i: number) => boolean) => {
+  const straighten = (l: number, cells: number[], free: (l: number, i: number) => boolean, clip: (l: number, i: number, dx: number, dy: number) => boolean) => {
+    // in the gaps between IC pins the pieces keep to the maze path (it found the gap's middle)
+    const onPath = new Set(cells);
     const walk = (a: number, b: number, out: number[]): boolean => {
       let x = a % W;
       let y = (a - x) / W;
@@ -480,7 +599,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       while (x !== bx || y !== by) {
         const nx = x + sx;
         const ny = y + sy;
-        if (!free(l, ny * W + nx)) return false;
+        if (!free(l, ny * W + nx) || clip(l, ny * W + nx, sx, sy) || (offMiddle[l * N + ny * W + nx]! > 0.05 && !onPath.has(ny * W + nx))) return false;
         if (sx && sy && (!free(l, y * W + nx) || !free(l, ny * W + x))) return false;
         x = nx;
         y = ny;
@@ -521,7 +640,88 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       verts.push(cells[next]!);
       i = next;
     }
-    return { verts, covered };
+    if (!recentre(l, verts, free, clip)) return { verts, covered };
+    // pieces moved: the copper they cover now
+    const moved = [verts[0]!];
+    for (let q = 0; q + 1 < verts.length; q++) {
+      let x = verts[q]! % W;
+      let y = (verts[q]! - x) / W;
+      const bx = verts[q + 1]! % W;
+      const by = (verts[q + 1]! - bx) / W;
+      while (x !== bx || y !== by) {
+        x += Math.sign(bx - x);
+        y += Math.sign(by - y);
+        moved.push(y * W + x);
+      }
+    }
+    return { verts, covered: moved };
+  };
+
+  /*
+   * A piece running through the gap between two IC pins moves onto the gap's middle row (or
+   * column), if the copper fits there. Its neighbours keep their directions: they get longer or
+   * shorter along their own line, so everything stays 0/45/90°.
+   */
+  const recentre = (l: number, verts: number[], free: (l: number, i: number) => boolean, clip: (l: number, i: number, dx: number, dy: number) => boolean) => {
+    let changed = false;
+    const xy = (c: number) => [c % W, (c - (c % W)) / W] as const;
+    for (let q = 1; q + 2 < verts.length; q++) {
+      const [ax, ay] = xy(verts[q]!);
+      const [bx, by] = xy(verts[q + 1]!);
+      const horizontal = ay === by;
+      if (!horizontal && ax !== bx) continue;
+      const gap = gaps.find((g) => {
+        if (g.vertical !== horizontal || !g.layers.includes(l)) return false;
+        const across = (horizontal ? ay : ax) * G;
+        const [lo, hi] = horizontal ? [g.y0, g.y1] : [g.x0, g.x1];
+        const [s0, s1] = horizontal ? [Math.min(ax, bx) * G, Math.max(ax, bx) * G] : [Math.min(ay, by) * G, Math.max(ay, by) * G];
+        const [r0, r1] = horizontal ? [g.x0, g.x1] : [g.y0, g.y1];
+        return across > lo && across < hi && Math.min(s1, r1) - Math.max(s0, r0) >= 0.2;
+      });
+      if (!gap) continue;
+      const shift = Math.round(gap.mid / G) - (horizontal ? ay : ax);
+      if (!shift) continue;
+      // each end slides along its other piece onto the new row / column
+      const slide = (c: number, other: number): number | null => {
+        const [cx, cy] = xy(c);
+        const [ox, oy] = xy(other);
+        const dx = Math.sign(cx - ox);
+        const dy = Math.sign(cy - oy);
+        const along = horizontal ? dy : dx; // how the other piece advances across the gap
+        if (!along) return null;
+        const t = shift / along; // steps to move along the other piece (negative: shorten it)
+        const nx = cx + dx * t;
+        const ny = cy + dy * t;
+        // the other piece must keep a positive length
+        if ((nx - ox) * dx + (ny - oy) * dy <= 0 && (dx || dy)) return null;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) return null;
+        return ny * W + nx;
+      };
+      const na = slide(verts[q]!, verts[q - 1]!);
+      const nb = slide(verts[q + 1]!, verts[q + 2]!);
+      if (na === null || nb === null) continue;
+      // the three new pieces must be clear
+      const ok = (a: number, b: number) => {
+        let [x, y] = xy(a);
+        const [tx, ty] = xy(b);
+        const sx = Math.sign(tx - x);
+        const sy = Math.sign(ty - y);
+        while (x !== tx || y !== ty) {
+          const nx = x + sx;
+          const ny = y + sy;
+          if (!free(l, ny * W + nx) || clip(l, ny * W + nx, sx, sy)) return false;
+          if (sx && sy && (!free(l, y * W + nx) || !free(l, ny * W + x))) return false;
+          x = nx;
+          y = ny;
+        }
+        return true;
+      };
+      if (!ok(verts[q - 1]!, na) || !ok(na, nb) || !ok(nb, verts[q + 2]!)) continue;
+      verts[q] = na;
+      verts[q + 1] = nb;
+      changed = true;
+    }
+    return changed;
   };
 
   /** Turn a path into tracks and vias, reserve its copper; returns the cells the copper covers. */
@@ -537,7 +737,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     }
     const covered: number[] = [];
     const lines = runs.map((run, ri) => {
-      const { verts, covered: cov } = straighten(run.l, run.cells, free);
+      const { verts, covered: cov } = straighten(run.l, run.cells, free, (l, i, dx, dy) => clips(net, k, l, i, dx, dy));
       for (const c of cov) covered.push(run.l * N + c);
       const pts = verts.flatMap((c) => [(c % W) * G, Math.floor(c / W) * G]);
       if (ri > 0) addVia(netId, net, pts[0]!, pts[1]!);
@@ -546,12 +746,15 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     if (startPad >= 0 && lines[0]) {
       const sp = pads[startPad]!;
       const se = escapes[startPad];
-      lines[0].pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y]));
+      const pts = lines[0].pts;
+      pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y, ...entryBend(pts[0]!, pts[1]!, sp.x, sp.y)]));
     }
     const last = lines.at(-1)!;
     if (endPad >= 0) {
+      const ep = pads[endPad]!;
       const ee = escapes[endPad];
-      last.pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : []), pads[endPad]!.x, pads[endPad]!.y);
+      const pts = last.pts;
+      pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : entryBend(pts.at(-2)!, pts.at(-1)!, ep.x, ep.y)), ep.x, ep.y);
     }
     if (endVia) {
       // a drop to a plane: the via at the end of the path
@@ -586,9 +789,13 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const goalStamp = epoch;
     for (const st of groupCells.get(find(c.a))!) goal[st] = goalStamp;
     const goalCells = groupCells.get(find(c.a))!;
-    const fits = freeFor(net, k);
-    const goalFits = goalCells.some((st) => fits(Math.floor(st / N), st % N));
-    const path = search(net, k, groupCells.get(find(c.b))!, (st) => goal[st] === goalStamp, pa, goalFits);
+    // end where the track fits, on its pad's centre line; failing that where it fits; failing
+    // that deepest inside the pad
+    const fits = (st: number) => freeFor(net, k)(Math.floor(st / N), st % N);
+    const centred = (st: number) => fits(st) && !offCentre(net, k, st);
+    const deepest = new Set(deepestCells(goalCells));
+    const accept = goalCells.some(centred) ? centred : goalCells.some(fits) ? fits : (st: number) => deepest.has(st);
+    const path = search(net, k, groupCells.get(find(c.b))!, (st) => goal[st] === goalStamp, pa, accept);
     if (!path) {
       failed.push(c);
       continue;
@@ -770,6 +977,8 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const rg = region(pl);
     if (rg.main === undefined || rg.sizes[rg.main]! * G * G < 1) continue;
     const roots = [...new Set(pads.map((_, idx) => find(idx)).filter((r) => padNet[r] === rg.pnet))];
+    // copper of the drops so far → the via it leads down to: a later drop may simply join it
+    const dropCopper = new Map<number, { x: number; y: number }>();
     for (const r of roots) {
       if (timedOut || now() > deadline) break;
       const reaches = groupCells.get(r)!.some((st) => Math.floor(st / N) === rg.l && rg.island[st % N] === rg.main);
@@ -779,6 +988,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       const path = search(rg.pnet, 0, starts, (st) => {
         // a via site well inside the main area (the via then joins the plane)
         if (Math.floor(st / N) === rg.l) return false;
+        if (dropCopper.has(st)) return true; // join an earlier drop
         const i = st % N;
         if (viaAt[i] === rg.pnet && rg.island[i] === rg.main) return true; // join an existing via
         if (rg.island[i] !== rg.main || !viaFreeFor(rg.pnet)(i)) return false;
@@ -792,9 +1002,13 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         return true;
       }, pads[r]!);
       if (!path) continue;
-      groupCells.get(r)!.push(...commit(pl.netId, rg.pnet, 0, path, padAt(r, path[0]!), -1, true));
+      const joins = dropCopper.get(path.at(-1)!);
+      const copper = commit(pl.netId, rg.pnet, 0, path, padAt(r, path[0]!), -1, !joins);
+      groupCells.get(r)!.push(...copper);
       const end = path.at(-1)! % N;
-      dropVias.set(r, [...(dropVias.get(r) ?? []), { x: (end % W) * G, y: Math.floor(end / W) * G }]);
+      const via = joins ?? { x: (end % W) * G, y: Math.floor(end / W) * G };
+      for (const st of copper) dropCopper.set(st, via);
+      dropVias.set(r, [...(dropVias.get(r) ?? []), via]);
     }
   }
 
@@ -846,6 +1060,20 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const OUTER = new Set<CopperLayer>(['F.Cu', 'B.Cu']);
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+/**
+ * The bend (if any) between a grid point on a pad and the pad centre, so the entry is a straight
+ * piece (continuing the track) then a diagonal one into the centre, not one piece at an arbitrary
+ * angle. The bend lies in the box spanned by the two points, so on a rectangular pad it stays on
+ * the pad, and the diagonal is as deep inside it as it can be.
+ */
+function entryBend(x: number, y: number, px: number, py: number): number[] {
+  const dx = px - x;
+  const dy = py - y;
+  const m = Math.min(Math.abs(dx), Math.abs(dy));
+  if (m < 1e-6 || Math.abs(Math.abs(dx) - Math.abs(dy)) < 1e-6) return [];
+  return [px - Math.sign(dx) * m, py - Math.sign(dy) * m];
+}
 
 /** Drop collinear points and duplicates from a flat polyline. */
 function simplify(pts: number[]): number[] {

@@ -170,6 +170,56 @@ describe('routing', () => {
     expect(tiny).toBe(0);
   });
 
+  it('enters pads at 0/45/90° too', () => {
+    const b = buck().board();
+    const odd: string[] = [];
+    for (const t of b.tracks) {
+      for (let i = 0; i + 3 < t.pts.length; i += 2) {
+        const [ax, ay, bx, by] = [t.pts[i]!, t.pts[i + 1]!, t.pts[i + 2]!, t.pts[i + 3]!];
+        const dx = Math.abs(bx - ax);
+        const dy = Math.abs(by - ay);
+        // (escape stubs end in a sub-grid jog onto the grid)
+        if (dx > 1e-3 && dy > 1e-3 && Math.abs(dx - dy) > 1e-3 && Math.min(dx, dy) > 0.051) odd.push(`${ax},${ay} → ${bx},${by}`);
+      }
+    }
+    expect(odd).toEqual([]);
+  });
+
+  it('runs onto a pad along its centre line, not half over its edge', () => {
+    const k = buck();
+    k.transact({ summary: 'holes', ops: [{ op: 'add_hole', diameter_mm: 3.5, corner: 'all' }] });
+    const b = k.board();
+    const pads = b.parts.flatMap((p) => p.pads).filter((p) => p.shape !== 'round');
+    const odd = new Set<string>();
+    for (const t of b.tracks) {
+      for (let i = 0; i + 3 < t.pts.length; i += 2) {
+        const [ax, ay, bx, by] = [t.pts[i]!, t.pts[i + 1]!, t.pts[i + 2]!, t.pts[i + 3]!];
+        if (Math.hypot(bx - ax, by - ay) < 0.11) continue; // the sub-grid jog onto the pad centre
+        const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 0.02));
+        for (let q = 0; q <= n; q++) {
+          const x = ax + ((bx - ax) * q) / n;
+          const y = ay + ((by - ay) * q) / n;
+          for (const p of pads) {
+            if (p.netId !== t.netId || !(p.drill || p.layers.includes(t.layer))) continue;
+            const ox = Math.abs(x - p.x) - p.w / 2;
+            const oy = Math.abs(y - p.y) - p.h / 2;
+            const dist = Math.hypot(Math.max(ox, 0), Math.max(oy, 0)) + Math.min(Math.max(ox, oy), 0);
+            // apart, wholly on the pad, or only grazing its edge
+            if (dist >= t.width / 2 - 0.08 || dist <= -t.width / 2 + 0.08) continue;
+            // touching the pad: the track's line runs through the pad centre (within what the pad's width allows)
+            const dx = bx - ax;
+            const dy = by - ay;
+            const across = Math.abs(dy) < 1e-9 ? p.h : Math.abs(dx) < 1e-9 ? p.w : Math.min(p.w, p.h);
+            const off = Math.abs((p.x - ax) * dy - (p.y - ay) * dx) / Math.hypot(dx, dy);
+            if (off <= Math.max(0, across / 2 - t.width / 2) + 0.09) continue;
+            odd.add(`${b.netNames[t.netId]} ${t.width} at ${x.toFixed(2)},${y.toFixed(2)}`);
+          }
+        }
+      }
+    }
+    expect([...odd]).toEqual([]);
+  });
+
   it('the copper DRC catches a short', async () => {
     const { copperDrc } = await import('../src/drc.ts');
     const b = structuredClone(buck().board());
@@ -313,5 +363,35 @@ describe('mounting holes', () => {
     k.transact({ summary: 'rm', ops: [{ op: 'remove_hole', id: 'all' }] });
     b = k.board();
     expect(b.parts.some((p) => p.componentId.startsWith('hole:'))).toBe(false);
+  });
+});
+
+describe('router: between IC pins', () => {
+  it('takes the middle of the gap between two pins', async () => {
+    const { route } = await import('../src/router.ts');
+    type Pad = import('@tracewise/schema').BoardPad;
+    type Part = import('@tracewise/schema').BoardPart;
+    const pad = (number: string, x: number, y: number, w: number, h: number, netId?: string): Pad => ({ number, x, y, w, h, shape: 'rect', netId, layers: ['F.Cu'] });
+    const part = (refdes: string, x: number, y: number, pads: Pad[]) =>
+      ({ componentId: refdes, refdes, x, y, rot: 0, pads, courtyard: { x: x - 1, y: y - 1, w: 2, h: 2 }, body: { x, y, w: 0, h: 0 }, pin1: { x, y } }) as unknown as Part;
+    // a column of eight pins, each on its own net; the net X has to cross it. (1.2 mm pitch: the
+    // gaps' middles lie on the routing grid, 9.2 is one; the lane there is three grid rows wide)
+    const pins = Array.from({ length: 8 }, (_, i) => pad(String(i + 1), 10, 5 + i * 1.2, 1.4, 0.52, `p${i}`));
+    const ic = part('U1', 12, 9.2, pins);
+    const r1 = part('R1', 5, 9.45, [pad('1', 5, 9.45, 0.8, 0.9, 'X')]);
+    const r2 = part('R2', 15, 9.45, [pad('1', 15, 9.45, 0.8, 0.9, 'X')]);
+    const res = route({
+      outline: { w: 20, h: 20 },
+      layers: ['F.Cu'],
+      rules: { clearance: 0.15, track: 0.15, powerTrack: 0.5, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 },
+      parts: [ic, r1, r2],
+      powerNets: new Set(),
+    });
+    expect(res.failed).toEqual([]);
+    const x = res.tracks.filter((t) => t.netId === 'X');
+    // where the track passes the pin column, it runs down the gap's middle
+    const crossing = x.flatMap((t) => t.pts.flatMap((_, i) => (i % 2 === 0 && i + 3 < t.pts.length && t.pts[i + 1] === t.pts[i + 3] && Math.min(t.pts[i]!, t.pts[i + 2]!) <= 9.5 && Math.max(t.pts[i]!, t.pts[i + 2]!) >= 10.5 ? [t.pts[i + 1]!] : [])));
+    expect(crossing).toHaveLength(1);
+    expect(crossing[0]).toBeCloseTo(9.2, 6);
   });
 });
