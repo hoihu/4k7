@@ -31,11 +31,32 @@
   ]);
 
   const selectedPart = $derived(app.selection.length === 1 ? (b?.parts.find((p) => p.refdes === app.selection[0]) ?? null) : null);
-  function unpin() {
-    const ref = selectedPart?.refdes;
+  /** Forget the user's placement of a part: the placer decides again. */
+  function release(ref: string) {
     const k = app.k?.ledger.find((x) => x.text.startsWith(`position(${ref})`));
-    if (k) void app.userEdit(`Unpin ${ref}`, [{ op: 'remove_constraint', id: k.id }]);
+    if (k) void app.userEdit(`Let the placer place ${ref}`, [{ op: 'remove_constraint', id: k.id }]);
   }
+  /** Lock a part exactly where it is, or unlock it (it stays there as the user's choice). */
+  function toggleLock(ref: string) {
+    const p = b?.parts.find((x) => x.refdes === ref);
+    if (!p || p.componentId.startsWith('hole:')) return;
+    void app.userEdit(`${p.locked ? 'Unlock' : 'Lock'} ${ref}`, [{ op: 'place', ref, x_mm: p.x, y_mm: p.y, rot: p.rot as 0 | 90 | 180 | 270, lock: !p.locked }]);
+  }
+
+  // board size: the proposal's, or the user's
+  let sizeW = $state('');
+  let sizeH = $state('');
+  $effect(() => {
+    sizeW = b ? String(b.outline.w) : '';
+    sizeH = b ? String(b.outline.h) : '';
+  });
+  function setSize() {
+    const w = Number(sizeW);
+    const h = Number(sizeH);
+    if (!(w > 0 && h > 0) || (b && w === b.outline.w && h === b.outline.h && b.sizeBy === 'user')) return;
+    void app.userEdit(`Board ${w} × ${h} mm`, [{ op: 'set_board', width_mm: w, height_mm: h }]);
+  }
+  const routeLabel = $derived(b?.routing === 'done' ? 'Routed' : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
 
   /** Gerbers, drill, BOM and pick-and-place as one zip. */
   function exportFab() {
@@ -72,11 +93,17 @@
       onclear={() => ((app.selection = []), (marker = null))}
       onhovernet={(n) => (hotNet = n)}
       onplace={(ref, x, y, rot) => void app.userEdit(`Place ${ref}`, [{ op: 'place', ref, x_mm: x, y_mm: y, rot }])}
+      onlock={toggleLock}
     />
     </div>
     <div class="fl tl">
       {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
       <div class="seg"><button aria-pressed={mode === '2d'} onclick={() => (mode = '2d')}>2D</button><button aria-pressed={mode === '3d'} onclick={() => (mode = '3d')}>3D</button></div>
+      {#if b?.parts.length}
+        <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose layout', [{ op: 'propose_layout' }])}>Propose layout</button>
+        <button class="btn" class:pri={b.routing !== 'done'} disabled={app.running || b.routing === 'done'} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' ? 'Route again' : 'Route'}</button>
+        <span class="chip" class:stale={b.routing === 'stale'} class:ok={b.routing === 'done'}>{routeLabel}</span>
+      {/if}
       {#if app.boardBusy}<span class="busy">updating…</span>{/if}
     </div>
     {#if app.k?.proposal}
@@ -91,17 +118,26 @@
       <div class="blank"><p><b>No parts yet.</b> Draw the circuit in the schematic (or ask the agent); the board is placed from it automatically.</p></div>
     {/if}
     <div class="status">
-      <span>{mode === '3d' ? 'drag = rotate · right-drag = pan · wheel = zoom' : 'click = reference · drag part = pin it there · R = rotate · drag board = pan · wheel = zoom'}</span>
+      <span>{mode === '3d' ? 'drag = rotate · right-drag = pan · wheel = zoom' : 'click = reference · drag part = place it (kept as your choice) · R = rotate · L = lock · drag board = pan · wheel = zoom'}</span>
       <span class="sp mono">{hotNet ? netName(hotNet) : app.selection.join(' ') || '—'}</span>
     </div>
   </div>
   <aside class="col side">
     <div class="ph"><b>Board</b><span class="grow"></span>{#if b}<span class="mono muted">{b.outline.w} × {b.outline.h} mm · {b.layers.length} layers</span>{/if}</div>
+    {#if b?.parts.length}
+      <form class="size" onsubmit={(e) => (e.preventDefault(), setSize())}>
+        <input class="mono" aria-label="Board width (mm)" bind:value={sizeW} onblur={setSize} />
+        <span class="muted">×</span>
+        <input class="mono" aria-label="Board height (mm)" bind:value={sizeH} onblur={setSize} />
+        <span class="muted small">mm · {b.sizeBy === 'user' ? 'your size' : 'proposed'}</span>
+        {#if b.sizeBy === 'user'}<button type="button" class="btn" title="Back to the proposed size" onclick={() => void app.userEdit('Board size: proposed', [{ op: 'set_board', width_mm: null, height_mm: null }])}>Auto</button>{/if}
+      </form>
+    {/if}
     <div class="scroll">
       {#if b}
         <div class="stats">
           <div><b>{b.parts.filter((p) => !p.componentId.startsWith('hole:')).length}</b><span>parts{#if b.parts.some((p) => p.componentId.startsWith('hole:'))} · {b.parts.filter((p) => p.componentId.startsWith('hole:')).length} holes{/if}</span></div>
-          <div><b>{b.stats.routed}/{b.stats.nets}</b><span>nets routed</span></div>
+          <div><b>{b.routing === 'done' ? `${b.stats.routed}/${b.stats.nets}` : '—'}</b><span>{b.routing === 'done' ? 'nets routed' : routeLabel.toLowerCase()}</span></div>
           <div><b>{b.ratsnest.length}</b><span>unrouted</span></div>
           <div><b>{b.stats.vias}</b><span>vias</span></div>
         </div>
@@ -114,8 +150,18 @@
         </ul>
         {#if selectedPart}
           <h4>{selectedPart.refdes} <span class="muted mono">{selectedPart.pkg}</span></h4>
-          <p class="small mono">x {selectedPart.x} · y {selectedPart.y} mm · {selectedPart.rot}°{selectedPart.locked ? ' · pinned' : ' · placed automatically'}</p>
-          {#if selectedPart.locked}<button class="btn wide" onclick={unpin}>Unpin (let the placer move it)</button>{/if}
+          <p class="small mono">x {selectedPart.x} · y {selectedPart.y} mm · {selectedPart.rot}°</p>
+          <p class="small">
+            {#if selectedPart.locked}Locked here.
+            {:else if selectedPart.intent}Your placement{selectedPart.intent.anchor ? `, kept relative to ${selectedPart.intent.anchor} (it follows ${selectedPart.intent.anchor})` : ''}; the placer nudges it only if it must.
+            {:else}Placed automatically{selectedPart.follows ? `; it follows ${selectedPart.follows}` : ''}.{/if}
+          </p>
+          {#if !selectedPart.componentId.startsWith('hole:')}
+            <div class="row2">
+              <button class="btn" onclick={() => toggleLock(selectedPart.refdes)}>{selectedPart.locked ? 'Unlock' : 'Lock here'}</button>
+              {#if selectedPart.locked || selectedPart.intent}<button class="btn" onclick={() => release(selectedPart.refdes)}>Let the placer decide</button>{/if}
+            </div>
+          {/if}
         {/if}
         <h4>Manufacturing</h4>
         <button class="btn pri wide" onclick={exportFab} disabled={!b.parts.length}>Download fab files (.zip)</button>
@@ -137,13 +183,19 @@
         <p class="small muted">Ask the agent, e.g. “4 layers with GND on In1 and +3V3 on In2”.</p>
         <h4>Rules</h4>
         <p class="small mono muted">clearance {b.rules.clearance} · track {b.rules.track} / {b.rules.powerTrack} · via {b.rules.viaPad}/{b.rules.viaDrill} mm</p>
-        <p class="small muted">Ask the agent for board changes, e.g. “make the board 40 × 30 mm”, “put J1 at the left edge”, “use 4 layers”.</p>
+        <p class="small muted">Workflow: propose the layout, adjust the size and the parts (drag, R, L), then route. Or ask the agent, e.g. “make the board 40 × 30 mm”, “lock J1 at the left edge”, “use 4 layers”.</p>
       {/if}
     </div>
   </aside>
 </section>
 
 <style>
+  .chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--txt); background: var(--panel); opacity: 0.8; }
+  .chip.ok { color: var(--ok); }
+  .chip.stale { color: var(--warn); }
+  .size { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+  .size input { width: 52px; padding: 2px 4px; }
+  .row2 { display: flex; gap: 6px; flex-wrap: wrap; }
   .lay { display: grid; grid-template-columns: 330px minmax(0, 1fr) 280px; gap: 1px; background: var(--line); height: 100%; min-height: 0; }
   .lay.nochat { grid-template-columns: 0 minmax(0, 1fr) 280px; }
   .col { background: var(--panel); min-height: 0; min-width: 0; display: flex; flex-direction: column; }

@@ -35,6 +35,20 @@ export interface BoardSettings {
   planes?: { netId: string; layer: CopperLayer }[];
   /** Mounting holes (board features, not parts). */
   holes?: MountingHole[];
+  /**
+   * The placement as last proposed or adjusted (propose_layout, place, route store it). Later
+   * layouts start from it, so a change moves only what it has to. Absent: proposed afresh.
+   */
+  placement?: StoredPlacement;
+  /** The route step: the placement key the board was routed for; routing shows while it matches. */
+  routed?: string;
+}
+
+export interface StoredPlacement {
+  /** The proposed outline (a size set with set_board wins). */
+  outline: { w: number; h: number };
+  /** Component id → centre (mm) and clockwise rotation. */
+  parts: Record<string, { x: number; y: number; rot: number }>;
 }
 
 export type HoleCorner = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
@@ -99,8 +113,12 @@ export interface BoardPart {
   body: { x: number; y: number; w: number; h: number };
   courtyard: { x: number; y: number; w: number; h: number };
   pin1: { x: number; y: number };
-  /** Pinned by the user (a position constraint); the placer does not move it. */
+  /** Locked by the user (a hard position constraint); the placer does not move it. */
   locked: boolean;
+  /** Placed where the user put it (a soft position constraint), relative to this part if set. */
+  intent?: { anchor?: string };
+  /** The part it belongs with (refdes): it follows that part, and a choice for it is relative to it. */
+  follows?: string;
 }
 
 export interface Track {
@@ -180,6 +198,12 @@ export interface BoardView {
   missing: string[];
   /** Net id → name. */
   netNames: Record<string, string>;
+  /** Routing: not done yet, done for an earlier placement (out of date), or done for this one. */
+  routing: 'none' | 'stale' | 'done';
+  /** Identifies this placement (parts, nets, outline, rules); the route step records it. */
+  placementKey: string;
+  /** The outline: proposed by the placer, or set by the user. */
+  sizeBy: 'proposal' | 'user';
 }
 
 /** Compact board description for agents (design_query get_board). */
@@ -188,14 +212,19 @@ export function boardSummary(b: BoardView, routed = true) {
     outline_mm: b.outline,
     layers: b.layers.length,
     rules: b.rules,
-    parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, pinned: p.locked })),
-    routing: routed
-      ? { nets: b.stats.nets, routed: b.stats.routed, unrouted_connections: b.stats.unrouted, vias: b.stats.vias, track_mm: b.stats.trackLength }
-      : 'not computed here (see the Layout view)',
+    outline_by: b.sizeBy,
+    parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, placed: p.locked ? 'locked' : p.intent ? `user${p.intent.anchor ? ` (relative to ${p.intent.anchor})` : ''}` : 'auto' })),
+    routing: !routed
+      ? 'not computed here (see the Layout view)'
+      : b.routing === 'done'
+        ? { nets: b.stats.nets, routed: b.stats.routed, unrouted_connections: b.stats.unrouted, vias: b.stats.vias, track_mm: b.stats.trackLength }
+        : b.routing === 'stale'
+          ? 'out of date: the placement changed since the route step (route again when the placement is final)'
+          : 'not routed yet (the route op, once the placement is final)',
     planes: b.planes.map((p) => ({ net: b.netNames[p.netId] ?? p.netId, layer: p.layer, dedicated: p.layer !== 'F.Cu' && p.layer !== 'B.Cu', automatic: p.auto })),
     mounting_holes: b.parts.filter((p) => p.componentId.startsWith('hole:')).map((p) => ({ id: p.refdes, x: p.x, y: p.y, diameter: p.pads[0]?.drill, plated: !p.pads[0]?.npth })),
     drc: b.diagnostics.map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
-    note: 'Placement and routing are recomputed automatically from the netlist and the ledger. Pin parts with place, size the board with set_board, keep parts together with constrain near, choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
+    note: 'Workflow: propose_layout (board size and placement), then adjustments (place = the user\'s choice for a part, kept relative to its parent part; lock: true pins it exactly; set_board for the size), then route as the last step. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
   };
 }

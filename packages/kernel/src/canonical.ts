@@ -23,6 +23,11 @@ function sortKeys(v: unknown): unknown {
 
 /** Bring older documents up to the current format version. */
 export function migrate(d: Design): Design {
+  if ((d.format as number) === 1) {
+    // format 2: a manual placement is the user's choice (soft), locking is explicit
+    for (const k of Object.values(d.ledger)) if (k.kind === 'position' && k.strength === 'hard') k.strength = 'soft';
+    d.format = DESIGN_FORMAT_VERSION;
+  }
   if (d.format !== DESIGN_FORMAT_VERSION) {
     throw new Error(`Unsupported design format ${String(d.format)} (expected ${DESIGN_FORMAT_VERSION})`);
   }

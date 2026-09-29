@@ -9,9 +9,15 @@ function buck() {
   return k;
 }
 
+/** The route step (the last one), then the board. */
+function routed(k: Kernel) {
+  k.transact({ summary: 'route', ops: [{ op: 'route' }] });
+  return k.board();
+}
+
 describe('board placement', () => {
   it('places every part on the board without overlapping courtyards', () => {
-    const b = buck().board();
+    const b = routed(buck());
     expect(b.parts).toHaveLength(12);
     expect(b.missing).toEqual([]);
     expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
@@ -43,7 +49,7 @@ describe('board placement', () => {
     const k = buck();
     k.transact({ summary: 'board', ops: [
       { op: 'set_board', width_mm: 40, height_mm: 30 },
-      { op: 'place', ref: 'J1', x_mm: 3, y_mm: 15, rot: 90 },
+      { op: 'place', ref: 'J1', x_mm: 3, y_mm: 15, rot: 90, lock: true },
     ] });
     const b = k.board();
     expect(b.outline).toEqual({ w: 40, h: 30 });
@@ -101,22 +107,96 @@ function brokenNets(b: ReturnType<Kernel['board']>): string[] {
 }
 
 describe('dragging a part (place)', () => {
-  it('moves just that part; the board keeps its frame and size', () => {
+  it('moves just that part, as the user\'s choice; the board keeps its frame and size', () => {
     const k = buck();
     const before = k.board();
-    const c2 = before.parts.find((p) => p.refdes === 'C2')!;
-    k.transact({ summary: 'drag', ops: [{ op: 'place', ref: 'C2', x_mm: c2.x + 1.5, y_mm: c2.y + 1, rot: c2.rot }] });
+    const c4 = before.parts.find((p) => p.refdes === 'C4')!;
+    k.transact({ summary: 'drag', ops: [{ op: 'place', ref: 'C4', x_mm: c4.x - 1, y_mm: c4.y }] });
     k.accept(undefined, 'user');
     const after = k.board();
-    const moved = after.parts.find((p) => p.refdes === 'C2')!;
-    expect([moved.x, moved.y, moved.locked]).toEqual([c2.x + 1.5, c2.y + 1, true]);
-    expect(Math.abs(after.outline.w - before.outline.w)).toBeLessThanOrEqual(4);
-    expect(Math.abs(after.outline.h - before.outline.h)).toBeLessThanOrEqual(4);
-    // the other parts stay roughly where they were
-    const u1a = before.parts.find((p) => p.refdes === 'U1')!;
-    const u1b = after.parts.find((p) => p.refdes === 'U1')!;
-    expect(Math.hypot(u1a.x - u1b.x, u1a.y - u1b.y)).toBeLessThan(3);
+    const moved = after.parts.find((p) => p.refdes === 'C4')!;
+    expect([moved.x, moved.y, moved.locked, moved.intent]).toEqual([c4.x - 1, c4.y, false, { anchor: 'U1' }]);
+    expect(after.outline).toEqual(before.outline);
+    // parts that did not have to give way stay exactly where they were
+    const same = before.parts.filter((p) => {
+      const q = after.parts.find((x) => x.refdes === p.refdes)!;
+      return q.x === p.x && q.y === p.y && q.rot === p.rot;
+    });
+    expect(same.length).toBeGreaterThanOrEqual(before.parts.length - 3);
     expect(after.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+  });
+});
+
+describe('the user\'s placement choices', () => {
+  const at = (k: Kernel, ref: string) => k.board().parts.find((p) => p.refdes === ref)!;
+
+  it('a choice is kept relative to the parent part; moving the parent brings its parts along', () => {
+    const k = buck();
+    const c4 = at(k, 'C4');
+    const c1 = at(k, 'C1');
+    const u1 = at(k, 'U1');
+    // the user puts C4 somewhere else next to U1, then moves U1
+    k.transact({ summary: 'c4', ops: [{ op: 'place', ref: 'C4', x_mm: c4.x - 1, y_mm: c4.y }] });
+    k.transact({ summary: 'u1', ops: [{ op: 'place', ref: 'U1', x_mm: u1.x + 1, y_mm: u1.y + 1 }] });
+    const c4b = at(k, 'C4');
+    const u1b = at(k, 'U1');
+    expect([u1b.x, u1b.y]).toEqual([u1.x + 1, u1.y + 1]);
+    // C4 (the user's choice, relative to U1) and C1 (placed automatically, U1's) follow U1
+    expect([c4b.x - u1b.x, c4b.y - u1b.y].map((v) => Math.round(v * 1000) / 1000)).toEqual([c4.x - 1 - u1.x, c4.y - u1.y].map((v) => Math.round(v * 1000) / 1000));
+    const c1b = at(k, 'C1');
+    expect(Math.hypot(c1b.x - u1b.x - (c1.x - u1.x), c1b.y - u1b.y - (c1.y - u1.y))).toBeLessThan(0.6);
+    expect(k.board().diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+  });
+
+  it('a new part is placed next to what it connects to; the others stay put', () => {
+    const k = buck();
+    k.transact({ summary: 'keep', ops: [{ op: 'propose_layout' }] });
+    const before = k.board();
+    k.transact({ summary: 'add', ops: [{ op: 'add_part', part: 'generic:C', refdes: 'C9', params: { capacitance: '100nF', voltage: '16V', package: '0402' } }, { op: 'connect', pins: ['C9.1'], net: '+3V3' }, { op: 'connect', pins: ['C9.2'], net: 'GND' }] });
+    const after = k.board();
+    expect(after.parts.some((p) => p.refdes === 'C9')).toBe(true);
+    const moved = before.parts.filter((p) => {
+      const q = after.parts.find((x) => x.refdes === p.refdes)!;
+      return q.x !== p.x || q.y !== p.y || q.rot !== p.rot;
+    });
+    expect(moved.length).toBeLessThanOrEqual(2);
+    expect(after.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+  });
+
+  it('routing is the last step: done, out of date after a change, done again', () => {
+    const k = buck();
+    expect(k.board().routing).toBe('none');
+    expect(k.board().tracks).toEqual([]);
+    const r = routed(k);
+    expect(r.routing).toBe('done');
+    expect(r.stats.unrouted).toBe(0);
+    const c4 = at(k, 'C4');
+    k.transact({ summary: 'move', ops: [{ op: 'place', ref: 'C4', x_mm: c4.x - 1, y_mm: c4.y }] });
+    expect(k.board().routing).toBe('stale');
+    expect(k.board().tracks).toEqual([]);
+    expect(routed(k).routing).toBe('done');
+  });
+
+  it('propose_layout starts over; it keeps locked parts, and the choices unless told not to', () => {
+    const k = buck();
+    const c4 = at(k, 'C4');
+    k.transact({ summary: 'c', ops: [{ op: 'place', ref: 'C4', x_mm: c4.x - 1, y_mm: c4.y }, { op: 'place', ref: 'J1', x_mm: 4, y_mm: 8, lock: true }] });
+    k.transact({ summary: 'again', ops: [{ op: 'propose_layout' }] });
+    expect(at(k, 'C4').intent).toEqual({ anchor: 'U1' });
+    expect(at(k, 'J1').locked).toBe(true);
+    k.transact({ summary: 'fresh', ops: [{ op: 'propose_layout', keep_choices: false }] });
+    expect(at(k, 'C4').intent).toBeUndefined();
+    expect([at(k, 'J1').x, at(k, 'J1').y, at(k, 'J1').locked]).toEqual([4, 8, true]);
+  });
+
+  it('older designs: their pinned parts become the user\'s choices (soft)', () => {
+    const k = buck();
+    k.transact({ summary: 'pin', ops: [{ op: 'place', ref: 'J1', x_mm: 4, y_mm: 8, lock: true }] });
+    k.accept();
+    const old = { ...JSON.parse(k.exportDesign()), format: 1 };
+    const k2 = new Kernel(old);
+    expect(k2.board().parts.find((p) => p.refdes === 'J1')!.locked).toBe(false);
+    expect(k2.board().parts.find((p) => p.refdes === 'J1')!.intent).toEqual({});
   });
 });
 
@@ -125,7 +205,7 @@ describe('fixed outline with a pinned part', () => {
     const k = buck();
     k.transact({ summary: 'board', ops: [
       { op: 'set_board', width_mm: 30, height_mm: 20 },
-      { op: 'place', ref: 'J1', x_mm: 3, y_mm: 10, rot: 0 },
+      { op: 'place', ref: 'J1', x_mm: 3, y_mm: 10, rot: 0, lock: true },
     ] });
     const b = k.board();
     expect(b.outline).toEqual({ w: 30, h: 20 });
@@ -153,7 +233,7 @@ describe('pinned parts and rotation', () => {
 
 describe('routing', () => {
   it('routes the buck completely, DRC-clean, and every net is one piece of copper', () => {
-    const b = buck().board();
+    const b = routed(buck());
     expect(b.stats.unrouted).toBe(0);
     expect(b.stats.routed).toBe(b.stats.nets);
     expect(b.ratsnest).toEqual([]);
@@ -167,7 +247,7 @@ describe('routing', () => {
   it('draws tracks as straight 0/45/90° pieces, not zigzags', () => {
     const k = buck();
     k.transact({ summary: 'holes', ops: [{ op: 'add_hole', diameter_mm: 3.5, corner: 'all' }] });
-    const b = k.board();
+    const b = routed(k);
     const pads = b.parts.flatMap((p) => p.pads);
     const nearPad = (x: number, y: number) => pads.some((p) => Math.hypot(p.x - x, p.y - y) < Math.max(p.w, p.h) / 2 + 1.4); // pad entries and escape stubs
     let tiny = 0;
@@ -187,7 +267,7 @@ describe('routing', () => {
   });
 
   it('enters pads at 0/45/90° too', () => {
-    const b = buck().board();
+    const b = routed(buck());
     const odd: string[] = [];
     for (const t of b.tracks) {
       for (let i = 0; i + 3 < t.pts.length; i += 2) {
@@ -204,7 +284,7 @@ describe('routing', () => {
   it('runs onto a pad along its centre line, not half over its edge', () => {
     const k = buck();
     k.transact({ summary: 'holes', ops: [{ op: 'add_hole', diameter_mm: 3.5, corner: 'all' }] });
-    const b = k.board();
+    const b = routed(k);
     const pads = b.parts.flatMap((p) => p.pads).filter((p) => p.shape !== 'round');
     const odd = new Set<string>();
     for (const t of b.tracks) {
@@ -238,12 +318,13 @@ describe('routing', () => {
 
   it('the copper DRC catches a short', async () => {
     const { copperDrc } = await import('../src/drc.ts');
-    const b = structuredClone(buck().board());
+    const b = structuredClone(routed(buck()));
     const pad = b.parts.find((p) => p.refdes === 'U1')!.pads[0]!;
     const other = Object.keys(b.netNames).find((n) => n !== pad.netId)!;
     b.tracks.push({ netId: other, layer: 'F.Cu', width: 0.25, pts: [pad.x - 1, pad.y, pad.x + 1, pad.y] });
     const d = copperDrc(b);
-    expect(d.some((x) => x.code === 'DRC.SHORT' && x.message.includes('U1.1'))).toBe(true);
+    // (reported against the pad, or against the pad's own track the short crosses first)
+    expect(d.some((x) => x.code === 'DRC.SHORT' && (x.message.includes('U1.1') || x.message.includes(b.netNames[pad.netId!]!)))).toBe(true);
   });
 });
 
@@ -251,7 +332,7 @@ describe('planes', () => {
   it('uses GND and the main supply as inner planes on 4 layers, connected through vias', () => {
     const k = buck();
     k.transact({ summary: '4 layers', ops: [{ op: 'set_board', layers: 4 }] });
-    const b = k.board();
+    const b = routed(k);
     expect(b.planes.map((p) => [b.netNames[p.netId], p.layer, p.auto])).toEqual([['GND', 'In1.Cu', true], ['+12V', 'In2.Cu', true]]);
     // no tracks on dedicated planes, and none for the plane nets
     expect(b.tracks.filter((t) => t.layer === 'In1.Cu' || t.layer === 'In2.Cu')).toEqual([]);
@@ -266,7 +347,7 @@ describe('planes', () => {
     const r2 = k.transact({ summary: 'x', ops: [{ op: 'set_plane', layer: 'In1.Cu', net: 'GND' }] });
     expect(JSON.stringify(r2)).toContain('does not exist on a 2-layer board');
     k.transact({ summary: 'planes', ops: [{ op: 'set_board', layers: 4 }, { op: 'set_plane', layer: 'In2.Cu', net: '+3V3' }] });
-    const b = k.board();
+    const b = routed(k);
     expect(b.planes.map((p) => [b.netNames[p.netId], p.layer, p.auto])).toEqual([['GND', 'In1.Cu', false], ['+3V3', 'In2.Cu', false]]);
     expect(b.stats.unrouted).toBe(0);
     expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
@@ -291,7 +372,7 @@ describe('vias', () => {
   it('never places a via in a pad or a small part’s land pattern', () => {
     const k = buck();
     k.transact({ summary: 'planes', ops: [{ op: 'set_board', layers: 4 }] });
-    const b = k.board();
+    const b = routed(k);
     expect(b.vias.length).toBeGreaterThan(3); // plane drops
     expect(viaInPad(b)).toEqual([]);
     expect(b.stats.unrouted).toBe(0);
@@ -300,7 +381,7 @@ describe('vias', () => {
   it('keeps vias apart and connects plane vias through thermal reliefs', () => {
     const k = buck();
     k.transact({ summary: 'planes', ops: [{ op: 'set_board', layers: 4 }] });
-    const b = k.board();
+    const b = routed(k);
     for (let i = 0; i < b.vias.length; i++) {
       for (let j = i + 1; j < b.vias.length; j++) {
         const d = Math.hypot(b.vias[i]!.x - b.vias[j]!.x, b.vias[i]!.y - b.vias[j]!.y);
@@ -327,7 +408,7 @@ describe('vias', () => {
   it('allows vias in pads only when asked, and the DRC reports them otherwise', async () => {
     const k = buck();
     k.transact({ summary: 'planes', ops: [{ op: 'set_board', layers: 4, via_in_pad: true }] });
-    const b = k.board();
+    const b = routed(k);
     expect(b.rules.viaInPad).toBe(true);
     expect(b.diagnostics.filter((x) => x.code === 'DRC.VIA_IN_PAD')).toEqual([]);
     const { copperDrc } = await import('../src/drc.ts');
@@ -342,7 +423,7 @@ describe('mounting holes', () => {
     const k = buck();
     const before = k.board();
     k.transact({ summary: 'holes', ops: [{ op: 'add_hole', diameter_mm: 3.5, corner: 'all' }] });
-    const b = k.board();
+    const b = routed(k);
     const holes = b.parts.filter((p) => p.componentId.startsWith('hole:'));
     expect(holes.map((h) => h.refdes)).toEqual(['MH1', 'MH2', 'MH3', 'MH4']);
     expect(holes.map((h) => [h.x, h.y])).toEqual([[4, 4], [b.outline.w - 4, 4], [4, b.outline.h - 4], [b.outline.w - 4, b.outline.h - 4]]);
@@ -357,7 +438,7 @@ describe('mounting holes', () => {
     const { fabFiles } = await import('@tracewise/fab');
     const k = buck();
     k.transact({ summary: 'holes', ops: [{ op: 'add_hole', diameter_mm: 3.5, corner: 'all' }] });
-    const files = fabFiles(k.board(), 'h');
+    const files = fabFiles(routed(k), 'h');
     const npth = files.find((f) => f.name === 'h-NPTH.drl')!.content;
     expect(npth.split('\n').filter((l) => /^X/.test(l))).toHaveLength(4);
     expect(npth).toContain('C3.500');
@@ -370,7 +451,7 @@ describe('mounting holes', () => {
   it('can plate a hole onto a net and remove holes again', () => {
     const k = buck();
     k.transact({ summary: 'hole', ops: [{ op: 'add_hole', diameter_mm: 3.2, x_mm: 5, y_mm: 5, plated: true, net: 'GND' }] });
-    let b = k.board();
+    let b = routed(k);
     const mh = b.parts.find((p) => p.refdes === 'MH1')!;
     expect(mh.pads[0]!.npth).toBeUndefined();
     expect(b.netNames[mh.pads[0]!.netId!]).toBe('GND');

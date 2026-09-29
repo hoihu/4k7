@@ -17,7 +17,7 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { CalcCall, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design } from '@tracewise/schema';
+import { CalcCall, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -408,7 +408,7 @@ class AppState {
 
   async newProject() {
     await this.importDesign({
-      format: 1,
+      format: DESIGN_FORMAT_VERSION,
       name: 'untitled',
       seq: 2,
       parts: {},

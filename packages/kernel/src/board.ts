@@ -19,6 +19,7 @@ import {
   type BoardPart,
   type BoardView,
   type Component,
+  type Constraint,
   type CopperLayer,
   type Design,
   type MountingHole,
@@ -26,6 +27,7 @@ import {
   type PartCard,
   type RatsLine,
   type SchematicView,
+  type StoredPlacement,
 } from '@tracewise/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@tracewise/parts';
 import { cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
@@ -45,8 +47,10 @@ interface Item {
   y: number;
   rot: number;
   fixed: boolean;
-  /** Pinned without a rotation: the placer still picks the rotation. */
+  /** Locked without a rotation: the placer still picks the rotation. */
   freeRot?: boolean;
+  /** The user's choice for this part (a soft position constraint). */
+  intent?: Constraint;
   /** Courtyard size at rotation 0, centred. */
   cw: number;
   ch: number;
@@ -79,6 +83,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const missing: string[] = [];
   const items: Item[] = [];
 
+  const stored = settings.placement;
+
   /* ---- footprints ---- */
   for (const comp of componentsSorted(d)) {
     const card = cardOf(d, comp.part);
@@ -110,55 +116,14 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const area = items.reduce((s, it) => s + (it.cw + SPACING) * (it.ch + SPACING), 0);
   const sx = pts.length ? Math.max(...pts.map((p) => p.x)) - Math.min(...pts.map((p) => p.x)) : 1;
   const sy = pts.length ? Math.max(...pts.map((p) => p.y)) - Math.min(...pts.map((p) => p.y)) : 1;
-  // mm per mil so that the schematic spread becomes a comfortably packed board of a usual shape:
-  // big schematics are long rows, so x and y are scaled separately towards about 1.4 : 1
-  const targetW = Math.sqrt(area * 2.8 * 1.4);
-  const targetH = targetW / 1.4;
-  const clampScale = (v: number) => Math.min(0.05, Math.max(0.0005, v));
-  const scaleX = clampScale(targetW / Math.max(sx, 1));
-  const scaleY = clampScale(targetH / Math.max(sy, 1));
-  items.forEach((it, i) => {
-    const c = centre.get(it.comp.id);
-    it.x = c ? c.x * scaleX : i * 5;
-    it.y = c ? c.y * scaleY : 0;
-    it.rot = c?.vertical && isTwoPin(it.card) ? 90 : 0;
-  });
-
-  /*
-   * With pinned parts, start from the board placed without any pins: pinned coordinates are
-   * board coordinates, so everything else must start in that frame too (a drag then moves
-   * one part and the rest adapts around it, instead of jumping to a different frame).
-   */
-  const pins = Object.values(d.ledger).filter((k) => k.kind === 'position' && k.a);
-  if (pins.length) {
-    const free: Design = { ...d, ledger: Object.fromEntries(Object.entries(d.ledger).filter(([, k]) => k.kind !== 'position')) };
-    const base = placeBoard(free, sch);
-    for (const it of items) {
-      const p = base.parts.find((x) => x.componentId === it.comp.id);
-      if (p) {
-        it.x = p.x;
-        it.y = p.y;
-        it.rot = p.rot;
-      }
-    }
-  }
-
-  /* ---- pinned parts ---- */
-  for (const k of Object.values(d.ledger)) {
-    if (k.kind !== 'position' || !k.a) continue;
-    const it = items.find((x) => x.comp.id === k.a);
-    if (!it) continue;
-    it.x = k.xMm ?? it.x;
-    it.y = k.yMm ?? it.y;
-    it.rot = k.rot ?? it.rot;
-    it.freeRot = k.rot === undefined;
-    it.fixed = true;
-  }
-  const anyFixed = items.some((it) => it.fixed);
-
-  /* ---- connectivity ---- */
   const byComp = new Map(items.map((it) => [it.comp.id, it]));
   const padsOf = (it: Item) => it.fp.pads.map((p) => ({ pad: p, net: it.comp.pins[p.number] }));
+  const padPos = (it: Item, px: number, py: number) => {
+    const [x, y] = rotate(px, py, it.rot);
+    return { x: it.x + x, y: it.y + y };
+  };
+
+  /* ---- connectivity ---- */
   const nets = new Map<string, { it: Item; px: number; py: number }[]>();
   for (const it of items) {
     for (const { pad, net } of padsOf(it)) {
@@ -197,92 +162,207 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     .filter((k) => k.kind === 'near' && k.a && k.b && byComp.has(k.a) && byComp.has(k.b))
     .map((k) => ({ a: byComp.get(k.a!)!, b: byComp.get(k.b!)!, max: k.maxMm ?? 3 }));
 
-  const padPos = (it: Item, px: number, py: number) => {
-    const [x, y] = rotate(px, py, it.rot);
-    return { x: it.x + x, y: it.y + y };
+  /*
+   * Each part's parent: the part it belongs with, which it follows when that moves (and which
+   * a user's choice for it is relative to). A decoupling cap: its IC; otherwise the biggest part
+   * it shares a signal net with (a supply net if there is none), if that is bigger than itself.
+   */
+  const parent = new Map<Item, Item>();
+  for (const s of springs) parent.set(s.it, s.to);
+  for (const it of items) {
+    if (parent.has(it)) continue;
+    for (const supply of [false, true]) {
+      let best: Item | undefined;
+      for (const { net } of padsOf(it)) {
+        if (!net || isGroundNet(d.nets[net]!) || isPowerNet(d.nets[net]!) !== supply) continue;
+        for (const m of nets.get(net) ?? []) {
+          const n = m.it.fp.pads.length;
+          if (m.it === it || n <= it.fp.pads.length) continue;
+          if (!best || n > best.fp.pads.length || (n === best.fp.pads.length && natCmp(m.it.comp.refdes, best.comp.refdes) < 0)) best = m.it;
+        }
+      }
+      if (best) {
+        parent.set(it, best);
+        break;
+      }
+    }
+  }
+
+  /* ---- the user's decisions: locked parts (hard) and choices (soft, maybe relative) ---- */
+  const positions = Object.values(d.ledger).filter((k) => k.kind === 'position' && k.a && byComp.has(k.a));
+  for (const k of positions) {
+    const it = byComp.get(k.a!)!;
+    if (k.strength === 'hard') {
+      it.fixed = true;
+      it.freeRot = k.rot === undefined;
+    } else it.intent = k;
+  }
+  // bigger parts first: a choice's anchor (always bigger) is in place before the part itself
+  const bySize = [...items].sort((a, b) => b.fp.pads.length - a.fp.pads.length || natCmp(a.comp.refdes, b.comp.refdes));
+  const anchorOf = (it: Item) => (it.intent?.rel ? byComp.get(it.intent.rel) : undefined);
+  const applyLocks = () => {
+    for (const k of positions) {
+      if (k.strength !== 'hard') continue;
+      const it = byComp.get(k.a!)!;
+      it.x = k.xMm ?? it.x;
+      it.y = k.yMm ?? it.y;
+      if (k.rot !== undefined) it.rot = k.rot;
+    }
+  };
+  /** Put each part with a choice where the user wants it (relative ones next to their anchor). */
+  const applyIntents = () => {
+    for (const it of bySize) {
+      const k = it.intent;
+      if (!k) continue;
+      const a = anchorOf(it);
+      if (k.rel && !a) continue; // the anchor is gone: the part stays where it is
+      if (a) {
+        const [ox, oy] = rotate(k.xMm ?? 0, k.yMm ?? 0, a.rot);
+        it.x = a.x + ox;
+        it.y = a.y + oy;
+        if (k.rot !== undefined) it.rot = (((a.rot + k.rot) % 360) + 360) % 360;
+      } else {
+        it.x = k.xMm ?? it.x;
+        it.y = k.yMm ?? it.y;
+        if (k.rot !== undefined) it.rot = k.rot;
+      }
+    }
   };
 
-  /*
-   * A fixed outline with pinned parts: pinned coordinates are board coordinates, so the others
-   * must stay inside the outline too (without pins, the finished placement is centred instead).
-   */
-  const margin0 = 1.5 + rules.edgeClearance;
-  const contain =
-    anyFixed && settings.width && settings.height
-      ? (it: Item) => {
-          if (it.fixed) return;
-          const e = extent(it);
-          it.x = Math.min(Math.max(it.x, margin0 + e.w / 2), settings.width! - margin0 - e.w / 2);
-          it.y = Math.min(Math.max(it.y, margin0 + e.h / 2), settings.height! - margin0 - e.h / 2);
+  /* ---- the outline: the user's size, else the stored proposal, else a new proposal ---- */
+  const margin = 1.5 + rules.edgeClearance;
+  // parts (with spacing) cover at most this much of a proposed board: room to route
+  const DENSITY = layers.length === 4 ? 0.55 : 0.45;
+  const userSize = !!(settings.width && settings.height);
+  let outline = userSize ? { w: settings.width!, h: settings.height! } : (stored?.outline ?? { w: 0, h: 0 });
+  // (a proposal without the user's size relaxes freely; its outline is fitted afterwards)
+  let containing = userSize || !!stored;
+  const contain = (it: Item) => {
+    if (it.fixed || !containing) return;
+    const e = extent(it);
+    it.x = Math.min(Math.max(it.x, margin + e.w / 2), outline.w - margin - e.w / 2);
+    it.y = Math.min(Math.max(it.y, margin + e.h / 2), outline.h - margin - e.h / 2);
+  };
+
+  /* ---- relax: pads towards their nets, caps to their supply pins, near constraints ---- */
+  const relax = (movable: Item[], iterations: number) => {
+    const moving = new Set(movable);
+    for (let iter = 0; iter < iterations; iter++) {
+      const step = 0.35 * (1 - iter / iterations) + 0.05;
+      const force = new Map<Item, { fx: number; fy: number }>(movable.map((it) => [it, { fx: 0, fy: 0 }]));
+      const add = (it: Item, fx: number, fy: number) => {
+        const f = force.get(it);
+        if (f) {
+          f.fx += fx;
+          f.fy += fy;
         }
-      : null;
-  if (contain) {
-    // start from the unpinned board centred in the outline
-    const bb0 = bounds(items.filter((it) => !it.fixed));
-    const dx = settings.width! / 2 - (bb0.x0 + bb0.x1) / 2;
-    const dy = settings.height! / 2 - (bb0.y0 + bb0.y1) / 2;
-    for (const it of items) if (!it.fixed) {
-      it.x += dx;
-      it.y += dy;
+      };
+      for (const [netId, members] of nets) {
+        if (members.length < 2 || !members.some((m) => moving.has(m.it))) continue;
+        const w = weight(netId, members.length);
+        const ps = members.map((m) => padPos(m.it, m.px, m.py));
+        const cx = ps.reduce((s, p) => s + p.x, 0) / ps.length;
+        const cy = ps.reduce((s, p) => s + p.y, 0) / ps.length;
+        members.forEach((m, i) => add(m.it, (cx - ps[i]!.x) * w, (cy - ps[i]!.y) * w));
+      }
+      for (const s of springs) {
+        if (!moving.has(s.it)) continue;
+        const a = padPos(s.it, s.px, s.py);
+        const b = capSpot(s);
+        add(s.it, (b.x - a.x) * s.w, (b.y - a.y) * s.w);
+      }
+      for (const n of near) {
+        const dx = n.b.x - n.a.x;
+        const dy = n.b.y - n.a.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist <= n.max) continue;
+        const k = (dist - n.max) / dist;
+        add(n.a, dx * k * 2, dy * k * 2);
+        add(n.b, -dx * k * 2, -dy * k * 2);
+      }
+      for (const it of movable) {
+        const f = force.get(it)!;
+        const len = Math.hypot(f.fx, f.fy);
+        const lim = 2;
+        const k = len * step > lim ? lim / len : step;
+        it.x += f.fx * k;
+        it.y += f.fy * k;
+      }
+      applyIntents();
+      separate(items, 3);
+      for (const it of items) contain(it);
     }
+  };
+  /** Where a decoupling cap's supply pad belongs: next to the IC's pin, outside the IC's body. */
+  function capSpot(s: (typeof springs)[number]) {
+    const pad = padPos(s.to, s.tx, s.ty);
+    const e = extent(s.to);
+    const own = extent(s.it);
+    let dx = pad.x - s.to.x;
+    let dy = pad.y - s.to.y;
+    if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) dx = 1;
+    const f = Math.min(Math.abs(dx) > 1e-9 ? e.w / 2 / Math.abs(dx) : Infinity, Math.abs(dy) > 1e-9 ? e.h / 2 / Math.abs(dy) : Infinity);
+    const len = Math.hypot(dx, dy);
+    const out = Math.max(own.w, own.h) / 2 + SPACING;
+    return f >= 1 ? pad : { x: s.to.x + dx * f + (dx / len) * out, y: s.to.y + dy * f + (dy / len) * out };
   }
 
-  /* ---- relax ---- */
-  const movable = items.filter((it) => !it.fixed);
-  const ITER = 160;
-  for (let iter = 0; iter < ITER; iter++) {
-    const step = 0.35 * (1 - iter / ITER) + 0.05;
-    const force = new Map<Item, { fx: number; fy: number }>(movable.map((it) => [it, { fx: 0, fy: 0 }]));
-    const add = (it: Item, fx: number, fy: number) => {
-      const f = force.get(it);
-      if (f) {
-        f.fx += fx;
-        f.fy += fy;
+  /*
+   * An IC's small parts right at their pin: just outside the IC's courtyard, on the edge nearest
+   * the pin, turned so the connected pad is closest to it. Overlaps are left to the separation
+   * (which slides them along the edge).
+   */
+  // decoupling caps first, then the IC's other small parts (bootstrap, soft-start, feedback …)
+  // at the pin they connect to
+  const satellites = [
+    ...springs,
+    ...items.flatMap((it) => {
+      const ic = parent.get(it);
+      if (!ic || !isTwoPin(it.card) || ic.fp.pads.length <= 3 || springs.some((s) => s.it === it)) return [];
+      for (const { pad, net } of padsOf(it)) {
+        if (!net || isGroundNet(d.nets[net]!)) continue;
+        const pin = padsOf(ic).find((p) => p.net === net);
+        if (pin) return [{ it, to: ic, tx: pin.pad.x, ty: pin.pad.y, px: pad.x, py: pad.y, w: 1 }];
       }
-    };
-    for (const [netId, members] of nets) {
-      if (members.length < 2) continue;
-      const w = weight(netId, members.length);
-      const ps = members.map((m) => padPos(m.it, m.px, m.py));
-      const cx = ps.reduce((s, p) => s + p.x, 0) / ps.length;
-      const cy = ps.reduce((s, p) => s + p.y, 0) / ps.length;
-      members.forEach((m, i) => add(m.it, (cx - ps[i]!.x) * w, (cy - ps[i]!.y) * w));
+      return [];
+    }),
+  ];
+  const hugCaps = (only?: Set<Item>) => {
+    for (const s of satellites) {
+      const it = s.it;
+      if (it.fixed || it.intent || (only && !only.has(it))) continue;
+      const ic = s.to;
+      const pin = padPos(ic, s.tx, s.ty);
+      const e = extent(ic);
+      const edges = [
+        { d: pin.x - (ic.x - e.w / 2), x: ic.x - e.w / 2, y: pin.y, nx: -1, ny: 0 },
+        { d: ic.x + e.w / 2 - pin.x, x: ic.x + e.w / 2, y: pin.y, nx: 1, ny: 0 },
+        { d: pin.y - (ic.y - e.h / 2), x: pin.x, y: ic.y - e.h / 2, nx: 0, ny: -1 },
+        { d: ic.y + e.h / 2 - pin.y, x: pin.x, y: ic.y + e.h / 2, nx: 0, ny: 1 },
+      ];
+      const edge = edges.reduce((a, b) => (b.d < a.d ? b : a));
+      // a pin under the body (a BGA ball): a ring of caps would wall in the tracks escaping from
+      // between the balls. Only a part alone on its ball's net (a VCAP cap) goes to the edge, with
+      // a channel for those tracks; the rest keep the place the relaxation found
+      const under = Math.abs(s.tx) < ic.fp.body.w / 2 - 0.1 && Math.abs(s.ty) < ic.fp.body.h / 2 - 0.1;
+      const net = padsOf(it).find((p) => p.pad.x === s.px && p.pad.y === s.py)?.net;
+      if (under && (nets.get(net ?? '')?.length ?? 0) > 2) continue;
+      const gap = SPACING + (under ? 1.2 : 0);
+      let best: { x: number; y: number; rot: number; dist: number } | null = null;
+      for (const rot of [0, 90, 180, 270]) {
+        it.rot = rot;
+        const own = extent(it);
+        const cx = edge.x + edge.nx * (own.w / 2 + gap);
+        const cy = edge.y + edge.ny * (own.h / 2 + gap);
+        const [px, py] = rotate(s.px, s.py, rot);
+        const dist = Math.hypot(cx + px - pin.x, cy + py - pin.y);
+        if (!best || dist < best.dist - 1e-6) best = { x: cx, y: cy, rot, dist };
+      }
+      it.x = best!.x;
+      it.y = best!.y;
+      it.rot = best!.rot;
     }
-    for (const s of springs) {
-      const a = padPos(s.it, s.px, s.py);
-      // the target: next to the supply pad, but outside the IC (BGA balls lie under the body)
-      const pad = padPos(s.to, s.tx, s.ty);
-      const e = extent(s.to);
-      const own = extent(s.it);
-      let dx = pad.x - s.to.x;
-      let dy = pad.y - s.to.y;
-      if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) dx = 1;
-      const f = Math.min(Math.abs(dx) > 1e-9 ? e.w / 2 / Math.abs(dx) : Infinity, Math.abs(dy) > 1e-9 ? e.h / 2 / Math.abs(dy) : Infinity);
-      const len = Math.hypot(dx, dy);
-      const out = Math.max(own.w, own.h) / 2 + SPACING;
-      const b = f >= 1 ? pad : { x: s.to.x + dx * f + (dx / len) * out, y: s.to.y + dy * f + (dy / len) * out };
-      add(s.it, (b.x - a.x) * s.w, (b.y - a.y) * s.w);
-    }
-    for (const n of near) {
-      const dx = n.b.x - n.a.x;
-      const dy = n.b.y - n.a.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist <= n.max) continue;
-      const k = (dist - n.max) / dist;
-      add(n.a, dx * k * 2, dy * k * 2);
-      add(n.b, -dx * k * 2, -dy * k * 2);
-    }
-    for (const it of movable) {
-      const f = force.get(it)!;
-      const len = Math.hypot(f.fx, f.fy);
-      const lim = 2;
-      const k = len * step > lim ? lim / len : step;
-      it.x += f.fx * k;
-      it.y += f.fy * k;
-    }
-    separate(items, 3);
-    if (contain) for (const it of movable) contain(it);
-  }
+  };
 
   /* ---- rotations of two-pin parts: shortest connections ---- */
   const netCentre = (netId: string, except: Item) => {
@@ -291,9 +371,6 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     const ps = ms.map((m) => padPos(m.it, m.px, m.py));
     return { x: ps.reduce((s, p) => s + p.x, 0) / ps.length, y: ps.reduce((s, p) => s + p.y, 0) / ps.length };
   };
-  // pinned parts without a pinned rotation first (only rotations that fit between the other
-  // pinned parts: they cannot move out of the way), then the movable ones. A pinned part serves
-  // its signals: its pads on plane nets drop onto the plane right there, whichever way they face.
   const fixedItems = items.filter((it) => it.fixed);
   const planeNets = new Set(settingsPlanes(d, layers.length as 2 | 4).map((pl) => pl.netId));
   const clashes = (it: Item) => {
@@ -304,67 +381,205 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       return Math.abs(o.x - it.x) < (e.w + eo.w) / 2 - 1e-6 && Math.abs(o.y - it.y) < (e.h + eo.h) / 2 - 1e-6;
     });
   };
-  for (const it of [...items.filter((x) => x.fixed && x.freeRot), ...movable]) {
-    if (!isTwoPin(it.card)) continue;
-    let best = it.rot;
-    let bestLen = Infinity;
-    for (const rot of [0, 90, 180, 270]) {
-      it.rot = rot;
-      if (it.fixed && clashes(it)) continue;
-      let len = 0;
-      for (const { pad, net } of padsOf(it)) {
-        if (!net || (it.fixed && planeNets.has(net))) continue;
-        const c = netCentre(net, it);
-        if (!c) continue;
-        const p = padPos(it, pad.x, pad.y);
-        len += Math.hypot(c.x - p.x, c.y - p.y);
+  // locked parts without a locked rotation (only rotations that fit between the other locked
+  // parts: they cannot move out of the way) serve their signals: their pads on plane nets drop
+  // onto the plane right there, whichever way they face
+  const orient = (list: Item[]) => {
+    for (const it of list) {
+      if (!isTwoPin(it.card)) continue;
+      let best = it.rot;
+      let bestLen = Infinity;
+      for (const rot of [0, 90, 180, 270]) {
+        it.rot = rot;
+        if (it.fixed && clashes(it)) continue;
+        let len = 0;
+        for (const { pad, net } of padsOf(it)) {
+          if (!net || (it.fixed && planeNets.has(net))) continue;
+          const c = netCentre(net, it);
+          if (!c) continue;
+          const p = padPos(it, pad.x, pad.y);
+          len += Math.hypot(c.x - p.x, c.y - p.y);
+        }
+        if (len < bestLen - 1e-6) {
+          bestLen = len;
+          best = rot;
+        }
       }
-      if (len < bestLen - 1e-6) {
-        bestLen = len;
-        best = rot;
+      it.rot = best;
+    }
+  };
+
+  /** Final clean-up: no overlaps, inside the outline, on the grid; a proposed outline grows if it must. */
+  const settle = () => {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      for (let round = 0; round < 30; round++) {
+        // stuck against the outline: spread in two dimensions now and then
+        if (round % 10 === 9) {
+          separate(items, 10);
+          for (const it of items) contain(it);
+        }
+        separate(items, 40, true);
+        for (const it of items) contain(it);
+        for (const it of items) if (!it.fixed) snapItem(it);
+        // settled: the spacing holds to within a grid step (what the strict separation leaves)
+        if (!overlapping(items, SPACING - GRID_MM)) return;
+      }
+      if (userSize) return; // the user's size: overlaps show as DRC errors
+      outline = { w: Math.ceil(outline.w * 1.1), h: Math.ceil(outline.h * 1.1) };
+    }
+  };
+
+  if (!stored) {
+    /* ---- proposal: start from the schematic, scaled into the outline ---- */
+    const targetW = Math.sqrt(area * 2.8 * 1.4);
+    const targetH = targetW / 1.4;
+    const clampScale = (v: number) => Math.min(0.05, Math.max(0.0005, v));
+    const scaleX = clampScale(targetW / Math.max(sx, 1));
+    const scaleY = clampScale(targetH / Math.max(sy, 1));
+    items.forEach((it, i) => {
+      const c = centre.get(it.comp.id);
+      it.x = c ? c.x * scaleX : i * 5;
+      it.y = c ? c.y * scaleY : 0;
+      it.rot = c?.vertical && isTwoPin(it.card) ? 90 : 0;
+    });
+    /*
+     * With the user's decisions, start from the board placed without them: their coordinates
+     * are board coordinates, so everything else must start in that frame too (a drag then
+     * moves one part and the rest adapts around it, instead of jumping to a different frame).
+     */
+    if (positions.length) {
+      const free: Design = { ...d, ledger: Object.fromEntries(Object.entries(d.ledger).filter(([, k]) => k.kind !== 'position')) };
+      const base = placeBoard(free, sch);
+      for (const it of items) {
+        const p = base.parts.find((x) => x.componentId === it.comp.id);
+        if (p) {
+          it.x = p.x;
+          it.y = p.y;
+          it.rot = p.rot;
+        }
+      }
+    } else {
+      // centred in the outline
+      const bb0 = bounds(items);
+      const dx = outline.w / 2 - (bb0.x0 + bb0.x1) / 2;
+      const dy = outline.h / 2 - (bb0.y0 + bb0.y1) / 2;
+      for (const it of items) {
+        it.x += dx;
+        it.y += dy;
       }
     }
-    it.rot = best;
+    applyLocks();
+    applyIntents();
+    relax(
+      items.filter((it) => !it.fixed && !it.intent),
+      160,
+    );
+    orient(items.filter((it) => (it.fixed && it.freeRot) || (!it.fixed && !it.intent)));
+    const free = items.filter((it) => !it.fixed && !it.intent);
+    if (userSize) {
+      if (!positions.length) {
+        // the relaxed cluster, centred in the user's outline
+        const bb1 = bounds(items);
+        const dx = outline.w / 2 - (bb1.x0 + bb1.x1) / 2;
+        const dy = outline.h / 2 - (bb1.y0 + bb1.y1) / 2;
+        for (const it of free) {
+          it.x += dx;
+          it.y += dy;
+        }
+      }
+    } else if (items.length) {
+      // the proposed size: the relaxed cluster, spread until the parts cover at most DENSITY
+      const partsArea = items.reduce((sum, it) => sum + (it.cw + SPACING) * (it.ch + SPACING), 0);
+      const bb1 = bounds(items);
+      const f = Math.sqrt(partsArea / DENSITY / Math.max((bb1.x1 - bb1.x0) * (bb1.y1 - bb1.y0), 1e-6));
+      if (f > 1) {
+        const cx = (bb1.x0 + bb1.x1) / 2;
+        const cy = (bb1.y0 + bb1.y1) / 2;
+        for (const it of free) {
+          it.x = cx + (it.x - cx) * f;
+          it.y = cy + (it.y - cy) * f;
+        }
+        applyIntents();
+        separate(items, 10);
+      }
+      // onto the board: locked parts keep their coordinates, the rest shifts clear of the edge
+      const bb2 = bounds(items);
+      const shift = positions.length ? { x: Math.max(0, margin - bb2.x0), y: Math.max(0, margin - bb2.y0) } : { x: margin - bb2.x0, y: margin - bb2.y0 };
+      for (const it of items) {
+        if (it.fixed || (positions.length && it.intent && !it.intent.rel)) continue;
+        it.x += shift.x;
+        it.y += shift.y;
+      }
+      const bb3 = bounds(items);
+      outline = { w: settings.width ?? Math.ceil(bb3.x1 + margin), h: settings.height ?? Math.ceil(bb3.y1 + margin) };
+    }
+    hugCaps();
+    containing = true;
+    applyIntents();
+  } else {
+    /* ---- from the stored placement: only what changed moves ---- */
+    const before = new Map<Item, { x: number; y: number; rot: number }>();
+    for (const it of items) {
+      const p = stored.parts[it.comp.id];
+      if (!p) continue;
+      it.x = p.x;
+      it.y = p.y;
+      it.rot = p.rot;
+      before.set(it, { ...p });
+    }
+    applyLocks();
+    applyIntents();
+    // parts placed automatically follow their parent when it moved or turned
+    for (const it of bySize) {
+      const pa = parent.get(it);
+      const was = before.get(it);
+      const paWas = pa && before.get(pa);
+      if (!pa || !was || !paWas || it.fixed || it.intent) continue;
+      if (pa.x === paWas.x && pa.y === paWas.y && pa.rot === paWas.rot) continue;
+      const dr = (((pa.rot - paWas.rot) % 360) + 360) % 360;
+      const [ox, oy] = rotate(was.x - paWas.x, was.y - paWas.y, dr);
+      it.x = pa.x + ox;
+      it.y = pa.y + oy;
+      it.rot = (it.rot + dr) % 360;
+    }
+    // new parts: next to what they connect to, then relaxed among the others (which stay put)
+    const added = items.filter((it) => !before.has(it) && !it.fixed && !it.intent);
+    if (added.length) {
+      for (const it of added) {
+        const ps: { x: number; y: number }[] = [];
+        for (const { net } of padsOf(it)) for (const m of nets.get(net ?? '') ?? []) if (before.has(m.it)) ps.push(padPos(m.it, m.px, m.py));
+        const c = ps.length ? { x: ps.reduce((s, p) => s + p.x, 0) / ps.length, y: ps.reduce((s, p) => s + p.y, 0) / ps.length } : { x: outline.w / 2, y: outline.h / 2 };
+        it.x = c.x;
+        it.y = c.y;
+      }
+      const still = items.filter((it) => !added.includes(it) && !it.fixed);
+      for (const it of still) it.fixed = true;
+      relax(added, 80);
+      orient(added);
+      hugCaps(new Set(added));
+      for (const it of still) it.fixed = false;
+    }
+    orient(items.filter((it) => it.fixed && it.freeRot && !before.has(it)));
   }
-  for (const it of movable) snapItem(it);
-  // separate and (on a fixed outline) keep inside, until both hold
-  for (let round = 0; round < (contain ? 30 : 1); round++) {
-    separate(items, 40, true);
-    if (contain) for (const it of movable) contain(it);
-    for (const it of movable) snapItem(it);
-    if (!contain || !overlapping(items)) break;
-  }
+  settle();
 
-  /* ---- outline ---- */
-  const margin = 1.5 + rules.edgeClearance;
-  const bb = bounds(items);
-  let w = settings.width ?? Math.ceil((bb.x1 - bb.x0 + 2 * margin) * 2) / 2;
-  let h = settings.height ?? Math.ceil((bb.y1 - bb.y0 + 2 * margin) * 2) / 2;
+  // locked parts outside a proposed outline widen it
+  let w = outline.w;
+  let h = outline.h;
+  if (!userSize && items.some((it) => it.fixed)) {
+    const b = bounds(items.filter((it) => it.fixed));
+    w = Math.max(w, Math.ceil((b.x1 + margin) * 2) / 2);
+    h = Math.max(h, Math.ceil((b.y1 + margin) * 2) / 2);
+  }
   if (!items.length) {
     w = settings.width ?? 20;
     h = settings.height ?? 20;
   }
-  // move the placement onto the board (pinned parts are in board coordinates already)
-  if (!anyFixed && items.length) {
-    const dx = snap((w - (bb.x1 - bb.x0)) / 2 - bb.x0);
-    const dy = snap((h - (bb.y1 - bb.y0)) / 2 - bb.y0);
-    for (const it of items) {
-      it.x = r3(it.x + dx);
-      it.y = r3(it.y + dy);
-    }
-  } else if (anyFixed && !settings.width && items.length) {
-    // grow the outline to include everything, keeping pinned coordinates
-    const b2 = bounds(items);
-    const shiftX = b2.x0 < margin ? snap(margin - b2.x0) : 0;
-    const shiftY = b2.y0 < margin ? snap(margin - b2.y0) : 0;
-    for (const it of movable) {
-      it.x = r3(it.x + shiftX);
-      it.y = r3(it.y + shiftY);
-    }
-    const b3 = bounds(items);
-    w = Math.ceil((Math.max(b3.x1 + margin, w)) * 2) / 2;
-    h = Math.ceil((Math.max(b3.y1 + margin, h)) * 2) / 2;
+  for (const it of items) {
+    it.x = r3(it.x);
+    it.y = r3(it.y);
   }
+  const movable = items.filter((it) => !it.fixed);
 
   /* ---- mounting holes: fixed keep-outs; corner holes follow the outline ---- */
   const holes = settings.holes ?? [];
@@ -385,11 +600,11 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       if (!overlapping(all)) break;
       separate(all, 40, true);
       for (const it of movable) snapItem(it);
-      if (settings.width && settings.height) {
+      if (userSize) {
         const inside = (it: Item) => {
           const e = extent(it);
-          it.x = Math.min(Math.max(it.x, margin + e.w / 2), settings.width! - margin - e.w / 2);
-          it.y = Math.min(Math.max(it.y, margin + e.h / 2), settings.height! - margin - e.h / 2);
+          it.x = Math.min(Math.max(it.x, margin + e.w / 2), w - margin - e.w / 2);
+          it.y = Math.min(Math.max(it.y, margin + e.h / 2), h - margin - e.h / 2);
         };
         for (const it of movable) inside(it);
       } else {
@@ -440,11 +655,19 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   });
 
   /* ---- result ---- */
-  const parts: BoardPart[] = [...items.map((it) => toPart(d, it, layers)), ...holeParts];
+  const parts: BoardPart[] = [
+    ...items.map((it) => {
+      const pa = parent.get(it);
+      return { ...toPart(d, it, layers), ...(pa ? { follows: pa.comp.refdes } : {}) };
+    }),
+    ...holeParts,
+  ];
   const diagnostics = placementChecks(parts, w, h, rules.edgeClearance);
   for (const ref of missing) {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board.`, entities: [ref] });
   }
+  const planes = settingsPlanes(d, layers.length as 2 | 4);
+  const placementKey = hash(JSON.stringify([w, h, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.pads.map((q) => q.netId ?? '')])]));
   return {
     outline: { w, h },
     layers,
@@ -453,24 +676,46 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     tracks: [],
     vias: [],
     zones: [],
-    planes: settingsPlanes(d, layers.length as 2 | 4),
+    planes,
     ratsnest: ratsnest(parts),
     diagnostics,
     stats: { nets: 0, routed: 0, unrouted: 0, trackLength: 0, vias: 0 },
     missing,
     netNames: Object.fromEntries(Object.values(d.nets).map((n) => [n.id, n.name])),
+    routing: settings.routed ? (settings.routed === placementKey ? 'done' : 'stale') : 'none',
+    placementKey,
+    sizeBy: userSize ? 'user' : 'proposal',
   };
 }
 
-/** Place, then route and check the copper. */
-export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number } = {}): BoardView {
+/** The placement to store (propose_layout, place, route): where every part is now. */
+export function storedPlacement(b: BoardView): StoredPlacement {
+  return {
+    outline: { ...b.outline },
+    parts: Object.fromEntries(b.parts.filter((p) => !p.componentId.startsWith('hole:')).map((p) => [p.componentId, { x: p.x, y: p.y, rot: p.rot }])),
+  };
+}
+
+/** FNV-1a, as 8 hex digits. */
+function hash(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/** Place; route and check the copper when the route step was taken for this placement (or `route`). */
+export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean } = {}): BoardView {
   const b = placeBoard(d, sch);
-  if (!b.parts.length) return b;
+  if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const planes = settingsPlanes(d, b.layers.length as 2 | 4);
   const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, planes: planes.map(({ netId, layer }) => ({ netId, layer })), ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
   const routed: BoardView = {
     ...b,
+    routing: 'done',
     tracks: r.tracks,
     vias: r.vias,
     zones: r.zones,
@@ -544,7 +789,10 @@ function separate(items: Item[], passes: number, strict = false) {
         const eb = extent(b);
         const ox = (ea.w + eb.w) / 2 + SPACING - Math.abs(a.x - b.x);
         const oy = (ea.h + eb.h) / 2 + SPACING - Math.abs(a.y - b.y);
-        if (ox <= 1e-6 || oy <= 1e-6) continue;
+        // (on the grid, spacing short by up to a step stays: snapping moves parts by half a step,
+        // and a placement that is settled must stay put when laid out again)
+        const tol = strict ? GRID_MM + 1e-6 : 1e-6;
+        if (ox <= tol || oy <= tol) continue;
         moved = true;
         if (!strict) {
           // during relaxation: push apart along the line between the centres, so a cluster
@@ -577,7 +825,13 @@ function separate(items: Item[], passes: number, strict = false) {
         const sign = alongX ? (a.x < b.x || (a.x === b.x && i < j) ? -1 : 1) : a.y < b.y || (a.y === b.y && i < j) ? -1 : 1;
         // final clean-up on the grid: equal shares (mass weighting would let a small part
         // oscillate against the outline next to a big one)
-        const [ka, kb] = a.fixed ? [0, 1] : b.fixed ? [1, 0] : [0.5, 0.5];
+        const ma = mobility(a);
+        const mb = mobility(b);
+        // two of the user's choices: the part with fewer pins gives way (a cap to its IC)
+        const both = ma === 1 && mb === 1;
+        const pa = both ? a.fp.pads.length : 0;
+        const pb = both ? b.fp.pads.length : 0;
+        const [ka, kb] = ma < mb || pa > pb ? [0, 1] : mb < ma || pb > pa ? [1, 0] : [0.5, 0.5];
         if (alongX) {
           a.x += sign * amount * ka;
           b.x -= sign * amount * kb;
@@ -601,23 +855,30 @@ function separate(items: Item[], passes: number, strict = false) {
   }
 }
 
-/** How much of a separation each part takes: fixed parts none, otherwise the smaller part more. */
+/** Who gives way in an overlap: automatic parts before the user's choices, locked parts never. */
+const mobility = (it: Item) => (it.fixed ? 0 : it.intent ? 1 : 2);
+
+/** How much of a separation each part takes: the less mobile none, otherwise the smaller part more. */
 function share(a: Item, b: Item, ea: { w: number; h: number }, eb: { w: number; h: number }): [number, number] {
-  if (a.fixed) return [0, 1];
-  if (b.fixed) return [1, 0];
-  const ma = ea.w * ea.h;
-  const mb = eb.w * eb.h;
-  return [mb / (ma + mb), ma / (ma + mb)];
+  const ma = mobility(a);
+  const mb = mobility(b);
+  if (ma < mb) return [0, 1];
+  if (mb < ma) return [1, 0];
+  const sa = ea.w * ea.h;
+  const sb = eb.w * eb.h;
+  return [sb / (sa + sb), sa / (sa + sb)];
 }
 
-function overlapping(items: Item[]): boolean {
+/** Any two courtyards closer than `gap` (0: overlapping)? */
+function overlapping(items: Item[], gap = 0): boolean {
   for (let i = 0; i < items.length; i++) {
     const a = items[i]!;
     const ea = extent(a);
     for (let j = i + 1; j < items.length; j++) {
       const b = items[j]!;
+      if (a.fixed && b.fixed) continue;
       const eb = extent(b);
-      if ((ea.w + eb.w) / 2 - Math.abs(a.x - b.x) > 1e-6 && (ea.h + eb.h) / 2 - Math.abs(a.y - b.y) > 1e-6) return true;
+      if ((ea.w + eb.w) / 2 + gap - Math.abs(a.x - b.x) > 1e-6 && (ea.h + eb.h) / 2 + gap - Math.abs(a.y - b.y) > 1e-6) return true;
     }
   }
   return false;
@@ -677,8 +938,11 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     courtyard: rect(it.cw, it.ch),
     pin1: { x: r3(it.x + p1x), y: r3(it.y + p1y) },
     locked: it.fixed,
+    ...(it.intent ? { intent: it.intent.rel ? { anchor: anchorRef(d, it.intent.rel) } : {} } : {}),
   };
 }
+
+const anchorRef = (d: Design, compId: string) => d.components[compId]?.refdes ?? compId;
 
 /** Minimum spanning tree of each net's pads (Prim), as straight lines. */
 export function ratsnest(parts: BoardPart[], connected?: (netId: string, a: BoardPad, b: BoardPad) => boolean): RatsLine[] {

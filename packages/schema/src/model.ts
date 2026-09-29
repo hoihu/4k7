@@ -6,7 +6,7 @@
 import type { BoardSettings } from './board.ts';
 import type { PartCard } from './part.ts';
 
-export const DESIGN_FORMAT_VERSION = 1;
+export const DESIGN_FORMAT_VERSION = 2;
 
 export interface Design {
   format: typeof DESIGN_FORMAT_VERSION;
@@ -90,10 +90,16 @@ export interface Constraint {
   value?: string;
   /** For `near`: maximum distance in mm (board). */
   maxMm?: number;
-  /** For `position`: pinned board position of `a` (centre, mm) and clockwise rotation (absent: the placer picks it). */
+  /**
+   * For `position`: board position of `a` (centre, mm) and clockwise rotation (absent: the
+   * placer picks it). Hard = locked there; soft = the user's choice, which the placer keeps but
+   * may nudge. With `rel`, soft positions are relative to that component: offset and rotation in
+   * its frame, so the part follows when it moves or turns.
+   */
   xMm?: number;
   yMm?: number;
   rot?: number;
+  rel?: string;
   domain: ConstraintDomain;
   strength: 'hard' | 'soft';
   source: ConstraintSource;

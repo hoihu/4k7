@@ -136,8 +136,18 @@ export const PlaceOp = z.object({
   ref: componentRef,
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
-  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation; omit it to let the placer choose the rotation (a rotation pinned earlier stays)'),
+  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation; omit it to keep the current one'),
+  lock: z.boolean().optional().describe('true: lock the part exactly there (a hard pin, e.g. connectors at the edge). Default: the user\'s choice for this part, kept relative to its parent part (a cap next to its IC follows the IC) and nudged only if it must'),
 });
+
+export const ProposeLayoutOp = z.object({
+  op: z.literal('propose_layout'),
+  keep_choices: z.boolean().optional().describe('Keep the user\'s placement choices (default true); false forgets them (locked parts stay)'),
+}).describe('Propose the board afresh: a board size (unless set with set_board) and a placement from the netlist (supply caps at their IC\'s pins). Replaces the current placement.');
+
+export const RouteOp = z.object({
+  op: z.literal('route'),
+}).describe('Route the board as it is placed now (the last step). A later placement change shows the routing as out of date until route runs again.');
 
 export const SetPlaneOp = z.object({
   op: z.literal('set_plane'),
@@ -180,6 +190,8 @@ export const EditOp = z.discriminatedUnion('op', [
   SetSymbolOp,
   SetBoardOp,
   PlaceOp,
+  ProposeLayoutOp,
+  RouteOp,
   SetPlaneOp,
   AddHoleOp,
   RemoveHoleOp,

@@ -11,10 +11,12 @@
     onselect?: (refdes: string, additive: boolean) => void;
     onclear?: () => void;
     onhovernet?: (netId: string | null) => void;
-    /** Drag or rotate a part: pin it there (the place op). A drag leaves the rotation as it was pinned (or free). */
+    /** Drag or rotate a part: the user's choice for it (the place op). A drag keeps the rotation. */
     onplace?: (refdes: string, x: number, y: number, rot?: number) => void;
+    /** L on a selected part: lock it where it is, or unlock it. */
+    onlock?: (refdes: string) => void;
   }
-  let { board, show, selection = [], hotNet = null, marker = null, onselect, onclear, onhovernet, onplace }: Props = $props();
+  let { board, show, selection = [], hotNet = null, marker = null, onselect, onclear, onhovernet, onplace, onlock }: Props = $props();
 
   /** Part being dragged: offset in mm, snapped to 0.1 mm. */
   let partDrag = $state<{ ref: string; sx: number; sy: number; dx: number; dy: number; moved: boolean } | null>(null);
@@ -107,6 +109,10 @@
       e.preventDefault();
       onplace(part.refdes, part.x, part.y, (part.rot + 90) % 360);
     }
+    if ((e.key === 'l' || e.key === 'L') && selection.length === 1 && onlock) {
+      e.preventDefault();
+      onlock(selection[0]!);
+    }
   }
 
   const LAYER_CLASS: Record<CopperLayer, string> = { 'F.Cu': 'fcu', 'In1.Cu': 'in1', 'In2.Cu': 'in2', 'B.Cu': 'bcu' };
@@ -121,7 +127,7 @@
   const path = (pts: number[]) => pts.reduce((s, v, i) => s + (i % 2 ? `,${v}` : `${i ? ' L' : 'M'}${v}`), '');
 </script>
 
-<!-- an interactive canvas: pointer and keyboard (R = rotate) are the point -->
+<!-- an interactive canvas: pointer and keyboard (R = rotate, L = lock) are the point -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <svg
   bind:this={svg}
@@ -209,7 +215,8 @@
         {#if show.silk && !p.componentId.startsWith('hole:')}
           <rect class="silk" x={p.body.x} y={p.body.y} width={p.body.w} height={p.body.h} />
           <circle class="silkdot" cx={p.pin1.x} cy={p.pin1.y} r="0.18" />
-          {#if p.locked}<circle class="pin" cx={p.courtyard.x + p.courtyard.w - 0.3} cy={p.courtyard.y + 0.3} r="0.16"><title>pinned</title></circle>{/if}
+          {#if p.locked}<circle class="pin" cx={p.courtyard.x + p.courtyard.w - 0.3} cy={p.courtyard.y + 0.3} r="0.16"><title>locked</title></circle>
+          {:else if p.intent}<circle class="choice" cx={p.courtyard.x + p.courtyard.w - 0.3} cy={p.courtyard.y + 0.3} r="0.1"><title>your placement{p.intent.anchor ? ` (kept relative to ${p.intent.anchor})` : ''}</title></circle>{/if}
           <text class="ref" x={p.x} y={p.y} font-size={Math.max(0.5, Math.min(1.2, Math.min(p.body.w, p.body.h) * 0.45))}>{p.refdes}</text>
         {/if}
       </g>
@@ -276,4 +283,6 @@
   .part.dragging .hit { fill: rgba(111, 181, 255, 0.18); }
   .pin { fill: none; stroke: #9fd2ff; stroke-width: 0.06; opacity: 0.45; pointer-events: none; }
   .part:hover .pin, .part.sel .pin { opacity: 1; }
+  .choice { fill: #9fd2ff; opacity: 0.45; pointer-events: none; }
+  .part:hover .choice, .part.sel .choice { opacity: 1; }
 </style>

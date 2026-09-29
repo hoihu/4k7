@@ -17,7 +17,8 @@ import {
   type MountingHole,
   DEFAULT_BOARD,
 } from '@tracewise/schema';
-import { autoPlanes } from './board.ts';
+import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
+import { layoutSchematic } from './layout.ts';
 import { isTwoPin, planUnits, searchParts } from '@tracewise/parts';
 import {
   allocRefdes,
@@ -78,6 +79,10 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return setBoard(d, op);
     case 'place':
       return place(d, op);
+    case 'propose_layout':
+      return proposeLayout(d, op.keep_choices ?? true);
+    case 'route':
+      return routeStep(d);
     case 'set_plane':
       return setPlane(d, op);
     case 'add_hole':
@@ -207,30 +212,107 @@ function addHole(d: Design, op: Extract<EditOp, { op: 'add_hole' }>): OpResult {
   return { op: 'add_hole', effect: `mounting hole${added.length > 1 ? 's' : ''} Ø${op.diameter_mm} mm${op.plated ? ' plated' : ''}: ${added.join(', ')}`, ids: ['board'] };
 }
 
-/** Pin a part on the board: a hard position constraint (one per part, replaced on re-place). */
+/** The board as placed now (for ops that record where parts are). */
+function placedNow(d: Design) {
+  return placeBoard(d, layoutSchematic(d));
+}
+
+/** Store the current placement, so later layouts start from it. */
+function keepPlacement(d: Design) {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  d.board = b;
+  b.placement = storedPlacement(placedNow(d));
+}
+
+/**
+ * Place a part: the user's choice (a soft position constraint, relative to the part's parent so
+ * it follows when that moves), or with `lock` exactly there (hard). One per part; placing again
+ * replaces it, keeping a rotation chosen before unless a new one is given.
+ */
 function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
   const comp = resolveComponent(d, op.ref);
-  // without a rotation, a rotation pinned before stays; if there is none, the placer picks it
+  if (!d.board?.placement) keepPlacement(d); // start from what the user sees
+  const now = placedNow(d);
   let rot: number | undefined = op.rot;
+  let prevRel: string | undefined;
   for (const k of Object.values(d.ledger)) {
     if (k.kind !== 'position' || k.a !== comp.id) continue;
-    rot ??= k.rot;
+    if (rot === undefined && k.rot !== undefined) {
+      // a rotation relative to an anchor: back to the board frame
+      const anchor = k.rel ? now.parts.find((p) => p.componentId === k.rel) : undefined;
+      rot = anchor ? (anchor.rot + k.rot) % 360 : k.rot;
+    }
+    prevRel = k.rel;
     delete d.ledger[k.id];
   }
   const id = nextId(d, 'k');
   const r = (v: number) => Math.round(v * 1000) / 1000;
-  d.ledger[id] = {
-    id,
-    kind: 'position',
-    a: comp.id,
-    xMm: r(op.x_mm),
-    yMm: r(op.y_mm),
-    ...(rot !== undefined && { rot }),
-    domain: 'placement',
-    strength: 'hard',
-    source: { type: 'user' },
-  };
-  return { op: 'place', effect: `${comp.refdes} pinned at (${r(op.x_mm)}, ${r(op.y_mm)}) mm${rot !== undefined ? `, ${rot}°` : ''}`, ids: [id] };
+  const part = now.parts.find((p) => p.componentId === comp.id);
+  const anchorRef = part?.follows ?? (prevRel ? d.components[prevRel]?.refdes : undefined);
+  const anchor = !op.lock && anchorRef ? now.parts.find((p) => p.refdes === anchorRef) : undefined;
+  if (anchor) {
+    // offset and rotation in the anchor's frame
+    const dx = op.x_mm - anchor.x;
+    const dy = op.y_mm - anchor.y;
+    const back = (360 - anchor.rot) % 360;
+    const [ox, oy] = back === 90 ? [-dy, dx] : back === 180 ? [-dx, -dy] : back === 270 ? [dy, -dx] : [dx, dy];
+    d.ledger[id] = {
+      id,
+      kind: 'position',
+      a: comp.id,
+      rel: anchor.componentId,
+      xMm: r(ox),
+      yMm: r(oy),
+      ...(rot !== undefined && { rot: (((rot - anchor.rot) % 360) + 360) % 360 }),
+      domain: 'placement',
+      strength: 'soft',
+      source: { type: 'user' },
+    };
+  } else {
+    d.ledger[id] = {
+      id,
+      kind: 'position',
+      a: comp.id,
+      xMm: r(op.x_mm),
+      yMm: r(op.y_mm),
+      ...(rot !== undefined && { rot }),
+      domain: 'placement',
+      strength: op.lock ? 'hard' : 'soft',
+      source: { type: 'user' },
+    };
+  }
+  keepPlacement(d);
+  const at = `(${r(op.x_mm)}, ${r(op.y_mm)}) mm${rot !== undefined ? `, ${rot}°` : ''}`;
+  return { op: 'place', effect: op.lock ? `${comp.refdes} locked at ${at}` : `${comp.refdes} placed at ${at}${anchor ? ` (kept relative to ${anchor.refdes})` : ''}`, ids: [id] };
+}
+
+/** A fresh proposal: board size (unless set) and placement, keeping locked parts (and choices). */
+function proposeLayout(d: Design, keepChoices: boolean): OpResult {
+  let forgot = 0;
+  if (!keepChoices) {
+    for (const k of Object.values(d.ledger)) {
+      if (k.kind === 'position' && k.strength === 'soft') {
+        delete d.ledger[k.id];
+        forgot++;
+      }
+    }
+  }
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  delete b.placement;
+  delete b.routed;
+  d.board = b;
+  const now = placedNow(d);
+  b.placement = storedPlacement(now);
+  return { op: 'propose_layout', effect: `layout proposed: ${now.outline.w} × ${now.outline.h} mm${now.sizeBy === 'user' ? ' (your size)' : ''}, ${now.parts.filter((p) => !p.componentId.startsWith('hole:')).length} parts${forgot ? `, ${forgot} placement choice(s) forgotten` : ''}`, ids: ['board'] };
+}
+
+/** The route step: route the board as placed now (the board view routes while this placement stays). */
+function routeStep(d: Design): OpResult {
+  if (!d.board?.placement) keepPlacement(d);
+  const now = placedNow(d);
+  if (!now.parts.length) reject({ code: 'BOARD_INVALID', message: 'Nothing to route: the board has no parts.' });
+  d.board!.routed = now.placementKey;
+  return { op: 'route', effect: 'board routed as placed', ids: ['board'] };
 }
 
 /** Draw a part as one symbol or as units. Changes the design's copy of the part card only. */
@@ -674,7 +756,7 @@ export function describeConstraint(d: Design, k: Constraint): string {
     case 'arrangement':
       return `arrangement(${n(k.a)}) = ${k.value}`;
     case 'position':
-      return `position(${n(k.a)}) = (${k.xMm}, ${k.yMm}) mm${k.rot ? ` ${k.rot}°` : ''}`;
+      return `position(${n(k.a)}) = (${k.xMm}, ${k.yMm}) mm${k.rel ? ` from ${n(k.rel)}` : ''}${k.rot !== undefined ? ` ${k.rot}°` : ''}${k.strength === 'hard' ? ', locked' : ''}`;
     case 'note':
       return `note${k.a ? `(${n(k.a)})` : ''}: ${k.value}`;
     default:

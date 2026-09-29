@@ -401,14 +401,23 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const off = Math.abs((p.x - (i % W) * G) * dy - (p.y - Math.floor(i / W) * G) * dx) / Math.hypot(dx, dy);
     return off > Math.max(0, across / 2 - widths[k]! / 2) + 0.08;
   };
-  /** A track end on this state would sit off its pad's centre lines (at a corner or an edge). */
+  /**
+   * A track end on this state would sit off its pad's centre line (at a corner or along an edge):
+   * it is fine wholly on the pad, or on the long centre line of an elongated pad (either centre
+   * line of a squarish one).
+   */
   const offCentre = (net: number, k: number, st: number) => {
     const t = k < 2 ? touch[k]![st]! : 0;
     if (!t || padNet[t - 1] !== net) return false;
     const p = pads[t - 1]!;
     const i = st % N;
     const r = widths[k]! / 2;
-    return Math.abs(Math.floor(i / W) * G - p.y) > Math.max(0, p.h / 2 - r) + 0.08 && Math.abs((i % W) * G - p.x) > Math.max(0, p.w / 2 - r) + 0.08;
+    const dx = Math.abs((i % W) * G - p.x);
+    const dy = Math.abs(Math.floor(i / W) * G - p.y);
+    if (p.shape !== 'round' && Math.min(p.w / 2 - dx, p.h / 2 - dy) >= r - 0.01) return false;
+    const onVertical = dx <= Math.max(0, p.w / 2 - r) + 0.08;
+    const onHorizontal = dy <= Math.max(0, p.h / 2 - r) + 0.08;
+    return !(p.h > p.w * 1.2 ? onVertical : p.w > p.h * 1.2 ? onHorizontal : onVertical || onHorizontal);
   };
 
   // union-find over pads
@@ -747,14 +756,14 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       const sp = pads[startPad]!;
       const se = escapes[startPad];
       const pts = lines[0].pts;
-      pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y, ...entryBend(pts[0]!, pts[1]!, sp.x, sp.y)]));
+      pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y, ...entryBend(pts[0]!, pts[1]!, sp, width)]));
     }
     const last = lines.at(-1)!;
     if (endPad >= 0) {
       const ep = pads[endPad]!;
       const ee = escapes[endPad];
       const pts = last.pts;
-      pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : entryBend(pts.at(-2)!, pts.at(-1)!, ep.x, ep.y)), ep.x, ep.y);
+      pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : entryBend(pts.at(-2)!, pts.at(-1)!, ep, width)), ep.x, ep.y);
     }
     if (endVia) {
       // a drop to a plane: the via at the end of the path
@@ -1062,17 +1071,22 @@ const OUTER = new Set<CopperLayer>(['F.Cu', 'B.Cu']);
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 /**
- * The bend (if any) between a grid point on a pad and the pad centre, so the entry is a straight
- * piece (continuing the track) then a diagonal one into the centre, not one piece at an arbitrary
- * angle. The bend lies in the box spanned by the two points, so on a rectangular pad it stays on
- * the pad, and the diagonal is as deep inside it as it can be.
+ * The bend (if any) between a grid point on a pad and the pad centre, so the entry is 0/45/90°
+ * instead of one piece at an arbitrary angle. Preferably a straight piece (continuing the track)
+ * then a diagonal one deep inside the pad into its centre; but if that straight piece would run
+ * off the pad's centre band (half over its edge), the diagonal first and the straight piece on
+ * the centre line. The bend lies in the box spanned by the two points: on a rectangular pad it
+ * stays on the pad.
  */
-function entryBend(x: number, y: number, px: number, py: number): number[] {
-  const dx = px - x;
-  const dy = py - y;
+function entryBend(x: number, y: number, p: BoardPad, width: number): number[] {
+  const dx = p.x - x;
+  const dy = p.y - y;
   const m = Math.min(Math.abs(dx), Math.abs(dy));
   if (m < 1e-6 || Math.abs(Math.abs(dx) - Math.abs(dy)) < 1e-6) return [];
-  return [px - Math.sign(dx) * m, py - Math.sign(dy) * m];
+  // the straight piece runs along the bigger delta, m off the centre line
+  const across = Math.abs(dy) > Math.abs(dx) ? p.w : p.h;
+  if (m <= Math.max(0, across / 2 - width / 2) + 0.08) return [p.x - Math.sign(dx) * m, p.y - Math.sign(dy) * m];
+  return [x + Math.sign(dx) * m, y + Math.sign(dy) * m];
 }
 
 /** Drop collinear points and duplicates from a flat polyline. */
