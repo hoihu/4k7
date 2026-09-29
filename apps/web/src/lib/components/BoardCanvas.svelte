@@ -236,7 +236,7 @@
         {/each}
         {#if show.silk && !p.componentId.startsWith('hole:')}
           <rect class="silk" x={p.body.x} y={p.body.y} width={p.body.w} height={p.body.h} />
-          <circle class="silkdot" cx={p.pin1.x} cy={p.pin1.y} r="0.18" />
+          {#if p.polarized}<circle class="silkdot" cx={p.pin1.x} cy={p.pin1.y} r="0.18" />{/if}
           {#if p.locked}<circle class="pin" cx={p.courtyard.x + p.courtyard.w - 0.3} cy={p.courtyard.y + 0.3} r="0.16"><title>locked</title></circle>
           {:else if p.intent}<circle class="choice" cx={p.courtyard.x + p.courtyard.w - 0.3} cy={p.courtyard.y + 0.3} r="0.1"><title>your placement{p.intent.anchor ? ` (kept relative to ${p.intent.anchor})` : ''}</title></circle>{/if}
           <text class="ref" x={p.x} y={p.y} font-size={Math.max(0.5, Math.min(1.2, Math.min(p.body.w, p.body.h) * 0.45))}>{p.refdes}</text>

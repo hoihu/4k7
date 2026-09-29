@@ -666,6 +666,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       body: { x: r3(at.x - hole.d / 2), y: r3(at.y - hole.d / 2), w: hole.d, h: hole.d },
       courtyard: { x: r3(at.x - k / 2), y: r3(at.y - k / 2), w: k, h: k },
       pin1: { x: r3(at.x), y: r3(at.y) },
+      polarized: false,
       locked: true,
     };
   });
@@ -1030,9 +1031,19 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     body: rect(it.fp.body.w, it.fp.body.h),
     courtyard: rect(it.cw, it.ch),
     pin1: { x: r3(it.x + p1x), y: r3(it.y + p1y) },
+    polarized: polarized(it.card),
     locked: it.fixed,
     ...(it.intent ? { intent: it.intent.rel ? { anchor: anchorRef(d, it.intent.rel) } : {} } : {}),
   };
+}
+
+/**
+ * Whether a part's orientation matters, so pin 1 is marked: not for two-pin resistors, capacitors,
+ * inductors and crystals whose pins carry no polarity (+/−, anode/cathode); for everything else.
+ */
+function polarized(card: PartCard): boolean {
+  if (card.pins.length !== 2 || !['resistor', 'capacitor', 'inductor', 'crystal'].includes(card.category)) return true;
+  return card.pins.some((p) => /^([+−-]|a|k|anode|cathode)$/i.test(p.name));
 }
 
 const anchorRef = (d: Design, compId: string) => d.components[compId]?.refdes ?? compId;

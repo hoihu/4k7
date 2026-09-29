@@ -113,6 +113,8 @@ export interface BoardPart {
   body: { x: number; y: number; w: number; h: number };
   courtyard: { x: number; y: number; w: number; h: number };
   pin1: { x: number; y: number };
+  /** Its orientation matters (diodes, polarized caps, ICs, connectors): pin 1 is marked. */
+  polarized: boolean;
   /** Locked by the user (a hard position constraint); the placer does not move it. */
   locked: boolean;
   /** Placed where the user put it (a soft position constraint), relative to this part if set. */

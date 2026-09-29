@@ -162,8 +162,9 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
     if (part.componentId.startsWith('hole:')) continue; // mounting holes carry no silkscreen
     const r = part.body;
     clipped([r.x, r.y, r.x + r.w, r.y, r.x + r.w, r.y + r.h, r.x, r.y + r.h, r.x, r.y]);
-    // pin-1 mark: a short dash next to pin 1 (a dot would disappear in the clipping)
-    clipped([part.pin1.x - 0.2, part.pin1.y, part.pin1.x + 0.2, part.pin1.y]);
+    // pin-1 mark where the orientation matters: a short dash next to pin 1 (a dot would
+    // disappear in the clipping)
+    if (part.polarized) clipped([part.pin1.x - 0.2, part.pin1.y, part.pin1.x + 0.2, part.pin1.y]);
     // refdes above the part, else below, else on the body
     const th = Math.min(1, Math.max(0.6, Math.min(r.w, r.h) * 0.6));
     const tw = textWidth(part.refdes, th);

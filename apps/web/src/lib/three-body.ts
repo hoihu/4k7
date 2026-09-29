@@ -180,7 +180,7 @@ function zoneTexture(z: BoardView['zones'][number], w: number, h: number): THREE
 }
 
 /** Meshes of one package body, in its own coordinates (origin = package centre, board surface at 0). */
-function bodyGroup(body: Body3D, res: Res): THREE.Group {
+function bodyGroup(body: Body3D, res: Res, mark = true): THREE.Group {
   const group = new THREE.Group();
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -204,11 +204,14 @@ function bodyGroup(body: Body3D, res: Res): THREE.Group {
     });
     group.add(mesh);
   }
-  const p = body.pin1;
-  const disc = new THREE.Mesh(new THREE.CircleGeometry(p.r, 24), res.mark);
-  disc.rotation.x = -Math.PI / 2;
-  disc.position.set(p.x, p.z + 0.002, p.y);
-  group.add(disc);
+  if (mark) {
+    // the pin-1 dot (only where the orientation matters)
+    const p = body.pin1;
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(p.r, 24), res.mark);
+    disc.rotation.x = -Math.PI / 2;
+    disc.position.set(p.x, p.z + 0.002, p.y);
+    group.add(disc);
+  }
   return group;
 }
 
@@ -312,7 +315,7 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res): THREE.
   for (const part of b.parts) {
     const body = bodies.get(part.componentId);
     if (!body) continue;
-    const g = bodyGroup(body, res);
+    const g = bodyGroup(body, res, part.polarized);
     g.rotation.y = -(part.rot * Math.PI) / 180; // clockwise in the top view
     g.position.set(part.x, CU, part.y);
     group.add(g);

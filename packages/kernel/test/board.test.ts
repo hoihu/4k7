@@ -61,6 +61,14 @@ describe('board placement', () => {
     expect(misses).toEqual([]);
   });
 
+  it('marks pin 1 only where the orientation matters', () => {
+    const b = buck().board();
+    const marked = Object.fromEntries(b.parts.map((p) => [p.refdes, p.polarized]));
+    // resistors, ceramic caps and the inductor: no mark; the diode, the IC and the connector: marked
+    for (const r of ['R1', 'R2', 'R3', 'C1', 'C2', 'C3', 'C4', 'C5', 'L1']) expect(marked[r], r).toBe(false);
+    for (const r of ['D1', 'U1', 'J1']) expect(marked[r], r).toBe(true);
+  });
+
   it('honours pinned positions and board settings', () => {
     const k = buck();
     k.transact({ summary: 'board', ops: [
