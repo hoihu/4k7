@@ -4,6 +4,7 @@
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
   import BoardCanvas from './BoardCanvas.svelte';
+  import type { TopView } from '../three-body.ts';
   import Chat from './Chat.svelte';
 
   /** Layout workspace: agent chat, the board, and a panel with checks, layers and outputs. */
@@ -15,6 +16,28 @@
   let show = $state<Record<string, boolean>>({ 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true });
   let hotNet = $state<string | null>(null);
   let mode = $state<'2d' | '3d'>('2d');
+  // switching views: the 3D view starts from the 2D view's area and flies into 3D; back, it flies
+  // to straight above and the 2D view takes over that area. The 2D view stays up until 3D is drawn.
+  let canvas2d: BoardCanvas | undefined = $state();
+  let view3d: Board3DView | undefined = $state();
+  let from2d = $state<TopView | null>(null);
+  let show2d = $state(true);
+  let switching = false;
+  function to3d() {
+    if (mode === '3d' || switching) return;
+    from2d = canvas2d?.getView() ?? null;
+    show2d = true;
+    mode = '3d';
+  }
+  async function to2d() {
+    if (mode === '2d' || switching) return;
+    switching = true;
+    const v = await view3d?.flyToTop();
+    if (v) canvas2d?.setView(v);
+    show2d = true;
+    mode = '2d';
+    switching = false;
+  }
   let marker = $state<{ x: number; y: number } | null>(null);
   const netName = (id: string | null) => (id ? (b?.netNames[id] ?? id) : '');
   const errors = $derived(b?.diagnostics.filter((d) => d.severity === 'error').length ?? 0);
@@ -81,9 +104,10 @@
 <section class="lay" class:nochat={!app.chatOpen}>
   <div class="col chatcol">{#if app.chatOpen}<Chat />{/if}</div>
   <div class="col canvas">
-    {#if mode === '3d' && b}<Board3DView board={b} />{/if}
-    <div class="stage2d" class:hidden={mode === '3d'}>
+    {#if mode === '3d' && b}<Board3DView bind:this={view3d} board={b} from={from2d} onready={() => (show2d = false)} />{/if}
+    <div class="stage2d" class:hidden={!show2d}>
     <BoardCanvas
+      bind:this={canvas2d}
       board={b}
       {show}
       {hotNet}
@@ -98,7 +122,7 @@
     </div>
     <div class="fl tl">
       {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
-      <div class="seg"><button aria-pressed={mode === '2d'} onclick={() => (mode = '2d')}>2D</button><button aria-pressed={mode === '3d'} onclick={() => (mode = '3d')}>3D</button></div>
+      <div class="seg"><button aria-pressed={mode === '2d'} onclick={to2d}>2D</button><button aria-pressed={mode === '3d'} onclick={to3d}>3D</button></div>
       {#if b?.parts.length}
         <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose layout', [{ op: 'propose_layout' }])}>Propose layout</button>
         <button class="btn" class:pri={b.routing !== 'done'} disabled={app.running || b.routing === 'done'} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' ? 'Route again' : 'Route'}</button>

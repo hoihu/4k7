@@ -1,10 +1,20 @@
 <script lang="ts">
   import { body3dFor, type Body3D } from '@tracewise/parts';
   import type { BoardView } from '@tracewise/schema';
-  import type { BoardViewer, ViewPreset } from '../three-body.ts';
+  import type { BoardViewer, TopView, ViewPreset } from '../three-body.ts';
 
-  /** The assembled board in 3D (three.js, loaded when first shown). */
-  let { board }: { board: BoardView } = $props();
+  /**
+   * The assembled board in 3D (three.js, loaded when first shown). With `from` (the 2D view's
+   * area), it starts exactly at that top-down view and flies into 3D; `onready` once the first
+   * frame is drawn (so the 2D view can step aside without a blank moment).
+   */
+  let { board, from = null, onready }: { board: BoardView; from?: TopView | null; onready?: () => void } = $props();
+  let started = false;
+
+  /** Fly back to straight above the current point (before switching to 2D). */
+  export async function flyToTop(): Promise<TopView | null> {
+    return viewer ? viewer.flyToTop() : null;
+  }
 
   let host: HTMLDivElement | undefined = $state();
   let canvas: HTMLCanvasElement | undefined = $state();
@@ -22,7 +32,10 @@
         v = createBoardViewer(c);
         viewer = v;
       })
-      .catch((e: Error) => (error = `3D view unavailable: ${e.message}`));
+      .catch((e: Error) => {
+        error = `3D view unavailable: ${e.message}`;
+        onready?.();
+      });
     return () => {
       gone = true;
       v?.dispose();
@@ -38,6 +51,11 @@
       if (r.ok) bodies.set(p.componentId, r.body);
     }
     viewer.setBoard(board, bodies);
+    if (!started) {
+      started = true;
+      if (from) viewer.flyFromTop(from);
+      requestAnimationFrame(() => onready?.());
+    }
   });
 
   $effect(() => {

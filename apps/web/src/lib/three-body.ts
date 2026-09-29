@@ -20,10 +20,21 @@ export interface BodyViewer {
   dispose(): void;
 }
 
+/** A straight top-down view of the board: centre (mm, board coordinates) and visible height. */
+export interface TopView {
+  cx: number;
+  cy: number;
+  visH: number;
+}
+
 export interface BoardViewer {
   /** Keeps the camera when only the content changes (same board size). */
   setBoard(board: BoardView, bodies: Map<string, Body3D>): void;
   view(preset: ViewPreset): void;
+  /** Start exactly at this top-down view (the 2D view's), then fly into the 3D view. */
+  flyFromTop(from: TopView): void;
+  /** Fly back to straight above the current point; resolves with that top-down view. */
+  flyToTop(): Promise<TopView>;
   resize(width: number, height: number): void;
   dispose(): void;
 }
@@ -85,17 +96,75 @@ function viewerCore(canvas: HTMLCanvasElement) {
     });
   }
 
-  function view(preset: ViewPreset) {
+  let home = new THREE.Vector3(); // the content's centre: where the preset views look
+  function presetPose(preset: ViewPreset) {
     const dist = (radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.08;
     const dir =
       preset === 'top' ? new THREE.Vector3(0, 1, 0.0001) :
       preset === 'bottom' ? new THREE.Vector3(0, -1, 0.0001) :
       preset === 'front' ? new THREE.Vector3(0, 0.25, 1) :
       new THREE.Vector3(-0.55, 0.75, 0.9); // from the front left, above
-    camera.position.copy(controls.target).addScaledVector(dir.normalize(), dist);
+    return { target: home.clone(), position: home.clone().addScaledVector(dir.normalize(), dist) };
+  }
+  /** Put the camera there; `free`: without the controls' zoom limits (a flight's poses). */
+  function place(pose: { target: THREE.Vector3; position: THREE.Vector3 }, free = false) {
+    controls.target.copy(pose.target);
+    camera.position.copy(pose.position);
     camera.lookAt(controls.target);
-    controls.update();
+    if (!free) controls.update();
     render();
+  }
+  function view(preset: ViewPreset) {
+    stopFlight();
+    place(presetPose(preset));
+  }
+
+  /*
+   * Camera flights: target, distance and the angles around the target are eased from one pose to
+   * the other (so the camera swings round the board instead of cutting through it).
+   */
+  let flight = 0;
+  function stopFlight() {
+    if (flight) cancelAnimationFrame(flight);
+    flight = 0;
+    controls.enabled = true;
+  }
+  function fly(to: { target: THREE.Vector3; position: THREE.Vector3 }, ms: number, settle = true): Promise<void> {
+    stopFlight();
+    const t0 = controls.target.clone();
+    const s0 = new THREE.Spherical().setFromVector3(camera.position.clone().sub(t0));
+    const s1 = new THREE.Spherical().setFromVector3(to.position.clone().sub(to.target));
+    // the short way round
+    let dTheta = s1.theta - s0.theta;
+    if (dTheta > Math.PI) dTheta -= 2 * Math.PI;
+    if (dTheta < -Math.PI) dTheta += 2 * Math.PI;
+    const start = performance.now();
+    controls.enabled = false;
+    return new Promise((resolve) => {
+      const step = (now: number) => {
+        const u = Math.min(1, (now - start) / ms);
+        const e = u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2; // ease in-out
+        const target = t0.clone().lerp(to.target, e);
+        const sph = new THREE.Spherical(Math.exp(Math.log(s0.radius) + (Math.log(s1.radius) - Math.log(s0.radius)) * e), s0.phi + (s1.phi - s0.phi) * e, s0.theta + dTheta * e);
+        place({ target, position: target.clone().add(new THREE.Vector3().setFromSpherical(sph)) }, true);
+        if (u < 1) flight = requestAnimationFrame(step);
+        else {
+          flight = 0;
+          controls.enabled = true;
+          if (settle) controls.update();
+          resolve();
+        }
+      };
+      flight = requestAnimationFrame(step);
+    });
+  }
+  const tanHalf = () => Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  /** The camera straight above a board point (board surface at y = 0), showing `visH` mm of height. */
+  function topPose(v: TopView) {
+    const h = v.visH / (2 * tanHalf());
+    const target = new THREE.Vector3(v.cx, 0, v.cy);
+    // (a hair towards the front, so screen-up is the board's -y as in the 2D view)
+    return { target, position: new THREE.Vector3(v.cx, h, v.cy + h * 1e-4) };
   }
 
   return {
@@ -109,6 +178,7 @@ function viewerCore(canvas: HTMLCanvasElement) {
       if (!keepView) {
         const sphere = new THREE.Box3().setFromObject(group).getBoundingSphere(new THREE.Sphere());
         radius = Math.max(sphere.radius, 0.5);
+        home = sphere.center.clone();
         controls.target.copy(sphere.center);
         controls.minDistance = radius * 0.3;
         controls.maxDistance = radius * 12;
@@ -119,6 +189,17 @@ function viewerCore(canvas: HTMLCanvasElement) {
       } else render();
     },
     view,
+    flyFromTop(from: TopView) {
+      place(topPose(from), true);
+      void fly(presetPose('iso'), 900);
+    },
+    async flyToTop(): Promise<TopView> {
+      const t = controls.target;
+      const visH = 2 * camera.position.distanceTo(t) * tanHalf();
+      const v = { cx: t.x, cy: t.z, visH };
+      await fly(topPose(v), 700, false); // (the 2D view takes over from here)
+      return v;
+    },
     resize(width: number, height: number) {
       if (width < 1 || height < 1) return;
       renderer.setSize(width, height, false);
@@ -127,6 +208,7 @@ function viewerCore(canvas: HTMLCanvasElement) {
       render();
     },
     dispose() {
+      stopFlight();
       controls.removeEventListener('change', render);
       controls.dispose();
       disposeGroup(group);
@@ -343,6 +425,8 @@ export function createBoardViewer(canvas: HTMLCanvasElement): BoardViewer {
       size = key;
     },
     view: core.view,
+    flyFromTop: core.flyFromTop,
+    flyToTop: core.flyToTop,
     resize: core.resize,
     dispose: core.dispose,
   };

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { BoardView, CopperLayer } from '@tracewise/schema';
+  import type { TopView } from '../three-body.ts';
 
   /** 2D board view (mm, top view): outline, pads, tracks, vias, silkscreen, ratsnest. */
   interface Props {
@@ -53,6 +54,22 @@
       vb = { x: -m, y: -m, w: board.outline.w + 2 * m, h: board.outline.h + 2 * m };
     }
   });
+
+  /** The area shown (for the 3D view to start from): centre and visible height, mm. */
+  export function getView(): TopView {
+    const r = svg?.getBoundingClientRect();
+    const aspect = r && r.height > 0 ? r.width / r.height : vb.w / vb.h;
+    // the view box is fitted into the element ("meet"): the visible height is the view box's, or more
+    const visH = aspect > vb.w / vb.h ? vb.h : vb.w / aspect;
+    return { cx: vb.x + vb.w / 2, cy: vb.y + vb.h / 2, visH };
+  }
+  /** Show this area (coming back from the 3D view). */
+  export function setView(v: TopView) {
+    const r = svg?.getBoundingClientRect();
+    const aspect = r && r.height > 0 ? r.width / r.height : vb.w / vb.h;
+    vb = { x: v.cx - (v.visH * aspect) / 2, y: v.cy - v.visH / 2, w: v.visH * aspect, h: v.visH };
+    userMoved = true;
+  }
 
   function toSvg(e: { clientX: number; clientY: number }) {
     const m = svg!.getScreenCTM()!.inverse();
