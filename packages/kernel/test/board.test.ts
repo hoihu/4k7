@@ -45,6 +45,22 @@ describe('board placement', () => {
     expect(dist('C1')).toBeLessThan(8);
   });
 
+  it('lines up similar parts next to each other (a column shares its x, a row its y)', () => {
+    const b = buck().board();
+    const misses: string[] = [];
+    for (const a of b.parts) {
+      for (const c of b.parts) {
+        if (a.refdes >= c.refdes || a.courtyard.w !== c.courtyard.w || a.courtyard.h !== c.courtyard.h || a.rot % 180 !== c.rot % 180) continue;
+        for (const column of [true, false]) {
+          const across = column ? Math.abs(a.x - c.x) : Math.abs(a.y - c.y);
+          const gap = column ? Math.abs(a.y - c.y) - a.courtyard.h : Math.abs(a.x - c.x) - a.courtyard.w;
+          if (across > 1e-6 && across <= 1 && gap >= 0 && gap <= 2) misses.push(`${a.refdes}/${c.refdes} ${across.toFixed(3)} off`);
+        }
+      }
+    }
+    expect(misses).toEqual([]);
+  });
+
   it('honours pinned positions and board settings', () => {
     const k = buck();
     k.transact({ summary: 'board', ops: [
@@ -145,6 +161,26 @@ describe('the user\'s placement choices', () => {
     expect([c4b.x - u1b.x, c4b.y - u1b.y].map((v) => Math.round(v * 1000) / 1000)).toEqual([c4.x - 1 - u1.x, c4.y - u1.y].map((v) => Math.round(v * 1000) / 1000));
     const c1b = at(k, 'C1');
     expect(Math.hypot(c1b.x - u1b.x - (c1.x - u1.x), c1b.y - u1b.y - (c1.y - u1.y))).toBeLessThan(0.6);
+    expect(k.board().diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+  });
+
+  it('parts pushed away from their parent close in again when the parent moves to free space', () => {
+    const k = buck();
+    k.transact({ summary: 'room', ops: [{ op: 'set_board', width_mm: 60, height_mm: 40 }, { op: 'propose_layout' }] });
+    const kids = k.board().parts.filter((p) => p.follows === 'U1').map((p) => p.refdes);
+    const spread = () => {
+      const u = at(k, 'U1');
+      return kids.reduce((sum, r) => sum + Math.hypot(at(k, r).x - u.x, at(k, r).y - u.y), 0) / kids.length;
+    };
+    const start = spread();
+    // a big hole right next to U1 pushes its parts away (and a move keeps that placement) …
+    const u = at(k, 'U1');
+    k.transact({ summary: 'hole', ops: [{ op: 'add_hole', diameter_mm: 5, x_mm: u.x + 7, y_mm: u.y }] });
+    k.transact({ summary: 'keep', ops: [{ op: 'place', ref: 'U1', x_mm: u.x, y_mm: u.y }] });
+    expect(spread()).toBeGreaterThan(start + 0.2);
+    // … U1 moved to free space: they gather round it again
+    k.transact({ summary: 'away', ops: [{ op: 'place', ref: 'U1', x_mm: 48, y_mm: 30 }] });
+    expect(spread()).toBeLessThanOrEqual(start + 0.1);
     expect(k.board().diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
   });
 

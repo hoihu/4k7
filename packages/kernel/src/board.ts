@@ -530,17 +530,32 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     applyLocks();
     applyIntents();
     // parts placed automatically follow their parent when it moved or turned
+    const followers: Item[] = [];
     for (const it of bySize) {
       const pa = parent.get(it);
       const was = before.get(it);
       const paWas = pa && before.get(pa);
       if (!pa || !was || !paWas || it.fixed || it.intent) continue;
-      if (pa.x === paWas.x && pa.y === paWas.y && pa.rot === paWas.rot) continue;
+      const moved = pa.x !== paWas.x || pa.y !== paWas.y || pa.rot !== paWas.rot || followers.includes(pa);
+      if (!moved) continue;
       const dr = (((pa.rot - paWas.rot) % 360) + 360) % 360;
       const [ox, oy] = rotate(was.x - paWas.x, was.y - paWas.y, dr);
       it.x = pa.x + ox;
       it.y = pa.y + oy;
       it.rot = (it.rot + dr) % 360;
+      followers.push(it);
+    }
+    /*
+     * … and then settle in close around it again: parts pushed away earlier (something was in
+     * the way) would otherwise keep that distance for good. A short relaxation towards their
+     * connections, the rest staying put, and the IC's small parts back at their pins.
+     */
+    if (followers.length) {
+      const still = items.filter((it) => !followers.includes(it) && !it.fixed);
+      for (const it of still) it.fixed = true;
+      relax(followers, 60);
+      hugCaps(new Set(followers));
+      for (const it of still) it.fixed = false;
     }
     // new parts: next to what they connect to, then relaxed among the others (which stay put)
     const added = items.filter((it) => !before.has(it) && !it.fixed && !it.intent);
@@ -562,6 +577,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     orient(items.filter((it) => it.fixed && it.freeRot && !before.has(it)));
   }
   settle();
+  alignSimilar(items, contain);
 
   // locked parts outside a proposed outline widen it
   let w = outline.w;
@@ -853,6 +869,83 @@ function separate(items: Item[], passes: number, strict = false) {
     }
     if (!moved) break;
   }
+}
+
+/*
+ * Similar parts next to each other line up: a column of caps stacked above each other shares
+ * one x, a row of resistors side by side one y. Similar: the same footprint size, turned the same
+ * way; next to each other: nearly aligned already (within ALIGN_TOL) and courtyards at most
+ * ALIGN_GAP apart. The line is a locked part's or a user's choice's if the group has one, else
+ * the most common position. A part moves only if that overlaps nothing.
+ */
+const ALIGN_TOL = 1;
+const ALIGN_GAP = 2;
+function alignSimilar(items: Item[], contain: (it: Item) => void) {
+  const key = (it: Item) => `${r3(it.cw)}x${r3(it.ch)}/${it.rot % 180}`;
+  for (const column of [true, false]) {
+    // neighbours: stacked (column) or side by side (row), nearly aligned across
+    const parent = items.map((_, i) => i);
+    const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i]!)));
+    for (let i = 0; i < items.length; i++) {
+      const a = items[i]!;
+      const ea = extent(a);
+      for (let j = i + 1; j < items.length; j++) {
+        const b = items[j]!;
+        if (key(a) !== key(b)) continue;
+        const across = column ? Math.abs(a.x - b.x) : Math.abs(a.y - b.y);
+        const gap = column ? Math.abs(a.y - b.y) - ea.h : Math.abs(a.x - b.x) - ea.w;
+        if (across <= ALIGN_TOL + 1e-9 && gap <= ALIGN_GAP && gap > -1e-6) parent[find(j)] = find(i);
+      }
+    }
+    const groups = new Map<number, Item[]>();
+    items.forEach((it, i) => groups.set(find(i), [...(groups.get(find(i)) ?? []), it]));
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      const at = (it: Item) => (column ? it.x : it.y);
+      const put = (it: Item, v: number) => (column ? (it.x = v) : (it.y = v));
+      /** Move the group's movable parts onto `target` where that clashes with nothing; how many are on it. */
+      const apply = (target: number) => {
+        for (const it of group) {
+          if (it.fixed || it.intent || Math.abs(at(it) - target) < 1e-9) continue;
+          const was = at(it);
+          put(it, target);
+          const x = it.x;
+          const y = it.y;
+          contain(it);
+          if (it.x !== x || it.y !== y || items.some((o) => o !== it && closer(it, o, SPACING - GRID_MM))) {
+            put(it, was);
+            contain(it);
+          }
+        }
+        return group.filter((it) => Math.abs(at(it) - target) < 1e-9).length;
+      };
+      // the line: a locked part's or a user's choice's; else each position in the group is tried
+      // (most common first) and the one that lines up the most parts wins
+      const anchor = group.find((it) => it.fixed) ?? group.find((it) => it.intent);
+      const count = new Map<number, number>();
+      for (const it of group) count.set(r3(at(it)), (count.get(r3(at(it))) ?? 0) + 1);
+      const mid = group.reduce((sum, it) => sum + at(it), 0) / group.length;
+      const candidates = anchor ? [at(anchor)] : [...count.entries()].sort((p, q) => q[1] - p[1] || Math.abs(p[0] - mid) - Math.abs(q[0] - mid) || p[0] - q[0]).map(([v]) => v);
+      const start = group.map((it) => ({ it, x: it.x, y: it.y }));
+      let best = { target: candidates[0]!, n: 0 };
+      for (const target of candidates) {
+        const n = apply(target);
+        for (const s of start) {
+          s.it.x = s.x;
+          s.it.y = s.y;
+        }
+        if (n > best.n) best = { target, n };
+      }
+      apply(best.target);
+    }
+  }
+}
+
+/** Two courtyards closer than `gap`? */
+function closer(a: Item, b: Item, gap: number): boolean {
+  const ea = extent(a);
+  const eb = extent(b);
+  return (ea.w + eb.w) / 2 + gap - Math.abs(a.x - b.x) > 1e-6 && (ea.h + eb.h) / 2 + gap - Math.abs(a.y - b.y) > 1e-6;
 }
 
 /** Who gives way in an overlap: automatic parts before the user's choices, locked parts never. */
