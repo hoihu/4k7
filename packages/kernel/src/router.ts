@@ -748,9 +748,46 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       if (!run || run.l !== l) runs.push({ l, cells: [s % N] });
       else run.cells.push(s % N);
     }
+    // a path starting or ending inside a pad runs on to (from) the pad's centre cell, so the
+    // straightening can aim its last piece at the pad centre (not at some cell off to the side)
+    const toward = (from: number, to: number) => {
+      const out: number[] = [];
+      let x = from % W;
+      let y = (from - x) / W;
+      const tx = to % W;
+      const ty = (to - tx) / W;
+      while (x !== tx || y !== ty) {
+        x += Math.sign(tx - x);
+        y += Math.sign(ty - y);
+        out.push(y * W + x);
+      }
+      return out;
+    };
+    const centreCell = (p: BoardPad) => Math.round(p.y / G) * W + Math.round(p.x / G);
+    const startsInPad = startPad >= 0 && !(escapes[startPad]?.state === path[0]) && padCells[startPad]!.includes(path[0]!);
+    const endsInPad = endPad >= 0 && !(escapes[endPad]?.state === path.at(-1)) && padCells[endPad]!.includes(path.at(-1)!);
+    if (startsInPad && runs[0]) runs[0].cells = [...toward(runs[0].cells[0]!, centreCell(pads[startPad]!)).reverse(), runs[0].cells[0]!, ...runs[0].cells.slice(1)].filter((c, i, a) => i === 0 || c !== a[i - 1]);
+    if (endsInPad && runs.at(-1)) {
+      const run = runs.at(-1)!;
+      run.cells = [...run.cells, ...toward(run.cells.at(-1)!, centreCell(pads[endPad]!))];
+    }
+    if (startsInPad && runs[0]) {
+      // (the cells toward the centre were listed from the path outwards: put the centre first)
+      const c0 = centreCell(pads[startPad]!);
+      const i0 = runs[0].cells.indexOf(c0);
+      if (i0 > 0) runs[0].cells = [...runs[0].cells.slice(0, i0 + 1).reverse(), ...runs[0].cells.slice(i0 + 1)];
+    }
     const covered: number[] = [];
     const lines = runs.map((run, ri) => {
-      const { verts, covered: cov } = straighten(run.l, run.cells, free, (l, i, dx, dy) => clips(net, k, l, i, dx, dy));
+      const clip = (l: number, i: number, dx: number, dy: number) => clips(net, k, l, i, dx, dy);
+      let { verts, covered: cov } = straighten(run.l, run.cells, free, clip);
+      // again on the result, until it stops improving: a spike in the maze path (up and back
+      // down) is cut off once the pieces before and after it can see each other
+      for (let again = 0; again < 3; again++) {
+        const next = straighten(run.l, cov, free, clip);
+        if (next.verts.length >= verts.length) break;
+        ({ verts, covered: cov } = next);
+      }
       for (const c of cov) covered.push(run.l * N + c);
       const pts = verts.flatMap((c) => [(c % W) * G, Math.floor(c / W) * G]);
       if (ri > 0) addVia(netId, net, pts[0]!, pts[1]!);

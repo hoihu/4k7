@@ -350,6 +350,23 @@ describe('routing', () => {
     expect(off).toEqual([]);
   });
 
+  it('has no spikes: no two diagonals meeting in a point, no doubling back (outside pads and vias)', () => {
+    const b = routed(buck());
+    const pads = b.parts.flatMap((p) => p.pads);
+    const hidden = (x: number, y: number) => pads.some((q) => Math.abs(x - q.x) <= q.w / 2 && Math.abs(y - q.y) <= q.h / 2) || b.vias.some((v) => Math.hypot(x - v.x, y - v.y) <= v.pad / 2);
+    const diag = (x: number, y: number) => Math.abs(x) > 1e-6 && Math.abs(Math.abs(x) - Math.abs(y)) < 1e-6;
+    const spikes: string[] = [];
+    for (const t of b.tracks) {
+      for (let i = 2; i + 3 < t.pts.length; i += 2) {
+        const [ux, uy] = [t.pts[i]! - t.pts[i - 2]!, t.pts[i + 1]! - t.pts[i - 1]!];
+        const [vx, vy] = [t.pts[i + 2]! - t.pts[i]!, t.pts[i + 3]! - t.pts[i + 1]!];
+        const cos = (ux * vx + uy * vy) / (Math.hypot(ux, uy) * Math.hypot(vx, vy));
+        if (((diag(ux, uy) && diag(vx, vy) && cos < 0.5) || cos < -0.1) && !hidden(t.pts[i]!, t.pts[i + 1]!)) spikes.push(`${b.netNames[t.netId]} at ${t.pts[i]},${t.pts[i + 1]}`);
+      }
+    }
+    expect(spikes).toEqual([]);
+  });
+
   it('the copper DRC catches a short', async () => {
     const { copperDrc } = await import('../src/drc.ts');
     const b = structuredClone(routed(buck()));
@@ -494,6 +511,46 @@ describe('mounting holes', () => {
     k.transact({ summary: 'rm', ops: [{ op: 'remove_hole', id: 'all' }] });
     b = k.board();
     expect(b.parts.some((p) => p.componentId.startsWith('hole:'))).toBe(false);
+  });
+});
+
+describe('router: direct tracks', () => {
+  it('goes straight where it can: no spike up and back down before a pad', async () => {
+    const { route } = await import('../src/router.ts');
+    type Pad = import('@tracewise/schema').BoardPad;
+    type Part = import('@tracewise/schema').BoardPart;
+    // a buck's output corner (from a real board): L2 → C16 on +1V1 passes C14 and D3
+    const data: [string, [number, number, number, number, string | undefined][]][] = [
+      ['C12', [[31.9, 27, 0.95, 0.628, undefined], [31.9, 25.572, 0.95, 0.628, undefined]]],
+      ['C13', [[35.4, 34.8, 0.95, 0.628, undefined], [35.4, 36.228, 0.95, 0.628, undefined]]],
+      ['C14', [[38.6, 25.3, 0.95, 0.628, 'COMP_RC2'], [38.6, 23.872, 0.95, 0.628, undefined]]],
+      ['C15', [[42.8, 30.7, 0.628, 0.95, undefined], [44.228, 30.7, 0.628, 0.95, undefined]]],
+      ['C16', [[44.2, 24.2, 1.8, 0.9, '+1V1'], [44.2, 27.2, 1.8, 0.9, undefined]]],
+      ['C17', [[36.8, 38.3, 0.9, 1.8, '+1V1'], [33.8, 38.3, 0.9, 1.8, undefined]]],
+      ['D3', [[41.3, 26.8, 1.75, 1.45, undefined], [41.3, 22.5, 1.75, 1.45, undefined]]],
+      ['L2', [[35.3, 26.7, 4.2, 1.6, undefined], [35.3, 23.6, 4.2, 1.6, '+1V1']]],
+      ['R5', [[39.7, 36.2, 0.95, 0.628, '+1V1'], [39.7, 34.772, 0.95, 0.628, undefined]]],
+      ['R6', [[41.6, 34.8, 0.95, 0.628, undefined], [41.6, 36.228, 0.95, 0.628, undefined]]],
+      ['R7', [[42.8, 32.6, 0.628, 0.95, undefined], [44.228, 32.6, 0.628, 0.95, 'COMP_RC2']]],
+      ['U2', [[35.4, 29.1, 1.4, 0.52, undefined], [35.4, 30.37, 1.4, 0.52, undefined], [35.4, 31.64, 1.4, 0.52, undefined], [35.4, 32.91, 1.4, 0.52, undefined], [40.7, 32.91, 1.4, 0.52, undefined], [40.7, 31.64, 1.4, 0.52, undefined], [40.7, 30.37, 1.4, 0.52, undefined], [40.7, 29.1, 1.4, 0.52, undefined]]],
+    ];
+    const parts = data.map(([refdes, ps]) => {
+      const pads: Pad[] = ps.map(([x, y, w, h, netId], i) => ({ number: String(i + 1), x, y, w, h, shape: 'rect', ...(netId ? { netId } : {}), layers: ['F.Cu'] }));
+      const x0 = Math.min(...pads.map((p) => p.x - p.w / 2)) - 0.25;
+      const y0 = Math.min(...pads.map((p) => p.y - p.h / 2)) - 0.25;
+      const x1 = Math.max(...pads.map((p) => p.x + p.w / 2)) + 0.25;
+      const y1 = Math.max(...pads.map((p) => p.y + p.h / 2)) + 0.25;
+      return { componentId: refdes, refdes, x: (x0 + x1) / 2, y: (y0 + y1) / 2, rot: 0, pads, courtyard: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } } as unknown as Part;
+    });
+    const r = route({ outline: { w: 66, h: 50 }, layers: ['F.Cu', 'B.Cu'], rules: { clearance: 0.15, track: 0.15, powerTrack: 0.5, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 }, parts, powerNets: new Set(['+1V1']) });
+    expect(r.failed).toEqual([]);
+    const l2c16 = r.tracks.find((t) => t.netId === '+1V1' && t.pts[0] === 35.3 && t.pts[1] === 23.6 && t.pts.at(-2) === 44.2 && t.pts.at(-1) === 24.2)!;
+    expect(l2c16).toBeDefined();
+    // after clearing C14 and D3 it runs straight into C16 on its centre line: never above it again
+    const ys = l2c16.pts.filter((_, i) => i % 2 === 1);
+    const lowest = ys.indexOf(Math.min(...ys));
+    expect(ys.slice(lowest).every((y, i, a) => i === 0 || y >= a[i - 1]! - 1e-9)).toBe(true);
+    expect(l2c16.pts.slice(-4)).toEqual([expect.any(Number), 24.2, 44.2, 24.2]);
   });
 });
 
