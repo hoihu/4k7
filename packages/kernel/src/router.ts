@@ -397,9 +397,13 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const t = k < 2 ? touch[k]![l * N + i]! : 0;
     if (!t || padNet[t - 1] !== net) return false;
     const p = pads[t - 1]!;
-    const across = dy === 0 ? p.h : dx === 0 ? p.w : Math.min(p.w, p.h);
     const off = Math.abs((p.x - (i % W) * G) * dy - (p.y - Math.floor(i / W) * G) * dx) / Math.hypot(dx, dy);
-    return off > Math.max(0, across / 2 - widths[k]! / 2) + 0.08;
+    // across a pad's long side a track may meet it anywhere along it; along the pad (or into a
+    // squarish one, or diagonally) only on its centre line (within the grid's rounding)
+    const r = widths[k]! / 2;
+    const alongSide = (dy === 0 && p.h > p.w * 1.2) || (dx === 0 && p.w > p.h * 1.2);
+    const slack = alongSide ? Math.max(p.w, p.h) / 2 - r + 0.08 : dx !== 0 && dy !== 0 ? 0.1 : 0.08;
+    return off > slack;
   };
   /**
    * A track end on this state would sit off its pad's centre line (at a corner or along an edge):
@@ -765,18 +769,187 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       const pts = last.pts;
       pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : entryBend(pts.at(-2)!, pts.at(-1)!, ep, width)), ep.x, ep.y);
     }
+    let dropVia: Via | undefined;
     if (endVia) {
       // a drop to a plane: the via at the end of the path
       const i = path.at(-1)! % N;
+      const before = vias.length;
       addVia(netId, net, (i % W) * G, Math.floor(i / W) * G);
+      if (vias.length > before) dropVia = vias.at(-1);
     }
+    // exactly onto the pads' centre lines (the grid only gets within half a step)
+    if (startPad >= 0 && lines[0]) lines[0].pts = reversePts(alignEnd(reversePts(simplify(lines[0].pts)), pads[startPad]!, lines[0].l, net, width, lines.length === 1 ? dropVia : undefined));
+    if (endPad >= 0) last.pts = alignEnd(simplify(last.pts), pads[endPad]!, last.l, net, width);
+    // the copper as it finally lies (aligned ends moved it): the cells later routes may join
+    const onCopper = new Set<number>();
     for (const line of lines) {
       const pts = simplify(line.pts);
       if (pts.length < 4) continue;
       tracks.push({ netId, layer: layers[line.l]!, width, pts: pts.map(r3) });
-      for (let q = 0; q + 3 < pts.length; q += 2) stampSeg(line.l, net, pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!, width);
+      for (let q = 0; q + 3 < pts.length; q += 2) {
+        const [ax, ay, bx, by] = [pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!];
+        stampSeg(line.l, net, ax, ay, bx, by, width);
+        const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / (G / 4)));
+        for (let i = 0; i <= steps; i++) {
+          const x = ax + ((bx - ax) * i) / steps;
+          const y = ay + ((by - ay) * i) / steps;
+          const ci = Math.round(x / G);
+          const cj = Math.round(y / G);
+          if (ci < 0 || cj < 0 || ci >= W || cj >= H) continue;
+          // a cell whose centre lies on the copper (within the track, not just near it)
+          if (segDist(ax, ay, bx, by)(ci * G, cj * G) <= width / 2 - 1e-6) onCopper.add(line.l * N + cj * W + ci);
+        }
+      }
     }
-    return covered;
+    return onCopper.size ? [...onCopper] : covered;
+  };
+  /*
+   * The run into a pad (pts ends at the pad centre), moved so that its line goes exactly through
+   * the pad centre: grid rows rarely hit a pad's centre line, so a track would run in slightly
+   * off-centre (or a diagonal aim past the centre). The run keeps its direction; the piece before
+   * it slides along its own direction to meet it (angles stay). If the run starts at a via made
+   * for this track (a drop to a plane), the via moves with it. Made only if the copper keeps its
+   * clearance from everything of other nets (checked exactly).
+   */
+  const alignEnd = (pts: number[], p: BoardPad, l: number, net: number, width: number, via?: Via): number[] => {
+    const n = pts.length / 2;
+    const px = pts[2 * n - 2]!;
+    const py = pts[2 * n - 1]!;
+    const outside = (x: number, y: number) => Math.abs(x - p.x) > p.w / 2 + 1e-9 || Math.abs(y - p.y) > p.h / 2 + 1e-9;
+    for (let j = n - 2; j >= 1; j--) {
+      // the run [A, B] = points j-1, j: the last one starting outside the pad
+      const ax = pts[2 * j - 2]!;
+      const ay = pts[2 * j - 1]!;
+      const bx = pts[2 * j]!;
+      const by = pts[2 * j + 1]!;
+      if (!outside(ax, ay)) continue;
+      const ux = sgn(bx - ax);
+      const uy = sgn(by - ay);
+      if (ux === 0 && uy === 0) return pts;
+      // across a pad's long side it may meet the pad anywhere: nothing to align
+      if ((uy === 0 && p.h > p.w * 1.2) || (ux === 0 && p.w > p.h * 1.2)) return pts;
+      const ul = Math.hypot(ux, uy);
+      const off = ((px - ax) * uy - (py - ay) * ux) / ul; // signed distance of the centre from the run's line
+      if (Math.abs(off) > 0.3 || (px - ax) * ux + (py - ay) * uy <= 0) return pts;
+      if (Math.abs(off) < 1e-6) return [...pts.slice(0, 2 * j), px, py]; // on the line: straight in
+      let nax: number;
+      let nay: number;
+      if (j >= 2) {
+        // slide A along [Z, A] onto the line through the centre (direction u); an escape stub's
+        // sub-grid jog before A is dropped: then A slides along the stub itself
+        let zi = j - 2;
+        let zx = pts[2 * zi]!;
+        let zy = pts[2 * zi + 1]!;
+        const octilinear = (dx: number, dy: number) => Math.abs(dx) < 1e-9 || Math.abs(dy) < 1e-9 || Math.abs(Math.abs(dx) - Math.abs(dy)) < 1e-9;
+        let vx = ax - zx;
+        let vy = ay - zy;
+        if (!octilinear(vx, vy) && zi >= 1) {
+          const yx = pts[2 * zi - 2]!;
+          const yy = pts[2 * zi - 1]!;
+          vx = zx - yx;
+          vy = zy - yy;
+          zi--;
+          zx = yx;
+          zy = yy;
+        }
+        vx = sgn(vx);
+        vy = sgn(vy);
+        const det = uy * vx - ux * vy;
+        if (Math.abs(det) < 1e-9) return pts; // [Z, A] parallel to the run
+        const t = ((px - zx) * uy - (py - zy) * ux) / det;
+        if (t <= 1e-6) return pts; // [Z, A] would turn back
+        nax = zx + vx * t;
+        nay = zy + vy * t;
+        // the corner must not end up half over the pad's edge (the piece before turns off there)
+        if (padDist(p)(nax, nay) < width / 2 - 0.08) return pts;
+        if (!clearOf(net, l, width, [[zx, zy, nax, nay], [nax, nay, px, py]])) return pts;
+        return [...pts.slice(0, 2 * zi + 2), nax, nay, px, py];
+      }
+      // A is the track's other end. On a pad of the net (its centre): a short step inside that
+      // pad onto the line through this pad's centre, then straight in
+      const layer = layers[l]!;
+      const q = pads.findIndex((o, qi) => padNet[qi] === net && o !== p && Math.abs(o.x - ax) < 1e-6 && Math.abs(o.y - ay) < 1e-6 && (o.drill || o.layers.includes(layer)));
+      if (q >= 0) {
+        const o = pads[q]!;
+        // only where the track may meet that pad anywhere (across its long side): its own entry
+        // must not suffer
+        if (!((uy === 0 && o.h > o.w * 1.2) || (ux === 0 && o.w > o.h * 1.2))) return pts;
+        nax = ax + (off * uy) / ul;
+        nay = ay - (off * ux) / ul;
+        if (Math.abs(nax - o.x) <= o.w / 2 - width / 2 + 1e-6 && Math.abs(nay - o.y) <= o.h / 2 - width / 2 + 1e-6 && clearOf(net, l, width, [[nax, nay, px, py]])) return [ax, ay, nax, nay, px, py];
+        return pts;
+      }
+      // on a via of the net: a step hidden under the via's ring onto the line, then straight in
+      const atVia = vias.find((v) => numOf(v.netId) === net && Math.abs(v.x - ax) < 1e-6 && Math.abs(v.y - ay) < 1e-6);
+      if (atVia && Math.abs(off) <= atVia.pad / 2 - width / 2) {
+        nax = ax + (off * uy) / ul;
+        nay = ay - (off * ux) / ul;
+        if (clearOf(net, l, width, [[nax, nay, px, py]])) return [ax, ay, nax, nay, px, py];
+      }
+      // where it joins a track of the net, it slides along that track
+      for (const t of tracks) {
+        if (t.layer !== layer || numOf(t.netId) !== net) continue;
+        for (let q = 0; q + 3 < t.pts.length; q += 2) {
+          const [cx, cy, dx, dy] = [t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!];
+          if (segDist(cx, cy, dx, dy)(ax, ay) > 1e-6) continue;
+          const vx = sgn(dx - cx);
+          const vy = sgn(dy - cy);
+          const det = uy * vx - ux * vy;
+          if (Math.abs(det) < 1e-9) continue;
+          const s2 = ((px - ax) * uy - (py - ay) * ux) / det;
+          nax = ax + vx * s2;
+          nay = ay + vy * s2;
+          // still on that piece of track
+          if (segDist(cx, cy, dx, dy)(nax, nay) > 1e-6) continue;
+          if (!clearOf(net, l, width, [[nax, nay, px, py]])) continue;
+          return [nax, nay, px, py];
+        }
+      }
+      // or it is this track's own new via (a drop to a plane): the via moves with it
+      if (!via || Math.abs(via.x - ax) > 1e-6 || Math.abs(via.y - ay) > 1e-6) return pts;
+      // (the foot of A on the line through the centre)
+      nax = ax + (off * uy) / ul;
+      nay = ay - (off * ux) / ul;
+      if (!clearOf(net, l, width, [[nax, nay, px, py]])) return pts;
+      for (let vl = 0; vl < L; vl++) if (!clearOf(net, vl, via.pad, [[nax, nay, nax, nay]])) return pts;
+      via.x = r3(nax);
+      via.y = r3(nay);
+      stampVia(net, nax, nay);
+      return [nax, nay, px, py];
+    }
+    return pts;
+  };
+  /** The segments (of the given width, on layer l) keep the clearance from all copper of other nets. */
+  const clearOf = (net: number, l: number, width: number, segs: [number, number, number, number][]) => {
+    const need = rules.clearance + width / 2 - 1e-3;
+    const layer = layers[l]!;
+    for (const [ax, ay, bx, by] of segs) {
+      const len = Math.hypot(bx - ax, by - ay);
+      const steps = Math.max(1, Math.ceil(len / 0.01));
+      const near = segDist(ax, ay, bx, by);
+      for (let q = 0; q < pads.length; q++) {
+        const p = pads[q]!;
+        if (padNet[q] === net || (!p.drill && !p.layers.includes(layer))) continue;
+        if (Math.abs(p.x - (ax + bx) / 2) > len / 2 + Math.max(p.w, p.h) + 1 || Math.abs(p.y - (ay + by) / 2) > len / 2 + Math.max(p.w, p.h) + 1) continue;
+        const d = padDist(p);
+        for (let i = 0; i <= steps; i++) if (d(ax + ((bx - ax) * i) / steps, ay + ((by - ay) * i) / steps) < need) return false;
+        // a reserved escape stub of another net
+        const e = escapes[q];
+        if (e && e.l === l) {
+          const stub = rules.clearance + (width + rules.track) / 2 - 1e-3;
+          for (const [cx, cy, dx, dy] of [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]] as const) {
+            if (segSegDist(ax, ay, bx, by, cx, cy, dx, dy) < stub) return false;
+          }
+        }
+      }
+      for (const t of tracks) {
+        if (t.layer !== layer || numOf(t.netId) === net) continue;
+        const gap = rules.clearance + (width + t.width) / 2 - 1e-3;
+        for (let q = 0; q + 3 < t.pts.length; q += 2) if (segSegDist(ax, ay, bx, by, t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!) < gap) return false;
+      }
+      for (const v of vias) if (numOf(v.netId) !== net && near(v.x, v.y) < rules.clearance + (width + v.pad) / 2 - 1e-3) return false;
+    }
+    return true;
   };
   const padAt = (root: number, state: number) => pads.findIndex((_, idx) => find(idx) === root && padCells[idx]!.includes(state));
 
@@ -1087,6 +1260,34 @@ function entryBend(x: number, y: number, p: BoardPad, width: number): number[] {
   const across = Math.abs(dy) > Math.abs(dx) ? p.w : p.h;
   if (m <= Math.max(0, across / 2 - width / 2) + 0.08) return [p.x - Math.sign(dx) * m, p.y - Math.sign(dy) * m];
   return [x + Math.sign(dx) * m, y + Math.sign(dy) * m];
+}
+
+/** The sign, with coordinates equal within float noise counting as equal. */
+const sgn = (v: number) => (Math.abs(v) < 1e-9 ? 0 : Math.sign(v));
+
+/** A flat polyline, back to front. */
+function reversePts(pts: number[]): number[] {
+  const out: number[] = [];
+  for (let i = pts.length - 2; i >= 0; i -= 2) out.push(pts[i]!, pts[i + 1]!);
+  return out;
+}
+
+/** The shortest distance between two segments. */
+function segSegDist(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number): number {
+  const ccw = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) => (qx - px) * (ry - py) - (qy - py) * (rx - px);
+  const d1 = ccw(cx, cy, dx, dy, ax, ay);
+  const d2 = ccw(cx, cy, dx, dy, bx, by);
+  const d3 = ccw(ax, ay, bx, by, cx, cy);
+  const d4 = ccw(ax, ay, bx, by, dx, dy);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return 0;
+  const pt = (px: number, py: number, sx: number, sy: number, ex: number, ey: number) => {
+    const vx = ex - sx;
+    const vy = ey - sy;
+    const l2 = vx * vx + vy * vy;
+    const t = l2 ? Math.max(0, Math.min(1, ((px - sx) * vx + (py - sy) * vy) / l2)) : 0;
+    return Math.hypot(px - (sx + t * vx), py - (sy + t * vy));
+  };
+  return Math.min(pt(ax, ay, cx, cy, dx, dy), pt(bx, by, cx, cy, dx, dy), pt(cx, cy, ax, ay, bx, by), pt(dx, dy, ax, ay, bx, by));
 }
 
 /** Drop collinear points and duplicates from a flat polyline. */

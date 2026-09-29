@@ -291,8 +291,14 @@ describe('routing', () => {
       for (let i = 0; i + 3 < t.pts.length; i += 2) {
         const [ax, ay, bx, by] = [t.pts[i]!, t.pts[i + 1]!, t.pts[i + 2]!, t.pts[i + 3]!];
         if (Math.hypot(bx - ax, by - ay) < 0.11) continue; // the sub-grid jog onto the pad centre
-        const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 0.02));
+        const len = Math.hypot(bx - ax, by - ay);
+        const n = Math.max(1, Math.ceil(len / 0.02));
         for (let q = 0; q <= n; q++) {
+          // the round joint at a bend belongs to both pieces: skip what lies within half a track
+          // width of a bend (the other piece is judged on its own)
+          const nearStart = (q * len) / n < t.width / 2;
+          const nearEnd = ((n - q) * len) / n < t.width / 2;
+          if ((nearStart && i > 0) || (nearEnd && i + 5 < t.pts.length)) continue;
           const x = ax + ((bx - ax) * q) / n;
           const y = ay + ((by - ay) * q) / n;
           for (const p of pads) {
@@ -314,6 +320,34 @@ describe('routing', () => {
       }
     }
     expect([...odd]).toEqual([]);
+  });
+
+  it('runs straight into a pad exactly on its centre line (or aims a diagonal at its centre)', () => {
+    const b = routed(buck());
+    const pads = b.parts.flatMap((p) => p.pads.map((q) => ({ ...q, ref: p.refdes })));
+    const padAt = (netId: string, x: number, y: number) => pads.find((q) => q.netId === netId && Math.abs(q.x - x) < 1e-6 && Math.abs(q.y - y) < 1e-6);
+    const off: string[] = [];
+    for (const t of b.tracks) {
+      const n = t.pts.length / 2;
+      // pad to pad, two pads whose centre lines differ: one straight run cannot meet both
+      const bothPads = !!padAt(t.netId, t.pts[0]!, t.pts[1]!) && !!padAt(t.netId, t.pts[2 * n - 2]!, t.pts[2 * n - 1]!);
+      for (const fromEnd of [true, false]) {
+        const pts = fromEnd ? t.pts : t.pts.flatMap((_, i) => (i % 2 ? [] : [t.pts[t.pts.length - 2 - i]!, t.pts[t.pts.length - 1 - i]!]));
+        const p = padAt(t.netId, pts[2 * n - 2]!, pts[2 * n - 1]!);
+        if (!p || bothPads) continue;
+        for (let j = n - 2; j >= 0; j--) {
+          const [ax, ay, bx, by] = [pts[2 * j]!, pts[2 * j + 1]!, pts[2 * j + 2]!, pts[2 * j + 3]!];
+          if (Math.abs(ax - p.x) <= p.w / 2 && Math.abs(ay - p.y) <= p.h / 2) continue; // inside: look further back
+          const horizontal = Math.abs(ay - by) < 1e-9;
+          const vertical = Math.abs(ax - bx) < 1e-9;
+          const alongSide = (horizontal && p.h > p.w * 1.2) || (vertical && p.w > p.h * 1.2);
+          const d = Math.abs((p.x - ax) * (by - ay) - (p.y - ay) * (bx - ax)) / Math.hypot(bx - ax, by - ay);
+          if (!alongSide && d > 1e-3) off.push(`${b.netNames[t.netId]} into ${p.ref}.${p.number}: ${d.toFixed(3)} off`);
+          break;
+        }
+      }
+    }
+    expect(off).toEqual([]);
   });
 
   it('the copper DRC catches a short', async () => {
