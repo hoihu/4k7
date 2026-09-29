@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 
-export const PackageFamily = z.enum(['QFP', 'QFN', 'DFN', 'SOIC', 'SSOP', 'TSSOP', 'MSOP', 'SOT', 'BGA', 'CSP', 'DIP', 'CHIP', 'SOD', 'HEADER', 'other']);
+export const PackageFamily = z.enum(['QFP', 'QFN', 'DFN', 'SOIC', 'SSOP', 'TSSOP', 'MSOP', 'SOT', 'BGA', 'CSP', 'DIP', 'CHIP', 'SOD', 'HEADER', 'MODULE', 'other']);
 export type PackageFamily = z.infer<typeof PackageFamily>;
 
 const mm = z.number().positive();
@@ -13,11 +13,11 @@ const dims = z.tuple([mm, mm]);
 
 export const PackageInfo = z.object({
   name: z.string().min(2).describe('Package name as in the datasheet, e.g. "LQFP100", "UFQFPN48", "TFBGA216"'),
-  family: PackageFamily.describe('QFP for LQFP/TQFP, QFN for (U)FQFPN/VQFN, BGA for (T/U)FBGA'),
+  family: PackageFamily.describe('QFP for LQFP/TQFP, QFN for (U)FQFPN/VQFN, BGA for (T/U)FBGA; MODULE for a small carrier board with its pins in two rows along the long edges (Raspberry Pi Pico, ESP32/WROOM modules, Arduino Nano …): body_mm = the board, span_mm[0] = distance between the two pin rows, height_mm = board thickness'),
   pins: z.number().int().positive().describe('Number of pins/balls, excluding an exposed pad'),
   pitch_mm: mm.optional().describe('Lead or ball pitch'),
   body_mm: dims.optional().describe('Body width × length, nominal (E1 × D1 for QFP; E × D for QFN/BGA)'),
-  span_mm: dims.optional().describe('Leaded packages: lead tip to lead tip, width × length (E × D for QFP)'),
+  span_mm: dims.optional().describe('Leaded packages: lead tip to lead tip, width × length (E × D for QFP); DIP/MODULE: distance between the pin rows (centre to centre)'),
   lead_length_mm: mm.optional().describe('Foot length L (QFP/SOIC) or terminal length (QFN)'),
   lead_width_mm: mm.optional().describe('Lead width b'),
   height_mm: mm.optional(),

@@ -14,10 +14,17 @@ import type { BoardView } from '@tracewise/schema';
 export type ViewPreset = 'iso' | 'top' | 'bottom' | 'front';
 
 export interface BodyViewer {
-  setBody(body: Body3D): void;
+  /** With `top`: a picture of the part from above (a module's carrier board shows it). */
+  setBody(body: Body3D, top?: TopPicture): void;
   view(preset: ViewPreset): void;
   resize(width: number, height: number): void;
   dispose(): void;
+}
+
+/** A picture of a part from above: a data URL and clockwise quarter turns. */
+export interface TopPicture {
+  src: string;
+  rot: 0 | 90 | 180 | 270;
 }
 
 /** A straight top-down view of the board: centre (mm, board coordinates) and visible height. */
@@ -51,6 +58,7 @@ function resources() {
     body: new THREE.MeshStandardMaterial({ color: 0x2e3137, roughness: 0.75, metalness: 0.05 }),
     lead: new THREE.MeshStandardMaterial({ color: 0xc9ccd2, roughness: 0.35, metalness: 0.75 }),
     mark: new THREE.MeshStandardMaterial({ color: 0x8a8e96, roughness: 0.9 }),
+    pcb: new THREE.MeshStandardMaterial({ color: 0x1f6b3c, roughness: 0.55, metalness: 0.05 }),
     mask: new THREE.MeshStandardMaterial({ color: 0x1d5a33, roughness: 0.55, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
     cuUnderMask: new THREE.MeshStandardMaterial({ color: 0x2f7f4c, roughness: 0.5, metalness: 0.1 }),
     pad: new THREE.MeshStandardMaterial({ color: 0xd6aa55, roughness: 0.3, metalness: 0.85 }),
@@ -190,6 +198,7 @@ function viewerCore(canvas: HTMLCanvasElement) {
       } else render();
     },
     view,
+    redraw: render,
     flyFromTop(from: TopView) {
       place(topPose(from), true);
       void fly(presetPose('iso'), 900);
@@ -271,11 +280,14 @@ function zoneTexture(z: BoardView['zones'][number], w: number, h: number, drills
 }
 
 /** Meshes of one package body, in its own coordinates (origin = package centre, board surface at 0). */
-function bodyGroup(body: Body3D, res: Res, mark = true): THREE.Group {
+function bodyGroup(body: Body3D, res: Res, mark = true, top?: TopPicture, redraw?: () => void): THREE.Group {
   const group = new THREE.Group();
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
-  for (const mat of ['body', 'lead', 'mark'] as const) {
+  // a module with its picture: the picture shows its chips, the generic chip block goes
+  const pictured = !!(top && body.board);
+  for (const mat of ['body', 'lead', 'mark', 'pcb'] as const) {
+    if (pictured && mat === 'body') continue;
     const boxes = body.boxes.filter((b) => b.mat === mat);
     if (!boxes.length) continue;
     const mesh = new THREE.InstancedMesh(res.unitBox, res[mat], boxes.length);
@@ -295,6 +307,63 @@ function bodyGroup(body: Body3D, res: Res, mark = true): THREE.Group {
     });
     group.add(mesh);
   }
+  if (body.board) {
+    // a module's carrier board: drilled through, a copper ring round every hole, plated walls
+    const { w, h, t, holes } = body.board;
+    const plate = new THREE.Shape();
+    plate.moveTo(-w / 2, -h / 2);
+    plate.lineTo(w / 2, -h / 2);
+    plate.lineTo(w / 2, h / 2);
+    plate.lineTo(-w / 2, h / 2);
+    plate.closePath();
+    for (const hole of holes) {
+      const path = new THREE.Path();
+      path.absarc(hole.x, hole.y, hole.d / 2, 0, Math.PI * 2, true);
+      plate.holes.push(path);
+    }
+    const geo = new THREE.ExtrudeGeometry(plate, { depth: t, bevelEnabled: false, curveSegments: 24 });
+    geo.rotateX(Math.PI / 2); // (x, y) → (x, 0, y), t thick downwards
+    const pcb = new THREE.Mesh(geo, [res.pcb, res.edge]);
+    pcb.position.y = t;
+    group.add(pcb);
+    if (top) {
+      // the picture on the top face (under the pads' rings), turned as the user set it
+      const tex = new THREE.TextureLoader().load(top.src, () => redraw?.());
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.center.set(0.5, 0.5);
+      tex.rotation = -(top.rot * Math.PI) / 180;
+      tex.anisotropy = 4;
+      const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+      const face = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+      face.rotation.x = -Math.PI / 2; // facing up; the picture's top towards the board's −y
+      face.position.y = t + 0.002;
+      face.userData.dispose = () => {
+        tex.dispose();
+        mat.dispose();
+      };
+      group.add(face);
+    }
+    const rings = new Map<number, THREE.BufferGeometry>();
+    for (const hole of holes) {
+      let ring = rings.get(hole.d);
+      if (!ring) {
+        const r = new THREE.Shape();
+        r.absarc(0, 0, hole.d / 2 + 0.4, 0, Math.PI * 2, false);
+        const inner = new THREE.Path();
+        inner.absarc(0, 0, hole.d / 2, 0, Math.PI * 2, true);
+        r.holes.push(inner);
+        ring = new THREE.ExtrudeGeometry(r, { depth: 0.03, bevelEnabled: false, curveSegments: 24 });
+        ring.rotateX(Math.PI / 2);
+        rings.set(hole.d, ring);
+      }
+      const top = new THREE.Mesh(ring, res.pad);
+      top.position.set(hole.x, t + 0.03, hole.y);
+      group.add(top);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(hole.d / 2, hole.d / 2, t, 24, 1, true), res.barrel);
+      barrel.position.set(hole.x, t / 2, hole.y);
+      group.add(barrel);
+    }
+  }
   if (mark) {
     // the pin-1 dot (only where the orientation matters)
     const p = body.pin1;
@@ -307,7 +376,7 @@ function bodyGroup(body: Body3D, res: Res, mark = true): THREE.Group {
 }
 
 /** The assembled board: substrate with solder mask, copper, holes and every part body. */
-function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res): THREE.Group {
+function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, redraw?: () => void): THREE.Group {
   const group = new THREE.Group();
   const { w, h } = b.outline;
   /*
@@ -453,7 +522,7 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res): THREE.
   for (const part of b.parts) {
     const body = bodies.get(part.componentId);
     if (!body) continue;
-    const g = bodyGroup(body, res, part.polarized);
+    const g = bodyGroup(body, res, part.polarized, part.topImage, redraw);
     g.rotation.y = -(part.rot * Math.PI) / 180; // clockwise in the top view
     g.position.set(part.x, CU, part.y);
     group.add(g);
@@ -464,7 +533,7 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res): THREE.
 export function createBodyViewer(canvas: HTMLCanvasElement): BodyViewer {
   const core = viewerCore(canvas);
   return {
-    setBody: (body) => core.setContent(bodyGroup(body, core.res)),
+    setBody: (body, top) => core.setContent(bodyGroup(body, core.res, true, top, core.redraw)),
     view: core.view,
     resize: core.resize,
     dispose: core.dispose,
@@ -477,7 +546,7 @@ export function createBoardViewer(canvas: HTMLCanvasElement): BoardViewer {
   return {
     setBoard(board, bodies) {
       const key = `${board.outline.w}x${board.outline.h}`;
-      core.setContent(boardGroup(board, bodies, core.res), key === size);
+      core.setContent(boardGroup(board, bodies, core.res, core.redraw), key === size);
       size = key;
     },
     view: core.view,

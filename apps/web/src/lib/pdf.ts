@@ -72,3 +72,27 @@ export async function renderPage(doc: Doc, pageNo: number, canvas: HTMLCanvasEle
   return hits.slice(0, 4).map(rectOf);
 }
 
+
+/**
+ * Cut a rectangle out of a page (`box`: x0, y0, x1, y1 as fractions of the page) as a JPEG data
+ * URL, rendered so that its longer side is about `px` pixels.
+ */
+export async function cropPage(doc: Doc, pageNo: number, box: [number, number, number, number], px = 1024): Promise<string> {
+  const page = await doc.getPage(Math.min(Math.max(1, pageNo), doc.numPages));
+  const base = page.getViewport({ scale: 1 });
+  const [x0, y0, x1, y1] = box;
+  const scale = px / Math.max((x1 - x0) * base.width, (y1 - y0) * base.height, 1);
+  const viewport = page.getViewport({ scale });
+  const full = document.createElement('canvas');
+  full.width = Math.ceil(viewport.width);
+  full.height = Math.ceil(viewport.height);
+  await page.render({ canvas: full, viewport }).promise;
+  const out = document.createElement('canvas');
+  out.width = Math.max(1, Math.round((x1 - x0) * full.width));
+  out.height = Math.max(1, Math.round((y1 - y0) * full.height));
+  const ctx = out.getContext('2d')!;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(full, x0 * full.width, y0 * full.height, out.width, out.height, 0, 0, out.width, out.height);
+  return out.toDataURL('image/jpeg', 0.85);
+}

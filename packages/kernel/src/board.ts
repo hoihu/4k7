@@ -1032,6 +1032,7 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     courtyard: rect(it.cw, it.ch),
     pin1: { x: r3(it.x + p1x), y: r3(it.y + p1y) },
     polarized: polarized(it.card),
+    ...(it.card.topImage ? { topImage: { src: it.card.topImage.src, rot: it.card.topImage.rot } } : {}),
     locked: it.fixed,
     ...(it.intent ? { intent: it.intent.rel ? { anchor: anchorRef(d, it.intent.rel) } : {} } : {}),
   };

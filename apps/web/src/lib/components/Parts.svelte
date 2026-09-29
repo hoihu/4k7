@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BUILTIN_PARTS, planUnits, searchParts, symbolFor, unitCount } from '@tracewise/parts';
+  import { BUILTIN_PARTS, isModule, planUnits, searchParts, symbolFor, unitCount } from '@tracewise/parts';
   import type { PartCard, PartPin, SheetView, SymbolView } from '@tracewise/schema';
   import { app } from '../app.svelte.ts';
   import type { Datasheet } from '../ingest.svelte.ts';
@@ -71,6 +71,31 @@
     }
     const next: PartCard = card.units?.length ? { ...card, units: undefined } : { ...card, units: planUnits(card.pins) };
     if (!next.units) delete next.units;
+    await ingest.update(next);
+    current = ingest.library.find((p) => p.id === card.id) ?? next;
+  }
+  /*
+   * A picture of the part from the datasheet (a module's top view): drag a rectangle round it on
+   * the datasheet page; it is cropped, stored with the part and shown on its 3D body.
+   */
+  let picking = $state(false);
+  function startPicking() {
+    picking = true;
+    mech = '3d';
+    dsTerms = [];
+    dsLabel = 'drag a rectangle round the part in a picture (top view, pin 1 top left if you can)';
+  }
+  async function takePicture(card: PartCard, page: number, box: [number, number, number, number]) {
+    picking = false;
+    dsLabel = '';
+    if (!sheetDoc) return;
+    const { openPdf, cropPage } = await import('../pdf.ts');
+    const src = await cropPage(await openPdf(sheetDoc.hash, sheetDoc.data), page, box);
+    await setPicture(card, { src, page, rot: 0 });
+  }
+  async function setPicture(card: PartCard, pic: PartCard['topImage']) {
+    const next: PartCard = { ...card, ...(pic ? { topImage: pic } : {}) };
+    if (!pic) delete next.topImage;
     await ingest.update(next);
     current = ingest.library.find((p) => p.id === card.id) ?? next;
   }
@@ -169,6 +194,14 @@
           <button aria-pressed={mech === 'fp'} onclick={() => (mech = 'fp')}>Footprint</button>
           <button aria-pressed={mech === '3d'} onclick={() => (mech = '3d')}>3D</button>
           <span class="grow"></span>
+          {#if mech === '3d' && sheetDoc && mode === 'part' && userIds.has(card.id) && isModule(card.packageInfo)}
+            {#if picking}<button class="link" onclick={() => ((picking = false), (dsLabel = ''))}>cancel</button>
+            {:else}<button class="link" title="Take the part's picture from the datasheet for the 3D view" onclick={startPicking}>{card.topImage ? 'other picture' : 'picture from datasheet'}</button>{/if}
+            {#if card.topImage && !picking}
+              <button class="link" title="Turn the picture a quarter clockwise" onclick={() => setPicture(card, { ...card.topImage!, rot: ((card.topImage!.rot + 90) % 360) as 0 | 90 | 180 | 270 })}>rotate</button>
+              <button class="link" onclick={() => setPicture(card, undefined)}>remove picture</button>
+            {/if}
+          {/if}
           {#if card.packageInfo.page && sheetDoc}<button class="link" onclick={() => showPackage(card)}>drawing p. {card.packageInfo.page}</button>{/if}
         </div>
         <div class="mech">
@@ -382,7 +415,7 @@
 
   {#if sheetDoc && shown && (mode === 'part' || ingest.phase === 'review')}
     <div class="pane dspane">
-      <DatasheetView sheet={sheetDoc} bind:page={dsPage} terms={dsTerms} label={dsLabel} />
+      <DatasheetView sheet={sheetDoc} bind:page={dsPage} terms={dsTerms} label={dsLabel} onpick={picking && shown ? (page, box) => takePicture(shown, page, box) : undefined} />
     </div>
   {/if}
 </div>

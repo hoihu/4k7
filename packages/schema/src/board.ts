@@ -115,6 +115,8 @@ export interface BoardPart {
   pin1: { x: number; y: number };
   /** Its orientation matters (diodes, polarized caps, ICs, connectors): pin 1 is marked. */
   polarized: boolean;
+  /** A picture of the part from the top (from its part card), for the 3D view. */
+  topImage?: { src: string; rot: 0 | 90 | 180 | 270 };
   /** Locked by the user (a hard position constraint); the placer does not move it. */
   locked: boolean;
   /** Placed where the user put it (a soft position constraint), relative to this part if set. */

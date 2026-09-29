@@ -33,7 +33,7 @@
   });
 
   $effect(() => {
-    if (viewer && result?.ok) viewer.setBody(result.body);
+    if (viewer && result?.ok) viewer.setBody(result.body, card.topImage);
   });
 
   $effect(() => {

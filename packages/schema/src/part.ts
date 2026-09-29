@@ -113,6 +113,17 @@ export interface PartCard {
    * pins of its layout. Every pin belongs to exactly one unit. Overrides `symbolLayout`.
    */
   units?: SymbolUnit[];
+  /** A picture of the part seen from the top (cropped from its datasheet), shown on its 3D body. */
+  topImage?: TopImage;
+}
+
+export interface TopImage {
+  /** The picture: a data URL (JPEG). */
+  src: string;
+  /** Datasheet page it was cropped from. */
+  page: number;
+  /** Clockwise quarter turns to match the footprint (pin 1 top left). */
+  rot: 0 | 90 | 180 | 270;
 }
 
 export interface SymbolUnit {

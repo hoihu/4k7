@@ -40,6 +40,20 @@ export function bgaRowName(i: number): string {
   return i < letters.length ? letters[i]! : letters[Math.floor(i / letters.length) - 1]! + letters[i % letters.length]!;
 }
 
+/**
+ * A module (a small carrier board with two rows of pins, like a Raspberry Pi Pico): the MODULE
+ * family, or a "DIP" whose body is wider than its pin rows (the pins would sit under the body,
+ * which a DIP never has).
+ */
+export function isModule(pkg: PackageInfo): boolean {
+  return pkg.family === 'MODULE' || (pkg.family === 'DIP' && !!pkg.body_mm && pkg.body_mm[0] > (pkg.span_mm?.[0] ?? 7.62));
+}
+
+/** A module's pin rows: centre to centre (given, else 1.61 mm in from each long edge, as on a Pico). */
+export function moduleSpan(pkg: PackageInfo): number {
+  return pkg.span_mm?.[0] ?? Math.max(2.54, (pkg.body_mm?.[0] ?? 21) - 3.22);
+}
+
 export function footprintFor(pkg: PackageInfo, pinNumbers: string[] = []): FootprintResult {
   const need = (what: (keyof PackageInfo)[]) => {
     const missing = what.filter((k) => pkg[k] === undefined);
@@ -79,7 +93,8 @@ export function footprintFor(pkg: PackageInfo, pinNumbers: string[] = []): Footp
       return { ok: true, footprint: grid(pkg, pinNumbers) };
     }
     case 'DIP':
-      return { ok: true, footprint: dip(pkg) };
+    case 'MODULE':
+      return { ok: true, footprint: isModule(pkg) ? moduleFp(pkg) : dip(pkg) };
     case 'CHIP': {
       const miss = need(['body_mm']);
       if (miss) return { ok: false, reason: miss };
@@ -216,6 +231,27 @@ function dip(pkg: PackageInfo): Footprint {
   const bw = pkg.body_mm?.[0] ?? 6.35;
   const bl = pkg.body_mm?.[1] ?? n * pitch + 0.5;
   return { pads, body: { w: bw, h: bl }, courtyard: { w: r2(rowSpan + 1.6 + 2 * COURTYARD), h: r2(bl + 2 * COURTYARD) }, pin1: { x: r2(-rowSpan / 2 - 1.2), y: off(0) }, notes: [] };
+}
+
+/** A module: two rows of through-hole pads under the board's long edges, numbered like a DIP. */
+function moduleFp(pkg: PackageInfo): Footprint {
+  const n = Math.ceil(pkg.pins / 2);
+  const pitch = pkg.pitch_mm ?? 2.54;
+  const span = moduleSpan(pkg);
+  const bw = pkg.body_mm?.[0] ?? span + 3.22;
+  const bl = pkg.body_mm?.[1] ?? n * pitch + 1;
+  const off = (i: number) => r2((i - (n - 1) / 2) * pitch);
+  const pads: Pad[] = [];
+  let num = 1;
+  for (let i = 0; i < n && num <= pkg.pins; i++) pads.push({ number: String(num++), x: r2(-span / 2), y: off(i), w: 1.7, h: 1.7, shape: i === 0 ? 'rect' : 'round', drill: 1 });
+  for (let i = 0; i < n && num <= pkg.pins; i++) pads.push({ number: String(num++), x: r2(span / 2), y: -off(i), w: 1.7, h: 1.7, shape: 'round', drill: 1 });
+  return {
+    pads,
+    body: { w: bw, h: bl },
+    courtyard: { w: r2(Math.max(bw, span + 1.7) + 2 * COURTYARD), h: r2(Math.max(bl, n * pitch) + 2 * COURTYARD) },
+    pin1: { x: r2(-span / 2 + 1.6), y: off(0) },
+    notes: [],
+  };
 }
 
 /** Two-terminal chip (resistor, capacitor, moulded inductor): pads along x, pin 1 left. */

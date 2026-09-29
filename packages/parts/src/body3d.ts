@@ -4,13 +4,14 @@
  * for a 3D preview and collision/height checks, and the basis for a STEP/GLB export later.
  */
 import type { PackageInfo } from '@tracewise/schema';
-import { bgaRowName, footprintFor, type Pad } from './footprint.ts';
+import { bgaRowName, footprintFor, isModule, moduleSpan, type Pad } from './footprint.ts';
 
 export interface Box3 {
   /** Min and max corners. */
   min: [number, number, number];
   max: [number, number, number];
-  mat: 'body' | 'lead' | 'mark';
+  /** pcb: a module's carrier board. */
+  mat: 'body' | 'lead' | 'mark' | 'pcb';
 }
 
 export interface Ball3 {
@@ -26,6 +27,8 @@ export interface Body3D {
   /** Overall height above the board. */
   height: number;
   notes: string[];
+  /** A module's carrier board (w × h, t thick, centred, from z = 0), with its drilled holes. */
+  board?: { w: number; h: number; t: number; holes: { x: number; y: number; d: number }[] };
 }
 
 export type Body3DResult = { ok: true; body: Body3D } | { ok: false; reason: string };
@@ -69,7 +72,8 @@ export function body3dFor(pkg: PackageInfo, pinNumbers: string[] = []): Body3DRe
       return { ok: true, body: ballGrid(pkg, pinNumbers, notes) };
     }
     case 'DIP':
-      return { ok: true, body: dip(pkg, notes) };
+    case 'MODULE':
+      return { ok: true, body: isModule(pkg) ? moduleBody(pkg) : dip(pkg, notes) };
     case 'CHIP':
       return pkg.body_mm ? { ok: true, body: chip(pkg) } : { ok: false, reason: 'needs body_mm' };
     case 'SOD':
@@ -195,6 +199,41 @@ function dip(pkg: PackageInfo, notes: string[]): Body3D {
   }
   notes.push('Through-hole pins shown 3 mm below the board surface.');
   return { boxes, balls: [], pin1: pin1Mark(pkg, bw, bl, H - 0.5, false), height: H - 0.5, notes };
+}
+
+/**
+ * A module: its carrier board (green, as thick as given, else 1 mm) soldered flat on the board,
+ * gold pads over the pins, castellated half-holes where the pins sit at the edge, and the main
+ * chip in the middle.
+ */
+function moduleBody(pkg: PackageInfo): Body3D {
+  const n = Math.ceil(pkg.pins / 2);
+  const pitch = pkg.pitch_mm ?? 2.54;
+  const span = moduleSpan(pkg);
+  const bw = pkg.body_mm?.[0] ?? span + 3.22;
+  const bl = pkg.body_mm?.[1] ?? n * pitch + 1;
+  const t = pkg.height_mm && pkg.height_mm <= 2 ? pkg.height_mm : 1;
+  const boxes: Box3[] = [];
+  const holes: { x: number; y: number; d: number }[] = [];
+  const castellated = bw / 2 - span / 2 < 2.5;
+  let num = 0;
+  for (const sign of [-1, 1]) {
+    for (const o of offsets(n, pitch)) {
+      if (++num > pkg.pins) break;
+      const x = (sign * span) / 2;
+      const y = sign < 0 ? o : -o;
+      // a plated hole (the viewer draws its copper ring); castellated: a pad strip on to the edge
+      // and the plated half-hole down the edge
+      holes.push({ x: r3(x), y: r3(y), d: 1 });
+      if (castellated) {
+        boxes.push(box(x + sign * 0.8, y - 0.55, t, sign * bw / 2, y + 0.55, t + 0.03, 'lead'));
+        boxes.push(box(sign * (bw / 2 - 0.05), y - 0.55, 0, sign * (bw / 2 + 0.02), y + 0.55, t + 0.03, 'lead'));
+      }
+    }
+  }
+  const s = Math.min(bw, bl) * 0.33;
+  boxes.push(box(-s / 2, -s / 2, t, s / 2, s / 2, t + 0.9, 'body'));
+  return { boxes, balls: [], pin1: { x: r3(-span / 2 + 1.6), y: r3(offsets(n, pitch)[0]!), z: t + 0.03, r: 0.35 }, height: t + 0.9, notes: ['A module: its carrier board with the main chip; other parts on it are not shown.'], board: { w: bw, h: bl, t, holes } };
 }
 
 /** Pin-1 dimple near the corner of pin 1 (top-left in the footprint view). */
