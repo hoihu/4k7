@@ -163,9 +163,9 @@
                 {/each}
                 {#each z.shape.adds as a, ai (ai)}<path d={path(a.pts)} stroke="white" stroke-width={a.w} fill="none" />{/each}
               </mask>
-              <rect class="zone" class:hot={hotNet === z.netId} x={o[0]} y={o[1]} width={o[2] - o[0]} height={o[3] - o[1]} mask="url(#{id})" data-net={z.netId} />
+              <rect class="zone" x={o[0]} y={o[1]} width={o[2] - o[0]} height={o[3] - o[1]} mask="url(#{id})" />
             {:else}
-              <path class="zone" class:hot={hotNet === z.netId} d={zonePath(z.rects)} data-net={z.netId} />
+              <path class="zone" d={zonePath(z.rects)} />
             {/if}
           {/each}
           {#each tracksOn(layer) as t, i (i)}
@@ -245,12 +245,12 @@
   .substrate { fill: #0f2a22; }
   .edge { fill: none; stroke: #e0c341; stroke-width: 0.15; }
   .layer path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-  .layer .zone { stroke: none; opacity: 0.16; }
+  /* planes and pours are never highlighted (they cover the board; hovering them would light it all up) */
+  .layer .zone { stroke: none; opacity: 0.16; pointer-events: none; }
   .fcu .zone { fill: #c9463d; }
   .bcu .zone { fill: #3f7fd6; }
   .in1 .zone { fill: #c9a13d; }
   .in2 .zone { fill: #8e5cd6; }
-  .layer .zone.hot { fill: #fff27a; opacity: 0.35; }
   .fcu path { stroke: #c9463d; }
   .bcu path { stroke: #3f7fd6; }
   .in1 path { stroke: #c9a13d; }
