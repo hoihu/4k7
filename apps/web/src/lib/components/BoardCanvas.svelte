@@ -184,7 +184,7 @@
   tabindex="0"
 >
   {#if board}
-    <rect class="substrate" x="0" y="0" width={board.outline.w} height={board.outline.h} rx="0.5" />
+    {#if show.board !== false}<rect class="substrate" x="0" y="0" width={board.outline.w} height={board.outline.h} rx="0.5" />{/if}
 
     {#each order as layer (layer)}
       {#if show[layer]}
@@ -281,6 +281,7 @@
 
 <style>
   .board { width: 100%; height: 100%; display: block; background: var(--canvas); cursor: default; touch-action: none; }
+  /* the board itself (substrate under the solder mask): not a copper layer */
   .substrate { fill: #0f2a22; }
   .edge { fill: none; stroke: #e0c341; stroke-width: 0.15; }
   .layer path { fill: none; stroke-linecap: round; stroke-linejoin: round; }

@@ -13,7 +13,7 @@
   });
 
   const b = $derived(app.board);
-  let show = $state<Record<string, boolean>>({ 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true });
+  let show = $state<Record<string, boolean>>({ board: true, 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true });
   let hotNet = $state<string | null>(null);
   let mode = $state<'2d' | '3d'>('2d');
   // switching views: the 3D view starts from the 2D view's area and flies into 3D; back, it flies
@@ -43,6 +43,7 @@
   const errors = $derived(b?.diagnostics.filter((d) => d.severity === 'error').length ?? 0);
   const warnings = $derived(b?.diagnostics.filter((d) => d.severity === 'warning').length ?? 0);
   const layerNames: [string, string][] = $derived([
+    ['board', 'Board · substrate / solder mask'],
     ...(b?.layers ?? ['F.Cu', 'B.Cu']).map((l: CopperLayer): [string, string] => {
       const plane = b?.planes.find((p) => p.layer === l);
       const name = l === 'F.Cu' ? 'Top copper' : l === 'B.Cu' ? 'Bottom copper' : `Inner ${l.slice(2, 3)}`;
@@ -254,6 +255,7 @@
   .diags .r:hover { background: var(--hover); }
   .layers label { display: flex; gap: 6px; align-items: center; font-size: 12px; padding: 2px 0; cursor: pointer; }
   .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; background: var(--line-2); }
+  .sw.board { background: #0f2a22; border: 1px solid var(--line-2); }
   .sw.FCu { background: #c9463d; }
   .sw.BCu { background: #3f7fd6; }
   .sw.In1Cu { background: #c9a13d; }
