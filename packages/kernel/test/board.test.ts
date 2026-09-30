@@ -691,6 +691,28 @@ describe('router: direct tracks', () => {
   });
 });
 
+describe('router: long connections on a big board', () => {
+  it('finds the shortest way (no detours, no vias) when the costs run into the thousands', async () => {
+    const { route } = await import('../src/router.ts');
+    type Pad = import('@tracewise/schema').BoardPad;
+    type Part = import('@tracewise/schema').BoardPart;
+    const pad = (x: number, y: number): Pad => ({ number: '1', x, y, w: 1, h: 1, shape: 'rect', netId: 'X', layers: ['F.Cu'] });
+    const part = (refdes: string, p: Pad) => ({ componentId: refdes, refdes, x: p.x, y: p.y, rot: 0, pads: [p], courtyard: { x: p.x - 1, y: p.y - 1, w: 2, h: 2 } }) as unknown as Part;
+    const r = route({
+      outline: { w: 200, h: 120 },
+      layers: ['F.Cu', 'B.Cu'],
+      rules: { clearance: 0.15, track: 0.15, powerTrack: 0.5, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 },
+      parts: [part('A', pad(10, 30)), part('B', pad(185, 95))],
+      powerNets: new Set(),
+    });
+    expect(r.failed).toEqual([]);
+    expect(r.vias).toEqual([]);
+    const len = r.tracks.reduce((sum, t) => sum + t.pts.reduce((a, _, i) => (i % 2 === 0 && i + 3 < t.pts.length ? a + Math.hypot(t.pts[i + 2]! - t.pts[i]!, t.pts[i + 3]! - t.pts[i + 1]!) : a), 0), 0);
+    // the shortest 0/45/90° way: 65 mm diagonal plus 110 mm straight
+    expect(len).toBeCloseTo(65 * Math.SQRT2 + 110, 1);
+  });
+});
+
 describe('router: between IC pins', () => {
   it('takes the middle of the gap between two pins', async () => {
     const { route } = await import('../src/router.ts');

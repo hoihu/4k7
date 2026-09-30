@@ -524,17 +524,23 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   };
 
   /** A* from any start state to a goal state; returns the path (start → goal) or null. */
-  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number }, accept?: (s: number) => boolean): number[] | null => {
+  /*
+   * The estimate of the way left (A*): the distance to the target: a point, or the box round all
+   * goal cells. With a group of copper as the goal, a point (one pad of it) would overestimate
+   * the way to the group's nearer parts, and the search would run past them to that pad.
+   */
+  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean): number[] | null => {
     const free = freeFor(net, k);
     const viaFree = viaFreeFor(net);
     cost.fill(Infinity);
     const heap = new Heap();
-    const tx = target.x / G;
-    const ty = target.y / G;
+    const [bx0, by0, bx1, by1] = 'x0' in target ? [target.x0, target.y0, target.x1, target.y1] : [target.x / G, target.y / G, target.x / G, target.y / G];
     const h = (s: number) => {
       const i = s % N;
-      const dx = Math.abs((i % W) - tx);
-      const dy = Math.abs(Math.floor(i / W) - ty);
+      const x = i % W;
+      const y = Math.floor(i / W);
+      const dx = Math.max(bx0 - x, 0, x - bx1);
+      const dy = Math.max(by0 - y, 0, y - by1);
       return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
     };
     // starts and goals only where this width fits; if none does (a track wider than its pad),
@@ -559,8 +565,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     while (heap.size) {
       const s = heap.pop();
       if (heap.lastPrio >= best - 1e-6) break;
-      // outdated entry: this state was reached more cheaply since it was pushed
-      if (heap.lastPrio - h(s) > cost[s]! + 1e-6) continue;
+      // outdated entry: this state was reached more cheaply since it was pushed. (Costs are kept
+      // as 32-bit floats and the priorities as 64-bit numbers: at a cost of a few hundred the
+      // rounding alone is ~1e-4, so the tolerance must be above that; real differences are ≥ 0.05.)
+      if (heap.lastPrio - h(s) > cost[s]! + 0.01) continue;
       if (isGoal(s) && (accept ? accept(s) : usable(s)) && cost[s]! + toCentre(s) < best) {
         best = cost[s]! + toCentre(s);
         reached = s;
@@ -839,6 +847,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     // exactly onto the pads' centre lines (the grid only gets within half a step)
     if (startPad >= 0 && lines[0]) lines[0].pts = reversePts(alignEnd(reversePts(simplify(lines[0].pts)), pads[startPad]!, lines[0].l, net, width, lines.length === 1 ? dropVia : undefined));
     if (endPad >= 0) last.pts = alignEnd(simplify(last.pts), pads[endPad]!, last.l, net, width);
+    // an end on a track of the net (a join): exactly onto that track's centre line
+    if (startPad < 0 && lines[0] && !(lines.length === 1 && endVia)) lines[0].pts = reversePts(joinTrack(reversePts(simplify(lines[0].pts)), lines[0].l, net));
+    if (endPad < 0 && !endVia) last.pts = joinTrack(simplify(last.pts), last.l, net);
+    for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, width);
     // the copper as it finally lies (aligned ends moved it): the cells later routes may join
     const onCopper = new Set<number>();
     for (const line of lines) {
@@ -919,8 +931,11 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         if (t <= 1e-6) return pts; // [Z, A] would turn back
         nax = zx + vx * t;
         nay = zy + vy * t;
-        // the corner must not end up half over the pad's edge (the piece before turns off there)
+        // the corner must not end up half over the pad's edge (the piece before turns off there),
+        // nor on or next to another pad of the net (the turn would leave that pad across its edge)
         if (padDist(p)(nax, nay) < width / 2 - 0.08) return pts;
+        const layer0 = layers[l]!;
+        if (pads.some((o, q) => o !== p && padNet[q] === net && (o.drill || o.layers.includes(layer0)) && padDist(o)(nax, nay) < width / 2 + 0.05)) return pts;
         if (!clearOf(net, l, width, [[zx, zy, nax, nay], [nax, nay, px, py]])) return pts;
         return [...pts.slice(0, 2 * zi + 2), nax, nay, px, py];
       }
@@ -978,6 +993,108 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     }
     return pts;
   };
+  /*
+   * A path that ends on a track of its net joins it somewhere inside its copper, which on a wide
+   * track can be off its centre line: the last run slides on along its direction onto the centre
+   * line (or, running alongside it, a short step across). Only with exact clearance.
+   */
+  const joinTrack = (pts: number[], l: number, net: number): number[] => {
+    const n = pts.length / 2;
+    if (n < 2) return pts;
+    const [px, py] = [pts[2 * n - 2]!, pts[2 * n - 1]!];
+    const [ax, ay] = [pts[2 * n - 4]!, pts[2 * n - 3]!];
+    const layer = layers[l]!;
+    let best: { d: number; cx: number; cy: number; dx: number; dy: number; w: number } | null = null;
+    for (const t of tracks) {
+      if (t.layer !== layer || numOf(t.netId) !== net) continue;
+      for (let q = 0; q + 3 < t.pts.length; q += 2) {
+        const [cx, cy, ex, ey] = [t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!];
+        const d = segDist(cx, cy, ex, ey)(px, py);
+        if (d <= t.width / 2 + 1e-6 && (!best || d < best.d)) best = { d, cx, cy, dx: ex - cx, dy: ey - cy, w: t.width };
+      }
+    }
+    if (!best || best.d < 1e-6) return pts; // not on a track, or already on its centre line
+    const { cx, cy, dx, dy } = best;
+    const ux = px - ax;
+    const uy = py - ay;
+    // where the run's line meets the track's centre line (t along the run beyond P, s on the track)
+    const det = ux * dy - uy * dx;
+    let q: [number, number] | null = null;
+    if (Math.abs(det) > 1e-9) {
+      const t = ((cx - px) * dy - (cy - py) * dx) / det;
+      const s2 = ((cx - px) * uy - (cy - py) * ux) / det;
+      if (t > -1e-9 && t * Math.hypot(ux, uy) <= best.w && s2 >= -1e-9 && s2 <= 1 + 1e-9) q = [px + ux * t, py + uy * t];
+    }
+    if (!q) {
+      // alongside: the foot on the centre line
+      const l2 = dx * dx + dy * dy;
+      const s2 = l2 ? Math.max(0, Math.min(1, ((px - cx) * dx + (py - cy) * dy) / l2)) : 0;
+      q = [cx + dx * s2, cy + dy * s2];
+      if (!clearOf(net, l, best.w, [[px, py, q[0], q[1]]])) return pts;
+      return [...pts, q[0], q[1]];
+    }
+    if (!clearOf(net, l, best.w, [[ax, ay, q[0], q[1]]])) return pts;
+    return [...pts.slice(0, 2 * n - 2), q[0], q[1]];
+  };
+
+  /*
+   * Small jogs: two parallel runs joined by a short step (under 0.3 mm), e.g. where the maze
+   * lined a diagonal up with a pad centre. The corner before the first run slides along its own
+   * direction until that run is on the line of the second, and the step is gone (angles stay).
+   * Only with exact clearance; ends of the track stay where they are.
+   */
+  const dejog = (pts: number[], l: number, net: number, width: number): number[] => {
+    let out = pts;
+    for (let pass = 0; pass < 3; pass++) {
+      let changed = false;
+      const n = out.length / 2;
+      for (let i = 1; i + 2 < n; i++) {
+        // runs: Z→A (before), A→B (first), B→C (the step), C→D (second)
+        if (i < 2) continue;
+        const P = (k: number) => [out[2 * k]!, out[2 * k + 1]!] as const;
+        const [zx, zy] = P(i - 2);
+        const [ax, ay] = P(i - 1);
+        const [bx, by] = P(i);
+        const [cx, cy] = P(i + 1);
+        const [dx, dy] = P(i + 2);
+        if (Math.hypot(cx - bx, cy - by) > 0.3) continue;
+        const u = [sgn(bx - ax), sgn(by - ay)];
+        const v = [sgn(dx - cx), sgn(dy - cy)];
+        if (u[0] !== v[0] || u[1] !== v[1]) continue; // not parallel, same way
+        // slide A along Z→A onto the line through C with direction u
+        const w = [sgn(ax - zx), sgn(ay - zy)];
+        const det = w[0]! * u[1]! - w[1]! * u[0]!;
+        if (Math.abs(det) < 1e-9) continue;
+        const t = ((cx - zx) * u[1]! - (cy - zy) * u[0]!) / det;
+        const nx = zx + w[0]! * t;
+        const ny = zy + w[1]! * t;
+        // A' must stay on the Z side of D (the run A'→D keeps its direction)
+        if (t <= 1e-6 || (dx - nx) * u[0]! + (dy - ny) * u[1]! <= 1e-6) continue;
+        if (!clearOf(net, l, width, [[zx, zy, nx, ny], [nx, ny, dx, dy]])) continue;
+        // nor half over a pad of the net (the step may have been there to line up with one)
+        const layer = layers[l]!;
+        const overPad = pads.some((p, q) => {
+          if (padNet[q] !== net || (!p.drill && !p.layers.includes(layer))) return false;
+          const d = padDist(p);
+          for (let k = 0; k <= 10; k++) {
+            const x = zx + ((nx - zx) * k) / 10;
+            const y = zy + ((ny - zy) * k) / 10;
+            const e = d(x, y);
+            if (e > 0 && e < width / 2 - 0.02) return true; // touching from outside, not on it
+          }
+          // and the new corner not on or next to one (the turn would leave the pad across its edge)
+          return d(nx, ny) < width / 2 + 0.05;
+        });
+        if (overPad) continue;
+        out = [...out.slice(0, 2 * (i - 1)), nx, ny, ...out.slice(2 * (i + 2))];
+        changed = true;
+        break;
+      }
+      if (!changed) break;
+    }
+    return out;
+  };
+
   /** The segments (of the given width, on layer l) keep the clearance from all copper of other nets. */
   const clearOf = (net: number, l: number, width: number, segs: [number, number, number, number][]) => {
     const need = rules.clearance + width / 2 - 1e-3;
@@ -1273,7 +1390,18 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const centred = (st: number) => fits(st) && !offCentre(net, k, st);
     const deepest = new Set(deepestCells(goalCells));
     const accept = goalCells.some(centred) ? centred : goalCells.some(fits) ? fits : (st: number) => deepest.has(st);
-    const path = search(net, k, groupCells.get(find(c.b))!, (st) => goal[st] === goalStamp, pa, accept);
+    // (the estimate: the box round the whole goal group, not just pad a)
+    let [gx0, gy0, gx1, gy1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const st of goalCells) {
+      const i = st % N;
+      const x = i % W;
+      const y = (i - x) / W;
+      if (x < gx0) gx0 = x;
+      if (x > gx1) gx1 = x;
+      if (y < gy0) gy0 = y;
+      if (y > gy1) gy1 = y;
+    }
+    const path = search(net, k, groupCells.get(find(c.b))!, (st) => goal[st] === goalStamp, { x0: gx0, y0: gy0, x1: gx1, y1: gy1 }, accept);
     if (!path) {
       failed.push(c);
       continue;
