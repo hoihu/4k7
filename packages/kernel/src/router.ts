@@ -6,7 +6,7 @@
  * tree, shortest first; a connection may end on any copper already joined to its net.
  * Failed connections are routed first in the next pass (simple rip-up and retry).
  */
-import { cutoutBounds, cutoutDistance, insideOutline, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape } from '@tracewise/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape } from '@tracewise/schema';
 
 const G = 0.1; // grid pitch, mm
 const MULTI = -1; // near copper of two nets: nobody may route here
@@ -34,6 +34,8 @@ export interface RouteInput {
   /** Rounded board corners (radius) and milled cutouts: no copper within the edge clearance. */
   cornerRadius?: number;
   cutouts?: BoardCutout[];
+  /** A free-form outline (closed polygon): no copper outside it or within the edge clearance. */
+  shape?: number[];
 }
 
 export interface RouteResult {
@@ -213,6 +215,8 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
 
   // board edge (rounded corners too) and milled cutouts
   const cornerR = input.cornerRadius ?? 0;
+  const shaped = cornerR > 0 || !!input.shape;
+  const inside = (x: number, y: number) => insideBoard({ outline: input.outline, cornerRadius: cornerR, shape: input.shape ?? null }, x, y);
   for (let k = 0; k < widths.length; k++) {
     const keep = rules.edgeClearance + widths[k]! / 2;
     for (let l = 0; l < L; l++) {
@@ -222,7 +226,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
           const x = i * G;
           const y = j * G;
           if (x < keep || y < keep || x > input.outline.w - keep || y > input.outline.h - keep) m[j * W + i] = EDGE;
-          else if (cornerR > 0 && insideOutline(input.outline.w, input.outline.h, cornerR, x, y) < keep) m[j * W + i] = EDGE;
+          else if (shaped && inside(x, y) < keep) m[j * W + i] = EDGE;
         }
       }
       for (const c of input.cutouts ?? []) {
@@ -1054,7 +1058,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       for (let i = 0; i < W; i++) {
         const x = i * G;
         const y = j * G;
-        ok[j * W + i] = x >= keep && y >= keep && x <= input.outline.w - keep && y <= input.outline.h - keep && (cornerR <= 0 || insideOutline(input.outline.w, input.outline.h, cornerR, x, y) >= keep) ? 1 : 0;
+        ok[j * W + i] = x >= keep && y >= keep && x <= input.outline.w - keep && y <= input.outline.h - keep && (!shaped || inside(x, y) >= keep) ? 1 : 0;
       }
     }
     for (const c of input.cutouts ?? []) {
@@ -1201,20 +1205,12 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         cuts.push({ k: 'rect', x: r3(co.x - cw / 2 - e), y: r3(co.y - ch / 2 - e), w: r3(cw + 2 * e), h: r3(ch + 2 * e) });
       } else cuts.push({ k: 'stroke', pts: along(co.w), w: r3(co.h + 2 * e) }); // turned: a covering oblong
     }
-    if (cornerR > 0) {
-      const R = Math.min(cornerR, Math.min(input.outline.w, input.outline.h) / 2);
-      // the band between the rounded edge (moved in by the clearance) and the square corner
-      const inner = R - e;
-      const mid = (inner + R * Math.SQRT2) / 2;
-      const bw = R * Math.SQRT2 - inner + 0.2;
-      for (const [cx, cy, a0] of [[R, R, 180], [input.outline.w - R, R, 270], [input.outline.w - R, input.outline.h - R, 0], [R, input.outline.h - R, 90]] as const) {
-        const pts: number[] = [];
-        for (let i = 0; i <= 8; i++) {
-          const t = ((a0 + (90 * i) / 8) * Math.PI) / 180;
-          pts.push(r3(cx + mid * Math.cos(t)), r3(cy + mid * Math.sin(t)));
-        }
-        cuts.push({ k: 'stroke', pts, w: r3(bw) });
-      }
+    // a rounded or free-form outline: the pour is clipped to it, and a band of the edge
+    // clearance along it is cut
+    let clip: number[] | undefined;
+    if (shaped) {
+      clip = boardPolygon({ outline: input.outline, cornerRadius: cornerR, shape: input.shape ?? null }).map(r3);
+      cuts.push({ k: 'stroke', pts: [...clip, clip[0]!, clip[1]!], w: r3(2 * e) });
     }
     // islands that are not kept (no connection to the net): cut them out, grown into the
     // clearance around them (always at least one grid cell wide)
@@ -1230,7 +1226,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         }
       }
     }
-    return { outline: [e, e, r3(input.outline.w - e), r3(input.outline.h - e)], cuts, adds };
+    return { outline: [e, e, r3(input.outline.w - e), r3(input.outline.h - e)], ...(clip ? { clip } : {}), cuts, adds };
   };
 
   // 1. provisional areas; 2. drops of every group that does not reach its plane

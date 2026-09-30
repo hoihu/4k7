@@ -132,6 +132,15 @@ export const SetBoardOp = z.object({
   corner_radius_mm: z.number().min(0).optional().describe('Rounded board corners: the radius (0 = square corners)'),
 });
 
+export const SetOutlineOp = z.object({
+  op: z.literal('set_outline'),
+  svg_path: z.string().optional().describe('The outline as an SVG path (M L H V C S Q T A Z, absolute or relative, y down), in any units: it is scaled to width_mm / height_mm. One closed figure; cutouts are separate (add_cutout). E.g. a Christmas tree, a circle, a shield shape.'),
+  points: z.array(z.tuple([z.number(), z.number()])).optional().describe('Or the outline as corner points [x, y] (y down), in any units'),
+  width_mm: z.number().positive().optional().describe('Scale the shape to this width (only one of width/height: proportional)'),
+  height_mm: z.number().positive().optional().describe('Scale the shape to this height (only one of width/height: proportional)'),
+  rectangle: z.boolean().optional().describe('true: back to a rectangular board (keeping width × height)'),
+}).describe('A free-form board outline. Parts, copper and pours keep the edge clearance from it; the Edge_Cuts Gerber carries it.');
+
 const cutoutAnchor = z.enum(['top_left', 'top', 'top_right', 'left', 'center', 'right', 'bottom_left', 'bottom', 'bottom_right']);
 
 export const AddCutoutOp = z.object({
@@ -218,6 +227,7 @@ export const EditOp = z.discriminatedUnion('op', [
   RemoveHoleOp,
   AddCutoutOp,
   RemoveCutoutOp,
+  SetOutlineOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
 export type EditOpName = EditOp['op'];

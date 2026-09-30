@@ -2,7 +2,7 @@
  * Copper design-rule check on exact geometry, independent of the router's grid: clearance
  * between tracks, vias and pads of different nets on the same layer.
  */
-import { cutoutDistance, insideOutline } from '@tracewise/schema';
+import { cutoutDistance, insideBoard } from '@tracewise/schema';
 import type { BoardDiagnostic, BoardView, CopperLayer } from '@tracewise/schema';
 
 type Shape =
@@ -160,7 +160,7 @@ export function edgeDrc(b: BoardView): BoardDiagnostic[] {
   const seen = new Set<string>();
   // how close a disc of radius r at (x, y) comes to the outline or a cutout (negative: over it)
   const room = (x: number, y: number, r: number) => {
-    let best = { d: insideOutline(b.outline.w, b.outline.h, b.cornerRadius, x, y) - r, what: 'the board edge' };
+    let best = { d: insideBoard(b, x, y) - r, what: 'the board edge' };
     for (const c of b.cutouts) {
       const d = cutoutDistance(c, x, y) - r;
       if (d < best.d) best = { d, what: `cutout ${c.id}` };
@@ -175,7 +175,7 @@ export function edgeDrc(b: BoardView): BoardDiagnostic[] {
     seen.add(key);
     out.push({ code: 'DRC.EDGE_CLEARANCE', severity: 'error', message: `${what} is ${Math.max(0, d).toFixed(2)} mm from ${near} (min ${e} mm).`, at: { x, y }, entities: [] });
   };
-  if (!b.cutouts.length && !b.cornerRadius) return out; // the router keeps off straight edges
+  if (!b.cutouts.length && !b.cornerRadius && !b.shape) return out; // the router keeps off straight edges
   for (const t of b.tracks) {
     const what = `track ${b.netNames[t.netId] ?? t.netId}`;
     for (let i = 0; i + 3 < t.pts.length; i += 2) {

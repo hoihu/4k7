@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Body3D } from '@tracewise/parts';
-import { cutoutPolygon, outlinePolygon, type BoardView } from '@tracewise/schema';
+import { boardPolygon, cutoutPolygon, type BoardView } from '@tracewise/schema';
 
 export type ViewPreset = 'iso' | 'top' | 'bottom' | 'front';
 
@@ -251,7 +251,15 @@ function zoneTexture(z: BoardView['zones'][number], w: number, h: number, drills
   };
   if (z.shape) {
     const [x0, y0, x1, y1] = z.shape.outline;
-    ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    if (z.shape.clip) {
+      // a shaped board: the pour fills the outline polygon
+      const c = z.shape.clip;
+      ctx.beginPath();
+      ctx.moveTo(c[0]!, c[1]!);
+      for (let i = 2; i < c.length; i += 2) ctx.lineTo(c[i]!, c[i + 1]!);
+      ctx.closePath();
+      ctx.fill();
+    } else ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
     ctx.globalCompositeOperation = 'destination-out';
     for (const c of z.shape.cuts) {
       if (c.k === 'circle') {
@@ -386,7 +394,7 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, redraw?
    */
   const drills = b.parts.flatMap((p) => p.pads.filter((q) => q.drill).map((q) => ({ x: q.x, y: q.y, d: q.drill!, pad: q })));
   const outline = new THREE.Shape();
-  const ring = outlinePolygon(w, h, b.cornerRadius ?? 0);
+  const ring = boardPolygon(b);
   outline.moveTo(ring[0]!, ring[1]!);
   for (let i = 2; i < ring.length; i += 2) outline.lineTo(ring[i]!, ring[i + 1]!);
   outline.closePath();

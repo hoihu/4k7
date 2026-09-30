@@ -32,7 +32,8 @@ import {
   cutoutBounds,
   cutoutDistance,
   cutoutPolygon,
-  insideOutline,
+  insideBoard,
+  insidePolygon,
   placeCutout,
 } from '@tracewise/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@tracewise/parts';
@@ -240,6 +241,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   // parts (with spacing) cover at most this much of a proposed board: room to route
   const DENSITY = layers.length === 4 ? 0.55 : 0.45;
   const userSize = !!(settings.width && settings.height);
+  // a free-form outline: parts stay inside it (with the margin), not just inside its box
+  const shape = settings.shape ?? null;
   let outline = userSize ? { w: settings.width!, h: settings.height! } : (stored?.outline ?? { w: 0, h: 0 });
   // (a proposal without the user's size relaxes freely; its outline is fitted afterwards)
   let containing = userSize || !!stored;
@@ -248,6 +251,34 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     const e = extent(it);
     it.x = Math.min(Math.max(it.x, margin + e.w / 2), outline.w - margin - e.w / 2);
     it.y = Math.min(Math.max(it.y, margin + e.h / 2), outline.h - margin - e.h / 2);
+    if (shape) pushInside(it);
+  };
+  /** Into a free-form outline: moved inwards (up the distance field) until the courtyard is inside with the margin. */
+  const pushInside = (it: Item) => {
+    for (let k = 0; k < 16; k++) {
+      const e = extent(it);
+      let worst = { d: Infinity, x: 0, y: 0 };
+      for (const [fx, fy] of [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [0, 0]] as const) {
+        const x = it.x + (fx * e.w) / 2;
+        const y = it.y + (fy * e.h) / 2;
+        const d = insidePolygon(shape!, x, y);
+        if (d < worst.d) worst = { d, x, y };
+      }
+      if (worst.d >= margin - 1e-6) return;
+      // the way inwards at the worst point (the distance field's gradient)
+      const g = 0.05;
+      let gx = insidePolygon(shape!, worst.x + g, worst.y) - insidePolygon(shape!, worst.x - g, worst.y);
+      let gy = insidePolygon(shape!, worst.x, worst.y + g) - insidePolygon(shape!, worst.x, worst.y - g);
+      const len = Math.hypot(gx, gy);
+      if (len < 1e-9) {
+        gx = outline.w / 2 - it.x;
+        gy = outline.h / 2 - it.y;
+      }
+      const l2 = Math.hypot(gx, gy) || 1;
+      const step = margin - worst.d + 0.1;
+      it.x += (gx / l2) * step;
+      it.y += (gy / l2) * step;
+    }
   };
 
   /* ---- relax: pads towards their nets, caps to their supply pins, near constraints ---- */
@@ -627,7 +658,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       return blocker(c.id, (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0 + 2 * e, y1 - y0 + 2 * e);
     }),
     // a rounded corner takes a square of its radius out of the usable area
-    ...(cornerR > margin ? [[0, 0], [w, 0], [0, h], [w, h]].map(([cx, cy], i) => blocker(`corner${i}`, cx === 0 ? cornerR / 2 : cx! - cornerR / 2, cy === 0 ? cornerR / 2 : cy! - cornerR / 2, cornerR, cornerR)) : []),
+    ...(cornerR > margin && !shape ? [[0, 0], [w, 0], [0, h], [w, h]].map(([cx, cy], i) => blocker(`corner${i}`, cx === 0 ? cornerR / 2 : cx! - cornerR / 2, cy === 0 ? cornerR / 2 : cy! - cornerR / 2, cornerR, cornerR)) : []),
   ];
   if ((holes.length || cutouts.length || cornerR > margin) && items.length) {
     for (let round = 0; round < 20; round++) {
@@ -700,12 +731,12 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }),
     ...holeParts,
   ];
-  const diagnostics = placementChecks(parts, w, h, rules.edgeClearance, cornerR, boardCutouts);
+  const diagnostics = placementChecks(parts, w, h, rules.edgeClearance, { outline: { w, h }, cornerRadius: cornerR, shape }, boardCutouts);
   for (const ref of missing) {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board.`, entities: [ref] });
   }
   const planes = settingsPlanes(d, layers.length as 2 | 4);
-  const placementKey = hash(JSON.stringify([w, h, cornerR, boardCutouts, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.pads.map((q) => q.netId ?? '')])]));
+  const placementKey = hash(JSON.stringify([w, h, cornerR, shape, boardCutouts, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.pads.map((q) => q.netId ?? '')])]));
   return {
     outline: { w, h },
     layers,
@@ -724,6 +755,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     placementKey,
     sizeBy: userSize ? 'user' : 'proposal',
     cornerRadius: cornerR,
+    shape,
     cutouts: boardCutouts,
   };
 }
@@ -752,7 +784,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const planes = settingsPlanes(d, b.layers.length as 2 | 4);
-  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, planes: planes.map(({ netId, layer }) => ({ netId, layer })), cornerRadius: b.cornerRadius, cutouts: b.cutouts, ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
+  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, planes: planes.map(({ netId, layer }) => ({ netId, layer })), cornerRadius: b.cornerRadius, ...(b.shape ? { shape: b.shape } : {}), cutouts: b.cutouts, ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
   const routed: BoardView = {
     ...b,
     routing: 'done',
@@ -1104,7 +1136,8 @@ export function ratsnest(parts: BoardPart[], connected?: (netId: string, a: Boar
   return out;
 }
 
-function placementChecks(parts: BoardPart[], w: number, h: number, edge: number, cornerR = 0, cutouts: BoardCutout[] = []): BoardDiagnostic[] {
+function placementChecks(parts: BoardPart[], w: number, h: number, edge: number, outline: { outline: { w: number; h: number }; cornerRadius: number; shape: number[] | null }, cutouts: BoardCutout[] = []): BoardDiagnostic[] {
+  const shaped = outline.cornerRadius > 0 || !!outline.shape;
   const out: BoardDiagnostic[] = [];
   // a pad's corners (and centre): how far inside the outline / outside every cutout
   const padPoints = (p: BoardPad) => [[p.x - p.w / 2, p.y - p.h / 2], [p.x + p.w / 2, p.y - p.h / 2], [p.x - p.w / 2, p.y + p.h / 2], [p.x + p.w / 2, p.y + p.h / 2], [p.x, p.y]] as const;
@@ -1112,9 +1145,10 @@ function placementChecks(parts: BoardPart[], w: number, h: number, edge: number,
     const a = parts[i]!;
     const A = a.courtyard;
     const hole = a.componentId.startsWith('hole:');
-    if (A.x < 0 || A.y < 0 || A.x + A.w > w || A.y + A.h > h) {
+    const corners = [[A.x, A.y], [A.x + A.w, A.y], [A.x, A.y + A.h], [A.x + A.w, A.y + A.h]] as const;
+    if (A.x < 0 || A.y < 0 || A.x + A.w > w || A.y + A.h > h || (outline.shape && !hole && corners.some(([x, y]) => insideBoard(outline, x, y) < 0))) {
       out.push({ code: 'DRC.OFF_BOARD', severity: 'error', message: `${a.refdes} is outside the board outline.`, at: { x: a.x, y: a.y }, entities: [a.refdes] });
-    } else if (a.pads.some((p) => p.x - p.w / 2 < edge || p.y - p.h / 2 < edge || p.x + p.w / 2 > w - edge || p.y + p.h / 2 > h - edge || (cornerR > 0 && padPoints(p).some(([x, y]) => insideOutline(w, h, cornerR, x, y) < edge)))) {
+    } else if (a.pads.some((p) => p.x - p.w / 2 < edge || p.y - p.h / 2 < edge || p.x + p.w / 2 > w - edge || p.y + p.h / 2 > h - edge || (shaped && padPoints(p).some(([x, y]) => insideBoard(outline, x, y) < edge)))) {
       out.push({ code: 'DRC.EDGE_CLEARANCE', severity: 'error', message: `${a.refdes} has copper closer than ${edge} mm to the board edge.`, at: { x: a.x, y: a.y }, entities: [a.refdes] });
     }
     for (const c of hole ? [] : cutouts) {

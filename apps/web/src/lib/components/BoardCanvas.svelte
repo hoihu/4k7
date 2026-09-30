@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { cutoutPolygon, outlinePolygon, type BoardView, type CopperLayer } from '@tracewise/schema';
+  import { boardPolygon, cutoutPolygon, type BoardView, type CopperLayer } from '@tracewise/schema';
   import type { TopView } from '../three-body.ts';
 
   /** 2D board view (mm, top view): outline, pads, tracks, vias, silkscreen, ratsnest. */
@@ -22,7 +22,7 @@
   /** A closed polygon (flat x, y list) as SVG path data. */
   const polyPath = (pts: number[]) => pts.reduce((d, v, i) => (i % 2 ? `${d} ${v}` : `${d}${i ? ' L' : 'M'} ${v}`), '') + ' Z';
   /** The board outline (rounded corners) and its milled cutouts. */
-  const outlinePath = $derived(board ? polyPath(outlinePolygon(board.outline.w, board.outline.h, board.cornerRadius || 0.5)) : '');
+  const outlinePath = $derived(board ? polyPath(boardPolygon(board.shape ? board : { ...board, cornerRadius: board.cornerRadius || 0.5 })) : '');
   const cutoutPaths = $derived(board ? board.cutouts.map((c) => polyPath(cutoutPolygon(c))) : []);
 
   /** Part being dragged: offset in mm, snapped to 0.1 mm. */
@@ -200,7 +200,7 @@
               {@const id = `zm-${layer}-${zi}`}
               {@const o = z.shape.outline}
               <mask {id} maskUnits="userSpaceOnUse" x={o[0] - 1} y={o[1] - 1} width={o[2] - o[0] + 2} height={o[3] - o[1] + 2}>
-                <rect x={o[0]} y={o[1]} width={o[2] - o[0]} height={o[3] - o[1]} fill="white" />
+                {#if z.shape.clip}<path d={polyPath(z.shape.clip)} fill="white" />{:else}<rect x={o[0]} y={o[1]} width={o[2] - o[0]} height={o[3] - o[1]} fill="white" />{/if}
                 {#each z.shape.cuts as c, ci (ci)}
                   {#if c.k === 'circle'}<circle cx={c.x} cy={c.y} r={c.d / 2} fill="black" />
                   {:else if c.k === 'rect'}<rect x={c.x} y={c.y} width={c.w} height={c.h} fill="black" />

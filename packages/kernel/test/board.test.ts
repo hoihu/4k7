@@ -611,6 +611,46 @@ describe('milling: rounded corners and cutouts', () => {
   });
 });
 
+describe('free-form outline (set_outline)', () => {
+  // a Christmas tree: three tiers and a trunk, drawn in its own units
+  const tree = 'M 50 0 L 70 25 L 60 25 L 80 50 L 68 50 L 90 75 L 55 75 L 55 90 L 45 90 L 45 75 L 10 75 L 32 50 L 20 50 L 40 25 L 30 25 Z';
+
+  it('an SVG path becomes the outline, scaled to the size asked for; parts and copper stay inside', async () => {
+    const k = buck();
+    k.transact({ summary: 'tree', ops: [{ op: 'set_outline', svg_path: tree, height_mm: 100 }, { op: 'propose_layout' }] });
+    const b = routed(k);
+    expect(b.outline.h).toBe(100);
+    expect(b.outline.w).toBeCloseTo(88.889, 2);
+    expect(b.shape).toHaveLength(30);
+    expect(b.stats.unrouted).toBe(0);
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    const { insideBoard } = await import('@tracewise/schema');
+    for (const p of b.parts) {
+      const c = p.courtyard;
+      for (const [x, y] of [[c.x, c.y], [c.x + c.w, c.y], [c.x, c.y + c.h], [c.x + c.w, c.y + c.h]] as const) expect(insideBoard(b, x, y), p.refdes).toBeGreaterThan(0);
+    }
+    for (const t of b.tracks) for (let i = 0; i < t.pts.length; i += 2) expect(insideBoard(b, t.pts[i]!, t.pts[i + 1]!) - t.width / 2).toBeGreaterThanOrEqual(b.rules.edgeClearance - 1e-3);
+    const { fabFiles } = await import('@tracewise/fab');
+    const edge = fabFiles(b, 't').find((f) => f.name === 't-Edge_Cuts.gbr')!.content;
+    expect(edge.split('\n').filter((l) => l.endsWith('D01*')).length).toBe(15);
+  });
+
+  it('curves and arcs are sampled; a crossing outline is refused; back to a rectangle', () => {
+    const k = buck();
+    // a circle from two arcs, 60 mm across
+    k.transact({ summary: 'round', ops: [{ op: 'set_outline', svg_path: 'M 0 50 A 50 50 0 0 1 100 50 A 50 50 0 0 1 0 50 Z', width_mm: 60 }] });
+    let b = k.board();
+    expect([b.outline.w, b.outline.h]).toEqual([60, 60]);
+    expect(b.shape!.length / 2).toBeGreaterThan(40);
+    const bad = k.transact({ summary: 'bow', ops: [{ op: 'set_outline', points: [[0, 0], [10, 10], [10, 0], [0, 10]], width_mm: 30 }] });
+    expect(JSON.stringify(bad)).toContain('crosses itself');
+    k.transact({ summary: 'rect', ops: [{ op: 'set_outline', rectangle: true }] });
+    b = k.board();
+    expect(b.shape).toBeNull();
+    expect([b.outline.w, b.outline.h]).toEqual([60, 60]);
+  });
+});
+
 describe('router: direct tracks', () => {
   it('goes straight where it can: no spike up and back down before a pad', async () => {
     const { route } = await import('../src/router.ts');

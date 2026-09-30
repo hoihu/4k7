@@ -3,7 +3,7 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
-import { cutoutPolygon, outlinePolygon, type BoardPad, type BoardView, type CopperLayer } from '@tracewise/schema';
+import { boardPolygon, cutoutPolygon, type BoardPad, type BoardView, type CopperLayer } from '@tracewise/schema';
 import { textStrokes, textWidth } from './font.ts';
 
 export interface FabFile {
@@ -48,7 +48,11 @@ class Gerber {
   /** An exact plane: the outline filled, cutouts cleared (clear polarity), spokes drawn back. */
   plane(sh: import('@tracewise/schema').ZoneShape) {
     const [x0, y0, x1, y1] = sh.outline;
-    this.body.push('G36*', `${this.xy(x0, y0)}D02*`, `${this.xy(x1, y0)}D01*`, `${this.xy(x1, y1)}D01*`, `${this.xy(x0, y1)}D01*`, `${this.xy(x0, y0)}D01*`, 'G37*');
+    // the filled area: the clip polygon (a shaped board), else the rectangle
+    const area = sh.clip ?? [x0, y0, x1, y0, x1, y1, x0, y1];
+    this.body.push('G36*', `${this.xy(area[0]!, area[1]!)}D02*`);
+    for (let i = 2; i < area.length; i += 2) this.body.push(`${this.xy(area[i]!, area[i + 1]!)}D01*`);
+    this.body.push(`${this.xy(area[0]!, area[1]!)}D01*`, 'G37*');
     this.body.push('%LPC*%');
     for (const c of sh.cuts) {
       if (c.k === 'circle') this.circle(c.x, c.y, c.d);
@@ -191,7 +195,7 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
   // the board outline (rounded corners too) and every milled cutout, as closed contours
   const edge = new Gerber(h, ['FileFunction,Profile,NP', 'FilePolarity,Positive']);
   const closed = (pts: number[]) => [...pts, pts[0]!, pts[1]!];
-  edge.line(closed(outlinePolygon(w, h, b.cornerRadius ?? 0)), 0.1);
+  edge.line(closed(boardPolygon(b)), 0.1);
   for (const c of b.cutouts ?? []) edge.line(closed(cutoutPolygon(c)), 0.1);
   files.push({ name: `${base}-Edge_Cuts.gbr`, content: edge.toString() });
 

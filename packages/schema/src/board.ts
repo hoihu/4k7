@@ -37,6 +37,11 @@ export interface BoardSettings {
   holes?: MountingHole[];
   /** Rounded board corners: the radius (mm); absent or 0 = square corners. */
   cornerRadius?: number;
+  /**
+   * A free-form outline (set_outline): a closed polygon, flat x, y list in mm, its bounding box
+   * starting at 0, 0 and as big as width × height. Absent: the (rounded) rectangle.
+   */
+  shape?: number[];
   /** Milled cutouts inside the board (openings, slots). */
   cutouts?: Cutout[];
   /**
@@ -165,6 +170,33 @@ export function outlinePolygon(w: number, h: number, r: number): number[] {
   return roundedBox(w / 2, h / 2, w / 2, h / 2, Math.min(r, Math.min(w, h) / 2), 0, 10);
 }
 
+/** Signed distance from a point to a polygon's edge: positive inside, negative outside. */
+export function insidePolygon(poly: number[], px: number, py: number): number {
+  let inside = false;
+  let best = Infinity;
+  const n = poly.length / 2;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const [xi, yi, xj, yj] = [poly[2 * i]!, poly[2 * i + 1]!, poly[2 * j]!, poly[2 * j + 1]!];
+    if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+    const dx = xj - xi;
+    const dy = yj - yi;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((px - xi) * dx + (py - yi) * dy) / l2)) : 0;
+    best = Math.min(best, Math.hypot(px - (xi + t * dx), py - (yi + t * dy)));
+  }
+  return inside ? best : -best;
+}
+
+/** The board outline as a polygon: the free-form shape, else the (rounded) rectangle. */
+export function boardPolygon(b: { outline: { w: number; h: number }; cornerRadius?: number; shape?: number[] | null }): number[] {
+  return b.shape ?? outlinePolygon(b.outline.w, b.outline.h, b.cornerRadius ?? 0);
+}
+
+/** How far a point lies inside the board outline (negative outside). */
+export function insideBoard(b: { outline: { w: number; h: number }; cornerRadius?: number; shape?: number[] | null }, px: number, py: number): number {
+  return b.shape ? insidePolygon(b.shape, px, py) : insideOutline(b.outline.w, b.outline.h, b.cornerRadius ?? 0, px, py);
+}
+
 /** A cutout's bounding box: x0, y0, x1, y1. */
 export function cutoutBounds(c: BoardCutout): [number, number, number, number] {
   const p = cutoutPolygon(c);
@@ -282,6 +314,8 @@ export type ZoneCut =
 export interface ZoneShape {
   /** Filled rectangle x0, y0, x1, y1. */
   outline: [number, number, number, number];
+  /** Filled only inside this polygon (a free-form or rounded board outline). */
+  clip?: number[];
   cuts: ZoneCut[];
   /** Copper drawn back after the cuts (thermal-relief spokes). */
   adds: { pts: number[]; w: number }[];
@@ -330,6 +364,8 @@ export interface BoardView {
   sizeBy: 'proposal' | 'user';
   /** Rounded board corners (radius, mm; 0 = square). */
   cornerRadius: number;
+  /** A free-form outline (closed polygon, flat x, y list), else null: the (rounded) rectangle. */
+  shape: number[] | null;
   /** Milled cutouts, placed on this outline. */
   cutouts: BoardCutout[];
 }

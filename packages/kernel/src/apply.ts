@@ -20,6 +20,7 @@ import {
 } from '@tracewise/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
 import { layoutSchematic } from './layout.ts';
+import { boardOutline, pathPolygon } from './outline.ts';
 import { isTwoPin, planUnits, searchParts } from '@tracewise/parts';
 import {
   allocRefdes,
@@ -90,6 +91,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return addHole(d, op);
     case 'add_cutout':
       return addCutout(d, op);
+    case 'set_outline':
+      return setOutline(d, op);
     case 'remove_cutout': {
       const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
       const before = b.cutouts ?? [];
@@ -133,8 +136,20 @@ function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): OpResult
     }
     out.push(`${key} ${v === null ? 'fit to parts' : `${v} mm`}`);
   };
-  size('width', op.width_mm);
-  size('height', op.height_mm);
+  if (b.shape && (op.width_mm !== undefined || op.height_mm !== undefined)) {
+    // a free-form outline is scaled to the new size (one side given: proportionally)
+    if (op.width_mm === null || op.height_mm === null) reject({ code: 'BOARD_INVALID', message: 'The board has a free-form outline, so its size is fixed; set_outline rectangle: true first.' });
+    const r = boardOutline(b.shape, op.width_mm ?? undefined, op.height_mm ?? undefined);
+    if (r.ok) {
+      b.shape = r.pts;
+      b.width = Math.max(...r.pts.filter((_, i) => i % 2 === 0));
+      b.height = Math.max(...r.pts.filter((_, i) => i % 2 === 1));
+      out.push(`outline scaled to ${b.width} × ${b.height} mm`);
+    }
+  } else {
+    size('width', op.width_mm);
+    size('height', op.height_mm);
+  }
   if (op.layers) {
     b.layers = op.layers;
     out.push(`${op.layers} layers`);
@@ -190,6 +205,34 @@ function setPlane(d: Design, op: Extract<EditOp, { op: 'set_plane' }>): OpResult
   b.planes = [...rest, { netId: net!.id, layer: op.layer! as CopperLayer }];
   d.board = b;
   return { op: 'set_plane', effect: `${net!.name} plane on ${op.layer}${op.layer === 'F.Cu' || op.layer === 'B.Cu' ? ' (pour)' : ' (dedicated)'}`, ids: ['board'] };
+}
+
+/** A free-form board outline (an SVG path or points, scaled to the size asked for), or back to a rectangle. */
+function setOutline(d: Design, op: Extract<EditOp, { op: 'set_outline' }>): OpResult {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  d.board = b;
+  if (op.rectangle) {
+    delete b.shape;
+    return { op: 'set_outline', effect: `rectangular board${b.width && b.height ? ` ${b.width} × ${b.height} mm` : ''}`, ids: ['board'] };
+  }
+  let raw: number[];
+  if (op.svg_path) {
+    const r = pathPolygon(op.svg_path);
+    if (!r.ok) reject({ code: 'BOARD_INVALID', message: `The outline path: ${r.reason}.` });
+    raw = (r as { pts: number[] }).pts;
+  } else if (op.points) raw = op.points.flat();
+  else reject({ code: 'BOARD_INVALID', message: 'set_outline needs svg_path or points (or rectangle: true).' });
+  if (!op.width_mm && !op.height_mm) reject({ code: 'BOARD_INVALID', message: 'Give the outline a size: width_mm or height_mm (or both).' });
+  const r = boardOutline(raw!, op.width_mm, op.height_mm);
+  if (!r.ok) reject({ code: 'BOARD_INVALID', message: `The outline: ${r.reason}.` });
+  const pts = (r as { pts: number[] }).pts;
+  const w = Math.max(...pts.filter((_, i) => i % 2 === 0));
+  const h = Math.max(...pts.filter((_, i) => i % 2 === 1));
+  if (w < 5 || h < 5 || w > 500 || h > 500) reject({ code: 'BOARD_INVALID', message: `The outline would be ${w} × ${h} mm; boards are 5–500 mm.` });
+  b.shape = pts;
+  b.width = w;
+  b.height = h;
+  return { op: 'set_outline', effect: `free-form outline, ${pts.length / 2} points, ${w} × ${h} mm`, ids: ['board'] };
 }
 
 /** A milled cutout: a rectangle, circle or slot, positioned from an anchor point. */
