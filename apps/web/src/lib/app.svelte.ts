@@ -17,7 +17,7 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { CalcCall, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design } from '@tracewise/schema';
+import { CalcCall, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -61,6 +61,13 @@ export interface ChatItem {
   source?: string;
   /** This turn produced the proposal that is currently pending (or was decided). */
   changeset?: { state: 'pending' | 'accepted' | 'rejected' | 'superseded'; note?: string };
+  /** Tokens this turn used (live while it runs), with the cost: estimated, or as Claude Code reported it. */
+  usage?: TokenCount & { costUsd: number; exact: boolean };
+}
+
+/** The API price of some token usage (0 for a model without a known price). */
+export function tokenCost(t: TokenCount, fallbackModel: string): number {
+  return costUsd(t.model ?? fallbackModel, { input: t.input, output: t.output, cacheRead: t.cacheRead, cacheWrite: t.cacheWrite });
 }
 
 class AppState {
@@ -528,8 +535,17 @@ class AppState {
               if (last?.type === 'thinking') last.text += e.text;
               else item.segments.push({ type: 'thinking', text: e.text });
               break;
+            case 'tokens':
+              item.usage = { ...e.tokens, costUsd: tokenCost(e.tokens, this.settings.claudeModel ?? ''), exact: false };
+              break;
             case 'done': {
               if (e.session) this.claudeSession = e.session;
+              if (e.tokens || e.costUsd !== undefined) {
+                const t = e.tokens ?? item.usage ?? { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+                const cost = e.costUsd ?? tokenCost(t, this.settings.claudeModel ?? '');
+                item.usage = { ...t, costUsd: cost, exact: e.costUsd !== undefined };
+                this.spend += cost;
+              }
               if (!e.ok && e.error) {
                 // Claude Code prints API errors as its reply too: show them once, as an error
                 const dup = item.segments.findLastIndex((x) => x.type === 'text' && x.text.trim() === e.error!.trim());

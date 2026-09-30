@@ -160,7 +160,7 @@
             <span class="hint inline">higher = more thorough, more tokens</span>
           </td>
         </tr>
-        <tr><td>Session spend</td><td class="mono">${app.spend.toFixed(3)} <span class="muted">(estimate from token usage)</span></td></tr>
+        <tr><td>Session spend</td><td class="mono">${app.spend.toFixed(3)} <span class="muted">(API price of the tokens used, Claude Code chats included; a subscription is not billed per token)</span></td></tr>
         {/if}
       </tbody>
     </table>

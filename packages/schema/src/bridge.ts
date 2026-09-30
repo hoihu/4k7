@@ -65,7 +65,18 @@ export type ChatEvent =
   | { kind: 'session'; session: string }
   | { kind: 'text'; text: string }
   | { kind: 'thinking'; text: string }
-  | { kind: 'done'; ok: boolean; error?: string; costUsd?: number; session?: string };
+  /** Tokens used so far by this request (all model calls, all passes), sent while it runs. */
+  | { kind: 'tokens'; tokens: TokenCount }
+  | { kind: 'done'; ok: boolean; error?: string; costUsd?: number; session?: string; tokens?: TokenCount };
+
+/** Token usage: input (not cached), read from and written to the prompt cache, output; the model. */
+export interface TokenCount {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+  model?: string;
+}
 
 export type BridgeToTab =
   | { type: 'welcome'; protocol: number; agent: string; chat: ChatCapability }

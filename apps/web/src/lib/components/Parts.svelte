@@ -1,7 +1,8 @@
 <script lang="ts">
   import { BUILTIN_PARTS, isModule, planUnits, searchParts, symbolFor, unitCount } from '@tracewise/parts';
   import type { PartCard, PartPin, SheetView, SymbolView } from '@tracewise/schema';
-  import { app } from '../app.svelte.ts';
+  import { app, tokenCost } from '../app.svelte.ts';
+  import { USAGE_TITLE, usageLine } from '../usage.ts';
   import type { Datasheet } from '../ingest.svelte.ts';
   import Body3DView from './Body3DView.svelte';
   import DatasheetView from './DatasheetView.svelte';
@@ -332,7 +333,8 @@
         <span class="tag">{card.package}</span>
         <span class="tag">{card.pins.length} pins</span>
         <span class="grow"></span>
-        {#if ingest.costUsd !== null}<span class="muted">${ingest.costUsd.toFixed(2)}</span>{/if}
+        {#if ingest.tokens}<span class="usage" title={USAGE_TITLE}>{usageLine(ingest.tokens, ingest.costUsd ?? tokenCost(ingest.tokens, ''), ingest.costUsd !== null)}</span>
+        {:else if ingest.costUsd !== null}<span class="muted">${ingest.costUsd.toFixed(2)}</span>{/if}
         <button class="btn" onclick={() => ingest.discard()}>Discard</button>
         <button class="btn pri" onclick={save}>Add to library</button>
       </div>
@@ -358,6 +360,7 @@
       <div class="scroll body">
         {#if ingest.phase === 'running'}
           <p class="desc"><b class="mono">{ingest.request?.mpn}</b> · {ingest.request?.source}{#if ingest.passes > 1} · pass {ingest.pass} of {ingest.passes}{/if}</p>
+          {#if ingest.tokens}<p class="usage" title={USAGE_TITLE}>{usageLine(ingest.tokens, tokenCost(ingest.tokens, ''))}</p>{/if}
           <ol class="log">
             {#each ingest.log as l, i (i)}<li class:last={i === ingest.log.length - 1}>{l}</li>{/each}
           </ol>
@@ -450,6 +453,8 @@
   .sub { display: block; font-size: 11px; color: var(--txt-3); max-width: 170px; }
   .body { padding: 10px 14px; }
   .desc { margin: 0 0 10px; color: var(--txt-2); }
+  .usage { font-family: var(--mono); font-size: 11px; color: var(--txt-3); margin: -6px 0 10px; }
+  .ph .usage { margin: 0; }
   .grid { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr); gap: 12px; align-items: stretch; margin-bottom: 10px; }
   .sym, .fp { height: 300px; background: var(--canvas); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; position: relative; }
   .grid.big .sym, .grid.big .fp { height: min(62vh, 560px); }

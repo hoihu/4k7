@@ -3,6 +3,7 @@
   import { bridge } from '../bridge.svelte.ts';
   import ChangesetCard from './ChangesetCard.svelte';
   import { markdown } from '../markdown.ts';
+  import { USAGE_TITLE, usageLine } from '../usage.ts';
 
   let scroller: HTMLDivElement | undefined = $state();
 
@@ -98,6 +99,7 @@
               {/if}
             {/each}
             {#if m.status === 'streaming'}<div class="working"><span class="dot"></span>{m.source ? `${m.source} is editing the working copy…` : 'working…'}</div>{/if}
+            {#if m.usage}<div class="usage" title={USAGE_TITLE}>{usageLine(m.usage, m.usage.costUsd, m.usage.exact)}</div>{/if}
             <ChangesetCard item={m} />
           </div>
         {/if}
@@ -136,6 +138,7 @@
   .m.u { align-self: flex-end; background: var(--accent-soft); border-radius: 8px; padding: 6px 9px; max-width: 90%; white-space: pre-wrap; }
   .m.a { padding: 0 2px; display: flex; flex-direction: column; gap: 3px; }
   .txt { white-space: pre-wrap; }
+  .usage { font-family: var(--mono); font-size: 10.5px; color: var(--txt-3); margin-top: 3px; }
   .txt.md { white-space: normal; }
   .md :global(p) { margin: 0 0 6px; }
   .md :global(p:last-child), .md :global(ul:last-child), .md :global(ol:last-child) { margin-bottom: 0; }

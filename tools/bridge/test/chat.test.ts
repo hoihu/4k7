@@ -90,6 +90,15 @@ describe('app chat via Claude Code', () => {
     expect(flags.appended).toMatch(/^You are answering messages typed into/);
   });
 
+  it('counts the tokens of every model call and sends the totals (live and with the end)', async () => {
+    const { send } = await setup();
+    const es = await send('t1', 'count');
+    // live: the first model call's prompt, straight away
+    expect(es.find((e) => e.kind === 'tokens')).toEqual({ kind: 'tokens', tokens: { input: 1200, cacheRead: 8000, cacheWrite: 500, output: 1, model: 'claude-sonnet-5' } });
+    // the end: both calls, output counted once per call (the deltas are cumulative)
+    expect(es.at(-1)).toMatchObject({ kind: 'done', ok: true, costUsd: 0.012, tokens: { input: 1500, cacheRead: 17000, cacheWrite: 500, output: 190, model: 'claude-sonnet-5' } });
+  });
+
   it('runs Claude with the configured profile, like a claude-personal alias', async () => {
     // a shell set up for a business account on Bedrock, started from inside a Claude Code session
     const saved = { ...process.env };

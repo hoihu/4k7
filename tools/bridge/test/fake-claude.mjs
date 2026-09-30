@@ -45,7 +45,8 @@ const flags = {
     nested: 'CLAUDECODE' in process.env,
   },
 };
-out({ type: 'stream_event', event: { type: 'message_start' } });
+// model call 1 (its prompt: fresh, from the cache, into the cache)
+out({ type: 'stream_event', event: { type: 'message_start', message: { model: 'claude-sonnet-5', usage: { input_tokens: 1200, cache_read_input_tokens: 8000, cache_creation_input_tokens: 500, output_tokens: 1 } } } });
 if (!tools.includes('get_context')) {
   // the importer writes its part as one long tool call
   out({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'tool_use', name: 'mcp__tracewise__submit_part' } } });
@@ -54,7 +55,12 @@ if (!tools.includes('get_context')) {
 for (const chunk of ['Got it. ', `tools=${tools.join(',')} `, `context=${JSON.stringify(ctx.content[0].text).slice(0, 30)} `, `flags=${JSON.stringify(flags)}`]) {
   out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: chunk } } });
 }
+out({ type: 'stream_event', event: { type: 'message_delta', usage: { output_tokens: 150 } } });
 out({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'pages/page-001.txt' } }, { type: 'text', text: 'Got it. (full message)' }] } });
+// model call 2, after the tool result (mostly from the cache now)
+out({ type: 'stream_event', event: { type: 'message_start', message: { model: 'claude-sonnet-5', usage: { input_tokens: 300, cache_read_input_tokens: 9000, cache_creation_input_tokens: 0, output_tokens: 1 } } } });
+out({ type: 'stream_event', event: { type: 'message_delta', usage: { output_tokens: 20 } } });
+out({ type: 'stream_event', event: { type: 'message_delta', usage: { output_tokens: 40 } } });
 if (flags.prompt === 'please fail') {
   out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'boom', session_id: session });
 } else {

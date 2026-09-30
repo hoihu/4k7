@@ -6,7 +6,7 @@
  * so every pin can be shown on its page. Nothing is saved before the user's review.
  */
 import { compareDrafts, draftToCard, listUserParts, mergeDrafts, planUnits, registerUserParts, unregisterUserPart, type Disagreement } from '@tracewise/parts';
-import { PartDraft, type BridgeContent, type IngestIssue, type PartCard } from '@tracewise/schema';
+import { PartDraft, type BridgeContent, type IngestIssue, type PartCard, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { deleteLibraryPart, loadDatasheet, loadLibrary, saveDatasheet, saveLibraryPart, type StoredDatasheet } from './persist.ts';
 
@@ -46,6 +46,8 @@ export class IngestState {
   lastIssues = $state<IngestIssue[]>([]);
   submissions = $state(0);
   costUsd = $state<number | null>(null);
+  /** Tokens used so far (both passes), live while the import runs. */
+  tokens = $state<TokenCount | null>(null);
   /** Imported parts saved in this browser. */
   library = $state<PartCard[]>([]);
   request = $state<{ mpn: string; source: string; url?: string } | null>(null);
@@ -154,9 +156,13 @@ export class IngestState {
           case 'text':
             this.reply += e.text;
             break;
+          case 'tokens':
+            this.tokens = e.tokens;
+            break;
           case 'done':
             this.#run = null;
             if (typeof e.costUsd === 'number') this.costUsd = e.costUsd;
+            if (e.tokens) this.tokens = e.tokens;
             if (this.drafts[0]) {
               if (this.passes > 1 && !this.drafts[1]) this.secondPassFailed = e.ok ? 'The second pass finished without an accepted part.' : (e.error ?? 'failed');
               this.split = this.drafts[0].pins.length > SPLIT_ABOVE;
@@ -247,6 +253,7 @@ export class IngestState {
     this.lastIssues = [];
     this.submissions = 0;
     this.costUsd = null;
+    this.tokens = null;
     this.request = null;
     this.pass = 1;
     this.passes = 1;

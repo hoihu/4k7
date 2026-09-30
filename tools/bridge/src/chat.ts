@@ -12,7 +12,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { CHAT_WEB_PROMPT, INGEST_VERIFY_PROMPT, chatModePrompt, ingestPrompt, type ChatCapability, type ChatEvent, type TabToBridge } from '@tracewise/schema';
+import { CHAT_WEB_PROMPT, INGEST_VERIFY_PROMPT, chatModePrompt, ingestPrompt, type ChatCapability, type ChatEvent, type TabToBridge, type TokenCount } from '@tracewise/schema';
 import type { Bridge, ChatMessage } from './bridge.ts';
 import type { ClaudeProfile } from './config.ts';
 import { tokenMatches, type McpMode } from './mcp.ts';
@@ -41,6 +41,9 @@ interface Run {
   mode: McpMode;
   done: boolean;
   cancelled: boolean;
+  /** Tokens so far (every model call of every pass), and when they were last sent to the app. */
+  tokens?: TokenCount;
+  tokensSent?: number;
 }
 
 /** Probe the Claude Code CLI. */
@@ -139,7 +142,22 @@ export class ChatRunner {
   #end(id: string, run: Run, done: DoneEvent) {
     run.done = true;
     this.#runs.delete(id);
-    this.#emit(id, done);
+    this.#emit(id, run.tokens ? { ...done, tokens: run.tokens } : done);
+  }
+
+  /** Count a model call's usage into the run; send the totals at most once a second. */
+  #count(id: string, run: Run, add: Partial<TokenCount>, force = false) {
+    const t = (run.tokens ??= { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 });
+    t.input += add.input ?? 0;
+    t.cacheRead += add.cacheRead ?? 0;
+    t.cacheWrite += add.cacheWrite ?? 0;
+    t.output += add.output ?? 0;
+    if (add.model) t.model = add.model;
+    const now = Date.now();
+    if (force || !run.tokensSent || now - run.tokensSent >= 1000) {
+      run.tokensSent = now;
+      this.#emit(id, { kind: 'tokens', tokens: { ...t } });
+    }
   }
 
   /**
@@ -233,6 +251,7 @@ export class ChatRunner {
     const label = `${run.mode} ${id}`;
 
     let streamedText = false;
+    let messageOut = 0; // output tokens of the model call in progress (message_delta counts cumulatively)
     let writing: { json: string; reported: number } | null = null;
     let stderr = '';
     let outcome: DoneEvent | null = null;
@@ -276,8 +295,15 @@ export class ChatRunner {
           } else if (e?.type === 'content_block_start' && run.mode === 'ingest' && e.content_block?.type === 'tool_use') {
             writing = e.content_block.name?.endsWith('submit_part') ? { json: '', reported: 0 } : null;
             if (writing) this.#emit(id, { kind: 'status', text: 'Writing the part…' });
-          } else if (e?.type === 'message_start' && streamedText) {
-            this.#emit(id, { kind: 'text', text: '\n\n' });
+          } else if (e?.type === 'message_start') {
+            if (streamedText) this.#emit(id, { kind: 'text', text: '\n\n' });
+            // a new model call: its prompt (fresh, from the cache, into the cache)
+            const u = e.message?.usage;
+            messageOut = u?.output_tokens ?? 0;
+            this.#count(id, run, { input: u?.input_tokens ?? 0, cacheRead: u?.cache_read_input_tokens ?? 0, cacheWrite: u?.cache_creation_input_tokens ?? 0, output: messageOut, ...(e.message?.model ? { model: e.message.model } : {}) });
+          } else if (e?.type === 'message_delta' && typeof e.usage?.output_tokens === 'number') {
+            this.#count(id, run, { output: Math.max(0, e.usage.output_tokens - messageOut) });
+            messageOut = e.usage.output_tokens;
           }
           break;
         }
@@ -361,6 +387,14 @@ async function download(url: string): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer());
 }
 
+/** Token usage as the Anthropic API reports it (message_start: the prompt; message_delta: output so far). */
+interface StreamUsage {
+  input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  output_tokens?: number;
+}
+
 /** The subset of Claude Code's stream-json output this runner reads. */
 type StreamJson =
   | { type: 'system'; subtype?: string; session_id?: string; mcp_servers?: { name: string; status: string }[] }
@@ -370,6 +404,8 @@ type StreamJson =
         type: string;
         delta?: { type: string; text?: string; thinking?: string; partial_json?: string };
         content_block?: { type: string; name?: string };
+        message?: { model?: string; usage?: StreamUsage };
+        usage?: StreamUsage;
       };
     }
   | { type: 'assistant'; message?: { content?: { type: string; text?: string; name?: string; input?: unknown }[] } }
