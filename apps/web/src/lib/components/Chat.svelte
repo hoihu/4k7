@@ -2,6 +2,7 @@
   import { app } from '../app.svelte.ts';
   import { bridge } from '../bridge.svelte.ts';
   import ChangesetCard from './ChangesetCard.svelte';
+  import { markdown } from '../markdown.ts';
 
   let scroller: HTMLDivElement | undefined = $state();
 
@@ -75,7 +76,8 @@
             {#if m.source}<div class="src"><span class="ext">⇄</span> {m.source} <span class="muted">via bridge</span></div>{/if}
             {#each m.segments as s, i (i)}
               {#if s.type === 'text'}
-                <div class="txt">{s.text}</div>
+                <!-- the agent's reply, rendered from Markdown (escaped; see markdown.ts) -->
+                <div class="txt md">{@html markdown(s.text)}</div>
               {:else if s.type === 'thinking'}
                 <details class="think"><summary>reasoning</summary><div>{s.text}</div></details>
               {:else if s.type === 'tool'}
@@ -134,6 +136,16 @@
   .m.u { align-self: flex-end; background: var(--accent-soft); border-radius: 8px; padding: 6px 9px; max-width: 90%; white-space: pre-wrap; }
   .m.a { padding: 0 2px; display: flex; flex-direction: column; gap: 3px; }
   .txt { white-space: pre-wrap; }
+  .txt.md { white-space: normal; }
+  .md :global(p) { margin: 0 0 6px; }
+  .md :global(p:last-child), .md :global(ul:last-child), .md :global(ol:last-child) { margin-bottom: 0; }
+  .md :global(ul), .md :global(ol) { margin: 0 0 6px; padding-left: 18px; }
+  .md :global(li) { margin: 2px 0; }
+  .md :global(h5) { margin: 8px 0 4px; font-size: 12.5px; }
+  .md :global(code) { font-family: var(--mono); font-size: 0.92em; background: var(--panel-2); padding: 0 3px; border-radius: 3px; }
+  .md :global(pre) { background: var(--panel-2); padding: 6px 8px; border-radius: 5px; overflow-x: auto; margin: 0 0 6px; }
+  .md :global(pre code) { background: none; padding: 0; }
+  .md :global(a) { color: var(--accent-txt, var(--accent)); }
   .tl { font-family: var(--mono); font-size: 11px; color: var(--txt-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tl .ok { color: var(--ok); } .tl .er { color: var(--err); }
   details summary { cursor: pointer; color: var(--txt-3); font-size: 11.5px; list-style: none; }
