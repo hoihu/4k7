@@ -71,8 +71,12 @@ export function route(input: RouteInput, passes = 8): RouteResult {
   const deadline = t0 + (input.budgetMs ?? 15_000);
   for (let pass = 0; pass < passes; pass++) {
     const r = routeOnce(input, pads, owner, order, deadline, planeOnly);
-    if (!best || r.failed.length < best.failed.length) best = r;
+    const improved = !best || r.failed.length < best.failed.length;
+    if (improved) best = r;
     if (!r.failed.length || r.timedOut) break;
+    // a pass without an improvement: more orders will not help (the same connections are
+    // blocked), and each pass costs as much as the first (seconds on a big board)
+    if (!improved) break;
     // another pass only if one fits comfortably in the budget
     if (now() + (now() - t0) / (pass + 1) > deadline) break;
     // failures first; the rest alternately in the old order and longest first (a different
@@ -216,7 +220,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   // board edge (rounded corners too) and milled cutouts
   const cornerR = input.cornerRadius ?? 0;
   const shaped = cornerR > 0 || !!input.shape;
-  const inside = (x: number, y: number) => insideBoard({ outline: input.outline, cornerRadius: cornerR, shape: input.shape ?? null }, x, y);
+  // how far each grid point lies inside a rounded or free-form outline: computed once per route
+  // (every pass, width class, layer and plane reads it)
+  const edgeField = shaped ? insideField(input, W, H) : null;
+  const inside = (x: number, y: number) => edgeField![Math.round(y / G) * W + Math.round(x / G)]!;
   for (let k = 0; k < widths.length; k++) {
     const keep = rules.edgeClearance + widths[k]! / 2;
     for (let l = 0; l < L; l++) {
@@ -1005,46 +1012,11 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   };
   const padAt = (root: number, state: number) => pads.findIndex((_, idx) => find(idx) === root && padCells[idx]!.includes(state));
 
-  let timedOut = false;
-  for (const c of order) {
-    const net = numOf(c.netId);
-    if (find(c.a) === find(c.b)) continue;
-    if (timedOut || now() > deadline) {
-      timedOut = true;
-      failed.push(c);
-      continue;
-    }
-    const pa = pads[c.a]!;
-    const pb = pads[c.b]!;
-    // power width only where both pads can take it
-    const wide = input.powerNets.has(c.netId) && Math.min(pa.w, pa.h) >= rules.powerTrack * 0.9 && Math.min(pb.w, pb.h) >= rules.powerTrack * 0.9;
-    const k = wide ? 1 : 0;
-    epoch++;
-    const goalStamp = epoch;
-    for (const st of groupCells.get(find(c.a))!) goal[st] = goalStamp;
-    const goalCells = groupCells.get(find(c.a))!;
-    // end where the track fits, on its pad's centre line; failing that where it fits; failing
-    // that deepest inside the pad
-    const fits = (st: number) => freeFor(net, k)(Math.floor(st / N), st % N);
-    const centred = (st: number) => fits(st) && !offCentre(net, k, st);
-    const deepest = new Set(deepestCells(goalCells));
-    const accept = goalCells.some(centred) ? centred : goalCells.some(fits) ? fits : (st: number) => deepest.has(st);
-    const path = search(net, k, groupCells.get(find(c.b))!, (st) => goal[st] === goalStamp, pa, accept);
-    if (!path) {
-      failed.push(c);
-      continue;
-    }
-    // (a route may also start on copper laid earlier for this net: then it starts right there)
-    const copper = commit(c.netId, net, k, path, padAt(find(c.b), path[0]!), padAt(find(c.a), path.at(-1)!));
-    union(c.a, c.b);
-    groupCells.get(find(c.a))!.push(...copper);
-  }
-
   /*
    * Planes and pours. Inner planes are dedicated to their net (no tracks there); pours on outer
    * layers fill what the tracks leave. Every group of a plane net that does not reach its plane
-   * drops onto it (short track + via). Order: provisional plane areas → drops for all planes →
-   * final areas (now clear of every drop via of other nets) → connectivity.
+   * drops onto it (short track + via). Order: inner-plane drops → signal routing → outer-pour
+   * drops → final areas (clear of every via of other nets) → connectivity.
    */
   const zones: Zone[] = [];
   const planes = (input.planes ?? []).filter((pl) => layerIdx.has(pl.layer) && netNum.has(pl.netId));
@@ -1231,7 +1203,9 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
 
   // 1. provisional areas; 2. drops of every group that does not reach its plane
   const dropVias = new Map<number, { x: number; y: number }[]>(); // pad root → drop vias
-  for (const pl of planes) {
+  let timedOut = false;
+  const dropOnto = (list: typeof planes) => {
+  for (const pl of list) {
     const rg = region(pl);
     if (rg.main === undefined || rg.sizes[rg.main]! * G * G < 1) continue;
     const roots = [...new Set(pads.map((_, idx) => find(idx)).filter((r) => padNet[r] === rg.pnet))];
@@ -1269,6 +1243,48 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       dropVias.set(r, [...(dropVias.get(r) ?? []), via]);
     }
   }
+  };
+  /*
+   * Fan-out first: pads on a net with a dedicated inner plane drop onto it before the signals are
+   * routed (the signals then go round the drop vias; routed first, a signal can shut a pad off
+   * from every via site). Outer pours come last: they fill what the tracks leave.
+   */
+  dropOnto(planes.filter((pl) => !OUTER.has(pl.layer)));
+  for (const c of order) {
+    const net = numOf(c.netId);
+    if (find(c.a) === find(c.b)) continue;
+    if (timedOut || now() > deadline) {
+      timedOut = true;
+      failed.push(c);
+      continue;
+    }
+    const pa = pads[c.a]!;
+    const pb = pads[c.b]!;
+    // power width only where both pads can take it
+    const wide = input.powerNets.has(c.netId) && Math.min(pa.w, pa.h) >= rules.powerTrack * 0.9 && Math.min(pb.w, pb.h) >= rules.powerTrack * 0.9;
+    const k = wide ? 1 : 0;
+    epoch++;
+    const goalStamp = epoch;
+    for (const st of groupCells.get(find(c.a))!) goal[st] = goalStamp;
+    const goalCells = groupCells.get(find(c.a))!;
+    // end where the track fits, on its pad's centre line; failing that where it fits; failing
+    // that deepest inside the pad
+    const fits = (st: number) => freeFor(net, k)(Math.floor(st / N), st % N);
+    const centred = (st: number) => fits(st) && !offCentre(net, k, st);
+    const deepest = new Set(deepestCells(goalCells));
+    const accept = goalCells.some(centred) ? centred : goalCells.some(fits) ? fits : (st: number) => deepest.has(st);
+    const path = search(net, k, groupCells.get(find(c.b))!, (st) => goal[st] === goalStamp, pa, accept);
+    if (!path) {
+      failed.push(c);
+      continue;
+    }
+    // (a route may also start on copper laid earlier for this net: then it starts right there)
+    const copper = commit(c.netId, net, k, path, padAt(find(c.b), path[0]!), padAt(find(c.a), path.at(-1)!));
+    union(c.a, c.b);
+    groupCells.get(find(c.a))!.push(...copper);
+  }
+
+  dropOnto(planes.filter((pl) => OUTER.has(pl.layer)));
 
   // 3. final areas, clear of all drops; 4. what reaches the main area is connected through it
   for (const pl of planes) {
@@ -1340,6 +1356,66 @@ function entryBend(x: number, y: number, p: BoardPad, width: number): number[] {
 
 /** The sign, with coordinates equal within float noise counting as equal. */
 const sgn = (v: number) => (Math.abs(v) < 1e-9 ? 0 : Math.sign(v));
+
+/**
+ * Distance of every grid point inside the outline (negative outside), cached per route input.
+ * Only distances up to FIELD_BAND matter (the edge clearance plus the widest copper), so: inside
+ * or out per row from where the row crosses the outline, and exact distances only in a band
+ * along each edge; everything farther away is ±FIELD_FAR. (A curvy outline has hundreds of
+ * edges: measuring every point to every edge would take longer than the whole routing.)
+ */
+const fields = new WeakMap<RouteInput, Float32Array>();
+const FIELD_BAND = 2;
+const FIELD_FAR = 1000;
+function insideField(input: RouteInput, W: number, H: number): Float32Array {
+  let f = fields.get(input);
+  if (f) return f;
+  f = new Float32Array(W * H);
+  const poly = boardPolygon({ outline: input.outline, cornerRadius: input.cornerRadius ?? 0, shape: input.shape ?? null });
+  const n = poly.length / 2;
+  // inside or out: the crossings of each row with the outline, filled pairwise
+  for (let j = 0; j < H; j++) {
+    const y = j * G;
+    const xs: number[] = [];
+    for (let a = 0, b = n - 1; a < n; b = a++) {
+      const [ax, ay, bx, by] = [poly[2 * a]!, poly[2 * a + 1]!, poly[2 * b]!, poly[2 * b + 1]!];
+      if (ay > y !== by > y) xs.push(ax + ((y - ay) * (bx - ax)) / (by - ay));
+    }
+    xs.sort((p, q) => p - q);
+    f.fill(-FIELD_FAR, j * W, j * W + W);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      const i0 = Math.max(0, Math.ceil(xs[k]! / G));
+      const i1 = Math.min(W - 1, Math.floor(xs[k + 1]! / G));
+      if (i1 >= i0) f.fill(FIELD_FAR, j * W + i0, j * W + i1 + 1);
+    }
+  }
+  // exact distances near the edges
+  const near = new Float32Array(W * H).fill(FIELD_FAR);
+  for (let a = 0, b = n - 1; a < n; b = a++) {
+    const [ax, ay, bx, by] = [poly[2 * a]!, poly[2 * a + 1]!, poly[2 * b]!, poly[2 * b + 1]!];
+    const d = segDist(ax, ay, bx, by);
+    for (let j = Math.max(0, Math.floor((Math.min(ay, by) - FIELD_BAND) / G)); j <= Math.min(H - 1, Math.ceil((Math.max(ay, by) + FIELD_BAND) / G)); j++) {
+      for (let i = Math.max(0, Math.floor((Math.min(ax, bx) - FIELD_BAND) / G)); i <= Math.min(W - 1, Math.ceil((Math.max(ax, bx) + FIELD_BAND) / G)); i++) {
+        const v = d(i * G, j * G);
+        if (v < near[j * W + i]!) near[j * W + i] = v;
+      }
+    }
+  }
+  for (let c = 0; c < W * H; c++) if (near[c]! < FIELD_FAR) f[c] = f[c]! > 0 ? near[c]! : -near[c]!;
+  fields.set(input, f);
+  return f;
+}
+
+/** Distance from a point to the segment a–b. */
+function segDist(ax: number, ay: number, bx: number, by: number) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const l2 = dx * dx + dy * dy;
+  return (x: number, y: number) => {
+    const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+    return Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
+  };
+}
 
 /** A flat polyline, back to front. */
 function reversePts(pts: number[]): number[] {

@@ -461,8 +461,53 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
         // settled: the spacing holds to within a grid step (what the strict separation leaves)
         if (!overlapping(items, SPACING - GRID_MM)) return;
       }
-      if (userSize) return; // the user's size: overlaps show as DRC errors
+      if (userSize) {
+        legalize();
+        return; // the user's size: what still overlaps shows as DRC errors
+      }
       outline = { w: Math.ceil(outline.w * 1.1), h: Math.ceil(outline.h * 1.1) };
+    }
+  };
+  /** Room for a part at (x, y): inside the outline with the margin, clear of every other part. */
+  const fits = (it: Item, x: number, y: number) => {
+    const e = extent(it);
+    if (x - e.w / 2 < margin - 1e-6 || y - e.h / 2 < margin - 1e-6 || x + e.w / 2 > outline.w - margin + 1e-6 || y + e.h / 2 > outline.h - margin + 1e-6) return false;
+    if (shape) {
+      for (const [fx, fy] of [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]] as const) if (insidePolygon(shape, x + (fx * e.w) / 2, y + (fy * e.h) / 2) < margin - 1e-6) return false;
+    }
+    const [ox, oy] = [it.x, it.y];
+    it.x = x;
+    it.y = y;
+    const clash = items.some((o) => o !== it && closer(it, o, SPACING));
+    it.x = ox;
+    it.y = oy;
+    return !clash;
+  };
+  /*
+   * A fixed outline (the user's size, a free-form shape) where parts still overlap after
+   * settling: each overlapping part moves to the nearest spot where it fits (rings round where it
+   * is), smaller parts first; the outline cannot grow instead.
+   */
+  const legalize = () => {
+    const clashing = () => items.filter((it) => !it.fixed && items.some((o) => o !== it && closer(it, o, SPACING - GRID_MM)));
+    const todo = clashing().sort((a, b) => a.cw * a.ch - b.cw * b.ch || natCmp(a.comp.refdes, b.comp.refdes));
+    const maxR = Math.hypot(outline.w, outline.h);
+    for (const it of todo) {
+      if (!items.some((o) => o !== it && closer(it, o, SPACING - GRID_MM))) continue; // freed by an earlier move
+      search: for (let r = 0.5; r <= maxR; r += 0.5) {
+        const n = Math.max(8, Math.round((2 * Math.PI * r) / 0.5));
+        for (let k = 0; k < n; k++) {
+          const a = (2 * Math.PI * k) / n;
+          const x = snap(it.x + r * Math.cos(a));
+          const y = snap(it.y + r * Math.sin(a));
+          if (fits(it, x, y)) {
+            it.x = x;
+            it.y = y;
+            snapItem(it);
+            break search;
+          }
+        }
+      }
     }
   };
 

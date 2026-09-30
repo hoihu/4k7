@@ -80,7 +80,9 @@
     if (!(w > 0 && h > 0) || (b && w === b.outline.w && h === b.outline.h && b.sizeBy === 'user')) return;
     void app.userEdit(`Board ${w} × ${h} mm`, [{ op: 'set_board', width_mm: w, height_mm: h }]);
   }
-  const routeLabel = $derived(b?.routing === 'done' ? 'Routed' : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
+  // (routing runs after the placement shows: until its result is in, it is "routing…")
+  const routing = $derived(b?.routing === 'done' && app.boardBusy && app.boardStage !== 'routed');
+  const routeLabel = $derived(routing ? 'Routing…' : b?.routing === 'done' ? 'Routed' : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
 
   /** Gerbers, drill, BOM and pick-and-place as one zip. */
   function exportFab() {
@@ -127,7 +129,7 @@
       {#if b?.parts.length}
         <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose layout', [{ op: 'propose_layout' }])}>Propose layout</button>
         <button class="btn" class:pri={b.routing !== 'done'} disabled={app.running || b.routing === 'done'} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' ? 'Route again' : 'Route'}</button>
-        <span class="chip" class:stale={b.routing === 'stale'} class:ok={b.routing === 'done'}>{routeLabel}</span>
+        <span class="chip" class:stale={b.routing === 'stale'} class:ok={b.routing === 'done' && !routing}>{routeLabel}</span>
       {/if}
       {#if app.boardBusy}<span class="busy">updating…</span>{/if}
     </div>
