@@ -129,6 +129,27 @@ export const SetBoardOp = z.object({
   track_mm: z.number().positive().optional().describe('Signal track width (default 0.25)'),
   power_track_mm: z.number().positive().optional().describe('Supply/ground track width (default 0.5)'),
   via_in_pad: z.boolean().optional().describe('Allow vias inside pads (default false; only when the user asks for it, e.g. for tight BGA fan-out or thermal pads)'),
+  corner_radius_mm: z.number().min(0).optional().describe('Rounded board corners: the radius (0 = square corners)'),
+});
+
+const cutoutAnchor = z.enum(['top_left', 'top', 'top_right', 'left', 'center', 'right', 'bottom_left', 'bottom', 'bottom_right']);
+
+export const AddCutoutOp = z.object({
+  op: z.literal('add_cutout'),
+  shape: z.enum(['rect', 'circle', 'slot']).describe('rect: an opening (optionally with rounded corners); circle: a round cutout; slot: an oblong with round ends (e.g. an isolation slot)'),
+  x_mm: z.number().describe('Centre x, measured from the anchor point (x right)'),
+  y_mm: z.number().describe('Centre y, measured from the anchor point (y down)'),
+  anchor: cutoutAnchor.optional().describe('What x/y are measured from (default top_left, the board corner): a corner, the middle of an edge (top, left, right, bottom) or the centre. A cutout anchored to an edge or corner follows the board size.'),
+  width_mm: z.number().positive().optional().describe('rect: width; slot: length, end to end'),
+  height_mm: z.number().positive().optional().describe('rect: height; slot: width'),
+  diameter_mm: z.number().positive().optional().describe('circle: diameter'),
+  corner_radius_mm: z.number().min(0).optional().describe('rect: rounded corners'),
+  angle_deg: z.number().optional().describe('rect, slot: rotation, degrees clockwise (default 0: along x)'),
+});
+
+export const RemoveCutoutOp = z.object({
+  op: z.literal('remove_cutout'),
+  id: z.string().describe('Cutout id ("CO1"), or "all"'),
 });
 
 export const PlaceOp = z.object({
@@ -195,6 +216,8 @@ export const EditOp = z.discriminatedUnion('op', [
   SetPlaneOp,
   AddHoleOp,
   RemoveHoleOp,
+  AddCutoutOp,
+  RemoveCutoutOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
 export type EditOpName = EditOp['op'];

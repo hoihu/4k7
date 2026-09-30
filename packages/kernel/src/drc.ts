@@ -2,6 +2,7 @@
  * Copper design-rule check on exact geometry, independent of the router's grid: clearance
  * between tracks, vias and pads of different nets on the same layer.
  */
+import { cutoutDistance, insideOutline } from '@tracewise/schema';
 import type { BoardDiagnostic, BoardView, CopperLayer } from '@tracewise/schema';
 
 type Shape =
@@ -150,4 +151,39 @@ function segRect(ax: number, ay: number, bx: number, by: number, r: { x0: number
   let best = Infinity;
   for (const [cx, cy, dx, dy] of edges) best = Math.min(best, segSeg(ax, ay, bx, by, cx, cy, dx, dy));
   return best;
+}
+
+/** Tracks and vias closer than the edge clearance to a cutout or to the (rounded) board edge. */
+export function edgeDrc(b: BoardView): BoardDiagnostic[] {
+  const e = b.rules.edgeClearance;
+  const out: BoardDiagnostic[] = [];
+  const seen = new Set<string>();
+  // how close a disc of radius r at (x, y) comes to the outline or a cutout (negative: over it)
+  const room = (x: number, y: number, r: number) => {
+    let best = { d: insideOutline(b.outline.w, b.outline.h, b.cornerRadius, x, y) - r, what: 'the board edge' };
+    for (const c of b.cutouts) {
+      const d = cutoutDistance(c, x, y) - r;
+      if (d < best.d) best = { d, what: `cutout ${c.id}` };
+    }
+    return best;
+  };
+  const report = (what: string, x: number, y: number, r: number) => {
+    const { d, what: near } = room(x, y, r);
+    if (d >= e - EPS) return;
+    const key = `${what}|${near}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ code: 'DRC.EDGE_CLEARANCE', severity: 'error', message: `${what} is ${Math.max(0, d).toFixed(2)} mm from ${near} (min ${e} mm).`, at: { x, y }, entities: [] });
+  };
+  if (!b.cutouts.length && !b.cornerRadius) return out; // the router keeps off straight edges
+  for (const t of b.tracks) {
+    const what = `track ${b.netNames[t.netId] ?? t.netId}`;
+    for (let i = 0; i + 3 < t.pts.length; i += 2) {
+      const [ax, ay, bx, by] = [t.pts[i]!, t.pts[i + 1]!, t.pts[i + 2]!, t.pts[i + 3]!];
+      const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 0.05));
+      for (let k = 0; k <= n; k++) report(what, ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n, t.width / 2);
+    }
+  }
+  for (const v of b.vias) report(`via ${b.netNames[v.netId] ?? v.netId}`, v.x, v.y, v.pad / 2);
+  return out;
 }

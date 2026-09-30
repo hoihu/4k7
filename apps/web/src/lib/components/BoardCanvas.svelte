@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { BoardView, CopperLayer } from '@tracewise/schema';
+  import { cutoutPolygon, outlinePolygon, type BoardView, type CopperLayer } from '@tracewise/schema';
   import type { TopView } from '../three-body.ts';
 
   /** 2D board view (mm, top view): outline, pads, tracks, vias, silkscreen, ratsnest. */
@@ -18,6 +18,12 @@
     onlock?: (refdes: string) => void;
   }
   let { board, show, selection = [], hotNet = null, marker = null, onselect, onclear, onhovernet, onplace, onlock }: Props = $props();
+
+  /** A closed polygon (flat x, y list) as SVG path data. */
+  const polyPath = (pts: number[]) => pts.reduce((d, v, i) => (i % 2 ? `${d} ${v}` : `${d}${i ? ' L' : 'M'} ${v}`), '') + ' Z';
+  /** The board outline (rounded corners) and its milled cutouts. */
+  const outlinePath = $derived(board ? polyPath(outlinePolygon(board.outline.w, board.outline.h, board.cornerRadius || 0.5)) : '');
+  const cutoutPaths = $derived(board ? board.cutouts.map((c) => polyPath(cutoutPolygon(c))) : []);
 
   /** Part being dragged: offset in mm, snapped to 0.1 mm. */
   let partDrag = $state<{ ref: string; sx: number; sy: number; dx: number; dy: number; moved: boolean } | null>(null);
@@ -184,7 +190,7 @@
   tabindex="0"
 >
   {#if board}
-    {#if show.board !== false}<rect class="substrate" x="0" y="0" width={board.outline.w} height={board.outline.h} rx="0.5" />{/if}
+    {#if show.board !== false}<path class="substrate" d={[outlinePath, ...cutoutPaths].join(' ')} fill-rule="evenodd" />{/if}
 
     {#each order as layer (layer)}
       {#if show[layer]}
@@ -274,7 +280,8 @@
       {/each}
     {/if}
 
-    <rect class="edge" x="0" y="0" width={board.outline.w} height={board.outline.h} rx="0.5" />
+    <path class="edge" d={outlinePath} />
+    {#each cutoutPaths as d, i (i)}<path class="edge" {d} />{/each}
     {#if marker}<circle class="marker" cx={marker.x} cy={marker.y} r="1.2" />{/if}
   {/if}
 </svg>

@@ -28,10 +28,16 @@ import {
   type RatsLine,
   type SchematicView,
   type StoredPlacement,
+  type BoardCutout,
+  cutoutBounds,
+  cutoutDistance,
+  cutoutPolygon,
+  insideOutline,
+  placeCutout,
 } from '@tracewise/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@tracewise/parts';
 import { cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
-import { copperDrc } from './drc.ts';
+import { copperDrc, edgeDrc } from './drc.ts';
 import { route } from './router.ts';
 
 const SPACING = 0.3; // between courtyards
@@ -606,12 +612,26 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   };
   // parts keep clear of the screw head / washer: a square of 2 × diameter
   const keep = (hole: MountingHole) => 2 * hole.d;
-  if (holes.length && items.length) {
+  // cutouts (their bounding box, plus the edge clearance) and rounded corners are keep-outs too
+  const cutouts = settings.cutouts ?? [];
+  const cornerR = settings.cornerRadius ?? 0;
+  const blocker = (id: string, x: number, y: number, cw: number, ch: number) => ({ comp: { refdes: `~${id}` }, x, y, rot: 0, fixed: true, cw, ch }) as unknown as Item;
+  const keepOuts = () => [
+    ...holes.map((hole) => {
+      const at = holeAt(hole);
+      return blocker(hole.id, at.x, at.y, keep(hole), keep(hole));
+    }),
+    ...cutouts.map((c) => {
+      const [x0, y0, x1, y1] = cutoutBounds(placeCutout(c, w, h));
+      const e = rules.edgeClearance;
+      return blocker(c.id, (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0 + 2 * e, y1 - y0 + 2 * e);
+    }),
+    // a rounded corner takes a square of its radius out of the usable area
+    ...(cornerR > margin ? [[0, 0], [w, 0], [0, h], [w, h]].map(([cx, cy], i) => blocker(`corner${i}`, cx === 0 ? cornerR / 2 : cx! - cornerR / 2, cy === 0 ? cornerR / 2 : cy! - cornerR / 2, cornerR, cornerR)) : []),
+  ];
+  if ((holes.length || cutouts.length || cornerR > margin) && items.length) {
     for (let round = 0; round < 20; round++) {
-      const blockers = holes.map((hole) => {
-        const at = holeAt(hole);
-        return { comp: { refdes: `~${hole.id}` }, x: at.x, y: at.y, rot: 0, fixed: true, cw: keep(hole), ch: keep(hole) } as unknown as Item;
-      });
+      const blockers = keepOuts();
       const all = [...items, ...blockers];
       if (!overlapping(all)) break;
       separate(all, 40, true);
@@ -672,6 +692,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   });
 
   /* ---- result ---- */
+  const boardCutouts = cutouts.map((c) => placeCutout(c, w, h));
   const parts: BoardPart[] = [
     ...items.map((it) => {
       const pa = parent.get(it);
@@ -679,12 +700,12 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }),
     ...holeParts,
   ];
-  const diagnostics = placementChecks(parts, w, h, rules.edgeClearance);
+  const diagnostics = placementChecks(parts, w, h, rules.edgeClearance, cornerR, boardCutouts);
   for (const ref of missing) {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board.`, entities: [ref] });
   }
   const planes = settingsPlanes(d, layers.length as 2 | 4);
-  const placementKey = hash(JSON.stringify([w, h, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.pads.map((q) => q.netId ?? '')])]));
+  const placementKey = hash(JSON.stringify([w, h, cornerR, boardCutouts, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.pads.map((q) => q.netId ?? '')])]));
   return {
     outline: { w, h },
     layers,
@@ -702,6 +723,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     routing: settings.routed ? (settings.routed === placementKey ? 'done' : 'stale') : 'none',
     placementKey,
     sizeBy: userSize ? 'user' : 'proposal',
+    cornerRadius: cornerR,
+    cutouts: boardCutouts,
   };
 }
 
@@ -729,7 +752,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const planes = settingsPlanes(d, b.layers.length as 2 | 4);
-  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, planes: planes.map(({ netId, layer }) => ({ netId, layer })), ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
+  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, planes: planes.map(({ netId, layer }) => ({ netId, layer })), cornerRadius: b.cornerRadius, cutouts: b.cutouts, ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
   const routed: BoardView = {
     ...b,
     routing: 'done',
@@ -748,7 +771,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   };
   const unrouted = new Map<string, number>();
   for (const f of r.failed) unrouted.set(f.netId, (unrouted.get(f.netId) ?? 0) + 1);
-  const diags = [...b.diagnostics, ...copperDrc(routed)];
+  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed)];
   for (const [netId, n] of unrouted) {
     const f = r.failed.find((x) => x.netId === netId)!;
     diags.push({
@@ -1081,15 +1104,25 @@ export function ratsnest(parts: BoardPart[], connected?: (netId: string, a: Boar
   return out;
 }
 
-function placementChecks(parts: BoardPart[], w: number, h: number, edge: number): BoardDiagnostic[] {
+function placementChecks(parts: BoardPart[], w: number, h: number, edge: number, cornerR = 0, cutouts: BoardCutout[] = []): BoardDiagnostic[] {
   const out: BoardDiagnostic[] = [];
+  // a pad's corners (and centre): how far inside the outline / outside every cutout
+  const padPoints = (p: BoardPad) => [[p.x - p.w / 2, p.y - p.h / 2], [p.x + p.w / 2, p.y - p.h / 2], [p.x - p.w / 2, p.y + p.h / 2], [p.x + p.w / 2, p.y + p.h / 2], [p.x, p.y]] as const;
   for (let i = 0; i < parts.length; i++) {
     const a = parts[i]!;
     const A = a.courtyard;
+    const hole = a.componentId.startsWith('hole:');
     if (A.x < 0 || A.y < 0 || A.x + A.w > w || A.y + A.h > h) {
       out.push({ code: 'DRC.OFF_BOARD', severity: 'error', message: `${a.refdes} is outside the board outline.`, at: { x: a.x, y: a.y }, entities: [a.refdes] });
-    } else if (a.pads.some((p) => p.x - p.w / 2 < edge || p.y - p.h / 2 < edge || p.x + p.w / 2 > w - edge || p.y + p.h / 2 > h - edge)) {
+    } else if (a.pads.some((p) => p.x - p.w / 2 < edge || p.y - p.h / 2 < edge || p.x + p.w / 2 > w - edge || p.y + p.h / 2 > h - edge || (cornerR > 0 && padPoints(p).some(([x, y]) => insideOutline(w, h, cornerR, x, y) < edge)))) {
       out.push({ code: 'DRC.EDGE_CLEARANCE', severity: 'error', message: `${a.refdes} has copper closer than ${edge} mm to the board edge.`, at: { x: a.x, y: a.y }, entities: [a.refdes] });
+    }
+    for (const c of hole ? [] : cutouts) {
+      // the courtyard over the cutout, or copper within the edge clearance of it
+      const cy = { x0: A.x, y0: A.y, x1: A.x + A.w, y1: A.y + A.h };
+      const over = cutoutDistance(c, Math.min(Math.max(c.x, cy.x0), cy.x1), Math.min(Math.max(c.y, cy.y0), cy.y1)) < 0 || cutoutPolygon(c).some((v, k, pts) => k % 2 === 0 && v > cy.x0 && v < cy.x1 && pts[k + 1]! > cy.y0 && pts[k + 1]! < cy.y1);
+      if (over) out.push({ code: 'DRC.CUTOUT_OVERLAP', severity: 'error', message: `${a.refdes} lies over cutout ${c.id}.`, at: { x: a.x, y: a.y }, entities: [a.refdes] });
+      else if (a.pads.some((p) => padPoints(p).some(([x, y]) => cutoutDistance(c, x, y) < edge))) out.push({ code: 'DRC.EDGE_CLEARANCE', severity: 'error', message: `${a.refdes} has copper closer than ${edge} mm to cutout ${c.id}.`, at: { x: a.x, y: a.y }, entities: [a.refdes] });
     }
     for (let j = i + 1; j < parts.length; j++) {
       const b = parts[j]!;

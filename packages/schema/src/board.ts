@@ -35,6 +35,10 @@ export interface BoardSettings {
   planes?: { netId: string; layer: CopperLayer }[];
   /** Mounting holes (board features, not parts). */
   holes?: MountingHole[];
+  /** Rounded board corners: the radius (mm); absent or 0 = square corners. */
+  cornerRadius?: number;
+  /** Milled cutouts inside the board (openings, slots). */
+  cutouts?: Cutout[];
   /**
    * The placement as last proposed or adjusted (propose_layout, place, route store it). Later
    * layouts start from it, so a change moves only what it has to. Absent: proposed afresh.
@@ -52,6 +56,122 @@ export interface StoredPlacement {
 }
 
 export type HoleCorner = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
+
+/** Where a cutout is measured from: a board corner, the middle of an edge, or the centre. */
+export type CutoutAnchor = 'top_left' | 'top' | 'top_right' | 'left' | 'center' | 'right' | 'bottom_left' | 'bottom' | 'bottom_right';
+
+/**
+ * A milled cutout (not plated): a rectangle (optionally with rounded corners), a circle, or a
+ * slot (a rounded-end oblong). Its centre is given from an anchor point (default the top-left
+ * corner), so a cutout anchored to an edge or corner follows the board size.
+ */
+export interface Cutout {
+  /** "CO1", "CO2" … */
+  id: string;
+  shape: 'rect' | 'circle' | 'slot';
+  /** Centre, mm from the anchor point (x right, y down). */
+  x: number;
+  y: number;
+  anchor?: CutoutAnchor;
+  /** rect: width; circle: diameter; slot: length, end to end. */
+  w: number;
+  /** rect: height; slot: width. */
+  h?: number;
+  /** rect: corner radius. */
+  r?: number;
+  /** rect, slot: rotation, degrees clockwise. */
+  angle?: number;
+}
+
+/** A cutout placed on the board: absolute centre, all sizes filled in. */
+export interface BoardCutout {
+  id: string;
+  shape: 'rect' | 'circle' | 'slot';
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  r: number;
+  angle: number;
+}
+
+/** The absolute cutout for a board of w × h. */
+export function placeCutout(c: Cutout, w: number, h: number): BoardCutout {
+  const a = c.anchor ?? 'top_left';
+  const ax = a.endsWith('left') ? 0 : a.endsWith('right') ? w : w / 2;
+  const ay = a.startsWith('top') ? 0 : a.startsWith('bottom') ? h : h / 2;
+  const hh = c.shape === 'circle' ? c.w : (c.h ?? c.w);
+  return { id: c.id, shape: c.shape, x: ax + c.x, y: ay + c.y, w: c.w, h: hh, r: c.shape === 'rect' ? Math.min(c.r ?? 0, Math.min(c.w, hh) / 2) : 0, angle: c.angle ?? 0 };
+}
+
+/** Signed distance from a point to a cutout: negative inside, positive outside. */
+export function cutoutDistance(c: BoardCutout, px: number, py: number): number {
+  const a = (-c.angle * Math.PI) / 180;
+  const dx = px - c.x;
+  const dy = py - c.y;
+  const x = dx * Math.cos(a) - dy * Math.sin(a);
+  const y = dx * Math.sin(a) + dy * Math.cos(a);
+  if (c.shape === 'circle') return Math.hypot(x, y) - c.w / 2;
+  if (c.shape === 'slot') {
+    const half = Math.max(0, c.w / 2 - c.h / 2);
+    return Math.hypot(Math.max(Math.abs(x) - half, 0), y) - c.h / 2;
+  }
+  return roundedBoxDistance(x, y, c.w / 2, c.h / 2, c.r);
+}
+
+/** Signed distance to a rounded rectangle centred at the origin (half sizes hx, hy, radius r). */
+function roundedBoxDistance(x: number, y: number, hx: number, hy: number, r: number): number {
+  const qx = Math.abs(x) - (hx - r);
+  const qy = Math.abs(y) - (hy - r);
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
+}
+
+/** How far a point lies inside the board outline (w × h, corner radius r); negative outside. */
+export function insideOutline(w: number, h: number, r: number, px: number, py: number): number {
+  return -roundedBoxDistance(px - w / 2, py - h / 2, w / 2, h / 2, Math.min(r, Math.min(w, h) / 2));
+}
+
+/** A rounded rectangle as a closed polygon (flat x, y list), `seg` points per quarter circle. */
+function roundedBox(cx: number, cy: number, hx: number, hy: number, r: number, angle: number, seg = 8): number[] {
+  const pts: number[] = [];
+  const corners: [number, number, number][] = [
+    [hx - r, -(hy - r), -90],
+    [hx - r, hy - r, 0],
+    [-(hx - r), hy - r, 90],
+    [-(hx - r), -(hy - r), 180],
+  ];
+  for (const [ox, oy, a0] of corners) {
+    const n = r > 1e-9 ? seg : 1;
+    for (let i = 0; i < n; i++) {
+      const t = ((a0 + (90 * i) / Math.max(1, n - 1)) * Math.PI) / 180;
+      pts.push(ox + r * Math.cos(t), oy + r * Math.sin(t));
+    }
+  }
+  const a = (angle * Math.PI) / 180;
+  const out: number[] = [];
+  for (let i = 0; i < pts.length; i += 2) out.push(cx + pts[i]! * Math.cos(a) - pts[i + 1]! * Math.sin(a), cy + pts[i]! * Math.sin(a) + pts[i + 1]! * Math.cos(a));
+  return out;
+}
+
+/** A cutout's contour as a closed polygon (flat x, y list, first point not repeated). */
+export function cutoutPolygon(c: BoardCutout): number[] {
+  if (c.shape === 'circle') return roundedBox(c.x, c.y, c.w / 2, c.w / 2, c.w / 2, 0, 12);
+  if (c.shape === 'slot') return roundedBox(c.x, c.y, c.w / 2, c.h / 2, c.h / 2, c.angle, 12);
+  return roundedBox(c.x, c.y, c.w / 2, c.h / 2, c.r, c.angle, 8);
+}
+
+/** The board outline (w × h, corner radius r) as a closed polygon. */
+export function outlinePolygon(w: number, h: number, r: number): number[] {
+  return roundedBox(w / 2, h / 2, w / 2, h / 2, Math.min(r, Math.min(w, h) / 2), 0, 10);
+}
+
+/** A cutout's bounding box: x0, y0, x1, y1. */
+export function cutoutBounds(c: BoardCutout): [number, number, number, number] {
+  const p = cutoutPolygon(c);
+  const xs = p.filter((_, i) => i % 2 === 0);
+  const ys = p.filter((_, i) => i % 2 === 1);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
 
 export interface MountingHole {
   /** "MH1", "MH2" … */
@@ -208,6 +328,10 @@ export interface BoardView {
   placementKey: string;
   /** The outline: proposed by the placer, or set by the user. */
   sizeBy: 'proposal' | 'user';
+  /** Rounded board corners (radius, mm; 0 = square). */
+  cornerRadius: number;
+  /** Milled cutouts, placed on this outline. */
+  cutouts: BoardCutout[];
 }
 
 /** Compact board description for agents (design_query get_board). */
@@ -227,6 +351,8 @@ export function boardSummary(b: BoardView, routed = true) {
           : 'not routed yet (the route op, once the placement is final)',
     planes: b.planes.map((p) => ({ net: b.netNames[p.netId] ?? p.netId, layer: p.layer, dedicated: p.layer !== 'F.Cu' && p.layer !== 'B.Cu', automatic: p.auto })),
     mounting_holes: b.parts.filter((p) => p.componentId.startsWith('hole:')).map((p) => ({ id: p.refdes, x: p.x, y: p.y, diameter: p.pads[0]?.drill, plated: !p.pads[0]?.npth })),
+    corner_radius_mm: b.cornerRadius,
+    cutouts: b.cutouts.map((c) => ({ id: c.id, shape: c.shape, x: c.x, y: c.y, ...(c.shape === 'circle' ? { diameter: c.w } : { w: c.w, h: c.h }), ...(c.r ? { corner_radius: c.r } : {}), ...(c.angle ? { angle: c.angle } : {}) })),
     drc: b.diagnostics.map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
     note: 'Workflow: propose_layout (board size and placement), then adjustments (place = the user\'s choice for a part, kept relative to its parent part; lock: true pins it exactly; set_board for the size), then route as the last step. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',

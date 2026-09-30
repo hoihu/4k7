@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { cutoutDistance } from '@tracewise/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 
@@ -555,6 +556,58 @@ describe('mounting holes', () => {
     k.transact({ summary: 'rm', ops: [{ op: 'remove_hole', id: 'all' }] });
     b = k.board();
     expect(b.parts.some((p) => p.componentId.startsWith('hole:'))).toBe(false);
+  });
+});
+
+describe('milling: rounded corners and cutouts', () => {
+  const inCutout = (b: ReturnType<Kernel['board']>, keep: number) => {
+    const bad: string[] = [];
+    for (const c of b.cutouts) {
+      for (const t of b.tracks) for (let i = 0; i + 3 < t.pts.length; i += 2) {
+        for (let k = 0; k <= 20; k++) {
+          const x = t.pts[i]! + ((t.pts[i + 2]! - t.pts[i]!) * k) / 20;
+          const y = t.pts[i + 1]! + ((t.pts[i + 3]! - t.pts[i + 1]!) * k) / 20;
+          if (cutoutDistance(c, x, y) - t.width / 2 < keep - 1e-3) bad.push(`${b.netNames[t.netId]} at ${x.toFixed(2)},${y.toFixed(2)}`);
+        }
+      }
+      for (const p of b.parts) for (const q of p.pads) if (cutoutDistance(c, q.x, q.y) < 0) bad.push(`${p.refdes}.${q.number}`);
+    }
+    return bad;
+  };
+
+  it('keeps parts and copper clear of a cutout; the outline file carries it', async () => {
+    const k = buck();
+    k.transact({ summary: 'mill', ops: [{ op: 'set_board', width_mm: 40, height_mm: 30 }, { op: 'add_cutout', shape: 'rect', x_mm: 0, y_mm: 0, anchor: 'center', width_mm: 8, height_mm: 6, corner_radius_mm: 1 }, { op: 'propose_layout' }] });
+    const b = routed(k);
+    expect(b.cutouts.map((c) => [c.id, c.x, c.y, c.w, c.h])).toEqual([['CO1', 20, 15, 8, 6]]);
+    expect(b.stats.unrouted).toBe(0);
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(inCutout(b, b.rules.edgeClearance)).toEqual([]);
+    // no part's courtyard over it
+    for (const p of b.parts) {
+      const cy = p.courtyard;
+      expect(cy.x + cy.w <= 16 || cy.x >= 24 || cy.y + cy.h <= 12 || cy.y >= 18, p.refdes).toBe(true);
+    }
+    const { fabFiles } = await import('@tracewise/fab');
+    const edge = fabFiles(b, 'm').find((f) => f.name === 'm-Edge_Cuts.gbr')!.content;
+    // two contours: the outline and the cutout (each starts with a move D02)
+    expect(edge.split('\n').filter((l) => l.endsWith('D02*')).length).toBe(2);
+  });
+
+  it('an anchored cutout follows the board size; rounded corners keep copper off them', () => {
+    const k = buck();
+    k.transact({ summary: 'mill', ops: [{ op: 'set_board', width_mm: 40, height_mm: 30, corner_radius_mm: 4 }, { op: 'add_cutout', shape: 'slot', x_mm: -6, y_mm: 0, anchor: 'right', width_mm: 8, height_mm: 1.5 }, { op: 'propose_layout' }] });
+    let b = routed(k);
+    expect([b.cutouts[0]!.x, b.cutouts[0]!.y]).toEqual([34, 15]);
+    expect(b.cornerRadius).toBe(4);
+    expect(b.stats.unrouted).toBe(0);
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(inCutout(b, b.rules.edgeClearance)).toEqual([]);
+    k.transact({ summary: 'wider', ops: [{ op: 'set_board', width_mm: 50 }] });
+    b = k.board();
+    expect([b.cutouts[0]!.x, b.cutouts[0]!.y]).toEqual([44, 15]);
+    k.transact({ summary: 'rm', ops: [{ op: 'remove_cutout', id: 'CO1' }] });
+    expect(k.board().cutouts).toEqual([]);
   });
 });
 

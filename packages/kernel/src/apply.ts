@@ -15,6 +15,7 @@ import {
   type CopperLayer,
   type HoleCorner,
   type MountingHole,
+  type Cutout,
   DEFAULT_BOARD,
 } from '@tracewise/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
@@ -87,6 +88,18 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return setPlane(d, op);
     case 'add_hole':
       return addHole(d, op);
+    case 'add_cutout':
+      return addCutout(d, op);
+    case 'remove_cutout': {
+      const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+      const before = b.cutouts ?? [];
+      const keep = op.id.toLowerCase() === 'all' ? [] : before.filter((c) => c.id.toUpperCase() !== op.id.toUpperCase());
+      if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: `No cutout "${op.id}".`, candidates: before.map((c) => c.id) });
+      if (keep.length) b.cutouts = keep;
+      else delete b.cutouts;
+      d.board = b;
+      return { op: 'remove_cutout', effect: `removed ${before.length - keep.length} cutout(s)`, ids: ['board'] };
+    }
     case 'remove_hole': {
       const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
       const before = b.holes ?? [];
@@ -135,6 +148,12 @@ function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): OpResult
   rule('clearance', op.clearance_mm, 'clearance');
   rule('track', op.track_mm, 'track');
   rule('powerTrack', op.power_track_mm, 'power track');
+  if (op.corner_radius_mm !== undefined) {
+    if (op.corner_radius_mm > 50) reject({ code: 'BOARD_INVALID', message: `A ${op.corner_radius_mm} mm corner radius is too big.` });
+    if (op.corner_radius_mm > 0) b.cornerRadius = op.corner_radius_mm;
+    else delete b.cornerRadius;
+    out.push(op.corner_radius_mm > 0 ? `corners rounded, r ${op.corner_radius_mm} mm` : 'square corners');
+  }
   if (op.via_in_pad !== undefined) {
     if (op.via_in_pad) b.rules.viaInPad = true;
     else delete b.rules.viaInPad;
@@ -171,6 +190,35 @@ function setPlane(d: Design, op: Extract<EditOp, { op: 'set_plane' }>): OpResult
   b.planes = [...rest, { netId: net!.id, layer: op.layer! as CopperLayer }];
   d.board = b;
   return { op: 'set_plane', effect: `${net!.name} plane on ${op.layer}${op.layer === 'F.Cu' || op.layer === 'B.Cu' ? ' (pour)' : ' (dedicated)'}`, ids: ['board'] };
+}
+
+/** A milled cutout: a rectangle, circle or slot, positioned from an anchor point. */
+function addCutout(d: Design, op: Extract<EditOp, { op: 'add_cutout' }>): OpResult {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const cutouts = [...(b.cutouts ?? [])];
+  let id = '';
+  for (let i = 1; ; i++) if (!cutouts.some((c) => c.id === `CO${i}`)) {
+    id = `CO${i}`;
+    break;
+  }
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+  let c: Cutout;
+  if (op.shape === 'circle') {
+    const dia = op.diameter_mm ?? op.width_mm;
+    if (!dia) reject({ code: 'BOARD_INVALID', message: 'A circular cutout needs diameter_mm.' });
+    c = { id, shape: 'circle', x: r3(op.x_mm), y: r3(op.y_mm), w: dia! };
+  } else {
+    if (!op.width_mm || !op.height_mm) reject({ code: 'BOARD_INVALID', message: `A ${op.shape} cutout needs width_mm and height_mm${op.shape === 'slot' ? ' (length and width)' : ''}.` });
+    if (op.shape === 'slot' && op.height_mm! > op.width_mm!) reject({ code: 'BOARD_INVALID', message: 'A slot is longer than it is wide: width_mm is its length, height_mm its width (use angle_deg to turn it).' });
+    c = { id, shape: op.shape, x: r3(op.x_mm), y: r3(op.y_mm), w: op.width_mm!, h: op.height_mm!, ...(op.shape === 'rect' && op.corner_radius_mm ? { r: op.corner_radius_mm } : {}), ...(op.angle_deg ? { angle: op.angle_deg } : {}) };
+  }
+  if (op.anchor && op.anchor !== 'top_left') c.anchor = op.anchor;
+  if (Math.max(c.w, c.h ?? 0) < 0.3) reject({ code: 'BOARD_INVALID', message: 'A cutout smaller than 0.3 mm cannot be milled.' });
+  cutouts.push(c);
+  b.cutouts = cutouts;
+  d.board = b;
+  const size = c.shape === 'circle' ? `Ø${c.w} mm` : `${c.w} × ${c.h} mm`;
+  return { op: 'add_cutout', effect: `cutout ${id}: ${c.shape} ${size} at (${c.x}, ${c.y}) mm from ${c.anchor ?? 'top_left'}`.replace('_', ' '), ids: ['board'] };
 }
 
 /** Mounting holes: at fixed positions or anchored to corners (they follow the board size). */

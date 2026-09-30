@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Body3D } from '@tracewise/parts';
-import type { BoardView } from '@tracewise/schema';
+import { cutoutPolygon, outlinePolygon, type BoardView } from '@tracewise/schema';
 
 export type ViewPreset = 'iso' | 'top' | 'bottom' | 'front';
 
@@ -386,11 +386,19 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, redraw?
    */
   const drills = b.parts.flatMap((p) => p.pads.filter((q) => q.drill).map((q) => ({ x: q.x, y: q.y, d: q.drill!, pad: q })));
   const outline = new THREE.Shape();
-  outline.moveTo(0, 0);
-  outline.lineTo(w, 0);
-  outline.lineTo(w, h);
-  outline.lineTo(0, h);
+  const ring = outlinePolygon(w, h, b.cornerRadius ?? 0);
+  outline.moveTo(ring[0]!, ring[1]!);
+  for (let i = 2; i < ring.length; i += 2) outline.lineTo(ring[i]!, ring[i + 1]!);
   outline.closePath();
+  // milled cutouts go through, like the holes
+  for (const c of b.cutouts ?? []) {
+    const pts = cutoutPolygon(c);
+    const path = new THREE.Path();
+    path.moveTo(pts[0]!, pts[1]!);
+    for (let i = 2; i < pts.length; i += 2) path.lineTo(pts[i]!, pts[i + 1]!);
+    path.closePath();
+    outline.holes.push(path);
+  }
   for (const d of drills) {
     const hole = new THREE.Path();
     hole.absarc(d.x, d.y, d.d / 2, 0, Math.PI * 2, true);

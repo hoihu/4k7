@@ -3,7 +3,7 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
-import type { BoardPad, BoardView, CopperLayer } from '@tracewise/schema';
+import { cutoutPolygon, outlinePolygon, type BoardPad, type BoardView, type CopperLayer } from '@tracewise/schema';
 import { textStrokes, textWidth } from './font.ts';
 
 export interface FabFile {
@@ -188,8 +188,11 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
   files.push({ name: `${base}-F_Silkscreen.gbr`, content: silk.toString() });
 
   /* outline */
+  // the board outline (rounded corners too) and every milled cutout, as closed contours
   const edge = new Gerber(h, ['FileFunction,Profile,NP', 'FilePolarity,Positive']);
-  edge.line([0, 0, w, 0, w, h, 0, h, 0, 0], 0.1);
+  const closed = (pts: number[]) => [...pts, pts[0]!, pts[1]!];
+  edge.line(closed(outlinePolygon(w, h, b.cornerRadius ?? 0)), 0.1);
+  for (const c of b.cutouts ?? []) edge.line(closed(cutoutPolygon(c)), 0.1);
   files.push({ name: `${base}-Edge_Cuts.gbr`, content: edge.toString() });
 
   files.push({ name: `${base}-PTH.drl`, content: drill(b) });
