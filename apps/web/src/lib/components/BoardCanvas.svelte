@@ -48,6 +48,13 @@
 
   let svg: SVGSVGElement | undefined = $state();
   let vb = $state({ x: -2, y: -2, w: 40, h: 30 });
+  let cw = $state(0);
+  let ch = $state(0);
+  /** One screen pixel in mm, so markers keep their size at any zoom. */
+  const px = $derived(cw && ch ? 1 / Math.min(cw / vb.w, ch / vb.h) : vb.w / 800);
+  /** How a part got where it is: the placer's, the user's choice, or locked. */
+  const stateOf = (p: BoardView['parts'][number]) => (p.locked ? 'locked' : p.intent ? 'choice' : 'free');
+  const centreOf = (ref: string) => board?.parts.find((x) => x.refdes === ref);
   let fittedFor = '';
   let userMoved = false;
 
@@ -176,7 +183,10 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <svg
   bind:this={svg}
+  bind:clientWidth={cw}
+  bind:clientHeight={ch}
   class="board"
+  class:placing={show.placement}
   viewBox="{vb.x} {vb.y} {vb.w} {vb.h}"
   preserveAspectRatio="xMidYMid meet"
   role="application"
@@ -226,12 +236,29 @@
       {/each}
     {/if}
 
+    {#if show.placement}
+      <!-- who placed what: your choices and locked parts coloured, the rest dimmed; a choice kept
+           relative to another part is tied to it -->
+      {#each board.parts as p (p.componentId)}
+        {#if !p.componentId.startsWith('hole:')}
+          {@const st = stateOf(p)}
+          {@const o = offset(p.refdes)}
+          <rect class="pl {st}" x={p.courtyard.x + (o?.dx ?? 0)} y={p.courtyard.y + (o?.dy ?? 0)} width={p.courtyard.w} height={p.courtyard.h} rx={Math.min(0.3, p.courtyard.w / 6)} />
+          {#if st === 'choice' && p.intent?.anchor}
+            {@const a = centreOf(p.intent.anchor)}
+            {#if a}<line class="tie" x1={p.x + (o?.dx ?? 0)} y1={p.y + (o?.dy ?? 0)} x2={a.x} y2={a.y} stroke-width={px * 1.2} stroke-dasharray="{px * 4} {px * 3}" />{/if}
+          {/if}
+        {/if}
+      {/each}
+    {/if}
+
     <!-- pads (top copper + through-hole) -->
     {#each board.parts as p (p.componentId)}
       <g
         class="part"
         class:sel={selection.includes(p.refdes)}
         class:locked={p.locked}
+        class:free={show.placement && stateOf(p) === 'free' && !p.componentId.startsWith('hole:')}
         class:dragging={partDrag?.ref === p.refdes}
         data-ref={p.refdes}
         transform={offset(p.refdes) ? `translate(${offset(p.refdes)!.dx} ${offset(p.refdes)!.dy})` : undefined}
@@ -261,9 +288,19 @@
           {#if p.body.round}<circle class="silk" cx={p.body.x + p.body.w / 2} cy={p.body.y + p.body.h / 2} r={p.body.w / 2} />
           {:else}<rect class="silk" x={p.body.x} y={p.body.y} width={p.body.w} height={p.body.h} />{/if}
           {#if p.polarized}<circle class="silkdot" cx={p.pin1.x} cy={p.pin1.y} r="0.18" />{/if}
-          {#if p.locked}<circle class="pin" cx={p.courtyard.x + p.courtyard.w - 0.3} cy={p.courtyard.y + 0.3} r="0.16"><title>locked</title></circle>
-          {:else if p.intent}<circle class="choice" cx={p.courtyard.x + p.courtyard.w - 0.3} cy={p.courtyard.y + 0.3} r="0.1"><title>your placement{p.intent.anchor ? ` (kept relative to ${p.intent.anchor})` : ''}</title></circle>{/if}
           <text class="ref" x={p.x} y={p.y} font-size={Math.max(0.5, Math.min(1.2, Math.min(p.body.w, p.body.h) * 0.45))}>{p.refdes}</text>
+        {/if}
+        {#if !p.componentId.startsWith('hole:') && stateOf(p) !== 'free'}
+          <!-- a marker of fixed screen size at the courtyard's top right: a padlock (locked) or a dot (your choice) -->
+          <g class="mark {stateOf(p)}" transform="translate({p.courtyard.x + p.courtyard.w} {p.courtyard.y}) scale({px})">
+            <title>{p.locked ? 'Locked here' : `Your placement${p.intent?.anchor ? `, kept relative to ${p.intent.anchor}` : ''}`}</title>
+            {#if p.locked}
+              <path class="shackle" d="M -3 -2 v -3 a 3 3 0 0 1 6 0 v 3" />
+              <rect x="-5" y="-2.5" width="10" height="8" rx="1.5" />
+            {:else}
+              <circle r="4.5" />
+            {/if}
+          </g>
         {/if}
       </g>
     {/each}
@@ -329,8 +366,15 @@
   .part { cursor: grab; }
   .part.dragging { cursor: grabbing; opacity: 0.85; }
   .part.dragging .hit { fill: rgba(111, 181, 255, 0.18); }
-  .pin { fill: none; stroke: #9fd2ff; stroke-width: 0.06; opacity: 0.45; pointer-events: none; }
-  .part:hover .pin, .part.sel .pin { opacity: 1; }
-  .choice { fill: #9fd2ff; opacity: 0.45; pointer-events: none; }
-  .part:hover .choice, .part.sel .choice { opacity: 1; }
+  /* placement state: the markers (always) and the overlay (Placement on) */
+  .mark { pointer-events: none; }
+  .mark.choice circle { fill: #6fb5ff; stroke: #0b0f14; stroke-width: 1.5; }
+  .mark.locked rect { fill: #f0a03c; stroke: #0b0f14; stroke-width: 1.2; }
+  .mark.locked .shackle { fill: none; stroke: #f0a03c; stroke-width: 1.8; }
+  .pl { pointer-events: none; stroke-width: 0.08; }
+  .pl.free { fill: none; stroke: none; }
+  .pl.choice { fill: rgba(111, 181, 255, 0.22); stroke: #6fb5ff; }
+  .pl.locked { fill: rgba(240, 160, 60, 0.22); stroke: #f0a03c; }
+  .tie { stroke: #6fb5ff; opacity: 0.8; pointer-events: none; }
+  .placing .part.free { opacity: 0.4; }
 </style>

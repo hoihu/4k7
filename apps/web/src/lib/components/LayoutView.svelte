@@ -13,7 +13,7 @@
   });
 
   const b = $derived(app.board);
-  let show = $state<Record<string, boolean>>({ board: true, 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true });
+  let show = $state<Record<string, boolean>>({ board: true, 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true, placement: false });
   let hotNet = $state<string | null>(null);
   let mode = $state<'2d' | '3d'>('2d');
   // switching views: the 3D view starts from the 2D view's area and flies into 3D; back, it flies
@@ -55,6 +55,34 @@
   ]);
 
   const selectedPart = $derived(app.selection.length === 1 ? (b?.parts.find((p) => p.refdes === app.selection[0]) ?? null) : null);
+  /* who placed what: the placer, the user (a choice it keeps), or locked */
+  const placed = $derived.by(() => {
+    const parts = (b?.parts ?? []).filter((p) => !p.componentId.startsWith('hole:'));
+    return {
+      choice: parts.filter((p) => !p.locked && p.intent).map((p) => p.refdes),
+      locked: parts.filter((p) => p.locked).map((p) => p.refdes),
+      free: parts.filter((p) => !p.locked && !p.intent).map((p) => p.refdes),
+    };
+  });
+  /** Show the placement overlay and select these parts. */
+  function showPlaced(refs: string[]) {
+    show.placement = true;
+    app.selection = refs;
+  }
+  /** Every choice back to the placer; locked parts stay. */
+  function releaseAll() {
+    const ids = placed.choice.map((ref) => app.k?.ledger.find((x) => x.text.startsWith(`position(${ref})`))?.id).filter((id): id is string => !!id);
+    if (ids.length) void app.userEdit(`Let the placer place ${ids.length} part(s) again`, ids.map((id) => ({ op: 'remove_constraint', id })));
+  }
+  /** Unlock every locked part (each stays where it is, as the user's choice). */
+  function unlockAll() {
+    const ops = placed.locked.flatMap((ref) => {
+      const p = b?.parts.find((x) => x.refdes === ref);
+      return p ? [{ op: 'place', ref, x_mm: p.x, y_mm: p.y, rot: p.rot as 0 | 90 | 180 | 270, lock: false }] : [];
+    });
+    if (ops.length) void app.userEdit(`Unlock ${ops.length} part(s)`, ops);
+  }
+
   /** Forget the user's placement of a part: the placer decides again. */
   function release(ref: string) {
     const k = app.k?.ledger.find((x) => x.text.startsWith(`position(${ref})`));
@@ -190,6 +218,20 @@
             </div>
           {/if}
         {/if}
+        {#if b.parts.length}
+          <h4>Placement <label class="small muted toggle"><input type="checkbox" bind:checked={show.placement} /> show</label></h4>
+          <div class="placed">
+            <button class="r" title="Select the parts you placed" disabled={!placed.choice.length} onclick={() => showPlaced(placed.choice)}><span class="key choice"></span>Your choices<b>{placed.choice.length}</b></button>
+            <button class="r" title="Select the locked parts" disabled={!placed.locked.length} onclick={() => showPlaced(placed.locked)}><span class="key locked"></span>Locked<b>{placed.locked.length}</b></button>
+            <button class="r" title="Select the parts the placer decides" disabled={!placed.free.length} onclick={() => showPlaced(placed.free)}><span class="key free"></span>Placed automatically<b>{placed.free.length}</b></button>
+          </div>
+          {#if placed.choice.length || placed.locked.length}
+            <div class="row2">
+              {#if placed.choice.length}<button class="btn" disabled={app.running} title="Your choices go back to the placer; locked parts stay" onclick={releaseAll}>Release all choices</button>{/if}
+              {#if placed.locked.length}<button class="btn" disabled={app.running} title="Locked parts stay where they are, as your choices" onclick={unlockAll}>Unlock all</button>{/if}
+            </div>
+          {/if}
+        {/if}
         <h4>Manufacturing</h4>
         <button class="btn pri wide" onclick={exportFab} disabled={!b.parts.length}>Download fab files (.zip)</button>
         <p class="small muted">Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place.{#if errors} Fix the {errors} error{errors > 1 ? 's' : ''} first; the files would not make a working board.{/if}</p>
@@ -223,6 +265,15 @@
   .size { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
   .size input { width: 52px; padding: 2px 4px; }
   .row2 { display: flex; gap: 6px; flex-wrap: wrap; }
+  .toggle { font-weight: 400; margin-left: 6px; display: inline-flex; align-items: center; gap: 4px; }
+  .placed { display: flex; flex-direction: column; margin-bottom: 6px; }
+  .placed .r { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 4px; }
+  .placed .r b { margin-left: auto; font-family: var(--mono); font-weight: 600; }
+  .placed .r:disabled { opacity: 0.5; cursor: default; }
+  .key { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .key.choice { background: #6fb5ff; }
+  .key.locked { background: #f0a03c; }
+  .key.free { border: 1px solid var(--txt-3); }
   .lay { display: grid; grid-template-columns: 330px minmax(0, 1fr) 280px; gap: 1px; background: var(--line); height: 100%; min-height: 0; }
   .lay.nochat { grid-template-columns: 0 minmax(0, 1fr) 280px; }
   .col { background: var(--panel); min-height: 0; min-width: 0; display: flex; flex-direction: column; }
