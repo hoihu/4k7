@@ -1584,7 +1584,10 @@ function simplify(pts: number[]): number[] {
       const bx = out[n - 2]!;
       const by = out[n - 1]!;
       const cross = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
-      if (Math.abs(cross) < 1e-9 && (bx - ax) * (x - bx) + (by - ay) * (y - by) >= 0) {
+      // on one line, going on (or only stepping back by a sub-grid bit, e.g. from a pad centre
+      // to the grid point next to it): the middle point goes
+      const forward = (bx - ax) * (x - bx) + (by - ay) * (y - by) >= 0;
+      if (Math.abs(cross) < 1e-9 && (forward || Math.hypot(bx - ax, by - ay) < G / 2 || Math.hypot(x - bx, y - by) < G / 2)) {
         out[n - 2] = x;
         out[n - 1] = y;
         continue;

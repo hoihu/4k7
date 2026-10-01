@@ -234,6 +234,23 @@ describe('the user\'s placement choices', () => {
     expect([at(k, 'J1').x, at(k, 'J1').y, at(k, 'J1').locked]).toEqual([4, 8, true]);
   });
 
+  it('two-pin parts face each other where they connect (a chosen rotation may turn round 180°)', () => {
+    const k = buck();
+    const r3 = at(k, 'R3');
+    // C5 and R3 share N$1 (C5.1–R3.2); placed side by side, both turned so those pads face away
+    k.transact({ summary: 'away', ops: [{ op: 'place', ref: 'R3', x_mm: r3.x, y_mm: r3.y, rot: 0 }, { op: 'place', ref: 'C5', x_mm: r3.x - 3, y_mm: r3.y, rot: 0 }] });
+    const b = k.board();
+    const c5 = b.parts.find((p) => p.refdes === 'C5')!;
+    const r = b.parts.find((p) => p.refdes === 'R3')!;
+    const d = (a: { x: number; y: number }, c: { x: number; y: number }) => Math.hypot(a.x - c.x, a.y - c.y);
+    const shared = d(c5.pads.find((q) => q.number === '1')!, r.pads.find((q) => q.number === '2')!);
+    // the connected pads are now the nearest pair of the two parts
+    for (const p of c5.pads) for (const q of r.pads) expect(shared).toBeLessThanOrEqual(d(p, q) + 1e-6);
+    // each kept its direction (lying), at most turned round
+    expect([c5.rot % 180, r.rot % 180]).toEqual([0, 0]);
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+  });
+
   it('older designs: their pinned parts become the user\'s choices (soft)', () => {
     const k = buck();
     k.transact({ summary: 'pin', ops: [{ op: 'place', ref: 'J1', x_mm: 4, y_mm: 8, lock: true }] });

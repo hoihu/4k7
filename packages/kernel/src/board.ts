@@ -410,6 +410,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   };
   const fixedItems = items.filter((it) => it.fixed);
   const planeNets = new Set(settingsPlanes(d, layers.length as 2 | 4).map((pl) => pl.netId));
+  // nets with a dedicated inner plane: their pads drop onto it right where they are
+  const innerPlaneNets = new Set(settingsPlanes(d, layers.length as 2 | 4).filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu').map((pl) => pl.netId));
   const clashes = (it: Item) => {
     const e = extent(it);
     return fixedItems.some((o) => {
@@ -443,6 +445,38 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
         }
       }
       it.rot = best;
+    }
+  };
+
+  /*
+   * Two-pin parts face the way that shortens their connections: a resistor's or a diode's chosen
+   * rotation is taken as its direction (lying or standing), so it may be turned round by 180°
+   * (the same footprint area: nothing else moves). Pads on a net with a dedicated inner plane do
+   * not count (they drop onto it where they are). Locked parts keep their rotation; an IC's small
+   * parts keep the one that puts them at their pin.
+   */
+  const flipTwoPin = () => {
+    const hugged = new Set(satellites.map((x) => x.it));
+    const length = (it: Item) => {
+      let len = 0;
+      for (const { pad, net } of padsOf(it)) {
+        if (!net || innerPlaneNets.has(net)) continue;
+        const c = netCentre(net, it);
+        if (!c) continue;
+        const p = padPos(it, pad.x, pad.y);
+        len += Math.hypot(c.x - p.x, c.y - p.y);
+      }
+      return len;
+    };
+    // twice: two connected parts (a resistor and its LED) each see the other's final side
+    for (let pass = 0; pass < 2; pass++) {
+      for (const it of items) {
+        if (it.fixed || hugged.has(it) || !isTwoPin(it.card)) continue;
+        const was = it.rot;
+        const before = length(it);
+        it.rot = (was + 180) % 360;
+        if (length(it) >= before - 1e-6) it.rot = was;
+      }
     }
   };
 
@@ -658,6 +692,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }
     orient(items.filter((it) => it.fixed && it.freeRot && !before.has(it)));
   }
+  flipTwoPin();
   settle();
   alignSimilar(items, contain);
 
