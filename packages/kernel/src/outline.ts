@@ -8,12 +8,22 @@
  */
 
 export type OutlineResult = { ok: true; pts: number[] } | { ok: false; reason: string };
+export type FiguresResult = { ok: true; figs: number[][] } | { ok: false; reason: string };
 
 /** The polygon of an SVG path's first figure (flat x, y list, in the path's own units). */
 export function pathPolygon(d: string): OutlineResult {
+  const r = pathFigures(d);
+  if (!r.ok) return r;
+  if (r.figs.length > 1) return { ok: false, reason: 'the path has more than one figure; give the outline alone (cutouts are added with add_cutout)' };
+  return { ok: true, pts: r.figs[0]! };
+}
+
+/** Every figure of an SVG path as a closed polygon (flat x, y lists, in the path's own units). */
+export function pathFigures(d: string): FiguresResult {
+  const figs: number[][] = [];
   const tokens = d.match(/[MmLlHhVvCcSsQqTtAaZz]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g);
   if (!tokens?.length) return { ok: false, reason: 'the path is empty' };
-  const pts: number[] = [];
+  let pts: number[] = [];
   let i = 0;
   let cmd = '';
   let x = 0;
@@ -23,8 +33,14 @@ export function pathPolygon(d: string): OutlineResult {
   let cx = 0; // last control point (for S and T)
   let cy = 0;
   let prev = '';
-  let figures = 0;
   let closed = false;
+  /** End the current figure (the closing point repeating the first is dropped). */
+  const endFigure = () => {
+    if (pts.length >= 4 && Math.abs(pts[0]! - pts.at(-2)!) < 1e-9 && Math.abs(pts[1]! - pts.at(-1)!) < 1e-9) pts.splice(-2);
+    if (pts.length >= 6) figs.push(pts);
+    pts = [];
+    closed = false;
+  };
   const num = () => {
     const t = tokens[i++];
     if (t === undefined || /[a-z]/i.test(t)) throw new Error(`a number is missing after "${cmd}"`);
@@ -94,12 +110,7 @@ export function pathPolygon(d: string): OutlineResult {
       const oy = rel ? y : 0;
       switch (cmd.toUpperCase()) {
         case 'M': {
-          if (pts.length && !closed) closed = true; // a second figure: the first one ends here
-          if (closed && pts.length) {
-            figures++;
-            i = tokens.length;
-            break;
-          }
+          if (pts.length) endFigure(); // a new figure: the current one ends here
           x = ox + num();
           y = oy + num();
           sx = x;
@@ -168,10 +179,9 @@ export function pathPolygon(d: string): OutlineResult {
   } catch (e) {
     return { ok: false, reason: (e as Error).message };
   }
-  // the closing point repeats the first: drop it
-  if (pts.length >= 4 && Math.abs(pts[0]! - pts.at(-2)!) < 1e-9 && Math.abs(pts[1]! - pts.at(-1)!) < 1e-9) pts.splice(-2);
-  if (figures) return { ok: false, reason: 'the path has more than one figure; give the outline alone (cutouts are added with add_cutout)' };
-  return { ok: true, pts };
+  endFigure();
+  if (!figs.length) return { ok: false, reason: 'the path has no closed figure with at least 3 points' };
+  return { ok: true, figs };
 }
 
 /**

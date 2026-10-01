@@ -3,7 +3,7 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
-import { boardPolygon, cutoutPolygon, type BoardPad, type BoardView, type CopperLayer } from '@tracewise/schema';
+import { boardPolygon, cutoutPolygon, figureDepths, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer } from '@tracewise/schema';
 import { textStrokes, textWidth } from './font.ts';
 
 export interface FabFile {
@@ -62,6 +62,27 @@ class Gerber {
     }
     this.body.push('%LPD*%');
     for (const a of sh.adds) this.line(a.pts, a.w);
+  }
+  /** One closed polygon as a region, in dark or clear polarity. */
+  region(pts: number[], clear = false) {
+    if (pts.length < 6) return;
+    if (clear) this.body.push('%LPC*%');
+    this.body.push('G36*', `${this.xy(pts[0]!, pts[1]!)}D02*`);
+    for (let i = 2; i + 1 < pts.length; i += 2) this.body.push(`${this.xy(pts[i]!, pts[i + 1]!)}D01*`);
+    this.body.push(`${this.xy(pts[0]!, pts[1]!)}D01*`, 'G37*');
+    if (clear) this.body.push('%LPD*%');
+  }
+  polarity(clear: boolean) {
+    this.body.push(clear ? '%LPC*%' : '%LPD*%');
+  }
+  /** A silkscreen graphic: filled figures (outermost first, holes cleared) or closed outlines. */
+  graphic(g: BoardGraphic) {
+    if (g.mode === 'outline') {
+      for (const p of g.polys) this.line([...p, p[0]!, p[1]!], g.line);
+      return;
+    }
+    const depth = figureDepths(g.polys);
+    g.polys.map((p, i) => ({ p, d: depth[i]! })).sort((a, b) => a.d - b.d).forEach(({ p, d }) => this.region(p, d % 2 === 1));
   }
   /** Filled rectangles as regions (copper pours). */
   regions(rects: number[]) {
@@ -134,8 +155,17 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
     files.push({ name: `${base}-${side === 'Top' ? 'F' : 'B'}_Paste.gbr`, content: paste.toString() });
   }
 
-  /* silkscreen: body outlines and refdes, kept off pads */
+  /* silkscreen: graphics (logos), body outlines and refdes, kept off pads */
   const silk = new Gerber(h, ['FileFunction,Legend,Top', 'FilePolarity,Positive']);
+  // graphics first; then the pads (with their clearance) are cleared out of them
+  const topGraphics = (b.graphics ?? []).filter((g) => g.side === 'top');
+  for (const g of topGraphics) silk.graphic(g);
+  if (topGraphics.length) {
+    silk.polarity(true);
+    for (const p of pads) if (p.npth || onLayer(p, 'F.Cu')) silk.pad(p.npth ? { ...p, w: p.drill!, h: p.drill!, shape: 'round' } : p, SILK_TO_PAD);
+    for (const v of b.vias) silk.circle(v.x, v.y, v.pad + 2 * SILK_TO_PAD);
+    silk.polarity(false);
+  }
   const keepOff = [
     ...pads.map((p) => ({ x0: p.x - p.w / 2 - SILK_TO_PAD - SILK_WIDTH / 2, y0: p.y - p.h / 2 - SILK_TO_PAD - SILK_WIDTH / 2, x1: p.x + p.w / 2 + SILK_TO_PAD + SILK_WIDTH / 2, y1: p.y + p.h / 2 + SILK_TO_PAD + SILK_WIDTH / 2 })),
     // and off vias (ink on a via's ring prints badly)
@@ -193,6 +223,17 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
     }
   }
   files.push({ name: `${base}-F_Silkscreen.gbr`, content: silk.toString() });
+  // bottom silkscreen: only graphics put there (parts are on top)
+  const bottomGraphics = (b.graphics ?? []).filter((g) => g.side === 'bottom');
+  if (bottomGraphics.length) {
+    const bsilk = new Gerber(h, ['FileFunction,Legend,Bot', 'FilePolarity,Positive']);
+    for (const g of bottomGraphics) bsilk.graphic(g);
+    bsilk.polarity(true);
+    for (const p of pads) if (p.npth || onLayer(p, 'B.Cu')) bsilk.pad(p.npth ? { ...p, w: p.drill!, h: p.drill!, shape: 'round' } : p, SILK_TO_PAD);
+    for (const v of b.vias) bsilk.circle(v.x, v.y, v.pad + 2 * SILK_TO_PAD);
+    bsilk.polarity(false);
+    files.push({ name: `${base}-B_Silkscreen.gbr`, content: bsilk.toString() });
+  }
 
   /* outline */
   // the board outline (rounded corners too) and every milled cutout, as closed contours

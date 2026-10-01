@@ -35,6 +35,8 @@ import {
   insideBoard,
   insidePolygon,
   placeCutout,
+  placeGraphic,
+  figureDepths,
 } from '@tracewise/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@tracewise/parts';
 import { cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
@@ -804,6 +806,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
 
   /* ---- result ---- */
   const boardCutouts = cutouts.map((c) => placeCutout(c, w, h));
+  const boardGraphics = (settings.graphics ?? []).map((g) => placeGraphic(g, w, h));
   const parts: BoardPart[] = [
     ...items.map((it) => {
       const pa = parent.get(it);
@@ -812,6 +815,26 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     ...holeParts,
   ];
   const diagnostics = placementChecks(parts, w, h, rules.edgeClearance, { outline: { w, h }, cornerRadius: cornerR, shape }, boardCutouts);
+  // silkscreen graphics: wholly on the board (the real outline, not its box), and clear of parts?
+  const outlineOf = { outline: { w, h }, cornerRadius: cornerR, shape };
+  for (const g of boardGraphics) {
+    const label = `Silkscreen graphic ${g.id}${g.name ? ` (${g.name})` : ''}`;
+    const pts = g.polys.flatMap((p) => p.map((_, i) => i).filter((i) => i % 2 === 0).map((i) => [p[i]!, p[i + 1]!] as const));
+    const off = pts.filter(([x, y]) => insideBoard(outlineOf, x, y) < 0 || boardCutouts.some((c) => cutoutDistance(c, x, y) < 0));
+    g.inside = off.length === 0;
+    if (!g.inside) diagnostics.push({ code: 'DRC.SILK_OUTSIDE', severity: 'warning', message: `${label} reaches past the board outline${boardCutouts.length ? ' or into a cutout' : ''} (${Math.round((100 * off.length) / pts.length)} % of its contour); that part is not printed. Move or shrink it (edit_graphic).`, entities: [g.id] });
+    const depth = figureDepths(g.polys);
+    const inInk = (x: number, y: number) => g.polys.reduce((n, p, k) => n + (pointInPolygon(p, x, y) ? 1 : 0) * (depth[k]! % 2 === 0 ? 1 : -1), 0) > 0;
+    g.over = parts
+      .filter((p) => {
+        const c = p.courtyard;
+        if (c.x > g.bounds[2] || c.x + c.w < g.bounds[0] || c.y > g.bounds[3] || c.y + c.h < g.bounds[1]) return false;
+        if (pts.some(([x, y]) => x > c.x && x < c.x + c.w && y > c.y && y < c.y + c.h)) return true;
+        return g.mode === 'fill' && [[c.x, c.y], [c.x + c.w, c.y], [c.x, c.y + c.h], [c.x + c.w, c.y + c.h], [c.x + c.w / 2, c.y + c.h / 2]].some(([x, y]) => inInk(x!, y!));
+      })
+      .map((p) => p.refdes);
+    if (g.over.length) diagnostics.push({ code: 'DRC.SILK_OVER_PARTS', severity: 'warning', message: `${label} lies over ${g.over.join(', ')}; ink is kept off pads but covers the rest. Move it to a free spot (edit_graphic).`, entities: [g.id, ...g.over] });
+  }
   for (const ref of missing) {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board. Give it one from its datasheet drawing with set_footprint.`, entities: [ref] });
   }
@@ -837,6 +860,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     cornerRadius: cornerR,
     shape,
     cutouts: boardCutouts,
+    graphics: boardGraphics,
   };
 }
 
@@ -846,6 +870,16 @@ export function storedPlacement(b: BoardView): StoredPlacement {
     outline: { ...b.outline },
     parts: Object.fromEntries(b.parts.filter((p) => !p.componentId.startsWith('hole:')).map((p) => [p.componentId, { x: p.x, y: p.y, rot: p.rot }])),
   };
+}
+
+/** Whether a point lies inside a closed polygon (flat x, y list), even-odd. */
+function pointInPolygon(p: number[], x: number, y: number): boolean {
+  let hit = false;
+  for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) {
+    const [xi, yi, xj, yj] = [p[i]!, p[i + 1]!, p[j]!, p[j + 1]!];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
 }
 
 /** FNV-1a, as 8 hex digits. */

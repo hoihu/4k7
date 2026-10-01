@@ -860,3 +860,73 @@ describe('rename_part', () => {
     expect(k.transact({ summary: 'generic', ops: [{ op: 'rename_part', part: 'generic:R', mpn: 'X' }] }).status).toBe('rejected');
   });
 });
+
+describe('silkscreen graphics', () => {
+  // a ring: an outer circle and an inner one (a hole when filled), 10 units across
+  const ring = 'M 0 5 A 5 5 0 1 1 10 5 A 5 5 0 1 1 0 5 Z M 2.5 5 A 2.5 2.5 0 1 0 7.5 5 A 2.5 2.5 0 1 0 2.5 5 Z';
+
+  it('places a filled graphic from an SVG path, holes and all, and writes it to the silkscreen Gerber', async () => {
+    const k = buck();
+    const r = k.transact({ summary: 'logo', ops: [{ op: 'add_graphic', svg_path: ring, width_mm: 6, x_mm: -5, y_mm: -5, anchor: 'bottom_right', name: 'logo' }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    k.accept();
+    const b = k.board();
+    expect(b.graphics).toHaveLength(1);
+    const g = b.graphics[0]!;
+    expect(g.polys).toHaveLength(2);
+    expect(g.bounds[2] - g.bounds[0]).toBeCloseTo(6, 1);
+    // centred 5 mm in from the bottom-right corner
+    expect((g.bounds[0] + g.bounds[2]) / 2).toBeCloseTo(b.outline.w - 5, 1);
+    expect((g.bounds[1] + g.bounds[3]) / 2).toBeCloseTo(b.outline.h - 5, 1);
+    const { gerbers } = await import('@tracewise/fab');
+    const silk = gerbers(b, 't').find((f) => f.name.endsWith('F_Silkscreen.gbr'))!.content;
+    // the outer figure filled, the inner one cleared
+    expect(silk.match(/G36\*/g)!.length).toBeGreaterThanOrEqual(2);
+    expect(silk).toContain('%LPC*%');
+  });
+
+  it('knows whether a graphic is on the board and clear of parts, and moves it with edit_graphic', () => {
+    const k = buck();
+    const b0 = k.board();
+    // half off the board's right edge
+    k.transact({ summary: 'off', ops: [{ op: 'add_graphic', svg_path: ring, width_mm: 6, x_mm: 0, y_mm: 0, anchor: 'right' }] });
+    let g = k.board().graphics[0]!;
+    expect(g.inside).toBe(false);
+    expect(k.board().diagnostics.some((x) => x.code === 'DRC.SILK_OUTSIDE')).toBe(true);
+    k.transact({ summary: 'in', ops: [{ op: 'edit_graphic', id: 'G1', dx_mm: -4, width_mm: 3 }] });
+    g = k.board().graphics[0]!;
+    expect(g.inside).toBe(true);
+    expect(g.bounds[2] - g.bounds[0]).toBeCloseTo(3, 1);
+    // right over a part
+    const u1 = b0.parts.find((p) => p.refdes === 'U1')!;
+    k.transact({ summary: 'over', ops: [{ op: 'edit_graphic', id: 'G1', anchor: 'top_left', x_mm: u1.x, y_mm: u1.y }] });
+    expect(k.board().graphics[0]!.over).toContain('U1');
+    expect(k.board().diagnostics.some((x) => x.code === 'DRC.SILK_OVER_PARTS')).toBe(true);
+  });
+
+  it('places saved artwork by name, at its saved size unless told otherwise', async () => {
+    const { registerArtwork, unregisterArtwork } = await import('../src/index.ts');
+    registerArtwork([{ id: 'dot', name: 'Dot', mode: 'fill', polys: [[-2, -2, 2, -2, 2, 2, -2, 2]], w: 4, h: 4 }]);
+    try {
+      const k = buck();
+      expect(k.transact({ summary: 'art', ops: [{ op: 'add_graphic', artwork: 'dot', x_mm: 8, y_mm: 8 }] }).status).toBe('ok');
+      expect(k.transact({ summary: 'art2', ops: [{ op: 'add_graphic', artwork: 'DOT', width_mm: 2, x_mm: 3, y_mm: 3 }] }).status).toBe('ok');
+      const [a, b] = k.board().graphics;
+      expect(a!.bounds[2] - a!.bounds[0]).toBeCloseTo(4, 3);
+      expect(b!.bounds[2] - b!.bounds[0]).toBeCloseTo(2, 3);
+      expect(a!.name).toBe('Dot');
+      expect(k.transact({ summary: 'none', ops: [{ op: 'add_graphic', artwork: 'nope', x_mm: 1, y_mm: 1 }] }).rejection?.candidates).toContain('Dot');
+    } finally {
+      unregisterArtwork('dot');
+    }
+  });
+
+  it('removes graphics, and rejects paths without a closed figure', () => {
+    const k = buck();
+    k.transact({ summary: 'logo', ops: [{ op: 'add_graphic', svg_path: ring, mode: 'outline', width_mm: 8, x_mm: 10, y_mm: 10 }] });
+    expect(k.board().graphics[0]!.mode).toBe('outline');
+    k.transact({ summary: 'gone', ops: [{ op: 'remove_graphic', id: 'G1' }] });
+    expect(k.board().graphics).toEqual([]);
+    expect(k.transact({ summary: 'bad', ops: [{ op: 'add_graphic', svg_path: 'M 0 0 L 5 5', x_mm: 1, y_mm: 1 }] }).status).toBe('rejected');
+  });
+});

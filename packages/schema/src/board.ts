@@ -44,6 +44,8 @@ export interface BoardSettings {
   shape?: number[];
   /** Milled cutouts inside the board (openings, slots). */
   cutouts?: Cutout[];
+  /** Graphics on the silkscreen (logos, clipart, decoration). */
+  graphics?: SilkGraphic[];
   /**
    * The placement as last proposed or adjusted (propose_layout, place, route store it). Later
    * layouts start from it, so a change moves only what it has to. Absent: proposed afresh.
@@ -86,6 +88,144 @@ export interface Cutout {
   r?: number;
   /** rect, slot: rotation, degrees clockwise. */
   angle?: number;
+}
+
+/**
+ * A graphic on the silkscreen, from an SVG path: filled (inner figures cut holes, even-odd, as in a
+ * logo) or drawn as outlines. Its figures are stored in mm centred on 0, 0; it is placed like a
+ * cutout (centre from an anchor point, turned by `angle`).
+ */
+export interface SilkGraphic {
+  /** "G1", "G2" … */
+  id: string;
+  name?: string;
+  side: 'top' | 'bottom';
+  mode: 'fill' | 'outline';
+  /** outline: the line width (mm). */
+  line?: number;
+  /** Closed figures, flat x, y lists in mm around 0, 0 (y down), not yet turned. */
+  polys: number[][];
+  /** Size of the figures' bounding box (mm). */
+  w: number;
+  h: number;
+  /** Centre, mm from the anchor point. */
+  x: number;
+  y: number;
+  anchor?: CutoutAnchor;
+  /** Rotation, degrees clockwise. */
+  angle?: number;
+}
+
+/** Saved artwork (artwork library): a graphic's figures, centred, in mm at its saved size. */
+export interface Artwork {
+  /** Stable key, e.g. "snowflake-fern". */
+  id: string;
+  name: string;
+  mode: 'fill' | 'outline';
+  line?: number;
+  polys: number[][];
+  w: number;
+  h: number;
+  /** Where it came from: "board G3", "logo.svg". */
+  source?: string;
+  /** A traced picture: the picture (a data URL, scaled down) and the settings, so it can be adjusted later. */
+  raster?: { src: string; widthMm: number; dotMm: number; threshold: number; invert: boolean; dither: boolean };
+}
+
+/** A silkscreen graphic placed on the board: absolute figures. */
+export interface BoardGraphic {
+  id: string;
+  name?: string;
+  side: 'top' | 'bottom';
+  mode: 'fill' | 'outline';
+  line: number;
+  polys: number[][];
+  /** x0, y0, x1, y1 */
+  bounds: [number, number, number, number];
+  /** Whether it lies wholly on the board (inside the outline, outside every cutout). */
+  inside?: boolean;
+  /** Parts it lies over (their courtyards); ink is kept off pads but covers the rest. */
+  over?: string[];
+}
+
+/** The absolute graphic for a board of w × h. */
+export function placeGraphic(g: SilkGraphic, w: number, h: number): BoardGraphic {
+  const a = g.anchor ?? 'top_left';
+  const cx = (a.endsWith('left') ? 0 : a.endsWith('right') ? w : w / 2) + g.x;
+  const cy = (a.startsWith('top') ? 0 : a.startsWith('bottom') ? h : h / 2) + g.y;
+  const t = ((g.angle ?? 0) * Math.PI) / 180;
+  const [c, s] = [Math.cos(t), Math.sin(t)];
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+  const polys = g.polys.map((p) => p.map((v, i) => (i % 2 === 0 ? r3(cx + v * c - p[i + 1]! * s) : r3(cy + p[i - 1]! * s + v * c))));
+  const xs = polys.flatMap((p) => p.filter((_, i) => i % 2 === 0));
+  const ys = polys.flatMap((p) => p.filter((_, i) => i % 2 === 1));
+  return {
+    id: g.id,
+    ...(g.name ? { name: g.name } : {}),
+    side: g.side,
+    mode: g.mode,
+    line: g.line ?? 0.2,
+    polys,
+    bounds: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+  };
+}
+
+/** How deeply each figure is nested in the others (0 = outermost): even = ink, odd = a hole, when filled. */
+export function figureDepths(polys: number[][]): number[] {
+  const inside = (x: number, y: number, p: number[]) => {
+    let hit = false;
+    for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) {
+      const [xi, yi, xj, yj] = [p[i]!, p[i + 1]!, p[j]!, p[j + 1]!];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+    }
+    return hit;
+  };
+  // a point just inside each figure (off its first edge's middle), so figures touching at a corner
+  // (traced pixel art) are told apart reliably
+  const probe = (p: number[]): [number, number] => {
+    const [x0, y0, x1, y1] = [p[0]!, p[1]!, p[2]!, p[3]!];
+    const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+    const e = len * 1e-3;
+    const [mx, my, nx, ny] = [(x0 + x1) / 2, (y0 + y1) / 2, -(y1 - y0) / len, (x1 - x0) / len];
+    return inside(mx + nx * e, my + ny * e, p) ? [mx + nx * e, my + ny * e] : [mx - nx * e, my - ny * e];
+  };
+  // only figures whose box holds the probe can contain it: a coarse grid of boxes keeps traced
+  // pictures (thousands of dots) fast
+  const boxes = polys.map((p) => {
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (let i = 0; i + 1 < p.length; i += 2) {
+      x0 = Math.min(x0, p[i]!);
+      x1 = Math.max(x1, p[i]!);
+      y0 = Math.min(y0, p[i + 1]!);
+      y1 = Math.max(y1, p[i + 1]!);
+    }
+    return [x0, y0, x1, y1] as const;
+  });
+  const gx0 = Math.min(...boxes.map((b) => b[0]));
+  const gy0 = Math.min(...boxes.map((b) => b[1]));
+  const span = Math.max(Math.max(...boxes.map((b) => b[2])) - gx0, Math.max(...boxes.map((b) => b[3])) - gy0, 1e-9);
+  const n = Math.max(1, Math.min(64, Math.round(Math.sqrt(polys.length))));
+  const cell = (v: number, o: number) => Math.min(n - 1, Math.max(0, Math.floor(((v - o) / span) * n)));
+  const grid = new Map<number, number[]>();
+  boxes.forEach((b, i) => {
+    for (let cx = cell(b[0], gx0); cx <= cell(b[2], gx0); cx++) {
+      for (let cy = cell(b[1], gy0); cy <= cell(b[3], gy0); cy++) {
+        const k = cy * n + cx;
+        const list = grid.get(k);
+        if (list) list.push(i);
+        else grid.set(k, [i]);
+      }
+    }
+  });
+  return polys.map((p, k) => {
+    const [x, y] = probe(p);
+    let depth = 0;
+    for (const m of grid.get(cell(y, gy0) * n + cell(x, gx0)) ?? []) {
+      const b = boxes[m]!;
+      if (m !== k && x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3] && inside(x, y, polys[m]!)) depth++;
+    }
+    return depth;
+  });
 }
 
 /** A cutout placed on the board: absolute centre, all sizes filled in. */
@@ -368,6 +508,8 @@ export interface BoardView {
   shape: number[] | null;
   /** Milled cutouts, placed on this outline. */
   cutouts: BoardCutout[];
+  /** Silkscreen graphics, placed on this outline. */
+  graphics: BoardGraphic[];
 }
 
 /** Compact board description for agents (design_query get_board). */
@@ -389,6 +531,17 @@ export function boardSummary(b: BoardView, routed = true) {
     mounting_holes: b.parts.filter((p) => p.componentId.startsWith('hole:')).map((p) => ({ id: p.refdes, x: p.x, y: p.y, diameter: p.pads[0]?.drill, plated: !p.pads[0]?.npth })),
     corner_radius_mm: b.cornerRadius,
     cutouts: b.cutouts.map((c) => ({ id: c.id, shape: c.shape, x: c.x, y: c.y, ...(c.shape === 'circle' ? { diameter: c.w } : { w: c.w, h: c.h }), ...(c.r ? { corner_radius: c.r } : {}), ...(c.angle ? { angle: c.angle } : {}) })),
+    silkscreen_graphics: b.graphics.map((g) => ({
+      id: g.id,
+      ...(g.name ? { name: g.name } : {}),
+      side: g.side,
+      mode: g.mode,
+      figures: g.polys.length,
+      bounds_mm: g.bounds,
+      centre_mm: [Math.round(((g.bounds[0] + g.bounds[2]) / 2) * 100) / 100, Math.round(((g.bounds[1] + g.bounds[3]) / 2) * 100) / 100],
+      inside_board: g.inside ?? true,
+      ...(g.over?.length ? { over_parts: g.over } : {}),
+    })),
     drc: b.diagnostics.map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
     note: 'Workflow: propose_layout (board size and placement), then adjustments (place = the user\'s choice for a part, kept relative to its parent part; lock: true pins it exactly; set_board for the size), then route as the last step. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',

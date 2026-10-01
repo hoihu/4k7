@@ -16,8 +16,22 @@
     onplace?: (refdes: string, x: number, y: number, rot?: number) => void;
     /** L on a selected part: lock it where it is, or unlock it. */
     onlock?: (refdes: string) => void;
+    /** A silkscreen graphic dragged by dx, dy (mm). */
+    ongraphic?: (id: string, dx: number, dy: number) => void;
   }
-  let { board, show, selection = [], hotNet = null, marker = null, onselect, onclear, onhovernet, onplace, onlock }: Props = $props();
+  let { board, show, selection = [], hotNet = null, marker = null, onselect, onclear, onhovernet, onplace, onlock, ongraphic }: Props = $props();
+
+  /* dragging a silkscreen graphic: like a part, it stays where it was dropped until the board shows it there */
+  let gfxDrag = $state<{ id: string; sx: number; sy: number; dx: number; dy: number; moved: boolean } | null>(null);
+  let gfxDropped = $state<{ id: string; x0: number; y0: number; dx: number; dy: number } | null>(null);
+  const gfxStill = (id: string) => {
+    const g = board?.graphics?.find((x) => x.id === id);
+    return !!g && !!gfxDropped && Math.abs(g.bounds[0] - gfxDropped.x0) < 1e-6 && Math.abs(g.bounds[1] - gfxDropped.y0) < 1e-6;
+  };
+  $effect(() => {
+    if (gfxDropped && !gfxStill(gfxDropped.id)) gfxDropped = null;
+  });
+  const gfxOffset = (id: string) => (gfxDrag?.id === id ? gfxDrag : gfxDropped?.id === id && gfxStill(id) ? gfxDropped : null);
 
   /** A closed polygon (flat x, y list) as SVG path data. */
   const polyPath = (pts: number[]) => pts.reduce((d, v, i) => (i % 2 ? `${d} ${v}` : `${d}${i ? ' L' : 'M'} ${v}`), '') + ' Z';
@@ -108,9 +122,22 @@
       partDrag = { ref, sx: p.x, sy: p.y, dx: 0, dy: 0, moved: false };
       return;
     }
+    const gfx = e.button === 0 && ongraphic ? (e.target as Element).closest('[data-gfx]')?.getAttribute('data-gfx') : null;
+    if (gfx) {
+      const p = toSvg(e);
+      gfxDrag = { id: gfx, sx: p.x, sy: p.y, dx: 0, dy: 0, moved: false };
+      return;
+    }
     drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false };
   }
   function onpointermove(e: PointerEvent) {
+    if (gfxDrag) {
+      const p = toSvg(e);
+      gfxDrag.dx = snap(p.x - gfxDrag.sx);
+      gfxDrag.dy = snap(p.y - gfxDrag.sy);
+      if (Math.abs(gfxDrag.dx) + Math.abs(gfxDrag.dy) >= 0.2) gfxDrag.moved = true;
+      return;
+    }
     if (partDrag) {
       const p = toSvg(e);
       const dx = snap(p.x - partDrag.sx);
@@ -133,6 +160,17 @@
     vb = { ...vb, x: drag.vx - dx * s, y: drag.vy - dy * s };
   }
   function onpointerup(e: PointerEvent) {
+    if (gfxDrag) {
+      const d = gfxDrag;
+      gfxDrag = null;
+      const g = board?.graphics?.find((x) => x.id === d.id);
+      if (d.moved && g) {
+        gfxDropped = { id: d.id, x0: g.bounds[0], y0: g.bounds[1], dx: d.dx, dy: d.dy };
+        setTimeout(() => gfxDropped?.id === d.id && (gfxDropped = null), 5000);
+        ongraphic?.(d.id, d.dx, d.dy);
+      }
+      return;
+    }
     if (partDrag) {
       const d = partDrag;
       partDrag = null;
@@ -233,6 +271,25 @@
     {#if show.courtyard}
       {#each board.parts as p (p.componentId)}
         <rect class="court" x={p.courtyard.x} y={p.courtyard.y} width={p.courtyard.w} height={p.courtyard.h} />
+      {/each}
+    {/if}
+
+    {#if show.silk}
+      <!-- silkscreen graphics (logos): filled even-odd (inner figures are holes) or outlines; the bottom side faded -->
+      {#each board.graphics ?? [] as g (g.id)}
+        {@const o = gfxOffset(g.id)}
+        <path
+          class="sgfx {g.mode}"
+          class:bottom={g.side === 'bottom'}
+          class:movable={!!ongraphic}
+          class:dragging={gfxDrag?.id === g.id}
+          class:off={g.inside === false}
+          data-gfx={g.id}
+          transform={o ? `translate(${o.dx} ${o.dy})` : undefined}
+          d={g.polys.map((p) => polyPath(p)).join(' ')}
+          fill-rule="evenodd"
+          stroke-width={g.mode === 'outline' ? g.line : undefined}
+        ><title>{g.id}{g.name ? ` · ${g.name}` : ''} ({g.side} silkscreen){g.inside === false ? ' · reaches past the board' : ''}{g.over?.length ? ` · over ${g.over.join(', ')}` : ''}{ongraphic ? ' · drag to move' : ''}</title></path>
       {/each}
     {/if}
 
@@ -366,6 +423,15 @@
   .part { cursor: grab; }
   .part.dragging { cursor: grabbing; opacity: 0.85; }
   .part.dragging .hit { fill: rgba(111, 181, 255, 0.18); }
+  .sgfx { pointer-events: none; }
+  .sgfx.movable { pointer-events: all; cursor: grab; }
+  .sgfx.movable:hover { filter: drop-shadow(0 0 0.3px #9fd2ff); opacity: 1; }
+  .sgfx.dragging { cursor: grabbing; opacity: 0.7; }
+  .sgfx.off { fill: #ffb27a; }
+  .sgfx.outline.off { stroke: #ffb27a; fill: none; }
+  .sgfx.fill { fill: #e9ecef; stroke: none; opacity: 0.85; }
+  .sgfx.outline { fill: none; stroke: #e9ecef; stroke-linejoin: round; opacity: 0.85; }
+  .sgfx.bottom { opacity: 0.3; }
   /* placement state: the markers (always) and the overlay (Placement on) */
   .mark { pointer-events: none; }
   .mark.choice circle { fill: #6fb5ff; stroke: #0b0f14; stroke-width: 1.5; }

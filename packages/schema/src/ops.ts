@@ -175,6 +175,44 @@ export const AddCutoutOp = z.object({
   angle_deg: z.number().optional().describe('rect, slot: rotation, degrees clockwise (default 0: along x)'),
 });
 
+export const AddGraphicOp = z.object({
+  op: z.literal('add_graphic'),
+  svg_path: z.string().min(1).optional().describe('SVG path data of the graphic (any units; M L H V C S Q T A Z, absolute or relative; several figures allowed). Filled: figures inside figures are holes (even-odd), as in a logo'),
+  artwork: z.string().optional().describe('Instead of svg_path: a saved artwork by name (the artwork library); without width/height it keeps its saved size'),
+  mode: z.enum(['fill', 'outline']).optional().describe('fill (default; an artwork: its own): the figures are filled with ink; outline: only their contours are drawn'),
+  line_mm: z.number().min(0.1).optional().describe('outline: the line width (default 0.2; at least 0.15 prints reliably)'),
+  width_mm: z.number().positive().optional().describe('Scale the graphic to this width (with only one of width/height the other keeps the proportions; neither: path units are mm)'),
+  height_mm: z.number().positive().optional(),
+  x_mm: z.number().describe('Centre x, measured from the anchor point'),
+  y_mm: z.number().describe('Centre y, measured from the anchor point (y down)'),
+  anchor: cutoutAnchor.optional().describe('What x/y are measured from (default top_left): a corner, an edge\'s middle or the centre; it then follows the board size'),
+  angle_deg: z.number().optional().describe('Rotation, degrees clockwise'),
+  side: z.enum(['top', 'bottom']).optional().describe('Silkscreen side (default top)'),
+  name: z.string().optional().describe('What it is, e.g. "logo"'),
+});
+
+export const EditGraphicOp = z.object({
+  op: z.literal('edit_graphic'),
+  id: z.string().describe('Graphic id ("G1")'),
+  dx_mm: z.number().optional().describe('Move by this much (x right)'),
+  dy_mm: z.number().optional().describe('Move by this much (y down)'),
+  x_mm: z.number().optional().describe('New centre x from the anchor'),
+  y_mm: z.number().optional().describe('New centre y from the anchor'),
+  anchor: cutoutAnchor.optional().describe('Measure from another anchor (x/y then from it; without x/y it keeps its place)'),
+  angle_deg: z.number().optional().describe('New rotation, degrees clockwise'),
+  width_mm: z.number().positive().optional().describe('Scale to this width (height in proportion unless given)'),
+  height_mm: z.number().positive().optional(),
+  mode: z.enum(['fill', 'outline']).optional(),
+  line_mm: z.number().min(0.1).optional(),
+  side: z.enum(['top', 'bottom']).optional(),
+  name: z.string().optional(),
+});
+
+export const RemoveGraphicOp = z.object({
+  op: z.literal('remove_graphic'),
+  id: z.string().describe('Graphic id ("G1"), or "all"'),
+});
+
 export const RemoveCutoutOp = z.object({
   op: z.literal('remove_cutout'),
   id: z.string().describe('Cutout id ("CO1"), or "all"'),
@@ -248,6 +286,9 @@ export const EditOp = z.discriminatedUnion('op', [
   RemoveHoleOp,
   AddCutoutOp,
   RemoveCutoutOp,
+  AddGraphicOp,
+  EditGraphicOp,
+  RemoveGraphicOp,
   SetOutlineOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;

@@ -17,11 +17,12 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type TokenCount } from '@tracewise/schema';
+import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
+import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderSchematicPng } from './snapshot.ts';
 import {
   DEFAULT_SETTINGS,
@@ -104,6 +105,7 @@ class AppState {
   private kernel = createKernel();
   /** Datasheet import (Parts view). */
   ingest = new IngestState(this.kernel);
+  artwork = new ArtworkLibrary(this.kernel);
   private agent!: Agent;
   private abort: AbortController | null = null;
   private seq = 1;
@@ -126,6 +128,7 @@ class AppState {
       }
     }
     await this.ingest.init().catch((e: Error) => this.flash(`Could not load imported parts: ${e.message}`));
+    await this.artwork.init().catch((e: Error) => this.flash(`Could not load the artwork library: ${e.message}`));
     await this.ingest.adoptFootprints(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
     this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget });
     this.settingsChannel?.addEventListener('message', (e: MessageEvent<{ type: string; code?: string }>) => {
@@ -433,6 +436,46 @@ class AppState {
         const out = await this.importPart(args.data);
         log(`import · ${args.data.mpn}`, !out.isError, out.content[0]?.type === 'text' ? out.content[0].text.split('\n')[0]! : '');
         return out;
+      }
+      case 'artwork': {
+        const args = ArtworkInput.safeParse(input);
+        if (!args.success) return text(args.error.message, true);
+        const a = args.data;
+        try {
+          switch (a.action) {
+            case 'list': {
+              const items = this.artwork.items;
+              log('artwork · list', true, `${items.length} saved`);
+              return text(items.length ? items.map((x) => `- "${x.name}": ${x.w} × ${x.h} mm, ${x.mode === 'fill' ? 'filled' : `outlines ${x.line} mm`}, ${x.polys.length} figure(s)${x.source ? ` (from ${x.source})` : ''}`).join('\n') : 'The artwork library is empty.');
+            }
+            case 'save': {
+              const design = await this.kernel.draftDesign();
+              const g = design.board?.graphics?.find((x) => x.id.toUpperCase() === a.graphic.toUpperCase());
+              if (!g) return text(`No silkscreen graphic "${a.graphic}" on the board (${(design.board?.graphics ?? []).map((x) => x.id).join(', ') || 'none'}).`, true);
+              const saved = await this.artwork.saveGraphic(g, a.name.trim());
+              log('artwork · save', true, `${g.id} as "${saved.name}"`);
+              this.flash(`Saved "${saved.name}" to the artwork library`);
+              return text(`Saved ${g.id} as "${saved.name}" (${saved.w} × ${saved.h} mm). Place it with add_graphic artwork: "${saved.name}".`);
+            }
+            case 'rename': {
+              const x = this.artwork.find(a.name);
+              if (!x) return text(`No saved artwork "${a.name}".`, true);
+              await this.artwork.rename(x.id, a.to.trim());
+              log('artwork · rename', true, `"${a.name}" → "${a.to}"`);
+              return text(`Renamed "${a.name}" to "${a.to}".`);
+            }
+            case 'delete': {
+              const x = this.artwork.find(a.name);
+              if (!x) return text(`No saved artwork "${a.name}".`, true);
+              await this.artwork.remove(x.id);
+              log('artwork · delete', true, `"${x.name}"`);
+              return text(`Deleted "${x.name}" from the library; boards that use it keep their copy.`);
+            }
+          }
+        } catch (e) {
+          return text((e as Error).message, true);
+        }
+        break;
       }
       case 'pending_import': {
         const args = PendingImportInput.safeParse(input);

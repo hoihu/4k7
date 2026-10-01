@@ -2,11 +2,11 @@
  * Local-first persistence in IndexedDB. The API key is encrypted with a non-extractable
  * AES-GCM key that never leaves this browser profile.
  */
-import type { Design, PartCard } from '@tracewise/schema';
+import type { Artwork, Design, PartCard } from '@tracewise/schema';
 
 const DB = 'tracewise';
-/** v2: 'library' store for imported parts; v3: 'datasheets' (PDFs by SHA-256). */
-const VERSION = 3;
+/** v2: 'library' store for imported parts; v3: 'datasheets' (PDFs by SHA-256); v4: 'artwork' (silkscreen graphics). */
+const VERSION = 4;
 
 /** Last storage problem in this browser, for diagnostics ('ok' when saving works). */
 export let storageHealth = 'ok';
@@ -31,7 +31,7 @@ function open(): Promise<IDBDatabase> {
     };
     req.onupgradeneeded = () => {
       const db = req.result;
-      for (const s of ['projects', 'settings', 'keys', 'library', 'datasheets']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+      for (const s of ['projects', 'settings', 'keys', 'library', 'datasheets', 'artwork']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
     };
     req.onsuccess = () => {
       clearTimeout(timer);
@@ -103,6 +103,25 @@ export async function saveLibraryPart(card: PartCard): Promise<void> {
 
 export async function deleteLibraryPart(id: string): Promise<void> {
   await tx('library', 'readwrite', (s) => s.delete(id));
+}
+
+/* -------------------------------- artwork -------------------------------- */
+
+/** Saved silkscreen artwork (logos, clipart), kept in this browser for every project. */
+export async function loadArtwork(): Promise<Artwork[]> {
+  try {
+    return (await tx<Artwork[]>('artwork', 'readonly', (s) => s.getAll() as IDBRequest<Artwork[]>)) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveArtwork(a: Artwork): Promise<void> {
+  await put('artwork', a.id, JSON.parse(JSON.stringify(a)) as Artwork);
+}
+
+export async function deleteArtwork(id: string): Promise<void> {
+  await tx('artwork', 'readwrite', (s) => s.delete(id));
 }
 
 /** Datasheets of imported parts, so every value can be shown on its page. */

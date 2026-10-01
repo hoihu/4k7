@@ -232,6 +232,55 @@ function viewerCore(canvas: HTMLCanvasElement) {
   };
 }
 
+/** Silkscreen graphics of one side drawn into an alpha texture (white = ink), kept off pads and vias. */
+function silkTexture(graphics: BoardView['graphics'], b: BoardView, side: 'top' | 'bottom'): THREE.CanvasTexture | null {
+  const { w, h } = b.outline;
+  const k = Math.min(25, 4096 / Math.max(w, h));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(w * k));
+  canvas.height = Math.max(1, Math.round(h * k));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.scale(k, k);
+  ctx.fillStyle = '#fff';
+  ctx.strokeStyle = '#fff';
+  ctx.lineJoin = 'round';
+  for (const g of graphics) {
+    ctx.beginPath();
+    for (const p of g.polys) {
+      ctx.moveTo(p[0]!, p[1]!);
+      for (let i = 2; i + 1 < p.length; i += 2) ctx.lineTo(p[i]!, p[i + 1]!);
+      ctx.closePath();
+    }
+    if (g.mode === 'fill') ctx.fill('evenodd');
+    else {
+      ctx.lineWidth = g.line;
+      ctx.stroke();
+    }
+  }
+  // no ink on pads (with their clearance) or vias
+  ctx.globalCompositeOperation = 'destination-out';
+  const gap = 0.15;
+  for (const part of b.parts) {
+    for (const p of part.pads) {
+      if (!p.drill && !p.npth && !p.layers.includes(side === 'top' ? 'F.Cu' : 'B.Cu')) continue;
+      if (p.shape === 'round' || p.npth) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, (p.npth ? p.drill! : Math.min(p.w, p.h)) / 2 + gap, 0, Math.PI * 2);
+        ctx.fill();
+      } else ctx.fillRect(p.x - p.w / 2 - gap, p.y - p.h / 2 - gap, p.w + 2 * gap, p.h + 2 * gap);
+    }
+  }
+  for (const v of b.vias) {
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, v.pad / 2 + gap, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 4;
+  return tex;
+}
+
 /** A pour's exact shape drawn into an alpha texture (white = copper), ~25 px/mm. */
 function zoneTexture(z: BoardView['zones'][number], w: number, h: number, drills: { x: number; y: number; d: number }[] = []): THREE.CanvasTexture | null {
   const k = Math.min(25, 4096 / Math.max(w, h));
@@ -530,6 +579,26 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, redraw?
     sheet.rotation.x = bottom ? Math.PI / 2 : -Math.PI / 2;
     // just outside the board surface, under the tracks
     sheet.position.set(w / 2, bottom ? -THICKNESS - CU * 0.3 : CU * 0.3, h / 2);
+    sheet.userData.dispose = () => {
+      tex.dispose();
+      mat.dispose();
+    };
+    group.add(sheet);
+  }
+
+  /* silkscreen graphics (logos): white ink on the solder mask */
+  for (const side of ['top', 'bottom'] as const) {
+    const gs = (b.graphics ?? []).filter((g) => g.side === side);
+    if (!gs.length) continue;
+    const bottom = side === 'bottom';
+    const tex = silkTexture(gs, b, side);
+    if (!tex) continue;
+    if (bottom) tex.flipY = false;
+    const mat = new THREE.MeshStandardMaterial({ color: 0xf2f2ee, roughness: 0.8, metalness: 0, alphaMap: tex, alphaTest: 0.5, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const sheet = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    sheet.rotation.x = bottom ? Math.PI / 2 : -Math.PI / 2;
+    // on the solder mask, above the tracks under it
+    sheet.position.set(w / 2, bottom ? -THICKNESS - CU * 1.3 : CU * 1.3, h / 2);
     sheet.userData.dispose = () => {
       tex.dispose();
       mat.dispose();

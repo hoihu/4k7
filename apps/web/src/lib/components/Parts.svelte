@@ -5,6 +5,8 @@
   import { USAGE_TITLE, usageLine } from '../usage.ts';
   import type { Datasheet } from '../ingest.svelte.ts';
   import type { TopView } from '../three-body.ts';
+  import { artworkSvg, keepPicture, rasterize, type RasterOptions } from '../artwork.svelte.ts';
+  import type { Artwork } from '@tracewise/schema';
   import Body3DView from './Body3DView.svelte';
   import DatasheetView from './DatasheetView.svelte';
   import FootprintView from './FootprintView.svelte';
@@ -14,7 +16,7 @@
   let q = $state('');
   let current = $state<PartCard>(BUILTIN_PARTS.find((p) => p.id === 'ti:TPS54331DR') ?? BUILTIN_PARTS[0]!);
   /** 'import' shows the datasheet importer (form, progress, review) instead of a part. */
-  let mode = $state<'part' | 'import'>(ingest.phase === 'idle' ? 'part' : 'import');
+  let mode = $state<'part' | 'import' | 'art' | 'raster'>(ingest.phase === 'idle' ? 'part' : 'import');
   let hoverPin = $state<string | null>(null);
 
   const userIds = $derived(new Set(ingest.library.map((p) => p.id)));
@@ -55,9 +57,9 @@
   let open = $state<Record<string, boolean>>(loadOpen());
   function loadOpen(): Record<string, boolean> {
     try {
-      return { design: true, mine: true, basics: true, ref: false, ...JSON.parse(localStorage.getItem('tw.parts.open') ?? '{}') };
+      return { design: true, mine: true, basics: true, ref: false, art: true, ...JSON.parse(localStorage.getItem('tw.parts.open') ?? '{}') };
     } catch {
-      return { design: true, mine: true, basics: true, ref: false };
+      return { design: true, mine: true, basics: true, ref: false, art: true };
     }
   }
   function toggle(k: string) {
@@ -69,6 +71,115 @@
     }
   }
   const select = (p: PartCard) => ((current = p), (mode = 'part'), (editing = null));
+
+  /* the artwork library: saved silkscreen graphics, SVG import and export */
+  const arts = $derived(app.artwork.items);
+  let artId = $state<string | null>(null);
+  const art = $derived(arts.find((a) => a.id === artId) ?? null);
+  let artName = $state<string | null>(null);
+  let svgPicker: HTMLInputElement | undefined = $state();
+  const artPath = (a: Artwork) => a.polys.map((p) => `M${p.slice(0, 2).join(' ')}L${p.slice(2).join(' ')}Z`).join('');
+  const artBox = (a: Artwork, m = 0.08) => {
+    const pad = Math.max(a.w, a.h) * m + (a.mode === 'outline' ? (a.line ?? 0.2) : 0);
+    return `${-a.w / 2 - pad} ${-a.h / 2 - pad} ${a.w + 2 * pad} ${a.h + 2 * pad}`;
+  };
+  async function importSvg(f: File | undefined | null) {
+    if (!f) return;
+    try {
+      const a = await app.artwork.importSvg(f);
+      artId = a.id;
+      mode = 'art';
+      app.flash(`Imported "${a.name}" (${a.w} × ${a.h} mm)`);
+    } catch (e) {
+      app.flash((e as Error).message);
+    }
+    if (svgPicker) svgPicker.value = '';
+  }
+  function exportSvg(a: Artwork) {
+    const url = URL.createObjectURL(new Blob([artworkSvg(a)], { type: 'image/svg+xml' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${a.name.replace(/[^\w.-]+/g, '_')}.svg`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+  /* a picture (PNG, JPG …) as black-and-white dots, previewed live, then traced into artwork */
+  let imgPicker: HTMLInputElement | undefined = $state();
+  /** The picture being turned into dots; `replace`: adjusting that saved artwork. */
+  let raster = $state<{ name: string; file: string; img: ImageBitmap; src: string; o: RasterOptions; replace?: string } | null>(null);
+  let rasterCanvas: HTMLCanvasElement | undefined = $state();
+  let rasterBusy = $state(false);
+  const rasterGrid = $derived(raster ? rasterize(raster.img, raster.o) : null);
+  $effect(() => {
+    const g = rasterGrid;
+    const c = rasterCanvas;
+    if (!g || !c) return;
+    c.width = g.cols;
+    c.height = g.rows;
+    const ctx = c.getContext('2d')!;
+    const im = ctx.createImageData(g.cols, g.rows);
+    for (let i = 0; i < g.ink.length; i++) {
+      const v = g.ink[i] ? 20 : 235;
+      im.data.set([v, v, v, 255], i * 4);
+    }
+    ctx.putImageData(im, 0, 0);
+  });
+  async function pickImage(f: File | undefined | null) {
+    if (imgPicker) imgPicker.value = '';
+    if (!f) return;
+    try {
+      const img = await createImageBitmap(f);
+      raster = { name: f.name.replace(/\.[a-z0-9]+$/i, ''), file: f.name, img, src: keepPicture(img), o: { widthMm: 20, dotMm: 0.2, threshold: 128, invert: false, dither: false } };
+      mode = 'raster';
+    } catch {
+      app.flash('That picture could not be read (PNG, JPG, GIF, WebP or BMP).');
+    }
+  }
+  async function saveRaster() {
+    if (!raster || !rasterGrid) return;
+    rasterBusy = true;
+    try {
+      const a = await app.artwork.saveRaster(raster.name.trim() || raster.file, rasterGrid, $state.snapshot(raster.o), raster.file, raster.src, raster.replace);
+      raster.img.close();
+      raster = null;
+      artId = a.id;
+      mode = 'art';
+      app.flash(`Saved "${a.name}" (${a.w} × ${a.h} mm, ${a.polys.length} shapes)`);
+    } catch (e) {
+      app.flash((e as Error).message);
+    } finally {
+      rasterBusy = false;
+    }
+  }
+  /** Reopen a traced picture with its settings; saving replaces the artwork. */
+  async function adjustArt(a: Artwork) {
+    if (!a.raster) return;
+    try {
+      const img = await createImageBitmap(await (await fetch(a.raster.src)).blob());
+      const { src, ...o } = a.raster;
+      raster = { name: a.name, file: a.source ?? a.name, img, src, o, replace: a.id };
+      mode = 'raster';
+    } catch {
+      app.flash('The stored picture could not be read.');
+    }
+  }
+  async function commitArtName() {
+    const a = art;
+    const name = artName?.trim();
+    artName = null;
+    if (!a || !name || name === a.name) return;
+    try {
+      await app.artwork.rename(a.id, name);
+    } catch (e) {
+      app.flash((e as Error).message);
+    }
+  }
+  async function removeArt(a: Artwork) {
+    await app.artwork.remove(a.id);
+    artId = null;
+    mode = 'part';
+    app.flash(`Deleted "${a.name}"; boards that use it keep their copy`);
+  }
 
   /* renaming an imported part: its title or part number changes, its id (what designs refer to) stays */
   let editing = $state<'title' | 'mpn' | null>(null);
@@ -469,12 +580,80 @@
           {@render head('ref', 'Reference ICs', refICs.length)}
           {#if open.ref}<ul class="rows">{#each refICs as p (p.id)}{@render row(p)}{/each}</ul>{/if}
         {/if}
+        <div class="sechead">
+          {@render head('art', 'Artwork', arts.length)}
+          <button class="link imp-svg" title="Import a logo or clipart from an SVG file" onclick={() => svgPicker?.click()}>+ SVG</button>
+          <button class="link imp-svg" title="A picture (PNG, JPG …) as black-and-white dots" onclick={() => imgPicker?.click()}>+ Image</button>
+        </div>
+        <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden bind:this={imgPicker} onchange={(e) => void pickImage((e.currentTarget as HTMLInputElement).files?.[0])} />
+        <input type="file" accept=".svg,image/svg+xml" hidden bind:this={svgPicker} onchange={(e) => void importSvg((e.currentTarget as HTMLInputElement).files?.[0])} />
+        {#if open.art}
+          <ul class="rows">
+            {#each arts as a (a.id)}
+              <li>
+                <button class="r item" aria-current={mode === 'art' && artId === a.id} title="{a.name} · {a.w} × {a.h} mm" onclick={() => ((artId = a.id), (mode = 'art'), (artName = null))}>
+                  <svg class="thumb" viewBox={artBox(a)} aria-hidden="true">
+                    <path d={artPath(a)} fill-rule="evenodd" class={a.mode} stroke-width={a.mode === 'outline' ? Math.max(a.line ?? 0.2, Math.max(a.w, a.h) / 25) : undefined} />
+                  </svg>
+                  <span class="trunc name">{a.name}</span>
+                  <span class="pkg mono">{a.w}×{a.h}</span>
+                </button>
+              </li>
+            {:else}
+              <li class="none">Silkscreen graphics you save (ask the agent) or import from SVG appear here.</li>
+            {/each}
+          </ul>
+        {/if}
       {/if}
     </div>
   </div>
 
   <div class="pane detail">
-    {#if mode === 'part'}
+    {#if mode === 'raster' && raster}
+      <div class="ph">
+        <b>Picture to silkscreen</b><span class="muted">{raster.file}</span><span class="grow"></span>
+        <button class="btn" onclick={() => { const back = raster?.replace; raster?.img.close(); raster = null; if (back) { artId = back; mode = 'art'; } else mode = 'part'; }}>Cancel</button>
+        <button class="btn pri" disabled={rasterBusy} onclick={() => void saveRaster()}>{raster.replace ? 'Update artwork' : 'Save to artwork'}</button>
+      </div>
+      <div class="scroll body">
+        <div class="rasterctl">
+          <label>Name <input class="text" bind:value={raster.name} /></label>
+          <label>Width <input class="text mono num" type="number" min="2" max="200" step="1" bind:value={raster.o.widthMm} /> mm</label>
+          <label>Dot <input class="text mono num" type="number" min="0.1" max="1" step="0.05" bind:value={raster.o.dotMm} /> mm</label>
+          <label class="wide" title={raster.o.dither ? 'Darker or lighter (128 = as it is)' : 'How dark a dot must be to become ink'}>{raster.o.dither ? 'Darkness' : 'Threshold'} <input type="range" min="1" max="254" bind:value={raster.o.threshold} /> <span class="mono">{raster.o.threshold}</span></label>
+          <label class="check"><input type="checkbox" bind:checked={raster.o.invert} /> Invert</label>
+          <label class="check"><input type="checkbox" bind:checked={raster.o.dither} /> Dither (photos)</label>
+        </div>
+        {#if rasterGrid}
+          <p class="desc">{rasterGrid.cols} × {rasterGrid.rows} dots · {Math.round(raster.o.widthMm * 10) / 10} × {Math.round(rasterGrid.rows * raster.o.dotMm * 10) / 10} mm{raster.o.dotMm < 0.15 ? ' · dots under 0.15 mm may not print' : ''}</p>
+        {/if}
+        <div class="artview raster"><canvas bind:this={rasterCanvas}></canvas></div>
+        <p class="hint">Dark parts become ink. Logos and line art look best without dithering; for photos, turn dithering on and use dots of 0.2 mm or more. The result is saved as artwork; ask the agent to place it.</p>
+      </div>
+    {:else if mode === 'art' && art}
+      <div class="ph">
+        {#if artName !== null}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input class="text rename" bind:value={artName} autofocus onblur={() => void commitArtName()} onkeydown={(e) => (e.key === 'Enter' ? void commitArtName() : e.key === 'Escape' && (artName = null))} />
+        {:else}
+          <button class="namebtn" title="Rename" onclick={() => (artName = art.name)}>{art.name}<span class="pen">✎</span></button>
+        {/if}
+        <span class="muted mono">artwork</span>
+        <span class="grow"></span>
+        {#if art.raster}<button class="btn" title="Change dithering, threshold, size … of the picture" onclick={() => void adjustArt(art)}>Adjust…</button>{/if}
+        <button class="btn" onclick={() => exportSvg(art)}>Export SVG</button>
+        <button class="btn" onclick={() => void removeArt(art)}>Delete</button>
+      </div>
+      <div class="scroll body">
+        <p class="desc">{art.w} × {art.h} mm · {art.mode === 'fill' ? 'filled' : `outlines ${art.line} mm`} · {art.polys.length} figure{art.polys.length === 1 ? '' : 's'}{art.source ? ` · from ${art.source}` : ''}</p>
+        <div class="artview">
+          <svg viewBox={artBox(art, 0.12)} role="img" aria-label={art.name}>
+            <path d={artPath(art)} fill-rule="evenodd" class={art.mode} stroke-width={art.mode === 'outline' ? (art.line ?? 0.2) : undefined} />
+          </svg>
+        </div>
+        <p class="hint">Ask the agent to place it, e.g. “put {art.name} at the top right, 10 mm wide”. Boards keep their own copy, so changing or deleting it here does not change them.</p>
+      </div>
+    {:else if mode === 'part'}
       <div class="ph">
         {#if userIds.has(part.id)}
           {@render nameField('title', partTitle(part), 'The name people know it by (shown in the parts list)', '')}
@@ -617,6 +796,20 @@
   .search { padding: 6px 8px; border-bottom: 1px solid var(--line); }
   .search input { width: 100%; }
   .btn.sm { padding: 2px 8px; font-size: 12px; }
+  .sechead { display: flex; align-items: center; }
+  .sechead > :global(.sec) { flex: 1; }
+  .link.imp-svg { margin-right: 10px; font-size: 11px; }
+  .thumb { width: 18px; height: 18px; flex: none; }
+  .thumb path, .artview path { fill: var(--txt); }
+  .thumb path.outline, .artview path.outline { fill: none; stroke: var(--txt); stroke-linejoin: round; }
+  .artview { height: min(56vh, 480px); background: var(--canvas); border: 1px solid var(--line); border-radius: 8px; display: grid; padding: 16px; margin-bottom: 10px; }
+  .artview svg { width: 100%; height: 100%; }
+  .artview.raster { position: relative; }
+  .artview.raster canvas { position: absolute; inset: 16px; width: calc(100% - 32px); height: calc(100% - 32px); object-fit: contain; image-rendering: pixelated; }
+  .rasterctl { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 8px; font-size: 12px; }
+  .rasterctl label { display: inline-flex; align-items: center; gap: 6px; }
+  .rasterctl .num { width: 64px; }
+  .rasterctl .wide input { width: 140px; }
   .namebtn { border: 1px solid transparent; background: none; padding: 1px 4px; border-radius: 5px; font-weight: 700; color: var(--txt); cursor: text; display: inline-flex; gap: 6px; align-items: center; }
   .namebtn:hover { border-color: var(--line-2); }
   .namebtn .pen { font-weight: 400; color: var(--txt-3); opacity: 0; font-size: 11px; }

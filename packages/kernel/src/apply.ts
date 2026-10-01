@@ -17,11 +17,13 @@ import {
   type HoleCorner,
   type MountingHole,
   type Cutout,
+  type SilkGraphic,
   DEFAULT_BOARD,
 } from '@tracewise/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
 import { layoutSchematic } from './layout.ts';
-import { boardOutline, pathPolygon } from './outline.ts';
+import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
+import { findArtwork, listArtwork } from './artwork.ts';
 import { footprintFor, isTwoPin, planUnits, searchParts } from '@tracewise/parts';
 import {
   allocRefdes,
@@ -98,6 +100,20 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return addCutout(d, op);
     case 'set_outline':
       return setOutline(d, op);
+    case 'add_graphic':
+      return addGraphic(d, op);
+    case 'edit_graphic':
+      return editGraphic(d, op);
+    case 'remove_graphic': {
+      const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+      const before = b.graphics ?? [];
+      const keep = op.id.toLowerCase() === 'all' ? [] : before.filter((g) => g.id.toUpperCase() !== op.id.toUpperCase());
+      if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: `No silkscreen graphic "${op.id}".`, candidates: before.map((g) => g.id) });
+      if (keep.length) b.graphics = keep;
+      else delete b.graphics;
+      d.board = b;
+      return { op: 'remove_graphic', effect: `removed ${before.length - keep.length} silkscreen graphic(s)`, ids: ['board'] };
+    }
     case 'remove_cutout': {
       const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
       const before = b.cutouts ?? [];
@@ -267,6 +283,122 @@ function addCutout(d: Design, op: Extract<EditOp, { op: 'add_cutout' }>): OpResu
   d.board = b;
   const size = c.shape === 'circle' ? `Ø${c.w} mm` : `${c.w} × ${c.h} mm`;
   return { op: 'add_cutout', effect: `cutout ${id}: ${c.shape} ${size} at (${c.x}, ${c.y}) mm from ${c.anchor ?? 'top_left'}`.replace('_', ' '), ids: ['board'] };
+}
+
+/** A silkscreen graphic from an SVG path: scaled to its size, centred, placed from an anchor. */
+function addGraphic(d: Design, op: Extract<EditOp, { op: 'add_graphic' }>): OpResult {
+  let figs: number[][];
+  const art = op.artwork ? findArtwork(op.artwork) : undefined;
+  if (op.artwork) {
+    if (!art) reject({ code: 'REF_UNKNOWN', message: `No saved artwork "${op.artwork}".`, candidates: listArtwork().map((a) => a.name) });
+    figs = art!.polys;
+  } else {
+    if (!op.svg_path) reject({ code: 'BOARD_INVALID', message: 'add_graphic needs svg_path or artwork.' });
+    const parsed = pathFigures(op.svg_path!);
+    if (!parsed.ok) reject({ code: 'BOARD_INVALID', message: `The graphic's path: ${parsed.reason}.` });
+    figs = parsed.figs;
+  }
+  const xs = figs.flatMap((p) => p.filter((_, i) => i % 2 === 0));
+  const ys = figs.flatMap((p) => p.filter((_, i) => i % 2 === 1));
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const [bw, bh] = [x1 - x0, y1 - y0];
+  if (!(bw > 0) || !(bh > 0)) reject({ code: 'BOARD_INVALID', message: 'The graphic has no area.' });
+  const sx = op.width_mm ? op.width_mm / bw : op.height_mm ? op.height_mm / bh : 1;
+  const sy = op.height_mm ? op.height_mm / bh : op.width_mm ? op.width_mm / bw : 1;
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+  const polys = figs.map((p) => p.map((v, i) => (i % 2 === 0 ? r3((v - (x0 + x1) / 2) * sx) : r3((v - (y0 + y1) / 2) * sy))));
+  const [w, h] = [r3(bw * sx), r3(bh * sy)];
+  if (Math.max(w, h) < 0.5) reject({ code: 'BOARD_INVALID', message: `The graphic would be ${w} × ${h} mm; silkscreen needs at least about 1 mm to be readable (give width_mm or height_mm).` });
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const graphics = [...(b.graphics ?? [])];
+  let id = '';
+  for (let i = 1; ; i++) if (!graphics.some((g) => g.id === `G${i}`)) {
+    id = `G${i}`;
+    break;
+  }
+  const mode = op.mode ?? art?.mode ?? 'fill';
+  const name = op.name ?? art?.name;
+  const g: SilkGraphic = {
+    id,
+    ...(name ? { name } : {}),
+    side: op.side ?? 'top',
+    mode,
+    ...(mode === 'outline' ? { line: op.line_mm ?? art?.line ?? 0.2 } : {}),
+    polys,
+    w,
+    h,
+    x: r3(op.x_mm),
+    y: r3(op.y_mm),
+    ...(op.anchor && op.anchor !== 'top_left' ? { anchor: op.anchor } : {}),
+    ...(op.angle_deg ? { angle: op.angle_deg } : {}),
+  };
+  graphics.push(g);
+  b.graphics = graphics;
+  d.board = b;
+  const points = polys.reduce((n, p) => n + p.length / 2, 0);
+  return {
+    op: 'add_graphic',
+    effect: `silkscreen graphic ${id}${g.name ? ` (${g.name})` : ''}: ${g.mode === 'fill' ? 'filled' : `outlines ${g.line} mm`}, ${polys.length} figure(s), ${points} points, ${w} × ${h} mm on the ${g.side} side at (${g.x}, ${g.y}) mm from ${(g.anchor ?? 'top_left').replace('_', ' ')}`,
+    ids: ['board'],
+  };
+}
+
+/** Move, resize, turn or restyle a silkscreen graphic (a drag in the layout view moves it by dx/dy). */
+function editGraphic(d: Design, op: Extract<EditOp, { op: 'edit_graphic' }>): OpResult {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const graphics = b.graphics ?? [];
+  const g = graphics.find((x) => x.id.toUpperCase() === op.id.toUpperCase());
+  if (!g) reject({ code: 'REF_UNKNOWN', message: `No silkscreen graphic "${op.id}".`, candidates: graphics.map((x) => x.id) });
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+  const changes: string[] = [];
+  if (op.anchor && op.anchor !== (g.anchor ?? 'top_left')) {
+    // keep its place unless a new x/y is given: re-measure the centre from the new anchor
+    const { w, h } = placedNow(d).outline;
+    const at = (a: string) => [a.endsWith('left') ? 0 : a.endsWith('right') ? w : w / 2, a.startsWith('top') ? 0 : a.startsWith('bottom') ? h : h / 2];
+    const [ox, oy] = at(g.anchor ?? 'top_left');
+    const [nx, ny] = at(op.anchor);
+    g.x = r3(g.x + ox! - nx!);
+    g.y = r3(g.y + oy! - ny!);
+    if (op.anchor === 'top_left') delete g.anchor;
+    else g.anchor = op.anchor;
+    changes.push(`from ${op.anchor.replace('_', ' ')}`);
+  }
+  if (op.x_mm !== undefined) g.x = r3(op.x_mm);
+  if (op.y_mm !== undefined) g.y = r3(op.y_mm);
+  if (op.dx_mm) g.x = r3(g.x + op.dx_mm);
+  if (op.dy_mm) g.y = r3(g.y + op.dy_mm);
+  if (op.x_mm !== undefined || op.y_mm !== undefined || op.dx_mm || op.dy_mm) changes.push(`at (${g.x}, ${g.y}) mm`);
+  if (op.angle_deg !== undefined) {
+    if (op.angle_deg % 360) g.angle = op.angle_deg % 360;
+    else delete g.angle;
+    changes.push(`turned ${op.angle_deg}°`);
+  }
+  if (op.width_mm || op.height_mm) {
+    const sx = op.width_mm ? op.width_mm / g.w : op.height_mm! / g.h;
+    const sy = op.height_mm ? op.height_mm / g.h : sx;
+    g.polys = g.polys.map((p) => p.map((v, i) => r3(v * (i % 2 === 0 ? sx : sy))));
+    g.w = r3(g.w * sx);
+    g.h = r3(g.h * sy);
+    if (Math.max(g.w, g.h) < 0.5) reject({ code: 'BOARD_INVALID', message: 'That would make the graphic smaller than 0.5 mm.' });
+    changes.push(`${g.w} × ${g.h} mm`);
+  }
+  if (op.mode) {
+    g.mode = op.mode;
+    changes.push(op.mode === 'fill' ? 'filled' : 'outlines');
+  }
+  if (op.line_mm) g.line = op.line_mm;
+  if (g.mode === 'outline') g.line ??= 0.2;
+  else delete g.line;
+  if (op.side) {
+    g.side = op.side;
+    changes.push(`${op.side} side`);
+  }
+  if (op.name !== undefined) {
+    if (op.name) g.name = op.name;
+    else delete g.name;
+  }
+  d.board = b;
+  return { op: 'edit_graphic', effect: `silkscreen graphic ${g.id}${g.name ? ` (${g.name})` : ''}: ${changes.join(', ') || 'unchanged'}`, ids: ['board'] };
 }
 
 /** Mounting holes: at fixed positions or anchored to corners (they follow the board size). */

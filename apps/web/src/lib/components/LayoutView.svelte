@@ -149,6 +149,7 @@
       onhovernet={(n) => (hotNet = n)}
       onplace={(ref, x, y, rot) => void app.userEdit(`Place ${ref}`, [{ op: 'place', ref, x_mm: x, y_mm: y, rot }])}
       onlock={toggleLock}
+      ongraphic={(id, dx, dy) => void app.userEdit(`Move ${id}`, [{ op: 'edit_graphic', id, dx_mm: dx, dy_mm: dy }])}
     />
     </div>
     <div class="fl tl">
