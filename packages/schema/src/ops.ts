@@ -132,6 +132,13 @@ export const SetFootprintOp = z.object({
   page: z.number().int().optional().describe('Datasheet page with the drawing'),
 });
 
+export const RenamePartOp = z.object({
+  op: z.literal('rename_part'),
+  part: z.string().min(1).describe('Part id ("adi:ADIN2111BCPZ") or a component using it ("U4")'),
+  mpn: z.string().min(1).optional().describe('The new part number shown on the symbol and in the BOM; the part id stays'),
+  title: z.string().optional().describe('The name a person calls it ("Raspberry Pi Pico"), shown in the parts list; empty = none'),
+});
+
 export const SetBoardOp = z.object({
   op: z.literal('set_board'),
   width_mm: z.number().positive().nullable().optional().describe('Board width; null = size to fit the parts'),
@@ -231,6 +238,7 @@ export const EditOp = z.discriminatedUnion('op', [
   RemoveWaiverOp,
   SetSymbolOp,
   SetFootprintOp,
+  RenamePartOp,
   SetBoardOp,
   PlaceOp,
   ProposeLayoutOp,

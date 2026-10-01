@@ -259,6 +259,7 @@ export class IngestState {
       | { action: 'pick'; picks: { key: string; pass: 1 | 2 }[] }
       | { action: 'set_pins'; pins: DraftPin[] }
       | { action: 'remove_pins'; numbers: string[] }
+      | { action: 'rename'; mpn?: string; title?: string }
       | { action: 'set_package'; package: Partial<PackageInfo> },
   ): Promise<{ isError: boolean; text: string }> {
     if (this.phase === 'running') return { isError: true, text: `The import of ${this.request?.mpn} is still running; wait for it (import_part again with the same mpn).` };
@@ -315,6 +316,16 @@ export class IngestState {
         for (const n of gone) forget(`pin:${n}`);
         break;
       }
+      case 'rename': {
+        const mpn = a.mpn?.trim();
+        if (mpn && this.library.some((p) => p.mpn?.toLowerCase() === mpn.toLowerCase())) return { isError: true, text: `${mpn} is already in the library.` };
+        edit((d) => {
+          if (mpn) d.mpn = mpn;
+          if (a.title !== undefined) d.title = a.title.trim() || undefined;
+        });
+        if (mpn && this.request) this.request = { ...this.request, mpn };
+        break;
+      }
       case 'set_package':
         edit((d) => Object.assign(d.package, a.package));
         for (const k of Object.keys(a.package)) forget(`package:${k}`);
@@ -333,7 +344,7 @@ export class IngestState {
     const card = this.card;
     const pkg = card?.packageInfo ?? d.package;
     const lines = [
-      `${this.request?.mpn}: ${card ? `${card.id}, ${card.pins.length} pins` : 'not usable yet'}, package ${pkg.name} (${pkg.family}${pkg.pitch_mm ? `, pitch ${pkg.pitch_mm}` : ''}${pkg.body_mm ? `, body ${pkg.body_mm.join('×')}` : ''}${pkg.exposed_pad_mm ? `, exposed pad ${pkg.exposed_pad_mm.join('×')}` : ''}; drawing p.${pkg.page ?? '?'})`,
+      `${this.request?.mpn}${d.title ? ` "${d.title}"` : ''}: ${card ? `${card.id}, ${card.pins.length} pins` : 'not usable yet'}, package ${pkg.name} (${pkg.family}${pkg.pitch_mm ? `, pitch ${pkg.pitch_mm}` : ''}${pkg.body_mm ? `, body ${pkg.body_mm.join('×')}` : ''}${pkg.exposed_pad_mm ? `, exposed pad ${pkg.exposed_pad_mm.join('×')}` : ''}; drawing p.${pkg.page ?? '?'})`,
     ];
     const dis = this.disagreements;
     if (dis.length) {

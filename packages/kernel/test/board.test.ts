@@ -838,3 +838,25 @@ describe('set_footprint review', () => {
     expect(k.committedDesign().parts['acme:BUZ12']!.packageInfo?.pads).toHaveLength(2);
   });
 });
+
+describe('rename_part', () => {
+  it('renames the part number shown everywhere; the id stays and the review shows it', () => {
+    const k = new Kernel();
+    const d = k.committedDesign();
+    d.parts['acme:BUZ12'] = {
+      id: 'acme:BUZ12', mpn: 'BUZ12', manufacturer: 'Acme', description: '12 mm buzzer', category: 'other', refPrefix: 'BZ', package: 'BUZ12',
+      pins: [{ number: '1', name: '+', type: 'passive' }, { number: '2', name: '-', type: 'passive' }],
+      params: {}, provenance: { source: 'datasheet' },
+    };
+    k.load(d);
+    k.transact({ summary: 'buzzer', ops: [{ op: 'add_part', part: 'acme:BUZ12', refdes: 'BZ1' }] });
+    k.accept();
+    const r = k.transact({ summary: 'rename', ops: [{ op: 'rename_part', part: 'BZ1', mpn: 'BUZ12-RC' }] });
+    expect(r.status).toBe('ok');
+    expect(k.proposal()?.hunks.find((h) => h.id === 'part:acme:BUZ12')?.title).toContain('name: BUZ12 → BUZ12-RC');
+    k.accept();
+    expect(k.committedDesign().components[Object.keys(k.committedDesign().components)[0]!]!.part).toBe('acme:BUZ12');
+    expect(k.state().view.sheets[0]!.symbols.find((s) => s.refdes === 'BZ1')!.value).toBe('BUZ12-RC');
+    expect(k.transact({ summary: 'generic', ops: [{ op: 'rename_part', part: 'generic:R', mpn: 'X' }] }).status).toBe('rejected');
+  });
+});

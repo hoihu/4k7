@@ -12,6 +12,7 @@ const passive = (n: string, name = n): PartPin => ({ number: n, name, type: 'pas
 export const GENERIC_PARTS: PartCard[] = [
   {
     id: 'generic:R',
+    title: 'Resistor',
     description: 'Resistor',
     category: 'resistor',
     refPrefix: 'R',
@@ -26,6 +27,7 @@ export const GENERIC_PARTS: PartCard[] = [
   },
   {
     id: 'generic:C',
+    title: 'Capacitor',
     description: 'Capacitor, non-polarized (ceramic)',
     category: 'capacitor',
     refPrefix: 'C',
@@ -41,6 +43,7 @@ export const GENERIC_PARTS: PartCard[] = [
   },
   {
     id: 'generic:CP',
+    title: 'Electrolytic cap',
     description: 'Capacitor, polarized (electrolytic / tantalum / polymer)',
     category: 'capacitor',
     refPrefix: 'C',
@@ -55,6 +58,7 @@ export const GENERIC_PARTS: PartCard[] = [
   },
   {
     id: 'generic:L',
+    title: 'Inductor',
     description: 'Inductor',
     category: 'inductor',
     refPrefix: 'L',
@@ -69,6 +73,7 @@ export const GENERIC_PARTS: PartCard[] = [
   },
   {
     id: 'generic:D',
+    title: 'Diode',
     description: 'Diode (rectifier, Schottky, TVS). Pin 1 = cathode K, pin 2 = anode A',
     category: 'diode',
     refPrefix: 'D',
@@ -86,6 +91,7 @@ export const GENERIC_PARTS: PartCard[] = [
   },
   {
     id: 'generic:BRIDGE',
+    title: 'Bridge rectifier',
     description: 'Bridge rectifier, single package (e.g. MB6S, DB107, GBU4J). Pins AC1, AC2, +, −',
     category: 'diode',
     refPrefix: 'D',
@@ -106,6 +112,7 @@ export const GENERIC_PARTS: PartCard[] = [
   },
   {
     id: 'generic:LED',
+    title: 'LED',
     description: 'LED. Pin 1 = cathode K, pin 2 = anode A',
     category: 'led',
     refPrefix: 'D',
@@ -120,6 +127,7 @@ export const GENERIC_PARTS: PartCard[] = [
   },
   {
     id: 'generic:NMOS',
+    title: 'MOSFET',
     description: 'N-channel MOSFET, 3 pins (G, S, D)',
     category: 'transistor',
     refPrefix: 'Q',
@@ -134,6 +142,7 @@ export const GENERIC_PARTS: PartCard[] = [
   ...[2, 3, 4, 5, 6, 8, 10].map(
     (n): PartCard => ({
       id: `generic:CONN_1x${n}`,
+      title: `Connector 1×${n}`,
       description: `Connector, 1 row, ${n} pins (header, terminal block)`,
       category: 'connector',
       refPrefix: 'J',
@@ -302,6 +311,29 @@ export const BUILTIN_PARTS: PartCard[] = [...GENERIC_PARTS, ...IC_PARTS];
 const byId = new Map(BUILTIN_PARTS.map((p) => [p.id, p]));
 
 /** Parts the user imported (e.g. from datasheets); registered at startup from local storage. */
+/**
+ * What a person calls a part, short: its title; else the part's own name, not a description of
+ * it: a word of the description the part number starts with ("STM32F777 Arm Cortex-M7 MCU" →
+ * STM32F777), a product name ("Raspberry Pi Pico - RP2040-based module" → Raspberry Pi Pico),
+ * else the part number without its ordering suffix (ADIN2111BCPZ → ADIN2111).
+ */
+export function partTitle(card: PartCard): string {
+  if (card.title) return card.title;
+  const first = card.description.split(/\s[-–—]\s|[,.;(]|\swith\s/)[0]!.trim();
+  if (!card.mpn) return first || card.id;
+  const words = first.split(/\s+/).filter(Boolean);
+  const own = words.find((w) => w.length >= 4 && card.mpn!.toUpperCase().startsWith(w.toUpperCase()));
+  if (own) return own;
+  if (words.length >= 2 && words.length <= 4 && words.every((w) => /^[A-Z]/.test(w))) return first;
+  return mpnBase(card.mpn);
+}
+
+/** A part number without its ordering suffix (package, grade, reel): TPS54331DR → TPS54331, AMS1117-3.3 → AMS1117. */
+export function mpnBase(mpn: string): string {
+  const m = /^(.*?\d)(?:[A-Z]{1,5}\d?[A-Z]*|-\S+)(?:[-/]\S*)*$/.exec(mpn.trim());
+  return m ? m[1]! : mpn.trim();
+}
+
 const userParts = new Map<string, PartCard>();
 
 export function registerUserParts(cards: PartCard[]): void {
@@ -329,13 +361,13 @@ export function searchParts(text: string, extra: PartCard[] = []): PartCard[] {
   if (!terms.length) return all;
   const scored = all
     .map((p) => {
-      const hay = [p.id, p.mpn, p.manufacturer, p.description, p.category, p.package, ...(p.notes ?? [])]
+      const hay = [p.id, p.mpn, p.title, p.manufacturer, p.description, p.category, p.package, ...(p.notes ?? [])]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
       let score = 0;
       for (const t of terms) {
-        if (p.id.toLowerCase().includes(t) || p.mpn?.toLowerCase().includes(t)) score += 3;
+        if (p.id.toLowerCase().includes(t) || p.mpn?.toLowerCase().includes(t) || p.title?.toLowerCase().includes(t)) score += 3;
         else if (hay.includes(t)) score += 1;
         else if (t.length > 3 && hay.includes(t.slice(0, -1))) score += 0.5; // plural "capacitors"
       }

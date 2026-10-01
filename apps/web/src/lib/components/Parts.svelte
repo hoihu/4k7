@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BUILTIN_PARTS, isModule, planUnits, searchParts, symbolFor, unitCount } from '@tracewise/parts';
+  import { BUILTIN_PARTS, footprintFor, isModule, packageOf, partTitle, planUnits, searchParts, symbolFor, unitCount } from '@tracewise/parts';
   import type { PartCard, PartPin, SheetView, SymbolView } from '@tracewise/schema';
   import { app, tokenCost } from '../app.svelte.ts';
   import { USAGE_TITLE, usageLine } from '../usage.ts';
@@ -18,7 +18,78 @@
   let hoverPin = $state<string | null>(null);
 
   const userIds = $derived(new Set(ingest.library.map((p) => p.id)));
-  const list = $derived(q.trim() ? searchParts(q) : [...ingest.library, ...BUILTIN_PARTS]);
+  /*
+   * The library list, grouped by what matters now: the parts this design uses, the user's own
+   * imports, the basics (generic passives and headers, as chips) and the reference ICs.
+   */
+  type Cat = 'ic' | 'conn' | 'disc' | 'other';
+  const CATS: [Cat, string][] = [['ic', 'IC'], ['conn', 'Connector'], ['disc', 'Discrete'], ['other', 'Other']];
+  const catOf = (p: PartCard): Cat =>
+    p.category === 'ic' ? 'ic' : p.category === 'connector' ? 'conn' : ['resistor', 'capacitor', 'inductor', 'diode', 'led', 'transistor', 'crystal'].includes(p.category) ? 'disc' : 'other';
+  let cat = $state<Cat | null>(null);
+  const shownCat = (p: PartCard) => !cat || catOf(p) === cat;
+  /** Every known part once: the user's library first, then the built-ins, then cards only the design has. */
+  const all = $derived.by(() => {
+    const seen = new Map<string, PartCard>();
+    for (const p of [...ingest.library, ...BUILTIN_PARTS, ...Object.values(app.designParts)]) if (!seen.has(p.id)) seen.set(p.id, p);
+    return seen;
+  });
+  /** Which components of the open design use each part. */
+  const usedBy = $derived.by(() => {
+    const m = new Map<string, string[]>();
+    for (const c of app.k?.summary.components ?? []) m.set(c.part, [...(m.get(c.part) ?? []), c.refdes]);
+    return m;
+  });
+  const inDesign = $derived([...usedBy.keys()].map((id) => all.get(id)).filter((p): p is PartCard => !!p && shownCat(p)).sort((a, b) => (usedBy.get(a.id)![0]!).localeCompare(usedBy.get(b.id)![0]!, 'en', { numeric: true })));
+  const mine = $derived(ingest.library.filter(shownCat));
+  const basics = $derived(BUILTIN_PARTS.filter((p) => p.id.startsWith('generic:') && shownCat(p)));
+  const refICs = $derived(BUILTIN_PARTS.filter((p) => !p.id.startsWith('generic:') && shownCat(p)));
+  const results = $derived(q.trim() ? searchParts(q).filter(shownCat) : []);
+  const pkgName = (p: PartCard) => packageOf(p)?.name ?? '';
+  /** Something to look at: no footprint can be made from the package data. */
+  const noFootprint = (p: PartCard) => {
+    const pkg = packageOf(p);
+    return !pkg || !footprintFor(pkg, p.pins.map((x) => x.number)).ok;
+  };
+  const chipLabel = (p: PartCard) => p.id.replace(/^generic:/, '').replace(/^CONN_1x(\d+)$/, '1×$1');
+  let open = $state<Record<string, boolean>>(loadOpen());
+  function loadOpen(): Record<string, boolean> {
+    try {
+      return { design: true, mine: true, basics: true, ref: false, ...JSON.parse(localStorage.getItem('tw.parts.open') ?? '{}') };
+    } catch {
+      return { design: true, mine: true, basics: true, ref: false };
+    }
+  }
+  function toggle(k: string) {
+    open = { ...open, [k]: !open[k] };
+    try {
+      localStorage.setItem('tw.parts.open', JSON.stringify(open));
+    } catch {
+      /* a convenience only */
+    }
+  }
+  const select = (p: PartCard) => ((current = p), (mode = 'part'), (editing = null));
+
+  /* renaming an imported part: its title or part number changes, its id (what designs refer to) stays */
+  let editing = $state<'title' | 'mpn' | null>(null);
+  let nameDraft = $state('');
+  async function commitName() {
+    const field = editing;
+    if (!field) return;
+    editing = null;
+    const lib = ingest.library.find((p) => p.id === part.id);
+    const name = nameDraft.trim();
+    if (!lib || (field === 'mpn' && (!name || name === lib.mpn)) || (field === 'title' && name === (lib.title ?? partTitle(lib)))) return;
+    const label = field === 'title' ? `title of ${lib.mpn ?? lib.id}` : (lib.mpn ?? lib.id);
+    // the open design keeps its own copy of the part: change it there too (a commit of its own)
+    if (usedBy.has(lib.id) && !(await app.userEdit(`Rename ${label} → ${name || '(none)'}`, [{ op: 'rename_part', part: lib.id, [field]: name }]))) return;
+    const next = { ...$state.snapshot(lib) } as PartCard;
+    if (field === 'mpn') next.mpn = name;
+    else if (name) next.title = name;
+    else delete next.title;
+    await ingest.update(next);
+    app.flash(`Renamed ${label} to ${name || '(description)'}`);
+  }
 
   /* ---- import form ---- */
   let mpn = $state('');
@@ -204,6 +275,33 @@
   const unitName = (card: PartCard, pin: string) => card.units?.find((u) => Object.values(u.layout).some((side) => (side as (string[] | null)[]).some((e) => e?.includes(pin))))?.name ?? '';
 </script>
 
+{#snippet nameField(field: 'title' | 'mpn', value: string, hint: string, cls: string)}
+  {#if editing === field}
+    <!-- svelte-ignore a11y_autofocus -->
+    <input class="text rename {cls}" bind:value={nameDraft} autofocus onblur={() => void commitName()} onkeydown={(e) => (e.key === 'Enter' ? void commitName() : e.key === 'Escape' && (editing = null))} />
+  {:else}
+    <button class="namebtn {cls}" class:sub2={field === 'mpn'} title={hint} onclick={() => ((nameDraft = field === 'title' ? (part.title ?? partTitle(part)) : (part.mpn ?? '')), (editing = field))}>{value}<span class="pen">✎</span></button>
+  {/if}
+{/snippet}
+
+{#snippet head(key: string, label: string, n: number)}
+  <button class="sec" aria-expanded={!!open[key]} onclick={() => toggle(key)}>
+    <span class="caret">{open[key] ? '▾' : '▸'}</span>{label}<span class="muted">{n}</span>
+  </button>
+{/snippet}
+
+{#snippet row(p: PartCard, refs?: string[])}
+  <li>
+    <button class="r item" aria-current={mode === 'part' && p.id === current.id} title="{p.description}{pkgName(p) ? ` · ${pkgName(p)}` : ''}" onclick={() => select(p)}>
+      <span class="trunc name">{partTitle(p)}</span>
+      <span class="pkg mono trunc">{p.mpn ?? p.id.replace(/^[a-z-]+:/, '')}</span>
+      <span class="grow"></span>
+      {#if noFootprint(p)}<span class="tag warn" title="No footprint can be made from its package data">no footprint</span>{/if}
+      {#if refs}<span class="refs mono trunc" title={refs.join(', ')}>{refs.length > 3 ? `${refs.slice(0, 3).join(' ')} +${refs.length - 3}` : refs.join(' ')}</span>{/if}
+    </button>
+  </li>
+{/snippet}
+
 {#snippet detail(card: PartCard)}
   <p class="desc">{card.description}{#if card.manufacturer} · {card.manufacturer}{/if}</p>
   {#if card.pins.length > 24}
@@ -322,33 +420,70 @@
 
 <div class="parts" class:withds={!!sheetDoc && !!shown && (mode === 'part' || ingest.phase === 'review')}>
   <div class="pane list">
-    <div class="ph"><b>Library</b><span class="grow"></span><span class="muted">{ingest.library.length + BUILTIN_PARTS.length}</span></div>
-    <div class="search"><input class="text" placeholder="Search parts…" bind:value={q} /></div>
-    <button class="btn imp" aria-current={mode === 'import'} onclick={() => (mode = 'import')}>
-      Import from datasheet…
-      {#if ingest.phase === 'running'}<span class="tag info">running</span>{:else if ingest.phase === 'review'}<span class="tag warn">review</span>{/if}
-    </button>
+    <div class="ph">
+      <b>Library</b><span class="muted">{all.size}</span><span class="grow"></span>
+      <button class="btn sm" aria-current={mode === 'import'} title="Import a part from its datasheet" onclick={() => (mode = 'import')}>+ Import</button>
+    </div>
+    <div class="search">
+      <input class="text" placeholder="Search parts…" bind:value={q} />
+      <div class="cats">
+        {#each CATS as [c, label] (c)}<button class="chip" aria-pressed={cat === c} onclick={() => (cat = cat === c ? null : c)}>{label}</button>{/each}
+      </div>
+    </div>
     <div class="scroll">
-      <ul class="rows">
-        {#each list as p (p.id)}
-          <li>
-            <button class="r item" aria-current={mode === 'part' && p.id === current.id} onclick={() => ((current = p), (mode = 'part'))}>
-              <span class="grow">
-                <span class="mono">{p.mpn ?? p.id}</span>
-                <span class="sub trunc">{p.description}</span>
-              </span>
-              <span class="tag" class:ok={userIds.has(p.id)}>{userIds.has(p.id) ? 'mine' : p.category}</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
+      {#if q.trim()}
+        <ul class="rows">
+          {#each results as p (p.id)}{@render row(p)}{:else}<li class="none">No part matches “{q}”.</li>{/each}
+        </ul>
+      {:else}
+        {#if inDesign.length}
+          {@render head('design', 'In this design', inDesign.length)}
+          {#if open.design}<ul class="rows">{#each inDesign as p (p.id)}{@render row(p, usedBy.get(p.id))}{/each}</ul>{/if}
+        {/if}
+        {@render head('mine', 'My parts', mine.length + (ingest.phase === 'running' || ingest.phase === 'review' ? 1 : 0))}
+        {#if open.mine}
+          <ul class="rows">
+            {#if ingest.phase === 'running' || ingest.phase === 'review'}
+              <li>
+                <button class="r item" aria-current={mode === 'import'} onclick={() => (mode = 'import')}>
+                  <span class="mono grow trunc">{ingest.request?.mpn ?? 'Import'}</span>
+                  <span class="tag" class:info={ingest.phase === 'running'} class:warn={ingest.phase === 'review'}>{ingest.phase === 'running' ? 'importing' : 'review'}</span>
+                </button>
+              </li>
+            {/if}
+            {#each mine as p (p.id)}{@render row(p)}{/each}
+            {#if !mine.length && ingest.phase !== 'running' && ingest.phase !== 'review'}<li class="none">Parts you import from datasheets appear here.</li>{/if}
+          </ul>
+        {/if}
+        {#if basics.length}
+          {@render head('basics', 'Basics', basics.length)}
+          {#if open.basics}
+            <div class="chips">
+              {#each basics as p (p.id)}
+                <button class="chip mono" aria-pressed={mode === 'part' && current.id === p.id} title={p.description} onclick={() => select(p)}>{chipLabel(p)}</button>
+              {/each}
+            </div>
+          {/if}
+        {/if}
+        {#if refICs.length}
+          {@render head('ref', 'Reference ICs', refICs.length)}
+          {#if open.ref}<ul class="rows">{#each refICs as p (p.id)}{@render row(p)}{/each}</ul>{/if}
+        {/if}
+      {/if}
     </div>
   </div>
 
   <div class="pane detail">
     {#if mode === 'part'}
       <div class="ph">
-        <b class="mono">{part.id}</b>
+        {#if userIds.has(part.id)}
+          {@render nameField('title', partTitle(part), 'The name people know it by (shown in the parts list)', '')}
+          {@render nameField('mpn', part.mpn ?? part.id, 'The part number (ordering code) on the symbol and in the BOM', 'mono')}
+          <span class="muted mono idtag" title="The part id designs refer to; it stays">{part.id}</span>
+        {:else}
+          <b>{partTitle(part)}</b>
+          <span class="mono muted">{part.mpn ?? part.id}</span>
+        {/if}
         {#if part.package}<span class="tag">{part.package}</span>{/if}
         <span class="tag warn" title={part.provenance.note}>{part.provenance.source}{#if part.provenance.page}&nbsp;p.{part.provenance.page}{/if}</span>
         <span class="grow"></span>
@@ -481,9 +616,28 @@
   .list, .detail { min-height: 0; }
   .search { padding: 6px 8px; border-bottom: 1px solid var(--line); }
   .search input { width: 100%; }
-  .imp { margin: 6px 8px; display: flex; gap: 6px; align-items: center; justify-content: center; }
-  .imp[aria-current="true"] { border-color: var(--accent); color: var(--accent-txt); }
-  .item { width: 100%; border: 0; background: transparent; text-align: left; padding: 4px 8px 4px 10px; }
+  .btn.sm { padding: 2px 8px; font-size: 12px; }
+  .namebtn { border: 1px solid transparent; background: none; padding: 1px 4px; border-radius: 5px; font-weight: 700; color: var(--txt); cursor: text; display: inline-flex; gap: 6px; align-items: center; }
+  .namebtn:hover { border-color: var(--line-2); }
+  .namebtn .pen { font-weight: 400; color: var(--txt-3); opacity: 0; font-size: 11px; }
+  .namebtn:hover .pen { opacity: 1; }
+  .rename { font-weight: 700; padding: 1px 4px; min-width: 200px; }
+  .namebtn.sub2 { font-weight: 400; color: var(--txt-2); }
+  .idtag { font-size: 11px; }
+  .btn.sm[aria-current="true"] { border-color: var(--accent); color: var(--accent-txt); }
+  .cats, .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .cats { margin-top: 6px; }
+  .chips { padding: 2px 10px 8px; }
+  .chip { border: 1px solid var(--line-2); background: var(--panel); color: var(--txt-2); border-radius: 999px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-txt); border-color: var(--accent); }
+  .sec { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: transparent; padding: 8px 10px 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--txt-3); cursor: pointer; text-align: left; }
+  .sec .muted { font-weight: 400; }
+  .caret { width: 10px; }
+  .none { padding: 4px 10px 8px; font-size: 12px; color: var(--txt-3); }
+  .item { width: 100%; border: 0; background: transparent; text-align: left; padding: 3px 8px 3px 26px; display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .item .name { flex: none; max-width: 60%; }
+  .pkg { font-size: 11px; color: var(--txt-3); min-width: 0; }
+  .refs { font-size: 11px; color: var(--accent-txt); flex: none; max-width: 40%; }
   .item[aria-current="true"] { background: var(--accent-soft); }
   .sub { display: block; font-size: 11px; color: var(--txt-3); max-width: 170px; }
   .body { padding: 10px 14px; }

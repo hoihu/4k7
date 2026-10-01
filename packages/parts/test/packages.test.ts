@@ -125,3 +125,17 @@ describe('explicit land patterns (from a datasheet drawing)', () => {
     expect(r.body.cylinders?.filter((c) => c.mat === 'lead').map((c) => [c.x, c.z0])).toEqual([[-3.8, -3], [3.8, -3]]);
   });
 });
+
+describe('part titles', () => {
+  it('names the part, not a description of it', async () => {
+    const { partTitle, mpnBase, BUILTIN_PARTS } = await import('../src/index.ts');
+    const base = { id: 'x:y', category: 'ic' as const, refPrefix: 'U', pins: [], params: {}, provenance: { source: 'datasheet' as const } };
+    expect(partTitle({ ...base, mpn: 'SC0915', description: 'Raspberry Pi Pico - RP2040-based microcontroller module, 40-pin' })).toBe('Raspberry Pi Pico');
+    expect(partTitle({ ...base, mpn: 'STM32F777NIH6', description: 'STM32F777 Arm Cortex-M7 MCU, 216 MHz' })).toBe('STM32F777');
+    expect(partTitle({ ...base, mpn: 'ADIN2111BCPZ', description: '2-port 10BASE-T1L Ethernet switch with integrated PHYs' })).toBe('ADIN2111');
+    expect(partTitle({ ...base, mpn: 'X', title: 'Pico', description: 'whatever' })).toBe('Pico');
+    expect(['TPS54331DR', 'AMS1117-3.3', 'MCP1700T-3302E/TT', 'NE555DR', 'ATTINY85-20SU', 'ABI-009-RC', 'SC0915'].map(mpnBase)).toEqual(['TPS54331', 'AMS1117', 'MCP1700', 'NE555', 'ATTINY85', 'ABI-009', 'SC0915']);
+    expect(partTitle(BUILTIN_PARTS.find((p) => p.id === 'generic:NMOS')!)).toBe('MOSFET');
+    expect(partTitle(BUILTIN_PARTS.find((p) => p.id === 'ti:TPS54331DR')!)).toBe('TPS54331');
+  });
+});

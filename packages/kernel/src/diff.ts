@@ -60,6 +60,8 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
       what.push(`footprint: ${a.packageInfo?.name ?? a.package ?? 'none'} → ${pkg?.name ?? 'none'}`);
       if (pkg?.pads) details.push(`${pkg.pads.length} pads${pkg.body_mm ? `, body ${pkg.body_mm[0]} × ${pkg.body_mm[1]} mm` : ''}${pkg.height_mm ? `, ${pkg.height_mm} mm high` : ''}`);
     }
+    if ((a.mpn ?? '') !== (b.mpn ?? '')) what.push(`name: ${a.mpn ?? a.id} → ${b.mpn ?? b.id}`);
+    if ((a.title ?? '') !== (b.title ?? '')) what.push(`title: ${b.title ?? 'none'}`);
     if (!what.length) what.push('part card changed');
     hunks.push({
       id: `part:${id}`,

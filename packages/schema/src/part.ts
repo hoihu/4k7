@@ -91,6 +91,8 @@ export interface PartCard {
   /** Library id, "<namespace>:<name>", e.g. "ti:TPS54331DR" or "generic:C". */
   id: string;
   mpn?: string;
+  /** What a person calls the part ("Raspberry Pi Pico", "Buzzer 12 mm"); the list shows it before the part number. */
+  title?: string;
   manufacturer?: string;
   description: string;
   category: PartCategory;

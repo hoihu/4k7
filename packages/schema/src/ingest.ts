@@ -60,6 +60,7 @@ export type DraftPin = z.infer<typeof DraftPin>;
 export const PartDraft = z.object({
   mpn: z.string().min(2).describe('Exact orderable part number, e.g. "STM32F777VIT6"'),
   manufacturer: z.string().min(2),
+  title: z.string().min(2).max(30).optional().describe('The part\'s short name, no description: the base part number without ordering suffixes ("ADIN2111", "STM32F777", "TPS54331"), or its product name if it has one ("Raspberry Pi Pico")'),
   description: z.string().min(5).describe('One line: what the part is, key specs'),
   category: z.enum(['ic', 'connector', 'transistor', 'crystal', 'other']).default('ic'),
   datasheet: z.string().optional().describe('Datasheet URL if known'),

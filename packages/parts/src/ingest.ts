@@ -100,6 +100,7 @@ export function draftToCard(input: unknown): IngestResult {
   const card: PartCard = {
     id: `${slug(draft.manufacturer.split(/\s/)[0]!)}:${draft.mpn}`,
     mpn: draft.mpn,
+    ...(draft.title ? { title: draft.title } : {}),
     manufacturer: draft.manufacturer,
     description: draft.description,
     category: draft.category,

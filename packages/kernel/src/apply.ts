@@ -80,6 +80,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return setSymbol(d, op.ref, op.style);
     case 'set_footprint':
       return setFootprint(d, op);
+    case 'rename_part':
+      return renamePart(d, op);
     case 'set_board':
       return setBoard(d, op);
     case 'place':
@@ -455,6 +457,29 @@ function setFootprint(d: Design, op: Extract<EditOp, { op: 'set_footprint' }>): 
   d.parts[card.id] = copy;
   const f = fp.footprint;
   return { op: 'set_footprint', effect: `${users.join(', ')}: footprint ${op.name}, ${f.pads.length} pads, ${f.courtyard.w} × ${f.courtyard.h} mm courtyard`, ids: [card.id] };
+}
+
+/** A part's shown name (part number); its id, which components refer to, stays. Changes the design's copy. */
+function renamePart(d: Design, op: Extract<EditOp, { op: 'rename_part' }>): OpResult {
+  const byRef = findComponent(d, op.part);
+  const card = cardOf(d, byRef?.part ?? op.part);
+  if (!card) reject({ code: 'PART_UNKNOWN', message: `No part or component "${op.part}".`, candidates: Object.keys(d.parts).slice(0, 8) });
+  if (card.id.startsWith('generic:')) reject({ code: 'PART_UNKNOWN', message: `${card.id} is a generic part; give a component its part number with set_param mpn instead.` });
+  if (op.mpn === undefined && op.title === undefined) reject({ code: 'PART_UNKNOWN', message: 'rename_part needs mpn or title.' });
+  const copy: PartCard = structuredClone(card);
+  const changes: string[] = [];
+  if (op.mpn !== undefined && op.mpn.trim()) {
+    changes.push(`${card.mpn ?? card.id} → ${op.mpn.trim()}`);
+    copy.mpn = op.mpn.trim();
+  }
+  if (op.title !== undefined) {
+    changes.push(`title "${op.title.trim()}"`);
+    if (op.title.trim()) copy.title = op.title.trim();
+    else delete copy.title;
+  }
+  d.parts[card.id] = copy;
+  const users = Object.values(d.components).filter((c) => c.part === card.id).map((c) => c.refdes).sort(natCmp);
+  return { op: 'rename_part', effect: `${card.id}: ${changes.join(', ')}${users.length ? ` (${users.join(', ')})` : ''}`, ids: [card.id] };
 }
 
 function lookupCard(d: Design, id: string): PartCard {
