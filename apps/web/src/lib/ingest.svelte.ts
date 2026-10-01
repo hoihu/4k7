@@ -6,9 +6,9 @@
  * so every pin can be shown on its page. Nothing is saved before the user's review.
  */
 import { compareDrafts, draftToCard, listUserParts, mergeDrafts, planUnits, registerUserParts, unregisterUserPart, type Disagreement } from '@tracewise/parts';
-import { PartDraft, type BridgeContent, type Design, type IngestIssue, type PartCard, type TokenCount } from '@tracewise/schema';
+import { PartDraft, type BridgeContent, type DraftPin, type PackageInfo, type Design, type IngestIssue, type PartCard, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
-import { deleteLibraryPart, loadDatasheet, loadLibrary, saveDatasheet, saveLibraryPart, type StoredDatasheet } from './persist.ts';
+import { deleteDatasheet, deleteLibraryPart, loadDatasheet, loadLibrary, loadPendingImport, saveDatasheet, saveLibraryPart, savePendingImport, type StoredDatasheet } from './persist.ts';
 
 export interface IngestRequest {
   mpn: string;
@@ -29,6 +29,19 @@ interface KernelParts {
 
 export interface Datasheet extends StoredDatasheet {
   hash: string;
+}
+
+interface PendingRecord {
+  request: IngestState['request'];
+  passes: number;
+  drafts: (PartDraft | null)[];
+  takeB: Record<string, boolean>;
+  split: boolean;
+  secondPassFailed: string | null;
+  costUsd: number | null;
+  tokens: TokenCount | null;
+  reply: string;
+  datasheet: { hash: string; name: string } | null;
 }
 
 const MAX_BYTES = 24 * 1024 * 1024;
@@ -87,17 +100,78 @@ export class IngestState {
 
   #kernel: KernelParts;
   #run: string | null = null;
+  /** Set once a saved pending review is restored, so the first (idle) state does not erase it. */
+  #restored = false;
+  /** The datasheet stored for the pending review (removed again if the import is discarded). */
+  #storedSheet: string | null = null;
 
   constructor(kernel: KernelParts) {
     this.#kernel = kernel;
+    // keep the review across reloads: saved on every change, cleared when saved or discarded
+    $effect.root(() => {
+      $effect(() => {
+        // a snapshot reads every nested value, so picks made in the Parts view are seen too
+        const pending = this.phase === 'review' && this.drafts[0] ? ($state.snapshot(this.#pendingRecord()) as PendingRecord) : null;
+        if (!this.#restored) return;
+        void this.#keep(pending);
+      });
+    });
   }
 
-  /** Load saved parts and make them known to the kernel (agent) and the UI. */
+  #pendingRecord(): PendingRecord {
+    return {
+      request: this.request,
+      passes: this.passes,
+      drafts: this.drafts,
+      takeB: this.takeB,
+      split: this.split,
+      secondPassFailed: this.secondPassFailed,
+      costUsd: this.costUsd,
+      tokens: this.tokens,
+      reply: this.reply,
+      datasheet: this.datasheet ? { hash: this.datasheet.hash, name: this.datasheet.name } : null,
+    };
+  }
+
+  async #keep(pending: PendingRecord | null) {
+    if (pending?.datasheet && this.datasheet && this.#storedSheet !== this.datasheet.hash) {
+      this.#storedSheet = this.datasheet.hash;
+      await saveDatasheet(this.datasheet.hash, { name: this.datasheet.name, data: this.datasheet.data });
+    }
+    await savePendingImport(pending);
+  }
+
+  /** Load saved parts and make them known to the kernel (agent) and the UI; restore a pending review. */
   async init() {
     const cards = await loadLibrary();
     registerUserParts(cards);
     await this.#kernel.registerParts(cards);
     this.library = listUserParts();
+    try {
+      const p = await loadPendingImport<PendingRecord>();
+      if (p?.drafts?.[0] && this.phase === 'idle') {
+        this.request = p.request;
+        this.passes = p.passes;
+        this.drafts = p.drafts;
+        this.takeB = p.takeB ?? {};
+        this.split = p.split;
+        this.secondPassFailed = p.secondPassFailed;
+        this.costUsd = p.costUsd;
+        this.tokens = p.tokens;
+        this.reply = p.reply ?? '';
+        if (p.datasheet) {
+          const s = await loadDatasheet(p.datasheet.hash);
+          if (s) {
+            this.datasheet = { ...s, hash: p.datasheet.hash };
+            this.#storedSheet = p.datasheet.hash;
+          }
+        }
+        this.log = ['Restored the import waiting for review.'];
+        this.phase = 'review';
+      }
+    } finally {
+      this.#restored = true;
+    }
   }
 
   get available(): boolean {
@@ -175,6 +249,104 @@ export class IngestState {
     if (!sent) fail('The bridge is not connected.');
   }
 
+  /**
+   * The agent's side of the review (pending_import): the same draft the user sees in Parts. Pin
+   * and package corrections go into both passes' drafts, so a corrected fact is no longer disputed.
+   */
+  async agentEdit(
+    a:
+      | { action: 'get' | 'save' | 'discard' }
+      | { action: 'pick'; picks: { key: string; pass: 1 | 2 }[] }
+      | { action: 'set_pins'; pins: DraftPin[] }
+      | { action: 'remove_pins'; numbers: string[] }
+      | { action: 'set_package'; package: Partial<PackageInfo> },
+  ): Promise<{ isError: boolean; text: string }> {
+    if (this.phase === 'running') return { isError: true, text: `The import of ${this.request?.mpn} is still running; wait for it (import_part again with the same mpn).` };
+    if (this.phase !== 'review' || !this.drafts[0]) return { isError: true, text: 'No import is waiting for review.' };
+    const keys = new Set(this.disagreements.map((d) => d.key));
+    const edit = (f: (d: PartDraft) => void) => {
+      this.drafts = this.drafts.map((d) => {
+        if (!d) return d;
+        const copy = $state.snapshot(d) as PartDraft;
+        f(copy);
+        return copy;
+      });
+    };
+    const forget = (key: string) => {
+      const next = { ...this.takeB };
+      delete next[key];
+      this.takeB = next;
+    };
+    switch (a.action) {
+      case 'get':
+        return { isError: false, text: this.#describe() };
+      case 'discard': {
+        const mpn = this.request?.mpn;
+        this.discard();
+        return { isError: false, text: `Discarded the import of ${mpn}.` };
+      }
+      case 'save': {
+        const errors = this.issues.filter((i) => i.severity === 'error');
+        if (!this.card || errors.length) return { isError: true, text: `Not saved; fix first:\n${errors.map((i) => `- ${i.message}`).join('\n')}` };
+        const open = this.disagreements.filter((d) => this.takeB[d.key] === undefined);
+        if (open.length) return { isError: true, text: `Not saved; settle these disagreements first (pick, or correct the pin/package): ${open.map((d) => d.key).join(', ')}` };
+        const saved = await this.save();
+        return saved ? { isError: false, text: `${saved.mpn ?? saved.id} added to the library as ${saved.id} (${saved.pins.length} pins); place it with add_part.` } : { isError: true, text: 'Saving failed.' };
+      }
+      case 'pick': {
+        const bad = a.picks.filter((p) => !keys.has(p.key));
+        if (bad.length) return { isError: true, text: `Not disputed: ${bad.map((p) => p.key).join(', ')}. Disputed: ${[...keys].join(', ') || 'none'}` };
+        this.takeB = { ...this.takeB, ...Object.fromEntries(a.picks.map((p) => [p.key, p.pass === 2])) };
+        break;
+      }
+      case 'set_pins':
+        edit((d) => {
+          for (const p of a.pins) {
+            const i = d.pins.findIndex((x) => x.number.toUpperCase() === p.number.toUpperCase());
+            if (i >= 0) d.pins[i] = { ...d.pins[i], ...p };
+            else d.pins.push(p);
+          }
+        });
+        for (const p of a.pins) forget(`pin:${p.number.toUpperCase()}`);
+        break;
+      case 'remove_pins': {
+        const gone = new Set(a.numbers.map((n) => n.toUpperCase()));
+        edit((d) => (d.pins = d.pins.filter((p) => !gone.has(p.number.toUpperCase()))));
+        for (const n of gone) forget(`pin:${n}`);
+        break;
+      }
+      case 'set_package':
+        edit((d) => Object.assign(d.package, a.package));
+        for (const k of Object.keys(a.package)) forget(`package:${k}`);
+        break;
+    }
+    return { isError: false, text: `Updated.\n${this.#describe()}` };
+  }
+
+  /** The pending import as the agent reads it. */
+  agentSummary(): string {
+    return this.phase === 'review' && this.drafts[0] ? this.#describe() : '';
+  }
+
+  #describe(): string {
+    const d = this.drafts[0]!;
+    const card = this.card;
+    const pkg = card?.packageInfo ?? d.package;
+    const lines = [
+      `${this.request?.mpn}: ${card ? `${card.id}, ${card.pins.length} pins` : 'not usable yet'}, package ${pkg.name} (${pkg.family}${pkg.pitch_mm ? `, pitch ${pkg.pitch_mm}` : ''}${pkg.body_mm ? `, body ${pkg.body_mm.join('×')}` : ''}${pkg.exposed_pad_mm ? `, exposed pad ${pkg.exposed_pad_mm.join('×')}` : ''}; drawing p.${pkg.page ?? '?'})`,
+    ];
+    const dis = this.disagreements;
+    if (dis.length) {
+      lines.push('Disagreements between the passes (key: pass 1 | pass 2 → chosen):');
+      for (const x of dis) lines.push(`- ${x.key}: ${x.a} | ${x.b} → ${this.takeB[x.key] === undefined ? 'open' : this.takeB[x.key] ? 'pass 2' : 'pass 1'}`);
+    }
+    if (this.secondPassFailed) lines.push(`Second pass: ${this.secondPassFailed}`);
+    if (this.issues.length) lines.push('Issues:', ...this.issues.map((i) => `- ${i.severity}: ${i.message}`));
+    const pins = card?.pins ?? d.pins;
+    lines.push(`Pins: ${pins.map((p) => `${p.number} ${p.name} ${p.type}${'page' in p && p.page ? ` p${p.page}` : ''}`).join('; ')}`);
+    return lines.join('\n');
+  }
+
   cancel() {
     if (this.#run) bridge.cancelChat(this.#run);
   }
@@ -236,6 +408,10 @@ export class IngestState {
 
   discard() {
     this.cancel();
+    // the datasheet was kept only for this review (unless a saved part uses it)
+    const hash = this.#storedSheet;
+    if (hash && !this.library.some((p) => p.provenance.document === `sha256:${hash}`)) void deleteDatasheet(hash);
+    this.#storedSheet = null;
     this.#reset();
   }
 

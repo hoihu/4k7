@@ -97,9 +97,10 @@ export class ChatRunner {
     else this.start(msg);
   };
 
-  #busy(id: string): boolean {
-    if (![...this.#runs.values()].some((r) => !r.done)) return false;
-    this.#emit(id, { kind: 'done', ok: false, error: 'Claude Code is still working on the previous request.' });
+  /** One run of each kind at a time: a chat turn may start a datasheet import and wait for it. */
+  #busy(id: string, mode: McpMode): boolean {
+    if (![...this.#runs.values()].some((r) => !r.done && r.mode === mode)) return false;
+    this.#emit(id, { kind: 'done', ok: false, error: mode === 'ingest' ? 'Another datasheet import is still running.' : 'Claude Code is still working on the previous request.' });
     return true;
   }
 
@@ -113,7 +114,7 @@ export class ChatRunner {
   }
 
   start(msg: Extract<ChatMessage, { type: 'chat' }>) {
-    if (this.#busy(msg.id)) return;
+    if (this.#busy(msg.id, 'chat')) return;
     const token = randomBytes(24).toString('hex');
     const args = [
       '-p',
@@ -165,7 +166,7 @@ export class ChatRunner {
    * (Read/Grep/Glob, confined to that folder) and hand its extraction to submit_part.
    */
   async ingest(msg: IngestMessage) {
-    if (this.#busy(msg.id)) return;
+    if (this.#busy(msg.id, 'ingest')) return;
     const token = randomBytes(24).toString('hex');
     const run: Run = { child: null, token, mode: 'ingest', done: false, cancelled: false };
     this.#runs.set(msg.id, run);

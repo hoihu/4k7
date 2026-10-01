@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { QueryOp, Transaction } from './ops.ts';
 import { CalcCall, schemaOf, type ToolDefinition } from './tools.ts';
-import { PartDraft } from './ingest.ts';
+import { DraftPin, PackageInfo, PartDraft } from './ingest.ts';
 
 export const BRIDGE_PROTOCOL = 1;
 export const BRIDGE_PORTS = [7777, 7778, 7779, 7780, 7781] as const;
@@ -98,6 +98,26 @@ export const WaitForReviewInput = z.object({
   timeout_s: z.number().int().min(5).max(600).default(120).describe('How long to wait before returning "still pending"'),
 });
 
+export const ImportPartInput = z.object({
+  mpn: z.string().min(2).describe('Full ordering code; it picks the package, e.g. "ADIN2111BCPZ"'),
+  datasheet_url: z.string().url().describe("The manufacturer's datasheet PDF link"),
+  notes: z.string().optional().describe('Hints for the extraction, e.g. which package table to use'),
+  timeout_s: z.number().int().min(30).max(900).default(420).describe('How long to wait for the import (it takes a few minutes); if it is still running, call again with the same mpn to keep waiting'),
+});
+
+export const PendingImportInput = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('get') }).describe('The import waiting for review: pins, package, the passes\' disagreements and the issues'),
+  z.object({
+    action: z.literal('pick'),
+    picks: z.array(z.object({ key: z.string().describe('Disagreement key, e.g. "pin:41" or "package:pitch_mm"'), pass: z.union([z.literal(1), z.literal(2)]) })).min(1),
+  }).describe('Settle disagreements: take pass 1\'s or pass 2\'s value'),
+  z.object({ action: z.literal('set_pins'), pins: z.array(DraftPin).min(1) }).describe('Add pins or correct them (matched by number), e.g. a missing exposed pad "49" GND pwr_in'),
+  z.object({ action: z.literal('remove_pins'), numbers: z.array(z.string()).min(1) }),
+  z.object({ action: z.literal('set_package'), package: PackageInfo.partial() }).describe('Correct package facts (pitch, body, exposed pad …)'),
+  z.object({ action: z.literal('save') }).describe('Save the reviewed part to the library (refused while errors remain)'),
+  z.object({ action: z.literal('discard') }),
+]);
+
 export const DatasheetInput = z.object({
   part: z.string().min(1).describe('A component using the part ("BZ1") or the part id'),
   page: z.number().int().positive().optional().describe('Page to read: its text and a picture of it (drawings, dimension figures). Leave out for the page index.'),
@@ -148,6 +168,20 @@ export function bridgeTools(opts: { chat?: boolean } = {}): ToolDefinition[] {
         'Deterministic engineering calculators (divider, buck, led_resistor, rc, nearest_e). Use instead of mental ' +
         'arithmetic; results snap to standard E-series values.',
       input_schema: schemaOf(CalcCall),
+    },
+    {
+      name: 'import_part',
+      description:
+        "Import a part into the user's library from its datasheet PDF (the app's datasheet import: pins, package, footprint, " +
+        'decoupling, checked and cross-checked by a second independent pass). Takes a few minutes; the part is then in the library for add_part.',
+      input_schema: schemaOf(ImportPartInput),
+    },
+    {
+      name: 'pending_import',
+      description:
+        'Work on the datasheet import waiting for review (the same one the user sees in Parts): read it, settle the two passes\' ' +
+        'disagreements, add or correct pins and package facts from the datasheet, then save it to the library. Check values with read_datasheet.',
+      input_schema: schemaOf(PendingImportInput),
     },
     {
       name: 'read_datasheet',
@@ -242,7 +276,7 @@ Workflow:
 
 Conventional drawings are produced by the layout, not by you. Regulators (power input, power output, ground) are drawn automatically in datasheet reference style: input rail on the left with input caps, switch node, inductor and output rail on the right with diode, output caps and feedback divider, bootstrap cap between its pin and the switch node, and a common ground line. Just connect the circuit; do not try to place these parts with left_of/above constraints (constrain kind "arrangement" value "compact" on the IC opts out). Also: four diodes wired as a full bridge are drawn automatically as the classic 45° diamond (AC left/right, + top, − bottom). Just connect them correctly; use constrain kind "arrangement" value "inline" on one of the diodes only if the user wants it drawn flat. A single-package bridge is generic:BRIDGE.
 
-Big ICs (MCUs) can be drawn as several symbols: design_edit set_symbol with style "units" (U1A power/system, U1B… GPIO ports) or "single". It keeps every connection, so never delete and re-add a part to change how it is drawn. Units are placed like components: constrain left_of/right_of/above/below accepts unit references such as "U3B" (e.g. below U3B U3A moves that unit to the next row). Parts are imported from datasheets by the user in Parts → Import from datasheet; you cannot import parts yourself. A part without a footprint (DRC.NO_FOOTPRINT: a package no generator knows, e.g. a buzzer, relay, switch or terminal block) gets one with set_footprint: read the pads off the datasheet's recommended footprint or package drawing (pin pitch, hole and pad sizes; body size and height) and give every pin its pad; never place a substitute part instead. read_datasheet reads the datasheet stored with an imported part (page index, text search, a page's text with its picture; region zooms into a drawing): look there yourself before asking the user about a value, and set_footprint again to correct a footprint.
+Big ICs (MCUs) can be drawn as several symbols: design_edit set_symbol with style "units" (U1A power/system, U1B… GPIO ports) or "single". It keeps every connection, so never delete and re-add a part to change how it is drawn. Units are placed like components: constrain left_of/right_of/above/below accepts unit references such as "U3B" (e.g. below U3B U3A moves that unit to the next row). A part that is not in the library is imported from its datasheet with import_part (the ordering code and the datasheet PDF link; find the link on the web if allowed, or ask the user for it); the user can also import in Parts → Import from datasheet. Do not substitute a different part instead. An import waiting for review (passes disagree, warnings) is settled with pending_import: read the disputed pins and package facts in the datasheet (read_datasheet), pick or correct them, then save; ask the user only what the datasheet cannot answer. A part without a footprint (DRC.NO_FOOTPRINT: a package no generator knows, e.g. a buzzer, relay, switch or terminal block) gets one with set_footprint: read the pads off the datasheet's recommended footprint or package drawing (pin pitch, hole and pad sizes; body size and height) and give every pin its pad; never place a substitute part instead. read_datasheet reads the datasheet stored with an imported part (page index, text search, a page's text with its picture; region zooms into a drawing): look there yourself before asking the user about a value, and set_footprint again to correct a footprint.
 
 The board layout (Layout view) is worked in three steps, with the user deciding along the way. 1. propose_layout: a board size (unless set with set_board) and a placement from the netlist and the schematic grouping, supply caps and an IC's small parts at its pins. 2. Adjustments: place records the user's choice for a part (kept relative to its parent part, e.g. a cap to its IC, so it follows when the IC moves; the placer only nudges it if it must; leave rot out unless the user wants a particular orientation: the placer turns small parts so connected pads face each other); place with lock: true pins a part exactly (connectors at the edge, mounting-critical parts); set_board sets the size; remove a position constraint to let the placer decide again. Later changes (new parts, moved ICs) keep the placement and move only what they must. 3. route, as the last step once the placement is final; after a placement change the routing is out of date until route runs again. Look at the board with design_query get_board (it says whether routing is done). Steer it further with set_board (size, layers, track widths), constrain near (keep parts close), set_plane (a net's copper plane per layer: inner layers of a 4-layer board are dedicated planes and the net's pads drop onto them with vias; outer layers get a pour around the tracks; auto: true restores the default GND on B.Cu, or GND on In1.Cu and the main supply on In2.Cu with 4 layers). Do not route unasked while the user is still arranging parts; after route, check get_board (routing and DRC) before you propose. Vias are kept out of pads and small parts' land patterns; set_board via_in_pad: true only when the user asks for vias in pads. Mounting holes are board features, not parts: add_hole (diameter, corner: all/top_left/… with inset, or x/y; plated, optionally on a net such as GND), remove_hole. When the user wants the board to look like or be shaped like something (a Christmas tree, a heart, a circle), that is the board's outline: draw it with set_outline; do not rearrange the parts into the shape. Milling: set_outline gives the board a free-form outline from an SVG path you write (any units, one closed figure, curves and arcs allowed) scaled to width_mm/height_mm, e.g. a Christmas tree 100 mm high, a round badge, a shield; rectangle: true goes back. set_board corner_radius_mm rounds a rectangular board's corners; add_cutout mills an opening (rect with optional corner radius, circle, or slot = an oblong such as an isolation slot between high- and low-voltage areas; angle_deg turns it), its centre given from an anchor (a corner, an edge's middle or the centre, so it follows the board size); remove_cutout. Parts, copper and pours keep the edge clearance from cutouts; the Edge_Cuts Gerber carries them.
 

@@ -157,7 +157,7 @@ export class Bridge {
       );
     }
     const id = ++this.#seq;
-    const waitS = tool === 'wait_for_review' ? Number((input as { timeout_s?: number })?.timeout_s ?? 120) : 0;
+    const waitS = tool === 'wait_for_review' ? Number((input as { timeout_s?: number })?.timeout_s ?? 120) : tool === 'import_part' ? Number((input as { timeout_s?: number })?.timeout_s ?? 420) : 0;
     const timeoutMs = Math.max(this.#opts.callTimeoutMs ?? 60_000, (waitS + 15) * 1000);
     return new Promise((resolve) => {
       const timer = setTimeout(() => {

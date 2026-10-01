@@ -115,6 +115,28 @@ export async function saveDatasheet(hash: string, sheet: StoredDatasheet): Promi
   await put('datasheets', hash, sheet);
 }
 
+export async function deleteDatasheet(hash: string): Promise<void> {
+  await tx('datasheets', 'readwrite', (s) => s.delete(hash));
+}
+
+/** A datasheet import waiting for review, kept so a reload does not lose it (the PDF is in "datasheets"). */
+export async function savePendingImport(value: unknown | null): Promise<void> {
+  try {
+    if (value === null) await tx('settings', 'readwrite', (s) => s.delete('pendingImport'));
+    else await put('settings', 'pendingImport', JSON.parse(JSON.stringify(value)));
+  } catch (e) {
+    storageHealth = `saving the pending import failed: ${(e as Error).message}`;
+  }
+}
+
+export async function loadPendingImport<T>(): Promise<T | undefined> {
+  try {
+    return await get<T>('settings', 'pendingImport');
+  } catch {
+    return undefined;
+  }
+}
+
 export async function loadDatasheet(hash: string): Promise<StoredDatasheet | undefined> {
   try {
     return await get<StoredDatasheet>('datasheets', hash);

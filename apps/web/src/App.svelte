@@ -149,7 +149,14 @@
     {:else if app.view === 'lay'}
       <LayoutView />
     {:else if app.view === 'parts'}
-      <Parts />
+      <!-- the chat stays beside the parts, so an import can be talked through without switching views -->
+      <section class="partsv" class:nochat={!app.chatOpen}>
+        <div class="col chatcol">{#if app.chatOpen}<Chat />{/if}</div>
+        <div class="col partscol">
+          <Parts />
+          {#if !app.chatOpen}<button class="ib agentbtn" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
+        </div>
+      </section>
     {:else}
       <Settings />
     {/if}
@@ -173,6 +180,11 @@
 
   .sch { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr) minmax(240px, 290px); gap: 1px; background: var(--line); min-height: 0; }
   .sch.nochat { grid-template-columns: 0 minmax(0, 1fr) minmax(240px, 290px); }
+  .partsv { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: 1px; background: var(--line); min-height: 0; }
+  .partsv.nochat { grid-template-columns: 0 minmax(0, 1fr); }
+  .partsv .chatcol { display: flex; flex-direction: column; overflow: hidden; }
+  .partscol { position: relative; }
+  .agentbtn { position: absolute; left: 8px; bottom: 8px; z-index: 2; }
   .col { min-height: 0; min-width: 0; background: var(--panel); }
   .canvas { position: relative; overflow: hidden; background: var(--canvas); background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 16px 16px; }
   .fl { position: absolute; z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
@@ -201,6 +213,8 @@
     .bar .mode { display: none; }
     .sch, .sch.nochat { grid-template-columns: minmax(0, 1fr); }
     .sch > .col { display: none; }
+    .partsv, .partsv.nochat { grid-template-columns: minmax(0, 1fr); }
+    .partsv .chatcol { display: none; }
     .sch[data-pane="chat"] .chatcol, .sch[data-pane="canvas"] .canvas, .sch[data-pane="insp"] .inspcol { display: block; }
     .mobnav { display: flex; border-top: 1px solid var(--line); background: var(--panel); height: 40px; }
     .mobnav button { flex: 1; border: 0; background: transparent; color: var(--txt-3); font-size: 12px; }

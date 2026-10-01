@@ -17,7 +17,7 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { CalcCall, DatasheetInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type TokenCount } from '@tracewise/schema';
+import { CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -254,13 +254,62 @@ class AppState {
     return true;
   }
 
+  /**
+   * The import_part tool: the datasheet import of the Parts view, started by the agent. A clean
+   * result (accepted, both passes agree) goes straight into the library; disagreements between
+   * the passes wait for the user's review in Parts.
+   */
+  private async importPart(args: { mpn: string; datasheet_url: string; notes?: string; timeout_s: number }): Promise<{ isError: boolean; content: BridgeContent[] }> {
+    const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
+    const ing = this.ingest;
+    const same = ing.request?.mpn.toLowerCase() === args.mpn.trim().toLowerCase();
+    const known = ing.library.find((p) => p.mpn?.toLowerCase() === args.mpn.trim().toLowerCase());
+    if (known && !(same && ing.phase !== 'idle')) return text(`${args.mpn} is already in the library as ${known.id}; add it with add_part.`);
+    if (ing.phase === 'running' && !same) return text(`Another import (${ing.request?.mpn}) is running; try again when it has finished.`, true);
+    if (ing.phase === 'review' && !same) return text(`The import of ${ing.request?.mpn} is waiting for the user's review in Parts; ask them to save or discard it first.`, true);
+    if (ing.phase !== 'running' && !(same && ing.phase === 'review')) {
+      await ing.start({ mpn: args.mpn, url: args.datasheet_url, ...(args.notes ? { notes: args.notes } : {}), model: 'sonnet', verify: true });
+      this.flash(`Importing ${args.mpn} from its datasheet`);
+    }
+    const until = Date.now() + args.timeout_s * 1000;
+    while (ing.phase === 'running' && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
+    if (ing.phase === 'running') return text(`Still importing ${args.mpn} (${ing.log.at(-1) ?? 'working'}). Call import_part again with the same mpn to keep waiting.`);
+    if (ing.phase === 'failed') return text(`The import of ${args.mpn} failed: ${ing.error ?? 'unknown error'}`, true);
+    const card = ing.card;
+    const warnings = ing.issues.filter((i) => i.severity === 'warning').map((i) => `- ${i.message}`);
+    if (!card) return text(`The import of ${args.mpn} produced no usable part:\n${ing.issues.map((i) => `- ${i.message}`).join('\n')}`, true);
+    if (ing.disagreements.length || ing.secondPassFailed || warnings.length) {
+      const why = [
+        ing.secondPassFailed && `the cross-check pass did not finish (${ing.secondPassFailed})`,
+        ing.disagreements.length && `the two independent passes read ${ing.disagreements.length} fact(s) differently`,
+        warnings.length && `the checks raised ${warnings.length} warning(s)`,
+      ].filter(Boolean).join(', and ');
+      this.flash(`${args.mpn}: import waiting for review`);
+      return text(
+        `${card.id} was extracted, but ${why}; it is not in the library yet. Settle it with pending_import (get, then pick or correct pins/package from the datasheet with read_datasheet, then save), ` +
+          `or leave it to the user in Parts.\n${ing.agentSummary()}`,
+      );
+    }
+    const saved = await ing.save();
+    if (!saved) return text(`Saving ${args.mpn} failed.`, true);
+    this.flash(`${saved.mpn ?? saved.id} added to your library`);
+    return text(
+      `Imported ${saved.id}: ${saved.pins.length} pins, package ${saved.package ?? '?'}, both passes agree; it is in the library now (add_part part "${saved.id}").` +
+        (warnings.length ? `\nWarnings (the user can check them in Parts):\n${warnings.join('\n')}` : ''),
+    );
+  }
+
   /** The read_datasheet tool: page index, text search, or one page (text and picture). */
   private async readDatasheet(args: { part: string; page?: number; find?: string; region?: [number, number, number, number] }): Promise<{ isError: boolean; content: BridgeContent[] }> {
     const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
     let id = args.part;
     const comp = (await this.kernel.query({ op: 'get_component', ref: args.part })) as { part?: string };
     if (comp?.part) id = comp.part;
-    const card = this.designParts[id] ?? this.ingest.library.find((p) => p.id === id);
+    const pending = this.ingest.card;
+    const card =
+      this.designParts[id] ??
+      this.ingest.library.find((p) => p.id === id) ??
+      (pending && (pending.id === id || pending.mpn?.toLowerCase() === args.part.toLowerCase()) ? pending : undefined);
     if (!card) return text(`No part or component "${args.part}".`, true);
     const ds = await this.ingest.datasheetFor(card);
     if (!ds) return text(`${card.id} has no stored datasheet (only parts imported from a PDF keep theirs)${card.datasheet ? `; its datasheet link: ${card.datasheet}` : ''}.`, true);
@@ -376,6 +425,22 @@ class AppState {
         } catch (e) {
           return text((e as Error).message, true);
         }
+      }
+      case 'import_part': {
+        const args = ImportPartInput.safeParse(input);
+        if (!args.success) return text(args.error.message, true);
+        log(`import · ${args.data.mpn}`, true, 'reading the datasheet…');
+        const out = await this.importPart(args.data);
+        log(`import · ${args.data.mpn}`, !out.isError, out.content[0]?.type === 'text' ? out.content[0].text.split('\n')[0]! : '');
+        return out;
+      }
+      case 'pending_import': {
+        const args = PendingImportInput.safeParse(input);
+        if (!args.success) return text(args.error.message, true);
+        const out = await this.ingest.agentEdit(args.data);
+        if (args.data.action === 'save' && !out.isError) this.flash(out.text.split('\n')[0]!);
+        log(`import review · ${args.data.action}`, !out.isError, out.text.split('\n')[0]!.slice(0, 120));
+        return text(out.text, out.isError);
       }
       case 'read_datasheet': {
         const args = DatasheetInput.safeParse(input);
