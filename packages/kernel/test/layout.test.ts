@@ -77,6 +77,31 @@ describe('schematic layout', () => {
     }
   });
 
+  it('marks every T (a wire ending on the middle of another) with a junction dot', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    // a small cap beside the RC on the compensation pin (as in many reference designs)
+    k.transact({ summary: 'comp cap', ops: [
+      { op: 'add_part', part: 'generic:C', refdes: 'C9', params: { capacitance: '47pF', voltage: '25V' } },
+      { op: 'connect', pins: ['U1.COMP', 'C9.1'] },
+      { op: 'connect', pins: ['C9.2'], net: 'GND' },
+    ] });
+    const s = sheetOf(k);
+    const dots = new Set(s.junctions.map((j) => `${j.x},${j.y}`));
+    const segs = s.wires.flatMap((w) => Array.from({ length: w.pts.length / 2 - 1 }, (_, i) => ({ net: w.netId, x1: w.pts[2 * i]!, y1: w.pts[2 * i + 1]!, x2: w.pts[2 * i + 2]!, y2: w.pts[2 * i + 3]! })));
+    const inside = (g: (typeof segs)[number], x: number, y: number) =>
+      (g.x1 === g.x2 && x === g.x1 && y > Math.min(g.y1, g.y2) && y < Math.max(g.y1, g.y2)) || (g.y1 === g.y2 && y === g.y1 && x > Math.min(g.x1, g.x2) && x < Math.max(g.x1, g.x2));
+    let tees = 0;
+    for (const g of segs) {
+      for (const [x, y] of [[g.x1, g.y1], [g.x2, g.y2]] as const) {
+        if (!segs.some((o) => o.net === g.net && inside(o, x, y))) continue;
+        tees++;
+        expect(dots.has(`${x},${y}`), `T at ${x},${y} on ${g.net}`).toBe(true);
+      }
+    }
+    expect(tees).toBeGreaterThan(0);
+  });
+
   it('honours left_of hints for parts that would sit elsewhere by default', () => {
     const k = new Kernel();
     k.transact({ summary: '555 with decoupling', ops: [

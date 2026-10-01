@@ -229,3 +229,53 @@ export function supplyStubs(pins: { number: string; y: number; side: string }[],
   return out;
 }
 
+
+/**
+ * Junction dots wherever three or more connections meet on one net: wire ends, wires passing
+ * through, pins and supply symbols. A point where a wire ends on the middle of another (a T) is
+ * one of them, whichever drawing produced it.
+ */
+export function addJunctions(scene: Scene): void {
+  type Seg = { net: string; x1: number; y1: number; x2: number; y2: number };
+  const segs: Seg[] = [];
+  for (const w of scene.wires) {
+    for (let i = 0; i + 3 < w.pts.length; i += 2) {
+      const [x1, y1, x2, y2] = [w.pts[i]!, w.pts[i + 1]!, w.pts[i + 2]!, w.pts[i + 3]!];
+      if (x1 !== x2 || y1 !== y2) segs.push({ net: w.netId, x1, y1, x2, y2 });
+    }
+  }
+  const key = (x: number, y: number) => `${x},${y}`;
+  const pins = new Map<string, number>();
+  for (const s of scene.symbols) for (const p of s.pins) pins.set(key(p.x, p.y), (pins.get(key(p.x, p.y)) ?? 0) + 1);
+  const supplies = new Map<string, number>();
+  for (const l of scene.labels) if (l.kind !== 'net' || l.dir !== 'on') supplies.set(`${l.netId}@${key(l.x, l.y)}`, (supplies.get(`${l.netId}@${key(l.x, l.y)}`) ?? 0) + 1);
+  const inside = (s: Seg, x: number, y: number) =>
+    (s.x1 === s.x2 && x === s.x1 && y > Math.min(s.y1, s.y2) && y < Math.max(s.y1, s.y2)) ||
+    (s.y1 === s.y2 && y === s.y1 && x > Math.min(s.x1, s.x2) && x < Math.max(s.x1, s.x2));
+  const have = new Set(scene.junctions.map((j) => key(j.x, j.y)));
+  for (const s of segs) {
+    for (const [x, y] of [[s.x1, s.y1], [s.x2, s.y2]] as const) {
+      const k = key(x, y);
+      if (have.has(k)) continue;
+      let degree = (pins.get(k) ?? 0) + (supplies.get(`${s.net}@${k}`) ?? 0);
+      for (const o of segs) {
+        if (o.net !== s.net) continue;
+        if ((o.x1 === x && o.y1 === y) || (o.x2 === x && o.y2 === y)) degree += 1;
+        else if (inside(o, x, y)) degree += 2;
+      }
+      if (degree >= 3) {
+        scene.junctions.push({ x, y });
+        have.add(k);
+      }
+    }
+  }
+  // a pin touching the middle of a wire
+  for (const [k] of pins) {
+    if (have.has(k)) continue;
+    const [x, y] = k.split(',').map(Number) as [number, number];
+    if (segs.some((s) => inside(s, x, y))) {
+      scene.junctions.push({ x, y });
+      have.add(k);
+    }
+  }
+}

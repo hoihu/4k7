@@ -19,6 +19,7 @@ import { isTwoPin, symbolFor, unitCount } from '@tracewise/parts';
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
 import {
+  addJunctions,
   deco,
   decoWidth,
   supplyDir,
@@ -274,6 +275,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     }
   }
 
+  addJunctions(scene);
   const bb = sceneBBox(scene);
   const pad = 400;
   return {
