@@ -4,6 +4,7 @@
   import { app, tokenCost } from '../app.svelte.ts';
   import { USAGE_TITLE, usageLine } from '../usage.ts';
   import type { Datasheet } from '../ingest.svelte.ts';
+  import type { TopView } from '../three-body.ts';
   import Body3DView from './Body3DView.svelte';
   import DatasheetView from './DatasheetView.svelte';
   import FootprintView from './FootprintView.svelte';
@@ -28,6 +29,27 @@
   let verify = $state(true);
   /** Footprint or 3D body next to the symbol. */
   let mech = $state<'fp' | '3d'>('fp');
+  // switching: 3D starts from the footprint's top-down view and flies into 3D; back, it flies to
+  // straight above the footprint's view and the footprint takes over (as in the layout view)
+  let fpView: FootprintView | undefined = $state();
+  let bodyView: Body3DView | undefined = $state();
+  let from2d = $state<TopView | null>(null);
+  let show2d = $state(true);
+  let switching = false;
+  function to3d() {
+    if (mech === '3d' || switching) return;
+    from2d = fpView?.getView() ?? null;
+    show2d = true;
+    mech = '3d';
+  }
+  async function toFootprint() {
+    if (mech === 'fp' || switching) return;
+    switching = true;
+    await bodyView?.flyToTop(fpView?.getView() ?? undefined);
+    show2d = true;
+    mech = 'fp';
+    switching = false;
+  }
 
   /* ---- datasheet pane: the page a value was read from ---- */
   let sheetDoc = $state.raw<Datasheet | null>(null);
@@ -199,8 +221,8 @@
     {#if card.packageInfo}
       <div class="fp">
         <div class="tabs">
-          <button aria-pressed={mech === 'fp'} onclick={() => (mech = 'fp')}>Footprint</button>
-          <button aria-pressed={mech === '3d'} onclick={() => (mech = '3d')}>3D</button>
+          <button aria-pressed={mech === 'fp'} onclick={toFootprint}>Footprint</button>
+          <button aria-pressed={mech === '3d'} onclick={to3d}>3D</button>
           <span class="grow"></span>
           {#if mech === '3d' && sheetDoc && mode === 'part' && userIds.has(card.id) && isModule(card.packageInfo)}
             {#if picking}<button class="link" onclick={() => ((picking = false), (dsLabel = ''))}>cancel</button>
@@ -213,7 +235,9 @@
           {#if card.packageInfo.page && sheetDoc}<button class="link" onclick={() => showPackage(card)}>drawing p. {card.packageInfo.page}</button>{/if}
         </div>
         <div class="mech">
-          {#if mech === 'fp'}<FootprintView {card} bind:hover={hoverPin} />{:else}<Body3DView {card} />{/if}
+          <!-- the footprint stays underneath (it frames the switch); 3D lies over it once drawn -->
+          <div class="layer" class:hidden={mech === '3d' && !show2d}><FootprintView bind:this={fpView} {card} bind:hover={hoverPin} /></div>
+          {#if mech === '3d'}<div class="layer over"><Body3DView bind:this={bodyView} {card} from={from2d} onready={() => (show2d = false)} /></div>{/if}
         </div>
       </div>
     {/if}
@@ -442,7 +466,11 @@
   .seg button[aria-pressed="true"], .tabs button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-txt); }
   .tabs { display: flex; align-items: center; padding: 4px 6px; border-bottom: 1px solid var(--line); }
   .fp { display: flex; flex-direction: column; }
-  .mech { flex: 1; min-height: 0; }
+  .mech { flex: 1; min-height: 0; position: relative; }
+  .layer { position: absolute; inset: 0; display: flex; flex-direction: column; }
+  .layer > :global(*) { flex: 1; min-height: 0; }
+  .layer.hidden { visibility: hidden; }
+  .layer.over { z-index: 1; }
   .pins tr.clickable { cursor: pointer; }
   .pins tr.clickable:hover td { background: var(--hover); }
   .diff { margin-bottom: 12px; }

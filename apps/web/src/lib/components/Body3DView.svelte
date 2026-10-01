@@ -1,10 +1,10 @@
 <script lang="ts">
   import { body3dFor } from '@tracewise/parts';
   import type { PartCard } from '@tracewise/schema';
-  import type { BodyViewer, ViewPreset } from '../three-body.ts';
+  import type { BodyViewer, TopView, ViewPreset } from '../three-body.ts';
 
   /** 3D preview of the generated package body (three.js, loaded when first shown). */
-  let { card }: { card: PartCard } = $props();
+  let { card, from = null, onready }: { card: PartCard; from?: TopView | null; onready?: () => void } = $props();
 
   const result = $derived(card.packageInfo ? body3dFor(card.packageInfo, card.pins.map((p) => p.number)) : null);
   let host: HTMLDivElement | undefined = $state();
@@ -32,9 +32,22 @@
     };
   });
 
+  // the first body starts from the footprint's top-down view and flies into 3D (like the layout view)
+  let first = true;
   $effect(() => {
-    if (viewer && result?.ok) viewer.setBody(result.body, card.topImage);
+    if (!viewer || !result?.ok) return;
+    viewer.setBody(result.body, card.topImage);
+    if (!first) return;
+    first = false;
+    if (host) viewer.resize(host.clientWidth, host.clientHeight);
+    if (from) viewer.flyFromTop(from);
+    requestAnimationFrame(() => onready?.());
   });
+
+  /** Fly back to straight above (the footprint's view), for the switch to 2D. */
+  export function flyToTop(to?: TopView): Promise<TopView> | undefined {
+    return viewer?.flyToTop(to);
+  }
 
   $effect(() => {
     const v = viewer;

@@ -17,6 +17,10 @@ export interface BodyViewer {
   /** With `top`: a picture of the part from above (a module's carrier board shows it). */
   setBody(body: Body3D, top?: TopPicture): void;
   view(preset: ViewPreset): void;
+  /** Start exactly at this top-down view (the footprint's), then fly into the 3D view. */
+  flyFromTop(from: TopView): void;
+  /** Fly to straight above (`to`, else the current point); resolves with that top-down view. */
+  flyToTop(to?: TopView): Promise<TopView>;
   resize(width: number, height: number): void;
   dispose(): void;
 }
@@ -203,10 +207,10 @@ function viewerCore(canvas: HTMLCanvasElement) {
       place(topPose(from), true);
       void fly(presetPose('iso'), 900);
     },
-    async flyToTop(): Promise<TopView> {
+    async flyToTop(to?: TopView): Promise<TopView> {
       const t = controls.target;
       const visH = 2 * camera.position.distanceTo(t) * tanHalf();
-      const v = { cx: t.x, cy: t.z, visH };
+      const v = to ?? { cx: t.x, cy: t.z, visH };
       await fly(topPose(v), 700, false); // (the 2D view takes over from here)
       return v;
     },
@@ -561,6 +565,8 @@ export function createBodyViewer(canvas: HTMLCanvasElement): BodyViewer {
   return {
     setBody: (body, top) => core.setContent(bodyGroup(body, core.res, true, top, core.redraw)),
     view: core.view,
+    flyFromTop: core.flyFromTop,
+    flyToTop: core.flyToTop,
     resize: core.resize,
     dispose: core.dispose,
   };

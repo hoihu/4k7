@@ -1,6 +1,7 @@
 <script lang="ts">
   import { footprintFor } from '@tracewise/parts';
   import type { PartCard } from '@tracewise/schema';
+  import type { TopView } from '../three-body.ts';
 
   /** Top view of the generated land pattern: pads, body outline, courtyard and pin 1. */
   let { card, hover = $bindable(null) }: { card: PartCard; hover?: string | null } = $props();
@@ -30,6 +31,13 @@
     return 1 / Math.min(pw / vw!, ph / vh!);
   });
   const uid = `fp${Math.random().toString(36).slice(2, 8)}`;
+
+  /** What the panel shows, as a top-down view (mm, centred on the body), for the 3D view to start from. */
+  export function getView(): TopView | null {
+    if (!fp || !pw || !ph) return null;
+    const [, , vw, vh] = view.split(' ').map(Number);
+    return { cx: 0, cy: 0, visH: ph / Math.min(pw / vw!, ph / vh!) };
+  }
   /** Pad numbers only where they fit. */
   const labelSize = $derived(fp ? Math.min(...fp.pads.map((p) => Math.min(p.w, p.h))) * 0.7 : 0);
   const pkg = $derived(card.packageInfo);
