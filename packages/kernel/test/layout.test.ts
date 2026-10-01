@@ -93,6 +93,38 @@ describe('schematic layout', () => {
     expect(k.state().diagnostics.some((d) => d.code === 'LEDGER.PLACEMENT')).toBe(false);
   });
 
+  it('draws decoupling caps under the IC they feed, not in the regulator that makes the rail', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    const caps = Array.from({ length: 6 }, (_, i) => `C${10 + i}`);
+    k.transact({ summary: 'a 555 on the 3V3 rail', ops: [
+      { op: 'add_part', part: 'ti:NE555DR', refdes: 'U2' },
+      { op: 'connect', pins: ['U2.VCC'], net: '+3V3' },
+      { op: 'connect', pins: ['U2.GND'], net: 'GND' },
+      ...caps.flatMap((c) => [
+        { op: 'add_part' as const, part: 'generic:C', refdes: c, params: { capacitance: '100nF', voltage: '16V' } },
+        { op: 'connect' as const, pins: [`${c}.1`], net: '+3V3' },
+        { op: 'connect' as const, pins: [`${c}.2`], net: 'GND' },
+      ]),
+    ] });
+    const s = sheetOf(k);
+    const find = (ref: string) => s.symbols.find((x) => x.refdes === ref)!.bbox;
+    const u1 = find('U1');
+    const u2 = find('U2');
+    for (const c of caps) {
+      const b = find(c);
+      expect(b.y, `${c} below U2`).toBeGreaterThan(u2.y + u2.h);
+      expect(Math.abs(b.x - u2.x), `${c} near U2`).toBeLessThan(3000);
+    }
+    // the bulk output cap stays with the regulator
+    expect(Math.abs(find('C2').y - u1.y)).toBeLessThan(1500);
+    // drawn as a bank: one shared wire per rail, one supply symbol per rail
+    const capBox = caps.map(find);
+    const inBank = (y: number) => capBox.some((b) => Math.abs(y - b.y) < 600);
+    const labels = s.labels.filter((l) => l.x >= Math.min(...capBox.map((b) => b.x)) - 100 && l.x <= Math.max(...capBox.map((b) => b.x + b.w)) && inBank(l.y));
+    expect(labels.length).toBeLessThanOrEqual(2 * Math.ceil(caps.length / 4));
+  });
+
   it('orders anchors by left_of between ICs', () => {
     const k = new Kernel();
     k.transact({ summary: 'two ICs', ops: [

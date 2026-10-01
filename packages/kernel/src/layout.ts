@@ -14,7 +14,7 @@
  *  - Connections that are not drawn as wires are shown by net labels, so the drawing is
  *    always electrically complete and correct.
  */
-import type { Component, Constraint, Design, Net, PartCard, Point, Rect, SchematicView, SheetView } from '@tracewise/schema';
+import { parseAs, type Component, type Constraint, type Design, type Net, type PartCard, type Point, type Rect, type SchematicView, type SheetView } from '@tracewise/schema';
 import { isTwoPin, symbolFor, unitCount } from '@tracewise/parts';
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
@@ -84,11 +84,13 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   const anchors = comps.filter((c) => !isTwoPin(cardFor(c)));
   const bridges = findBridges(ctx, comps.filter((c) => isTwoPin(cardFor(c))));
   const inBridge = new Set(bridges.flatMap((b) => b.diodes.map((x) => x.comp.id)));
+  // supply caps belong to the IC they serve, decided before the regulators claim parts
+  const owners = supplyOwners(d, anchors, comps.filter((c) => isTwoPin(cardFor(c))));
   // regulators are drawn like datasheet reference designs (power flow); they claim their parts
   const flows = new Map<string, FlowPlan>();
   let unclaimed = comps.filter((c) => isTwoPin(cardFor(c)) && !inBridge.has(c.id));
   for (const a of anchors) {
-    const plan = planFlow(ctx, a, unclaimed);
+    const plan = planFlow(ctx, a, unclaimed.filter((c) => (owners.get(c.id) ?? a.id) === a.id));
     if (!plan) continue;
     flows.set(a.id, plan);
     unclaimed = unclaimed.filter((c) => !plan.consumed.has(c.id));
@@ -193,7 +195,8 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
       continue;
     }
     const rail = nets.find((n) => n && !isGroundNet(n)) ?? nets[0];
-    let owner = rail && decapOwner(d, attachable, rail.id);
+    const decided = attachable.find((a) => a.id === owners.get(c.id));
+    let owner = decided ?? (rail && decapOwner(d, attachable, rail.id));
     let target: AnchorPlan | undefined;
     if (owner && rail) {
       // the unit whose symbol has a pin on that rail (the power unit of a split IC)
@@ -325,6 +328,60 @@ function sideHint(ks: Constraint[], compId: string, anchors: Component[]): { anc
     }
   }
   return undefined;
+}
+
+/*
+ * Who each supply part (a two-pin part between two supply nets, mostly decoupling caps) belongs
+ * to: an IC whose datasheet asks for decoupling on that rail, else an IC with a power input on
+ * it, else one with any pin on it; the regulator that produces the rail (through its inductor)
+ * ranks below those, except for bulk caps (≥ 4.7 µF), which stay at the regulator's output.
+ * Equal ranks (two regulators fed from the same input): the IC added most recently before the
+ * part (parts are added together with their IC).
+ */
+function supplyOwners(d: Design, anchors: Component[], parts: Component[]): Map<string, string> {
+  const owners = new Map<string, string>();
+  const seq = (c: Component) => parseInt(c.id.replace(/^[a-z]+_/, ''), 36) || 0;
+  const pinsOf = (c: Component) => cardOf(d, c.part)!.pins.map((p) => c.pins[p.number]);
+  // what each regulator produces: its output pins' nets, and beyond an inductor on them
+  const produces = new Map<string, Set<string>>();
+  for (const a of anchors) {
+    const card = cardOf(d, a.part)!;
+    const outs = new Set(card.pins.filter((p) => p.type === 'pwr_out' && a.pins[p.number]).map((p) => a.pins[p.number]!));
+    for (const n of [...outs]) {
+      for (const l of parts) {
+        if (cardOf(d, l.part)!.category !== 'inductor') continue;
+        const [x, y] = pinsOf(l);
+        const beyond = x === n ? y : y === n ? x : undefined;
+        if (beyond && !isGroundNet(d.nets[beyond]!)) outs.add(beyond);
+      }
+    }
+    if (outs.size) produces.set(a.id, outs);
+  }
+  for (const c of parts) {
+    const nets = pinsOf(c).map((n) => (n ? d.nets[n] : undefined));
+    if (!nets.every((n) => n && isPowerNet(n))) continue;
+    const rail = nets.find((n) => n && !isGroundNet(n));
+    if (!rail) continue;
+    const bulk = (parseAs(c.params.capacitance, 'F') ?? 0) >= 4.7e-6;
+    let best: { a: Component; score: number } | null = null;
+    for (const a of anchors) {
+      const card = cardOf(d, a.part)!;
+      const pins = card.pins.filter((p) => a.pins[p.number] === rail.id);
+      const names = new Set(pins.map((p) => p.name));
+      let score = card.requirements?.some((r) => r.kind === 'decouple' && names.has(r.pin)) ? 4 : pins.some((p) => p.type === 'pwr_in') ? 3 : pins.length ? 2 : 0;
+      if (produces.get(a.id)?.has(rail.id)) score = Math.max(score, bulk ? 5 : 1);
+      if (!score) continue;
+      if (!best || score > best.score) best = { a, score };
+      else if (score === best.score) {
+        // the IC added most recently before the part (else the first one after it)
+        const s0 = seq(c);
+        const key = (x: Component) => (seq(x) <= s0 ? s0 - seq(x) : 1e9 + seq(x) - s0);
+        if (key(a) < key(best.a)) best = { a, score };
+      }
+    }
+    if (best) owners.set(c.id, best.a.id);
+  }
+  return owners;
 }
 
 /** The anchor a decoupling cap belongs to: datasheet requirement > power input > any pin. */
@@ -607,16 +664,71 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
   placeColumns('right');
   placeColumns('left');
 
-  /* decoupling row under everything so far */
+  /* decoupling banks under everything so far: caps on the same rails share one wire on top and
+     one below (a single rail symbol each), wrapped at the anchor's width so many caps on a big IC
+     stay a block under it instead of one long row pushing the neighbours away */
   if (plan.decaps.length) {
     const bb = sceneBBox(scene);
+    const rowW = Math.max(bb.x + bb.w, 2500);
+    // higher potential on top, as verticalPart draws it
+    const rank = (n?: Net) => (!n ? 1 : isGroundNet(n) ? 3 : isPowerNet(n) ? 0 : 2);
+    const netsOf = (c: Component) => cardOf(d, c.part)!.pins.map((p) => (c.pins[p.number] ? d.nets[c.pins[p.number]!] : undefined));
+    const flipped = (c: Component) => {
+      const nets = netsOf(c);
+      return rank(nets[1]) < rank(nets[0]);
+    };
+    const railsOf = (c: Component) => {
+      const nets = netsOf(c);
+      return flipped(c) ? [nets[1], nets[0]] : [nets[0], nets[1]];
+    };
+    const key = (c: Component) => railsOf(c).map((n) => n?.id ?? '').join('|');
+    // same rails together, in first-seen order
+    const order = [...new Set(plan.decaps.map(key))];
+    const caps = [...plan.decaps].sort((a, b) => order.indexOf(key(a)) - order.indexOf(key(b)));
     let x = 0;
-    const y = grid(bb.y + bb.h + 300) + 260 + 200; // room for the rail symbols above
-    for (const c of plan.decaps) {
-      const part = verticalPart(ctx, c, x, y);
-      mergeScene(scene, part);
-      x += satWidth(d, c);
+    let y = grid(bb.y + bb.h + 300) + 260 + 200; // room for the rail symbols above
+    let bottom = y;
+    let run: { key: string; rails: (Net | undefined)[]; top: Point[]; bot: Point[] } | null = null;
+    const closeRun = () => {
+      if (!run) return;
+      [run.top, run.bot].forEach((pts, i) => {
+        const net = run!.rails[i];
+        if (pts.length < 2 || !net) return;
+        const [a, b] = [pts[0]!, pts.at(-1)!];
+        scene.wires.push({ netId: net.id, pts: [a.x, a.y, b.x, b.y] });
+        for (const m of pts.slice(1, -1)) scene.junctions.push({ x: m.x, y: m.y });
+      });
+      run = null;
+    };
+    for (const c of caps) {
+      const w = satWidth(d, c);
+      const k = key(c);
+      if (x > 0 && x + w > rowW) {
+        closeRun();
+        x = 0;
+        y = grid(bottom + 100) + 260 + 100; // the next row's rail symbol above it
+      }
+      if (run && run.key !== k) closeRun();
+      const card = cardOf(d, c.part)!;
+      const [topNet, botNet] = railsOf(c);
+      const sym = makeSymbol(d, c, symbolFor(card, flipped(c)), x, y);
+      scene.symbols.push(sym);
+      const tp = sym.pins.find((p) => p.side === 'top')!;
+      const bp = sym.pins.find((p) => p.side === 'bottom')!;
+      const first = !run;
+      run ??= { key: k, rails: [topNet, botNet], top: [], bot: [] };
+      for (const [p, net, dir, list] of [[tp, topNet, 'up', run.top], [bp, botNet, 'down', run.bot]] as const) {
+        if (c.noConnect.includes(p.number)) scene.noConnects.push({ x: p.x, y: p.y });
+        else if (net) {
+          (list as Point[]).push({ x: p.x, y: p.y });
+          if (first) scene.labels.push(deco(net, p.x, p.y, dir));
+        }
+      }
+      const pb = sceneBBox(scene);
+      bottom = Math.max(bottom, pb.y + pb.h);
+      x += w;
     }
+    closeRun();
   }
 
   /* explicit side placements */
