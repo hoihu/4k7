@@ -33,6 +33,7 @@ export type RejectionCode =
   | 'REF_UNKNOWN'
   | 'PART_UNKNOWN'
   | 'SYMBOL_STYLE'
+  | 'FOOTPRINT_INVALID'
   | 'BOARD_INVALID'
   | 'PIN_UNKNOWN'
   | 'REFDES_TAKEN'

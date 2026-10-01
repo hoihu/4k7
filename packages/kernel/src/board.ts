@@ -813,7 +813,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   ];
   const diagnostics = placementChecks(parts, w, h, rules.edgeClearance, { outline: { w, h }, cornerRadius: cornerR, shape }, boardCutouts);
   for (const ref of missing) {
-    diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board.`, entities: [ref] });
+    diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board. Give it one from its datasheet drawing with set_footprint.`, entities: [ref] });
   }
   const planes = settingsPlanes(d, layers.length as 2 | 4);
   const placementKey = hash(JSON.stringify([w, h, cornerR, shape, boardCutouts, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.pads.map((q) => q.netId ?? '')])]));
@@ -1163,7 +1163,7 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     rot: it.rot,
     side: 'top',
     pads,
-    body: rect(it.fp.body.w, it.fp.body.h),
+    body: { ...rect(it.fp.body.w, it.fp.body.h), ...(it.fp.body.round ? { round: true } : {}) },
     courtyard: rect(it.cw, it.ch),
     pin1: { x: r3(it.x + p1x), y: r3(it.y + p1y) },
     polarized: polarized(it.card),

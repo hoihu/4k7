@@ -759,3 +759,82 @@ describe('router: between IC pins', () => {
     expect(crossing[0]).toBeCloseTo(9.2, 6);
   });
 });
+
+describe('set_footprint (a land pattern from the datasheet drawing)', () => {
+  /** A design with an imported buzzer whose package no generator knows. */
+  function withBuzzer() {
+    const k = new Kernel();
+    const d = k.committedDesign();
+    d.parts['acme:BUZ12'] = {
+      id: 'acme:BUZ12',
+      mpn: 'BUZ12',
+      manufacturer: 'Acme',
+      description: '12 mm magnetic buzzer',
+      category: 'other',
+      refPrefix: 'BZ',
+      package: 'BUZ12',
+      pins: [
+        { number: '1', name: '+', type: 'passive' },
+        { number: '2', name: '-', type: 'passive' },
+      ],
+      params: {},
+      provenance: { source: 'datasheet' },
+      packageInfo: { name: 'BUZ12', family: 'other', pins: 2, body_mm: [12, 12] },
+    };
+    k.load(d);
+    k.transact({ summary: 'buzzer', ops: [
+      { op: 'add_part', part: 'acme:BUZ12', refdes: 'BZ1' },
+      { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J1' },
+      { op: 'connect', pins: ['J1.1', 'BZ1.1'], net: 'VCC' },
+      { op: 'connect', pins: ['J1.2', 'BZ1.2'], net: 'GND' },
+    ] });
+    return k;
+  }
+  const pads = [
+    { number: '1', x: -3.8, y: 0, w: 1.6, drill: 0.9, shape: 'rect' as const },
+    { number: '2', x: 3.8, y: 0, w: 1.6, drill: 0.9 },
+  ];
+
+  it('puts a part without a footprint on the board', () => {
+    const k = withBuzzer();
+    expect(k.board().missing).toEqual(['BZ1']);
+    const r = k.transact({ summary: 'footprint from the drawing', ops: [{ op: 'set_footprint', ref: 'BZ1', name: 'Buzzer_12x9.5RM7.6', pads, body_mm: [12, 12], round: true, height_mm: 9.5 }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const b = k.board();
+    expect(b.missing).toEqual([]);
+    const bz = b.parts.find((p) => p.refdes === 'BZ1')!;
+    expect(bz.pads.map((p) => p.number).sort()).toEqual(['1', '2']);
+    expect(bz.body).toMatchObject({ w: 12, h: 12, round: true });
+    expect(Math.hypot(bz.pads[0]!.x - bz.pads[1]!.x, bz.pads[0]!.y - bz.pads[1]!.y)).toBeCloseTo(7.6, 3);
+  });
+
+  it('refuses a land pattern that misses a pin', () => {
+    const k = withBuzzer();
+    const r = k.transact({ summary: 'bad', ops: [{ op: 'set_footprint', ref: 'BZ1', name: 'BUZ', pads: [pads[0]!] }] });
+    expect(r.status).toBe('rejected');
+    expect(r.rejection?.message).toContain('pins without a pad: 2');
+  });
+});
+
+describe('set_footprint review', () => {
+  it('shows up as a change to accept, and accepting commits it', () => {
+    const k = new Kernel();
+    const d = k.committedDesign();
+    d.parts['acme:BUZ12'] = {
+      id: 'acme:BUZ12', mpn: 'BUZ12', manufacturer: 'Acme', description: '12 mm buzzer', category: 'other', refPrefix: 'BZ', package: 'BUZ12',
+      pins: [{ number: '1', name: '+', type: 'passive' }, { number: '2', name: '-', type: 'passive' }],
+      params: {}, provenance: { source: 'datasheet' }, packageInfo: { name: 'BUZ12', family: 'other', pins: 2 },
+    };
+    k.load(d);
+    k.transact({ summary: 'buzzer', ops: [{ op: 'add_part', part: 'acme:BUZ12', refdes: 'BZ1' }] });
+    k.accept();
+    k.transact({ summary: 'footprint', ops: [{ op: 'set_footprint', ref: 'BZ1', name: 'Buzzer_12x9.5RM7.6', round: true, body_mm: [12, 12], pads: [
+      { number: '1', x: -3.8, y: 0, w: 1.6, drill: 0.9 },
+      { number: '2', x: 3.8, y: 0, w: 1.6, drill: 0.9 },
+    ] }] });
+    const hunk = k.proposal()?.hunks.find((h) => h.id === 'part:acme:BUZ12');
+    expect(hunk?.title).toContain('footprint: BUZ12 → Buzzer_12x9.5RM7.6');
+    k.accept();
+    expect(k.committedDesign().parts['acme:BUZ12']!.packageInfo?.pads).toHaveLength(2);
+  });
+});

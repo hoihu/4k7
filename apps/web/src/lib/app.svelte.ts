@@ -17,7 +17,7 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { CalcCall, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type TokenCount } from '@tracewise/schema';
+import { CalcCall, DatasheetInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -74,6 +74,8 @@ class AppState {
   view = $state<View>('sch');
   tab = $state<InspectorTab>('issues');
   k = $state<KernelState | null>(null);
+  /** Part cards as the working copy has them (a footprint given in the design shows in Parts). */
+  designParts = $state.raw<Record<string, PartCard>>({});
   chat = $state<ChatItem[]>([]);
   running = $state(false);
   selection = $state<string[]>([]);
@@ -124,6 +126,7 @@ class AppState {
       }
     }
     await this.ingest.init().catch((e: Error) => this.flash(`Could not load imported parts: ${e.message}`));
+    await this.ingest.adoptFootprints(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
     this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget });
     this.settingsChannel?.addEventListener('message', (e: MessageEvent<{ type: string; code?: string }>) => {
       if (e.data?.type === 'bridge-held' && e.data.code) bridge.heldElsewhere(e.data.code);
@@ -163,6 +166,7 @@ class AppState {
   async refresh() {
     this.rev++;
     this.k = await this.kernel.state();
+    this.designParts = await this.kernel.designParts();
     const ids = new Set(this.k.proposal?.hunks.map((h) => h.id) ?? []);
     for (const id of Object.keys(this.hunkOff)) if (!ids.has(id)) delete this.hunkOff[id];
     if (this.sheet >= (this.k.view.sheets.length || 1)) this.sheet = 0;
@@ -250,6 +254,45 @@ class AppState {
     return true;
   }
 
+  /** The read_datasheet tool: page index, text search, or one page (text and picture). */
+  private async readDatasheet(args: { part: string; page?: number; find?: string; region?: [number, number, number, number] }): Promise<{ isError: boolean; content: BridgeContent[] }> {
+    const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
+    let id = args.part;
+    const comp = (await this.kernel.query({ op: 'get_component', ref: args.part })) as { part?: string };
+    if (comp?.part) id = comp.part;
+    const card = this.designParts[id] ?? this.ingest.library.find((p) => p.id === id);
+    if (!card) return text(`No part or component "${args.part}".`, true);
+    const ds = await this.ingest.datasheetFor(card);
+    if (!ds) return text(`${card.id} has no stored datasheet (only parts imported from a PDF keep theirs)${card.datasheet ? `; its datasheet link: ${card.datasheet}` : ''}.`, true);
+    const { openPdf, pageText, pageCount, cropPage } = await import('./pdf.ts');
+    const doc = await openPdf(ds.hash, ds.data);
+    const n = pageCount(doc);
+    if (args.page) {
+      if (args.page > n) return text(`The datasheet has ${n} pages.`, true);
+      const body = await pageText(doc, args.page);
+      const src = await cropPage(doc, args.page, args.region ?? [0, 0, 1, 1], args.region ? 1600 : 1400);
+      return {
+        isError: false,
+        content: [
+          { type: 'text', text: `${card.id} datasheet, page ${args.page} of ${n}${args.region ? ` (region ${args.region.join(', ')})` : ''}:\n${body}` },
+          { type: 'image', data: src.slice(src.indexOf(',') + 1), mimeType: 'image/jpeg' },
+        ],
+      };
+    }
+    const pages = await Promise.all(Array.from({ length: n }, (_, i) => pageText(doc, i + 1)));
+    if (args.find) {
+      const q = args.find.toLowerCase();
+      const hits = pages.flatMap((t, i) => {
+        const line = t.split('\n').find((l) => l.toLowerCase().includes(q));
+        return line ? [`p.${i + 1}: ${line.slice(0, 160)}`] : [];
+      });
+      return text(hits.length ? hits.join('\n') : `"${args.find}" is not in the datasheet text (drawings may hold it as a picture: read the page).`);
+    }
+    const index = pages.map((t, i) => `p.${i + 1}: ${t.split('\n').find((l) => l.trim().length > 3)?.slice(0, 100) ?? '(no text: a picture)'}`);
+    const refs = [card.packageInfo?.page && `package drawing p.${card.packageInfo.page}`, card.provenance.page && `pinout p.${card.provenance.page}`].filter(Boolean);
+    return text(`${card.id} datasheet ${ds.name}, ${n} pages${refs.length ? ` (${refs.join(', ')})` : ''}:\n${index.join('\n')}`);
+  }
+
   async queryComponent(ref: string): Promise<unknown> {
     return this.kernel.query({ op: 'get_component', ref });
   }
@@ -334,6 +377,13 @@ class AppState {
           return text((e as Error).message, true);
         }
       }
+      case 'read_datasheet': {
+        const args = DatasheetInput.safeParse(input);
+        if (!args.success) return text(args.error.message, true);
+        const out = await this.readDatasheet(args.data);
+        log(`datasheet · ${args.data.part}${args.data.page ? ` p.${args.data.page}` : args.data.find ? ` "${args.data.find}"` : ''}`, !out.isError, out.isError ? 'failed' : 'ok');
+        return out;
+      }
       case 'get_schematic_image': {
         const args = ImageInput.parse(input ?? {});
         if (this.view !== 'sch') {
@@ -398,7 +448,9 @@ class AppState {
   }
 
   private async persist() {
-    await saveProject(await this.kernel.exportDesign());
+    const json = await this.kernel.exportDesign();
+    await saveProject(json);
+    await this.ingest.adoptFootprints(JSON.parse(json) as Design).catch(() => {});
   }
 
   async exportJson(): Promise<string> {

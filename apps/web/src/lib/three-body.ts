@@ -315,6 +315,16 @@ function bodyGroup(body: Body3D, res: Res, mark = true, top?: TopPicture, redraw
     });
     group.add(mesh);
   }
+  for (const mat of ['body', 'lead'] as const) {
+    const cyls = (body.cylinders ?? []).filter((c) => c.mat === mat);
+    if (!cyls.length) continue;
+    const mesh = new THREE.InstancedMesh(res.cyl, res[mat], cyls.length);
+    cyls.forEach((c, i) => {
+      m.compose(new THREE.Vector3(c.x, (c.z0 + c.z1) / 2, c.y), q, new THREE.Vector3(c.r, c.z1 - c.z0, c.r));
+      mesh.setMatrixAt(i, m);
+    });
+    group.add(mesh);
+  }
   if (body.board) {
     // a module's carrier board: drilled through, a copper ring round every hole, plated walls
     const { w, h, t, holes } = body.board;

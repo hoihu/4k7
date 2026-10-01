@@ -82,3 +82,46 @@ describe('modules (a carrier board with two rows of pins)', () => {
     expect(d.ok && d.body.board).toBeFalsy();
   });
 });
+
+describe('explicit land patterns (from a datasheet drawing)', () => {
+  // a 12 mm buzzer, two leads 7.6 mm apart (Buzzer_12x9.5RM7.6)
+  const buzzer = {
+    name: 'Buzzer_12x9.5RM7.6',
+    family: 'other' as const,
+    pins: 2,
+    body_mm: [12, 12] as [number, number],
+    body_shape: 'round' as const,
+    height_mm: 9.5,
+    pads: [
+      { number: '1', x: -3.8, y: 0, w: 1.6, drill: 0.9, shape: 'rect' as const },
+      { number: '2', x: 3.8, y: 0, w: 1.6, drill: 0.9 },
+    ],
+  };
+
+  it('uses the pads as given, with a round body and a courtyard around it', () => {
+    const r = footprintFor(buzzer, ['1', '2']);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.footprint.pads.map((p) => [p.number, p.x, p.y, p.w, p.h, p.shape, p.drill])).toEqual([
+      ['1', -3.8, 0, 1.6, 1.6, 'rect', 0.9],
+      ['2', 3.8, 0, 1.6, 1.6, 'round', 0.9],
+    ]);
+    expect(r.footprint.body).toEqual({ w: 12, h: 12, round: true });
+    expect(r.footprint.courtyard).toEqual({ w: 13, h: 13 });
+  });
+
+  it('refuses missing pads, overlapping pads and drills without a copper ring', () => {
+    expect(footprintFor({ ...buzzer, pads: [buzzer.pads[0]!] }, ['1', '2'])).toMatchObject({ ok: false, reason: expect.stringContaining('pins without a pad: 2') });
+    expect(footprintFor({ ...buzzer, pads: [buzzer.pads[0]!, { ...buzzer.pads[1]!, x: -3 }] }, ['1', '2'])).toMatchObject({ ok: false, reason: expect.stringContaining('overlap') });
+    expect(footprintFor({ ...buzzer, pads: [buzzer.pads[0]!, { ...buzzer.pads[1]!, drill: 1.5 }] }, ['1', '2'])).toMatchObject({ ok: false, reason: expect.stringContaining('copper ring') });
+  });
+
+  it('builds a cylindrical 3D body with leads through the board', () => {
+    const r = body3dFor(buzzer, ['1', '2']);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.body.height).toBe(9.5);
+    expect(r.body.cylinders?.filter((c) => c.mat === 'body')).toEqual([{ x: 0, y: 0, z0: 0.3, z1: 9.5, r: 6, mat: 'body' }]);
+    expect(r.body.cylinders?.filter((c) => c.mat === 'lead').map((c) => [c.x, c.z0])).toEqual([[-3.8, -3], [3.8, -3]]);
+  });
+});

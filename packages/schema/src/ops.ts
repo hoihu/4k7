@@ -4,6 +4,7 @@
  * See docs/design/ops-api.md.
  */
 import { z } from 'zod';
+import { LandPad } from './ingest.ts';
 
 /* ---------------------------------- refs ---------------------------------- */
 
@@ -120,6 +121,17 @@ export const SetSymbolOp = z.object({
     .describe('units: draw a big IC as several symbols (U1A power/system, U1B… two GPIO ports each); single: one symbol. Pins, nets and refdes stay the same; applies to every component of that part.'),
 });
 
+export const SetFootprintOp = z.object({
+  op: z.literal('set_footprint'),
+  ref: componentRef.describe('A component using the part, e.g. "BZ1"; applies to every component of that part'),
+  name: z.string().min(2).describe('Package name, e.g. "Buzzer_12x9.5RM7.6"'),
+  pads: z.array(LandPad).min(1).describe('One pad per pin (pad number = pin number), from the datasheet\'s recommended footprint or package drawing, mm from the body centre, top view'),
+  body_mm: z.tuple([z.number().positive(), z.number().positive()]).optional().describe('Body width × length (round: diameter × diameter); default: around the pads'),
+  round: z.boolean().optional().describe('A cylindrical body (buzzer, electrolytic cap)'),
+  height_mm: z.number().positive().optional().describe('Body height above the board'),
+  page: z.number().int().optional().describe('Datasheet page with the drawing'),
+});
+
 export const SetBoardOp = z.object({
   op: z.literal('set_board'),
   width_mm: z.number().positive().nullable().optional().describe('Board width; null = size to fit the parts'),
@@ -218,6 +230,7 @@ export const EditOp = z.discriminatedUnion('op', [
   AddWaiverOp,
   RemoveWaiverOp,
   SetSymbolOp,
+  SetFootprintOp,
   SetBoardOp,
   PlaceOp,
   ProposeLayoutOp,

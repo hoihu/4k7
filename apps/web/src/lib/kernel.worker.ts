@@ -22,6 +22,8 @@ const methods = {
   hasPending: () => kernel.hasPending(),
   /** The working copy, for the board worker. */
   draftDesign: () => kernel.draftDesign(),
+  /** The working copy's part cards (the design's own copies, e.g. with a footprint the agent gave). */
+  designParts: () => kernel.draftDesign().parts,
   /** Imported parts, so the agent can find and place them. */
   registerParts: (cards: PartCard[]) => registerUserParts(cards),
   unregisterPart: (id: string) => unregisterUserPart(id),

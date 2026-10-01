@@ -11,6 +11,7 @@ import {
   type EditOp,
   type OpResult,
   type PartCard,
+  type PackageInfo,
   type BoardSettings,
   type CopperLayer,
   type HoleCorner,
@@ -21,7 +22,7 @@ import {
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
 import { layoutSchematic } from './layout.ts';
 import { boardOutline, pathPolygon } from './outline.ts';
-import { isTwoPin, planUnits, searchParts } from '@tracewise/parts';
+import { footprintFor, isTwoPin, planUnits, searchParts } from '@tracewise/parts';
 import {
   allocRefdes,
   cardOf,
@@ -77,6 +78,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
     }
     case 'set_symbol':
       return setSymbol(d, op.ref, op.style);
+    case 'set_footprint':
+      return setFootprint(d, op);
     case 'set_board':
       return setBoard(d, op);
     case 'place':
@@ -420,6 +423,38 @@ function setSymbol(d: Design, ref: string, style: 'single' | 'units'): OpResult 
   d.parts[card.id] = copy;
   const what = style === 'units' ? `${copy.units!.length} units (${copy.units!.map((u) => `${u.name}: ${u.title}`).join('; ')})` : 'one symbol';
   return { op: 'set_symbol', effect: `${users.join(', ')} drawn as ${what}`, ids: [card.id] };
+}
+
+/**
+ * Give a part an explicit land pattern (read off its datasheet drawing). Changes the design's copy
+ * of the part card, so every component of that part gets it; a library part shared by components
+ * that differ (generic resistors, caps …) is refused.
+ */
+function setFootprint(d: Design, op: Extract<EditOp, { op: 'set_footprint' }>): OpResult {
+  const comp = resolveComponent(d, op.ref);
+  const card = cardOf(d, comp.part)!;
+  const users = Object.values(d.components).filter((c) => c.part === card.id).map((c) => c.refdes).sort(natCmp);
+  if (card.id.startsWith('generic:') && users.length > 1) {
+    reject({ code: 'FOOTPRINT_INVALID', message: `${card.id} is a generic part used by ${users.join(', ')}; its footprint follows each component's package parameter (set_param package).` });
+  }
+  const pkg: PackageInfo = {
+    name: op.name,
+    family: 'other',
+    pins: card.pins.length,
+    pads: op.pads,
+    ...(op.body_mm ? { body_mm: op.body_mm } : {}),
+    ...(op.round ? { body_shape: 'round' as const } : {}),
+    ...(op.height_mm ? { height_mm: op.height_mm } : {}),
+    ...(op.page ? { page: op.page } : {}),
+  };
+  const fp = footprintFor(pkg, card.pins.map((p) => p.number));
+  if (!fp.ok) reject({ code: 'FOOTPRINT_INVALID', message: `${op.name} for ${comp.refdes}: ${fp.reason}.`, candidates: card.pins.map((p) => `${p.number} ${p.name}`) });
+  const copy: PartCard = structuredClone(card);
+  copy.packageInfo = pkg;
+  copy.package = op.name;
+  d.parts[card.id] = copy;
+  const f = fp.footprint;
+  return { op: 'set_footprint', effect: `${users.join(', ')}: footprint ${op.name}, ${f.pads.length} pads, ${f.courtyard.w} × ${f.courtyard.h} mm courtyard`, ids: [card.id] };
 }
 
 function lookupCard(d: Design, id: string): PartCard {

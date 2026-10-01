@@ -261,8 +261,8 @@ export interface BoardPart {
   rot: number;
   side: 'top' | 'bottom';
   pads: BoardPad[];
-  /** Body outline and courtyard, absolute axis-aligned rectangles. */
-  body: { x: number; y: number; w: number; h: number };
+  /** Body outline and courtyard, absolute axis-aligned rectangles; a round body is the circle in its box. */
+  body: { x: number; y: number; w: number; h: number; round?: boolean };
   courtyard: { x: number; y: number; w: number; h: number };
   pin1: { x: number; y: number };
   /** Its orientation matters (diodes, polarized caps, ICs, connectors): pin 1 is marked. */

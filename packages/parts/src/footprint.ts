@@ -19,8 +19,8 @@ export interface Pad {
 
 export interface Footprint {
   pads: Pad[];
-  /** Package body outline (silkscreen/fab), centred. */
-  body: { w: number; h: number };
+  /** Package body outline (silkscreen/fab), centred; round: a circle of diameter w. */
+  body: { w: number; h: number; round?: boolean };
   /** Keep-out rectangle around everything (courtyard), centred. */
   courtyard: { w: number; h: number };
   pin1: { x: number; y: number };
@@ -59,6 +59,7 @@ export function footprintFor(pkg: PackageInfo, pinNumbers: string[] = []): Footp
     const missing = what.filter((k) => pkg[k] === undefined);
     return missing.length ? `needs ${missing.join(', ')} from the package drawing` : null;
   };
+  if (pkg.pads?.length) return explicit(pkg, pinNumbers);
   switch (pkg.family) {
     case 'QFP': {
       const miss = need(['pitch_mm', 'body_mm']);
@@ -116,6 +117,59 @@ export function footprintFor(pkg: PackageInfo, pinNumbers: string[] = []): Footp
     default:
       return { ok: false, reason: `no generator for ${pkg.family} packages yet` };
   }
+}
+
+/**
+ * A land pattern given pad by pad (from the datasheet's drawing): checked for a pad per pin, no
+ * overlapping copper and drills inside their pads. The body is the given one, else the pads'
+ * extent; the courtyard covers both.
+ */
+function explicit(pkg: PackageInfo, pinNumbers: string[]): FootprintResult {
+  const pads: Pad[] = pkg.pads!.map((p) => ({
+    number: p.number,
+    x: r2(p.x),
+    y: r2(p.y),
+    w: r2(p.w),
+    h: r2(p.h ?? p.w),
+    shape: p.shape ?? (p.drill ? 'round' : 'rect'),
+    ...(p.drill ? { drill: r2(p.drill) } : {}),
+  }));
+  if (pinNumbers.length) {
+    const have = new Set(pads.map((p) => p.number.toUpperCase()));
+    const known = new Set(pinNumbers.map((n) => n.toUpperCase()));
+    const noPad = pinNumbers.filter((n) => !have.has(n.toUpperCase()));
+    if (noPad.length) return { ok: false, reason: `pins without a pad: ${noPad.join(', ')}` };
+    const stray = pads.filter((p) => !known.has(p.number.toUpperCase()));
+    if (stray.length) return { ok: false, reason: `pads for pins the part does not have: ${stray.map((p) => p.number).join(', ')} (pins: ${pinNumbers.join(', ')})` };
+  }
+  for (const p of pads) {
+    if (p.drill && p.drill >= Math.min(p.w, p.h) - 0.2) return { ok: false, reason: `pad ${p.number}: the ${p.drill} mm drill leaves no copper ring in a ${p.w} × ${p.h} mm pad (make the pad at least drill + 0.5 mm)` };
+  }
+  for (let i = 0; i < pads.length; i++) {
+    for (let j = i + 1; j < pads.length; j++) {
+      const [a, b] = [pads[i]!, pads[j]!];
+      if (a.number.toUpperCase() === b.number.toUpperCase()) continue; // several pads of one pin may touch
+      if (Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2) {
+        return { ok: false, reason: `pads ${a.number} and ${b.number} overlap (centres ${a.x}, ${a.y} and ${b.x}, ${b.y} mm)` };
+      }
+    }
+  }
+  const ex = Math.max(...pads.map((p) => Math.abs(p.x) + p.w / 2));
+  const ey = Math.max(...pads.map((p) => Math.abs(p.y) + p.h / 2));
+  const round = pkg.body_shape === 'round';
+  const [bw, bh] = pkg.body_mm ? (round ? [pkg.body_mm[0], pkg.body_mm[0]] : pkg.body_mm) : [r2(2 * ex + 0.5), r2(2 * ey + 0.5)];
+  const first = pads.find((p) => p.number === '1') ?? pads[0]!;
+  const notes = pkg.body_mm ? [] : ['Body size not given; drawn around the pads.'];
+  return {
+    ok: true,
+    footprint: {
+      pads,
+      body: { w: bw, h: bh, ...(round ? { round: true } : {}) },
+      courtyard: { w: r2(Math.max(bw, 2 * ex) + 2 * COURTYARD), h: r2(Math.max(bh, 2 * ey) + 2 * COURTYARD) },
+      pin1: { x: r2(first.x - first.w / 2 - 0.4), y: first.y },
+      notes,
+    },
+  };
 }
 
 function epNumber(pkg: PackageInfo, pinNumbers: string[]): string | null {

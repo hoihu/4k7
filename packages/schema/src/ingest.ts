@@ -11,6 +11,18 @@ export type PackageFamily = z.infer<typeof PackageFamily>;
 const mm = z.number().positive();
 const dims = z.tuple([mm, mm]);
 
+/** One pad of an explicit land pattern (mm, top view, y down, origin at the body centre). */
+export const LandPad = z.object({
+  number: z.string().min(1).describe('The pin number this pad belongs to'),
+  x: z.number().describe('Pad centre from the body centre, mm (right is +)'),
+  y: z.number().describe('Pad centre from the body centre, mm (down is +, top view)'),
+  w: mm.describe('Pad width (x); through-hole: the copper ring diameter'),
+  h: mm.optional().describe('Pad height (y); default = w'),
+  shape: z.enum(['rect', 'round']).optional().describe('Default round for drilled pads, rect otherwise'),
+  drill: mm.optional().describe('Through-hole drill diameter (the datasheet hole size, else lead diameter + 0.2–0.3 mm)'),
+});
+export type LandPad = z.infer<typeof LandPad>;
+
 export const PackageInfo = z.object({
   name: z.string().min(2).describe('Package name as in the datasheet, e.g. "LQFP100", "UFQFPN48", "TFBGA216"'),
   family: PackageFamily.describe('QFP for LQFP/TQFP, QFN for (U)FQFPN/VQFN, BGA for (T/U)FBGA; MODULE for a small carrier board with its pins in two rows along the long edges (Raspberry Pi Pico, ESP32/WROOM modules, Arduino Nano …): body_mm = the board, span_mm[0] = distance between the two pin rows, height_mm = board thickness'),
@@ -25,6 +37,11 @@ export const PackageInfo = z.object({
   grid: z.object({ rows: z.number().int().positive(), cols: z.number().int().positive() }).optional().describe('BGA ball matrix'),
   ball_mm: mm.optional().describe('BGA ball diameter'),
   page: z.number().int().optional().describe('Datasheet page with the package drawing'),
+  body_shape: z.enum(['rect', 'round']).optional().describe('round: a cylindrical body (buzzers, electrolytic caps), body_mm = diameter × diameter'),
+  pads: z
+    .array(LandPad)
+    .optional()
+    .describe('Explicit land pattern, for packages no family fits (buzzers, relays, switches, terminal blocks, odd connectors; family "other"): one pad per pin, from the recommended footprint or the package drawing. Overrides the generated pads.'),
 });
 export type PackageInfo = z.infer<typeof PackageInfo>;
 

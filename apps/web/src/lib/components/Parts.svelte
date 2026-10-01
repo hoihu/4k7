@@ -35,7 +35,14 @@
   let dsTerms = $state<string[]>([]);
   let dsLabel = $state('');
   /** The part shown in the detail pane (the one under review, or the selected library part). */
-  const shown = $derived(mode === 'import' ? ingest.card : current);
+  /** The selected part as the library has it now (the agent may have given it a footprint since). */
+  const part = $derived.by(() => {
+    const lib = ingest.library.find((p) => p.id === current.id) ?? current;
+    // a footprint given in the design (set_footprint), even before it is committed
+    const pkg = app.designParts[lib.id]?.packageInfo;
+    return pkg?.pads?.length && JSON.stringify(pkg) !== JSON.stringify(lib.packageInfo) ? { ...lib, packageInfo: pkg, package: pkg.name } : lib;
+  });
+  const shown = $derived(mode === 'import' ? ingest.card : part);
   $effect(() => {
     const card = shown;
     let stale = false;
@@ -317,14 +324,14 @@
   <div class="pane detail">
     {#if mode === 'part'}
       <div class="ph">
-        <b class="mono">{current.id}</b>
-        {#if current.package}<span class="tag">{current.package}</span>{/if}
-        <span class="tag warn" title={current.provenance.note}>{current.provenance.source}{#if current.provenance.page}&nbsp;p.{current.provenance.page}{/if}</span>
+        <b class="mono">{part.id}</b>
+        {#if part.package}<span class="tag">{part.package}</span>{/if}
+        <span class="tag warn" title={part.provenance.note}>{part.provenance.source}{#if part.provenance.page}&nbsp;p.{part.provenance.page}{/if}</span>
         <span class="grow"></span>
-        {#if current.datasheet}<a class="muted" href={current.datasheet} target="_blank" rel="noreferrer">datasheet ↗</a>{/if}
-        {#if userIds.has(current.id)}<button class="btn" onclick={() => remove(current)}>Remove</button>{/if}
+        {#if part.datasheet}<a class="muted" href={part.datasheet} target="_blank" rel="noreferrer">datasheet ↗</a>{/if}
+        {#if userIds.has(part.id)}<button class="btn" onclick={() => remove(part)}>Remove</button>{/if}
       </div>
-      <div class="scroll body">{@render detail(current)}</div>
+      <div class="scroll body">{@render detail(part)}</div>
     {:else if ingest.phase === 'review' && ingest.card}
       {@const card = ingest.card}
       <div class="ph">

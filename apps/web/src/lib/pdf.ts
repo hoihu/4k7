@@ -72,6 +72,35 @@ export async function renderPage(doc: Doc, pageNo: number, canvas: HTMLCanvasEle
   return hits.slice(0, 4).map(rectOf);
 }
 
+/** A page's text, one line per baseline, items separated by " | " where there is a gap (tables). */
+export async function pageText(doc: Doc, pageNo: number): Promise<string> {
+  const page = await doc.getPage(Math.min(Math.max(1, pageNo), doc.numPages));
+  const content = await page.getTextContent();
+  type Item = { str: string; transform: number[]; width: number };
+  const lines = new Map<number, Item[]>();
+  for (const it of content.items as Item[]) {
+    if (!it.str?.trim()) continue;
+    const y = Math.round(it.transform[5]! / 2) * 2;
+    lines.set(y, [...(lines.get(y) ?? []), it]);
+  }
+  return [...lines.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([, items]) => {
+      items.sort((a, b) => a.transform[4]! - b.transform[4]!);
+      let out = '';
+      let end = -Infinity;
+      for (const it of items) {
+        const x = it.transform[4]!;
+        out += out ? (x - end > 12 ? ' | ' : x - end > 1 ? ' ' : '') : '';
+        out += it.str.trim();
+        end = x + it.width;
+      }
+      return out;
+    })
+    .join('\n');
+}
+
+export const pageCount = (doc: Doc) => doc.numPages;
 
 /**
  * Cut a rectangle out of a page (`box`: x0, y0, x1, y1 as fractions of the page) as a JPEG data

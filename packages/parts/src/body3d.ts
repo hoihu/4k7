@@ -1,6 +1,6 @@
 /**
  * Simple 3D package bodies from datasheet package data (millimetres; x/y like the footprint,
- * viewed from the top with y down; z up, board surface at z = 0). Boxes and balls only: enough
+ * viewed from the top with y down; z up, board surface at z = 0). Boxes, balls and cylinders: enough
  * for a 3D preview and collision/height checks, and the basis for a STEP/GLB export later.
  */
 import type { PackageInfo } from '@tracewise/schema';
@@ -19,9 +19,20 @@ export interface Ball3 {
   r: number;
 }
 
+/** An upright cylinder (round bodies: buzzers, electrolytic caps). */
+export interface Cyl3 {
+  x: number;
+  y: number;
+  z0: number;
+  z1: number;
+  r: number;
+  mat: 'body' | 'lead';
+}
+
 export interface Body3D {
   boxes: Box3[];
   balls: Ball3[];
+  cylinders?: Cyl3[];
   /** Pin-1 mark on the top face (a small disc). */
   pin1: { x: number; y: number; z: number; r: number };
   /** Overall height above the board. */
@@ -45,6 +56,10 @@ export function body3dFor(pkg: PackageInfo, pinNumbers: string[] = []): Body3DRe
     const miss = keys.filter((k) => pkg[k] === undefined);
     return miss.length ? `needs ${miss.join(', ')} from the package drawing` : null;
   };
+  if (pkg.pads?.length) {
+    const fp = footprintFor(pkg, pinNumbers);
+    return fp.ok ? { ok: true, body: explicitBody(pkg, fp.footprint.pads, notes) } : { ok: false, reason: fp.reason };
+  }
   switch (pkg.family) {
     case 'QFP':
     case 'SOIC':
@@ -234,6 +249,32 @@ function moduleBody(pkg: PackageInfo): Body3D {
   const s = Math.min(bw, bl) * 0.33;
   boxes.push(box(-s / 2, -s / 2, t, s / 2, s / 2, t + 0.9, 'body'));
   return { boxes, balls: [], pin1: { x: r3(-span / 2 + 1.6), y: r3(offsets(n, pitch)[0]!), z: t + 0.03, r: 0.35 }, height: t + 0.9, notes: ['A module: its carrier board with the main chip; other parts on it are not shown.'], board: { w: bw, h: bl, t, holes } };
+}
+
+/**
+ * A part with a land pattern given pad by pad: its body (a cylinder when round, else a box)
+ * over the pads, through-hole leads down through the board, flat leads on SMD pads.
+ */
+function explicitBody(pkg: PackageInfo, pads: Pad[], notes: string[]): Body3D {
+  const ex = Math.max(...pads.map((p) => Math.abs(p.x) + p.w / 2));
+  const ey = Math.max(...pads.map((p) => Math.abs(p.y) + p.h / 2));
+  const round = pkg.body_shape === 'round';
+  const [bw, bl] = pkg.body_mm ? (round ? [pkg.body_mm[0], pkg.body_mm[0]] : pkg.body_mm) : [2 * ex + 0.5, 2 * ey + 0.5];
+  if (!pkg.height_mm) notes.push('Height not given; assumed 3 mm.');
+  const H = pkg.height_mm ?? 3;
+  const tht = pads.some((p) => p.drill);
+  const z0 = tht ? 0.3 : 0.05; // through-hole bodies stand off the board a little
+  const boxes: Box3[] = [];
+  const cylinders: Cyl3[] = [];
+  if (round) cylinders.push({ x: 0, y: 0, z0, z1: H, r: r3(bw / 2), mat: 'body' });
+  else boxes.push(box(-bw / 2, -bl / 2, z0, bw / 2, bl / 2, H, 'body'));
+  for (const p of pads) {
+    if (p.drill) cylinders.push({ x: p.x, y: p.y, z0: -3, z1: z0 + 0.01, r: r3(Math.max(0.15, (p.drill - 0.25) / 2)), mat: 'lead' });
+    else boxes.push(box(p.x - p.w * 0.4, p.y - p.h * 0.4, 0, p.x + p.w * 0.4, p.y + p.h * 0.4, 0.15, 'lead'));
+  }
+  if (tht) notes.push('Through-hole leads shown 3 mm below the board surface.');
+  const first = pads.find((p) => p.number === '1') ?? pads[0]!;
+  return { boxes, balls: [], cylinders, pin1: { x: first.x, y: first.y, z: H, r: 0.4 }, height: H, notes };
 }
 
 /** Pin-1 dimple near the corner of pin 1 (top-left in the footprint view). */

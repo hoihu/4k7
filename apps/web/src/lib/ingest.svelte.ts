@@ -6,7 +6,7 @@
  * so every pin can be shown on its page. Nothing is saved before the user's review.
  */
 import { compareDrafts, draftToCard, listUserParts, mergeDrafts, planUnits, registerUserParts, unregisterUserPart, type Disagreement } from '@tracewise/parts';
-import { PartDraft, type BridgeContent, type IngestIssue, type PartCard, type TokenCount } from '@tracewise/schema';
+import { PartDraft, type BridgeContent, type Design, type IngestIssue, type PartCard, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { deleteLibraryPart, loadDatasheet, loadLibrary, saveDatasheet, saveLibraryPart, type StoredDatasheet } from './persist.ts';
 
@@ -208,6 +208,18 @@ export class IngestState {
     await this.#store(plain);
     this.#reset();
     return plain;
+  }
+
+  /**
+   * A footprint given to a library part in the design (set_footprint, from its datasheet drawing)
+   * goes back to the library part once committed, so the Parts view and later designs have it.
+   */
+  async adoptFootprints(design: Design): Promise<void> {
+    for (const lib of this.library) {
+      const pkg = design.parts[lib.id]?.packageInfo;
+      if (!pkg?.pads?.length || JSON.stringify(pkg) === JSON.stringify(lib.packageInfo)) continue;
+      await this.update({ ...lib, packageInfo: pkg, package: pkg.name });
+    }
   }
 
   /** Change a saved part (e.g. split its symbol into units). */

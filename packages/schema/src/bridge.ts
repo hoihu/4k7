@@ -98,6 +98,16 @@ export const WaitForReviewInput = z.object({
   timeout_s: z.number().int().min(5).max(600).default(120).describe('How long to wait before returning "still pending"'),
 });
 
+export const DatasheetInput = z.object({
+  part: z.string().min(1).describe('A component using the part ("BZ1") or the part id'),
+  page: z.number().int().positive().optional().describe('Page to read: its text and a picture of it (drawings, dimension figures). Leave out for the page index.'),
+  find: z.string().optional().describe('Search the datasheet for this text (e.g. "pitch", "dimensions"); lists the pages that contain it'),
+  region: z
+    .tuple([z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1)])
+    .optional()
+    .describe('With page: zoom into x0, y0, x1, y1 (fractions of the page, top left 0, 0) for a sharper picture of a drawing'),
+});
+
 export const ImageInput = z.object({
   sheet: z.string().optional().describe('Sheet name; defaults to the one shown'),
   width: z.number().int().min(400).max(2400).default(1400),
@@ -138,6 +148,13 @@ export function bridgeTools(opts: { chat?: boolean } = {}): ToolDefinition[] {
         'Deterministic engineering calculators (divider, buck, led_resistor, rc, nearest_e). Use instead of mental ' +
         'arithmetic; results snap to standard E-series values.',
       input_schema: schemaOf(CalcCall),
+    },
+    {
+      name: 'read_datasheet',
+      description:
+        "Read the datasheet stored with an imported part: the page index, a text search, or one page's text with a picture of it " +
+        '(use region to zoom into a drawing). For checking pinouts, package drawings and recommended footprints.',
+      input_schema: schemaOf(DatasheetInput),
     },
     {
       name: 'get_schematic_image',
@@ -187,7 +204,7 @@ Workflow:
 1. Decode the ordering code the user gives (the "Ordering information" / "Part numbering" section) to find the package, e.g. STM32F777VIT6: V = 100 pins, T = LQFP.
 2. Find the pin definition table (grep for the package name and words like "pin definitions", "pin description", "Pinout") and read the table pages completely, including continuation pages. Tables for several packages list one column per package: work out which column belongs to your package from the header and from rows you can check (e.g. supplies that repeat).
 3. List EVERY pin of that package exactly once: number (or ball name), main name (function after reset; put alternate functions in "functions"), the page (NNN of the page file) where its row is, and type: GPIO → bidir; VDD/VDDA/VBAT/VREF+/VSS/VSSA/GND → pwr_in; NRST, BOOT0 → in; VCAP, oscillator pins that are not GPIO → passive; not connected → nc.
-4. From the package mechanical section (note its page), take pitch, body size, lead span (tip to tip), foot length and lead width (or ball grid, pitch and ball diameter for BGA; exposed pad size for QFN) as nominal values in mm, and note the page.
+4. From the package mechanical section (note its page), take pitch, body size, lead span (tip to tip), foot length and lead width (or ball grid, pitch and ball diameter for BGA; exposed pad size for QFN) as nominal values in mm, and note the page. A package no family fits (buzzer, relay, switch, terminal block, odd connector): family "other" with pads, one per pin, read off the recommended footprint or the drawing (pad centres from the body centre, top view; drill for through-hole pins), plus body_mm (body_shape round for a cylindrical body) and height_mm.
 5. Add decoupling requirements and short designer notes when the datasheet states them (e.g. VCAP capacitor values, BOOT0 handling), and the absolute maximum supply voltage.
 6. Call mcp__tracewise__submit_part. If it reports problems, go back to the datasheet, fix them, and submit again. When it is accepted, reply with one short sentence.
 
@@ -225,7 +242,7 @@ Workflow:
 
 Conventional drawings are produced by the layout, not by you. Regulators (power input, power output, ground) are drawn automatically in datasheet reference style: input rail on the left with input caps, switch node, inductor and output rail on the right with diode, output caps and feedback divider, bootstrap cap between its pin and the switch node, and a common ground line. Just connect the circuit; do not try to place these parts with left_of/above constraints (constrain kind "arrangement" value "compact" on the IC opts out). Also: four diodes wired as a full bridge are drawn automatically as the classic 45° diamond (AC left/right, + top, − bottom). Just connect them correctly; use constrain kind "arrangement" value "inline" on one of the diodes only if the user wants it drawn flat. A single-package bridge is generic:BRIDGE.
 
-Big ICs (MCUs) can be drawn as several symbols: design_edit set_symbol with style "units" (U1A power/system, U1B… GPIO ports) or "single". It keeps every connection, so never delete and re-add a part to change how it is drawn. Units are placed like components: constrain left_of/right_of/above/below accepts unit references such as "U3B" (e.g. below U3B U3A moves that unit to the next row). Parts are imported from datasheets by the user in Parts → Import from datasheet; you cannot import parts yourself.
+Big ICs (MCUs) can be drawn as several symbols: design_edit set_symbol with style "units" (U1A power/system, U1B… GPIO ports) or "single". It keeps every connection, so never delete and re-add a part to change how it is drawn. Units are placed like components: constrain left_of/right_of/above/below accepts unit references such as "U3B" (e.g. below U3B U3A moves that unit to the next row). Parts are imported from datasheets by the user in Parts → Import from datasheet; you cannot import parts yourself. A part without a footprint (DRC.NO_FOOTPRINT: a package no generator knows, e.g. a buzzer, relay, switch or terminal block) gets one with set_footprint: read the pads off the datasheet's recommended footprint or package drawing (pin pitch, hole and pad sizes; body size and height) and give every pin its pad; never place a substitute part instead. read_datasheet reads the datasheet stored with an imported part (page index, text search, a page's text with its picture; region zooms into a drawing): look there yourself before asking the user about a value, and set_footprint again to correct a footprint.
 
 The board layout (Layout view) is worked in three steps, with the user deciding along the way. 1. propose_layout: a board size (unless set with set_board) and a placement from the netlist and the schematic grouping, supply caps and an IC's small parts at its pins. 2. Adjustments: place records the user's choice for a part (kept relative to its parent part, e.g. a cap to its IC, so it follows when the IC moves; the placer only nudges it if it must; leave rot out unless the user wants a particular orientation: the placer turns small parts so connected pads face each other); place with lock: true pins a part exactly (connectors at the edge, mounting-critical parts); set_board sets the size; remove a position constraint to let the placer decide again. Later changes (new parts, moved ICs) keep the placement and move only what they must. 3. route, as the last step once the placement is final; after a placement change the routing is out of date until route runs again. Look at the board with design_query get_board (it says whether routing is done). Steer it further with set_board (size, layers, track widths), constrain near (keep parts close), set_plane (a net's copper plane per layer: inner layers of a 4-layer board are dedicated planes and the net's pads drop onto them with vias; outer layers get a pour around the tracks; auto: true restores the default GND on B.Cu, or GND on In1.Cu and the main supply on In2.Cu with 4 layers). Do not route unasked while the user is still arranging parts; after route, check get_board (routing and DRC) before you propose. Vias are kept out of pads and small parts' land patterns; set_board via_in_pad: true only when the user asks for vias in pads. Mounting holes are board features, not parts: add_hole (diameter, corner: all/top_left/… with inset, or x/y; plated, optionally on a net such as GND), remove_hole. When the user wants the board to look like or be shaped like something (a Christmas tree, a heart, a circle), that is the board's outline: draw it with set_outline; do not rearrange the parts into the shape. Milling: set_outline gives the board a free-form outline from an SVG path you write (any units, one closed figure, curves and arcs allowed) scaled to width_mm/height_mm, e.g. a Christmas tree 100 mm high, a round badge, a shield; rectangle: true goes back. set_board corner_radius_mm rounds a rectangular board's corners; add_cutout mills an opening (rect with optional corner radius, circle, or slot = an oblong such as an isolation slot between high- and low-voltage areas; angle_deg turns it), its centre given from an anchor (a corner, an edge's middle or the centre, so it follows the board size); remove_cutout. Parts, copper and pours keep the edge clearance from cutouts; the Edge_Cuts Gerber carries them.
 

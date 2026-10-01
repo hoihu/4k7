@@ -118,7 +118,7 @@ describe('MCP server', () => {
 
     expect(client.getInstructions()).toMatch(/Tracewise/);
     const tools = (await client.listTools()).tools.map((t) => t.name);
-    expect(tools).toEqual(['get_context', 'design_query', 'design_edit', 'calc', 'get_schematic_image', 'propose', 'wait_for_review']);
+    expect(tools).toEqual(['get_context', 'design_query', 'design_edit', 'calc', 'read_datasheet', 'get_schematic_image', 'propose', 'wait_for_review']);
 
     const res = await client.callTool({
       name: 'design_edit',

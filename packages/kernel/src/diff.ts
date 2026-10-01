@@ -41,22 +41,33 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     }
   }
 
-  /* part cards drawn differently (set_symbol); cards come and go with their components */
+  /* part cards changed in the design (set_symbol, set_footprint); cards come and go with their components */
   for (const id of Object.keys(draft.parts)) {
     const a = base.parts[id];
     const b = draft.parts[id]!;
-    if (!a) continue;
+    if (!a || JSON.stringify(a) === JSON.stringify(b)) continue;
+    const users = Object.values(draft.components).filter((c) => c.part === id).map((c) => c.refdes).sort(natCmp);
+    const what: string[] = [];
+    const details: string[] = [id];
     const ua = a.units?.length ?? 0;
     const ub = b.units?.length ?? 0;
-    if (ua === ub && JSON.stringify(a.units ?? null) === JSON.stringify(b.units ?? null)) continue;
-    const users = Object.values(draft.components).filter((c) => c.part === id).map((c) => c.refdes).sort(natCmp);
+    if (JSON.stringify(a.units ?? null) !== JSON.stringify(b.units ?? null)) {
+      what.push(`symbol: ${ua ? `${ua} units` : 'single'} → ${ub ? `${ub} units` : 'single'}`);
+      details.push(...(b.units?.map((u) => `${u.name}: ${u.title}`) ?? []));
+    }
+    if (JSON.stringify(a.packageInfo ?? null) !== JSON.stringify(b.packageInfo ?? null)) {
+      const pkg = b.packageInfo;
+      what.push(`footprint: ${a.packageInfo?.name ?? a.package ?? 'none'} → ${pkg?.name ?? 'none'}`);
+      if (pkg?.pads) details.push(`${pkg.pads.length} pads${pkg.body_mm ? `, body ${pkg.body_mm[0]} × ${pkg.body_mm[1]} mm` : ''}${pkg.height_mm ? `, ${pkg.height_mm} mm high` : ''}`);
+    }
+    if (!what.length) what.push('part card changed');
     hunks.push({
       id: `part:${id}`,
       kind: 'part',
       change: 'change',
       entityId: id,
-      title: `${users.join(', ') || id} symbol: ${ua ? `${ua} units` : 'single'} → ${ub ? `${ub} units` : 'single'}`,
-      details: [id, ...(b.units?.map((u) => `${u.name}: ${u.title}`) ?? [])],
+      title: `${users.join(', ') || id} ${what.join('; ')}`,
+      details,
     });
   }
 
