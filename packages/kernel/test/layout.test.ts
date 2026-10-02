@@ -187,3 +187,104 @@ describe('units', () => {
     expect(formatQuantity(1.5e-8, 'F')).toBe('15nF');
   });
 });
+
+describe('supply symbols on neighbouring pins', () => {
+  it('lifts a rail symbol above ground pins over it and drops those below, in separate columns', async () => {
+    const { supplyStubs } = await import('../src/scene.ts');
+    // right side, top to bottom: L5 → GND, J1 → signal, E5 → +3V3 (as on an STM32's BYPASS_REG / PDR_ON)
+    const pins = [
+      { number: 'L5', y: 100, side: 'right' },
+      { number: 'J1', y: 200, side: 'right' },
+      { number: 'E5', y: 300, side: 'right' },
+    ];
+    const rises = new Map<string, number>();
+    const stubs = supplyStubs(pins, (n) => (n === 'L5' ? 'down' : n === 'E5' ? 'up' : null), rises);
+    expect(stubs.get('L5')!).toBeGreaterThan(stubs.get('E5')!);
+    // the rail's symbol starts above L5, the ground's below E5
+    expect(300 - rises.get('E5')!).toBeLessThan(100);
+    expect(100 + rises.get('L5')!).toBeGreaterThan(300);
+    // a rail above a ground pin needs nothing
+    const r2 = new Map<string, number>();
+    supplyStubs([{ number: 'a', y: 100, side: 'left' }, { number: 'b', y: 200, side: 'left' }], (n) => (n === 'a' ? 'up' : 'down'), r2);
+    expect(r2.size).toBe(0);
+  });
+});
+
+describe('junction dots', () => {
+  it('pins stacked at one spot (repeated VDD) count once: no dot where only a wire meets them', async () => {
+    const { addJunctions, emptyScene } = await import('../src/scene.ts');
+    const scene = emptyScene();
+    const pin = (n: string) => ({ number: n, name: 'VDD', x: 0, y: 0, side: 'left' as const, showName: true, showNumber: false });
+    scene.symbols.push({ componentId: 'u', refdes: 'U1', value: '', bbox: { x: 0, y: -100, w: 400, h: 200 }, prims: [], pins: [pin('1'), pin('2'), pin('3')], refPos: { x: 0, y: 0, anchor: 'start' }, valuePos: { x: 0, y: 0, anchor: 'start' } });
+    scene.wires.push({ netId: 'n', pts: [-300, 0, 0, 0] });
+    addJunctions(scene);
+    expect(scene.junctions).toEqual([]);
+  });
+});
+
+describe('a transistor switching a load', () => {
+  function buzzer() {
+    const k = new Kernel();
+    const d = k.committedDesign();
+    d.parts['acme:BUZ'] = { id: 'acme:BUZ', mpn: 'BUZ', description: 'Buzzer, 12 V', category: 'other', refPrefix: 'LS', pins: [{ number: '1', name: '+', type: 'pwr_in' }, { number: '2', name: '-', type: 'pwr_in' }], params: {}, provenance: { source: 'datasheet' } };
+    k.load(d);
+    k.transact({ summary: 'buzzer', ops: [
+      { op: 'add_part', part: 'generic:CONN_1x3', refdes: 'J1' },
+      { op: 'add_part', part: 'acme:BUZ', refdes: 'LS1' },
+      { op: 'add_part', part: 'generic:NMOS', refdes: 'Q1', params: { mpn: 'AO3400A' } },
+      { op: 'add_part', part: 'generic:D', refdes: 'D6' },
+      { op: 'add_part', part: 'generic:R', refdes: 'R13', params: { resistance: '220' } },
+      { op: 'add_part', part: 'generic:R', refdes: 'R11', params: { resistance: '100' } },
+      { op: 'add_part', part: 'generic:R', refdes: 'R12', params: { resistance: '100k' } },
+      { op: 'add_part', part: 'generic:R', refdes: 'R14', params: { resistance: '10k' } },
+      { op: 'connect', pins: ['J1.1', 'R13.1'], net: 'VIN_12V' },
+      { op: 'set_net', net: 'VIN_12V', external: true, voltage: 12 },
+      { op: 'connect', pins: ['J1.3', 'Q1.S', 'R12.2'], net: 'GND' },
+      { op: 'connect', pins: ['R13.2', 'LS1.1', 'D6.K'], net: 'BUZ_P' },
+      { op: 'connect', pins: ['LS1.2', 'D6.A', 'Q1.D'], net: 'BUZZER_D' },
+      { op: 'connect', pins: ['J1.2', 'R11.1', 'R14.1'], net: 'BUZZER' },
+      { op: 'connect', pins: ['R14.2'], net: '+3V3' },
+      { op: 'set_net', net: '+3V3', voltage: 3.3 },
+      { op: 'connect', pins: ['R11.2', 'R12.1', 'Q1.G'], net: 'GATE' },
+    ] });
+    return sheetOf(k);
+  }
+  const at = (s: SheetView, ref: string) => s.symbols.find((x) => x.refdes === ref)!;
+  const mid = (s: SheetView, ref: string) => { const b = at(s, ref).bbox; return { x: b.x + b.w / 2, y: b.y + b.h / 2 }; };
+
+  it('draws the MOSFET as a MOSFET, its load stacked on the drain up to the rail, the diode beside it', () => {
+    const s = buzzer();
+    const q = at(s, 'Q1');
+    expect(q.prims.some((p) => p.t === 'poly')).toBe(true); // the body arrow, not a box
+    const drain = q.pins.find((p) => p.name === 'D')!;
+    expect(drain.side).toBe('top');
+    // LS1 then R13 straight above the drain, VIN_12V pointing up at the top
+    expect(at(s, 'LS1').pins.every((p) => p.x === drain.x)).toBe(true);
+    expect(at(s, 'R13').pins.every((p) => p.x === drain.x)).toBe(true);
+    expect(mid(s, 'LS1').y).toBeLessThan(drain.y);
+    expect(mid(s, 'R13').y).toBeLessThan(mid(s, 'LS1').y);
+    const vin = s.labels.find((l) => l.text === 'VIN_12V' && l.x === drain.x)!;
+    expect(vin.dir).toBe('up');
+    expect(mid(s, 'D6').x).toBeGreaterThan(drain.x);
+    expect(Math.abs(mid(s, 'D6').y - mid(s, 'LS1').y)).toBeLessThan(50);
+  });
+
+  it('draws the gate drive as a path from the left: input flag, series R lying down, pull-down from the node', () => {
+    const s = buzzer();
+    const gate = at(s, 'Q1').pins.find((p) => p.name === 'G')!;
+    const r11 = at(s, 'R11');
+    expect(r11.rotation).toBeDefined();
+    expect(Math.abs(mid(s, 'R11').y - gate.y)).toBeLessThan(50);
+    expect(mid(s, 'R11').x).toBeLessThan(gate.x);
+    expect(mid(s, 'R12').y).toBeGreaterThan(gate.y);
+    expect(mid(s, 'R12').x).toBeGreaterThan(mid(s, 'R11').x);
+    expect(s.labels.some((l) => l.text === 'BUZZER' && l.dir === 'left' && l.y === gate.y)).toBe(true);
+  });
+
+  it('stands a pull-up above its wire with the rail on top', () => {
+    const s = buzzer();
+    const plus = s.labels.find((l) => l.text === '+3V3')!;
+    expect(plus.dir).toBe('up');
+    expect(plus.y).toBeLessThan(mid(s, 'R14').y);
+  });
+});

@@ -14,9 +14,9 @@
  *  - Connections that are not drawn as wires are shown by net labels, so the drawing is
  *    always electrically complete and correct.
  */
-import { parseAs, type Component, type Constraint, type Design, type Net, type PartCard, type Point, type Rect, type SchematicView, type SheetView } from '@tracewise/schema';
-import { isTwoPin, symbolFor, unitCount } from '@tracewise/parts';
-import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
+import { parseAs, type Component, type Constraint, type Design, type Net, type PartCard, type Point, type Rect, type SchematicView, type SheetView, type SymbolView } from '@tracewise/schema';
+import { isTwoPin, symbolFor, unitCount, uprightSymbol } from '@tracewise/parts';
+import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, valueOf, type NetPin } from './doc.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
 import {
   addJunctions,
@@ -62,6 +62,15 @@ interface AnchorPlan {
   mirror?: boolean;
   /** Unit of a split symbol (big ICs): each unit is its own symbol with its own satellites. */
   unit?: number;
+  /** A transistor's load, stacked on its drain/collector up to the rail (see planStack). */
+  stack?: StackPlan;
+}
+
+interface StackPlan {
+  /** The transistor pin the stack stands on. */
+  pin: string;
+  /** Bottom first; parts with both ends on the same nets as a stack part sit beside it (a flyback diode). */
+  items: { comp: Component; parallel: Component[] }[];
 }
 
 const anchorSymbol = (plan: AnchorPlan) => symbolFor(plan.card, false, { mirror: plan.mirror ?? false, ...(plan.unit !== undefined ? { unit: plan.unit } : {}) });
@@ -82,7 +91,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   const { d } = ctx;
   const comps = componentsSorted(d).filter((c) => c.sheet === sheetId && cardOf(d, c.part));
   const cardFor = (c: Component) => cardOf(d, c.part)!;
-  const anchors = comps.filter((c) => !isTwoPin(cardFor(c)));
+  let anchors = comps.filter((c) => !isTwoPin(cardFor(c)));
   const bridges = findBridges(ctx, comps.filter((c) => isTwoPin(cardFor(c))));
   const inBridge = new Set(bridges.flatMap((b) => b.diodes.map((x) => x.comp.id)));
   // supply caps belong to the IC they serve, decided before the regulators claim parts
@@ -95,6 +104,18 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     if (!plan) continue;
     flows.set(a.id, plan);
     unclaimed = unclaimed.filter((c) => !plan.consumed.has(c.id));
+  }
+  // a transistor switching a load: the load stacks on its drain/collector up to the rail
+  const stacks = new Map<string, StackPlan>();
+  for (const a of anchors) {
+    if (flows.has(a.id)) continue;
+    const claimable = new Set([...unclaimed, ...anchors.filter((x) => x.id !== a.id && !flows.has(x.id) && !stacks.has(x.id))].filter((x) => cardFor(x).pins.length === 2).map((x) => x.id));
+    const st = planStack(ctx, a, claimable);
+    if (!st) continue;
+    stacks.set(a.id, st);
+    const taken = new Set(st.items.flatMap((i) => [i.comp.id, ...i.parallel.map((p) => p.id)]));
+    unclaimed = unclaimed.filter((c) => !taken.has(c.id));
+    anchors = anchors.filter((c) => !taken.has(c.id));
   }
   const twoPins = unclaimed;
   // other parts attach only to ICs drawn the ordinary way
@@ -112,7 +133,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     anchors.map((c) => {
       const card = cardFor(c);
       const n = unitCount(card);
-      const make = (unit?: number): AnchorPlan => ({ comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror: outputConn.has(c.id), ...(unit !== undefined ? { unit } : {}) });
+      const make = (unit?: number): AnchorPlan => ({ comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror: outputConn.has(c.id), ...(unit !== undefined ? { unit } : {}), ...(stacks.has(c.id) ? { stack: stacks.get(c.id)! } : {}) });
       return [c.id, n > 1 ? Array.from({ length: n }, (_, u) => make(u)) : [make()]];
     }),
   );
@@ -149,7 +170,15 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
       continue;
     }
     let attached = false;
-    for (const plan of attachable.flatMap((a) => plansOf(a.id))) {
+    // a part on a transistor's control pin belongs to the transistor (its gate drive), not to
+    // the IC or connector the signal comes from
+    const onControl = (plan: AnchorPlan) => {
+      if (plan.card.category !== 'transistor') return false;
+      const g = anchorSymbol(plan).pins.find((p) => p.side === 'left');
+      return !!g && nets.some((n) => n?.id === plan.comp.pins[g.number]);
+    };
+    const order = attachable.flatMap((a) => plansOf(a.id)).sort((a, b) => Number(onControl(b)) - Number(onControl(a)));
+    for (const plan of order) {
       const at = findAttach(ctx, plan, c, nets);
       if (at) {
         (pinSideOf(plan, at.anchorPin) === 'left' ? plan.left : plan.right).push(at);
@@ -508,6 +537,130 @@ function topoOrder(members: LayoutNode[], edges: [string, string][]): LayoutNode
   return out;
 }
 
+/* -------------------------------- stacks ---------------------------------- */
+
+/**
+ * A transistor switching a load (low side: N-MOSFET drain, NPN collector, on top of its symbol):
+ * the two-pin parts from that pin up to a supply rail (or as far as the chain is private), each
+ * taking the next net; parts with both ends on the same two nets as one of them (a flyback
+ * diode across a buzzer or relay coil) go beside it. Stops where the net branches.
+ */
+function planStack(ctx: Ctx, anchor: Component, claimable: Set<string>): StackPlan | null {
+  const { d, members } = ctx;
+  const card = cardOf(d, anchor.part)!;
+  if (card.category !== 'transistor') return null;
+  const top = symbolFor(card).pins.find((p) => p.side === 'top');
+  if (!top || !/^(D|DRAIN|C|COLLECTOR)$/i.test(top.name)) return null;
+  const start = anchor.pins[top.number];
+  if (!start || isPowerNet(d.nets[start]!)) return null;
+  let net: string = start;
+  const used = new Set([anchor.id]);
+  const items: StackPlan['items'] = [];
+  const otherNet = (c: Component, n: string) => Object.values(c.pins).find((x) => x !== n);
+  for (let k = 0; k < 4; k++) {
+    const here = [...new Map((members.get(net) ?? []).filter((m) => !used.has(m.comp.id)).map((m) => [m.comp.id, m.comp])).values()];
+    if (!here.length) break;
+    // everything else on this net must be part of the stack (else the chain is not private)
+    const cands = here.filter((c) => {
+      const o = otherNet(c, net);
+      return claimable.has(c.id) && Object.keys(c.pins).length === 2 && o && !isGroundNet(d.nets[o]!);
+    });
+    if (cands.length !== here.length) break;
+    const next = new Set(cands.map((c) => otherNet(c, net)!));
+    if (next.size !== 1) break;
+    // the load itself in the stack, diodes beside it
+    const main = cands.find((c) => cardOf(d, c.part)!.category !== 'diode') ?? cands[0]!;
+    items.push({ comp: main, parallel: cands.filter((c) => c !== main) });
+    for (const c of cands) used.add(c.id);
+    net = [...next][0]!;
+    if (isPowerNet(d.nets[net]!)) break;
+  }
+  return items.length ? { pin: top.number, items } : null;
+}
+
+/** Draw a stack upward from (x, y), the pin of `net`; returns the top point and its net. */
+function drawStack(ctx: Ctx, scene: Scene, plan: StackPlan, x: number, y: number, net: string): void {
+  const { d } = ctx;
+  for (const item of plan.items) {
+    const card = cardOf(d, item.comp.part)!;
+    const bottom = card.pins.find((p) => item.comp.pins[p.number] === net) ?? card.pins[0]!;
+    // pin on the lower net at the bottom
+    scene.symbols.push(makeSymbol(d, item.comp, uprightSymbol(card, bottom.number === card.pins[0]!.number), x, y - 200));
+    const upper = Object.values(item.comp.pins).find((n) => n !== net) ?? net;
+    // parts across it: to the right, clear of its name and value
+    const label = Math.max(tw(item.comp.refdes), tw(valueOf(d, item.comp))) + 160;
+    let px = x + grid(Math.max(400, label + 100));
+    for (const par of item.parallel) {
+      const pc = cardOf(d, par.part)!;
+      const pb = pc.pins.find((p) => par.pins[p.number] === net) ?? pc.pins[0]!;
+      scene.symbols.push(makeSymbol(d, par, uprightSymbol(pc, pb.number === pc.pins[0]!.number), px, y - 200));
+      scene.wires.push({ netId: net, pts: [x, y, px, y] }, { netId: upper, pts: [x, y - 400, px, y - 400] });
+      px += grid(Math.max(tw(par.refdes), tw(valueOf(d, par))) + 400);
+    }
+    y -= 400;
+    net = upper;
+  }
+  // the rail (or the net the chain goes on to) on top
+  scene.labels.push(deco(d.nets[net]!, x, y, 'up'));
+}
+
+/** A two-pin part lying horizontally centred on (cx, cy); `pin1Left` puts pin 1 on the left. */
+function horizontalPart(d: Design, comp: Component, cx: number, cy: number, pin1Left: boolean): SymbolView {
+  const card = cardOf(d, comp.part)!;
+  const def = uprightSymbol(card);
+  const s = makeSymbol(d, comp, def, cx, cy);
+  const rot = pin1Left ? -90 : 90;
+  const rad = (rot * Math.PI) / 180;
+  s.rotation = rot;
+  s.origin = { x: cx, y: cy };
+  s.pins = def.pins.map((p) => ({ ...p, x: Math.round(cx + p.x * Math.cos(rad) - p.y * Math.sin(rad)), y: Math.round(cy + p.x * Math.sin(rad) + p.y * Math.cos(rad)) }));
+  s.bbox = { x: cx - 200, y: cy - 100, w: 400, h: 200 };
+  s.refPos = { x: cx, y: cy - 175, anchor: 'middle' };
+  s.valuePos = { x: cx, y: cy - 90, anchor: 'middle' };
+  return s;
+}
+
+/**
+ * A transistor's control input drawn as a signal path to the left of its gate/base: the input
+ * net's flag, the series resistor lying horizontally, and the parts to a supply (pull-down)
+ * hanging from the node between it and the pin.
+ */
+function drawControl(ctx: Ctx, scene: Scene, pin: { x: number; y: number }, series: Sat, shunts: Sat[]): void {
+  const { d } = ctx;
+  const y = pin.y;
+  let x = pin.x;
+  for (const sh of shunts) {
+    // far enough left that its name and value stay clear of what is to its right
+    x -= grid(Math.max(300, Math.max(tw(sh.comp.refdes), tw(valueOf(d, sh.comp))) + 250));
+    // hanging down from the gate wire, its far end's supply symbol below
+    const card = cardOf(d, sh.comp.part)!;
+    const topPin = card.pins.find((p) => sh.comp.pins[p.number] === sh.net) ?? card.pins[0]!;
+    const sym = makeSymbol(d, sh.comp, uprightSymbol(card, topPin.number !== card.pins[0]!.number), x, y + 200);
+    scene.symbols.push(sym);
+    let upper = sh.net;
+    let bottom = sym.pins.find((p) => p.side === 'bottom')!;
+    let below = Object.values(sh.comp.pins).find((n) => n !== upper);
+    for (const c of sh.chain) {
+      const cc = cardOf(d, c.part)!;
+      const tp = cc.pins.find((p) => c.pins[p.number] === below) ?? cc.pins[0]!;
+      const cs = makeSymbol(d, c, uprightSymbol(cc, tp.number !== cc.pins[0]!.number), x, bottom.y + 200);
+      scene.symbols.push(cs);
+      upper = below ?? upper;
+      below = Object.values(c.pins).find((n) => n !== upper);
+      bottom = cs.pins.find((p) => p.side === 'bottom')!;
+    }
+    if (below) scene.labels.push(deco(d.nets[below]!, bottom.x, bottom.y, 'down'));
+  }
+  // the series resistor: its input end to the left, the flag of the input net there
+  const card = cardOf(d, series.comp.part)!;
+  const input = Object.values(series.comp.pins).find((n) => n !== series.net)!;
+  const right = shunts.length ? x - 300 : pin.x - 200;
+  const cx = right - 200;
+  scene.symbols.push(horizontalPart(d, series.comp, cx, y, series.comp.pins[card.pins[0]!.number] === input));
+  scene.wires.push({ netId: series.net, pts: [right, y, pin.x, y] });
+  scene.labels.push(deco(d.nets[input]!, cx - 200, y, 'left'));
+}
+
 /* --------------------------------- cells ---------------------------------- */
 
 function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
@@ -533,6 +686,28 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
     return id && !satsByPin.has(num) && !plan.comp.noConnect.includes(num) ? supplyDir(d.nets[id]!) : null;
   };
   const decorated = new Set<string>(); // stacked pins (repeated VDD) share one position
+  if (plan.card.category === 'transistor') {
+    // the control input as a signal path: input ▷── series R ──┬── gate, pull-downs from the node
+    const g = sym.pins.find((p) => p.side === 'left');
+    const list = g ? satsByPin.get(g.number) : undefined;
+    const series = list?.find((x) => {
+      const o = Object.values(x.comp.pins).find((n) => n !== x.net);
+      return !x.chain.length && o && !isPowerNet(d.nets[o]!);
+    });
+    if (g && list && series) {
+      satsByPin.delete(g.number);
+      decorated.add(`${g.x},${g.y}`);
+      drawControl(ctx, scene, g, series, list.filter((x) => x !== series));
+    }
+  }
+  if (plan.stack) {
+    // the transistor's load, stacked on its drain/collector
+    const at = sym.pins.find((p) => p.number === plan.stack!.pin);
+    if (at) {
+      decorated.add(`${at.x},${at.y}`);
+      drawStack(ctx, scene, plan.stack, at.x, at.y, plan.comp.pins[plan.stack.pin]!);
+    }
+  }
 
   /* neighbouring side pins on the same supply share one bus and one supply symbol */
   const bused = new Set<string>();
@@ -572,9 +747,11 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
       else gapLeft = Math.max(gapLeft, w);
     }
   }
+  const rises = new Map<string, number>();
   const stubs = supplyStubs(
     sym.pins.filter((p) => !bused.has(`${p.x},${p.y}`)),
     supplyOf,
+    rises,
   );
   for (const p of sym.pins) {
     const netId = plan.comp.pins[p.number];
@@ -601,7 +778,7 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
     }
     const dir: Dir = p.side === 'left' ? 'left' : p.side === 'right' ? 'right' : p.side === 'top' ? 'up' : 'down';
     const stub = stubs.get(p.number) ?? 100;
-    scene.labels.push(deco(net, p.x, p.y, dir, stub));
+    scene.labels.push(deco(net, p.x, p.y, dir, stub, rises.get(p.number) ?? 0));
     if (p.side === 'right') gapRight = Math.max(gapRight, decoWidth(net, stub) + 100);
     if (p.side === 'left') gapLeft = Math.max(gapLeft, decoWidth(net, stub) + 100);
   }
@@ -627,6 +804,38 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
           else x -= width;
         }
         first = false;
+        // a pull-up (the far end a positive rail) stands above the wire with its rail on top,
+        // where no pin above has parts whose wires would run through it
+        const ends = [s.comp, ...s.chain];
+        let far: string | undefined = s.net;
+        for (const c of ends) far = Object.values(c.pins).find((n) => n !== far) ?? far;
+        const height = ends.length * 400 + 400;
+        const up =
+          !!far &&
+          far !== s.net &&
+          supplyDir(d.nets[far]!) === 'up' &&
+          !sym.pins.some((q) => q.side === side && q.number !== p.number && satsByPin.has(q.number) && q.y < p.y && q.y >= p.y - height);
+        if (up) {
+          const attached = s.card.pins.find((pp) => s.comp.pins[pp.number] === s.net)!;
+          const satSym = makeSymbol(d, s.comp, symbolFor(s.card, attached.number === s.card.pins[0]!.number), x, p.y - 200);
+          scene.symbols.push(satSym);
+          let top = satSym.pins.find((pp) => pp.side === 'top')!;
+          let lower = s.net;
+          let upper = Object.values(s.comp.pins).find((n) => n !== lower);
+          for (const c of s.chain) {
+            const card = cardOf(d, c.part)!;
+            const bp = card.pins.find((pp) => c.pins[pp.number] === upper) ?? card.pins[0]!;
+            const cs = makeSymbol(d, c, symbolFor(card, bp.number === card.pins[0]!.number), x, top.y - 200);
+            scene.symbols.push(cs);
+            lower = upper ?? lower;
+            upper = Object.values(c.pins).find((n) => n !== lower);
+            top = cs.pins.find((pp) => pp.side === 'top')!;
+          }
+          if (upper) scene.labels.push(deco(d.nets[upper]!, top.x, top.y, 'up'));
+          xs.push(x);
+          if (side === 'right') x += width;
+          continue;
+        }
         // pin attached to the anchor net goes on top
         const flip = s.card.pins[0]!.number !== s.card.pins.find((pp) => s.comp.pins[pp.number] === s.net)!.number;
         const satDef = symbolFor(s.card, flip);

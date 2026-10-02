@@ -184,6 +184,8 @@ export interface LabelView {
   /** Supply symbol on a horizontal lead: a stub of `stubLen` mils in this direction comes first. */
   stub?: 'left' | 'right';
   stubLen?: number;
+  /** Extra stem (mils) before a supply symbol, so it clears symbols of neighbouring pins pointing the other way. */
+  rise?: number;
 }
 
 export interface WireView {

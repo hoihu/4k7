@@ -80,7 +80,7 @@ export function labelRect(l: LabelView): Rect {
     const sx = l.x + (l.stub === 'left' ? -1 : l.stub === 'right' ? 1 : 0) * (l.stubLen ?? 100);
     const half = l.kind === 'ground' ? 80 : Math.max(80, w / 2);
     // ground: bars 150 deep; rail: 200 stem + arrow + name
-    const h = l.kind === 'ground' ? 260 : 400;
+    const h = (l.kind === 'ground' ? 260 : 400) + (l.rise ?? 0);
     const sym: Rect = l.dir === 'up' ? { x: sx - half, y: l.y - h, w: 2 * half, h } : { x: sx - half, y: l.y, w: 2 * half, h };
     const x0 = Math.min(sym.x, l.x);
     const x1 = Math.max(sym.x + sym.w, l.x);
@@ -194,10 +194,10 @@ export function supplyDir(net: Net): 'up' | 'down' | null {
  * label pointing `dir`; supplies always get a vertical symbol (up for positive rails, down for
  * ground and negative rails), after a horizontal stub when the lead is horizontal.
  */
-export function deco(net: Net, x: number, y: number, dir: Dir, stubLen = 100): LabelView {
+export function deco(net: Net, x: number, y: number, dir: Dir, stubLen = 100, rise = 0): LabelView {
   const kind: LabelView['kind'] = isGroundNet(net) ? 'ground' : isPowerNet(net) ? 'rail' : 'net';
   const base = { x, y, text: net.name, netId: net.id, kind };
-  if (kind !== 'net' && (dir === 'left' || dir === 'right')) return { ...base, dir: supplyDir(net)!, stub: dir, stubLen };
+  if (kind !== 'net' && (dir === 'left' || dir === 'right')) return { ...base, dir: supplyDir(net)!, stub: dir, stubLen, ...(rise ? { rise } : {}) };
   return { ...base, dir };
 }
 
@@ -212,8 +212,17 @@ export function decoWidth(net: Net | undefined, stubLen = 100): number {
  * Stub lengths for supply symbols on horizontal leads, so that symbols on neighbouring pins
  * do not run into each other: upward symbols step outwards from the top, downward ones from
  * the bottom (pins closer than 300 mils form a run).
+ *
+ * An upward symbol below a downward one (a rail pin under a ground pin) would rise into it: then
+ * the downward symbols move to columns further out and both get a longer stem (`rises`), the
+ * rail symbol up past the highest of those ground pins and the ground symbol down past the
+ * lowest rail pin. Their wires cross; the symbols stay clear.
  */
-export function supplyStubs(pins: { number: string; y: number; side: string }[], dirOf: (pin: string) => 'up' | 'down' | null): Map<string, number> {
+export function supplyStubs(
+  pins: { number: string; y: number; side: string }[],
+  dirOf: (pin: string) => 'up' | 'down' | null,
+  rises?: Map<string, number>,
+): Map<string, number> {
   const out = new Map<string, number>();
   for (const side of ['left', 'right']) {
     const onSide = pins.filter((p) => p.side === side);
@@ -224,6 +233,25 @@ export function supplyStubs(pins: { number: string; y: number; side: string }[],
         step = i > 0 && Math.abs(p.y - run[i - 1]!.y) <= 300 ? step + 1 : 0;
         out.set(p.number, 100 + 200 * step);
       });
+    }
+    // rail pins under ground pins, close enough for their symbols to meet (rail 400 up, ground 260 down)
+    const ups = onSide.filter((p) => dirOf(p.number) === 'up');
+    const downs = onSide.filter((p) => dirOf(p.number) === 'down');
+    const pairs = ups.flatMap((u) => downs.filter((g) => g.y < u.y && u.y - g.y < 700).map((g) => [u, g] as const));
+    if (!pairs.length) continue;
+    const upsHit = [...new Set(pairs.map(([u]) => u))];
+    const downsHit = [...new Set(pairs.map(([, g]) => g))];
+    // the ground symbols to columns beyond the rail symbols (keeping their own steps)
+    const maxUp = Math.max(...upsHit.map((u) => out.get(u.number)!));
+    const shift = maxUp + 200 - Math.min(...downsHit.map((g) => out.get(g.number)!));
+    if (shift > 0) for (const g of downsHit) out.set(g.number, out.get(g.number)! + shift);
+    for (const u of upsHit) {
+      const top = Math.min(...pairs.filter(([x]) => x === u).map(([, g]) => g.y));
+      rises?.set(u.number, Math.max(rises.get(u.number) ?? 0, u.y - top + 100));
+    }
+    for (const g of downsHit) {
+      const bottom = Math.max(...pairs.filter(([, x]) => x === g).map(([u]) => u.y));
+      rises?.set(g.number, Math.max(rises.get(g.number) ?? 0, bottom - g.y + 100));
     }
   }
   return out;
@@ -246,7 +274,8 @@ export function addJunctions(scene: Scene): void {
   }
   const key = (x: number, y: number) => `${x},${y}`;
   const pins = new Map<string, number>();
-  for (const s of scene.symbols) for (const p of s.pins) pins.set(key(p.x, p.y), (pins.get(key(p.x, p.y)) ?? 0) + 1);
+  // pins stacked at one spot of a symbol (repeated VDD, VSS …) are one connection point
+  for (const s of scene.symbols) for (const k of new Set(s.pins.map((p) => key(p.x, p.y)))) pins.set(k, (pins.get(k) ?? 0) + 1);
   const supplies = new Map<string, number>();
   for (const l of scene.labels) if (l.kind !== 'net' || l.dir !== 'on') supplies.set(`${l.netId}@${key(l.x, l.y)}`, (supplies.get(`${l.netId}@${key(l.x, l.y)}`) ?? 0) + 1);
   const inside = (s: Seg, x: number, y: number) =>

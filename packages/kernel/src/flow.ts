@@ -213,11 +213,12 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
   const colPins = new Set(plan.pinCols.map((c) => c.pin));
   let gapR = 200;
   let gapL = 200;
+  const rises = new Map<string, number>();
   const stubs = supplyStubs(ic.pins, (num) => {
     const id = plan.comp.pins[num];
     const skip = num === plan.inPin || num === plan.outPin || colPins.has(num) || plan.comp.noConnect.includes(num);
     return id && !skip ? supplyDir(d.nets[id]!) : null;
-  });
+  }, rises);
   for (const p of ic.pins) {
     if (p.number === plan.inPin || p.number === plan.outPin || colPins.has(p.number)) continue;
     if (plan.comp.noConnect.includes(p.number)) {
@@ -232,7 +233,7 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
     }
     const dir = p.side === 'left' ? 'left' : p.side === 'right' ? 'right' : p.side === 'top' ? 'up' : 'down';
     const stub = stubs.get(p.number) ?? 100;
-    scene.labels.push(deco(net(id), p.x, p.y, dir, stub));
+    scene.labels.push(deco(net(id), p.x, p.y, dir, stub, rises.get(p.number) ?? 0));
     if (p.side === 'right') gapR = Math.max(gapR, decoWidth(net(id), stub) + 100);
     if (p.side === 'left') gapL = Math.max(gapL, decoWidth(net(id), stub) + 100);
   }

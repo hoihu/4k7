@@ -110,6 +110,13 @@
     const y = l.y;
     return [x0, y, x0 + s * 40, y - 45, x0 + s * (40 + w), y - 45, x0 + s * (40 + w), y + 45, x0 + s * 40, y + 45].join(',');
   }
+  /** The same tag on a vertical lead: after a short stem, pointing at the wire, the name level inside. */
+  function vflag(l: LabelView): string {
+    const w = l.text.length * 50 + 70;
+    const s = l.dir === 'up' ? -1 : 1;
+    const y0 = l.y + s * 70;
+    return [l.x, y0, l.x + w / 2, y0 + s * 40, l.x + w / 2, y0 + s * 130, l.x - w / 2, y0 + s * 130, l.x - w / 2, y0 + s * 40].join(',');
+  }
 </script>
 
 <svg
@@ -141,18 +148,21 @@
         <!-- supplies are always vertical; on a horizontal lead a stub comes first -->
         {@const sx = l.x + (l.stub === 'left' ? -1 : l.stub === 'right' ? 1 : 0) * (l.stubLen ?? 100)}
         {@const s = l.dir === 'up' ? -1 : 1}
+        <!-- (rise: a longer stem, clearing symbols of neighbouring pins that point the other way) -->
+        {@const r = l.rise ?? 0}
+        {@const stem = RAIL_STEM + r}
         <g class="pwr">
           {#if sx !== l.x}<line x1={l.x} y1={l.y} x2={sx} y2={l.y} />{/if}
           {#if l.kind === 'ground'}
-            <line x1={sx} y1={l.y} x2={sx} y2={l.y + s * 80} />
-            <line x1={sx - 70} y1={l.y + s * 80} x2={sx + 70} y2={l.y + s * 80} />
-            <line x1={sx - 45} y1={l.y + s * 115} x2={sx + 45} y2={l.y + s * 115} />
-            <line x1={sx - 20} y1={l.y + s * 150} x2={sx + 20} y2={l.y + s * 150} />
+            <line x1={sx} y1={l.y} x2={sx} y2={l.y + s * (r + 80)} />
+            <line x1={sx - 70} y1={l.y + s * (r + 80)} x2={sx + 70} y2={l.y + s * (r + 80)} />
+            <line x1={sx - 45} y1={l.y + s * (r + 115)} x2={sx + 45} y2={l.y + s * (r + 115)} />
+            <line x1={sx - 20} y1={l.y + s * (r + 150)} x2={sx + 20} y2={l.y + s * (r + 150)} />
           {:else}
             <!-- supply rail: a long stem ending in an arrow pointing away from the circuit -->
-            <line x1={sx} y1={l.y} x2={sx} y2={l.y + s * RAIL_STEM} />
-            <polygon class="arrow" points="{sx},{l.y + s * (RAIL_STEM + 70)} {sx - 45},{l.y + s * RAIL_STEM} {sx + 45},{l.y + s * RAIL_STEM}" />
-            <text class="rail-t" x={sx} y={s < 0 ? l.y - RAIL_STEM - 100 : l.y + RAIL_STEM + 160} text-anchor="middle">{l.text}</text>
+            <line x1={sx} y1={l.y} x2={sx} y2={l.y + s * stem} />
+            <polygon class="arrow" points="{sx},{l.y + s * (stem + 70)} {sx - 45},{l.y + s * stem} {sx + 45},{l.y + s * stem}" />
+            <text class="rail-t" x={sx} y={s < 0 ? l.y - stem - 100 : l.y + stem + 160} text-anchor="middle">{l.text}</text>
           {/if}
         </g>
       {:else if l.dir === 'on'}
@@ -163,7 +173,8 @@
       {:else}
         {@const s = l.dir === 'up' ? -1 : 1}
         <line class="wire" x1={l.x} y1={l.y} x2={l.x} y2={l.y + s * 70} />
-        <text class="net-t" x={l.x} y={l.dir === 'up' ? l.y - 95 : l.y + 150} text-anchor="middle">{l.text}</text>
+        <polygon class="flag" points={vflag(l)} />
+        <text class="net-t" x={l.x} y={l.dir === 'up' ? l.y - 120 : l.y + 180} text-anchor="middle">{l.text}</text>
       {/if}
     {/each}
 

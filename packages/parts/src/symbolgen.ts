@@ -65,6 +65,8 @@ export function unitOfPin(card: PartCard, pinNumber: string): number {
 export function symbolFor(card: PartCard, flip = false, opts: SymbolOptions = {}): SymbolDef {
   if (isTwoPin(card)) return twoPin(card, flip);
   if (card.category === 'diode' && card.pins.length === 4) return bridgeDiamond(card);
+  const tr = transistorSymbol(card);
+  if (tr) return tr;
   return box(card, opts.first ?? [], opts.mirror ?? false, opts.unit);
 }
 
@@ -133,6 +135,107 @@ function twoPin(card: PartCard, flip: boolean): SymbolDef {
     bbox: { x: -100, y: -200, w: 200, h: 400 },
     refPos: { x: 100, y: -15, anchor: 'start' },
     valuePos: { x: 100, y: 70, anchor: 'start' },
+  };
+}
+
+/**
+ * A two-pin part drawn upright like R or C, pin `flip`-wise: the usual glyph for R, C, L, D and
+ * LEDs, else a small body (a buzzer, a fuse, a two-pin module), with a + mark at pin 1 when it is
+ * named "+". For stacking parts in a column (a transistor's load).
+ */
+export function uprightSymbol(card: PartCard, flip = false): SymbolDef {
+  if (isTwoPin(card)) return twoPin(card, flip);
+  const d = flip ? -1 : 1;
+  const Y = (y: number) => y * d;
+  const prims: Prim[] = [
+    { t: 'line', x1: 0, y1: Y(-200), x2: 0, y2: Y(-120) },
+    { t: 'line', x1: 0, y1: Y(120), x2: 0, y2: Y(200) },
+    { t: 'rect', x: -80, y: -120, w: 160, h: 240, fill: true },
+  ];
+  const sound = /buzzer|beeper|speaker|sounder|transducer/i.test(`${card.description} ${card.title ?? ''}`);
+  // a sound wave beside the body (the name and value then start further right)
+  if (sound) prims.push({ t: 'path', d: 'M110,-50 Q150,0 110,50' }, { t: 'path', d: 'M140,-80 Q200,0 140,80' });
+  const [p1, p2] = card.pins as [PartPin, PartPin];
+  if (p1.name === '+') prims.push({ t: 'line', x1: -55, y1: Y(-150), x2: -25, y2: Y(-150) }, { t: 'line', x1: -40, y1: Y(-165), x2: -40, y2: Y(-135) });
+  return {
+    kind: 'two_pin',
+    prims,
+    pins: [
+      { number: p1.number, name: p1.name, x: 0, y: Y(-200), side: flip ? 'bottom' : 'top', showName: false, showNumber: false },
+      { number: p2.number, name: p2.name, x: 0, y: Y(200), side: flip ? 'top' : 'bottom', showName: false, showNumber: false },
+    ],
+    bbox: { x: -100, y: -200, w: sound ? 330 : 300, h: 400 },
+    refPos: { x: sound ? 240 : 120, y: -15, anchor: 'start' },
+    valuePos: { x: sound ? 240 : 120, y: 70, anchor: 'start' },
+  };
+}
+
+/* ------------------------------ transistors ------------------------------- */
+
+/**
+ * MOSFETs (pins G, D, S) and bipolar transistors (B, C, E) as their usual symbols: control pin
+ * on the left, the switched path vertical on the right (N-type: drain/collector on top; P-type:
+ * source/emitter on top, as they sit in a high-side switch).
+ */
+function transistorSymbol(card: PartCard): SymbolDef | null {
+  if (card.pins.length !== 3) return null;
+  const find = (re: RegExp) => card.pins.find((p) => re.test(p.name));
+  const g = find(/^(G|GATE)$/i);
+  const dr = find(/^(D|DRAIN)$/i);
+  const so = find(/^(S|SOURCE)$/i);
+  const b = find(/^(B|BASE)$/i);
+  const c = find(/^(C|COLLECTOR)$/i);
+  const e = find(/^(E|EMITTER)$/i);
+  const text = `${card.id} ${card.description} ${card.title ?? ''}`;
+  const prims: Prim[] = [];
+  const L = (x1: number, y1: number, x2: number, y2: number) => prims.push({ t: 'line', x1, y1, x2, y2 });
+  let pins: SymbolPin[];
+  if (g && dr && so) {
+    const pType = /p-?channel|pmos|\bp-?fet/i.test(text);
+    const [top, bottom] = pType ? [so, dr] : [dr, so];
+    // gate electrode, the channel in three pieces (enhancement), body tied to the source
+    L(-100, 400, 60, 400);
+    L(60, 140, 60, 460);
+    for (const [y0, y1] of [[110, 190], [260, 340], [410, 490]] as const) L(100, y0, 100, y1);
+    L(100, 150, 200, 150);
+    L(200, 150, 200, 0);
+    L(100, 450, 200, 450);
+    L(200, 450, 200, 600);
+    const srcY = pType ? 150 : 450;
+    L(100, 300, 200, 300);
+    L(200, 300, 200, srcY);
+    // the body arrow: into the channel for N, out of it for P
+    prims.push({ t: 'poly', pts: pType ? [160, 300, 110, 270, 110, 330] : [110, 300, 160, 270, 160, 330], closed: true, fill: true });
+    pins = [
+      { number: g.number, name: g.name, x: -100, y: 400, side: 'left', showName: false, showNumber: false },
+      { number: top.number, name: top.name, x: 200, y: 0, side: 'top', showName: false, showNumber: false },
+      { number: bottom.number, name: bottom.name, x: 200, y: 600, side: 'bottom', showName: false, showNumber: false },
+    ];
+  } else if (b && c && e) {
+    const pnp = /pnp/i.test(text);
+    const [top, bottom] = pnp ? [e, c] : [c, e];
+    L(-100, 300, 100, 300);
+    L(100, 180, 100, 420);
+    L(100, 240, 200, 140);
+    L(200, 140, 200, 0);
+    L(100, 360, 200, 460);
+    L(200, 460, 200, 600);
+    // the emitter arrow: out for NPN (at the bottom lead), in for PNP (at the top lead)
+    prims.push({ t: 'poly', pts: pnp ? [110, 250, 165, 210, 140, 190] : [190, 450, 135, 410, 160, 390], closed: true, fill: true });
+    prims.push({ t: 'circle', x: 120, y: 300, r: 170 });
+    pins = [
+      { number: b.number, name: b.name, x: -100, y: 300, side: 'left', showName: false, showNumber: false },
+      { number: top.number, name: top.name, x: 200, y: 0, side: 'top', showName: false, showNumber: false },
+      { number: bottom.number, name: bottom.name, x: 200, y: 600, side: 'bottom', showName: false, showNumber: false },
+    ];
+  } else return null;
+  return {
+    kind: 'box',
+    prims,
+    pins,
+    bbox: { x: -100, y: 0, w: 400, h: 600 },
+    refPos: { x: 260, y: 260, anchor: 'start' },
+    valuePos: { x: 260, y: 340, anchor: 'start' },
   };
 }
 
