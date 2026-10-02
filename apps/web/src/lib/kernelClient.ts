@@ -15,6 +15,11 @@ export function createKernel(): Remote & { port: KernelPort } {
     if (e.data.error !== undefined) p.reject(new Error(e.data.error));
     else p.resolve(e.data.result);
   };
+  // a worker that fails (an error outside a call) answers nothing more: fail what waits instead of hanging
+  worker.onerror = (e) => {
+    for (const p of pending.values()) p.reject(new Error(`kernel worker failed: ${e.message || 'unknown error'}`));
+    pending.clear();
+  };
   const call = (method: string, args: unknown[]) =>
     new Promise((resolve, reject) => {
       const id = ++seq;

@@ -71,10 +71,12 @@
     updateZoom();
   }
 
-  let drag: { x: number; y: number; vx: number; vy: number; moved: boolean } | null = null;
+  /** `ref`: the part under the pointer when the press began (once captured, events target the canvas itself). */
+  let drag: { x: number; y: number; vx: number; vy: number; moved: boolean; ref: string | null } | null = null;
   function onpointerdown(e: PointerEvent) {
     if (e.button !== 0 && e.button !== 1) return;
-    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false };
+    const ref = (e.target as Element).closest('[data-ref]')?.getAttribute('data-ref') ?? null;
+    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false, ref };
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
   }
   function onpointermove(e: PointerEvent) {
@@ -88,8 +90,7 @@
   }
   function onpointerup(e: PointerEvent) {
     if (drag && !drag.moved) {
-      const target = (e.target as Element).closest('[data-ref]');
-      if (target) onselect?.(target.getAttribute('data-ref')!, e.shiftKey || e.metaKey || e.ctrlKey);
+      if (drag.ref) onselect?.(drag.ref, e.shiftKey || e.metaKey || e.ctrlKey);
       else onclear?.();
     }
     drag = null;
