@@ -44,6 +44,15 @@ interface Pending {
 
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
+/** An allowed origin, exact or "https://*.example.dev" for its subdomains (one level, https only). */
+export function originMatches(allowed: string, origin: string): boolean {
+  if (allowed === origin) return true;
+  const m = /^https:\/\/\*\.(.+)$/.exec(allowed);
+  if (!m) return false;
+  const host = /^https:\/\/([a-z0-9-]+)\.(.+)$/i.exec(origin);
+  return !!host && host[2]!.toLowerCase() === m[1]!.toLowerCase();
+}
+
 export class Bridge {
   readonly code: string;
   #opts: BridgeOptions;
@@ -175,7 +184,7 @@ export class Bridge {
 
   #onConnection(ws: WebSocket, req: IncomingMessage) {
     const origin = req.headers.origin ?? '';
-    const allowed = LOCAL_ORIGIN.test(origin) || (this.#opts.origins ?? []).includes(origin);
+    const allowed = LOCAL_ORIGIN.test(origin) || (this.#opts.origins ?? []).some((o) => originMatches(o, origin));
     if (!allowed) {
       this.#log(`rejected connection from origin "${origin}"`);
       ws.close(1008, 'origin not allowed');

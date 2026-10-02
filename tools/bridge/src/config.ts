@@ -3,9 +3,10 @@
  * Claude Code does not require pairing the browser tab again.
  */
 import { randomInt } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * How to run the headless Claude Code for the app chat. Mirrors a shell alias such as
@@ -21,10 +22,31 @@ export interface ClaudeProfile {
   env: Record<string, string>;
 }
 
+/**
+ * The hosted app (Cloudflare Pages): allowed to connect by default, with its preview deploys
+ * (https://<hash>.<project>.pages.dev), and where pairing links point unless this runs from a
+ * checkout with its own dev server. TRACEWISE_HOSTED_URL overrides it (another domain).
+ */
+export const HOSTED_APP = (process.env.TRACEWISE_HOSTED_URL ?? 'https://tracewise.pages.dev').replace(/\/$/, '');
+const LOCAL_APP = 'http://localhost:5173';
+
+/** Origins allowed besides localhost: the hosted app and its preview deploys ("https://*." matches subdomains). */
+export function hostedOrigins(): string[] {
+  const u = new URL(HOSTED_APP);
+  return [u.origin, `${u.protocol}//*.${u.host}`];
+}
+
+/** Running from a checkout of the repository (with the web app next to it), not from npm. */
+function inCheckout(): boolean {
+  return existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'apps', 'web', 'package.json'));
+}
+
 export interface BridgeConfig {
   code: string;
   origins: string[];
   appUrl: string;
+  /** The other app to mention (the hosted one when pairing links point to the local dev server, and vice versa). */
+  otherAppUrl: string;
   claude: ClaudeProfile;
 }
 
@@ -45,13 +67,14 @@ export function loadConfig(): BridgeConfig {
     // first run
   }
   const code = process.env.TRACEWISE_BRIDGE_CODE ?? (cfg.code && /^\d{6}$/.test(cfg.code) ? cfg.code : newCode());
-  const origins = [...(cfg.origins ?? []), ...(process.env.TRACEWISE_ORIGINS?.split(',').filter(Boolean) ?? [])];
+  const origins = [...hostedOrigins(), ...(cfg.origins ?? []), ...(process.env.TRACEWISE_ORIGINS?.split(',').filter(Boolean) ?? [])];
   if (code !== cfg.code && !process.env.TRACEWISE_BRIDGE_CODE) {
     mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 });
     // keep every other setting in the file
     writeFileSync(path, JSON.stringify({ ...cfg, code, origins: cfg.origins ?? [] }, null, 2) + '\n', { mode: 0o600 });
   }
-  const appUrl = process.env.TRACEWISE_APP_URL ?? cfg.appUrl ?? 'http://localhost:5173';
+  const appUrl = process.env.TRACEWISE_APP_URL ?? cfg.appUrl ?? (inCheckout() ? LOCAL_APP : HOSTED_APP);
+  const otherAppUrl = appUrl === LOCAL_APP ? HOSTED_APP : LOCAL_APP;
   const c = (cfg.claude ?? {}) as Partial<ClaudeProfile>;
   const configDir = process.env.TRACEWISE_CLAUDE_CONFIG_DIR ?? c.configDir;
   const claude: ClaudeProfile = {
@@ -59,7 +82,7 @@ export function loadConfig(): BridgeConfig {
     unsetEnv: [...(c.unsetEnv ?? []), ...(process.env.TRACEWISE_CLAUDE_UNSET?.split(',').filter(Boolean) ?? [])],
     env: c.env ?? {},
   };
-  return { code, origins, appUrl, claude };
+  return { code, origins, appUrl, otherAppUrl, claude };
 }
 
 function expandHome(p: string): string {

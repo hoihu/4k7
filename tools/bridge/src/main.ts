@@ -57,6 +57,7 @@ async function main() {
   let server: ReturnType<typeof createMcpServer> | null = null;
   if (serve) {
     log(`open ${bridge.pairingLink()} to pair the app (Ctrl-C to stop)`);
+    log(`(or ${cfg.otherAppUrl.replace(/\/$/, '')}/#pair=${cfg.code})`);
   } else {
     server = createMcpServer(bridge);
     await server.connect(new StdioServerTransport());

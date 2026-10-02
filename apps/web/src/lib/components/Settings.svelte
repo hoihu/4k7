@@ -43,7 +43,9 @@
   }
 
   let pairCode = $state(app.settings.bridgeCode);
-  const mcpCommand = `claude mcp add --scope user tracewise -- node ${__REPO_ROOT__}/tools/bridge/src/main.ts`;
+  const mcpCommand = `claude mcp add --scope user tracewise -- ${__BRIDGE_MCP__}`;
+  const bridgeRun = __BRIDGE_RUN__;
+  const where = __HOSTED__ ? '' : ' (in this repository)';
   let copied = $state(false);
 
   async function copyCommand() {
@@ -104,7 +106,7 @@
               <div class="hint">{bridge.chat?.reason ?? 'This bridge is too old for the app chat. Restart it.'}</div>
             {:else}
               <span class="tag warn">not connected</span>
-              <div class="hint">Start the bridge in a terminal with <code>npm run bridge</code> (in this repository), open the pairing link it prints, or pair below under <a href="#bridge">Claude Code bridge</a>.</div>
+              <div class="hint">Start the bridge in a terminal with <code>{bridgeRun}</code>{where}, open the pairing link it prints, or pair below under <a href="#bridge">Claude Code bridge</a>.</div>
             {/if}
           </td>
         </tr>
@@ -180,7 +182,7 @@
       <p class="lead">Use Claude Code with your existing plan, no API key in the browser. Two ways: chat <b>here</b> (choose “Claude Code on this computer” as provider above; start the bridge with <code>npm run bridge</code>), or chat in the <b>Claude Code CLI</b> and let it drive this tab. Either way, changes arrive as changesets for you to review.</p>
       <ol class="steps">
         <li>
-          Chat here: run <code>npm run bridge</code> in this repository and open the pairing link it prints.
+          Chat here: run <code>{bridgeRun}</code>{where} and open the pairing link it prints.
           Chat in the CLI: start <code>claude</code> in this repository and approve the <b>tracewise</b> MCP server it offers (from <code>.mcp.json</code>);
           to use it from any folder, register it once instead:
           <div class="cmd"><code>{mcpCommand}</code><button class="ib" onclick={copyCommand}>{copied ? 'copied' : 'copy'}</button></div>

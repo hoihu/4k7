@@ -666,7 +666,7 @@ class AppState {
   private async runClaudeCode(text: string, item: ChatItem): Promise<void> {
     const fail = (t: string) => item.segments.push({ type: 'error', text: t });
     if (bridge.status !== 'connected') {
-      fail('Claude Code is not connected. Start the bridge (npm run bridge) and pair this tab under Settings → Claude Code bridge.');
+      fail(`Claude Code is not connected. Start the bridge (${__BRIDGE_RUN__}) and pair this tab under Settings → Claude Code bridge.`);
       return;
     }
     if (!bridge.chat?.available) {

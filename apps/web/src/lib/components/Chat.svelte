@@ -55,13 +55,13 @@
           <p class="muted">Click parts on the canvas to reference them. Hints like “make C2 100µF” or “put C1 left of U1” are recorded in the ledger and kept on every re-layout.</p>
           {#if app.isDemo}
             <p class="demo">
-              Offline demo (scripted). To use a real model, run <code>npm run bridge</code> and open its pairing link to chat with your
+              Offline demo (scripted). To use a real model, run <code>{__BRIDGE_RUN__}</code> and open its pairing link to chat with your
               <b>Claude Code</b>, or <button class="linkbtn" onclick={() => (app.view = 'set')}>add an API key</button>.
             </p>
           {:else if app.settings.provider === 'claude-code' && bridge.status !== 'connected'}
             <p class="demo">
               The chat uses your Claude Code, but the bridge is {bridge.status === 'elsewhere' ? 'connected in another tab' : 'not connected'}.
-              {#if bridge.status === 'elsewhere'}<button class="linkbtn" onclick={() => bridge.useThisTab()}>Use this tab</button>{:else}Run <code>npm run bridge</code> and open its pairing link.{/if}
+              {#if bridge.status === 'elsewhere'}<button class="linkbtn" onclick={() => bridge.useThisTab()}>Use this tab</button>{:else}Run <code>{__BRIDGE_RUN__}</code> and open its pairing link.{/if}
             </p>
           {/if}
         </div>

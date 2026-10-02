@@ -132,3 +132,16 @@ describe('MCP server', () => {
     expect(tab.messages.some((m) => m.type === 'agent' && m.name === 'Claude Code')).toBe(true);
   });
 });
+
+describe('allowed page origins', () => {
+  it('matches the hosted app exactly and its preview subdomains, nothing else', async () => {
+    const { originMatches } = await import('../src/bridge.ts');
+    const { hostedOrigins } = await import('../src/config.ts');
+    const [prod, previews] = hostedOrigins() as [string, string];
+    expect(originMatches(prod, prod)).toBe(true);
+    expect(originMatches(previews, prod.replace('https://', 'https://abc123.'))).toBe(true);
+    expect(originMatches(previews, prod.replace('https://', 'https://a.b.'))).toBe(false);
+    expect(originMatches(previews, 'https://evil.pages.dev')).toBe(false);
+    expect(originMatches(previews, prod.replace('https://', 'http://abc.'))).toBe(false);
+  });
+});
