@@ -44,13 +44,23 @@ interface Pending {
 
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
-/** An allowed origin, exact or "https://*.example.dev" for its subdomains (one level, https only). */
+/**
+ * An allowed origin: exact; "https://*.example.dev" for its subdomains (one level); or
+ * "https://*-name.example.dev" for a prefixed first label (Workers preview versions). https only.
+ */
 export function originMatches(allowed: string, origin: string): boolean {
   if (allowed === origin) return true;
-  const m = /^https:\/\/\*\.(.+)$/.exec(allowed);
-  if (!m) return false;
-  const host = /^https:\/\/([a-z0-9-]+)\.(.+)$/i.exec(origin);
-  return !!host && host[2]!.toLowerCase() === m[1]!.toLowerCase();
+  const sub = /^https:\/\/\*\.(.+)$/.exec(allowed);
+  if (sub) {
+    const host = /^https:\/\/([a-z0-9-]+)\.(.+)$/i.exec(origin);
+    return !!host && host[2]!.toLowerCase() === sub[1]!.toLowerCase();
+  }
+  const pre = /^https:\/\/\*-(.+)$/.exec(allowed);
+  if (pre) {
+    const host = /^https:\/\/([a-z0-9]+)-(.+)$/i.exec(origin);
+    return !!host && host[2]!.toLowerCase() === pre[1]!.toLowerCase();
+  }
+  return false;
 }
 
 export class Bridge {

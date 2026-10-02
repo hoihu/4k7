@@ -23,17 +23,22 @@ export interface ClaudeProfile {
 }
 
 /**
- * The hosted app (Cloudflare Pages): allowed to connect by default, with its preview deploys
- * (https://<hash>.<project>.pages.dev), and where pairing links point unless this runs from a
- * checkout with its own dev server. TRACEWISE_HOSTED_URL overrides it (another domain).
+ * The hosted app (Cloudflare): allowed to connect by default, with its preview deploys, and where
+ * pairing links point unless this runs from a checkout with its own dev server.
+ * TRACEWISE_HOSTED_URL overrides it (another domain).
  */
-export const HOSTED_APP = (process.env.TRACEWISE_HOSTED_URL ?? 'https://tracewise.pages.dev').replace(/\/$/, '');
+export const HOSTED_APP = (process.env.TRACEWISE_HOSTED_URL ?? 'https://tracewise.fischer-carlito.workers.dev').replace(/\/$/, '');
 const LOCAL_APP = 'http://localhost:5173';
 
-/** Origins allowed besides localhost: the hosted app and its preview deploys ("https://*." matches subdomains). */
+/**
+ * Origins allowed besides localhost: the hosted app and its preview deploys. Pages previews are
+ * subdomains (https://<hash>.<project>.pages.dev: "https://*."), Workers previews prefix the
+ * worker's name (https://<version>-<worker>.<account>.workers.dev: "https://*-").
+ */
 export function hostedOrigins(): string[] {
   const u = new URL(HOSTED_APP);
-  return [u.origin, `${u.protocol}//*.${u.host}`];
+  const [first, ...rest] = u.host.split('.');
+  return [u.origin, `${u.protocol}//*.${u.host}`, ...(u.host.endsWith('.workers.dev') ? [`${u.protocol}//*-${first}.${rest.join('.')}`] : [])];
 }
 
 /** Running from a checkout of the repository (with the web app next to it), not from npm. */

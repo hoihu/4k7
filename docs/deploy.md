@@ -12,8 +12,9 @@ its IndexedDB). Cloudflare Pages builds it from this (private) repository on eve
    - Build command: `npm run build`
    - Build output directory: `apps/web/dist`
    - Root directory: *(empty: the repository root)*
-   Node comes from `.node-version` (22). Cloudflare sets `CF_PAGES=1`, which makes the build a
-   *hosted* one: no sourcemaps, and the bridge offered as `npx -y tracewise-bridge`.
+   Node comes from `.node-version` (22). Every production build is a *hosted* one: no
+   sourcemaps, and the bridge offered as `npx -y tracewise-bridge` (`TW_LOCAL=1` for a build
+   that runs the bridge from the checkout, like the dev server).
 3. Production branch: `main`. Every other branch and pull request gets a preview address
    (`https://<hash>.<project>.pages.dev`).
 4. Optional: a custom domain under the project's **Custom domains**.
@@ -33,7 +34,7 @@ The app's address is then `https://<name>.<account>.workers.dev` (or a custom do
 ## The project name and the bridge
 
 The bridge accepts the hosted app by default: `HOSTED_APP` in `tools/bridge/src/config.ts`
-(`https://tracewise.pages.dev` and its preview subdomains). If the Pages project gets another
+(`https://tracewise.fischer-carlito.workers.dev` and its preview versions). If the Pages project gets another
 name, or the app a custom domain, change that constant (or set `TRACEWISE_HOSTED_URL` when
 running the bridge). Other origins: `TRACEWISE_ORIGINS=https://a.example,https://b.example`.
 

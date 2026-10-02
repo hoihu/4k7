@@ -16,7 +16,6 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      # the hosted build, as Cloudflare Pages makes it (no sourcemaps, no local paths)
+      # the hosted build, as Cloudflare makes it (no sourcemaps, no local paths)
       - run: npm run build
-        env:
-          TW_HOSTED: '1'
+      - run: "! find apps/web/dist -name '*.map' | grep -q . && ! grep -rq 'tools/bridge/src/main.ts' apps/web/dist"

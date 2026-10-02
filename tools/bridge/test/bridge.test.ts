@@ -137,11 +137,17 @@ describe('allowed page origins', () => {
   it('matches the hosted app exactly and its preview subdomains, nothing else', async () => {
     const { originMatches } = await import('../src/bridge.ts');
     const { hostedOrigins } = await import('../src/config.ts');
-    const [prod, previews] = hostedOrigins() as [string, string];
-    expect(originMatches(prod, prod)).toBe(true);
-    expect(originMatches(previews, prod.replace('https://', 'https://abc123.'))).toBe(true);
-    expect(originMatches(previews, prod.replace('https://', 'https://a.b.'))).toBe(false);
-    expect(originMatches(previews, 'https://evil.pages.dev')).toBe(false);
-    expect(originMatches(previews, prod.replace('https://', 'http://abc.'))).toBe(false);
+    const allowed = hostedOrigins();
+    const ok = (o: string) => allowed.some((a) => originMatches(a, o));
+    expect(allowed[0]).toBe('https://tracewise.fischer-carlito.workers.dev');
+    expect(ok('https://tracewise.fischer-carlito.workers.dev')).toBe(true);
+    // a Workers preview version
+    expect(ok('https://a1b2c3d4-tracewise.fischer-carlito.workers.dev')).toBe(true);
+    expect(ok('https://evil-tracewise.someone-else.workers.dev')).toBe(false);
+    expect(ok('https://other.fischer-carlito.workers.dev')).toBe(false);
+    expect(ok('https://evil.pages.dev')).toBe(false);
+    expect(ok('http://a1b2c3d4-tracewise.fischer-carlito.workers.dev')).toBe(false);
+    expect(originMatches('https://*.tracewise.pages.dev', 'https://abc123.tracewise.pages.dev')).toBe(true);
+    expect(originMatches('https://*.tracewise.pages.dev', 'https://a.b.tracewise.pages.dev')).toBe(false);
   });
 });
