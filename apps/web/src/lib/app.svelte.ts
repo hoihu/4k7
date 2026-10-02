@@ -345,6 +345,10 @@ class AppState {
     return text(`${card.id} datasheet ${ds.name}, ${n} pages${refs.length ? ` (${refs.join(', ')})` : ''}:\n${index.join('\n')}`);
   }
 
+  async queryNet(net: string): Promise<unknown> {
+    return this.kernel.query({ op: 'get_net', net });
+  }
+
   async queryComponent(ref: string): Promise<unknown> {
     return this.kernel.query({ op: 'get_component', ref });
   }
@@ -800,7 +804,22 @@ class AppState {
 
   /* --------------------------------- misc --------------------------------- */
 
+  /** A net selected in the schematic (its id): highlighted, its details in the Selection tab. */
+  selectedNet = $state<string | null>(null);
+
+  selectNet(netId: string) {
+    this.selection = [];
+    this.selectedNet = this.selectedNet === netId ? null : netId;
+    if (this.selectedNet) this.tab = 'sel';
+  }
+
+  clearSelection() {
+    this.selection = [];
+    this.selectedNet = null;
+  }
+
   toggleSelect(refdes: string, additive: boolean) {
+    this.selectedNet = null;
     if (additive) {
       this.selection = this.selection.includes(refdes) ? this.selection.filter((r) => r !== refdes) : [...this.selection, refdes];
     } else {

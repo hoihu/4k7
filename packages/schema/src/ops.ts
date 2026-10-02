@@ -69,6 +69,7 @@ export const SetNetOp = z.object({
   external: z.boolean().optional().describe('True for nets driven from outside the design (e.g. supply input on a connector)'),
   power: z.boolean().optional().describe('Draw as a power rail'),
   max_current: z.number().nullable().optional().describe('Expected maximum current in amps'),
+  track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise)'),
 });
 
 export const AddSheetOp = z.object({

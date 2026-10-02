@@ -956,3 +956,31 @@ describe('package defaults', () => {
     expect(k.board().parts.find((p) => p.refdes === 'R1')!.pads.every((p) => !!p.drill)).toBe(true);
   });
 });
+
+describe('track width per net', () => {
+  it('routes a net at its own width where the pads take it, and get_net suggests a width from the current', () => {
+    const k = buck();
+    expect(k.transact({ summary: 'wide', ops: [{ op: 'set_net', net: '+12V', max_current: 2, track_mm: 0.8 }] }).status).toBe('ok');
+    k.accept();
+    const info = k.query({ op: 'get_net', net: '+12V' }) as { track: { width_mm: number; suggested_mm: number; why: string } };
+    expect(info.track.width_mm).toBe(0.8);
+    expect(info.track.why).toBe('set for this net');
+    expect(info.track.suggested_mm).toBeGreaterThanOrEqual(0.7);
+    const b = routed(k);
+    const nid = Object.entries(b.netNames).find(([, n]) => n === '+12V')![0];
+    const widths = new Set(b.tracks.filter((t) => t.netId === nid).map((t) => t.width));
+    expect([...widths].some((w) => w > b.rules.track)).toBe(true);
+    expect(Math.max(...widths)).toBeLessThanOrEqual(0.8);
+    expect(k.transact({ summary: 'bad', ops: [{ op: 'set_net', net: '+12V', track_mm: 20 }] }).status).toBe('rejected');
+  });
+});
+
+describe('trackWidthFor', () => {
+  it('follows IPC-2221 for 1 oz outer copper at 10 °C rise', async () => {
+    const { trackWidthFor } = await import('@tracewise/schema');
+    expect(trackWidthFor(0.1)).toBe(0.15); // floor
+    expect(trackWidthFor(1)).toBeCloseTo(0.3, 2);
+    expect(trackWidthFor(2)).toBeCloseTo(0.8, 2);
+    expect(trackWidthFor(3)).toBeGreaterThan(1.2);
+  });
+});

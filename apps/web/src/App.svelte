@@ -111,8 +111,10 @@
             hot={app.hoverHunk}
             showDiff={app.showDiff}
             selection={app.selection}
+            selectedNet={app.selectedNet}
             onselect={(r, add) => app.toggleSelect(r, add)}
-            onclear={() => (app.selection = [])}
+            onselectnet={(n) => app.selectNet(n)}
+            onclear={() => app.clearSelection()}
           />
           <div class="fl sheets">
             {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}

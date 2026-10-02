@@ -24,6 +24,8 @@ export interface RouteInput {
   parts: BoardPart[];
   /** Nets drawn with power width when their pads allow it. */
   powerNets: Set<string>;
+  /** Track width per net (the user's choice, mm), where its pads allow it; else the class width. */
+  netWidths?: Record<string, number>;
   /**
    * Planes: an inner layer dedicated to one net (no tracks there), or a pour on an outer layer
    * filling what the tracks leave. Pads of the net drop onto their plane with a via.
@@ -151,8 +153,9 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   let lonely = 1_000_000;
   const padNet = pads.map((p) => (p.netId ? numOf(p.netId) : lonely++));
 
-  // width classes: 0 signal track, 1 power track, 2 via
+  // width classes: 0 signal track, 1 power track, 2 via, then the widths chosen for single nets
   const widths = [rules.track, rules.powerTrack, rules.viaPad];
+  for (const w of Object.values(input.netWidths ?? {})) if (w > 0 && !widths.includes(w)) widths.push(w);
   const maps = widths.map(() => Array.from({ length: L }, () => new Int32Array(N)));
 
   const mark = (k: number, l: number, i: number, net: number) => {
@@ -249,8 +252,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   for (const pl of input.planes ?? []) {
     const l = layerIdx.get(pl.layer);
     if (l === undefined || OUTER.has(pl.layer)) continue;
-    maps[0]![l]!.fill(EDGE);
-    maps[1]![l]!.fill(EDGE);
+    for (let k = 0; k < widths.length; k++) if (k !== 2) maps[k]![l]!.fill(EDGE);
   }
 
   // copper cells per pad (inside the pad), for starts and goals
@@ -1377,9 +1379,13 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     }
     const pa = pads[c.a]!;
     const pb = pads[c.b]!;
-    // power width only where both pads can take it
-    const wide = input.powerNets.has(c.netId) && Math.min(pa.w, pa.h) >= rules.powerTrack * 0.9 && Math.min(pb.w, pb.h) >= rules.powerTrack * 0.9;
-    const k = wide ? 1 : 0;
+    // the net's own width, else power width, each only where both pads can take it
+    const takes = (w: number) => Math.min(pa.w, pa.h) >= w * 0.9 && Math.min(pb.w, pb.h) >= w * 0.9;
+    const own = input.netWidths?.[c.netId];
+    const wide = input.powerNets.has(c.netId) && takes(rules.powerTrack);
+    // too wide for a pad: the widest class that still fits (never below the signal width)
+    const fitting = (w: number) => widths.reduce((best, x, i) => (i !== 2 && x <= w && takes(x) && x > widths[best]! ? i : best), 0);
+    const k = own ? (own <= rules.track || takes(own) ? widths.indexOf(own) : fitting(own)) : wide ? 1 : 0;
     epoch++;
     const goalStamp = epoch;
     for (const st of groupCells.get(find(c.a))!) goal[st] = goalStamp;

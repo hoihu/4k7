@@ -18,12 +18,14 @@ import {
   type TransactionResult,
   type BoardView,
   boardSummary,
+  DEFAULT_BOARD,
+  trackWidthFor,
 } from '@tracewise/schema';
 import { packageChoice, packageOptions, searchParts } from '@tracewise/parts';
 import { applyOp, describeConstraint } from './apply.ts';
 import { countDiagnostics, diagKey, runChecks } from './checks.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
-import { RejectError, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, natCmp, netMembers, valueOf } from './doc.ts';
+import { RejectError, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, valueOf } from './doc.ts';
 import { layoutSchematic } from './layout.ts';
 import { layoutBoard, placeBoard } from './board.ts';
 import { canonicalJson, migrate } from './canonical.ts';
@@ -267,7 +269,17 @@ export class Kernel {
         const n = findNet(d, q.net);
         if (!n) return { error: `No net ${q.net}`, nets: Object.values(d.nets).map((x) => x.name).sort(natCmp) };
         const pins = (netMembers(d).get(n.id) ?? []).map((m) => `${m.comp.refdes}.${m.pin.name} (${m.pin.type})`);
-        return { name: n.name, attrs: n.attrs, pins };
+        // the track it gets on the board: its own width, else the rules' power or signal width
+        const rules = (d.board ?? DEFAULT_BOARD).rules;
+        const kind = isGroundNet(n) ? 'ground' : isPowerNet(n) ? 'supply' : 'signal';
+        const width = n.attrs.trackWidth ?? (kind === 'signal' ? rules.track : rules.powerTrack);
+        const track = {
+          width_mm: width,
+          why: n.attrs.trackWidth ? 'set for this net' : kind === 'signal' ? 'signal width (rules)' : 'power width (rules)',
+          ...(n.attrs.maxCurrent ? { suggested_mm: trackWidthFor(n.attrs.maxCurrent), for_current_a: n.attrs.maxCurrent } : {}),
+          rules: { signal_mm: rules.track, power_mm: rules.powerTrack },
+        };
+        return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, track };
       }
       case 'get_diagnostics':
         return this.analyse(d).diagnostics;

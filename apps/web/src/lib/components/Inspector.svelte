@@ -28,10 +28,12 @@
     app
       .queryComponent(ref)
       .then((r) => {
+        if (app.selection[0] !== ref) return; // overtaken by a newer selection
         info = r && typeof r === 'object' && 'refdes' in r ? (r as ComponentInfo) : null;
         infoError = info ? null : String((r as { error?: unknown } | null)?.error ?? `${ref} could not be read.`);
       })
       .catch((e: Error) => {
+        if (app.selection[0] !== ref) return;
         info = null;
         infoError = `${ref} could not be read: ${e.message}`;
       });
@@ -44,6 +46,48 @@
   }
   const whyText = (p: NonNullable<ComponentInfo['package']>) =>
     p.why === 'set' ? 'chosen for this part' : p.why === 'default' ? 'design default' : p.why === 'auto' ? `sized up: ${p.reason}` : 'library default';
+
+  /* a selected net: what it is, what it connects, and its track width on the board */
+  interface NetInfo {
+    id: string;
+    name: string;
+    kind: 'ground' | 'supply' | 'signal';
+    attrs: { voltage?: number; maxCurrent?: number; external?: boolean; trackWidth?: number };
+    pins: string[];
+    track: { width_mm: number; why: string; suggested_mm?: number; for_current_a?: number; rules: { signal_mm: number; power_mm: number } };
+  }
+  let net = $state<NetInfo | null>(null);
+  $effect(() => {
+    const id = app.selectedNet;
+    void app.k;
+    if (!id) {
+      net = null;
+      return;
+    }
+    app
+      .queryNet(id)
+      // (an answer for a net no longer selected, overtaken by a quicker one, is dropped)
+      .then((r) => app.selectedNet === id && (net = r && typeof r === 'object' && 'id' in r ? (r as NetInfo) : null))
+      .catch(() => app.selectedNet === id && (net = null));
+  });
+  /** The net's pins, repeated ones (a big IC's many VDD pins) as one line with a count. */
+  const netPins = $derived.by(() => {
+    const counts = new Map<string, number>();
+    for (const p of net?.pins ?? []) counts.set(p, (counts.get(p) ?? 0) + 1);
+    return [...counts.entries()];
+  });
+  const WIDTHS = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0];
+  function setTrack(v: string) {
+    if (!net) return;
+    void app.userEdit(`${net.name} track ${v ? `${v} mm` : 'default'}`, [{ op: 'set_net', net: net.name, track_mm: v ? Number(v) : null }]);
+  }
+  function setCurrent(v: string) {
+    if (!net) return;
+    const a = Number(v.replace(',', '.').replace(/\s*a$/i, ''));
+    if (v.trim() && !(a > 0)) return;
+    if ((net.attrs.maxCurrent ?? null) === (v.trim() ? a : null)) return;
+    void app.userEdit(`${net.name} current ${v.trim() ? `${a} A` : 'unset'}`, [{ op: 'set_net', net: net.name, max_current: v.trim() ? a : null }]);
+  }
 
   const diags = $derived(app.k?.diagnostics ?? []);
   const open = $derived(diags.filter((d) => !d.waivedBy));
@@ -82,7 +126,7 @@
   <div class="tabs" role="tablist">
     {#each tabs as t (t.id)}
       <button role="tab" aria-selected={app.tab === t.id} onclick={() => (app.tab = t.id)}>
-        {t.id === 'sel' && sel ? sel : t.label} <span class="cnt">{count(t.id)}</span>
+        {t.id === 'sel' && sel ? sel : t.id === 'sel' && net ? net.name : t.label} <span class="cnt">{count(t.id)}</span>
       </button>
     {/each}
   </div>
@@ -152,7 +196,37 @@
       </ul>
       {#if !app.k?.history.length && !app.k?.proposal}<div class="empty">No commits yet.</div>{/if}
     {:else}
-      {#if !info && infoError}
+      {#if !sel && net}
+        <dl class="kv">
+          <dt>Net</dt><dd><b>{net.name}</b> <span class="tag">{net.kind}</span></dd>
+          {#if net.attrs.voltage !== undefined}<dt>voltage</dt><dd>{net.attrs.voltage} V{net.attrs.external ? ' · from outside' : ''}</dd>{/if}
+          <dt>current</dt>
+          <dd>
+            <input class="cur mono" placeholder="max A" value={net.attrs.maxCurrent ?? ''} disabled={!!app.k?.proposal} title="The most current this net carries; it suggests the track width" onchange={(e) => setCurrent((e.currentTarget as HTMLInputElement).value)} /> A
+          </dd>
+          <dt>track</dt>
+          <dd>
+            <select class="pkgsel mono" value={net.attrs.trackWidth ? String(net.attrs.trackWidth) : ''} disabled={!!app.k?.proposal} title={app.k?.proposal ? 'Review the pending changes first' : 'Track width on the board'} onchange={(e) => setTrack((e.currentTarget as HTMLSelectElement).value)}>
+              <option value="">{net.kind === 'signal' ? net.track.rules.signal_mm : net.track.rules.power_mm} mm · {net.kind === 'signal' ? 'signal' : 'power'} default</option>
+              {#each [...new Set([...WIDTHS, ...(net.track.suggested_mm ? [net.track.suggested_mm] : []), ...(net.attrs.trackWidth ? [net.attrs.trackWidth] : [])])].sort((a, b) => a - b) as w (w)}
+                <option value={String(w)}>{w} mm{w === net.track.suggested_mm ? ` · suggested for ${net.track.for_current_a} A` : ''}</option>
+              {/each}
+            </select>
+          </dd>
+        </dl>
+        {#if net.track.suggested_mm && net.track.suggested_mm > net.track.width_mm}
+          <p class="note warn">For {net.track.for_current_a} A this net needs about {net.track.suggested_mm} mm (1 oz copper, 10 °C rise); it has {net.track.width_mm} mm.
+            <button class="link" disabled={!!app.k?.proposal} onclick={() => setTrack(String(net!.track.suggested_mm))}>Use {net.track.suggested_mm} mm</button></p>
+        {:else if !net.attrs.maxCurrent}
+          <p class="note">Enter the current it carries to get a suggested width.</p>
+        {/if}
+        <div class="sect">Connections · {net.pins.length}</div>
+        <ul class="rows">
+          {#each netPins as [p, n], i (i)}
+            <li class="r"><button class="link mono" onclick={() => app.toggleSelect(p.split('.')[0]!, false)}>{p}</button>{#if n > 1}<span class="muted mono"> ×{n}</span>{/if}</li>
+          {/each}
+        </ul>
+      {:else if !info && infoError}
         <div class="empty err">{infoError}</div>
       {:else if !info}
         <div class="empty">Click a part on the canvas to see it here and reference it in the chat. Shift-click selects several.</div>
@@ -208,4 +282,8 @@
   .sugg button { border: 1px solid var(--line); background: var(--panel-2); border-radius: 99px; padding: 0 8px; font-size: 11.5px; line-height: 20px; color: var(--txt-2); }
   .pkgsel { font-size: 11px; padding: 1px 2px; max-width: 100%; background: var(--panel); color: var(--txt); border: 1px solid var(--line-2); border-radius: 4px; }
   .empty.err { color: var(--err); }
+  .cur { width: 60px; font-size: 11px; padding: 1px 4px; background: var(--panel); color: var(--txt); border: 1px solid var(--line-2); border-radius: 4px; }
+  .note { margin: 4px 10px 8px; font-size: 11px; color: var(--txt-3); }
+  .note.warn { color: var(--warn); }
+  .link { border: 0; background: none; padding: 0; color: var(--accent-txt); cursor: pointer; font: inherit; text-decoration: underline; }
 </style>

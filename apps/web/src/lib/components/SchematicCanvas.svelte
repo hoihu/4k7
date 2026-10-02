@@ -8,12 +8,16 @@
     hot?: string | null;
     showDiff?: boolean;
     selection?: string[];
+    /** The selected net (id): its wires and labels are highlighted. */
+    selectedNet?: string | null;
     onselect?: (refdes: string, additive: boolean) => void;
+    /** A click on a wire or a net label. */
+    onselectnet?: (netId: string) => void;
     onclear?: () => void;
     compact?: boolean;
   }
 
-  let { sheet, overlays = {}, hot = null, showDiff = true, selection = [], onselect, onclear, compact = false }: Props = $props();
+  let { sheet, overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, compact = false }: Props = $props();
 
   /** Length of a supply symbol's stem, in mils (keep in sync with labelRect in the kernel). */
   const RAIL_STEM = 200;
@@ -72,11 +76,12 @@
   }
 
   /** `ref`: the part under the pointer when the press began (once captured, events target the canvas itself). */
-  let drag: { x: number; y: number; vx: number; vy: number; moved: boolean; ref: string | null } | null = null;
+  let drag: { x: number; y: number; vx: number; vy: number; moved: boolean; ref: string | null; net: string | null } | null = null;
   function onpointerdown(e: PointerEvent) {
     if (e.button !== 0 && e.button !== 1) return;
     const ref = (e.target as Element).closest('[data-ref]')?.getAttribute('data-ref') ?? null;
-    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false, ref };
+    const net = (e.target as Element).closest('[data-net]')?.getAttribute('data-net') ?? null;
+    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false, ref, net };
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
   }
   function onpointermove(e: PointerEvent) {
@@ -91,6 +96,7 @@
   function onpointerup(e: PointerEvent) {
     if (drag && !drag.moved) {
       if (drag.ref) onselect?.(drag.ref, e.shiftKey || e.metaKey || e.ctrlKey);
+      else if (drag.net && onselectnet) onselectnet(drag.net);
       else onclear?.();
     }
     drag = null;
@@ -136,7 +142,11 @@
   {#if sheet}
     <!-- wires -->
     {#each sheet.wires as w, i (i)}
-      <polyline class="wire" points={w.pts.join(',')} />
+      <!-- (a wide invisible stroke makes the thin wire easy to click) -->
+      <g class="net" class:hl={w.netId === selectedNet} data-net={w.netId}>
+        {#if onselectnet}<polyline class="wire-hit" points={w.pts.join(',')} />{/if}
+        <polyline class="wire" points={w.pts.join(',')} />
+      </g>
     {/each}
     {#each sheet.junctions as j, i (i)}
       <circle class="junction" cx={j.x} cy={j.y} r="24" />
@@ -144,6 +154,7 @@
 
     <!-- labels -->
     {#each sheet.labels as l, i (i)}
+      <g class="net" class:hl={l.netId === selectedNet} data-net={l.netId}>
       {#if l.kind === 'ground' || l.kind === 'rail'}
         <!-- supplies are always vertical; on a horizontal lead a stub comes first -->
         {@const sx = l.x + (l.stub === 'left' ? -1 : l.stub === 'right' ? 1 : 0) * (l.stubLen ?? 100)}
@@ -176,6 +187,7 @@
         <polygon class="flag" points={vflag(l)} />
         <text class="net-t" x={l.x} y={l.dir === 'up' ? l.y - 120 : l.y + 180} text-anchor="middle">{l.text}</text>
       {/if}
+      </g>
     {/each}
 
     {#each sheet.noConnects as p, i (i)}
@@ -248,6 +260,13 @@
   .sch { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; touch-action: none; user-select: none; }
   .sch.compact { position: static; height: 100%; }
   .wire { stroke: var(--wire); stroke-width: 14; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .wire-hit { stroke: transparent; stroke-width: 70; fill: none; pointer-events: stroke; cursor: pointer; }
+  .net:hover .wire { stroke-width: 20; }
+  /* the selected net: wires, supply symbols and labels in the accent colour */
+  .net.hl .wire, .net.hl line { stroke: var(--accent); stroke-width: 22; }
+  .net.hl .arrow { fill: var(--accent); stroke: var(--accent); }
+  .net.hl .flag { stroke: var(--accent); }
+  .net.hl text { fill: var(--accent); }
   .junction { fill: var(--wire); }
   .sym :global(line), .sym :global(path), .sym :global(polyline) { stroke: var(--sym); stroke-width: 12; fill: none; stroke-linecap: round; stroke-linejoin: round; }
   .sym rect, .sym polygon, .sym circle { stroke: var(--sym); stroke-width: 12; fill: none; }

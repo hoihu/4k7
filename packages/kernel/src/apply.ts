@@ -909,6 +909,14 @@ function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpResult {
     else a.maxCurrent = op.max_current;
     changes.push(`max_current=${op.max_current ?? '∅'}`);
   }
+  if (op.track_mm !== undefined) {
+    if (op.track_mm === null) delete a.trackWidth;
+    else {
+      if (op.track_mm < 0.1 || op.track_mm > 10) reject({ code: 'PARAM_INVALID', message: `A track of ${op.track_mm} mm cannot be made; give 0.1–10 mm.` });
+      a.trackWidth = Math.round(op.track_mm * 1000) / 1000;
+    }
+    changes.push(`track ${op.track_mm === null ? 'default' : `${a.trackWidth} mm`}`);
+  }
   return { op: 'set_net', effect: `net ${net.name}: ${changes.join(', ') || 'no change'}`, ids: [net.id] };
 }
 

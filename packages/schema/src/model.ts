@@ -66,6 +66,18 @@ export interface NetAttrs {
   power?: boolean;
   /** Expected maximum current in amps. */
   maxCurrent?: number;
+  /** Track width on the board (mm), the user's choice; absent: the signal or power width of the rules. */
+  trackWidth?: number;
+}
+
+/**
+ * Track width (mm) an outer-layer track needs to carry `amps` with about `riseC` °C of heating
+ * (IPC-2221, 1 oz / 35 µm copper), rounded up to 0.05 mm, at least 0.15 mm.
+ */
+export function trackWidthFor(amps: number, riseC = 10, copperUm = 35): number {
+  const areaMil2 = Math.pow(amps / (0.048 * Math.pow(riseC, 0.44)), 1 / 0.725);
+  const widthMm = (areaMil2 / (copperUm / 25.4)) * 0.0254;
+  return Math.max(0.15, Math.ceil(widthMm * 20 - 0.02) / 20); // (a hair over a step does not round up)
 }
 
 export interface Net {

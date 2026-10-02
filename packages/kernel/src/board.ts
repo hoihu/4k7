@@ -908,7 +908,8 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const planes = settingsPlanes(d, b.layers.length as 2 | 4);
-  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, planes: planes.map(({ netId, layer }) => ({ netId, layer })), cornerRadius: b.cornerRadius, ...(b.shape ? { shape: b.shape } : {}), cutouts: b.cutouts, ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
+  const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
+  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, netWidths, planes: planes.map(({ netId, layer }) => ({ netId, layer })), cornerRadius: b.cornerRadius, ...(b.shape ? { shape: b.shape } : {}), cutouts: b.cutouts, ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
   const routed: BoardView = {
     ...b,
     routing: 'done',
