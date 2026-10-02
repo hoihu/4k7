@@ -1,0 +1,9 @@
+// Cloudflare (Workers with static assets): the built web app is served as is.
+// Build command: npm run build · Deploy command: npx wrangler deploy
+{
+  "name": "tracewise",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./apps/web/dist"
+  }
+}

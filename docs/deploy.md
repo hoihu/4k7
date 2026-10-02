@@ -18,6 +18,18 @@ its IndexedDB). Cloudflare Pages builds it from this (private) repository on eve
    (`https://<hash>.<project>.pages.dev`).
 4. Optional: a custom domain under the project's **Custom domains**.
 
+### Or: Cloudflare's Workers flow (asks for a deploy command)
+
+Creating the project under **Workers** (the newer flow) serves the same files as a Worker with
+static assets, configured in `wrangler.jsonc` (its `name` is the project name):
+
+- Build command: `npm run build`
+- Deploy command: `npx wrangler deploy`
+- Non-production branches (preview) command: `npx wrangler versions upload`
+
+The app's address is then `https://<name>.<account>.workers.dev` (or a custom domain); set it as
+`HOSTED_APP` below.
+
 ## The project name and the bridge
 
 The bridge accepts the hosted app by default: `HOSTED_APP` in `tools/bridge/src/config.ts`
