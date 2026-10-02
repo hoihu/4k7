@@ -779,6 +779,16 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
         }
       }
     }
+    // a fixed outline that the pushing could not clear: each part still in the way moves to the
+    // nearest free spot, the keep-outs standing in as fixed parts
+    if (userSize) {
+      const blockers = keepOuts();
+      if (overlapping([...items, ...blockers])) {
+        items.push(...blockers);
+        legalize();
+        items.splice(items.length - blockers.length, blockers.length);
+      }
+    }
   }
   const holeParts: BoardPart[] = holes.map((hole) => {
     const at = holeAt(hole);
