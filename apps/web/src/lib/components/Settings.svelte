@@ -200,7 +200,7 @@
         </li>
       </ol>
       {#if bridge.error}<div class="err">{bridge.error}</div>{/if}
-      <div class="hint">The bridge listens on 127.0.0.1 only and accepts pages from localhost. The tab reconnects by itself when Claude Code restarts.</div>
+      <div class="hint">The bridge listens on 127.0.0.1 only and accepts only this app's pages. The tab reconnects by itself when Claude Code restarts. On the hosted app, Chrome asks once for "Local network access" (allow it); Safari does not allow a website to reach the bridge, so use another browser for it.</div>
       <details class="diag">
         <summary>Diagnostics for this browser</summary>
         {#each [diag] as d (d.build)}

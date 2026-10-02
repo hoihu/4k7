@@ -49,6 +49,7 @@ request. Response headers (caching, basic security) are in `apps/web/public/_hea
 ## To test once it is online
 
 - First load, the offline demo, an API-key provider (Anthropic / OpenRouter) end to end.
-- The bridge from the hosted page (an https page talking to `ws://127.0.0.1`): Chrome, Firefox
-  and Safari; Chrome may ask for local-network access.
+- The bridge from the hosted page (an https page talking to `ws://127.0.0.1`): works in Chrome
+  once "Local network access" is allowed (it asks once); Safari blocks it (no permission to give).
+  Firefox and Edge still to check.
 - Datasheet import, Gerber export (downloads), the 3D view, storage in a private window.
