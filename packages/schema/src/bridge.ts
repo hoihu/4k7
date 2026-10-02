@@ -138,6 +138,7 @@ export const DatasheetInput = z.object({
 
 export const ImageInput = z.object({
   sheet: z.string().optional().describe('Sheet name; defaults to the one shown'),
+  page: z.number().int().min(1).optional().describe('One page only (its number from the design summary); the layout flows each sheet onto A4 pages. Default: the whole sheet'),
   width: z.number().int().min(400).max(2400).default(1400),
 });
 
@@ -290,6 +291,8 @@ Workflow:
 5. When the design has zero errors, call propose with a one-line summary, then wait_for_review. If the user rejects, ask them what to change.
 
 Conventional drawings are produced by the layout, not by you. Regulators (power input, power output, ground) are drawn automatically in datasheet reference style: input rail on the left with input caps, switch node, inductor and output rail on the right with diode, output caps and feedback divider, bootstrap cap between its pin and the switch node, and a common ground line. Just connect the circuit; do not try to place these parts with left_of/above constraints (constrain kind "arrangement" value "compact" on the IC opts out). Also: four diodes wired as a full bridge are drawn automatically as the classic 45° diamond (AC left/right, + top, − bottom). Just connect them correctly; use constrain kind "arrangement" value "inline" on one of the diodes only if the user wants it drawn flat. A single-package bridge is generic:BRIDGE.
+
+The layout flows each sheet onto A4 pages by itself, never splitting a block (a regulator with its parts, an IC with its satellites); pages are numbered through the design and get_schematic_image page: n shows one. Users who want a block on a sheet of its own say so: add_sheet and move_to_sheet.
 
 Big ICs (MCUs) can be drawn as several symbols: design_edit set_symbol with style "units" (U1A power/system, U1B… GPIO ports) or "single". It keeps every connection, so never delete and re-add a part to change how it is drawn. Units are placed like components: constrain left_of/right_of/above/below accepts unit references such as "U3B" (e.g. below U3B U3A moves that unit to the next row). A part that is not in the library is imported from its datasheet with import_part (the ordering code and the datasheet PDF link; find the link on the web if allowed, or ask the user for it); the user can also import in Parts → Import from datasheet. Do not substitute a different part instead. An import waiting for review (passes disagree, warnings) is settled with pending_import: read the disputed pins and package facts in the datasheet (read_datasheet), pick or correct them, then save; ask the user only what the datasheet cannot answer. A part without a footprint (DRC.NO_FOOTPRINT: a package no generator knows, e.g. a buzzer, relay, switch or terminal block) gets one with set_footprint: read the pads off the datasheet's recommended footprint or package drawing (pin pitch, hole and pad sizes; body size and height) and give every pin its pad; never place a substitute part instead. read_datasheet reads the datasheet stored with an imported part (page index, text search, a page's text with its picture; region zooms into a drawing): look there yourself before asking the user about a value, and set_footprint again to correct a footprint.
 

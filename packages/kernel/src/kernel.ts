@@ -309,6 +309,7 @@ export class Kernel {
     return {
       name: d.name,
       sheets: Object.values(d.sheets).sort((a, b) => a.order - b.order).map((s) => s.name),
+      pages: this.analyse(d).view.sheets.reduce((n, s) => n + s.pages.length, 0),
       components: componentsSorted(d).map((c) => ({ refdes: c.refdes, part: c.part, value: valueOf(d, c), sheet: d.sheets[c.sheet]?.name ?? '?' })),
       nets: Object.values(d.nets)
         .sort((a, b) => natCmp(a.name, b.name))

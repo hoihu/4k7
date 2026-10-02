@@ -14,7 +14,7 @@
  *  - Connections that are not drawn as wires are shown by net labels, so the drawing is
  *    always electrically complete and correct.
  */
-import { parseAs, type Component, type Constraint, type Design, type Net, type PartCard, type Point, type Rect, type SchematicView, type SheetView, type SymbolView } from '@tracewise/schema';
+import { PAGE, parseAs, type Component, type Constraint, type Design, type Net, type PageView, type PartCard, type Point, type Rect, type SchematicView, type SheetView, type SymbolView } from '@tracewise/schema';
 import { isTwoPin, symbolFor, unitCount, uprightSymbol } from '@tracewise/parts';
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, valueOf, type NetPin } from './doc.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
@@ -87,6 +87,9 @@ export function layoutSchematic(d: Design): SchematicView {
   const ctx: Ctx = { d, members: netMembers(d) };
   const sheets = Object.values(d.sheets).sort((a, b) => a.order - b.order);
   const views: SheetView[] = sheets.map((s) => layoutSheet(ctx, s.id, s.name));
+  // pages are numbered through the whole design, as on a printout
+  let n = 0;
+  for (const v of views) for (const p of v.pages) p.number = ++n;
   return { sheets: views, constraintStatus: evaluateConstraints(d, views) };
 }
 
@@ -252,11 +255,10 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   const rows = arrangeAnchors(d, nodes, directional);
   if (bridges.length && !rows.length) rows.push([]);
 
-  const scene = emptyScene();
-  let rowTop = 0;
-  let maxRight = 0;
+  /* ---- cells in rows; the pager flows them onto pages ---- */
+  const cellRows: CellRow[] = [];
   for (let [ri, row] of rows.entries()) {
-    const cells = row.map((n) => (flows.has(n.comp.id) ? flowCell(ctx, flows.get(n.comp.id)!) : buildCell(ctx, n.plan)));
+    const cells: Cell[] = row.map((n) => ({ scene: flows.has(n.comp.id) ? flowCell(ctx, flows.get(n.comp.id)!) : buildCell(ctx, n.plan), heads: [n.comp] }));
     // output connectors: one column at the right end of the row
     const outIdx = row.flatMap((n, i) => (outputConn.has(n.comp.id) ? [i] : []));
     const outColumn = outIdx.length ? stackCells(outIdx.map((i) => cells[i]!)) : null;
@@ -272,64 +274,170 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     if (ri === 0 && bridges.length) {
       // signal flow: connector → rectifier → the rest
       const after = row.findIndex((n) => anchorRank(d, n.comp) > 0);
-      cells.splice(after < 0 ? cells.length : after, 0, ...bridges.map((b) => bridgeCell(ctx, b)));
+      cells.splice(after < 0 ? cells.length : after, 0, ...bridges.map((b) => ({ scene: bridgeCell(ctx, b), heads: b.diodes.map((x) => x.comp) })));
     }
     if (outColumn) cells.push(outColumn);
-    const topExtent = Math.max(0, ...cells.map((c) => -sceneBBox(c).y));
-    let x = 0;
-    let rowBottom = rowTop;
-    for (const cell of cells) {
-      const bb = sceneBBox(cell);
-      translateScene(cell, x - bb.x, rowTop + topExtent);
-      x += bb.w + CELL_GAP;
-      rowBottom = Math.max(rowBottom, rowTop + topExtent + bb.y + bb.h);
-      mergeScene(scene, cell);
-    }
-    maxRight = Math.max(maxRight, x);
-    rowTop = grid(rowBottom + CELL_GAP);
+    cellRows.push({ cells, gap: CELL_GAP });
   }
+  // parts attached to nothing: a row of their own, close together
+  if (free.length) cellRows.push({ cells: free.map((c) => ({ scene: freePart(ctx, c), heads: isTwoPin(cardFor(c)) ? [] : [c] })), gap: 200 });
 
-  /* ---- free parts ---- */
-  if (free.length) {
-    const wrap = Math.max(maxRight, 4000);
-    let x = 0;
-    let y = rowTop + 300;
-    for (const c of free) {
-      const part = freePart(ctx, c);
-      const bb = sceneBBox(part);
-      if (x > 0 && x + bb.w > wrap) {
-        x = 0;
-        y += 900;
-      }
-      translateScene(part, x - bb.x, y);
-      x += bb.w + 200;
-      mergeScene(scene, part);
-    }
-  }
-
+  const { scene, pages } = paginate(d, cellRows);
   addJunctions(scene);
-  const bb = sceneBBox(scene);
-  const pad = 400;
-  return {
-    id: sheetId,
-    name: sheetName,
-    bbox: { x: bb.x - pad, y: bb.y - pad, w: bb.w + 2 * pad, h: bb.h + 2 * pad },
-    ...scene,
+  const bb = pagesBBox(pages);
+  return { id: sheetId, name: sheetName, bbox: bb, pages, ...scene };
+}
+
+/* --------------------------------- pages ---------------------------------- */
+
+/** A block of the drawing that is never split: a regulator with its parts, an IC with its satellites… */
+interface Cell {
+  scene: Scene;
+  /** The parts a page is named after. */
+  heads: Component[];
+}
+
+/** Cells that belong on one logical row (from above/below constraints), in order. */
+interface CellRow {
+  cells: Cell[];
+  gap: number;
+}
+
+/** Space between pages on the canvas. */
+const PAGE_GAP = 600;
+/** The drawing area of a page. */
+const DRAW_W = PAGE.w - 2 * PAGE.margin;
+const DRAW_H = PAGE.h - 2 * PAGE.margin - PAGE.title;
+
+/**
+ * Flow the cells onto pages: each row is broken into lines that fit the page width (order
+ * kept), lines are stacked until the page is full, then the next page starts. A cell wider or
+ * a line taller than the paper gets a page of its own, grown to fit (`oversized`). Pages sit
+ * side by side on the canvas, so the sheet still reads as one drawing. There is always at
+ * least one page, so an empty sheet shows its paper.
+ */
+function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[] } {
+  interface Line {
+    scene: Scene;
+    heads: Component[];
+    bbox: Rect;
+  }
+  // cells → lines (origins of the cells in a line are level, so IC bodies line up)
+  const lines: Line[] = [];
+  for (const row of rows) {
+    let cur: Cell[] = [];
+    let w = 0;
+    const flush = () => {
+      if (!cur.length) return;
+      const topExtent = Math.max(0, ...cur.map((c) => -sceneBBox(c.scene).y));
+      const scene = emptyScene();
+      let x = 0;
+      for (const cell of cur) {
+        const bb = sceneBBox(cell.scene);
+        translateScene(cell.scene, x - bb.x, topExtent);
+        x += bb.w + row.gap;
+        mergeScene(scene, cell.scene);
+      }
+      lines.push({ scene, heads: cur.flatMap((c) => c.heads), bbox: sceneBBox(scene) });
+      cur = [];
+      w = 0;
+    };
+    for (const cell of row.cells) {
+      const cw = sceneBBox(cell.scene).w;
+      if (cur.length && w + row.gap + cw > DRAW_W) flush();
+      w += (cur.length ? row.gap : 0) + cw;
+      cur.push(cell);
+    }
+    flush();
+  }
+
+  // lines → pages
+  const scene = emptyScene();
+  const pages: PageView[] = [];
+  let pageX = 0;
+  let onPage: Line[] = [];
+  let used = 0;
+  const flushPage = () => {
+    const wide = Math.max(0, ...onPage.map((l) => l.bbox.w));
+    const oversized = wide > DRAW_W || used > DRAW_H;
+    const rect: Rect = { x: pageX, y: 0, w: Math.max(PAGE.w, wide + 2 * PAGE.margin), h: Math.max(PAGE.h, used + 2 * PAGE.margin + PAGE.title) };
+    let y = rect.y + PAGE.margin;
+    for (const line of onPage) {
+      translateScene(line.scene, rect.x + PAGE.margin - line.bbox.x, y - line.bbox.y);
+      mergeScene(scene, line.scene);
+      y = grid(y + line.bbox.h + CELL_GAP);
+    }
+    pages.push({ number: pages.length + 1, name: pageName(d, onPage.flatMap((l) => l.heads), onPage.flatMap((l) => l.scene.symbols)), rect, ...(oversized ? { oversized: true } : {}) });
+    pageX += rect.w + PAGE_GAP;
+    onPage = [];
+    used = 0;
   };
+  for (const line of lines) {
+    const h = grid(line.bbox.h + CELL_GAP);
+    if (onPage.length && used + h - CELL_GAP > DRAW_H) flushPage();
+    used += h;
+    onPage.push(line);
+  }
+  if (onPage.length) used -= CELL_GAP;
+  flushPage();
+  return { scene, pages };
+}
+
+/**
+ * "U1 TPS54331DR, J1": the parts a page is built around, ICs first, then connectors, in refdes
+ * order. A split IC whose units are not all on this page names the ones that are:
+ * "U3 STM32F777NIH6 (B, G)".
+ */
+function pageName(d: Design, heads: Component[], symbols: SymbolView[]): string {
+  const seen = new Set<string>();
+  const conn = (c: Component) => Number(cardOf(d, c.part)!.category === 'connector');
+  const names = heads
+    .filter((c) => !seen.has(c.id) && seen.add(c.id))
+    .sort((a, b) => conn(a) - conn(b) || natCmp(a.refdes, b.refdes))
+    .map((c) => {
+      const card = cardOf(d, c.part)!;
+      const part = card.mpn ?? (card.id.startsWith('generic:') ? '' : card.id.split(':')[1] ?? '');
+      const units = symbols.filter((s) => s.componentId === c.id && s.unit).map((s) => s.unit!).sort();
+      const here = units.length && units.length < unitCount(card) ? ` (${unitRanges(units)})` : '';
+      return `${c.refdes}${part ? ` ${part}` : ''}${here}`;
+    });
+  if (!names.length) return heads.length ? 'parts' : 'empty';
+  return names.length > 4 ? `${names.slice(0, 3).join(', ')} +${names.length - 3}` : names.join(', ');
+}
+
+/** ["A", "C", "D", "E"] → "A, C–E". */
+function unitRanges(letters: string[]): string {
+  const out: string[] = [];
+  for (let i = 0; i < letters.length; ) {
+    let j = i;
+    while (j + 1 < letters.length && letters[j + 1]!.charCodeAt(0) === letters[j]!.charCodeAt(0) + 1) j++;
+    out.push(j > i + 1 ? `${letters[i]}–${letters[j]}` : letters.slice(i, j + 1).join(', '));
+    i = j + 1;
+  }
+  return out.join(', ');
+}
+
+function pagesBBox(pages: PageView[]): Rect {
+  const x0 = Math.min(...pages.map((p) => p.rect.x));
+  const y0 = Math.min(...pages.map((p) => p.rect.y));
+  const x1 = Math.max(...pages.map((p) => p.rect.x + p.rect.w));
+  const y1 = Math.max(...pages.map((p) => p.rect.y + p.rect.h));
+  const pad = 200;
+  return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
 }
 
 /** Stack cells vertically (their anchors share the local origin, so they line up). */
-function stackCells(cells: Scene[]): Scene {
+function stackCells(cells: Cell[]): Cell {
   const out = emptyScene();
   let y: number | null = null;
   for (const cell of cells) {
-    const bb = sceneBBox(cell);
+    const bb = sceneBBox(cell.scene);
     const dy: number = y === null ? 0 : y - bb.y;
-    translateScene(cell, 0, dy);
+    translateScene(cell.scene, 0, dy);
     y = bb.y + dy + bb.h + STACK_GAP;
-    mergeScene(out, cell);
+    mergeScene(out, cell.scene);
   }
-  return out;
+  return { scene: out, heads: cells.flatMap((c) => c.heads) };
 }
 
 /** Units of a split IC next to each other, top edges aligned (each unit's body starts at y = 0). */
@@ -1145,21 +1253,32 @@ function bridgeCell(ctx: Ctx, b: BridgeRect): Scene {
 
 /* ------------------------------ constraints ------------------------------- */
 
+/**
+ * Placement constraints are checked on the drawing. Parts on different pages of a sheet are
+ * compared by page: the pages read left to right and top to bottom, so an earlier page counts
+ * as both "left of" and "above" a later one.
+ */
 function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['constraintStatus'] {
-  const where = new Map<string, { sheet: string; bbox: Rect }>();
+  const where = new Map<string, { sheet: string; page: number; bbox: Rect }>();
   for (const s of sheets) {
+    const pageOf = (b: Rect) => {
+      const cx = b.x + b.w / 2;
+      const cy = b.y + b.h / 2;
+      return s.pages.findIndex((p) => cx >= p.rect.x && cx <= p.rect.x + p.rect.w && cy >= p.rect.y && cy <= p.rect.y + p.rect.h);
+    };
     for (const sym of s.symbols) {
       // a split IC occupies the union of its units
-      if (sym.unit) where.set(`${sym.componentId}#${sym.unit}`, { sheet: s.id, bbox: sym.bbox });
+      if (sym.unit) where.set(`${sym.componentId}#${sym.unit}`, { sheet: s.id, page: pageOf(sym.bbox), bbox: sym.bbox });
       const prev = where.get(sym.componentId);
       const b = sym.bbox;
-      if (!prev || prev.sheet !== s.id) where.set(sym.componentId, { sheet: s.id, bbox: b });
+      if (!prev || prev.sheet !== s.id) where.set(sym.componentId, { sheet: s.id, page: pageOf(b), bbox: b });
       else {
         const x = Math.min(prev.bbox.x, b.x);
         const y = Math.min(prev.bbox.y, b.y);
         const r = Math.max(prev.bbox.x + prev.bbox.w, b.x + b.w);
         const bo = Math.max(prev.bbox.y + prev.bbox.h, b.y + b.h);
         prev.bbox = { x, y, w: r - x, h: bo - y };
+        prev.page = Math.min(prev.page, pageOf(b));
       }
     }
   }
@@ -1173,6 +1292,11 @@ function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['con
     const b = (k.bUnit && where.get(`${k.b}#${k.bUnit}`)) || where.get(k.b ?? '');
     if (!a || !b || a.sheet !== b.sheet) {
       status[k.id] = 'not_applicable';
+      continue;
+    }
+    if (a.page !== b.page) {
+      const before = k.kind === 'left_of' || k.kind === 'above';
+      status[k.id] = (a.page < b.page) === before ? 'ok' : 'violated';
       continue;
     }
     const A = a.bbox;

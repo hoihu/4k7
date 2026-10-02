@@ -193,10 +193,34 @@ export interface WireView {
   pts: number[];
 }
 
+/**
+ * The paper the layout flows onto: A4 landscape at 1:1 (rounded to the 100 mil grid), in mils.
+ * `margin` is the border around the drawing area; `title` the height of the title strip at the
+ * bottom of that area. The drawing area is therefore (w − 2·margin) × (h − 2·margin − title).
+ */
+export const PAGE = { w: 11700, h: 8300, margin: 300, title: 500, mm: { w: 297, h: 210 } } as const;
+
+/**
+ * One printable page of a sheet. Pages are derived by the layout from the functional blocks
+ * (a regulator with its parts, an IC with its satellites…), which are never split across pages.
+ */
+export interface PageView {
+  /** 1-based, counted across the whole design in sheet order. */
+  number: number;
+  /** Derived from the main parts on it, e.g. "J1, U1 TPS54331DR". */
+  name: string;
+  /** The paper, in sheet coordinates. Normally PAGE-sized; larger when `oversized`. */
+  rect: Rect;
+  /** A single block larger than the paper: the page grew to hold it, and prints scaled down. */
+  oversized?: boolean;
+}
+
 export interface SheetView {
   id: string;
   name: string;
+  /** Union of the pages. */
   bbox: Rect;
+  pages: PageView[];
   symbols: SymbolView[];
   wires: WireView[];
   junctions: Point[];
@@ -215,6 +239,8 @@ export interface SchematicView {
 export interface DesignSummary {
   name: string;
   sheets: string[];
+  /** Printable pages across all sheets (derived by the layout). */
+  pages: number;
   components: { refdes: string; part: string; value: string; sheet: string }[];
   nets: { name: string; pins: number; voltage?: number; external?: boolean }[];
   counts: DiagnosticCounts;

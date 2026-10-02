@@ -10,6 +10,7 @@ geometry and checks every change.
 - **Parts from datasheets**: drop a manufacturer PDF (Parts → Import from datasheet); your local Claude Code extracts the pin table and package, the app checks it, and deterministic generators build the symbol and footprint.
 - **Schematic to manufacturing files**: the board is placed and routed automatically from the schematic (with a ground pour), checked by DRC, shown in 2D and 3D, and exported as Gerber, drill, BOM and pick-and-place. Steer it in words ("make the board 30 × 20 mm", "put J1 at the left edge") or drag parts to pin them.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
+- **Printable by construction**: the layout flows the schematic onto A4 pages by itself, never splitting a functional block; ⌘P prints them (or saves a PDF) for the bench.
 - **Local-first**: runs entirely in the browser. Your designs and API keys stay on your machine.
 
 ## Documents

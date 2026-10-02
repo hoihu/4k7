@@ -1,8 +1,12 @@
 <script lang="ts">
-  import type { LabelView, Prim, SheetView, SymbolView } from '@tracewise/schema';
+  import { PAGE, type LabelView, type Prim, type SheetView, type SymbolView } from '@tracewise/schema';
 
   interface Props {
     sheet: SheetView | undefined;
+    /** For the title block of each page. */
+    designName?: string;
+    /** Pages in the whole design (the "of N" in the title block); defaults to this sheet's count. */
+    pageCount?: number;
     /** componentId → overlay kind for pending changes */
     overlays?: Record<string, 'add' | 'change'>;
     hot?: string | null;
@@ -17,7 +21,7 @@
     compact?: boolean;
   }
 
-  let { sheet, overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, compact = false }: Props = $props();
+  let { sheet, designName, pageCount, overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, compact = false }: Props = $props();
 
   /** Length of a supply symbol's stem, in mils (keep in sync with labelRect in the kernel). */
   const RAIL_STEM = 200;
@@ -140,6 +144,19 @@
   {onpointerup}
 >
   {#if sheet}
+    <!-- pages: the paper, its frame and a title block (what is on the page, sheet, page n of N) -->
+    {#each sheet.pages as p (p.number)}
+      {@const m = PAGE.margin}
+      {@const ty = p.rect.y + p.rect.h - m - PAGE.title}
+      <g class="page">
+        <rect class="paper" x={p.rect.x} y={p.rect.y} width={p.rect.w} height={p.rect.h} />
+        <rect class="frame" x={p.rect.x + m} y={p.rect.y + m} width={p.rect.w - 2 * m} height={p.rect.h - 2 * m} />
+        <line class="frame" x1={p.rect.x + m} y1={ty} x2={p.rect.x + p.rect.w - m} y2={ty} />
+        <text class="title" x={p.rect.x + m + 150} y={ty + 320}>{p.name}</text>
+        <text class="title-s" x={p.rect.x + p.rect.w - m - 150} y={ty + 320} text-anchor="end">{[designName, sheet.name, `page ${p.number} of ${pageCount ?? sheet.pages.length}`, p.oversized ? 'larger than A4, prints scaled' : ''].filter(Boolean).join(' · ')}</text>
+      </g>
+    {/each}
+
     <!-- wires -->
     {#each sheet.wires as w, i (i)}
       <!-- (a wide invisible stroke makes the thin wire easy to click) -->
@@ -259,6 +276,10 @@
 <style>
   .sch { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; touch-action: none; user-select: none; }
   .sch.compact { position: static; height: 100%; }
+  .page .paper { fill: var(--paper); stroke: var(--grid); stroke-width: 12; }
+  .page .frame { fill: none; stroke: var(--grid); stroke-width: 10; }
+  .page .title { fill: var(--sch-txt); font-size: 220px; font-weight: 700; }
+  .page .title-s { fill: var(--pin-txt); font-size: 170px; }
   .wire { stroke: var(--wire); stroke-width: 14; fill: none; stroke-linecap: round; stroke-linejoin: round; }
   .wire-hit { stroke: transparent; stroke-width: 70; fill: none; pointer-events: stroke; cursor: pointer; }
   .net:hover .wire { stroke-width: 20; }

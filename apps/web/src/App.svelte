@@ -8,8 +8,13 @@
   import Settings from './lib/components/Settings.svelte';
   import Parts from './lib/components/Parts.svelte';
   import LayoutView from './lib/components/LayoutView.svelte';
+  import { printSchematic } from './lib/print.ts';
 
   let pane = $state<'chat' | 'canvas' | 'insp'>('canvas');
+
+  function print() {
+    if (app.k) void printSchematic(app.k.view, app.k.summary.name);
+  }
 
   onMount(() => {
     void app.init();
@@ -24,6 +29,10 @@
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !(e.target as HTMLElement).closest('input,textarea')) {
         e.preventDefault();
         if (app.k?.canUndo && !app.k.proposal) void app.undo();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'p' && app.view === 'sch') {
+        e.preventDefault();
+        print();
       }
       if (e.key === 'Escape') app.selection = [];
     };
@@ -107,6 +116,8 @@
         <div class="col canvas">
           <SchematicCanvas
             {sheet}
+            designName={app.k?.summary.name}
+            pageCount={app.k?.summary.pages}
             {overlays}
             hot={app.hoverHunk}
             showDiff={app.showDiff}
@@ -119,8 +130,9 @@
           <div class="fl sheets">
             {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
             {#each app.k?.view.sheets ?? [] as s, i (s.id)}
-              <button aria-pressed={i === app.sheet} onclick={() => (app.sheet = i)}>{s.name}</button>
+              <button aria-pressed={i === app.sheet} onclick={() => (app.sheet = i)}>{s.name}{#if s.pages.length > 1} <span class="muted">{s.pages.length}p</span>{/if}</button>
             {/each}
+            <button class="ib" onclick={print} title="Print the schematic (⌘P): one A4 page per block, or save as PDF">⎙</button>
           </div>
           {#if app.k?.proposal}
             <div class="fl pend">

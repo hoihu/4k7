@@ -17,7 +17,7 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type TokenCount } from '@tracewise/schema';
+import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type Rect, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -502,15 +502,30 @@ class AppState {
           this.view = 'sch';
           await tick();
         }
+        const sheets = this.k?.view.sheets ?? [];
         if (args.sheet) {
-          const i = this.k?.view.sheets.findIndex((s) => s.name.toLowerCase() === args.sheet!.toLowerCase()) ?? -1;
+          const i = sheets.findIndex((s) => s.name.toLowerCase() === args.sheet!.toLowerCase());
           if (i >= 0) this.sheet = i;
           await tick();
         }
+        // one page: frame on its paper (pages are numbered through the whole design)
+        let frame: Rect | undefined;
+        if (args.page !== undefined) {
+          const i = sheets.findIndex((s) => s.pages.some((p) => p.number === args.page));
+          if (i < 0) return text(`There is no page ${args.page}: the design has ${sheets.reduce((n, s) => n + s.pages.length, 0)} page(s).`, true);
+          this.sheet = i;
+          await tick();
+          frame = sheets[i]!.pages.find((p) => p.number === args.page)!.rect;
+        }
         await new Promise((r) => requestAnimationFrame(() => r(null)));
-        const img = await renderSchematicPng(args.width);
-        log('schematic image', true, `${args.width}px`);
-        return { isError: false, content: [{ type: 'image', ...img }] };
+        const img = await renderSchematicPng(args.width, frame);
+        log('schematic image', true, `${args.width}px${frame ? ` · page ${args.page}` : ''}`);
+        const content: BridgeContent[] = [{ type: 'image', ...img }];
+        const shown = sheets[this.sheet];
+        if (!frame && shown && shown.pages.length > 1) {
+          content.push({ type: 'text', text: `Sheet ${shown.name} is ${shown.pages.length} pages: ${shown.pages.map((p) => `${p.number} ${p.name}`).join('; ')}. Pass page: n to see one at full size.` });
+        }
+        return { isError: false, content };
       }
       case 'propose': {
         const args = ProposeInput.safeParse(input);

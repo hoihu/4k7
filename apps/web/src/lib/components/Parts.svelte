@@ -366,7 +366,7 @@
     }
     const minY = Math.min(...symbols.map((s) => s.bbox.y));
     const maxY = Math.max(...symbols.map((s) => s.bbox.y + s.bbox.h));
-    return { id: 'preview', name: card.id, bbox: { x: -300, y: minY - 300, w: x + 100, h: maxY - minY + 600 }, symbols, wires: [], junctions: [], labels: [], noConnects: [] };
+    return { id: 'preview', name: card.id, bbox: { x: -300, y: minY - 300, w: x + 100, h: maxY - minY + 600 }, pages: [], symbols, wires: [], junctions: [], labels: [], noConnects: [] };
   }
   function shift(p: SymbolView['prims'][number], dx: number): SymbolView['prims'][number] {
     switch (p.t) {

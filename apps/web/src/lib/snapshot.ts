@@ -1,7 +1,9 @@
+import type { Rect } from '@tracewise/schema';
+
 /**
- * Render the live schematic SVG to a PNG (base64), framed on the whole sheet.
- * Styles come from CSS (theme variables, scoped classes), so the computed paint of every
- * element is inlined into a clone before rasterising.
+ * Render the live schematic SVG to a PNG (base64), framed on the whole sheet or on `frame`
+ * (one page). Styles come from CSS (theme variables, scoped classes), so the computed paint
+ * of every element is inlined into a clone before rasterising.
  */
 const PROPS = [
   'fill',
@@ -19,12 +21,12 @@ const PROPS = [
   'display',
 ] as const;
 
-export async function renderSchematicPng(width: number): Promise<{ data: string; mimeType: string }> {
+export async function renderSchematicPng(width: number, frame?: Rect): Promise<{ data: string; mimeType: string }> {
   const live = document.querySelector<SVGSVGElement>('svg.sch');
   if (!live) throw new Error('The schematic view is not open.');
   const sheet = live.dataset.bbox?.split(',').map(Number);
   if (!sheet || sheet.length !== 4) throw new Error('No sheet to render.');
-  const [x, y, w, h] = sheet as [number, number, number, number];
+  const [x, y, w, h] = frame ? [frame.x, frame.y, frame.w, frame.h] : (sheet as [number, number, number, number]);
   const height = Math.round((width * h) / w);
 
   const clone = live.cloneNode(true) as SVGSVGElement;

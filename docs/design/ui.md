@@ -72,6 +72,6 @@ Screen space belongs to the design. Chrome has to earn its pixels.
 ## 5. Open UI questions
 
 - Keyboard model: ⌘K everywhere, plus `a`/`r` for accept/reject and `j`/`k` to walk change rows?
-- Multi-sheet navigation for large designs (100+ parts): a block diagram above the sheets?
+- Multi-sheet navigation for large designs (100+ parts): a block diagram above the sheets? (Pages are derived: the layout flows each sheet onto A4 pages, drawn side by side on the canvas and printed with ⌘P. Sheets remain the user's manual grouping on top of that.)
 - 3D view: a third canvas mode in Layout, or a separate workspace?
 - How to show a *running* agent turn on the canvas without flicker (preview the dry-run diff progressively vs. show it once).
