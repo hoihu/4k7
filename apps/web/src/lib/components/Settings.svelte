@@ -106,7 +106,7 @@
               <div class="hint">{bridge.chat?.reason ?? 'This bridge is too old for the app chat. Restart it.'}</div>
             {:else}
               <span class="tag warn">not connected</span>
-              <div class="hint">Start the bridge in a terminal with <code>{bridgeRun}</code>{where}, open the pairing link it prints, or pair below under <a href="#bridge">Claude Code bridge</a>.</div>
+              <div class="hint">Start the bridge in a terminal with <code>{bridgeRun}</code>{where}, open the pairing link it prints, or pair below under <a href="#bridge">Local bridge</a>.</div>
             {/if}
           </td>
         </tr>
@@ -170,7 +170,7 @@
 
   <section class="card" id="bridge">
     <div class="ph">
-      <b>Claude Code bridge</b>
+      <b>Local bridge</b>
       <span class="grow"></span>
       {#if bridge.status === 'connected'}<span class="tag ok">connected · {bridge.agent ?? 'MCP client'} · :{bridge.port}</span>
       {:else if bridge.status === 'connecting'}<span class="tag info">connecting…</span>

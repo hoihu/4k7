@@ -171,7 +171,7 @@ export class Bridge {
         errorResult(
           `The Tracewise app is not connected to this bridge. Give the user this link to open (it pairs the app in one click): ` +
             `${this.pairingLink()}\n` +
-            `Alternatively they can enter pairing code ${this.code} under Settings → Claude Code bridge in the app (bridge on port ${this.port}).`,
+            `Alternatively they can enter pairing code ${this.code} under Settings → Local bridge in the app (bridge on port ${this.port}).`,
         ),
       );
     }

@@ -384,7 +384,7 @@ class AppState {
     return this.chat[this.chat.length - 1]!;
   }
 
-  /** Execute one tool call forwarded by the Claude Code bridge. */
+  /** Execute one tool call forwarded by the local bridge. */
   async handleBridgeCall(tool: string, input: unknown): Promise<{ isError: boolean; content: BridgeContent[] }> {
     const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
     if (tool === 'submit_part') return this.ingest.submit(input); // datasheet import, not a design change
@@ -666,7 +666,7 @@ class AppState {
   private async runClaudeCode(text: string, item: ChatItem): Promise<void> {
     const fail = (t: string) => item.segments.push({ type: 'error', text: t });
     if (bridge.status !== 'connected') {
-      fail(`Claude Code is not connected. Start the bridge (${__BRIDGE_RUN__}) and pair this tab under Settings → Claude Code bridge.`);
+      fail(`Claude Code is not connected. Start the bridge (${__BRIDGE_RUN__}) and pair this tab under Settings → Local bridge.`);
       return;
     }
     if (!bridge.chat?.available) {

@@ -103,5 +103,5 @@ runs elsewhere and `TRACEWISE_CLAUDE_BIN` if `claude` is not on your PATH.
 **M0 (schematic)** is in progress, and a first slice of **M2/M3 (board, routing, fab)** works end to end for small boards (see [ARCHITECTURE.md](docs/ARCHITECTURE.md#m2m3-first-slice-board-routing-fab-2026-09-26)). Working now: the full loop from prompt → typed ops → atomic transactions → checks →
 auto-layout → reviewable changeset with per-change accept, a constraint ledger that survives re-layout, undo, and local
 persistence. Deviations from the architecture for now: the kernel is TypeScript behind the same API (Rust/WASM later),
-the document is stored as plain JSON (the CRDT arrives with collaboration), and there is one in-app provider (Anthropic) plus the Claude Code bridge.
+the document is stored as plain JSON (the CRDT arrives with collaboration), and there is one in-app provider (Anthropic) plus the local bridge to Claude Code.
 See [ARCHITECTURE.md §7](docs/ARCHITECTURE.md#7-roadmap).

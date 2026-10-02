@@ -275,7 +275,7 @@ Deviations (deliberate, to revisit):
 - **Counter-based ids** (`c_1a`) instead of ULIDs, for deterministic tests and diffs.
 - **Autonomy modes**: Auto and Review. Step mode (plan approval) is not built yet.
 
-Pulled forward from M4: the **Claude Code bridge** (`tools/bridge`), an MCP server that relays to the open tab, so an external agent on the user's own plan can drive the design through the same op catalogue and review flow.
+Pulled forward from M4: the **local bridge** (`tools/bridge`), an MCP server that relays to the open tab, so an external agent on the user's own plan can drive the design through the same op catalogue and review flow.
 
 Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models, and layout quality on 30+ part designs.
 

@@ -176,7 +176,7 @@ export interface Settings {
   mode: Mode;
   fixBudget: number;
   theme: 'system' | 'light' | 'dark';
-  /** Claude Code bridge pairing, remembered so the tab reconnects by itself. */
+  /** Local bridge pairing, remembered so the tab reconnects by itself. */
   bridgeCode: string;
   bridgePort: number | null;
   /** Model alias for Claude Code in the app chat ('' = Claude Code's default). */

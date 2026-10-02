@@ -80,9 +80,9 @@
         </button>
       {/if}
       {#if bridge.status === 'connected'}
-        <button class="chipbtn ext" onclick={() => (app.view = 'set')} title="Connected to the Claude Code bridge on port {bridge.port}">⇄ {bridge.agent ?? 'bridge'}</button>
+        <button class="chipbtn ext" onclick={() => (app.view = 'set')} title="Connected to the local bridge on port {bridge.port}">⇄ {bridge.agent ?? 'bridge'}</button>
       {:else if bridge.status === 'waiting'}
-        <button class="chipbtn" onclick={() => (app.view = 'set')} title="Waiting for the Claude Code bridge">⇄ <span class="muted">offline</span></button>
+        <button class="chipbtn" onclick={() => (app.view = 'set')} title="Waiting for the local bridge">⇄ <span class="muted">offline</span></button>
       {:else if bridge.status === 'elsewhere'}
         <button class="chipbtn" onclick={() => bridge.useThisTab()} title="Claude Code is connected in another tab of this app. Click to use this tab instead.">⇄ <span class="muted">other tab · use here</span></button>
       {/if}

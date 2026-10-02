@@ -113,7 +113,7 @@ claude mcp add --scope user tracewise -- node <repo>/tools/bridge/src/main.ts
 ```
 
 - **Pairing**: a 6-digit code is created once and kept in `~/.tracewise/bridge.json`. If the tab is not connected, every tool
-  answers with the code and asks the agent to tell the user, who enters it under Settings → Claude Code bridge. The tab
+  answers with the code and asks the agent to tell the user, who enters it under Settings → Local bridge. The tab
   remembers the code and reconnects by itself when Claude Code restarts.
 - **Security**: loopback only; WebSocket connections from non-localhost origins are closed before pairing (so a website
   cannot reach the bridge); no call is forwarded before the code matches; one paired tab at a time.

@@ -190,7 +190,7 @@ export class IngestState {
       this.phase = 'failed';
     };
     if (!mpn) return fail('Enter the full part number (the ordering code picks the package).');
-    if (!this.available) return fail('Pair the Claude Code bridge first (Settings → Claude Code).');
+    if (!this.available) return fail('Pair the local bridge first (Settings → Local bridge).');
     let pdf: { name: string; base64: string } | undefined;
     if (req.file) {
       if (req.file.size > MAX_BYTES) return fail(`The PDF is larger than ${MAX_BYTES >> 20} MB.`);

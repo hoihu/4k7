@@ -1,5 +1,5 @@
 /**
- * Browser side of the Claude Code bridge (tools/bridge). Connects to the local relay over a
+ * Browser side of the local bridge to Claude Code (tools/bridge). Connects to the local relay over a
  * WebSocket, pairs with the code, and executes forwarded tool calls against the kernel.
  */
 import {
