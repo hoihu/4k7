@@ -66,6 +66,9 @@ interface AnchorPlan {
   stack?: StackPlan;
 }
 
+/** A bit of wire between parts stacked in a column, so they do not crowd each other. */
+const CHAIN_GAP = 200;
+
 interface StackPlan {
   /** The transistor pin the stack stands on. */
   pin: string;
@@ -582,6 +585,9 @@ function planStack(ctx: Ctx, anchor: Component, claimable: Set<string>): StackPl
 function drawStack(ctx: Ctx, scene: Scene, plan: StackPlan, x: number, y: number, net: string): void {
   const { d } = ctx;
   for (const item of plan.items) {
+    // a bit of wire from the pin or part below
+    scene.wires.push({ netId: net, pts: [x, y, x, y - CHAIN_GAP] });
+    y -= CHAIN_GAP;
     const card = cardOf(d, item.comp.part)!;
     const bottom = card.pins.find((p) => item.comp.pins[p.number] === net) ?? card.pins[0]!;
     // pin on the lower net at the bottom
@@ -643,7 +649,8 @@ function drawControl(ctx: Ctx, scene: Scene, pin: { x: number; y: number }, seri
     for (const c of sh.chain) {
       const cc = cardOf(d, c.part)!;
       const tp = cc.pins.find((p) => c.pins[p.number] === below) ?? cc.pins[0]!;
-      const cs = makeSymbol(d, c, uprightSymbol(cc, tp.number !== cc.pins[0]!.number), x, bottom.y + 200);
+      if (below) scene.wires.push({ netId: below, pts: [x, bottom.y, x, bottom.y + CHAIN_GAP] });
+      const cs = makeSymbol(d, c, uprightSymbol(cc, tp.number !== cc.pins[0]!.number), x, bottom.y + CHAIN_GAP + 200);
       scene.symbols.push(cs);
       upper = below ?? upper;
       below = Object.values(c.pins).find((n) => n !== upper);
@@ -809,7 +816,7 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
         const ends = [s.comp, ...s.chain];
         let far: string | undefined = s.net;
         for (const c of ends) far = Object.values(c.pins).find((n) => n !== far) ?? far;
-        const height = ends.length * 400 + 400;
+        const height = ends.length * (400 + CHAIN_GAP) + 400;
         const up =
           !!far &&
           far !== s.net &&
@@ -825,7 +832,8 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
           for (const c of s.chain) {
             const card = cardOf(d, c.part)!;
             const bp = card.pins.find((pp) => c.pins[pp.number] === upper) ?? card.pins[0]!;
-            const cs = makeSymbol(d, c, symbolFor(card, bp.number === card.pins[0]!.number), x, top.y - 200);
+            if (upper) scene.wires.push({ netId: upper, pts: [x, top.y, x, top.y - CHAIN_GAP] });
+            const cs = makeSymbol(d, c, symbolFor(card, bp.number === card.pins[0]!.number), x, top.y - CHAIN_GAP - 200);
             scene.symbols.push(cs);
             lower = upper ?? lower;
             upper = Object.values(c.pins).find((n) => n !== lower);
@@ -850,6 +858,8 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
         s.chain.forEach((c, i) => {
           const card = cardOf(d, c.part)!;
           const topPin = card.pins.find((pp) => c.pins[pp.number] === upperNet) ?? card.pins[0]!;
+          if (upperNet) scene.wires.push({ netId: upperNet, pts: [x, y, x, y + CHAIN_GAP] });
+          y += CHAIN_GAP;
           const sym = makeSymbol(d, c, symbolFor(card, topPin.number !== card.pins[0]!.number), x, y + 200);
           scene.symbols.push(sym);
           const b = sym.pins.find((pp) => pp.side === 'bottom')!;
@@ -954,6 +964,16 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
   for (const c of plan.extraRight) {
     mergeScene(scene, verticalPart(ctx, c, grid(rx), grid(def.bbox.h / 2) - 200));
     rx += satWidth(d, c);
+  }
+  if (plan.card.category === 'transistor') {
+    // a small stage reads as one circuit: its ground symbols on one level, the lowest one's
+    const grounds = scene.labels.filter((l) => l.kind === 'ground' && l.dir === 'down' && !l.stub);
+    const lowest = Math.max(...grounds.map((l) => l.y));
+    for (const l of grounds) {
+      if (l.y >= lowest) continue;
+      scene.wires.push({ netId: l.netId, pts: [l.x, l.y, l.x, lowest] });
+      l.y = lowest;
+    }
   }
   return scene;
 }

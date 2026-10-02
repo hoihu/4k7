@@ -195,6 +195,10 @@ function railEnd(n: Net, x: number, y: number) {
 }
 
 const RISE = 400; // a vertical two-pin part spans 400 mils pin to pin
+/** A bit of wire between stacked parts (less crowded); dropped where a column must fit a tight space. */
+const GAP = 200;
+/** Height of a column of `n` parts, pin to pin. */
+const colH = (n: number, gap = GAP) => RISE * n + gap * Math.max(0, n - 1);
 
 export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
   const { d, members } = ctx;
@@ -239,21 +243,28 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
   }
 
   /** Draw a vertical stack of parts starting with its top pin at (x, y); returns the bottom pin. */
-  const stack = (col: Column, x: number, y: number, labelTaps = true): PinView => {
+  const stack = (col: Column, x: number, y: number, labelTaps = true, gap = GAP): PinView => {
     let upper = col.top;
     let bottom: PinView | null = null;
     col.parts.forEach((c, i) => {
+      if (i > 0 && gap) {
+        // a bit of wire from the part above
+        scene.wires.push({ netId: upper, pts: [x, y, x, y + gap] });
+        y += gap;
+      }
       const card = cardOf(d, c.part)!;
       const topPin = card.pins.find((pp) => c.pins[pp.number] === upper) ?? card.pins[0]!;
       const s = makeSymbol(d, c, symbolFor(card, topPin.number !== card.pins[0]!.number), x, y + RISE / 2);
       scene.symbols.push(s);
       bottom = s.pins.find((pp) => pp.side === 'bottom')!;
       const bNet = c.pins[bottom.number];
-      // a tap between two parts that is also used elsewhere (the FB node) gets a label
+      // a tap between two parts that is also used elsewhere (the FB node) gets a label, on the
+      // wire between them
       if (labelTaps && bNet && i < col.parts.length - 1 && tapUsedElsewhere(col, bNet)) {
-        scene.junctions.push({ x: bottom.x, y: bottom.y });
-        scene.wires.push({ netId: bNet, pts: [bottom.x, bottom.y, bottom.x + TAP_STUB, bottom.y] });
-        scene.labels.push(deco(net(bNet), bottom.x + TAP_STUB, bottom.y, 'right'));
+        const ty = bottom.y + gap / 2;
+        scene.junctions.push({ x: bottom.x, y: ty });
+        scene.wires.push({ netId: bNet, pts: [bottom.x, ty, bottom.x + TAP_STUB, ty] });
+        scene.labels.push(deco(net(bNet), bottom.x + TAP_STUB, ty, 'right'));
       }
       upper = bNet ?? '';
       y += RISE;
@@ -286,9 +297,11 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
 
   /** A part bridging from a pin up to the rail: centred between the two. */
   const bridge = (col: Column, x: number, yRail: number, p: PinView) => {
-    const off = floorGrid((p.y - yRail - RISE * col.parts.length) / 2);
+    // the gap only where it fits between the pin and the rail
+    const gap = p.y - yRail >= colH(col.parts.length) ? GAP : 0;
+    const off = floorGrid((p.y - yRail - colH(col.parts.length, gap)) / 2);
     if (off > 0) scene.wires.push({ netId: col.top, pts: [x, yRail, x, yRail + off] });
-    const bottom = stack(col, x, yRail + off);
+    const bottom = stack(col, x, yRail + off, true, gap);
     scene.wires.push({ netId: plan.comp.pins[(col as PinColumn).pin]!, pts: [p.x, p.y, x, p.y, x, bottom.y] });
   };
 
@@ -388,11 +401,11 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
   for (const tx of lTaps) scene.junctions.push({ x: tx, y: yL });
 
   /* ----- the common ground line ----- */
-  const deepest = Math.max(def.bbox.y + def.bbox.h, ...drops.map((p) => p.y), ...toGround.map((g) => g.y0 + RISE * g.col.parts.length));
+  const deepest = Math.max(def.bbox.y + def.bbox.h, ...drops.map((p) => p.y), ...toGround.map((g) => g.y0 + colH(g.col.parts.length)));
   const yG = grid(deepest + 200);
   for (const g of toGround) {
     // centre the column between its top connection and the ground line
-    const off = floorGrid((yG - g.y0 - RISE * g.col.parts.length) / 2);
+    const off = floorGrid((yG - g.y0 - colH(g.col.parts.length)) / 2);
     const lead = g.lead ? [...g.lead.pts] : [g.x, g.y0];
     if (off > 0) lead.push(g.x, g.y0 + off);
     if (lead.length >= 4) scene.wires.push({ netId: g.lead?.net ?? g.col.top, pts: lead });
