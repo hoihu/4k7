@@ -114,6 +114,12 @@ export function footprintFor(pkg: PackageInfo, pinNumbers: string[] = []): Footp
     }
     case 'HEADER':
       return { ok: true, footprint: header(pkg) };
+    case 'AXIAL':
+    case 'RADIAL': {
+      const miss = need(['pitch_mm', 'body_mm']);
+      if (miss) return { ok: false, reason: miss };
+      return { ok: true, footprint: twoLead(pkg) };
+    }
     default:
       return { ok: false, reason: `no generator for ${pkg.family} packages yet` };
   }
@@ -169,6 +175,32 @@ function explicit(pkg: PackageInfo, pinNumbers: string[]): FootprintResult {
       pin1: { x: r2(first.x - first.w / 2 - 0.4), y: first.y },
       notes,
     },
+  };
+}
+
+/**
+ * Two through-hole leads on the x axis, pitch apart, pin 1 left (square pad). Axial: the body lies
+ * between them (length × diameter); radial: a round can standing over both.
+ */
+function twoLead(pkg: PackageInfo): Footprint {
+  const p = pkg.pitch_mm!;
+  const lead = pkg.lead_width_mm ?? 0.6;
+  const drill = r2(Math.max(0.7, Math.ceil((lead + 0.3) * 10) / 10));
+  const pad = r2(Math.max(1.6, drill + 0.7));
+  const round = pkg.family === 'RADIAL';
+  const [bw, bh] = round ? [pkg.body_mm![0], pkg.body_mm![0]] : pkg.body_mm!;
+  const pads: Pad[] = [
+    { number: '1', x: r2(-p / 2), y: 0, w: pad, h: pad, shape: 'rect', drill },
+    { number: '2', x: r2(p / 2), y: 0, w: pad, h: pad, shape: 'round', drill },
+  ];
+  const cw = Math.max(bw, p + pad);
+  const ch = Math.max(bh, pad);
+  return {
+    pads,
+    body: { w: bw, h: bh, ...(round ? { round: true } : {}) },
+    courtyard: { w: r2(cw + 2 * COURTYARD), h: r2(ch + 2 * COURTYARD) },
+    pin1: { x: r2(-p / 2 - pad / 2 - 0.4), y: 0 },
+    notes: [],
   };
 }
 

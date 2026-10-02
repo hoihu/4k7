@@ -19,14 +19,18 @@ export interface Ball3 {
   r: number;
 }
 
-/** An upright cylinder (round bodies: buzzers, electrolytic caps). */
+/**
+ * A cylinder: upright from z0 to z1 (round bodies: buzzers, electrolytic caps), or with `lying`
+ * set, along x, that long, its axis at height z0 (axial resistors and diodes).
+ */
 export interface Cyl3 {
   x: number;
   y: number;
   z0: number;
   z1: number;
   r: number;
-  mat: 'body' | 'lead';
+  mat: 'body' | 'lead' | 'mark';
+  lying?: number;
 }
 
 export interface Body3D {
@@ -99,6 +103,12 @@ export function body3dFor(pkg: PackageInfo, pinNumbers: string[] = []): Body3DRe
     }
     case 'HEADER':
       return { ok: true, body: header(pkg) };
+    case 'AXIAL':
+    case 'RADIAL': {
+      const fp = footprintFor(pkg, pinNumbers);
+      if (!fp.ok) return { ok: false, reason: fp.reason };
+      return { ok: true, body: pkg.family === 'AXIAL' ? axialBody(pkg, notes) : radialBody(pkg, notes) };
+    }
     default:
       return { ok: false, reason: `no 3D generator for ${pkg.family} packages yet` };
   }
@@ -275,6 +285,38 @@ function explicitBody(pkg: PackageInfo, pads: Pad[], notes: string[]): Body3D {
   if (tht) notes.push('Through-hole leads shown 3 mm below the board surface.');
   const first = pads.find((p) => p.number === '1') ?? pads[0]!;
   return { boxes, balls: [], cylinders, pin1: { x: first.x, y: first.y, z: H, r: 0.4 }, height: H, notes };
+}
+
+/** An axial part: its body lying over the board between the leads, which bend down through it. */
+function axialBody(pkg: PackageInfo, notes: string[]): Body3D {
+  const p = pkg.pitch_mm!;
+  const [len, dia] = pkg.body_mm!;
+  const lead = pkg.lead_width_mm ?? 0.6;
+  const zc = dia / 2 + 0.4; // the axis, a little above the board
+  const cylinders: Cyl3[] = [{ x: 0, y: 0, z0: zc, z1: zc, r: r3(dia / 2), mat: 'body', lying: len }];
+  const boxes: Box3[] = [];
+  for (const s of [-1, 1]) {
+    // along the axis out of the body to above the hole, then down through the board
+    boxes.push(box((s * len) / 2, -lead / 2, zc - lead / 2, (s * p) / 2 + s * (lead / 2), lead / 2, zc + lead / 2, 'lead'));
+    boxes.push(box((s * p) / 2 - lead / 2, -lead / 2, -3, (s * p) / 2 + lead / 2, lead / 2, zc + lead / 2, 'lead'));
+  }
+  // a band at pin 1 (the cathode of a diode; harmless on a resistor)
+  cylinders.push({ x: r3(-len / 2 + len * 0.12), y: 0, z0: zc, z1: zc, r: r3(dia / 2 + 0.02), mat: 'mark', lying: r3(len * 0.12) });
+  notes.push('Leads shown 3 mm below the board surface.');
+  return { boxes, balls: [], cylinders, pin1: { x: r3(-len / 2 + len * 0.12), y: 0, z: zc + dia / 2, r: 0 }, height: r3(zc + dia / 2), notes };
+}
+
+/** A radial part: a can standing on the board over both leads. */
+function radialBody(pkg: PackageInfo, notes: string[]): Body3D {
+  const p = pkg.pitch_mm!;
+  const dia = pkg.body_mm![0];
+  const H = pkg.height_mm ?? Math.max(5, dia * 1.4);
+  const lead = pkg.lead_width_mm ?? 0.6;
+  const z0 = 0.4;
+  const cylinders: Cyl3[] = [{ x: 0, y: 0, z0, z1: H, r: r3(dia / 2), mat: 'body' }];
+  for (const s of [-1, 1]) cylinders.push({ x: r3((s * p) / 2), y: 0, z0: -3, z1: z0 + 0.01, r: r3(lead / 2), mat: 'lead' });
+  notes.push('Leads shown 3 mm below the board surface.');
+  return { boxes: [], balls: [], cylinders, pin1: { x: r3(-p / 2), y: 0, z: H, r: Math.min(0.5, dia / 8) }, height: H, notes };
 }
 
 /** Pin-1 dimple near the corner of pin 1 (top-left in the footprint view). */

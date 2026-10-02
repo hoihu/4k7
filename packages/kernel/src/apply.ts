@@ -24,7 +24,7 @@ import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
 import { layoutSchematic } from './layout.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
-import { footprintFor, isTwoPin, planUnits, searchParts } from '@tracewise/parts';
+import { footprintFor, isTwoPin, packageOptions, planUnits, searchParts, standardPackage } from '@tracewise/parts';
 import {
   allocRefdes,
   cardOf,
@@ -84,6 +84,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return setFootprint(d, op);
     case 'rename_part':
       return renamePart(d, op);
+    case 'set_package_defaults':
+      return setPackageDefaults(d, op);
     case 'set_board':
       return setBoard(d, op);
     case 'place':
@@ -591,6 +593,35 @@ function setFootprint(d: Design, op: Extract<EditOp, { op: 'set_footprint' }>): 
   return { op: 'set_footprint', effect: `${users.join(', ')}: footprint ${op.name}, ${f.pads.length} pads, ${f.courtyard.w} × ${f.courtyard.h} mm courtyard`, ids: [card.id] };
 }
 
+/** Packages for generic parts without their own: per kind, and automatic sizing. */
+function setPackageDefaults(d: Design, op: Extract<EditOp, { op: 'set_package_defaults' }>): OpResult {
+  const next = { ...(d.packageDefaults ?? {}) };
+  const slots = ['resistor', 'capacitor', 'electrolytic', 'inductor', 'diode', 'led'] as const;
+  const given: Partial<Record<(typeof slots)[number], string | null>> = {};
+  if (op.passives) Object.assign(given, { resistor: op.passives, capacitor: op.passives, led: op.passives });
+  for (const s of slots) if (op[s] !== undefined) given[s] = op[s];
+  const changes: string[] = [];
+  for (const [slot, name] of Object.entries(given) as [(typeof slots)[number], string | null][]) {
+    if (name === null || name === '') {
+      delete next[slot];
+      changes.push(`${slot}: library default`);
+      continue;
+    }
+    const pkg = standardPackage(name);
+    if (!pkg) reject({ code: 'PARAM_INVALID', message: `Unknown package "${name}" for ${slot}s. Known e.g.: 0402, 0603, 0805, 1206, 2512, AXIAL-0.4, RADIAL-D8, CAP-8x10, IND-6x6, SOD-123, SMA, DO-41, LED-5mm.` });
+    next[slot] = pkg.name;
+    changes.push(`${slot}: ${pkg.name}`);
+  }
+  if (op.auto_size !== undefined) {
+    if (op.auto_size) delete next.autoSize;
+    else next.autoSize = false;
+    changes.push(`automatic sizing ${op.auto_size ? 'on' : 'off'}`);
+  }
+  if (Object.keys(next).length) d.packageDefaults = next;
+  else delete d.packageDefaults;
+  return { op: 'set_package_defaults', effect: `package defaults: ${changes.join(', ') || 'unchanged'}`, ids: ['packages'] };
+}
+
 /** A part's shown name (part number); its id, which components refer to, stays. Changes the design's copy. */
 function renamePart(d: Design, op: Extract<EditOp, { op: 'rename_part' }>): OpResult {
   const byRef = findComponent(d, op.part);
@@ -635,6 +666,14 @@ function validateParams(card: PartCard, params: Record<string, string | null>, r
         code: 'PARAM_UNKNOWN',
         message: `${refdes} (${card.id}) has no parameter "${key}". Allowed: ${Object.keys(card.params).join(', ') || 'none'}.`,
         candidates: Object.keys(card.params),
+      });
+    }
+    if (key === 'package' && value && !card.packageInfo && !standardPackage(value, card.pins.length)) {
+      const opts = packageOptions(card);
+      reject({
+        code: 'PARAM_INVALID',
+        message: `${refdes}: unknown package "${value}".${opts.length ? ` Known for this part: ${opts.join(', ')} (and KiCad names like R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm, CP_Radial_D8.0mm_P3.50mm).` : ''}`,
+        candidates: opts,
       });
     }
     if (value === null || !spec.unit) continue;

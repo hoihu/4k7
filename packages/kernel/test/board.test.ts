@@ -930,3 +930,29 @@ describe('silkscreen graphics', () => {
     expect(k.transact({ summary: 'bad', ops: [{ op: 'add_graphic', svg_path: 'M 0 0 L 5 5', x_mm: 1, y_mm: 1 }] }).status).toBe('rejected');
   });
 });
+
+describe('package defaults', () => {
+  it('a design default changes every generic part without its own package; the review carries it', () => {
+    const k = buck();
+    const before = k.board().parts.find((p) => p.refdes === 'R1')!.pkg;
+    expect(before).toBe('0603');
+    const r = k.transact({ summary: 'hand solder', ops: [{ op: 'set_package_defaults', passives: '0805' }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    expect(k.proposal()?.hunks.some((h) => h.id === 'board:packages')).toBe(true);
+    k.accept();
+    expect(k.committedDesign().packageDefaults).toMatchObject({ resistor: '0805', capacitor: '0805', led: '0805' });
+    expect(k.board().parts.find((p) => p.refdes === 'R1')!.pkg).toBe('0805');
+    // explicit packages stay
+    expect(k.board().parts.find((p) => p.refdes === 'C1')!.pkg).toBe('1206');
+    expect(k.query({ op: 'get_component', ref: 'R1' })).toMatchObject({ package: { name: '0805', why: 'default' } });
+  });
+
+  it('rejects unknown package names with the known ones', () => {
+    const k = buck();
+    const r = k.transact({ summary: 'bad', ops: [{ op: 'set_param', ref: 'R1', params: { package: '0607' } }] });
+    expect(r.status).toBe('rejected');
+    expect(r.rejection?.candidates).toContain('AXIAL-0.4');
+    expect(k.transact({ summary: 'tht', ops: [{ op: 'set_param', ref: 'R1', params: { package: 'AXIAL-0.4' } }] }).status).toBe('ok');
+    expect(k.board().parts.find((p) => p.refdes === 'R1')!.pads.every((p) => !!p.drill)).toBe(true);
+  });
+});

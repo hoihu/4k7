@@ -139,3 +139,39 @@ describe('part titles', () => {
     expect(partTitle(BUILTIN_PARTS.find((p) => p.id === 'ti:TPS54331DR')!)).toBe('TPS54331');
   });
 });
+
+describe('passive packages: through-hole, defaults and sizing', () => {
+  it('knows axial, radial and the KiCad names, with footprints and 3D bodies', async () => {
+    const { standardPackage, footprintFor, body3dFor } = await import('../src/index.ts');
+    const ax = standardPackage('AXIAL-0.4')!;
+    expect(ax).toMatchObject({ family: 'AXIAL', pitch_mm: 10.16, body_mm: [6.3, 2.5] });
+    const fp = footprintFor(ax, ['1', '2']);
+    expect(fp.ok && fp.footprint.pads.map((p) => [p.x, !!p.drill])).toEqual([[-5.08, true], [5.08, true]]);
+    expect(standardPackage('R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm')).toMatchObject({ family: 'AXIAL', pitch_mm: 10.16 });
+    expect(standardPackage('RADIAL-D8')).toMatchObject({ family: 'RADIAL', pitch_mm: 3.5, body_mm: [8, 8] });
+    expect(standardPackage('CP_Radial_D10.0mm_P5.00mm')).toMatchObject({ family: 'RADIAL', pitch_mm: 5 });
+    expect(standardPackage('DO-41')).toMatchObject({ family: 'AXIAL', pitch_mm: 10.16 });
+    expect(standardPackage('LED-5mm')).toMatchObject({ family: 'RADIAL', pitch_mm: 2.54 });
+    expect(standardPackage('6x6mm')?.name).toBe('IND-6x6');
+    for (const n of ['AXIAL-0.4', 'RADIAL-D8', 'DO-41', 'LED-3mm']) expect(body3dFor(standardPackage(n)!, ['1', '2']).ok, n).toBe(true);
+    const round = footprintFor(standardPackage('RADIAL-D8')!, ['1', '2']);
+    expect(round.ok && round.footprint.body.round).toBe(true);
+  });
+
+  it('chooses: the part\'s own package, else the design default, sized up where the value demands', async () => {
+    const { packageChoice, BUILTIN_PARTS } = await import('../src/index.ts');
+    const C = BUILTIN_PARTS.find((p) => p.id === 'generic:C')!;
+    const R = BUILTIN_PARTS.find((p) => p.id === 'generic:R')!;
+    expect(packageChoice(C, { capacitance: '100nF' })).toEqual({ name: '0603', why: 'library' });
+    expect(packageChoice(C, { capacitance: '100nF' }, { capacitor: '0402' })).toEqual({ name: '0402', why: 'default' });
+    expect(packageChoice(C, { capacitance: '22uF', voltage: '10V' }, { capacitor: '0402' })).toMatchObject({ name: '1206', why: 'auto' });
+    expect(packageChoice(C, { capacitance: '1uF', voltage: '35V' })).toMatchObject({ name: '0805', why: 'auto' });
+    // sizing only goes up, and never past what was chosen explicitly
+    expect(packageChoice(C, { capacitance: '22uF' }, { capacitor: '1812' })).toEqual({ name: '1812', why: 'default' });
+    expect(packageChoice(C, { capacitance: '22uF', package: '0603' })).toEqual({ name: '0603', why: 'set' });
+    expect(packageChoice(C, { capacitance: '22uF' }, { autoSize: false })).toEqual({ name: '0603', why: 'library' });
+    expect(packageChoice(R, { resistance: '1', power: '0.5W' })).toMatchObject({ name: '2010', why: 'auto' });
+    // a through-hole default is not resized
+    expect(packageChoice(R, { resistance: '1', power: '0.5W' }, { resistor: 'AXIAL-0.4' })).toEqual({ name: 'AXIAL-0.4', why: 'default' });
+  });
+});

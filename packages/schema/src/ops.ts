@@ -132,6 +132,19 @@ export const SetFootprintOp = z.object({
   page: z.number().int().optional().describe('Datasheet page with the drawing'),
 });
 
+const pkgName = z.string().nullable().optional();
+export const SetPackageDefaultsOp = z.object({
+  op: z.literal('set_package_defaults'),
+  resistor: pkgName.describe('Package for generic resistors without their own, e.g. "0805", "AXIAL-0.4"; null = the library default (0603)'),
+  capacitor: pkgName.describe('Ceramic capacitors, e.g. "0805"'),
+  electrolytic: pkgName.describe('Polarized capacitors, e.g. "CAP-8x10", "RADIAL-D8"'),
+  inductor: pkgName.describe('e.g. "IND-6x6"'),
+  diode: pkgName.describe('e.g. "SMA", "DO-41"'),
+  led: pkgName.describe('e.g. "0805", "LED-5mm"'),
+  passives: z.string().optional().describe('Shorthand: resistors, ceramic capacitors and LEDs at once, e.g. "0805" for hand soldering'),
+  auto_size: z.boolean().optional().describe('Size up where the value demands it (capacitors ≥ 4.7 µF or > 25 V, resistor power, inductor/diode current); default on'),
+});
+
 export const RenamePartOp = z.object({
   op: z.literal('rename_part'),
   part: z.string().min(1).describe('Part id ("adi:ADIN2111BCPZ") or a component using it ("U4")'),
@@ -277,6 +290,7 @@ export const EditOp = z.discriminatedUnion('op', [
   SetSymbolOp,
   SetFootprintOp,
   RenamePartOp,
+  SetPackageDefaultsOp,
   SetBoardOp,
   PlaceOp,
   ProposeLayoutOp,

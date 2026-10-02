@@ -19,7 +19,7 @@ import {
   type BoardView,
   boardSummary,
 } from '@tracewise/schema';
-import { searchParts } from '@tracewise/parts';
+import { packageChoice, packageOptions, searchParts } from '@tracewise/parts';
 import { applyOp, describeConstraint } from './apply.ts';
 import { countDiagnostics, diagKey, runChecks } from './checks.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
@@ -253,6 +253,7 @@ export class Kernel {
           part: c.part,
           description: card?.description,
           params: c.params,
+          ...(card && packageOptions(card).length ? { package: { ...packageChoice(card, c.params, d.packageDefaults), options: packageOptions(card) } } : {}),
           pins: card?.pins.map((p) => ({
             pin: p.number,
             name: p.name,

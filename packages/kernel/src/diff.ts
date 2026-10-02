@@ -73,6 +73,20 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     });
   }
 
+  /* package defaults for generic parts */
+  if (JSON.stringify(base.packageDefaults ?? null) !== JSON.stringify(draft.packageDefaults ?? null)) {
+    const pd = draft.packageDefaults ?? {};
+    const set = Object.entries(pd).filter(([k]) => k !== 'autoSize').map(([k, v]) => `${k} ${v}`);
+    hunks.push({
+      id: 'board:packages',
+      kind: 'board',
+      change: base.packageDefaults ? 'change' : 'add',
+      entityId: 'packages',
+      title: `package defaults: ${set.join(', ') || 'library'}${pd.autoSize === false ? ', no automatic sizing' : ''}`,
+      details: [],
+    });
+  }
+
   /* board settings */
   if (JSON.stringify(base.board ?? null) !== JSON.stringify(draft.board ?? null)) {
     const b = draft.board;
@@ -195,7 +209,10 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
         break;
       }
       case 'board':
-        if (draft.board) d.board = clone(draft.board);
+        if (entity === 'packages') {
+          if (draft.packageDefaults) d.packageDefaults = clone(draft.packageDefaults);
+          else delete d.packageDefaults;
+        } else if (draft.board) d.board = clone(draft.board);
         else delete d.board;
         break;
       case 'part':

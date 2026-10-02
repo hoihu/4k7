@@ -22,6 +22,24 @@ export interface Design {
   waivers: Record<string, Waiver>;
   /** Board settings (outline, layers, rules); absent = defaults, outline sized to fit. */
   board?: BoardSettings;
+  /** Packages of generic parts without their own package parameter (set_package_defaults). */
+  packageDefaults?: PackageDefaults;
+}
+
+/**
+ * Packages for generic parts that do not name one: per kind, and whether sizes go up
+ * automatically where the value demands it (large or high-voltage capacitors, resistor power,
+ * inductor and diode current). Absent: the library's (0603, IND-4x4, SOD-123 …), sizing on.
+ */
+export interface PackageDefaults {
+  resistor?: string;
+  capacitor?: string;
+  electrolytic?: string;
+  inductor?: string;
+  diode?: string;
+  led?: string;
+  /** Size up where the value demands it (default true). */
+  autoSize?: boolean;
 }
 
 export interface Component {

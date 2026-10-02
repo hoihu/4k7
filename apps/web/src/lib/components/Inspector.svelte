@@ -6,24 +6,44 @@
     part: string;
     description?: string;
     params: Record<string, string>;
+    /** Generic parts: the package in use, why, and the ones to pick from. */
+    package?: { name: string; why: 'set' | 'default' | 'auto' | 'library'; reason?: string; options: string[] };
     pins?: { pin: string; name: string; type: string; net: string | null }[];
     constraints: { id: string; text: string; strength: string }[];
   }
 
   const sel = $derived(app.selection[0]);
   let info = $state<ComponentInfo | null>(null);
+  /** Why the selected part could not be read (shown instead of a blank pane). */
+  let infoError = $state<string | null>(null);
 
   $effect(() => {
     const ref = sel;
     void app.k; // refresh when the design changes
     if (!ref) {
       info = null;
+      infoError = null;
       return;
     }
-    void app.queryComponent(ref).then((r) => {
-      info = r && typeof r === 'object' && 'refdes' in r ? (r as ComponentInfo) : null;
-    });
+    app
+      .queryComponent(ref)
+      .then((r) => {
+        info = r && typeof r === 'object' && 'refdes' in r ? (r as ComponentInfo) : null;
+        infoError = info ? null : String((r as { error?: unknown } | null)?.error ?? `${ref} could not be read.`);
+      })
+      .catch((e: Error) => {
+        info = null;
+        infoError = `${ref} could not be read: ${e.message}`;
+      });
   });
+
+  /** Pick a package for the selected part ('' = back to the design default). */
+  function setPackage(name: string) {
+    if (!info) return;
+    void app.userEdit(name ? `Package ${info.refdes}: ${name}` : `Package ${info.refdes}: default`, [{ op: 'set_param', ref: info.refdes, params: { package: name || null } }]);
+  }
+  const whyText = (p: NonNullable<ComponentInfo['package']>) =>
+    p.why === 'set' ? 'chosen for this part' : p.why === 'default' ? 'design default' : p.why === 'auto' ? `sized up: ${p.reason}` : 'library default';
 
   const diags = $derived(app.k?.diagnostics ?? []);
   const open = $derived(diags.filter((d) => !d.waivedBy));
@@ -132,12 +152,24 @@
       </ul>
       {#if !app.k?.history.length && !app.k?.proposal}<div class="empty">No commits yet.</div>{/if}
     {:else}
-      {#if !info}
+      {#if !info && infoError}
+        <div class="empty err">{infoError}</div>
+      {:else if !info}
         <div class="empty">Click a part on the canvas to see it here and reference it in the chat. Shift-click selects several.</div>
       {:else}
         <dl class="kv">
           <dt>Part</dt><dd title={info.description}>{info.part}</dd>
-          {#each Object.entries(info.params) as [k, v] (k)}<dt>{k}</dt><dd>{v}</dd>{/each}
+          {#each Object.entries(info.params).filter(([k]) => !(info?.package && k === 'package')) as [k, v] (k)}<dt>{k}</dt><dd>{v}</dd>{/each}
+          {#if info.package}
+            <dt>package</dt>
+            <dd>
+              <select class="pkgsel mono" value={info.package.why === 'set' ? info.package.name : ''} disabled={!!app.k?.proposal} title={app.k?.proposal ? 'Review the pending changes first' : 'The footprint of this part'} onchange={(e) => setPackage((e.currentTarget as HTMLSelectElement).value)}>
+                <option value="">{info.package.why === 'set' ? 'default' : info.package.name} · {info.package.why === 'set' ? 'design default' : whyText(info.package)}</option>
+                {#each info.package.options as o (o)}<option value={o}>{o}</option>{/each}
+                {#if info.package.why === 'set' && !info.package.options.includes(info.package.name)}<option value={info.package.name}>{info.package.name}</option>{/if}
+              </select>
+            </dd>
+          {/if}
         </dl>
         <div class="sect">Pins</div>
         <dl class="kv">
@@ -174,4 +206,6 @@
   .sect { padding: 8px 10px 3px; font-size: 11px; color: var(--txt-3); text-transform: uppercase; letter-spacing: .04em; }
   .sugg { display: flex; gap: 4px; flex-wrap: wrap; padding: 2px 10px 10px; }
   .sugg button { border: 1px solid var(--line); background: var(--panel-2); border-radius: 99px; padding: 0 8px; font-size: 11.5px; line-height: 20px; color: var(--txt-2); }
+  .pkgsel { font-size: 11px; padding: 1px 2px; max-width: 100%; background: var(--panel); color: var(--txt); border: 1px solid var(--line-2); border-radius: 4px; }
+  .empty.err { color: var(--err); }
 </style>

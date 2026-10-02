@@ -98,7 +98,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   for (const comp of componentsSorted(d)) {
     const card = cardOf(d, comp.part);
     if (!card) continue;
-    const pkg = packageOf(card, comp.params);
+    const pkg = packageOf(card, comp.params, d.packageDefaults);
     const fp = pkg ? footprintFor(pkg, card.pins.map((p) => p.number)) : null;
     if (!pkg || !fp?.ok) {
       missing.push(comp.refdes);
