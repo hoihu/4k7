@@ -3,7 +3,7 @@
  * Hosts the design kernel off the main thread. Every call is a plain method name +
  * structured-cloneable arguments; the Rust/WASM kernel will slot in behind the same RPC.
  */
-import { Kernel, registerArtwork, unregisterArtwork } from '@tracewise/kernel';
+import { Kernel, designKey, registerArtwork, unregisterArtwork } from '@tracewise/kernel';
 import { registerUserParts, unregisterUserPart } from '@tracewise/parts';
 import type { Artwork, Design, PartCard } from '@tracewise/schema';
 
@@ -22,6 +22,11 @@ const methods = {
   hasPending: () => kernel.hasPending(),
   /** The working copy, for the board worker. */
   draftDesign: () => kernel.draftDesign(),
+  /** The working copy with its key, and whether it is a proposal (its board is not kept). */
+  boardInputs: () => {
+    const design = kernel.draftDesign();
+    return { design, key: designKey(design), pending: kernel.hasPending() };
+  },
   /** The working copy's part cards (the design's own copies, e.g. with a footprint the agent gave). */
   designParts: () => kernel.draftDesign().parts,
   /** Imported parts, so the agent can find and place them. */

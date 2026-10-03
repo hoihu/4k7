@@ -12,7 +12,8 @@ export class BoardClient {
   #seq = 0;
   #waiters: ((b: BoardView | null) => void)[] = [];
 
-  compute(design: Design, onStage: (stage: BoardStage, board: BoardView) => void, onError: (msg: string) => void): void {
+  /** `kept`: boards routed before; their copper stays where nothing it depends on has changed. */
+  compute(design: Design, kept: BoardView[], onStage: (stage: BoardStage, board: BoardView) => void, onError: (msg: string) => void): void {
     if (this.#busy && this.#worker) {
       this.#worker.terminate();
       this.#worker = null;
@@ -34,7 +35,18 @@ export class BoardClient {
         this.#flush(e.data.board!);
       }
     };
-    this.#worker.postMessage({ id, design });
+    this.#worker.postMessage({ id, design, kept });
+  }
+
+  /** Answer with a board that needs no computing (a stored one); a running computation is dropped. */
+  settle(board: BoardView) {
+    if (this.#busy && this.#worker) {
+      this.#worker.terminate();
+      this.#worker = null;
+    }
+    this.#busy = false;
+    this.#seq++;
+    this.#flush(board);
   }
 
   get busy() {

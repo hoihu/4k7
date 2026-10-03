@@ -90,12 +90,15 @@ export class Kernel {
     return placeBoard(this.draft, this.analyse(this.draft).view);
   }
 
-  /** The board of the working copy: placement, routing and DRC (computed on demand, cached). */
-  board(): BoardView {
+  /**
+   * The board of the working copy: placement, routing and DRC (computed on demand, cached).
+   * `kept`: boards routed before, whose copper stays where nothing it depends on has changed.
+   */
+  board(kept?: BoardView[]): BoardView {
     const d = this.draft;
     let b = this.boards.get(d);
     if (!b) {
-      b = layoutBoard(d, this.analyse(d).view);
+      b = layoutBoard(d, this.analyse(d).view, kept ? { kept } : {});
       this.boards.set(d, b);
     }
     return b;

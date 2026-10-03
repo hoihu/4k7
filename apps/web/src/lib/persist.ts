@@ -2,7 +2,7 @@
  * Local-first persistence in IndexedDB. The API key is encrypted with a non-extractable
  * AES-GCM key that never leaves this browser profile.
  */
-import type { Artwork, Design, PartCard } from '@tracewise/schema';
+import type { Artwork, Design, PartCard, SolvedBoard } from '@tracewise/schema';
 
 const DB = 'tracewise';
 /** v2: 'library' store for imported parts; v3: 'datasheets' (PDFs by SHA-256); v4: 'artwork' (silkscreen graphics). */
@@ -83,6 +83,23 @@ export async function saveProject(json: string): Promise<void> {
     await put('projects', 'current', json);
   } catch (e) {
     storageHealth = `saving the project failed: ${(e as Error).message}`;
+  }
+}
+
+/** The project's board as it was last solved (shown while the design is the one it was solved from). */
+export async function loadSolved(): Promise<SolvedBoard | undefined> {
+  try {
+    return await get<SolvedBoard>('projects', 'current.solved');
+  } catch {
+    return undefined;
+  }
+}
+
+export async function saveSolved(s: SolvedBoard): Promise<void> {
+  try {
+    await put('projects', 'current.solved', s);
+  } catch (e) {
+    storageHealth = `saving the board failed: ${(e as Error).message}`;
   }
 }
 

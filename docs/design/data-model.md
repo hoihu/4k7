@@ -97,6 +97,22 @@ project.twd/
   history/               optional op log
 ```
 
+Today the app writes one file, `.twd.json`: the design as canonical JSON plus a `solved` entry
+(one line) with the board as it was solved: parts with their pads, tracks, vias, pour and DRC
+result, the solver version, the build and the key of the design it was solved from. On opening,
+a `solved` entry whose key matches the design is shown as it is, whatever the current placer and
+router would compute; the board is solved afresh only when the design changes (and a proposal
+that is rejected, or an undo back to the opened design, brings the stored board back). When the design
+does change, the copper of the boards solved before stays wherever the router would get exactly
+the same input (pads, nets, widths, rules, planes, outline: the board's `routeKey`), so a new
+value, a lock or a silkscreen change keeps the tracks. **Pin layout** (Layout view) uses that: it
+locks every part where it is and sets the board size, after which neither a later placer nor a
+later router changes the board until the user changes what the copper depends on. The
+browser keeps the same record next to the project (`projects/current.solved`). The key is a hash
+of the canonical JSON, so `canonicalJson` and `designKey` are part of the format; a file written
+by solver 1 is kept as a golden file (`packages/kernel/test/golden`), and the test asks for a
+higher `SOLVER_VERSION` whenever the solver's output for it changes.
+
 Canonical JSON: sorted keys, integers only for geometry, `derived` geometry optional (`--no-derived`
 exports a minimal file; the kernel re-solves it deterministically). Format versions are migrated
 forward by the kernel. Changing the format needs a migration plus a golden-file test.

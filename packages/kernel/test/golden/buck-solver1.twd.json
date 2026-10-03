@@ -1,0 +1,623 @@
+{
+  "board": {
+    "layers": 2,
+    "placement": {
+      "outline": {
+        "h": 22,
+        "w": 24
+      },
+      "parts": {
+        "c_2": {
+          "rot": 0,
+          "x": 3.5,
+          "y": 8.27
+        },
+        "c_3": {
+          "rot": 0,
+          "x": 13.85,
+          "y": 11.005
+        },
+        "c_4": {
+          "rot": 180,
+          "x": 7.5,
+          "y": 10.3
+        },
+        "c_5": {
+          "rot": 90,
+          "x": 20.1,
+          "y": 14.4
+        },
+        "c_6": {
+          "rot": 90,
+          "x": 10.6,
+          "y": 15.514
+        },
+        "c_7": {
+          "rot": 270,
+          "x": 17.8,
+          "y": 5.15
+        },
+        "c_8": {
+          "rot": 270,
+          "x": 14,
+          "y": 5.275
+        },
+        "c_9": {
+          "rot": 270,
+          "x": 15,
+          "y": 15.486
+        },
+        "c_a": {
+          "rot": 90,
+          "x": 16.8,
+          "y": 15.486
+        },
+        "c_b": {
+          "rot": 0,
+          "x": 19.214,
+          "y": 11.1
+        },
+        "c_c": {
+          "rot": 180,
+          "x": 12.786,
+          "y": 18.9
+        },
+        "c_l": {
+          "rot": 270,
+          "x": 10.6,
+          "y": 6.76
+        }
+      }
+    },
+    "routed": "1987606d",
+    "rules": {
+      "clearance": 0.2,
+      "edgeClearance": 0.5,
+      "powerTrack": 0.5,
+      "track": 0.25,
+      "viaDrill": 0.3,
+      "viaPad": 0.6
+    }
+  },
+  "components": {
+    "c_2": {
+      "id": "c_2",
+      "noConnect": [],
+      "params": {},
+      "part": "generic:CONN_1x2",
+      "pins": {
+        "1": "n_d",
+        "2": "n_e"
+      },
+      "refdes": "J1",
+      "sheet": "s_1"
+    },
+    "c_3": {
+      "id": "c_3",
+      "noConnect": [
+        "3"
+      ],
+      "params": {},
+      "part": "ti:TPS54331DR",
+      "pins": {
+        "1": "n_m",
+        "2": "n_d",
+        "4": "n_i",
+        "5": "n_h",
+        "6": "n_j",
+        "7": "n_e",
+        "8": "n_f"
+      },
+      "refdes": "U1",
+      "sheet": "s_1"
+    },
+    "c_4": {
+      "id": "c_4",
+      "noConnect": [],
+      "params": {
+        "capacitance": "10uF",
+        "package": "1206",
+        "voltage": "25V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_d",
+        "2": "n_e"
+      },
+      "refdes": "C1",
+      "sheet": "s_1"
+    },
+    "c_5": {
+      "id": "c_5",
+      "noConnect": [],
+      "params": {
+        "capacitance": "47uF",
+        "package": "1210",
+        "voltage": "10V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_g",
+        "2": "n_e"
+      },
+      "refdes": "C2",
+      "sheet": "s_1"
+    },
+    "c_6": {
+      "id": "c_6",
+      "noConnect": [],
+      "params": {
+        "capacitance": "10nF",
+        "voltage": "16V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_i",
+        "2": "n_e"
+      },
+      "refdes": "C3",
+      "sheet": "s_1"
+    },
+    "c_7": {
+      "id": "c_7",
+      "noConnect": [],
+      "params": {
+        "current": "3.2A",
+        "inductance": "10uH",
+        "package": "IND-4x4"
+      },
+      "part": "generic:L",
+      "pins": {
+        "1": "n_f",
+        "2": "n_g"
+      },
+      "refdes": "L1",
+      "sheet": "s_1"
+    },
+    "c_8": {
+      "id": "c_8",
+      "noConnect": [],
+      "params": {
+        "current": "3A",
+        "mpn": "B340A",
+        "package": "SOD-123",
+        "vr": "40V"
+      },
+      "part": "generic:D",
+      "pins": {
+        "1": "n_f",
+        "2": "n_e"
+      },
+      "refdes": "D1",
+      "sheet": "s_1"
+    },
+    "c_9": {
+      "id": "c_9",
+      "noConnect": [],
+      "params": {
+        "resistance": "31.6k"
+      },
+      "part": "generic:R",
+      "pins": {
+        "1": "n_g",
+        "2": "n_h"
+      },
+      "refdes": "R1",
+      "sheet": "s_1"
+    },
+    "c_a": {
+      "id": "c_a",
+      "noConnect": [],
+      "params": {
+        "resistance": "10.2k"
+      },
+      "part": "generic:R",
+      "pins": {
+        "1": "n_h",
+        "2": "n_e"
+      },
+      "refdes": "R2",
+      "sheet": "s_1"
+    },
+    "c_b": {
+      "id": "c_b",
+      "noConnect": [],
+      "params": {
+        "resistance": "8.2k"
+      },
+      "part": "generic:R",
+      "pins": {
+        "1": "n_j",
+        "2": "n_k"
+      },
+      "refdes": "R3",
+      "sheet": "s_1"
+    },
+    "c_c": {
+      "id": "c_c",
+      "noConnect": [],
+      "params": {
+        "capacitance": "6.8nF",
+        "voltage": "16V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_k",
+        "2": "n_e"
+      },
+      "refdes": "C5",
+      "sheet": "s_1"
+    },
+    "c_l": {
+      "id": "c_l",
+      "noConnect": [],
+      "params": {
+        "capacitance": "100nF",
+        "package": "0402",
+        "voltage": "25V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_m",
+        "2": "n_f"
+      },
+      "refdes": "C4",
+      "sheet": "s_1"
+    }
+  },
+  "format": 2,
+  "ledger": {},
+  "name": "untitled",
+  "nets": {
+    "n_d": {
+      "attrs": {
+        "external": true,
+        "voltage": 12
+      },
+      "id": "n_d",
+      "name": "+12V"
+    },
+    "n_e": {
+      "attrs": {},
+      "id": "n_e",
+      "name": "GND"
+    },
+    "n_f": {
+      "attrs": {},
+      "id": "n_f",
+      "name": "SW"
+    },
+    "n_g": {
+      "attrs": {
+        "maxCurrent": 2,
+        "voltage": 3.3
+      },
+      "id": "n_g",
+      "name": "+3V3"
+    },
+    "n_h": {
+      "attrs": {},
+      "id": "n_h",
+      "name": "FB"
+    },
+    "n_i": {
+      "attrs": {},
+      "id": "n_i",
+      "name": "SS"
+    },
+    "n_j": {
+      "attrs": {},
+      "id": "n_j",
+      "name": "COMP"
+    },
+    "n_k": {
+      "attrs": {},
+      "id": "n_k",
+      "name": "N$1"
+    },
+    "n_m": {
+      "attrs": {},
+      "id": "n_m",
+      "name": "BOOT"
+    }
+  },
+  "parts": {
+    "generic:C": {
+      "category": "capacitor",
+      "description": "Capacitor, non-polarized (ceramic)",
+      "id": "generic:C",
+      "notes": [
+        "Ceramic X5R/X7R lose capacitance with DC bias; rate voltage ≥ 1.5× (better 2×) the net voltage."
+      ],
+      "params": {
+        "capacitance": {
+          "required": true,
+          "unit": "F"
+        },
+        "dielectric": {
+          "description": "C0G, X5R, X7R"
+        },
+        "package": {},
+        "voltage": {
+          "description": "Rated voltage",
+          "unit": "V"
+        }
+      },
+      "pins": [
+        {
+          "name": "1",
+          "number": "1",
+          "type": "passive"
+        },
+        {
+          "name": "2",
+          "number": "2",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "C",
+      "title": "Capacitor"
+    },
+    "generic:CONN_1x2": {
+      "category": "connector",
+      "description": "Connector, 1 row, 2 pins (header, terminal block)",
+      "id": "generic:CONN_1x2",
+      "notes": [
+        "Mark supply inputs with set_net(external: true, voltage)."
+      ],
+      "params": {
+        "mpn": {},
+        "package": {},
+        "pitch": {}
+      },
+      "pins": [
+        {
+          "name": "1",
+          "number": "1",
+          "side": "right",
+          "type": "passive"
+        },
+        {
+          "name": "2",
+          "number": "2",
+          "side": "right",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "J",
+      "title": "Connector 1×2"
+    },
+    "generic:D": {
+      "category": "diode",
+      "description": "Diode (rectifier, Schottky, TVS). Pin 1 = cathode K, pin 2 = anode A",
+      "id": "generic:D",
+      "notes": [
+        "Four diodes wired as a full bridge are drawn automatically as the classic 45° diamond (AC left/right, + top, − bottom). Just connect them; constrain arrangement \"inline\" to draw them flat."
+      ],
+      "params": {
+        "current": {
+          "unit": "A"
+        },
+        "mpn": {
+          "description": "e.g. B340A, 1N4148W, SMBJ5.0A"
+        },
+        "package": {},
+        "vr": {
+          "description": "Reverse voltage rating",
+          "unit": "V"
+        }
+      },
+      "pins": [
+        {
+          "name": "K",
+          "number": "1",
+          "type": "passive"
+        },
+        {
+          "name": "A",
+          "number": "2",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "D",
+      "title": "Diode"
+    },
+    "generic:L": {
+      "category": "inductor",
+      "description": "Inductor",
+      "id": "generic:L",
+      "params": {
+        "current": {
+          "description": "Saturation current",
+          "unit": "A"
+        },
+        "inductance": {
+          "required": true,
+          "unit": "H"
+        },
+        "mpn": {},
+        "package": {}
+      },
+      "pins": [
+        {
+          "name": "1",
+          "number": "1",
+          "type": "passive"
+        },
+        {
+          "name": "2",
+          "number": "2",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "L",
+      "title": "Inductor"
+    },
+    "generic:R": {
+      "category": "resistor",
+      "description": "Resistor",
+      "id": "generic:R",
+      "params": {
+        "package": {
+          "description": "e.g. 0402, 0603, 0805"
+        },
+        "power": {
+          "unit": "W"
+        },
+        "resistance": {
+          "required": true,
+          "unit": "Ω"
+        },
+        "tolerance": {
+          "description": "e.g. 1%"
+        }
+      },
+      "pins": [
+        {
+          "name": "1",
+          "number": "1",
+          "type": "passive"
+        },
+        {
+          "name": "2",
+          "number": "2",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "R",
+      "title": "Resistor"
+    },
+    "ti:TPS54331DR": {
+      "category": "ic",
+      "datasheet": "https://www.ti.com/lit/ds/symlink/tps54331.pdf",
+      "description": "Buck converter, 3.5–28 V in, 3 A, 570 kHz, SOIC-8, Vref 0.8 V",
+      "id": "ti:TPS54331DR",
+      "manufacturer": "Texas Instruments",
+      "mpn": "TPS54331DR",
+      "notes": [
+        "PH is the switch node: connect to the inductor and to the catch diode cathode (asynchronous converter).",
+        "Vout = 0.8 V × (1 + Rtop/Rbottom); use calc divider with vref 0.8.",
+        "COMP needs a type-II compensation network (R + C in series to GND, optional small C to GND).",
+        "PH is a switching node, not a power output; it counts as a driver for ERC."
+      ],
+      "package": "SOIC-8",
+      "params": {},
+      "pins": [
+        {
+          "description": "0.1 µF bootstrap cap to PH",
+          "name": "BOOT",
+          "number": "1",
+          "side": "right",
+          "type": "passive"
+        },
+        {
+          "maxVoltage": 28,
+          "name": "VIN",
+          "number": "2",
+          "side": "left",
+          "type": "pwr_in"
+        },
+        {
+          "description": "Float to enable (internal pull-up); UVLO divider optional",
+          "maxVoltage": 6,
+          "name": "EN",
+          "number": "3",
+          "side": "left",
+          "type": "in"
+        },
+        {
+          "description": "Soft-start capacitor to GND",
+          "name": "SS",
+          "number": "4",
+          "side": "left",
+          "type": "passive"
+        },
+        {
+          "description": "Feedback, Vref = 0.8 V",
+          "name": "VSNS",
+          "number": "5",
+          "side": "right",
+          "type": "in"
+        },
+        {
+          "description": "Compensation network to GND",
+          "name": "COMP",
+          "number": "6",
+          "side": "right",
+          "type": "passive"
+        },
+        {
+          "name": "GND",
+          "number": "7",
+          "side": "bottom",
+          "type": "pwr_in"
+        },
+        {
+          "description": "Switch node",
+          "name": "PH",
+          "number": "8",
+          "side": "right",
+          "type": "pwr_out"
+        }
+      ],
+      "provenance": {
+        "note": "M0 seed, verify against datasheet",
+        "source": "builtin"
+      },
+      "refPrefix": "U",
+      "requirements": [
+        {
+          "kind": "cap_between",
+          "pins": [
+            "BOOT",
+            "PH"
+          ],
+          "src": {
+            "note": "datasheet: BOOT pin description",
+            "source": "builtin"
+          },
+          "value": "100nF"
+        },
+        {
+          "kind": "decouple",
+          "min": "4.7uF",
+          "pin": "VIN",
+          "src": {
+            "note": "datasheet: input capacitor section",
+            "source": "builtin"
+          }
+        }
+      ]
+    }
+  },
+  "seq": 23,
+  "sheets": {
+    "s_1": {
+      "id": "s_1",
+      "name": "Main",
+      "order": 0
+    }
+  },
+  "waivers": {},
+  "solved": {"design":"0749b603b9146cd4","solver":1,"build":"test","at":"1970-01-01T00:00:00.000Z","board":{"outline":{"w":24,"h":22},"layers":["F.Cu","B.Cu"],"rules":{"clearance":0.2,"track":0.25,"powerTrack":0.5,"viaDrill":0.3,"viaPad":0.6,"edgeClearance":0.5},"parts":[{"componentId":"c_4","refdes":"C1","value":"10uF 25V","part":"generic:C","pkg":"1206","pkgInfo":{"name":"1206","family":"CHIP","pins":2,"body_mm":[3.2,1.6],"lead_length_mm":0.5,"height_mm":0.65},"x":7.5,"y":10.3,"rot":180,"side":"top","pads":[{"number":"1","x":9,"y":10.3,"w":0.9,"h":1.8,"shape":"rect","netId":"n_d","layers":["F.Cu"]},{"number":"2","x":6,"y":10.3,"w":0.9,"h":1.8,"shape":"rect","netId":"n_e","layers":["F.Cu"]}],"body":{"x":5.9,"y":9.5,"w":3.2,"h":1.6},"courtyard":{"x":5.3,"y":9.15,"w":4.4,"h":2.3},"pin1":{"x":9.7,"y":10.3},"polarized":false,"locked":false,"follows":"U1"},{"componentId":"c_5","refdes":"C2","value":"47uF 10V","part":"generic:C","pkg":"1210","pkgInfo":{"name":"1210","family":"CHIP","pins":2,"body_mm":[3.2,2.5],"lead_length_mm":0.5,"height_mm":1},"x":20.1,"y":14.4,"rot":90,"side":"top","pads":[{"number":"1","x":20.1,"y":12.9,"w":2.7,"h":0.9,"shape":"rect","netId":"n_g","layers":["F.Cu"]},{"number":"2","x":20.1,"y":15.9,"w":2.7,"h":0.9,"shape":"rect","netId":"n_e","layers":["F.Cu"]}],"body":{"x":18.85,"y":12.8,"w":2.5,"h":3.2},"courtyard":{"x":18.5,"y":12.2,"w":3.2,"h":4.4},"pin1":{"x":20.1,"y":12.2},"polarized":false,"locked":false},{"componentId":"c_6","refdes":"C3","value":"10nF 16V","part":"generic:C","pkg":"0603","pkgInfo":{"name":"0603","family":"CHIP","pins":2,"body_mm":[1.6,0.8],"lead_length_mm":0.35,"height_mm":0.45},"x":10.6,"y":15.514,"rot":90,"side":"top","pads":[{"number":"1","x":10.6,"y":14.8,"w":0.95,"h":0.628,"shape":"rect","netId":"n_i","layers":["F.Cu"]},{"number":"2","x":10.6,"y":16.228,"w":0.95,"h":0.628,"shape":"rect","netId":"n_e","layers":["F.Cu"]}],"body":{"x":10.2,"y":14.714,"w":0.8,"h":1.6},"courtyard":{"x":9.875,"y":14.236,"w":1.45,"h":2.556},"pin1":{"x":10.6,"y":14.236},"polarized":false,"locked":false,"follows":"U1"},{"componentId":"c_l","refdes":"C4","value":"100nF 25V","part":"generic:C","pkg":"0402","pkgInfo":{"name":"0402","family":"CHIP","pins":2,"body_mm":[1,0.5],"lead_length_mm":0.25,"height_mm":0.35},"x":10.6,"y":6.76,"rot":270,"side":"top","pads":[{"number":"1","x":10.6,"y":7.2,"w":0.65,"h":0.48,"shape":"rect","netId":"n_m","layers":["F.Cu"]},{"number":"2","x":10.6,"y":6.32,"w":0.65,"h":0.48,"shape":"rect","netId":"n_f","layers":["F.Cu"]}],"body":{"x":10.35,"y":6.26,"w":0.5,"h":1},"courtyard":{"x":10.025,"y":5.83,"w":1.15,"h":1.86},"pin1":{"x":10.6,"y":7.69},"polarized":false,"locked":false,"follows":"U1"},{"componentId":"c_c","refdes":"C5","value":"6.8nF 16V","part":"generic:C","pkg":"0603","pkgInfo":{"name":"0603","family":"CHIP","pins":2,"body_mm":[1.6,0.8],"lead_length_mm":0.35,"height_mm":0.45},"x":12.786,"y":18.9,"rot":180,"side":"top","pads":[{"number":"1","x":13.5,"y":18.9,"w":0.628,"h":0.95,"shape":"rect","netId":"n_k","layers":["F.Cu"]},{"number":"2","x":12.072,"y":18.9,"w":0.628,"h":0.95,"shape":"rect","netId":"n_e","layers":["F.Cu"]}],"body":{"x":11.986,"y":18.5,"w":1.6,"h":0.8},"courtyard":{"x":11.508,"y":18.175,"w":2.556,"h":1.45},"pin1":{"x":14.064,"y":18.9},"polarized":false,"locked":false},{"componentId":"c_8","refdes":"D1","value":"B340A","part":"generic:D","mpn":"B340A","pkg":"SOD-123","pkgInfo":{"name":"SOD-123","family":"SOD","pins":2,"body_mm":[2.7,1.6],"span_mm":[3.7,1.6],"lead_length_mm":0.55,"lead_width_mm":0.6,"height_mm":1.1},"x":14,"y":5.275,"rot":270,"side":"top","pads":[{"number":"1","x":14,"y":6.9,"w":0.95,"h":1,"shape":"rect","netId":"n_f","layers":["F.Cu"]},{"number":"2","x":14,"y":3.65,"w":0.95,"h":1,"shape":"rect","netId":"n_e","layers":["F.Cu"]}],"body":{"x":13.2,"y":3.925,"w":1.6,"h":2.7},"courtyard":{"x":12.95,"y":2.9,"w":2.1,"h":4.75},"pin1":{"x":14,"y":7.65},"polarized":true,"locked":false,"follows":"U1"},{"componentId":"c_2","refdes":"J1","value":"CONN_1x2","part":"generic:CONN_1x2","pkg":"HDR-1x2","pkgInfo":{"name":"HDR-1x2","family":"HEADER","pins":2,"pitch_mm":2.54,"height_mm":8.5},"x":3.5,"y":8.27,"rot":0,"side":"top","pads":[{"number":"1","x":3.5,"y":7,"w":1.7,"h":1.7,"shape":"rect","drill":1,"netId":"n_d","layers":["F.Cu","B.Cu"]},{"number":"2","x":3.5,"y":9.54,"w":1.7,"h":1.7,"shape":"round","drill":1,"netId":"n_e","layers":["F.Cu","B.Cu"]}],"body":{"x":2.23,"y":5.73,"w":2.54,"h":5.08},"courtyard":{"x":2,"y":5.48,"w":3,"h":5.58},"pin1":{"x":1.9,"y":7},"polarized":true,"locked":false,"follows":"U1"},{"componentId":"c_7","refdes":"L1","value":"10uH","part":"generic:L","pkg":"IND-4x4","pkgInfo":{"name":"IND-4x4","family":"CHIP","pins":2,"body_mm":[4,4],"lead_length_mm":1.2,"height_mm":2},"x":17.8,"y":5.15,"rot":270,"side":"top","pads":[{"number":"1","x":17.8,"y":6.7,"w":4.2,"h":1.6,"shape":"rect","netId":"n_f","layers":["F.Cu"]},{"number":"2","x":17.8,"y":3.6,"w":4.2,"h":1.6,"shape":"rect","netId":"n_g","layers":["F.Cu"]}],"body":{"x":15.8,"y":3.15,"w":4,"h":4},"courtyard":{"x":15.45,"y":2.55,"w":4.7,"h":5.2},"pin1":{"x":17.8,"y":7.75},"polarized":false,"locked":false,"follows":"U1"},{"componentId":"c_9","refdes":"R1","value":"31.6k","part":"generic:R","pkg":"0603","pkgInfo":{"name":"0603","family":"CHIP","pins":2,"body_mm":[1.6,0.8],"lead_length_mm":0.35,"height_mm":0.45},"x":15,"y":15.486,"rot":270,"side":"top","pads":[{"number":"1","x":15,"y":16.2,"w":0.95,"h":0.628,"shape":"rect","netId":"n_g","layers":["F.Cu"]},{"number":"2","x":15,"y":14.772,"w":0.95,"h":0.628,"shape":"rect","netId":"n_h","layers":["F.Cu"]}],"body":{"x":14.6,"y":14.686,"w":0.8,"h":1.6},"courtyard":{"x":14.275,"y":14.208,"w":1.45,"h":2.556},"pin1":{"x":15,"y":16.764},"polarized":false,"locked":false,"follows":"U1"},{"componentId":"c_a","refdes":"R2","value":"10.2k","part":"generic:R","pkg":"0603","pkgInfo":{"name":"0603","family":"CHIP","pins":2,"body_mm":[1.6,0.8],"lead_length_mm":0.35,"height_mm":0.45},"x":16.8,"y":15.486,"rot":90,"side":"top","pads":[{"number":"1","x":16.8,"y":14.772,"w":0.95,"h":0.628,"shape":"rect","netId":"n_h","layers":["F.Cu"]},{"number":"2","x":16.8,"y":16.2,"w":0.95,"h":0.628,"shape":"rect","netId":"n_e","layers":["F.Cu"]}],"body":{"x":16.4,"y":14.686,"w":0.8,"h":1.6},"courtyard":{"x":16.075,"y":14.208,"w":1.45,"h":2.556},"pin1":{"x":16.8,"y":14.208},"polarized":false,"locked":false,"follows":"U1"},{"componentId":"c_b","refdes":"R3","value":"8.2k","part":"generic:R","pkg":"0603","pkgInfo":{"name":"0603","family":"CHIP","pins":2,"body_mm":[1.6,0.8],"lead_length_mm":0.35,"height_mm":0.45},"x":19.214,"y":11.1,"rot":0,"side":"top","pads":[{"number":"1","x":18.5,"y":11.1,"w":0.628,"h":0.95,"shape":"rect","netId":"n_j","layers":["F.Cu"]},{"number":"2","x":19.928,"y":11.1,"w":0.628,"h":0.95,"shape":"rect","netId":"n_k","layers":["F.Cu"]}],"body":{"x":18.414,"y":10.7,"w":1.6,"h":0.8},"courtyard":{"x":17.936,"y":10.375,"w":2.556,"h":1.45},"pin1":{"x":17.936,"y":11.1},"polarized":false,"locked":false,"follows":"U1"},{"componentId":"c_3","refdes":"U1","value":"TPS54331DR","part":"ti:TPS54331DR","mpn":"TPS54331DR","manufacturer":"Texas Instruments","pkg":"SOIC-8","pkgInfo":{"name":"SOIC-8","family":"SOIC","pins":8,"pitch_mm":1.27,"body_mm":[3.9,4.9],"span_mm":[6,4.9],"lead_length_mm":0.7,"lead_width_mm":0.42,"height_mm":1.5},"x":13.85,"y":11.005,"rot":0,"side":"top","pads":[{"number":"1","x":11.2,"y":9.1,"w":1.4,"h":0.52,"shape":"rect","netId":"n_m","layers":["F.Cu"]},{"number":"2","x":11.2,"y":10.37,"w":1.4,"h":0.52,"shape":"rect","netId":"n_d","layers":["F.Cu"]},{"number":"3","x":11.2,"y":11.64,"w":1.4,"h":0.52,"shape":"rect","layers":["F.Cu"]},{"number":"4","x":11.2,"y":12.91,"w":1.4,"h":0.52,"shape":"rect","netId":"n_i","layers":["F.Cu"]},{"number":"5","x":16.5,"y":12.91,"w":1.4,"h":0.52,"shape":"rect","netId":"n_h","layers":["F.Cu"]},{"number":"6","x":16.5,"y":11.64,"w":1.4,"h":0.52,"shape":"rect","netId":"n_j","layers":["F.Cu"]},{"number":"7","x":16.5,"y":10.37,"w":1.4,"h":0.52,"shape":"rect","netId":"n_e","layers":["F.Cu"]},{"number":"8","x":16.5,"y":9.1,"w":1.4,"h":0.52,"shape":"rect","netId":"n_f","layers":["F.Cu"]}],"body":{"x":11.9,"y":8.555,"w":3.9,"h":4.9},"courtyard":{"x":10,"y":8.055,"w":7.7,"h":5.9},"pin1":{"x":10.1,"y":9.1},"polarized":true,"locked":false}],"tracks":[{"netId":"n_h","layer":"F.Cu","width":0.25,"pts":[16.8,14.772,16.8,14.8,15,14.8,15,14.772]},{"netId":"n_h","layer":"F.Cu","width":0.25,"pts":[16.5,12.91,16.5,12.9,16.8,13.2,16.8,14.772]},{"netId":"n_i","layer":"F.Cu","width":0.25,"pts":[11.2,12.91,10.6,13.51,10.6,14.8]},{"netId":"n_m","layer":"F.Cu","width":0.25,"pts":[11.2,9.1,10.6,8.5,10.6,7.2]},{"netId":"n_j","layer":"F.Cu","width":0.25,"pts":[16.5,11.64,17.96,11.64,18.5,11.1]},{"netId":"n_d","layer":"F.Cu","width":0.5,"pts":[11.2,10.37,9,10.37,9,10.3]},{"netId":"n_e","layer":"F.Cu","width":0.5,"pts":[3.5,9.54,3.5,9.5,4.3,10.3,6,10.3]},{"netId":"n_f","layer":"F.Cu","width":0.25,"pts":[17.8,6.7,16.5,8,16.5,9.1]},{"netId":"n_e","layer":"F.Cu","width":0.5,"pts":[12.072,18.9,10.6,17.428,10.6,16.228]},{"netId":"n_e","layer":"F.Cu","width":0.5,"pts":[20.1,15.9,17.9,15.9,17.6,16.2,16.8,16.2]},{"netId":"n_f","layer":"F.Cu","width":0.25,"pts":[16.5,8,15.1,8,14,6.9]},{"netId":"n_f","layer":"F.Cu","width":0.25,"pts":[14,6.9,13.4,6.3,10.6,6.3,10.6,6.32]},{"netId":"n_e","layer":"F.Cu","width":0.5,"pts":[16.8,16.2,15.1,17.9,11.9,17.9,11.486,18.314]},{"netId":"n_e","layer":"F.Cu","width":0.5,"pts":[16.5,10.37,16.5,10.4,15.6,10.4,11.6,14.4,11.6,15.228,10.6,16.228]},{"netId":"n_g","layer":"F.Cu","width":0.5,"pts":[15,16.2,13.8,16.2]},{"netId":"n_g","layer":"B.Cu","width":0.5,"pts":[13.8,16.2,16.4,13.6,17.5,13.6]},{"netId":"n_g","layer":"F.Cu","width":0.5,"pts":[17.5,13.6,19.4,13.6,20.1,12.9]},{"netId":"n_d","layer":"F.Cu","width":0.5,"pts":[3.5,7,5.7,7,9,10.3]},{"netId":"n_e","layer":"F.Cu","width":0.5,"pts":[14,3.65,12.475,5.175,12.5,5.2]},{"netId":"n_e","layer":"B.Cu","width":0.5,"pts":[12.5,5.2,12.5,7.5]},{"netId":"n_e","layer":"F.Cu","width":0.5,"pts":[12.5,7.5,15.5,10.5]},{"netId":"n_e","layer":"F.Cu","width":0.5,"pts":[10.6,16.228,9.972,15.6,9.8,15.6,6,11.8,6,10.3]},{"netId":"n_g","layer":"F.Cu","width":0.5,"pts":[17.8,3.6,19.6,5.4,20.2,5.4,20.8,6,20.8,12.2,20.1,12.9]},{"netId":"n_k","layer":"F.Cu","width":0.25,"pts":[19.928,11.1,18.928,12.1,18.3,12.1,18,12.4]},{"netId":"n_k","layer":"B.Cu","width":0.25,"pts":[18,12.4,18.2,12.6,18.2,15,14.5,18.7]},{"netId":"n_k","layer":"F.Cu","width":0.25,"pts":[14.5,18.7,14.3,18.9,13.5,18.9]}],"vias":[{"netId":"n_g","x":13.8,"y":16.2,"drill":0.3,"pad":0.6},{"netId":"n_g","x":17.5,"y":13.6,"drill":0.3,"pad":0.6},{"netId":"n_e","x":12.5,"y":5.2,"drill":0.3,"pad":0.6},{"netId":"n_e","x":12.5,"y":7.5,"drill":0.3,"pad":0.6},{"netId":"n_k","x":18,"y":12.4,"drill":0.3,"pad":0.6},{"netId":"n_k","x":14.5,"y":18.7,"drill":0.3,"pad":0.6}],"zones":[{"netId":"n_e","layer":"B.Cu","rects":[0.55,0.55,22.9,4.1,0.55,4.65,11.6,0.1,12.85,4.65,10.6,0.1,0.55,4.75,11.5,0.1,12.95,4.75,10.5,0.1,12.35,4.65,0.3,0.3,0.55,4.85,11.4,0.2,12.25,4.95,0.5,0.1,13.05,4.85,10.4,0.2,0.55,5.05,22.9,0.3,12.25,5.35,0.5,0.1,0.55,5.35,11.4,0.2,13.05,5.35,10.4,0.2,0.55,5.55,11.5,0.1,12.95,5.55,10.5,0.1,0.55,5.65,11.6,0.1,12.35,5.45,0.3,0.3,12.85,5.65,10.6,0.1,0.55,5.75,22.9,0.1,0.55,5.85,2,0.1,4.45,5.85,19,0.1,0.55,5.95,1.9,0.1,4.55,5.95,18.9,0.1,4.65,6.05,18.8,0.9,4.65,6.95,7.5,0.1,12.85,6.95,10.6,0.1,4.65,7.05,7.4,0.1,12.95,7.05,10.5,0.1,12.35,6.95,0.3,0.3,4.65,7.15,7.3,0.2,12.25,7.25,0.5,0.1,13.05,7.15,10.4,0.2,4.65,7.35,18.8,0.3,12.25,7.65,0.5,0.1,4.65,7.65,7.3,0.2,13.05,7.65,10.4,0.2,0.55,6.05,1.8,1.9,4.65,7.85,7.4,0.1,12.95,7.85,10.5,0.1,0.55,7.95,1.9,0.1,4.55,7.95,7.6,0.1,12.35,7.75,0.3,0.3,12.85,7.95,10.6,0.1,0.55,8.05,2,0.1,4.45,8.05,19,0.1,0.55,8.15,22.9,0.2,0.55,8.35,2.7,0.1,3.75,8.35,19.7,0.1,0.55,8.45,2.4,0.1,4.05,8.45,19.4,0.1,0.55,8.55,2.2,0.1,4.25,8.55,19.2,0.1,0.55,8.65,2.1,0.1,3.35,8.35,0.3,0.4,4.35,8.65,19.1,0.1,3.05,8.75,0.9,0.1,0.55,8.75,2,0.2,2.95,8.85,1.1,0.1,4.45,8.75,19,0.2,2.85,8.95,1.3,0.1,0.55,8.95,1.9,0.2,4.55,8.95,18.9,0.2,2.75,9.05,1.5,0.2,0.55,9.15,1.8,0.2,2.65,9.25,1.7,0.1,4.65,9.15,18.8,0.2,0.55,9.35,22.9,0.3,2.65,9.65,1.7,0.2,0.55,9.65,1.8,0.3,4.65,9.65,18.8,0.3,2.75,9.85,1.5,0.2,0.55,9.95,1.9,0.2,2.85,10.05,1.3,0.1,4.55,9.95,18.9,0.2,0.55,10.15,2,0.1,2.95,10.15,1.1,0.1,4.45,10.15,19,0.1,3.15,10.25,0.7,0.1,0.55,10.25,2.1,0.2,4.35,10.25,19.1,0.2,0.55,10.45,2.3,0.1,4.15,10.45,19.3,0.1,0.55,10.55,2.4,0.1,3.35,10.35,0.3,0.3,4.05,10.55,19.4,0.1,0.55,10.65,22.9,1.2,0.55,11.85,17.2,0.1,18.25,11.85,5.2,0.1,0.55,11.95,17,0.2,18.45,11.95,5,0.2,0.55,12.15,16.9,0.5,0.55,12.65,17,0.2,0.55,12.85,17.2,0.2,0.55,13.05,15.7,0.1,0.55,13.15,15.5,0.1,0.55,13.25,15.4,0.1,0.55,13.35,15.3,0.1,0.55,13.45,15.2,0.1,0.55,13.55,15.1,0.1,0.55,13.65,15,0.1,0.55,13.75,14.9,0.1,0.55,13.85,14.8,0.1,0.55,13.95,14.7,0.1,0.55,14.05,14.6,0.1,0.55,14.15,14.5,0.1,16.55,14.15,1.2,0.1,0.55,14.25,14.4,0.1,16.45,14.25,1.3,0.1,0.55,14.35,14.3,0.1,16.35,14.35,1.4,0.1,0.55,14.45,14.2,0.1,16.25,14.45,1.5,0.1,0.55,14.55,14.1,0.1,16.15,14.55,1.6,0.1,0.55,14.65,14,0.1,16.05,14.65,1.7,0.1,0.55,14.75,13.9,0.1,15.95,14.75,1.8,0.1,0.55,14.85,13.8,0.1,15.85,14.85,1.9,0.1,0.55,14.95,13.7,0.1,15.75,14.95,1.9,0.1,0.55,15.05,13.6,0.1,15.65,15.05,1.9,0.1,0.55,15.15,13.5,0.1,15.55,15.15,1.9,0.1,18.55,12.15,4.9,3.1,0.55,15.25,13.4,0.1,15.45,15.25,1.9,0.1,18.45,15.25,5,0.1,0.55,15.35,13.3,0.1,15.35,15.35,1.9,0.1,18.35,15.35,5.1,0.1,0.55,15.45,13.2,0.1,15.25,15.45,1.9,0.1,18.25,15.45,5.2,0.1,0.55,15.55,13.1,0.1,15.15,15.55,1.9,0.1,18.15,15.55,5.3,0.1,0.55,15.65,13,0.1,15.05,15.65,1.9,0.1,18.05,15.65,5.4,0.1,14.95,15.75,1.9,0.1,17.95,15.75,5.5,0.1,0.55,15.75,12.8,0.2,14.85,15.85,1.9,0.1,17.85,15.85,5.6,0.1,14.75,15.95,1.9,0.1,17.75,15.95,5.7,0.1,14.65,16.05,1.9,0.1,17.65,16.05,5.8,0.1,14.55,16.15,1.9,0.1,17.55,16.15,5.9,0.1,14.45,16.25,1.9,0.1,17.45,16.25,6,0.1,0.55,15.95,12.7,0.5,14.35,16.35,1.9,0.1,17.35,16.35,6.1,0.1,14.25,16.45,1.9,0.1,17.25,16.45,6.2,0.1,0.55,16.45,12.8,0.2,14.25,16.55,1.8,0.1,17.15,16.55,6.3,0.1,0.55,16.65,13,0.1,14.05,16.65,1.9,0.1,17.05,16.65,6.4,0.1,0.55,16.75,15.3,0.1,16.95,16.75,6.5,0.1,0.55,16.85,15.2,0.1,16.85,16.85,6.6,0.1,0.55,16.95,15.1,0.1,16.75,16.95,6.7,0.1,0.55,17.05,15,0.1,16.65,17.05,6.8,0.1,0.55,17.15,14.9,0.1,16.55,17.15,6.9,0.1,0.55,17.25,14.8,0.1,16.45,17.25,7,0.1,0.55,17.35,14.7,0.1,16.35,17.35,7.1,0.1,0.55,17.45,14.6,0.1,16.25,17.45,7.2,0.1,0.55,17.55,14.5,0.1,16.15,17.55,7.3,0.1,0.55,17.65,14.4,0.1,16.05,17.65,7.4,0.1,0.55,17.75,14.3,0.1,15.95,17.75,7.5,0.1,0.55,17.85,14.2,0.1,15.85,17.85,7.6,0.1,0.55,17.95,14.1,0.1,15.75,17.95,7.7,0.1,0.55,18.05,14,0.1,15.65,18.05,7.8,0.1,0.55,18.15,13.7,0.1,15.55,18.15,7.9,0.1,15.45,18.25,8,0.1,0.55,18.25,13.5,0.2,15.35,18.35,8.1,0.1,15.25,18.45,8.2,0.1,15.15,18.55,8.3,0.1,0.55,18.45,13.4,0.5,15.05,18.65,8.4,0.3,0.55,18.95,13.5,0.2,14.95,18.95,8.5,0.2,0.55,19.15,13.7,0.1,14.75,19.15,8.7,0.1,0.55,19.25,22.9,2.2],"shape":{"outline":[0.5,0.5,23.5,21.5],"cuts":[{"k":"rect","x":2.45,"y":5.95,"w":2.1,"h":2.1},{"k":"stroke","pts":[13.8,16.2,16.4,13.6,17.5,13.6],"w":0.9},{"k":"stroke","pts":[18,12.4,18.2,12.6,18.2,15,14.5,18.7],"w":0.65},{"k":"circle","x":13.8,"y":16.2,"d":1},{"k":"circle","x":17.5,"y":13.6,"d":1},{"k":"circle","x":18,"y":12.4,"d":1},{"k":"circle","x":14.5,"y":18.7,"d":1},{"k":"circle","x":12.5,"y":5.2,"d":1.1},{"k":"circle","x":12.5,"y":7.5,"d":1.1},{"k":"circle","x":3.5,"y":9.54,"d":2.2}],"adds":[{"pts":[12.5,5.2,13.15,5.2],"w":0.3},{"pts":[12.5,5.2,11.85,5.2],"w":0.3},{"pts":[12.5,5.2,12.5,5.85],"w":0.3},{"pts":[12.5,5.2,12.5,4.55],"w":0.3},{"pts":[12.5,7.5,13.15,7.5],"w":0.3},{"pts":[12.5,7.5,11.85,7.5],"w":0.3},{"pts":[12.5,7.5,12.5,8.15],"w":0.3},{"pts":[12.5,7.5,12.5,6.85],"w":0.3},{"pts":[3.5,9.54,4.7,9.54],"w":0.3},{"pts":[3.5,9.54,2.3,9.54],"w":0.3},{"pts":[3.5,9.54,3.5,10.74],"w":0.3},{"pts":[3.5,9.54,3.5,8.34],"w":0.3}]}}],"planes":[{"netId":"n_e","layer":"B.Cu","auto":true}],"ratsnest":[],"diagnostics":[],"stats":{"nets":9,"routed":9,"unrouted":0,"trackLength":101.9,"vias":6},"missing":[],"netNames":{"n_d":"+12V","n_e":"GND","n_f":"SW","n_g":"+3V3","n_h":"FB","n_i":"SS","n_j":"COMP","n_k":"N$1","n_m":"BOOT"},"routing":"done","placementKey":"1987606d","sizeBy":"proposal","cornerRadius":0,"shape":null,"cutouts":[],"graphics":[],"routeKey":"e3f5409f9fdfc61e"}}
+}

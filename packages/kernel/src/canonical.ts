@@ -8,7 +8,7 @@ export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortKeys(value), null, 2) + '\n';
 }
 
-function sortKeys(v: unknown): unknown {
+export function sortKeys(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(sortKeys);
   if (v && typeof v === 'object') {
     const out: Record<string, unknown> = {};
@@ -19,6 +19,18 @@ function sortKeys(v: unknown): unknown {
     return out;
   }
   return v;
+}
+
+/** Identifies a text by its content: two FNV-1a passes, 16 hex digits. Stored keys depend on it. */
+export function contentKey(s: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193);
+    b = Math.imul(b ^ c, 0x5bd1e995) ^ (b >>> 13);
+  }
+  return (a >>> 0).toString(16).padStart(8, '0') + (b >>> 0).toString(16).padStart(8, '0');
 }
 
 /** Bring older documents up to the current format version. */

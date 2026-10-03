@@ -12,6 +12,7 @@ geometry and checks every change.
 - **Schematic to manufacturing files**: the board is placed and routed automatically from the schematic (with a ground pour), checked by DRC, shown in 2D and 3D, and exported as Gerber, drill, BOM and pick-and-place. Steer it in words ("make the board 30 × 20 mm", "put J1 at the left edge") or drag parts to pin them.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
 - **Printable by construction**: the layout flows the schematic onto A4 pages by itself, never splitting a functional block; ⌘P prints them (or saves a PDF) for the bench.
+- **Opens the same years later**: a design carries its board as it was solved (placement, tracks, pour). Later versions of the placer and router do not touch it until you change the design.
 - **Local-first**: runs entirely in the browser. Your designs and API keys stay on your machine.
 
 ## Documents

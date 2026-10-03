@@ -38,7 +38,7 @@
   <Field label="Name">
     <input class="text" value={app.k?.summary.name ?? ''} onchange={(e) => app.renameProject((e.currentTarget as HTMLInputElement).value)} />
   </Field>
-  <Field label="File" hint="The native .twd.json format keeps the whole design, including history.">
+  <Field label="File" hint="The native .twd.json format keeps the whole design and its board as solved now, so it opens unchanged in later versions.">
     <div class="row">
       <button class="btn" onclick={exportFile}>Export .twd.json</button>
       <button class="btn" onclick={() => fileInput?.click()}>Import…</button>

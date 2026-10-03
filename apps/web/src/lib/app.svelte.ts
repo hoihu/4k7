@@ -15,9 +15,9 @@ import {
   type AgentEvent,
   type Provider,
 } from '@tracewise/agent';
-import type { KernelState } from '@tracewise/kernel';
+import { designKey, freezeBoard, readDesignFile, rekeySolved, writeDesignFile, type KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type Rect, type TokenCount } from '@tracewise/schema';
+import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type Rect, type SolvedBoard, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -30,9 +30,11 @@ import {
   loadApiKey,
   loadProject,
   loadSettings,
+  loadSolved,
   saveApiKey,
   saveProject,
   saveSettings,
+  saveSolved,
   storageHealth,
   storagePersistent,
   type Settings,
@@ -102,6 +104,17 @@ class AppState {
   /** Design revision (bumped on every refresh) and the revision the shown board was computed for. */
   private rev = 0;
   private boardRev = -1;
+  /**
+   * Boards kept as they were solved: the one the project was opened with and the latest. A
+   * design that matches one is shown from it, not solved again (a later solver would lay it
+   * out differently).
+   */
+  private opened: SolvedBoard | null = null;
+  private latest: SolvedBoard | null = null;
+  /** Key of the board in storage. */
+  private storedKey = '';
+  /** The stored board on show (null: the board was solved just now). */
+  boardFrom = $state.raw<SolvedBoard | null>(null);
 
   private kernel = createKernel();
   /** Datasheet import (Parts view). */
@@ -124,6 +137,8 @@ class AppState {
     if (saved) {
       try {
         await this.kernel.load(saved);
+        const solved = await loadSolved();
+        if (solved && solved.design === designKey(saved)) await this.adoptSolved(solved);
       } catch (e) {
         this.flash(`Could not load the saved project: ${(e as Error).message}`);
       }
@@ -180,17 +195,37 @@ class AppState {
   /** Recompute the board in the board worker: placement first (fast), then routing and DRC. */
   async refreshBoard() {
     const rev = this.rev;
-    const design = await this.kernel.draftDesign();
+    const { design, key, pending } = await this.kernel.boardInputs();
+    const kept = [this.latest, this.opened].find((s) => s?.design === key);
+    if (kept) {
+      // solved before for this very design: shown as it was
+      this.boards.settle(kept.board);
+      this.board = kept.board;
+      this.boardFrom = kept;
+      this.boardStage = 'routed';
+      this.boardBusy = false;
+      this.boardRev = rev;
+      if (!pending) this.storeSolved(kept);
+      return;
+    }
+    const routed = [this.board, this.latest?.board, this.opened?.board].filter((b): b is BoardView => !!b?.routeKey);
     this.boardBusy = true;
     this.boardStage = 'placed';
     this.boards.compute(
       design,
+      routed.filter((b, i) => routed.findIndex((x) => x.routeKey === b.routeKey) === i),
       (stage, board) => {
         this.board = board;
+        this.boardFrom = null;
         this.boardStage = stage;
         if (stage === 'routed') {
           this.boardBusy = false;
           this.boardRev = rev;
+          // a proposal's board is not kept: rejecting it brings the stored one back
+          if (!pending) {
+            this.latest = freezeBoard(key, board, __BUILD_ID__);
+            this.storeSolved(this.latest);
+          }
         }
       },
       (msg) => {
@@ -198,6 +233,21 @@ class AppState {
         this.flash(`Board layout failed: ${msg}`);
       },
     );
+  }
+
+  private storeSolved(s: SolvedBoard) {
+    if (this.storedKey === s.design) return;
+    this.storedKey = s.design;
+    void saveSolved(s);
+  }
+
+  /** A stored board that belongs to the design just loaded becomes the board on show. */
+  private async adoptSolved(solved: SolvedBoard | null) {
+    this.latest = null;
+    this.storedKey = '';
+    // loading may have migrated the design: the board stays, under the design's key as it is now
+    this.opened = solved ? rekeySolved(solved, await this.kernel.draftDesign()) : null;
+    if (this.opened) this.storeSolved(this.opened);
   }
 
   /** The routed board of the current design, for agents (computed if needed). */
@@ -586,12 +636,19 @@ class AppState {
     await this.ingest.adoptFootprints(JSON.parse(json) as Design).catch(() => {});
   }
 
+  /** The native file: the design, with its board as solved now so that it opens unchanged later. */
   async exportJson(): Promise<string> {
-    return this.kernel.exportDesign();
+    if (!(await this.kernel.hasPending())) await this.routedBoard();
+    const design = JSON.parse(await this.kernel.exportDesign()) as Design;
+    const key = designKey(design);
+    return writeDesignFile(design, [this.latest, this.opened].find((s) => s?.design === key));
   }
 
-  async importDesign(d: Design) {
-    await this.kernel.load(d);
+  /** Load a parsed native file (a design, with or without its solved board). */
+  async importDesign(file: Design) {
+    const { design, solved } = readDesignFile(file);
+    await this.kernel.load(design);
+    await this.adoptSolved(solved);
     this.agent.reset();
     this.chat = [];
     await this.persist();

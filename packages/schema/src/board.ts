@@ -502,6 +502,8 @@ export interface BoardView {
   routing: 'none' | 'stale' | 'done';
   /** Identifies this placement (parts, nets, outline, rules); the route step records it. */
   placementKey: string;
+  /** Identifies everything the copper was routed for (pads, nets, widths, rules, planes, outline); set on a routed board. */
+  routeKey?: string;
   /** The outline: proposed by the placer, or set by the user. */
   sizeBy: 'proposal' | 'user';
   /** Rounded board corners (radius, mm; 0 = square). */
@@ -512,6 +514,22 @@ export interface BoardView {
   cutouts: BoardCutout[];
   /** Silkscreen graphics, placed on this outline. */
   graphics: BoardGraphic[];
+}
+
+/**
+ * A board as it was solved, stored with the design so that it opens unchanged in a later
+ * version of the app. It is shown while the design is the one it was solved from.
+ */
+export interface SolvedBoard {
+  /** Key of the design this board was solved from (the kernel's designKey). */
+  design: string;
+  /** The solver that produced it (the kernel's SOLVER_VERSION). */
+  solver: number;
+  /** The app build that stored it. */
+  build?: string;
+  /** When it was solved (ISO 8601). */
+  at: string;
+  board: BoardView;
 }
 
 /** Compact board description for agents (design_query get_board). */
