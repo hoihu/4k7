@@ -47,6 +47,8 @@ export interface BoardViewer {
   /** Fly back to straight above the current point; resolves with that top-down view. */
   flyToTop(): Promise<TopView>;
   resize(width: number, height: number): void;
+  /** The view as it is now, as a PNG data URL on a transparent background (the design document's cover). */
+  picture(): string;
   dispose(): void;
 }
 
@@ -220,6 +222,10 @@ function viewerCore(canvas: HTMLCanvasElement) {
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
       render();
+    },
+    picture() {
+      render(); // (the drawing buffer is only kept until the frame is shown)
+      return canvas.toDataURL('image/png');
     },
     dispose() {
       stopFlight();
@@ -659,6 +665,7 @@ export function createBoardViewer(canvas: HTMLCanvasElement): BoardViewer {
     flyFromTop: core.flyFromTop,
     flyToTop: core.flyToTop,
     resize: core.resize,
+    picture: core.picture,
     dispose: core.dispose,
   };
 }
