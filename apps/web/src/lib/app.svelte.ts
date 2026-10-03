@@ -722,6 +722,7 @@ class AppState {
               break;
             case 'tokens':
               item.usage = { ...e.tokens, costUsd: tokenCost(e.tokens, this.settings.claudeModel ?? ''), exact: false };
+              if (e.tokens.model) this.lastModel = e.tokens.model;
               break;
             case 'done': {
               if (e.session) this.claudeSession = e.session;
@@ -729,6 +730,7 @@ class AppState {
                 const t = e.tokens ?? item.usage ?? { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
                 const cost = e.costUsd ?? tokenCost(t, this.settings.claudeModel ?? '');
                 item.usage = { ...t, costUsd: cost, exact: e.costUsd !== undefined };
+                if (t.model) this.lastModel = t.model;
                 this.spend += cost;
               }
               if (!e.ok && e.error) {

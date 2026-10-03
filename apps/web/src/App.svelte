@@ -88,21 +88,25 @@
           <span class="n e"><i></i>{counts.errors}</span><span class="n w"><i></i>{counts.warnings}</span>
         </button>
       {/if}
+      {#if app.k?.proposal && app.view !== 'sch'}
+        <button class="chipbtn pending" onclick={() => (app.view = 'sch')} title="A changeset is waiting for review. Click to open the schematic.">
+          <span class="pulse"></span>{app.pendingCount} pending
+        </button>
+        <button class="btn pri" disabled={app.running || app.acceptedCount === 0} onclick={() => app.accept()}>Accept</button>
+        <button class="btn" disabled={app.running} onclick={() => app.reject()}>Reject</button>
+      {/if}
+      {#if app.persistent === false}
+        <button class="chipbtn warnchip" onclick={() => (app.view = 'set')} title="The browser may evict this project under storage pressure. Open Settings to see the storage status and export a backup.">⚠ storage not persistent</button>
+      {/if}
       {#if bridge.status === 'connected'}
         <button class="chipbtn ext" onclick={() => (app.view = 'set')} title="Connected to the local bridge on port {bridge.port}">⇄ {bridge.agent ?? 'bridge'}</button>
       {:else if bridge.status === 'waiting'}
         <button class="chipbtn" onclick={() => (app.view = 'set')} title="Waiting for the local bridge">⇄ <span class="muted">offline</span></button>
       {:else if bridge.status === 'elsewhere'}
         <button class="chipbtn" onclick={() => bridge.useThisTab()} title="Claude Code is connected in another tab of this app. Click to use this tab instead.">⇄ <span class="muted">other tab · use here</span></button>
+      {:else if app.settings.provider === 'anthropic' && !app.isDemo}
+        <button class="chipbtn" onclick={() => (app.view = 'set')} title="Session spend with the Anthropic API ({app.settings.model})"><span class="muted">${app.spend.toFixed(2)}</span></button>
       {/if}
-      <div class="seg mode" title="Autonomy">
-        <button aria-pressed={app.settings.mode === 'auto'} onclick={() => app.updateSettings({ mode: 'auto' })}>Auto</button>
-        <button aria-pressed={app.settings.mode === 'review'} onclick={() => app.updateSettings({ mode: 'review' })}>Review</button>
-      </div>
-      <button class="chipbtn model" onclick={() => (app.view = 'set')} title="AI provider and session spend">
-        <span class="mono">{app.settings.provider === 'claude-code' ? 'claude code' : app.isDemo ? 'demo' : app.settings.model.replace('claude-', '')}</span>
-        {#if app.settings.provider === 'anthropic' && !app.isDemo}<span class="muted">${app.spend.toFixed(2)}</span>{/if}
-      </button>
       <button class="ib" title="Undo last commit (⌘Z)" disabled={!app.k?.canUndo || !!app.k?.proposal} onclick={() => app.undo()}>↶</button>
     </div>
   </header>
@@ -188,6 +192,8 @@
   .nav button[aria-current="true"] { background: var(--panel-2); color: var(--txt); font-weight: 600; }
   .nav button:hover { background: var(--hover); }
   .ext { color: var(--info); border-color: var(--info-soft); }
+  .pending { color: var(--accent-txt); border-color: var(--accent-soft); }
+  .warnchip { color: var(--warn); border-color: var(--warn-soft); }
   .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
   main { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
   .loading { display: grid; place-items: center; color: var(--txt-3); }
@@ -218,13 +224,12 @@
   @media (max-width: 1100px) {
     .sch, .sch.nochat { grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) 0; }
     .inspcol { display: none; }
-    .bar .model { display: none; }
   }
   @media (max-width: 760px) {
     .app { grid-template-rows: auto minmax(0, 1fr); }
     .bar { flex-wrap: wrap; padding: 6px 10px; row-gap: 6px; }
     .nav { order: 3; width: 100%; margin: 0; overflow-x: auto; }
-    .bar .mode { display: none; }
+    .bar .warnchip { display: none; }
     .sch, .sch.nochat { grid-template-columns: minmax(0, 1fr); }
     .sch > .col { display: none; }
     .partsv, .partsv.nochat { grid-template-columns: minmax(0, 1fr); }
