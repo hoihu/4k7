@@ -6,14 +6,21 @@
 
   let fileInput: HTMLInputElement | undefined = $state();
 
-  async function exportFile() {
-    const json = await app.exportJson();
+  function download(json: string, name: string) {
     const blob = new Blob([json], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${app.k?.summary.name ?? 'design'}.twd.json`;
+    a.download = `${name}.twd.json`;
     a.click();
     URL.revokeObjectURL(a.href);
+  }
+
+  async function exportFile() {
+    download(await app.exportJson(), app.k?.summary.name ?? 'design');
+  }
+
+  function deleteKept(key: string) {
+    if (window.confirm('Delete this kept project? Download it first if you still need it.')) void app.deleteKeptProject(key);
   }
 
   async function importFile(e: Event) {
@@ -45,6 +52,14 @@
       <input type="file" accept=".json,application/json" hidden bind:this={fileInput} onchange={importFile} />
     </div>
   </Field>
+  {#each app.keptProjects as kept (kept.key)}
+    <Field label="Kept copy" hint={`Saved project from ${new Date(kept.at).toLocaleString()} that could not be loaded: ${kept.reason}`}>
+      <div class="row">
+        <button class="btn" onclick={() => download(kept.json, `unreadable-${new Date(kept.at).toISOString().slice(0, 10)}`)}>Download</button>
+        <button class="btn" onclick={() => deleteKept(kept.key)}>Delete</button>
+      </div>
+    </Field>
+  {/each}
   <Field label="Reset">
     <button class="btn" onclick={reset}>New empty project</button>
   </Field>

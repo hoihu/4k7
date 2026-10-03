@@ -27,7 +27,10 @@ import { renderSchematicPng } from './snapshot.ts';
 import { jlcTool } from './jlc.ts';
 import {
   DEFAULT_SETTINGS,
+  deleteKeptProject,
+  keepProject,
   loadApiKey,
+  loadKeptProjects,
   loadProject,
   loadSettings,
   saveApiKey,
@@ -35,6 +38,7 @@ import {
   saveSettings,
   storageHealth,
   storagePersistent,
+  type KeptProject,
   type Settings,
 } from './persist.ts';
 
@@ -94,6 +98,8 @@ class AppState {
   toast = $state<string | null>(null);
   input = $state('');
   persistent = $state<boolean | null>(null);
+  /** Saved projects this version could not read, kept instead of being saved over. */
+  keptProjects = $state.raw<KeptProject[]>([]);
   /** Board view of the working copy, computed when the Layout view is open. */
   board = $state.raw<BoardView | null>(null);
   boardBusy = $state(false);
@@ -113,6 +119,8 @@ class AppState {
   private reviewWaiters: ((result: string) => void)[] = [];
   /** The in-app agent is running (external agents must wait). */
   private inAppBusy = false;
+  /** The saved project could not be read nor kept aside: do not save over it until the user replaces it. */
+  private saveBlocked = false;
   /** Claude Code answering the app chat through the bridge: session and current run. */
   private claudeSession: string | null = null;
   private claudeRun: { id: string; item: ChatItem } | null = null;
@@ -123,13 +131,19 @@ class AppState {
     const saved = await loadProject();
     if (saved) {
       try {
-        await this.kernel.load(saved);
+        await this.kernel.load(JSON.parse(saved) as Design);
       } catch (e) {
-        this.flash(`Could not load the saved project: ${(e as Error).message}`);
+        // the next save would replace it: keep it aside first
+        const reason = (e as Error).message;
+        this.saveBlocked = !(await keepProject(saved, reason));
+        this.flash(`Could not load the saved project: ${reason}. ${this.saveBlocked ? 'Nothing is saved until you start or import a project.' : 'It is kept under Settings → Project.'}`);
       }
     }
+    this.keptProjects = await loadKeptProjects();
     await this.ingest.init().catch((e: Error) => this.flash(`Could not load imported parts: ${e.message}`));
     await this.artwork.init().catch((e: Error) => this.flash(`Could not load the artwork library: ${e.message}`));
+    const newer = this.ingest.newer + this.artwork.newer;
+    if (newer) this.flash(`${newer} saved ${newer === 1 ? 'library item was' : 'library items were'} written by a newer version of the app and not loaded`);
     await this.ingest.adoptFootprints(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
     this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget, tools: { jlc_search: jlcTool } });
     this.settingsChannel?.addEventListener('message', (e: MessageEvent<{ type: string; code?: string }>) => {
@@ -588,7 +602,7 @@ class AppState {
 
   private async persist() {
     const json = await this.kernel.exportDesign();
-    await saveProject(json);
+    if (!this.saveBlocked) await saveProject(json);
     await this.ingest.adoptFootprints(JSON.parse(json) as Design).catch(() => {});
   }
 
@@ -600,6 +614,7 @@ class AppState {
     await this.kernel.load(d);
     this.agent.reset();
     this.chat = [];
+    this.saveBlocked = false; // the user chose to replace the project
     await this.persist();
     await this.refresh();
   }
@@ -616,6 +631,11 @@ class AppState {
       ledger: {},
       waivers: {},
     });
+  }
+
+  async deleteKeptProject(key: string) {
+    await deleteKeptProject(key);
+    this.keptProjects = await loadKeptProjects();
   }
 
   async renameProject(name: string) {

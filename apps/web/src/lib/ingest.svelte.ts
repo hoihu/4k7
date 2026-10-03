@@ -63,6 +63,8 @@ export class IngestState {
   tokens = $state<TokenCount | null>(null);
   /** Imported parts saved in this browser. */
   library = $state<PartCard[]>([]);
+  /** Saved parts a newer version of the app wrote; not loaded, left in storage. */
+  newer = 0;
   request = $state<{ mpn: string; source: string; url?: string } | null>(null);
   pass = $state(1);
   passes = $state(1);
@@ -143,7 +145,8 @@ export class IngestState {
 
   /** Load saved parts and make them known to the kernel (agent) and the UI; restore a pending review. */
   async init() {
-    const cards = await loadLibrary();
+    const { items: cards, newer } = await loadLibrary();
+    this.newer = newer;
     registerUserParts(cards);
     await this.#kernel.registerParts(cards);
     this.library = listUserParts();
