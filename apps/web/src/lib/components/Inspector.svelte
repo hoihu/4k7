@@ -108,6 +108,16 @@
   let jlcError = $state<string | null>(null);
   let jlcResults = $state<JlcPart[] | null>(null);
   const passiveKind = $derived(info?.category === 'resistor' ? 'resistor' : info?.category === 'capacitor' ? 'capacitor' : null);
+  /** Counts searches, so an answer overtaken by a newer search (or a new selection) is dropped. */
+  let jlcSeq = 0;
+  $effect(() => {
+    void sel; // the search belongs to one component: another selection closes it
+    jlcSeq++;
+    jlcOpen = false;
+    jlcResults = null;
+    jlcError = null;
+    jlcBusy = false;
+  });
   function openJlc() {
     if (!info) return;
     const card = app.designParts[info.part];
@@ -120,20 +130,23 @@
   }
   async function searchJlc() {
     if (!info || !jlcText.trim()) return;
+    const seq = ++jlcSeq;
     jlcBusy = true;
     jlcError = null;
     try {
-      jlcResults = await jlc.search({
+      const found = await jlc.search({
         ...(passiveKind ? { kind: passiveKind, value: jlcText.trim() } : { text: jlcText.trim() }),
         ...(jlcPkg.trim() ? { package: jlcPkg.trim() } : {}),
         basicOnly: jlcBasic,
         limit: 10,
       });
+      if (seq === jlcSeq) jlcResults = found;
     } catch (e) {
+      if (seq !== jlcSeq) return;
       jlcResults = null;
       jlcError = (e as Error).message;
     } finally {
-      jlcBusy = false;
+      if (seq === jlcSeq) jlcBusy = false;
     }
   }
   /** Take a search result: its number, and its package when the component's differs. */
