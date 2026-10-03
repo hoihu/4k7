@@ -626,7 +626,9 @@ function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, redraw?
     if (!body) continue;
     const g = bodyGroup(body, res, part.polarized, part.topImage, redraw);
     g.rotation.y = -(part.rot * Math.PI) / 180; // clockwise in the top view
-    g.position.set(part.x, CU, part.y);
+    // on the bottom side: turned over about its vertical axis (as the footprint is mirrored), hanging below the board
+    if (part.side === 'bottom') g.rotation.z = Math.PI;
+    g.position.set(part.x, part.side === 'bottom' ? -THICKNESS - CU : CU, part.y);
     group.add(g);
   }
   return group;

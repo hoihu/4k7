@@ -258,6 +258,12 @@ class AppState {
     return true;
   }
 
+  /** Put a part on the bottom or the top side of the board (a layer constraint; top is the default, so none). */
+  setSide(ref: string, side: 'top' | 'bottom'): Promise<boolean> {
+    const old = (this.k?.ledger ?? []).filter((x) => x.text.startsWith(`layer(${ref}) =`)).map((x) => ({ op: 'remove_constraint', id: x.id }));
+    return this.userEdit(`${ref} on the ${side} side`, [...old, ...(side === 'bottom' ? [{ op: 'constrain', kind: 'layer', a: ref, value: 'bottom' }] : [])]);
+  }
+
   /**
    * The import_part tool: the datasheet import of the Parts view, started by the agent. A clean
    * result (accepted, both passes agree) goes straight into the library; disagreements between

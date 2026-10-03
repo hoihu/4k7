@@ -10,6 +10,8 @@
     description?: string;
     category?: string;
     params: Record<string, string>;
+    /** The board side the part is mounted on. */
+    side?: 'top' | 'bottom';
     /** Every parameter the component may carry (the card's, then the universal lcsc). */
     specs: Record<string, ParamSpec>;
     /** Generic parts: the package in use, why, and the ones to pick from. */
@@ -375,6 +377,13 @@
               </select>
             </dd>
           {/if}
+          <dt title="The side of the board the part is mounted on">board side</dt>
+          <dd>
+            <select class="pkgsel mono" value={info.side ?? 'top'} disabled={!!app.k?.proposal} title={app.k?.proposal ? 'Review the pending changes first' : 'Bottom: the footprint is mirrored and its SMD pads are on the bottom copper; it may sit under SMD parts on the top side'} onchange={(e) => void app.setSide(info!.refdes, (e.currentTarget as HTMLSelectElement).value as 'top' | 'bottom')}>
+              <option value="top">top</option>
+              <option value="bottom">bottom</option>
+            </select>
+          </dd>
         </dl>
         <div class="sect">Sourcing · JLCPCB</div>
         <dl class="kv">
