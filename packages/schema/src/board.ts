@@ -401,6 +401,7 @@ export interface BoardPart {
   y: number;
   /** Clockwise, degrees (0/90/180/270). */
   rot: number;
+  /** The side it is mounted on (a `layer` constraint). On the bottom its footprint is mirrored: the board is viewed from the top. */
   side: 'top' | 'bottom';
   pads: BoardPad[];
   /** Body outline and courtyard, absolute axis-aligned rectangles; a round body is the circle in its box. */
@@ -539,7 +540,7 @@ export function boardSummary(b: BoardView, routed = true) {
     layers: b.layers.length,
     rules: b.rules,
     outline_by: b.sizeBy,
-    parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, placed: p.locked ? 'locked' : p.intent ? `user${p.intent.anchor ? ` (relative to ${p.intent.anchor})` : ''}` : 'auto' })),
+    parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, side: p.side, placed: p.locked ? 'locked' : p.intent ? `user${p.intent.anchor ? ` (relative to ${p.intent.anchor})` : ''}` : 'auto' })),
     routing: !routed
       ? 'not computed here (see the Layout view)'
       : b.routing === 'done'
@@ -564,6 +565,6 @@ export function boardSummary(b: BoardView, routed = true) {
     })),
     drc: b.diagnostics.map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
-    note: 'Workflow: propose_layout (board size and placement), then adjustments (place = the user\'s choice for a part, kept relative to its parent part; lock: true pins it exactly; set_board for the size), then route as the last step. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
+    note: 'Workflow: propose_layout (board size and placement), then adjustments (place = the user\'s choice for a part, kept relative to its parent part; lock: true pins it exactly; set_board for the size), then route as the last step. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
   };
 }

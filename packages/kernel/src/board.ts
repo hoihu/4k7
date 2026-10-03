@@ -11,6 +11,8 @@
  *    push each other apart.
  *  - Two-pin parts get the rotation with the shortest connections; everything snaps to 0.1 mm.
  *  - `position` constraints (the place op, dragging) pin a part; the placer never moves it.
+ *  - `layer` constraints put a part on the bottom side: its footprint is mirrored (seen from the
+ *    top), its SMD pads are on B.Cu, and it shares the area with the SMD parts on the top side.
  */
 import {
   DEFAULT_BOARD,
@@ -57,6 +59,10 @@ interface Item {
   y: number;
   rot: number;
   fixed: boolean;
+  /** The board side it is mounted on (a `layer` constraint; top unless told otherwise). */
+  side: 'top' | 'bottom';
+  /** Has drilled pads: it takes its place on both sides. */
+  tht: boolean;
   /** Locked without a rotation: the placer still picks the rotation. */
   freeRot?: boolean;
   /** The user's choice for this part (a soft position constraint). */
@@ -83,6 +89,14 @@ function rotate(x: number, y: number, rot: number): [number, number] {
   }
 }
 
+/** A footprint as it lies on the bottom side, seen from the top: flipped about its vertical axis. */
+function mirrored(fp: Footprint): Footprint {
+  return { ...fp, pads: fp.pads.map((p) => ({ ...p, x: -p.x || 0 })), pin1: { x: -fp.pin1.x || 0, y: fp.pin1.y } };
+}
+
+/** Whether two parts compete for the same area: on the same side, or one of them goes through the board. */
+const collide = (a: Item, b: Item) => a.tht || b.tht || a.side === b.side;
+
 const swapped = (rot: number) => rot % 180 !== 0;
 const extent = (it: Item) => (swapped(it.rot) ? { w: it.ch, h: it.cw } : { w: it.cw, h: it.ch });
 
@@ -96,6 +110,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const stored = settings.placement;
 
   /* ---- footprints ---- */
+  const onBottom = new Set(Object.values(d.ledger).filter((k) => k.kind === 'layer' && k.value === 'bottom' && k.a).map((k) => k.a!));
   for (const comp of componentsSorted(d)) {
     const card = cardOf(d, comp.part);
     if (!card) continue;
@@ -105,7 +120,9 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       missing.push(comp.refdes);
       continue;
     }
-    items.push({ comp, card, fp: fp.footprint, pkg: pkg.name, info: pkg, x: 0, y: 0, rot: 0, fixed: false, cw: fp.footprint.courtyard.w, ch: fp.footprint.courtyard.h });
+    const side = onBottom.has(comp.id) ? 'bottom' : 'top';
+    const foot = side === 'bottom' ? mirrored(fp.footprint) : fp.footprint;
+    items.push({ comp, card, fp: foot, pkg: pkg.name, info: pkg, x: 0, y: 0, rot: 0, fixed: false, side, tht: foot.pads.some((p) => !!p.drill), cw: foot.courtyard.w, ch: foot.courtyard.h });
   }
 
   /* ---- start from the schematic ---- */
@@ -418,7 +435,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const clashes = (it: Item) => {
     const e = extent(it);
     return fixedItems.some((o) => {
-      if (o === it) return false;
+      if (o === it || !collide(o, it)) return false;
       const eo = extent(o);
       return Math.abs(o.x - it.x) < (e.w + eo.w) / 2 - 1e-6 && Math.abs(o.y - it.y) < (e.h + eo.h) / 2 - 1e-6;
     });
@@ -729,7 +746,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   // cutouts (their bounding box, plus the edge clearance) and rounded corners are keep-outs too
   const cutouts = settings.cutouts ?? [];
   const cornerR = settings.cornerRadius ?? 0;
-  const blocker = (id: string, x: number, y: number, cw: number, ch: number) => ({ comp: { refdes: `~${id}` }, x, y, rot: 0, fixed: true, cw, ch }) as unknown as Item;
+  const blocker = (id: string, x: number, y: number, cw: number, ch: number) => ({ comp: { refdes: `~${id}` }, x, y, rot: 0, fixed: true, side: 'top', tht: true, cw, ch }) as unknown as Item;
   const keepOuts = () => [
     ...holes.map((hole) => {
       const at = holeAt(hole);
@@ -838,6 +855,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     const inInk = (x: number, y: number) => g.polys.reduce((n, p, k) => n + (pointInPolygon(p, x, y) ? 1 : 0) * (depth[k]! % 2 === 0 ? 1 : -1), 0) > 0;
     g.over = parts
       .filter((p) => {
+        // ink meets the parts on its own side (and the pads of through-hole parts)
+        if (p.side !== g.side && !p.pads.some((q) => q.drill)) return false;
         const c = p.courtyard;
         if (c.x > g.bounds[2] || c.x + c.w < g.bounds[0] || c.y > g.bounds[3] || c.y + c.h < g.bounds[1]) return false;
         if (pts.some(([x, y]) => x > c.x && x < c.x + c.w && y > c.y && y < c.y + c.h)) return true;
@@ -851,7 +870,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   }
   const planes = settingsPlanes(d, layers.length as 2 | 4);
   // the rules with sorted keys: a saved design has them sorted, and the key must survive saving
-  const placementKey = hash(JSON.stringify([w, h, cornerR, shape, boardCutouts, layers, sortKeys(rules), planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.pads.map((q) => q.netId ?? '')])]));
+  const placementKey = hash(JSON.stringify([w, h, cornerR, shape, boardCutouts, layers, sortKeys(rules), planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   return {
     outline: { w, h },
     layers,
@@ -917,7 +936,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   const planes = settingsPlanes(d, b.layers.length as 2 | 4);
   const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
   const routeKey = contentKey(
-    JSON.stringify(sortKeys([b.outline, b.layers, b.rules, b.parts.map((p) => [p.componentId, p.refdes, p.courtyard, p.pads]), [...powerNets].sort(), netWidths, planes.map(({ netId, layer }) => [netId, layer]), b.cornerRadius, b.shape, b.cutouts])),
+    JSON.stringify(sortKeys([b.outline, b.layers, b.rules, b.parts.map((p) => [p.componentId, p.refdes, p.side, p.courtyard, p.pads]), [...powerNets].sort(), netWidths, planes.map(({ netId, layer }) => [netId, layer]), b.cornerRadius, b.shape, b.cutouts])),
   );
   const kept = opts.kept?.find((k) => k.routing === 'done' && k.routeKey === routeKey);
   if (kept) {
@@ -999,7 +1018,7 @@ function separate(items: Item[], passes: number, strict = false) {
       const ea = extent(a);
       for (let j = i + 1; j < sorted.length; j++) {
         const b = sorted[j]!;
-        if (a.fixed && b.fixed) continue;
+        if ((a.fixed && b.fixed) || !collide(a, b)) continue;
         const eb = extent(b);
         const ox = (ea.w + eb.w) / 2 + SPACING - Math.abs(a.x - b.x);
         const oy = (ea.h + eb.h) / 2 + SPACING - Math.abs(a.y - b.y);
@@ -1079,7 +1098,7 @@ function separate(items: Item[], passes: number, strict = false) {
 const ALIGN_TOL = 1;
 const ALIGN_GAP = 2;
 function alignSimilar(items: Item[], contain: (it: Item) => void) {
-  const key = (it: Item) => `${r3(it.cw)}x${r3(it.ch)}/${it.rot % 180}`;
+  const key = (it: Item) => `${r3(it.cw)}x${r3(it.ch)}/${it.rot % 180}/${it.side}`;
   for (const column of [true, false]) {
     // neighbours: stacked (column) or side by side (row), nearly aligned across
     const parent = items.map((_, i) => i);
@@ -1141,6 +1160,7 @@ function alignSimilar(items: Item[], contain: (it: Item) => void) {
 
 /** Two courtyards closer than `gap`? */
 function closer(a: Item, b: Item, gap: number): boolean {
+  if (!collide(a, b)) return false;
   const ea = extent(a);
   const eb = extent(b);
   return (ea.w + eb.w) / 2 + gap - Math.abs(a.x - b.x) > 1e-6 && (ea.h + eb.h) / 2 + gap - Math.abs(a.y - b.y) > 1e-6;
@@ -1167,7 +1187,7 @@ function overlapping(items: Item[], gap = 0): boolean {
     const ea = extent(a);
     for (let j = i + 1; j < items.length; j++) {
       const b = items[j]!;
-      if (a.fixed && b.fixed) continue;
+      if ((a.fixed && b.fixed) || !collide(a, b)) continue;
       const eb = extent(b);
       if ((ea.w + eb.w) / 2 + gap - Math.abs(a.x - b.x) > 1e-6 && (ea.h + eb.h) / 2 + gap - Math.abs(a.y - b.y) > 1e-6) return true;
     }
@@ -1203,7 +1223,7 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
       shape: p.shape,
       ...(p.drill ? { drill: p.drill } : {}),
       ...(net ? { netId: net } : {}),
-      layers: p.drill ? [...layers] : ['F.Cu'],
+      layers: p.drill ? [...layers] : [it.side === 'bottom' ? 'B.Cu' : 'F.Cu'],
     };
   });
   const rect = (w: number, h: number) => {
@@ -1224,7 +1244,7 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     x: r3(it.x),
     y: r3(it.y),
     rot: it.rot,
-    side: 'top',
+    side: it.side,
     pads,
     body: { ...rect(it.fp.body.w, it.fp.body.h), ...(it.fp.body.round ? { round: true } : {}) },
     courtyard: rect(it.cw, it.ch),
@@ -1284,6 +1304,8 @@ function placementChecks(parts: BoardPart[], w: number, h: number, edge: number,
   const out: BoardDiagnostic[] = [];
   // a pad's corners (and centre): how far inside the outline / outside every cutout
   const padPoints = (p: BoardPad) => [[p.x - p.w / 2, p.y - p.h / 2], [p.x + p.w / 2, p.y - p.h / 2], [p.x - p.w / 2, p.y + p.h / 2], [p.x + p.w / 2, p.y + p.h / 2], [p.x, p.y]] as const;
+  // through-hole parts (and holes) take their place on both sides
+  const through = parts.map((p) => p.pads.some((q) => q.drill));
   for (let i = 0; i < parts.length; i++) {
     const a = parts[i]!;
     const A = a.courtyard;
@@ -1304,6 +1326,7 @@ function placementChecks(parts: BoardPart[], w: number, h: number, edge: number,
     for (let j = i + 1; j < parts.length; j++) {
       const b = parts[j]!;
       const B = b.courtyard;
+      if (a.side !== b.side && !through[i] && !through[j]) continue; // SMD parts on opposite sides share the area
       if (A.x < B.x + B.w - 1e-6 && B.x < A.x + A.w - 1e-6 && A.y < B.y + B.h - 1e-6 && B.y < A.y + A.h - 1e-6) {
         out.push({ code: 'DRC.COURTYARD_OVERLAP', severity: 'error', message: `${a.refdes} and ${b.refdes} overlap (courtyards).`, at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, entities: [a.refdes, b.refdes] });
       }

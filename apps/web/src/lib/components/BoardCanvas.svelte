@@ -16,10 +16,12 @@
     onplace?: (refdes: string, x: number, y: number, rot?: number) => void;
     /** L on a selected part: lock it where it is, or unlock it. */
     onlock?: (refdes: string) => void;
+    /** F on a selected part: flip it to the other side of the board. */
+    onflip?: (refdes: string) => void;
     /** A silkscreen graphic dragged by dx, dy (mm). */
     ongraphic?: (id: string, dx: number, dy: number) => void;
   }
-  let { board, show, selection = [], hotNet = null, marker = null, onselect, onclear, onhovernet, onplace, onlock, ongraphic }: Props = $props();
+  let { board, show, selection = [], hotNet = null, marker = null, onselect, onclear, onhovernet, onplace, onlock, onflip, ongraphic }: Props = $props();
 
   /* dragging a silkscreen graphic: like a part, it stays where it was dropped until the board shows it there */
   let gfxDrag = $state<{ id: string; sx: number; sy: number; dx: number; dy: number; moved: boolean } | null>(null);
@@ -112,10 +114,26 @@
     vb = { x: p.x - (p.x - vb.x) * k, y: p.y - (p.y - vb.y) * k, w, h: vb.h * k };
     userMoved = true;
   }
-  let drag: { x: number; y: number; vx: number; vy: number; moved: boolean } | null = null;
+  /** Bottom-side parts are drawn first, so the top side lies over them. */
+  const partsInOrder = $derived(board ? [...board.parts.filter((p) => p.side === 'bottom'), ...board.parts.filter((p) => p.side !== 'bottom')] : []);
+  /**
+   * The part under the pointer; of parts stacked on opposite sides the smallest (a cap under its
+   * IC can be picked, the IC anywhere else).
+   */
+  function refAt(e: PointerEvent): string | null {
+    const area = (ref: string) => {
+      const c = board?.parts.find((p) => p.refdes === ref)?.courtyard;
+      return c ? c.w * c.h : Infinity;
+    };
+    const refs = document.elementsFromPoint(e.clientX, e.clientY).flatMap((el) => (svg?.contains(el) ? [el.closest('[data-ref]')?.getAttribute('data-ref')] : [])).filter((r): r is string => !!r);
+    if (!refs.length) return (e.target as Element).closest('[data-ref]')?.getAttribute('data-ref') ?? null;
+    return refs.reduce((a, r) => (area(r) < area(a) ? r : a));
+  }
+  let drag: { x: number; y: number; vx: number; vy: number; moved: boolean; ref: string | null } | null = null;
   function onpointerdown(e: PointerEvent) {
     if (e.button !== 0 && e.button !== 1) return;
-    const ref = e.button === 0 && onplace ? (e.target as Element).closest('[data-ref]')?.getAttribute('data-ref') : null;
+    const at = e.button === 0 ? refAt(e) : null;
+    const ref = onplace ? at : null;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     if (ref) {
       const p = toSvg(e);
@@ -128,7 +146,7 @@
       gfxDrag = { id: gfx, sx: p.x, sy: p.y, dx: 0, dy: 0, moved: false };
       return;
     }
-    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false };
+    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false, ref: at };
   }
   function onpointermove(e: PointerEvent) {
     if (gfxDrag) {
@@ -185,8 +203,7 @@
       return;
     }
     if (drag && !drag.moved) {
-      const target = (e.target as Element).closest('[data-ref]');
-      if (target) onselect?.(target.getAttribute('data-ref')!, e.shiftKey || e.metaKey || e.ctrlKey);
+      if (drag.ref) onselect?.(drag.ref, e.shiftKey || e.metaKey || e.ctrlKey);
       else onclear?.();
     }
     drag = null;
@@ -198,6 +215,10 @@
       if (!part) return;
       e.preventDefault();
       onplace(part.refdes, part.x, part.y, (part.rot + 90) % 360);
+    }
+    if ((e.key === 'f' || e.key === 'F') && selection.length === 1 && onflip && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      onflip(selection[0]!);
     }
     if ((e.key === 'l' || e.key === 'L') && selection.length === 1 && onlock) {
       e.preventDefault();
@@ -217,7 +238,7 @@
   const path = (pts: number[]) => pts.reduce((s, v, i) => s + (i % 2 ? `,${v}` : `${i ? ' L' : 'M'}${v}`), '');
 </script>
 
-<!-- an interactive canvas: pointer and keyboard (R = rotate, L = lock) are the point -->
+<!-- an interactive canvas: pointer and keyboard (R = rotate, L = lock, F = flip) are the point -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <svg
   bind:this={svg}
@@ -309,10 +330,11 @@
       {/each}
     {/if}
 
-    <!-- pads (top copper + through-hole) -->
-    {#each board.parts as p (p.componentId)}
+    <!-- pads (the part's side + through-hole); bottom-side parts first, in the bottom copper's colour -->
+    {#each partsInOrder as p (p.componentId)}
       <g
         class="part"
+        class:bottom={p.side === 'bottom'}
         class:sel={selection.includes(p.refdes)}
         class:locked={p.locked}
         class:free={show.placement && stateOf(p) === 'free' && !p.componentId.startsWith('hole:')}
@@ -345,6 +367,7 @@
           {#if p.body.round}<circle class="silk" cx={p.body.x + p.body.w / 2} cy={p.body.y + p.body.h / 2} r={p.body.w / 2} />
           {:else}<rect class="silk" x={p.body.x} y={p.body.y} width={p.body.w} height={p.body.h} />{/if}
           {#if p.polarized}<circle class="silkdot" cx={p.pin1.x} cy={p.pin1.y} r="0.18" />{/if}
+          {#if p.side === 'bottom'}<title>{p.refdes} · bottom side (mirrored, seen from the top)</title>{/if}
           <text class="ref" x={p.x} y={p.y} font-size={Math.max(0.5, Math.min(1.2, Math.min(p.body.w, p.body.h) * 0.45))}>{p.refdes}</text>
         {/if}
         {#if !p.componentId.startsWith('hole:') && stateOf(p) !== 'free'}
@@ -401,7 +424,11 @@
   .layer path.hot { stroke: #fff27a; }
   .pad { fill: #c98a3c; }
   .pad.tht { fill: #d8a24a; }
-  .pad.hot { fill: #fff27a; }
+  /* parts on the bottom side: pads in the bottom copper's colour, the outline dashed */
+  .part.bottom .pad:not(.tht) { fill: #4f86d2; }
+  .part.bottom .silk { stroke: #9dc0ee; stroke-dasharray: 0.4 0.25; }
+  .part.bottom .silkdot, .part.bottom .ref { fill: #9dc0ee; }
+  .pad.hot, .part.bottom .pad.hot { fill: #fff27a; }
   .drill { fill: #0b0f14; }
   .drill.npth { stroke: #9aa3ad; stroke-width: 0.08; }
   .keepout { fill: none; stroke: #9aa3ad; stroke-width: 0.05; stroke-dasharray: 0.25 0.2; opacity: 0.7; }

@@ -87,6 +87,19 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     });
   }
 
+  /* the description (the words of the design document) */
+  if (JSON.stringify(base.description ?? null) !== JSON.stringify(draft.description ?? null)) {
+    const blocks = draft.description?.blocks ?? [];
+    hunks.push({
+      id: 'description:description',
+      kind: 'description',
+      change: base.description ? 'change' : 'add',
+      entityId: 'description',
+      title: `design description: overview, ${blocks.length} block${blocks.length === 1 ? '' : 's'}`,
+      details: blocks.map((b) => b.title),
+    });
+  }
+
   /* board settings */
   if (JSON.stringify(base.board ?? null) !== JSON.stringify(draft.board ?? null)) {
     const b = draft.board;
@@ -142,7 +155,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     if (!base.sheets[id]) hunks.push({ id: `sheet:${id}`, kind: 'sheet', change: 'add', entityId: id, title: `sheet ${draft.sheets[id]!.name}`, details: [] });
   }
 
-  const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6 };
+  const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6, description: 7 };
   const changeOrder = { add: 0, change: 1, remove: 2 };
   return hunks.sort((x, y) => order[x.kind] - order[y.kind] || changeOrder[x.change] - changeOrder[y.change] || natCmp(x.title, y.title));
 }
@@ -217,6 +230,10 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
         break;
       case 'part':
         if (draft.parts[entity]) d.parts[entity] = clone(draft.parts[entity]!);
+        break;
+      case 'description':
+        if (draft.description) d.description = clone(draft.description);
+        else delete d.description;
         break;
       case 'constraint':
         if (draft.ledger[entity]) d.ledger[entity] = clone(draft.ledger[entity]!);

@@ -41,6 +41,7 @@
   }
   let marker = $state<{ x: number; y: number } | null>(null);
   const netName = (id: string | null) => (id ? (b?.netNames[id] ?? id) : '');
+  const desc = $derived(app.k?.description ?? null);
   const errors = $derived(b?.diagnostics.filter((d) => d.severity === 'error').length ?? 0);
   const warnings = $derived(b?.diagnostics.filter((d) => d.severity === 'warning').length ?? 0);
   const layerNames: [string, string][] = $derived([
@@ -109,6 +110,13 @@
     void app.userEdit(`${p.locked ? 'Unlock' : 'Lock'} ${ref}`, [{ op: 'place', ref, x_mm: p.x, y_mm: p.y, rot: p.rot as 0 | 90 | 180 | 270, lock: !p.locked }]);
   }
 
+  /** Flip a part to the other side of the board. */
+  function flip(ref: string) {
+    const p = b?.parts.find((x) => x.refdes === ref);
+    if (!p || p.componentId.startsWith('hole:')) return;
+    void app.setSide(ref, p.side === 'bottom' ? 'top' : 'bottom');
+  }
+
   // board size: the proposal's, or the user's
   let sizeW = $state('');
   let sizeH = $state('');
@@ -165,6 +173,7 @@
       onhovernet={(n) => (hotNet = n)}
       onplace={(ref, x, y, rot) => void app.userEdit(`Place ${ref}`, [{ op: 'place', ref, x_mm: x, y_mm: y, rot }])}
       onlock={toggleLock}
+      onflip={flip}
       ongraphic={(id, dx, dy) => void app.userEdit(`Move ${id}`, [{ op: 'edit_graphic', id, dx_mm: dx, dy_mm: dy }])}
     />
     </div>
@@ -194,7 +203,7 @@
       <div class="blank"><p><b>No parts yet.</b> Draw the circuit in the schematic (or ask the agent); the board is placed from it automatically.</p></div>
     {/if}
     <div class="status">
-      <span>{mode === '3d' ? 'drag = rotate · right-drag = pan · wheel = zoom' : 'click = reference · drag part = place it (kept as your choice) · R = rotate · L = lock · drag board = pan · wheel = zoom'}</span>
+      <span>{mode === '3d' ? 'drag = rotate · right-drag = pan · wheel = zoom' : 'click = reference · drag part = place it (kept as your choice) · R = rotate · L = lock · F = flip to the other side · drag board = pan · wheel = zoom'}</span>
       <span class="sp mono">{hotNet ? netName(hotNet) : app.selection.join(' ') || '—'}</span>
     </div>
   </div>
@@ -226,7 +235,7 @@
         </ul>
         {#if selectedPart}
           <h4>{selectedPart.refdes} <span class="muted mono">{selectedPart.pkg}</span></h4>
-          <p class="small mono">x {selectedPart.x} · y {selectedPart.y} mm · {selectedPart.rot}°</p>
+          <p class="small mono">x {selectedPart.x} · y {selectedPart.y} mm · {selectedPart.rot}°{selectedPart.componentId.startsWith('hole:') ? '' : ` · ${selectedPart.side} side`}</p>
           <p class="small">
             {#if selectedPart.locked}Locked here.
             {:else if selectedPart.intent}Your placement{selectedPart.intent.anchor ? `, kept relative to ${selectedPart.intent.anchor} (it follows ${selectedPart.intent.anchor})` : ''}; the placer nudges it only if it must.
@@ -235,6 +244,7 @@
           {#if !selectedPart.componentId.startsWith('hole:')}
             <div class="row2">
               <button class="btn" onclick={() => toggleLock(selectedPart.refdes)}>{selectedPart.locked ? 'Unlock' : 'Lock here'}</button>
+              <button class="btn" disabled={app.running} title="Mount it on the other side of the board (F)" onclick={() => flip(selectedPart.refdes)}>{selectedPart.side === 'bottom' ? 'To the top side' : 'To the bottom side'}</button>
               {#if selectedPart.locked || selectedPart.intent}<button class="btn" onclick={() => release(selectedPart.refdes)}>Let the placer decide</button>{/if}
             </div>
           {/if}
@@ -256,6 +266,16 @@
         <h4>Manufacturing</h4>
         <button class="btn pri wide" onclick={exportFab} disabled={!b.parts.length}>Download fab files (.zip)</button>
         <p class="small muted">Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place.{#if errors} Fix the {errors} error{errors > 1 ? 's' : ''} first; the files would not make a working board.{/if}</p>
+        <h4>Documentation</h4>
+        <button class="btn wide" onclick={() => app.designDocument()} disabled={!b.parts.length || app.docBusy}>{app.docBusy ? 'Preparing…' : 'Design document (print / PDF)'}</button>
+        <p class="small muted">
+          The functional blocks described, each with its schematic and its place on the board, then layout, assembly drawing (parts only), BOM and schematic.
+          {#if desc}Description: {desc.blocks.length} block{desc.blocks.length === 1 ? '' : 's'}{#if desc.undescribed.length}, <span class="stale">{desc.undescribed.length} part{desc.undescribed.length === 1 ? '' : 's'} in none of them</span>{/if}.
+          {:else}No description written yet.{/if}
+        </p>
+        {#if b.parts.length && (!desc || desc.undescribed.length)}
+          <button class="btn wide" onclick={() => app.describeDesign()} disabled={app.running || app.isDemo} title={app.isDemo ? 'The offline demo cannot write it: choose an AI provider in Settings' : 'The agent writes the overview and the blocks; you review them like any change'}>{desc ? 'Ask the agent to update the description' : 'Ask the agent to describe the design'}</button>
+        {/if}
         <h4>Layers</h4>
         <ul class="layers">
           {#each layerNames as [key, label] (key)}
@@ -273,7 +293,7 @@
         <p class="small muted">Ask the agent, e.g. “4 layers with GND on In1 and +3V3 on In2”.</p>
         <h4>Rules</h4>
         <p class="small mono muted">clearance {b.rules.clearance} · track {b.rules.track} / {b.rules.powerTrack} · via {b.rules.viaPad}/{b.rules.viaDrill} mm</p>
-        <p class="small muted">Workflow: propose the layout, adjust the size and the parts (drag, R, L), then route. Or ask the agent, e.g. “make the board 40 × 30 mm”, “lock J1 at the left edge”, “use 4 layers”.</p>
+        <p class="small muted">Workflow: propose the layout, adjust the size and the parts (drag, R, L, F), then route. Or ask the agent, e.g. “make the board 40 × 30 mm”, “lock J1 at the left edge”, “put the decoupling caps on the bottom”, “use 4 layers”.</p>
       {/if}
     </div>
   </aside>
@@ -282,7 +302,7 @@
 <style>
   .chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--txt); background: var(--panel); opacity: 0.8; }
   .chip.ok { color: var(--ok); }
-  .chip.stale { color: var(--warn); }
+  .chip.stale, .small .stale { color: var(--warn); }
   .size { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
   .size input { width: 52px; padding: 2px 4px; }
   .row2 { display: flex; gap: 6px; flex-wrap: wrap; }

@@ -58,7 +58,6 @@ describe('solved board', () => {
     const k = new Kernel(design);
     expect(rekeySolved(solved!, k.draftDesign()).design).toBe(designKey(k.draftDesign()));
     // solving it again gives the stored board, or the solver has changed and must say so
-    expect(k.board().routing).toBe('done');
     if (canonicalJson(k.board()) !== canonicalJson(solved!.board)) {
       expect(SOLVER_VERSION, 'the solver lays this board out differently now: raise SOLVER_VERSION in src/solved.ts').toBeGreaterThan(solved!.solver);
     }

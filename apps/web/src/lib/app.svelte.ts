@@ -308,6 +308,12 @@ class AppState {
     return true;
   }
 
+  /** Put a part on the bottom or the top side of the board (a layer constraint; top is the default, so none). */
+  setSide(ref: string, side: 'top' | 'bottom'): Promise<boolean> {
+    const old = (this.k?.ledger ?? []).filter((x) => x.text.startsWith(`layer(${ref}) =`)).map((x) => ({ op: 'remove_constraint', id: x.id }));
+    return this.userEdit(`${ref} on the ${side} side`, [...old, ...(side === 'bottom' ? [{ op: 'constrain', kind: 'layer', a: ref, value: 'bottom' }] : [])]);
+  }
+
   /**
    * The import_part tool: the datasheet import of the Parts view, started by the agent. A clean
    * result (accepted, both passes agree) goes straight into the library; disagreements between
@@ -634,6 +640,38 @@ class AppState {
     const json = await this.kernel.exportDesign();
     await saveProject(json);
     await this.ingest.adoptFootprints(JSON.parse(json) as Design).catch(() => {});
+  }
+
+  /** The design document is being put together (the board may have to be routed first). */
+  docBusy = $state(false);
+
+  /**
+   * The design document through the print dialog: the description, each block with its
+   * schematic and its place on the board, layout, assembly drawing, BOM and schematic pages.
+   */
+  async designDocument() {
+    if (!this.k || this.docBusy) return;
+    this.docBusy = true;
+    try {
+      const board = this.k.summary.components.length ? await this.routedBoard() : null;
+      const { printDesignDocument } = await import('./designdoc.ts');
+      const k = this.k;
+      await printDesignDocument({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal });
+    } catch (e) {
+      this.flash(`The design document failed: ${(e as Error).message}`);
+    } finally {
+      this.docBusy = false;
+    }
+  }
+
+  /** Ask the agent for the words of the design document (it writes them with the describe op). */
+  describeDesign() {
+    this.chatOpen = true;
+    void this.send(
+      this.k?.description
+        ? 'Update the design description for the design document so it matches the design as it is now: the overview and every functional block (design_edit describe).'
+        : 'Write the design description for the design document: an overview, then the functional blocks with their parts and how each works (design_edit describe).',
+    );
   }
 
   /** The native file: the design, with its board as solved now so that it opens unchanged later. */

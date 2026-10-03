@@ -88,7 +88,7 @@ export interface TransactionResult {
 
 /* ------------------------------- changesets ------------------------------- */
 
-export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'sheet' | 'board';
+export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'sheet' | 'board' | 'description';
 
 export interface Hunk {
   /** Stable id: "<kind>:<entity id>". */
@@ -234,6 +234,16 @@ export interface SchematicView {
   constraintStatus: Record<string, 'ok' | 'violated' | 'not_applicable'>;
 }
 
+/* ------------------------------- description ------------------------------ */
+
+/** The design's description as stored, with parts by refdes (design_query get_description, the design document). */
+export interface DescriptionView {
+  overview: string;
+  blocks: { title: string; refs: string[]; text: string }[];
+  /** Parts no block covers (added since it was written). */
+  undescribed: string[];
+}
+
 /* ------------------------------ query results ----------------------------- */
 
 export interface DesignSummary {
@@ -246,4 +256,6 @@ export interface DesignSummary {
   counts: DiagnosticCounts;
   ledger: number;
   waivers: number;
+  /** Present when the design has a description: its blocks, and the parts none of them covers. */
+  description?: { blocks: number; undescribed: string[] };
 }

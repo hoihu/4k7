@@ -63,6 +63,23 @@ describe('fab outputs', () => {
     expect(pnp.find((l) => l.startsWith('U1,'))).toBe(`U1,TPS54331DR,SOIC-8,${u1.x.toFixed(3)},${(b.outline.h - u1.y).toFixed(3)},${(360 - u1.rot) % 360},Top`);
   });
 
+  it('parts on the bottom side get their own silkscreen, paste and pick-and-place layer', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    k.accept();
+    const cap = k.board().parts.find((p) => p.pads.length === 2 && p.pads.every((q) => !q.drill))!;
+    k.transact({ summary: 'side', ops: [{ op: 'constrain', kind: 'layer', a: cap.refdes, value: 'bottom' }] });
+    const b = k.board();
+    const files = fabFiles(b, 'buck');
+    const file = (name: string) => files.find((f) => f.name === name)!.content;
+    expect(file('buck-B_Silkscreen.gbr')).toContain('FileFunction,Legend,Bot');
+    // paste: flashes (D03) on the bottom for this part's pads only
+    expect(file('buck-B_Paste.gbr').split('\n').filter((l) => l.endsWith('D03*'))).toHaveLength(2);
+    const row = pickAndPlace(b).split('\n').find((l) => l.startsWith(`${cap.refdes},`))!;
+    expect(row.endsWith(',Bottom')).toBe(true);
+    expect(pickAndPlace(b).split('\n').filter((l) => l.endsWith(',Top')).length).toBeGreaterThan(0);
+  });
+
   it('packs a zip that unzip accepts with intact contents', () => {
     const files = fabFiles(board(), 'buck');
     const dir = mkdtempSync(join(tmpdir(), 'tw-zip-'));
