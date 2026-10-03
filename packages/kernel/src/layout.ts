@@ -313,8 +313,9 @@ const DRAW_H = PAGE.h - 2 * PAGE.margin - PAGE.title;
  * Flow the cells onto pages: each row is broken into lines that fit the page width (order
  * kept), lines are stacked until the page is full, then the next page starts. A cell wider or
  * a line taller than the paper gets a page of its own, grown to fit (`oversized`). Pages sit
- * side by side on the canvas, so the sheet still reads as one drawing. There is always at
- * least one page, so an empty sheet shows its paper.
+ * in a near-square grid on the canvas (rows of ⌈√n⌉), so the sheet still reads as one drawing
+ * and fits the window without a long scroll. There is always at least one page, so an empty
+ * sheet shows its paper.
  */
 function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[] } {
   interface Line {
@@ -352,23 +353,11 @@ function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[]
   }
 
   // lines → pages
-  const scene = emptyScene();
-  const pages: PageView[] = [];
-  let pageX = 0;
+  const sets: { lines: Line[]; used: number }[] = [];
   let onPage: Line[] = [];
   let used = 0;
   const flushPage = () => {
-    const wide = Math.max(0, ...onPage.map((l) => l.bbox.w));
-    const oversized = wide > DRAW_W || used > DRAW_H;
-    const rect: Rect = { x: pageX, y: 0, w: Math.max(PAGE.w, wide + 2 * PAGE.margin), h: Math.max(PAGE.h, used + 2 * PAGE.margin + PAGE.title) };
-    let y = rect.y + PAGE.margin;
-    for (const line of onPage) {
-      translateScene(line.scene, rect.x + PAGE.margin - line.bbox.x, y - line.bbox.y);
-      mergeScene(scene, line.scene);
-      y = grid(y + line.bbox.h + CELL_GAP);
-    }
-    pages.push({ number: pages.length + 1, name: pageName(d, onPage.flatMap((l) => l.heads), onPage.flatMap((l) => l.scene.symbols)), rect, ...(oversized ? { oversized: true } : {}) });
-    pageX += rect.w + PAGE_GAP;
+    sets.push({ lines: onPage, used });
     onPage = [];
     used = 0;
   };
@@ -380,6 +369,32 @@ function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[]
   }
   if (onPage.length) used -= CELL_GAP;
   flushPage();
+
+  // pages → grid on the canvas, read left to right and top to bottom; an oversized page widens
+  // its column and deepens its row, so the others stay aligned
+  const sizes = sets.map((p) => {
+    const wide = Math.max(0, ...p.lines.map((l) => l.bbox.w));
+    return { w: Math.max(PAGE.w, wide + 2 * PAGE.margin), h: Math.max(PAGE.h, p.used + 2 * PAGE.margin + PAGE.title), oversized: wide > DRAW_W || p.used > DRAW_H };
+  });
+  const cols = Math.ceil(Math.sqrt(sets.length));
+  const colW = Array.from({ length: cols }, (_, c) => Math.max(0, ...sizes.filter((_, i) => i % cols === c).map((z) => z.w)));
+  const rowH = Array.from({ length: Math.ceil(sets.length / cols) }, (_, r) => Math.max(0, ...sizes.slice(r * cols, (r + 1) * cols).map((z) => z.h)));
+  const colX = colW.map((_, c) => colW.slice(0, c).reduce((x, w) => x + w + PAGE_GAP, 0));
+  const rowY = rowH.map((_, r) => rowH.slice(0, r).reduce((y, h) => y + h + PAGE_GAP, 0));
+
+  const scene = emptyScene();
+  const pages: PageView[] = [];
+  sets.forEach((p, i) => {
+    const { w, h, oversized } = sizes[i]!;
+    const rect: Rect = { x: colX[i % cols]!, y: rowY[Math.floor(i / cols)]!, w, h };
+    let y = rect.y + PAGE.margin;
+    for (const line of p.lines) {
+      translateScene(line.scene, rect.x + PAGE.margin - line.bbox.x, y - line.bbox.y);
+      mergeScene(scene, line.scene);
+      y = grid(y + line.bbox.h + CELL_GAP);
+    }
+    pages.push({ number: i + 1, name: pageName(d, p.lines.flatMap((l) => l.heads), p.lines.flatMap((l) => l.scene.symbols)), rect, ...(oversized ? { oversized: true } : {}) });
+  });
   return { scene, pages };
 }
 
