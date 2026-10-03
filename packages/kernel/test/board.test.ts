@@ -1039,3 +1039,13 @@ describe('trackWidthFor', () => {
     expect(trackWidthFor(3)).toBeGreaterThan(1.2);
   });
 });
+
+describe('saved designs', () => {
+  it('stay routed after saving and loading', () => {
+    const k = buck();
+    k.transact({ summary: 'route', ops: [{ op: 'route' }] });
+    k.accept();
+    expect(k.board().routing).toBe('done');
+    expect(new Kernel(JSON.parse(k.exportDesign())).board().routing).toBe('done');
+  });
+});

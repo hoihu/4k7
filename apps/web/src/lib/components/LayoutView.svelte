@@ -1,5 +1,6 @@
 <script lang="ts">
   import { fabFiles, zip } from '@tracewise/fab';
+  import { SOLVER_VERSION } from '@tracewise/kernel';
   import type { BoardDiagnostic, CopperLayer } from '@tracewise/schema';
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
@@ -84,6 +85,19 @@
     if (ops.length) void app.userEdit(`Unlock ${ops.length} part(s)`, ops);
   }
 
+  /** Something a later placer could still move: a part that is not locked, or a board size that follows the parts. */
+  const pinned = $derived(!!b && !placed.free.length && !placed.choice.length && b.sizeBy === 'user');
+  /** Pin the layout: every part locked where it is and the board size fixed. The tracks stay (nothing they depend on changes). */
+  function pinLayout() {
+    if (!b) return;
+    const ops: unknown[] = [...placed.free, ...placed.choice].flatMap((ref) => {
+      const p = b.parts.find((x) => x.refdes === ref);
+      return p ? [{ op: 'place', ref, x_mm: p.x, y_mm: p.y, rot: p.rot as 0 | 90 | 180 | 270, lock: true }] : [];
+    });
+    if (b.sizeBy !== 'user') ops.push({ op: 'set_board', width_mm: b.outline.w, height_mm: b.outline.h });
+    if (ops.length) void app.userEdit('Pin the layout', ops);
+  }
+
   /** Forget the user's placement of a part: the placer decides again. */
   function release(ref: string) {
     const k = app.k?.ledger.find((x) => x.text.startsWith(`position(${ref})`));
@@ -118,6 +132,8 @@
   }
   // (routing runs after the placement shows: until its result is in, it is "routing…")
   const routing = $derived(b?.routing === 'done' && app.boardBusy && app.boardStage !== 'routed');
+  /** The board on show was solved by another version of the app: it is shown as saved. */
+  const saved = $derived(app.boardFrom && app.boardFrom.solver !== SOLVER_VERSION ? app.boardFrom : null);
   const routeLabel = $derived(routing ? 'Routing…' : b?.routing === 'done' ? 'Routed' : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
 
   /** Gerbers, drill, BOM and pick-and-place as one zip. */
@@ -167,7 +183,11 @@
       {#if b?.parts.length}
         <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose layout', [{ op: 'propose_layout' }])}>Propose layout</button>
         <button class="btn" class:pri={b.routing !== 'done'} disabled={app.running || b.routing === 'done'} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' ? 'Route again' : 'Route'}</button>
+        <button class="btn" disabled={app.running || pinned} title={pinned ? 'Every part is locked and the board size is set: no later version of the placer moves anything (Unlock all in the panel releases the parts)' : 'Lock every part where it is now and keep this board size, so that later changes and later versions of the app leave the layout alone. The tracks stay as they are.'} onclick={pinLayout}>{pinned ? 'Pinned' : 'Pin layout'}</button>
         <span class="chip" class:stale={b.routing === 'stale'} class:ok={b.routing === 'done' && !routing}>{routeLabel}</span>
+      {/if}
+      {#if saved}
+        <span class="chip" title="This board is shown as it was saved on {saved.at.slice(0, 10)}. This version of the app lays boards out differently, and a change to the design solves the board afresh. Pin layout first to keep the parts and the tracks where they are.">as saved {saved.at.slice(0, 10)}</span>
       {/if}
       {#if app.boardBusy}<span class="busy">updating…</span>{/if}
     </div>

@@ -13,6 +13,7 @@ geometry and checks every change.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
 - **Printable by construction**: the layout flows the schematic onto A4 pages by itself, never splitting a functional block; ⌘P prints them (or saves a PDF) for the bench.
 - **A design document from the design**: ask the agent to describe the design; it writes an overview and the functional blocks (reviewed like any change, kept in the project file). **Document** (schematic toolbar, or Layout → Documentation) prints it or saves a PDF: each block with its text, parts, schematic and place on the board, then the layout, an assembly drawing with only the parts and a tick list for populating a board, the BOM and the schematic pages.
+- **Opens the same years later**: a design carries its board as it was solved (placement, tracks, pour). Later versions of the placer and router do not touch it until you change the design.
 - **Local-first**: runs entirely in the browser. Your designs and API keys stay on your machine.
 
 ## Documents

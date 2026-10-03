@@ -42,6 +42,7 @@ import {
 } from '@tracewise/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@tracewise/parts';
 import { cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
+import { contentKey, sortKeys } from './canonical.ts';
 import { copperDrc, edgeDrc } from './drc.ts';
 import { route } from './router.ts';
 
@@ -868,7 +869,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board. Give it one from its datasheet drawing with set_footprint.`, entities: [ref] });
   }
   const planes = settingsPlanes(d, layers.length as 2 | 4);
-  const placementKey = hash(JSON.stringify([w, h, cornerR, shape, boardCutouts, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
+  // the rules with sorted keys: a saved design has them sorted, and the key must survive saving
+  const placementKey = hash(JSON.stringify([w, h, cornerR, shape, boardCutouts, layers, sortKeys(rules), planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   return {
     outline: { w, h },
     layers,
@@ -921,17 +923,32 @@ function hash(s: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
-/** Place; route and check the copper when the route step was taken for this placement (or `route`). */
-export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean } = {}): BoardView {
+/**
+ * Place; route and check the copper when the route step was taken for this placement (or `route`).
+ * `kept`: boards routed before. Copper routed for exactly what the router would get now stays as
+ * it is (a later router would draw it differently), so a change that leaves the placement, the
+ * nets and the rules alone (a value, a lock, the silkscreen) keeps the tracks.
+ */
+export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean; kept?: BoardView[] } = {}): BoardView {
   const b = placeBoard(d, sch);
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const planes = settingsPlanes(d, b.layers.length as 2 | 4);
   const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
+  const routeKey = contentKey(
+    JSON.stringify(sortKeys([b.outline, b.layers, b.rules, b.parts.map((p) => [p.componentId, p.refdes, p.side, p.courtyard, p.pads]), [...powerNets].sort(), netWidths, planes.map(({ netId, layer }) => [netId, layer]), b.cornerRadius, b.shape, b.cutouts])),
+  );
+  const kept = opts.kept?.find((k) => k.routing === 'done' && k.routeKey === routeKey);
+  if (kept) {
+    const same: BoardView = { ...b, routing: 'done', routeKey, tracks: kept.tracks, vias: kept.vias, zones: kept.zones, planes, ratsnest: kept.ratsnest, stats: kept.stats };
+    const left = kept.diagnostics.filter((x) => x.code === 'DRC.UNROUTED' || x.code === 'DRC.ROUTING_INCOMPLETE');
+    return { ...same, diagnostics: [...left.filter((x) => x.code === 'DRC.ROUTING_INCOMPLETE'), ...b.diagnostics, ...copperDrc(same), ...edgeDrc(same), ...left.filter((x) => x.code === 'DRC.UNROUTED')] };
+  }
   const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, netWidths, planes: planes.map(({ netId, layer }) => ({ netId, layer })), cornerRadius: b.cornerRadius, ...(b.shape ? { shape: b.shape } : {}), cutouts: b.cutouts, ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
   const routed: BoardView = {
     ...b,
     routing: 'done',
+    routeKey,
     tracks: r.tracks,
     vias: r.vias,
     zones: r.zones,
