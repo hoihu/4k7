@@ -155,84 +155,80 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
     files.push({ name: `${base}-${side === 'Top' ? 'F' : 'B'}_Paste.gbr`, content: paste.toString() });
   }
 
-  /* silkscreen: graphics (logos), body outlines and refdes, kept off pads */
-  const silk = new Gerber(h, ['FileFunction,Legend,Top', 'FilePolarity,Positive']);
-  // graphics first; then the pads (with their clearance) are cleared out of them
-  const topGraphics = (b.graphics ?? []).filter((g) => g.side === 'top');
-  for (const g of topGraphics) silk.graphic(g);
-  if (topGraphics.length) {
-    silk.polarity(true);
-    for (const p of pads) if (p.npth || onLayer(p, 'F.Cu')) silk.pad(p.npth ? { ...p, w: p.drill!, h: p.drill!, shape: 'round' } : p, SILK_TO_PAD);
-    for (const v of b.vias) silk.circle(v.x, v.y, v.pad + 2 * SILK_TO_PAD);
-    silk.polarity(false);
-  }
-  const keepOff = [
-    ...pads.map((p) => ({ x0: p.x - p.w / 2 - SILK_TO_PAD - SILK_WIDTH / 2, y0: p.y - p.h / 2 - SILK_TO_PAD - SILK_WIDTH / 2, x1: p.x + p.w / 2 + SILK_TO_PAD + SILK_WIDTH / 2, y1: p.y + p.h / 2 + SILK_TO_PAD + SILK_WIDTH / 2 })),
-    // and off vias (ink on a via's ring prints badly)
-    ...b.vias.map((v) => ({ x0: v.x - v.pad / 2 - SILK_WIDTH, y0: v.y - v.pad / 2 - SILK_WIDTH, x1: v.x + v.pad / 2 + SILK_WIDTH, y1: v.y + v.pad / 2 + SILK_WIDTH })),
-  ];
-  const clear = (x: number, y: number) =>
-    x > SILK_WIDTH && y > SILK_WIDTH && x < w - SILK_WIDTH && y < h - SILK_WIDTH && !keepOff.some((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1);
-  const clipped = (pts: number[]) => {
-    for (let i = 0; i + 3 < pts.length; i += 2) {
-      const [ax, ay, bx, by] = [pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!];
-      const len = Math.hypot(bx - ax, by - ay);
-      const steps = Math.max(1, Math.ceil(len / 0.05));
-      let run: number[] = [];
-      for (let s = 0; s <= steps; s++) {
-        const x = ax + ((bx - ax) * s) / steps;
-        const y = ay + ((by - ay) * s) / steps;
-        if (clear(x, y)) run.push(x, y);
-        else {
-          if (run.length >= 4) silk.line([run[0]!, run[1]!, run.at(-2)!, run.at(-1)!], SILK_WIDTH);
-          run = [];
-        }
-      }
-      if (run.length >= 4) silk.line([run[0]!, run[1]!, run.at(-2)!, run.at(-1)!], SILK_WIDTH);
+  /* silkscreen per side: graphics (logos), body outlines and refdes of the parts mounted there, kept off pads */
+  for (const [side, layer] of [['top', 'F.Cu'], ['bottom', 'B.Cu']] as const) {
+    const graphics = (b.graphics ?? []).filter((g) => g.side === side);
+    const parts = b.parts.filter((p) => p.side === side && !p.componentId.startsWith('hole:')); // mounting holes carry no silkscreen
+    // the bottom file only when something is printed there
+    if (side === 'bottom' && !graphics.length && !parts.length) continue;
+    const silk = new Gerber(h, [`FileFunction,Legend,${side === 'top' ? 'Top' : 'Bot'}`, 'FilePolarity,Positive']);
+    // the pads exposed on this side
+    const here = pads.filter((p) => p.npth || onLayer(p, layer));
+    // graphics first; then the pads (with their clearance) are cleared out of them
+    for (const g of graphics) silk.graphic(g);
+    if (graphics.length) {
+      silk.polarity(true);
+      for (const p of here) silk.pad(p.npth ? { ...p, w: p.drill!, h: p.drill!, shape: 'round' } : p, SILK_TO_PAD);
+      for (const v of b.vias) silk.circle(v.x, v.y, v.pad + 2 * SILK_TO_PAD);
+      silk.polarity(false);
     }
-  };
-  const texts: { x0: number; y0: number; x1: number; y1: number }[] = [];
-  for (const part of b.parts) {
-    if (part.componentId.startsWith('hole:')) continue; // mounting holes carry no silkscreen
-    const r = part.body;
-    if (r.round) {
-      const n = 48;
-      clipped(Array.from({ length: n + 1 }, (_, i) => [r.x + r.w / 2 + (r.w / 2) * Math.cos((2 * Math.PI * i) / n), r.y + r.h / 2 + (r.w / 2) * Math.sin((2 * Math.PI * i) / n)]).flat());
-    } else clipped([r.x, r.y, r.x + r.w, r.y, r.x + r.w, r.y + r.h, r.x, r.y + r.h, r.x, r.y]);
-    // pin-1 mark where the orientation matters: a short dash next to pin 1 (a dot would
-    // disappear in the clipping)
-    if (part.polarized) clipped([part.pin1.x - 0.2, part.pin1.y, part.pin1.x + 0.2, part.pin1.y]);
-    // refdes above the part, else below, else on the body
-    const th = Math.min(1, Math.max(0.6, Math.min(r.w, r.h) * 0.6));
-    const tw = textWidth(part.refdes, th);
-    const spots = [
-      { x: part.x, y: part.courtyard.y - th / 2 - 0.2 },
-      { x: part.x, y: part.courtyard.y + part.courtyard.h + th / 2 + 0.2 },
-      { x: part.x, y: part.y },
+    const keepOff = [
+      ...here.map((p) => ({ x0: p.x - p.w / 2 - SILK_TO_PAD - SILK_WIDTH / 2, y0: p.y - p.h / 2 - SILK_TO_PAD - SILK_WIDTH / 2, x1: p.x + p.w / 2 + SILK_TO_PAD + SILK_WIDTH / 2, y1: p.y + p.h / 2 + SILK_TO_PAD + SILK_WIDTH / 2 })),
+      // and off vias (ink on a via's ring prints badly)
+      ...b.vias.map((v) => ({ x0: v.x - v.pad / 2 - SILK_WIDTH, y0: v.y - v.pad / 2 - SILK_WIDTH, x1: v.x + v.pad / 2 + SILK_WIDTH, y1: v.y + v.pad / 2 + SILK_WIDTH })),
     ];
-    const box = (sx: number, sy: number) => ({ x0: sx - tw / 2 - 0.15, y0: sy - th / 2 - 0.15, x1: sx + tw / 2 + 0.15, y1: sy + th / 2 + 0.15 });
-    const fits = (sx: number, sy: number) => {
-      const bx = box(sx, sy);
-      if (texts.some((t) => bx.x0 < t.x1 && t.x0 < bx.x1 && bx.y0 < t.y1 && t.y0 < bx.y1)) return false;
-      return [0, 0.25, 0.5, 0.75, 1].every((fx) => [0, 0.5, 1].every((fy) => clear(sx - tw / 2 + fx * tw, sy - th / 2 + fy * th)));
+    const clear = (x: number, y: number) =>
+      x > SILK_WIDTH && y > SILK_WIDTH && x < w - SILK_WIDTH && y < h - SILK_WIDTH && !keepOff.some((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1);
+    const clipped = (pts: number[]) => {
+      for (let i = 0; i + 3 < pts.length; i += 2) {
+        const [ax, ay, bx, by] = [pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!];
+        const len = Math.hypot(bx - ax, by - ay);
+        const steps = Math.max(1, Math.ceil(len / 0.05));
+        let run: number[] = [];
+        for (let s = 0; s <= steps; s++) {
+          const x = ax + ((bx - ax) * s) / steps;
+          const y = ay + ((by - ay) * s) / steps;
+          if (clear(x, y)) run.push(x, y);
+          else {
+            if (run.length >= 4) silk.line([run[0]!, run[1]!, run.at(-2)!, run.at(-1)!], SILK_WIDTH);
+            run = [];
+          }
+        }
+        if (run.length >= 4) silk.line([run[0]!, run[1]!, run.at(-2)!, run.at(-1)!], SILK_WIDTH);
+      }
     };
-    const at = spots.find((s) => fits(s.x, s.y));
-    if (at) {
-      texts.push(box(at.x, at.y));
-      for (const stroke of textStrokes(part.refdes, at.x, at.y, th)) silk.line(stroke, SILK_WIDTH);
+    const texts: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    for (const part of parts) {
+      const r = part.body;
+      if (r.round) {
+        const n = 48;
+        clipped(Array.from({ length: n + 1 }, (_, i) => [r.x + r.w / 2 + (r.w / 2) * Math.cos((2 * Math.PI * i) / n), r.y + r.h / 2 + (r.w / 2) * Math.sin((2 * Math.PI * i) / n)]).flat());
+      } else clipped([r.x, r.y, r.x + r.w, r.y, r.x + r.w, r.y + r.h, r.x, r.y + r.h, r.x, r.y]);
+      // pin-1 mark where the orientation matters: a short dash next to pin 1 (a dot would
+      // disappear in the clipping)
+      if (part.polarized) clipped([part.pin1.x - 0.2, part.pin1.y, part.pin1.x + 0.2, part.pin1.y]);
+      // refdes above the part, else below, else on the body
+      const th = Math.min(1, Math.max(0.6, Math.min(r.w, r.h) * 0.6));
+      const tw = textWidth(part.refdes, th);
+      const spots = [
+        { x: part.x, y: part.courtyard.y - th / 2 - 0.2 },
+        { x: part.x, y: part.courtyard.y + part.courtyard.h + th / 2 + 0.2 },
+        { x: part.x, y: part.y },
+      ];
+      const box = (sx: number, sy: number) => ({ x0: sx - tw / 2 - 0.15, y0: sy - th / 2 - 0.15, x1: sx + tw / 2 + 0.15, y1: sy + th / 2 + 0.15 });
+      const fits = (sx: number, sy: number) => {
+        const bx = box(sx, sy);
+        if (texts.some((t) => bx.x0 < t.x1 && t.x0 < bx.x1 && bx.y0 < t.y1 && t.y0 < bx.y1)) return false;
+        return [0, 0.25, 0.5, 0.75, 1].every((fx) => [0, 0.5, 1].every((fy) => clear(sx - tw / 2 + fx * tw, sy - th / 2 + fy * th)));
+      };
+      const at = spots.find((s) => fits(s.x, s.y));
+      if (at) {
+        texts.push(box(at.x, at.y));
+        // bottom text is mirrored in the file (top view), so it reads right on the board's underside
+        for (const stroke of textStrokes(part.refdes, at.x, at.y, th)) silk.line(side === 'bottom' ? stroke.map((v, i) => (i % 2 === 0 ? 2 * at.x - v : v)) : stroke, SILK_WIDTH);
+      }
     }
-  }
-  files.push({ name: `${base}-F_Silkscreen.gbr`, content: silk.toString() });
-  // bottom silkscreen: only graphics put there (parts are on top)
-  const bottomGraphics = (b.graphics ?? []).filter((g) => g.side === 'bottom');
-  if (bottomGraphics.length) {
-    const bsilk = new Gerber(h, ['FileFunction,Legend,Bot', 'FilePolarity,Positive']);
-    for (const g of bottomGraphics) bsilk.graphic(g);
-    bsilk.polarity(true);
-    for (const p of pads) if (p.npth || onLayer(p, 'B.Cu')) bsilk.pad(p.npth ? { ...p, w: p.drill!, h: p.drill!, shape: 'round' } : p, SILK_TO_PAD);
-    for (const v of b.vias) bsilk.circle(v.x, v.y, v.pad + 2 * SILK_TO_PAD);
-    bsilk.polarity(false);
-    files.push({ name: `${base}-B_Silkscreen.gbr`, content: bsilk.toString() });
+    files.push({ name: `${base}-${side === 'top' ? 'F' : 'B'}_Silkscreen.gbr`, content: silk.toString() });
   }
 
   /* outline */

@@ -87,6 +87,61 @@ describe('board placement', () => {
   });
 });
 
+describe('parts on the bottom side (constrain layer)', () => {
+  const flip = (k: Kernel, ref: string, value = 'bottom') => k.transact({ summary: 'side', ops: [{ op: 'constrain', kind: 'layer', a: ref, value }] });
+
+  it('mirrors the footprint onto B.Cu; back on top it is as before', () => {
+    const k = buck();
+    const top = k.board().parts.find((p) => p.refdes === 'U1')!;
+    expect(top.side).toBe('top');
+    expect(flip(k, 'U1').status).toBe('ok');
+    const bot = k.board().parts.find((p) => p.refdes === 'U1')!;
+    expect(bot.side).toBe('bottom');
+    expect([bot.x, bot.y, bot.rot]).toEqual([top.x, top.y, top.rot]);
+    expect(bot.pads.every((p) => !!p.drill || p.layers.join() === 'B.Cu')).toBe(true);
+    // each pad lies mirrored about the part's axis (which one depends on the rotation)
+    const flipsX = top.rot % 180 === 0;
+    for (const pad of top.pads) {
+      const m = bot.pads.find((q) => q.number === pad.number)!;
+      expect(m.x).toBeCloseTo(flipsX ? 2 * top.x - pad.x : pad.x, 3);
+      expect(m.y).toBeCloseTo(flipsX ? pad.y : 2 * top.y - pad.y, 3);
+    }
+    expect((k.query({ op: 'get_component', ref: 'U1' }) as { side: string }).side).toBe('bottom');
+    flip(k, 'U1', 'top');
+    expect(k.board().parts.find((p) => p.refdes === 'U1')!.pads).toEqual(top.pads);
+  });
+
+  it('an SMD part may sit under an SMD part on the other side; on the same side they are kept apart', () => {
+    const k = buck();
+    k.transact({ summary: 'route', ops: [{ op: 'propose_layout' }] });
+    const u1 = k.board().parts.find((p) => p.refdes === 'U1')!;
+    const cap = k.board().parts.find((p) => p.follows === 'U1' && p.pads.length === 2 && p.pads.every((q) => !q.drill))!;
+    flip(k, cap.refdes);
+    k.transact({ summary: 'under', ops: [{ op: 'place', ref: cap.refdes, x_mm: u1.x, y_mm: u1.y, lock: true }] });
+    const b = k.board();
+    const under = b.parts.find((p) => p.refdes === cap.refdes)!;
+    expect([under.x, under.y, under.side]).toEqual([u1.x, u1.y, 'bottom']);
+    expect(b.parts.find((p) => p.refdes === 'U1')).toMatchObject({ x: u1.x, y: u1.y });
+    expect(b.diagnostics.filter((x) => x.code === 'DRC.COURTYARD_OVERLAP')).toEqual([]);
+    // back on the same side they compete for the area again: the placer moves U1 off the locked cap
+    flip(k, cap.refdes, 'top');
+    const again = k.board();
+    expect(again.parts.find((p) => p.refdes === 'U1')).not.toMatchObject({ x: u1.x, y: u1.y });
+    expect(again.diagnostics.filter((x) => x.code === 'DRC.COURTYARD_OVERLAP')).toEqual([]);
+  });
+
+  it('routes to bottom-side parts, DRC-clean and every net in one piece', () => {
+    const k = buck();
+    const caps = k.board().parts.filter((p) => p.pads.length === 2 && p.pads.every((q) => !q.drill)).slice(0, 3);
+    for (const c of caps) flip(k, c.refdes);
+    const b = routed(k);
+    expect(b.parts.filter((p) => p.side === 'bottom').map((p) => p.refdes)).toEqual(caps.map((c) => c.refdes));
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(b.ratsnest).toEqual([]);
+    expect(brokenNets(b)).toEqual([]);
+  });
+});
+
 /** Nets that are not one connected piece of copper, judged from geometry only. */
 function brokenNets(b: ReturnType<Kernel['board']>): string[] {
   type Node = { net: string; layer: string; x0: number; y0: number; x1: number; y1: number; seg?: number[]; r?: number; zone?: boolean };

@@ -1020,6 +1020,8 @@ function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResul
     if (op.value !== 'top' && op.value !== 'bottom') reject({ code: 'CONSTRAINT_INVALID', message: 'layer: value must be "top" or "bottom".' });
     k.a = resolveComponent(d, op.a!).id;
     k.value = op.value;
+    // the part turns over where the user sees it: the rest of the board stays as it is
+    if (!d.board?.placement && Object.keys(d.components).length) keepPlacement(d);
   } else {
     need(op.value, '"value" (the note text)');
     if (op.a) k.a = resolveComponent(d, op.a).id;
