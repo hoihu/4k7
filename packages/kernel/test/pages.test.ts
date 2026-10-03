@@ -85,9 +85,16 @@ describe('pages', () => {
       for (let i = 0; i < w.pts.length; i += 2) pages.add(s.pages.find((p) => inside({ x: w.pts[i]!, y: w.pts[i + 1]!, w: 0, h: 0 }, p.rect))!.number);
       expect(pages.size).toBe(1);
     }
-    // pages are named after the blocks on them and sit side by side with a gap
+    // pages are named after the blocks on them and sit in a near-square grid with a gap,
+    // read left to right and top to bottom
     expect(s.pages[0]!.name).toMatch(/^U1 TPS54331DR, /);
     expect(s.pages[1]!.rect.x).toBeGreaterThan(PAGE.w);
+    const cols = Math.ceil(Math.sqrt(s.pages.length));
+    s.pages.forEach((p, i) => {
+      expect(p.rect.x).toBe((i % cols) * (PAGE.w + 600));
+      expect(p.rect.y).toBe(Math.floor(i / cols) * (PAGE.h + 600));
+    });
+    if (s.pages.length > 2) expect(s.bbox.h).toBeGreaterThan(PAGE.h);
     expect(k.summary().pages).toBe(s.pages.length);
   });
 
