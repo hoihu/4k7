@@ -19,6 +19,8 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(
 
 export class ArtworkLibrary {
   items = $state<Artwork[]>([]);
+  /** Saved artwork a newer version of the app wrote; not loaded, left in storage. */
+  newer = 0;
   #kernel: KernelArtwork;
 
   constructor(kernel: KernelArtwork) {
@@ -26,7 +28,8 @@ export class ArtworkLibrary {
   }
 
   async init() {
-    const list = await loadArtwork();
+    const { items: list, newer } = await loadArtwork();
+    this.newer = newer;
     await this.#kernel.registerArtwork(list.map(forKernel));
     this.items = sorted(list);
   }

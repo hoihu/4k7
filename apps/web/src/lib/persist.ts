@@ -2,7 +2,7 @@
  * Local-first persistence in IndexedDB. The API key is encrypted with a non-extractable
  * AES-GCM key that never leaves this browser profile.
  */
-import type { Artwork, Design, PartCard } from '@tracewise/schema';
+import type { Artwork, PartCard } from '@tracewise/schema';
 
 const DB = 'tracewise';
 /** v2: 'library' store for imported parts; v3: 'datasheets' (PDFs by SHA-256); v4: 'artwork' (silkscreen graphics). */
@@ -69,10 +69,10 @@ const put = (store: string, key: string, value: unknown) => tx(store, 'readwrite
 
 /* --------------------------------- project -------------------------------- */
 
-export async function loadProject(): Promise<Design | undefined> {
+/** The saved project as stored (JSON text); the caller parses it, so an unreadable one can be kept. */
+export async function loadProject(): Promise<string | undefined> {
   try {
-    const raw = await get<string>('projects', 'current');
-    return raw ? (JSON.parse(raw) as Design) : undefined;
+    return (await get<string>('projects', 'current')) || undefined;
   } catch {
     return undefined;
   }
@@ -86,19 +86,96 @@ export async function saveProject(json: string): Promise<void> {
   }
 }
 
-/* ------------------------------ part library ------------------------------ */
+/** A saved project this version could not read, kept so the next save does not replace it. */
+export interface KeptProject {
+  key: string;
+  json: string;
+  reason: string;
+  /** When it was set aside, ms since epoch. */
+  at: number;
+}
 
-/** Parts imported from datasheets, kept in this browser. */
-export async function loadLibrary(): Promise<PartCard[]> {
+/** Move an unreadable saved project to its own key. False when even that failed. */
+export async function keepProject(json: string, reason: string): Promise<boolean> {
   try {
-    return (await tx<PartCard[]>('library', 'readonly', (s) => s.getAll() as IDBRequest<PartCard[]>)) ?? [];
+    const at = Date.now();
+    const kept: KeptProject = { key: `unreadable:${at}`, json, reason, at };
+    await put('projects', kept.key, kept);
+    await tx('projects', 'readwrite', (s) => s.delete('current')); // moved, so a reload does not keep it twice
+    return true;
+  } catch (e) {
+    storageHealth = `keeping the unreadable project failed: ${(e as Error).message}`;
+    return false;
+  }
+}
+
+export async function loadKeptProjects(): Promise<KeptProject[]> {
+  try {
+    const all = await tx<unknown[]>('projects', 'readonly', (s) => s.getAll() as IDBRequest<unknown[]>);
+    return (all ?? []).filter((v): v is KeptProject => typeof v === 'object' && v !== null && 'json' in v).sort((a, b) => a.at - b.at);
   } catch {
     return [];
   }
 }
 
+export async function deleteKeptProject(key: string): Promise<void> {
+  await tx('projects', 'readwrite', (s) => s.delete(key));
+}
+
+/* ----------------------------- stored records ----------------------------- */
+
+/**
+ * Library parts and artwork are stored one record each, stamped with the format they were
+ * written in. Bump a version when the record's shape changes and upgrade older records in
+ * `readStored`'s caller (the `upgrade` argument).
+ */
+export const LIBRARY_FORMAT_VERSION = 1;
+export const ARTWORK_FORMAT_VERSION = 1;
+
+/** What a store held: the records this version can read, and how many a newer version wrote. */
+export interface Stored<T> {
+  items: T[];
+  newer: number;
+}
+
+type Stamped<T> = T & { format?: number };
+
+const stamp = <T>(record: T, format: number): Stamped<T> => ({ ...(JSON.parse(JSON.stringify(record)) as T), format }); // plain data, never a Svelte proxy
+
+/**
+ * Sort stored records by format: current ones as they are, older ones through `upgrade`,
+ * newer ones left out (and left in the store). Records from before the stamp count as format 1.
+ */
+export function readStored<T>(records: Stamped<T>[], current: number, upgrade?: (record: T, from: number) => T): Stored<T> {
+  const out: Stored<T> = { items: [], newer: 0 };
+  for (const r of records) {
+    const { format = 1, ...rest } = r;
+    if (format > current) out.newer++;
+    else out.items.push(format < current && upgrade ? upgrade(rest as T, format) : (rest as T));
+  }
+  return out;
+}
+
+/** Whether the record stored under this key was written by a newer version (saving would destroy it). */
+async function newerStored(store: string, key: string, current: number): Promise<boolean> {
+  const existing = await get<{ format?: number }>(store, key);
+  return (existing?.format ?? 1) > current;
+}
+
+/* ------------------------------ part library ------------------------------ */
+
+/** Parts imported from datasheets, kept in this browser. */
+export async function loadLibrary(): Promise<Stored<PartCard>> {
+  try {
+    return readStored((await tx<Stamped<PartCard>[]>('library', 'readonly', (s) => s.getAll() as IDBRequest<Stamped<PartCard>[]>)) ?? [], LIBRARY_FORMAT_VERSION);
+  } catch {
+    return { items: [], newer: 0 };
+  }
+}
+
 export async function saveLibraryPart(card: PartCard): Promise<void> {
-  await put('library', card.id, JSON.parse(JSON.stringify(card)) as PartCard); // plain data, never a Svelte proxy
+  if (await newerStored('library', card.id, LIBRARY_FORMAT_VERSION)) throw new Error(`${card.id} was saved by a newer version of the app; update the app to change it`);
+  await put('library', card.id, stamp(card, LIBRARY_FORMAT_VERSION));
 }
 
 export async function deleteLibraryPart(id: string): Promise<void> {
@@ -108,16 +185,17 @@ export async function deleteLibraryPart(id: string): Promise<void> {
 /* -------------------------------- artwork -------------------------------- */
 
 /** Saved silkscreen artwork (logos, clipart), kept in this browser for every project. */
-export async function loadArtwork(): Promise<Artwork[]> {
+export async function loadArtwork(): Promise<Stored<Artwork>> {
   try {
-    return (await tx<Artwork[]>('artwork', 'readonly', (s) => s.getAll() as IDBRequest<Artwork[]>)) ?? [];
+    return readStored((await tx<Stamped<Artwork>[]>('artwork', 'readonly', (s) => s.getAll() as IDBRequest<Stamped<Artwork>[]>)) ?? [], ARTWORK_FORMAT_VERSION);
   } catch {
-    return [];
+    return { items: [], newer: 0 };
   }
 }
 
 export async function saveArtwork(a: Artwork): Promise<void> {
-  await put('artwork', a.id, JSON.parse(JSON.stringify(a)) as Artwork);
+  if (await newerStored('artwork', a.id, ARTWORK_FORMAT_VERSION)) throw new Error(`"${a.name}" was saved by a newer version of the app; update the app to change it`);
+  await put('artwork', a.id, stamp(a, ARTWORK_FORMAT_VERSION));
 }
 
 export async function deleteArtwork(id: string): Promise<void> {
