@@ -16,7 +16,11 @@ export interface AgentOptions {
   maxSteps?: number;
   /** Verification rounds before giving up and reporting remaining errors. */
   fixBudget?: number;
+  /** Tools the app provides beyond the kernel ones (jlc_search), by tool name. */
+  tools?: Record<string, ToolHandler>;
 }
+
+export type ToolHandler = (input: unknown) => Promise<{ content: string; isError: boolean; label: string; detail: string }>;
 
 interface PendingQuestion {
   askId: string;
@@ -189,8 +193,11 @@ export class Agent {
           const out = runCalc(parsed.data);
           return { content: JSON.stringify(out), isError: false, label: `calc · ${parsed.data.fn}`, detail: Object.entries(out).filter(([k]) => k !== 'note').map(([k, v]) => `${k}=${v}`).join(', ') };
         }
-        default:
+        default: {
+          const extra = this.opts.tools?.[name];
+          if (extra) return await extra(input);
           return { content: `Unknown tool ${name}`, isError: true, label: name, detail: 'unknown tool' };
+        }
       }
     } catch (e) {
       const msg = e instanceof CalcError ? e.message : errorMessage(e);

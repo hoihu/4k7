@@ -4,6 +4,8 @@
  */
 import {
   approxEqual,
+  normalizeLcsc,
+  paramSpecs,
   parseQuantity,
   type Component,
   type Constraint,
@@ -659,14 +661,20 @@ function lookupCard(d: Design, id: string): PartCard {
 }
 
 function validateParams(card: PartCard, params: Record<string, string | null>, refdes: string): void {
+  const specs = paramSpecs(card);
   for (const [key, value] of Object.entries(params)) {
-    const spec = card.params[key];
+    const spec = specs[key];
     if (!spec) {
       reject({
         code: 'PARAM_UNKNOWN',
-        message: `${refdes} (${card.id}) has no parameter "${key}". Allowed: ${Object.keys(card.params).join(', ') || 'none'}.`,
-        candidates: Object.keys(card.params),
+        message: `${refdes} (${card.id}) has no parameter "${key}". Allowed: ${Object.keys(specs).join(', ')}.`,
+        candidates: Object.keys(specs),
       });
+    }
+    if (key === 'lcsc' && value !== null) {
+      const n = normalizeLcsc(value);
+      if (!n) reject({ code: 'PARAM_INVALID', message: `${refdes}.lcsc = "${value}" is not an LCSC part number (a C followed by digits, e.g. C25804).` });
+      params[key] = n;
     }
     if (key === 'package' && value && !card.packageInfo && !standardPackage(value, card.pins.length)) {
       const opts = packageOptions(card);

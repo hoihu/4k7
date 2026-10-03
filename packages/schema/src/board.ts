@@ -391,6 +391,8 @@ export interface BoardPart {
   part: string;
   mpn?: string;
   manufacturer?: string;
+  /** LCSC / JLCPCB part number chosen for assembly (the component's lcsc parameter). */
+  lcsc?: string;
   /** Package name ("0603", "SOIC-8", "LQFP100"). */
   pkg: string;
   /** Package data the footprint was built from (3D bodies come from the same). */

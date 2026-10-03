@@ -19,6 +19,18 @@ export const CalcCall = z.object({
 });
 export type CalcCall = z.infer<typeof CalcCall>;
 
+/** jlc_search: JLCPCB's assembly catalogue (LCSC part numbers), by text, by value or by number. */
+export const JlcSearchInput = z.object({
+  text: z.string().optional().describe('What the part is, as words that appear in a catalogue description: "passive buzzer", "AMS1117-3.3", "USB-C receptacle 16P", "NPN SOT-23". Not for resistors/capacitors: use kind + value.'),
+  kind: z.enum(['resistor', 'capacitor']).optional().describe('Parametric search for a jellybean passive: give value (and package); text is ignored'),
+  value: z.string().optional().describe('With kind: the value, e.g. "10k", "100nF"'),
+  package: z.string().optional().describe('Package filter as JLCPCB names it: "0603", "SOT-23", "SOIC-8", "LQFP-48"'),
+  lcsc: z.string().optional().describe('Look one part up by its LCSC number ("C25804"): manufacturer part, package, value, stock, price and the datasheet link'),
+  basic_only: z.boolean().optional().describe('Only Basic and Preferred parts (no extended-part fee per unique part at JLCPCB assembly). Default: all, Basic first'),
+  limit: z.number().int().min(1).max(25).default(8),
+});
+export type JlcSearchInput = z.infer<typeof JlcSearchInput>;
+
 export const AskUser = z.object({
   question: z.string().min(5),
   options: z.array(z.string()).min(2).max(5).describe('Short, mutually exclusive choices'),
@@ -73,8 +85,19 @@ export const TOOL_NAMES = {
   query: 'design_query',
   edit: 'design_edit',
   calc: 'calc',
+  jlc: 'jlc_search',
   ask: 'ask_user',
 } as const;
+
+/** The jlc_search tool, shared by the in-app agent and the MCP bridge. */
+export const JLC_TOOL: ToolDefinition = {
+  name: TOOL_NAMES.jlc,
+  description:
+    "JLCPCB's assembly parts catalogue (LCSC part numbers): search by text, parametrically for resistors/capacitors (kind + value + package), " +
+    'or look a part up by its LCSC number (details, stock, price, datasheet link). Results say Basic/Preferred (no loading fee) or Extended. ' +
+    'Record the chosen part on a component with design_edit set_param lcsc: "C25804"; a generic resistor/capacitor stays generic.',
+  input_schema: schemaOf(JlcSearchInput),
+};
 
 export function toolDefinitions(): ToolDefinition[] {
   return [
@@ -100,6 +123,7 @@ export function toolDefinitions(): ToolDefinition[] {
         'results snap to standard E-series values where relevant.',
       input_schema: schemaOf(CalcCall),
     },
+    JLC_TOOL,
     {
       name: TOOL_NAMES.ask,
       description:

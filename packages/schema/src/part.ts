@@ -52,6 +52,26 @@ export interface ParamSpec {
   description?: string;
 }
 
+/**
+ * Parameters every component has, whatever its card: sourcing. `lcsc` is the LCSC / JLCPCB part
+ * number ("C25804") of the exact part to assemble; for a generic resistor or capacitor it is the
+ * whole sourcing decision (the symbol stays generic), for an imported IC it names the stocked variant.
+ */
+export const UNIVERSAL_PARAMS: Record<string, ParamSpec> = {
+  lcsc: { description: 'LCSC / JLCPCB part number of the exact part to assemble, e.g. "C25804" (jlc_search finds one)' },
+};
+
+/** The parameters a component of this card may carry: the card's own plus the universal ones. */
+export function paramSpecs(card: Pick<PartCard, 'params'>): Record<string, ParamSpec> {
+  return { ...card.params, ...UNIVERSAL_PARAMS };
+}
+
+/** "c25804" → "C25804"; null when it is not an LCSC number. */
+export function normalizeLcsc(s: string): string | null {
+  const m = /^\s*[cC]?\s*(\d{1,10})\s*$/.exec(s);
+  return m ? `C${m[1]}` : null;
+}
+
 /** Where a fact came from. M0 seeds carry `builtin`; ingested parts carry page + bbox. */
 export interface Provenance {
   source: 'builtin' | 'datasheet' | 'user';

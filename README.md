@@ -8,6 +8,7 @@ geometry and checks every change.
 - **Bring your own AI**: Anthropic, OpenAI-compatible (incl. OpenRouter), Gemini, or local models (Ollama / LM Studio).
 - **Bring your own tools**: attach any MCP server (distributor stock, company part DB, simulation…).
 - **Parts from datasheets**: drop a manufacturer PDF (Parts → Import from datasheet); your local Claude Code extracts the pin table and package, the app checks it, and deterministic generators build the symbol and footprint.
+- **Sourcing from JLCPCB**: parts are fetched on demand from JLCPCB's assembly catalogue (LCSC numbers, stock, price, Basic/Extended), by you in the Inspector or by the agent ("a cheap buzzer from JLC"). Passives stay generic and just get the number; parts with pins are imported from the catalogue's datasheet link. The BOM carries the LCSC column JLCPCB reads.
 - **Schematic to manufacturing files**: the board is placed and routed automatically from the schematic (with a ground pour), checked by DRC, shown in 2D and 3D, and exported as Gerber, drill, BOM and pick-and-place. Steer it in words ("make the board 30 × 20 mm", "put J1 at the left edge") or drag parts to pin them.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
 - **Printable by construction**: the layout flows the schematic onto A4 pages by itself, never splitting a functional block; ⌘P prints them (or saves a PDF) for the bench.
@@ -22,6 +23,7 @@ geometry and checks every change.
 | [docs/design/ops-api.md](docs/design/ops-api.md) | The operation catalogue that AI, MCP and UI all use |
 | [docs/design/ai-loop.md](docs/design/ai-loop.md) | Agent loop, verification loop, hints, BYO AI, MCP, relay |
 | [docs/design/part-ingest.md](docs/design/part-ingest.md) | Getting from a PDF datasheet to a verified part |
+| [docs/design/sourcing.md](docs/design/sourcing.md) | Parts from JLCPCB's assembly catalogue, on demand; the `lcsc` parameter and the BOM |
 | [docs/design/ui.md](docs/design/ui.md) | UI concept: workspaces, density rules |
 | [docs/ui/prototype.html](docs/ui/prototype.html) | Clickable prototype of the chosen UI (open in a browser) |
 | [docs/ui/proposals.html](docs/ui/proposals.html) | Earlier exploration: proposals A, B, C |

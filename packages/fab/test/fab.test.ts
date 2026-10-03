@@ -55,8 +55,8 @@ describe('fab outputs', () => {
     if (b.vias.length) expect(drl).toContain('C0.300');
     expect(drl).toContain('C1.000'); // header pins
     const rows = bom(b).trim().split('\n');
-    expect(rows[0]).toBe('Comment,Designator,Footprint,Quantity,MPN,Manufacturer');
-    expect(rows).toContain('TPS54331DR,U1,SOIC-8,1,TPS54331DR,Texas Instruments');
+    expect(rows[0]).toBe('Comment,Designator,Footprint,Quantity,MPN,Manufacturer,LCSC Part #');
+    expect(rows).toContain('TPS54331DR,U1,SOIC-8,1,TPS54331DR,Texas Instruments,');
     const pnp = pickAndPlace(b).trim().split('\n');
     expect(pnp).toHaveLength(1 + 11); // SMD parts only (J1 is through-hole)
     const u1 = b.parts.find((p) => p.refdes === 'U1')!;

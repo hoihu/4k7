@@ -1,5 +1,5 @@
 export * from './types.ts';
-export { Agent, type AgentOptions } from './loop.ts';
+export { Agent, type AgentOptions, type ToolHandler } from './loop.ts';
 export { runCalc, nearestE, CalcError } from './calc.ts';
 export { SYSTEM_PROMPT, formatDesignContext } from './prompt.ts';
 export { AnthropicProvider, ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL, costUsd, type Effort, type AnthropicOptions } from './providers/anthropic.ts';

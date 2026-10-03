@@ -4,6 +4,7 @@
  * in a Web Worker. M0 is TypeScript; the Rust/WASM kernel will implement this same API.
  */
 import {
+  paramSpecs,
   QueryOp,
   Transaction,
   emptyDesign,
@@ -254,7 +255,10 @@ export class Kernel {
           refdes: c.refdes,
           part: c.part,
           description: card?.description,
+          category: card?.category,
           params: c.params,
+          /** Every parameter this component may carry (the card's and the universal lcsc), for editors. */
+          specs: card ? paramSpecs(card) : {},
           ...(card && packageOptions(card).length ? { package: { ...packageChoice(card, c.params, d.packageDefaults), options: packageOptions(card) } } : {}),
           pins: card?.pins.map((p) => ({
             pin: p.number,

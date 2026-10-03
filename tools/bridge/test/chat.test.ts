@@ -84,7 +84,7 @@ describe('app chat via Claude Code', () => {
     expect(reply).not.toContain('(full message)'); // streamed deltas win over the final message
     // it reached the tab through the token-protected HTTP MCP endpoint
     expect(calls).toEqual(['get_context']);
-    expect(reply).toContain('tools=get_context,design_query,design_edit,calc,import_part,pending_import,artwork,read_datasheet,get_schematic_image,propose ');
+    expect(reply).toContain('tools=get_context,design_query,design_edit,calc,import_part,jlc_search,pending_import,artwork,read_datasheet,get_schematic_image,propose ');
     const flags = JSON.parse(reply.slice(reply.indexOf('flags=') + 6));
     expect(flags).toMatchObject({ tools: '', strict: true, allowed: 'mcp__tracewise', permission: 'dontAsk', model: 'sonnet', prompt: 'build a buck' });
     expect(flags.appended).toMatch(/^You are answering messages typed into/);

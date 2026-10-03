@@ -273,17 +273,18 @@ const csv = (rows: (string | number)[][]) => rows.map((r) => r.map((c) => (/[",\
 
 /** Bill of materials grouped by part, value and package. */
 export function bom(b: BoardView): string {
-  const groups = new Map<string, { value: string; pkg: string; mpn: string; mfr: string; refs: string[] }>();
+  const groups = new Map<string, { value: string; pkg: string; mpn: string; mfr: string; lcsc: string; refs: string[] }>();
   for (const p of b.parts) {
     if (p.componentId.startsWith('hole:')) continue; // board features, not parts to buy
-    const key = `${p.part}|${p.value}|${p.pkg}|${p.mpn ?? ''}`;
-    const g = groups.get(key) ?? { value: p.value, pkg: p.pkg, mpn: p.mpn ?? '', mfr: p.manufacturer ?? '', refs: [] };
+    const key = `${p.part}|${p.value}|${p.pkg}|${p.mpn ?? ''}|${p.lcsc ?? ''}`;
+    const g = groups.get(key) ?? { value: p.value, pkg: p.pkg, mpn: p.mpn ?? '', mfr: p.manufacturer ?? '', lcsc: p.lcsc ?? '', refs: [] };
     g.refs.push(p.refdes);
     groups.set(key, g);
   }
   const natural = (a: string, c: string) => a.localeCompare(c, 'en', { numeric: true });
   const rows = [...groups.values()].sort((a, c) => natural(a.refs[0]!, c.refs[0]!));
-  return csv([['Comment', 'Designator', 'Footprint', 'Quantity', 'MPN', 'Manufacturer'], ...rows.map((g) => [g.value, g.refs.sort(natural).join(','), g.pkg, g.refs.length, g.mpn, g.mfr])]);
+  // "LCSC Part #" is the column JLCPCB's assembly upload reads
+  return csv([['Comment', 'Designator', 'Footprint', 'Quantity', 'MPN', 'Manufacturer', 'LCSC Part #'], ...rows.map((g) => [g.value, g.refs.sort(natural).join(','), g.pkg, g.refs.length, g.mpn, g.mfr, g.lcsc])]);
 }
 
 /** Pick-and-place: centre, counter-clockwise rotation, y up from the bottom-left corner. */

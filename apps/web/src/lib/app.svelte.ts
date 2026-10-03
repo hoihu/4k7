@@ -24,6 +24,7 @@ import { BoardClient, type BoardStage } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderSchematicPng } from './snapshot.ts';
+import { jlcTool } from './jlc.ts';
 import {
   DEFAULT_SETTINGS,
   loadApiKey,
@@ -130,7 +131,7 @@ class AppState {
     await this.ingest.init().catch((e: Error) => this.flash(`Could not load imported parts: ${e.message}`));
     await this.artwork.init().catch((e: Error) => this.flash(`Could not load the artwork library: ${e.message}`));
     await this.ingest.adoptFootprints(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
-    this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget });
+    this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget, tools: { jlc_search: jlcTool } });
     this.settingsChannel?.addEventListener('message', (e: MessageEvent<{ type: string; code?: string }>) => {
       if (e.data?.type === 'bridge-held' && e.data.code) bridge.heldElsewhere(e.data.code);
       else void this.reloadSettings();
@@ -432,6 +433,11 @@ class AppState {
         } catch (e) {
           return text((e as Error).message, true);
         }
+      }
+      case 'jlc_search': {
+        const out = await jlcTool(input);
+        log(out.label, !out.isError, out.detail);
+        return text(out.content, out.isError);
       }
       case 'import_part': {
         const args = ImportPartInput.safeParse(input);
