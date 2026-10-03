@@ -273,6 +273,22 @@ export const RemoveHoleOp = z.object({
   id: z.string().describe('Hole id ("MH1") or "all"'),
 });
 
+export const DescribeOp = z.object({
+  op: z.literal('describe'),
+  overview: z.string().min(1).optional().describe('The whole design in a few short paragraphs (Markdown): what it is for, its inputs and outputs, the supplies, how the blocks work together. Omit to keep the current one'),
+  blocks: z
+    .array(
+      z.object({
+        title: z.string().min(1).describe('Name of the block, e.g. "3.3 V buck regulator", "USB-C input and protection"'),
+        refs: z.array(componentRef).min(1).describe('The parts of the block; every part of the design belongs to exactly one block'),
+        text: z.string().min(1).describe('How the block works (Markdown): its job, the key parts and why they have their values, the nets it takes and gives, anything to know when bringing it up'),
+      }),
+    )
+    .min(1)
+    .optional()
+    .describe('The functional blocks, in the order a reader should meet them (power first, then along the signal path). Replaces all blocks; omit to keep the current ones'),
+}).describe('Write the design description: the text of the design document, printed with each block\'s schematic, its place on the board, the layout, the assembly drawing and the BOM.');
+
 export const EditOp = z.discriminatedUnion('op', [
   AddPartOp,
   RemoveOp,
@@ -305,6 +321,7 @@ export const EditOp = z.discriminatedUnion('op', [
   EditGraphicOp,
   RemoveGraphicOp,
   SetOutlineOp,
+  DescribeOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
 export type EditOpName = EditOp['op'];
@@ -329,6 +346,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_net'), net: netName }),
   z.object({ op: z.literal('get_diagnostics') }),
   z.object({ op: z.literal('get_ledger') }),
+  z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
   z.object({ op: z.literal('get_board') }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
   z.object({
     op: z.literal('search_parts'),

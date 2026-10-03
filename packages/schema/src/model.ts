@@ -24,6 +24,25 @@ export interface Design {
   board?: BoardSettings;
   /** Packages of generic parts without their own package parameter (set_package_defaults). */
   packageDefaults?: PackageDefaults;
+  /** What the design does, in words (describe): the text of the design document. */
+  description?: Description;
+}
+
+/**
+ * The design in words: an overview and the functional blocks it is made of (a supply, an MCU
+ * with its support parts, an interface…). Written by the agent, printed in the design document
+ * next to each block's schematic and its place on the board. Text is Markdown.
+ */
+export interface Description {
+  overview: string;
+  blocks: DescriptionBlock[];
+}
+
+export interface DescriptionBlock {
+  title: string;
+  /** Component ids of the block's parts. */
+  components: string[];
+  text: string;
 }
 
 /**

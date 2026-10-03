@@ -137,6 +137,7 @@
               <button aria-pressed={i === app.sheet} onclick={() => (app.sheet = i)}>{s.name}{#if s.pages.length > 1} <span class="muted">{s.pages.length}p</span>{/if}</button>
             {/each}
             <button class="ib" onclick={print} title="Print the schematic (⌘P): one A4 page per block, or save as PDF">⎙</button>
+            <button class="ib" disabled={app.docBusy || !app.k?.summary.components.length} onclick={() => app.designDocument()} title="Design document: description of the blocks, layout, assembly drawing, BOM and schematic (print, or save as PDF)">{app.docBusy ? 'Preparing…' : 'Document'}</button>
           </div>
           {#if app.k?.proposal}
             <div class="fl pend">

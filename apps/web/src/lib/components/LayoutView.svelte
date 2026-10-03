@@ -40,6 +40,7 @@
   }
   let marker = $state<{ x: number; y: number } | null>(null);
   const netName = (id: string | null) => (id ? (b?.netNames[id] ?? id) : '');
+  const desc = $derived(app.k?.description ?? null);
   const errors = $derived(b?.diagnostics.filter((d) => d.severity === 'error').length ?? 0);
   const warnings = $derived(b?.diagnostics.filter((d) => d.severity === 'warning').length ?? 0);
   const layerNames: [string, string][] = $derived([
@@ -245,6 +246,16 @@
         <h4>Manufacturing</h4>
         <button class="btn pri wide" onclick={exportFab} disabled={!b.parts.length}>Download fab files (.zip)</button>
         <p class="small muted">Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place.{#if errors} Fix the {errors} error{errors > 1 ? 's' : ''} first; the files would not make a working board.{/if}</p>
+        <h4>Documentation</h4>
+        <button class="btn wide" onclick={() => app.designDocument()} disabled={!b.parts.length || app.docBusy}>{app.docBusy ? 'Preparing…' : 'Design document (print / PDF)'}</button>
+        <p class="small muted">
+          The functional blocks described, each with its schematic and its place on the board, then layout, assembly drawing (parts only), BOM and schematic.
+          {#if desc}Description: {desc.blocks.length} block{desc.blocks.length === 1 ? '' : 's'}{#if desc.undescribed.length}, <span class="stale">{desc.undescribed.length} part{desc.undescribed.length === 1 ? '' : 's'} in none of them</span>{/if}.
+          {:else}No description written yet.{/if}
+        </p>
+        {#if b.parts.length && (!desc || desc.undescribed.length)}
+          <button class="btn wide" onclick={() => app.describeDesign()} disabled={app.running || app.isDemo} title={app.isDemo ? 'The offline demo cannot write it: choose an AI provider in Settings' : 'The agent writes the overview and the blocks; you review them like any change'}>{desc ? 'Ask the agent to update the description' : 'Ask the agent to describe the design'}</button>
+        {/if}
         <h4>Layers</h4>
         <ul class="layers">
           {#each layerNames as [key, label] (key)}
@@ -271,7 +282,7 @@
 <style>
   .chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--txt); background: var(--panel); opacity: 0.8; }
   .chip.ok { color: var(--ok); }
-  .chip.stale { color: var(--warn); }
+  .chip.stale, .small .stale { color: var(--warn); }
   .size { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
   .size input { width: 52px; padding: 2px 4px; }
   .row2 { display: flex; gap: 6px; flex-wrap: wrap; }

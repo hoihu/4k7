@@ -20,6 +20,7 @@ import {
   type MountingHole,
   type Cutout,
   type SilkGraphic,
+  type DescriptionView,
   DEFAULT_BOARD,
 } from '@tracewise/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
@@ -86,6 +87,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return setFootprint(d, op);
     case 'rename_part':
       return renamePart(d, op);
+    case 'describe':
+      return describe(d, op);
     case 'set_package_defaults':
       return setPackageDefaults(d, op);
     case 'set_board':
@@ -622,6 +625,43 @@ function setPackageDefaults(d: Design, op: Extract<EditOp, { op: 'set_package_de
   if (Object.keys(next).length) d.packageDefaults = next;
   else delete d.packageDefaults;
   return { op: 'set_package_defaults', effect: `package defaults: ${changes.join(', ') || 'unchanged'}`, ids: ['packages'] };
+}
+
+/** The design description: the overview, the functional blocks, or both. Blocks share no part. */
+function describe(d: Design, op: Extract<EditOp, { op: 'describe' }>): OpResult {
+  if (op.overview === undefined && !op.blocks) reject({ code: 'INVALID_OP', message: 'describe needs an overview, blocks, or both.' });
+  const taken = new Map<string, string>();
+  const blocks = op.blocks?.map((b) => {
+    const components = [...new Set(b.refs.map((r) => resolveComponent(d, r).id))];
+    for (const id of components) {
+      const other = taken.get(id);
+      if (other) reject({ code: 'INVALID_OP', message: `${d.components[id]!.refdes} is in two blocks ("${other}" and "${b.title}"); every part belongs to one block.` });
+      taken.set(id, b.title);
+    }
+    return { title: b.title.trim(), components, text: b.text.trim() };
+  });
+  d.description = { overview: op.overview?.trim() ?? d.description?.overview ?? '', blocks: blocks ?? d.description?.blocks ?? [] };
+  const left = descriptionView(d)!.undescribed;
+  return {
+    op: 'describe',
+    effect:
+      `description: ${[op.overview !== undefined && 'overview', blocks && `${blocks.length} block${blocks.length === 1 ? '' : 's'}`].filter(Boolean).join(', ')}` +
+      (left.length ? `; in no block yet: ${left.join(', ')}` : ''),
+    ids: ['description'],
+  };
+}
+
+/** The description with its parts by refdes; parts removed since it was written drop out. */
+export function descriptionView(d: Design): DescriptionView | null {
+  if (!d.description) return null;
+  const covered = new Set<string>();
+  const blocks = d.description.blocks.map((b) => {
+    const parts = b.components.flatMap((id) => (d.components[id] ? [d.components[id]!] : []));
+    for (const c of parts) covered.add(c.id);
+    return { title: b.title, refs: parts.map((c) => c.refdes).sort(natCmp), text: b.text };
+  });
+  const undescribed = Object.values(d.components).filter((c) => !covered.has(c.id)).map((c) => c.refdes).sort(natCmp);
+  return { overview: d.description.overview, blocks, undescribed };
 }
 
 /** A part's shown name (part number); its id, which components refer to, stays. Changes the design's copy. */

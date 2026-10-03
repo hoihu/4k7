@@ -208,3 +208,49 @@ describe('determinism', () => {
     expect(b.exportDesign()).toBe(a.exportDesign());
   });
 });
+
+describe('design description', () => {
+  const blocks = [
+    { title: 'Input', refs: ['J1', 'C1'], text: 'The 12 V input and its bulk capacitor.' },
+    { title: 'Buck regulator', refs: ['U1', 'L1', 'D1', 'C2', 'C3', 'R1', 'R2'], text: 'TPS54331 stepping 12 V down to 3.3 V.' },
+  ];
+
+  it('is written with describe, reviewed as one hunk and kept in the file', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    k.accept();
+    const all = k.state().summary.components.map((c) => c.refdes);
+    const r = k.transact({ summary: 'describe', ops: [{ op: 'describe', overview: 'A 12 V to 3.3 V supply.', blocks }] });
+    expect(r.status).toBe('ok');
+    const covered = new Set(blocks.flatMap((b) => b.refs));
+    expect(r.results[0]!.effect).toBe(`description: overview, 2 blocks; in no block yet: ${all.filter((x) => !covered.has(x)).join(', ')}`);
+    expect(k.proposal()!.hunks.map((h) => [h.kind, h.title, h.details])).toEqual([['description', 'design description: overview, 2 blocks', ['Input', 'Buck regulator']]]);
+    k.accept();
+    const d = k.state().description!;
+    expect(d.blocks[1]!.refs).toEqual(['C2', 'C3', 'D1', 'L1', 'R1', 'R2', 'U1']);
+    expect(d.undescribed).toEqual(all.filter((x) => !covered.has(x)));
+    expect(k.state().summary.description).toEqual({ blocks: 2, undescribed: d.undescribed });
+    expect(JSON.parse(k.exportDesign()).description.overview).toBe('A 12 V to 3.3 V supply.');
+    expect(k.query({ op: 'get_description' })).toEqual(d);
+  });
+
+  it('keeps what is not given, follows renames and drops removed parts', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    k.transact({ summary: 'describe', ops: [{ op: 'describe', overview: 'First.', blocks }] });
+    k.transact({ summary: 'edit', ops: [{ op: 'describe', overview: 'Second.' }, { op: 'rename', ref: 'C1', refdes: 'C10' }, { op: 'remove', ref: 'R2' }] });
+    const d = k.state().description!;
+    expect(d.overview).toBe('Second.');
+    expect(d.blocks.map((b) => b.refs)).toEqual([['C10', 'J1'], ['C2', 'C3', 'D1', 'L1', 'R1', 'U1']]);
+  });
+
+  it('refuses a part in two blocks and unknown parts', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    const twice = k.transact({ summary: 'd', ops: [{ op: 'describe', blocks: [blocks[0], { title: 'Again', refs: ['C1'], text: 'x' }] }] });
+    expect(twice.rejection?.message).toContain('C1 is in two blocks');
+    expect(k.transact({ summary: 'd', ops: [{ op: 'describe', blocks: [{ title: 'X', refs: ['Q99'], text: 'x' }] }] }).rejection?.code).toBe('REF_UNKNOWN');
+    expect(k.transact({ summary: 'd', ops: [{ op: 'describe' }] }).rejection?.code).toBe('INVALID_OP');
+    expect(k.state().description).toBeNull();
+  });
+});
