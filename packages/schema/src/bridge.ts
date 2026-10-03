@@ -160,7 +160,7 @@ export function bridgeTools(opts: { chat?: boolean } = {}): ToolDefinition[] {
       name: 'design_query',
       description:
         'Read the design or the part library. Ops: get_summary, find, get_component, get_net, get_diagnostics, ' +
-        'get_ledger, search_parts, get_part. Read-only.',
+        'get_ledger, get_description, search_parts, get_part. Read-only.',
       input_schema: schemaOf(QueryOp),
     },
     {
@@ -302,6 +302,8 @@ The board layout (Layout view) is worked in three steps, with the user deciding 
 Sourcing for JLCPCB assembly (only when the user asks for parts from JLCPCB/LCSC, for cheap or in-stock parts, or for a BOM they can order): jlc_search searches JLCPCB's catalogue (LCSC numbers, stock, price; Basic and Preferred parts have no loading fee, Extended parts cost one per unique part). A resistor or capacitor stays the generic part: search with kind + value + package (the component's package, see get_component), pick a part that matches and record it with set_param lcsc; take a Basic part when one exists unless the user wants otherwise. Anything with pins (an IC, module, buzzer, connector) needs a part card: jlc_search lcsc gives the datasheet link, import the part from it with import_part, then set_param lcsc on the component. When the user asks for a cheap or available part, offer 2–3 candidates with price, stock and tier and let them pick. Stock and prices are a snapshot; the BOM export carries the LCSC numbers.
 
 User hints ("make C1 100µF", "put V1 left of U1") must be applied and recorded with constrain (quote their words). Never change what the ledger fixes as hard without asking. Waive a diagnostic only when it is genuinely intended, with a concrete reason.
+
+The design document (the user prints it from the app: description, each block with its schematic and its place on the board, schematic pages, layout, assembly drawing, BOM) takes its words from the design description. Write it with design_edit describe when the user asks for a design document or a description: an overview (what the design is for, inputs and outputs, supplies, how the blocks work together), then the functional blocks in reading order, each with its parts (every part in exactly one block; decoupling and support parts go with the part they serve) and a text on how it works and why the key values are what they are. Describe what is in the design (get_component, get_net, get_board for the layout), not what it could be; no headings inside the texts. When the design has a description and your change makes it wrong or adds parts, update it in the same changeset (design_query get_description shows it).
 
 The browser tab must be paired first: if a tool reports the tab is not connected, give the user the pairing link from the error message (opening it pairs the app); the 6-digit code is the fallback.
 

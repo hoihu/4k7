@@ -18,12 +18,13 @@ import {
   type SchematicView,
   type TransactionResult,
   type BoardView,
+  type DescriptionView,
   boardSummary,
   DEFAULT_BOARD,
   trackWidthFor,
 } from '@tracewise/schema';
 import { packageChoice, packageOptions, searchParts } from '@tracewise/parts';
-import { applyOp, describeConstraint } from './apply.ts';
+import { applyOp, describeConstraint, descriptionView } from './apply.ts';
 import { countDiagnostics, diagKey, runChecks } from './checks.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, valueOf } from './doc.ts';
@@ -46,6 +47,8 @@ export interface KernelState {
   history: HistoryEntry[];
   canUndo: boolean;
   summary: DesignSummary;
+  /** The design description (describe), or null while none is written. */
+  description: DescriptionView | null;
 }
 
 export class Kernel {
@@ -292,6 +295,8 @@ export class Kernel {
         const routed = this.boards.get(d);
         return routed ? boardSummary(routed) : boardSummary(this.boardPlacement(), false);
       }
+      case 'get_description':
+        return descriptionView(d) ?? { description: null, hint: 'No description yet: write one with design_edit describe (overview and blocks).', parts: componentsSorted(d).map((c) => c.refdes) };
       case 'get_ledger':
         return Object.values(d.ledger).map((k) => ({ id: k.id, text: describeConstraint(d, k), strength: k.strength, quote: k.source.quote }));
       case 'search_parts':
@@ -326,6 +331,7 @@ export class Kernel {
       counts: countDiagnostics(this.analyse(d).diagnostics),
       ledger: Object.keys(d.ledger).length,
       waivers: Object.keys(d.waivers).length,
+      ...(d.description ? { description: { blocks: d.description.blocks.length, undescribed: descriptionView(d)!.undescribed } } : {}),
     };
   }
 
@@ -350,6 +356,7 @@ export class Kernel {
       history: [...this.history].reverse(),
       canUndo: this.undoStack.length > 0,
       summary: this.summary(d),
+      description: descriptionView(d),
     };
   }
 

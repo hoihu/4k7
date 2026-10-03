@@ -271,9 +271,19 @@ export function drill(b: BoardView, plated = true): string {
 
 const csv = (rows: (string | number)[][]) => rows.map((r) => r.map((c) => (/[",\n]/.test(String(c)) ? `"${String(c).replace(/"/g, '""')}"` : String(c))).join(',')).join('\n') + '\n';
 
-/** Bill of materials grouped by part, value and package. */
-export function bom(b: BoardView): string {
-  const groups = new Map<string, { value: string; pkg: string; mpn: string; mfr: string; lcsc: string; refs: string[] }>();
+export interface BomLine {
+  value: string;
+  pkg: string;
+  mpn: string;
+  mfr: string;
+  lcsc: string;
+  /** Designators, in natural order. */
+  refs: string[];
+}
+
+/** Bill of materials grouped by part, value and package, in the order of each line's first designator. */
+export function bomLines(b: BoardView): BomLine[] {
+  const groups = new Map<string, BomLine>();
   for (const p of b.parts) {
     if (p.componentId.startsWith('hole:')) continue; // board features, not parts to buy
     const key = `${p.part}|${p.value}|${p.pkg}|${p.mpn ?? ''}|${p.lcsc ?? ''}`;
@@ -282,9 +292,13 @@ export function bom(b: BoardView): string {
     groups.set(key, g);
   }
   const natural = (a: string, c: string) => a.localeCompare(c, 'en', { numeric: true });
-  const rows = [...groups.values()].sort((a, c) => natural(a.refs[0]!, c.refs[0]!));
+  for (const g of groups.values()) g.refs.sort(natural);
+  return [...groups.values()].sort((a, c) => natural(a.refs[0]!, c.refs[0]!));
+}
+
+export function bom(b: BoardView): string {
   // "LCSC Part #" is the column JLCPCB's assembly upload reads
-  return csv([['Comment', 'Designator', 'Footprint', 'Quantity', 'MPN', 'Manufacturer', 'LCSC Part #'], ...rows.map((g) => [g.value, g.refs.sort(natural).join(','), g.pkg, g.refs.length, g.mpn, g.mfr, g.lcsc])]);
+  return csv([['Comment', 'Designator', 'Footprint', 'Quantity', 'MPN', 'Manufacturer', 'LCSC Part #'], ...bomLines(b).map((g) => [g.value, g.refs.join(','), g.pkg, g.refs.length, g.mpn, g.mfr, g.lcsc])]);
 }
 
 /** Pick-and-place: centre, counter-clockwise rotation, y up from the bottom-left corner. */

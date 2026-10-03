@@ -586,6 +586,38 @@ class AppState {
     await this.ingest.adoptFootprints(JSON.parse(json) as Design).catch(() => {});
   }
 
+  /** The design document is being put together (the board may have to be routed first). */
+  docBusy = $state(false);
+
+  /**
+   * The design document through the print dialog: the description, each block with its
+   * schematic and its place on the board, layout, assembly drawing, BOM and schematic pages.
+   */
+  async designDocument() {
+    if (!this.k || this.docBusy) return;
+    this.docBusy = true;
+    try {
+      const board = this.k.summary.components.length ? await this.routedBoard() : null;
+      const { printDesignDocument } = await import('./designdoc.ts');
+      const k = this.k;
+      await printDesignDocument({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal });
+    } catch (e) {
+      this.flash(`The design document failed: ${(e as Error).message}`);
+    } finally {
+      this.docBusy = false;
+    }
+  }
+
+  /** Ask the agent for the words of the design document (it writes them with the describe op). */
+  describeDesign() {
+    this.chatOpen = true;
+    void this.send(
+      this.k?.description
+        ? 'Update the design description for the design document so it matches the design as it is now: the overview and every functional block (design_edit describe).'
+        : 'Write the design description for the design document: an overview, then the functional blocks with their parts and how each works (design_edit describe).',
+    );
+  }
+
   async exportJson(): Promise<string> {
     return this.kernel.exportDesign();
   }
