@@ -41,7 +41,7 @@ describe('pages', () => {
     expect(p.number).toBe(1);
     expect(p.rect).toEqual({ x: 0, y: 0, w: PAGE.w, h: PAGE.h });
     expect(p.oversized).toBeUndefined();
-    expect(p.name).toBe('U1 TPS54331DR, J1');
+    expect(p.name).toBe('Buck converter, Connector');
     for (const sym of s.symbols) expect(inside(sym.bbox, drawArea(p)), `${sym.refdes} on the page`).toBe(true);
     expect(k.summary().pages).toBe(1);
   });
@@ -102,7 +102,7 @@ describe('pages', () => {
     }
     // pages are named after the blocks on them and sit in a near-square grid with a gap,
     // read left to right and top to bottom
-    expect(s.pages[0]!.name).toMatch(/^U1 TPS54331DR, /);
+    expect(s.pages[0]!.name).toMatch(/^Buck converter/);
     expect(s.pages[1]!.rect.x).toBeGreaterThan(PAGE.w);
     const cols = Math.ceil(Math.sqrt(s.pages.length));
     s.pages.forEach((p, i) => {
