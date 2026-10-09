@@ -113,6 +113,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
         ? [
             `clearance ${b.rules.clearance} mm`,
             `track ${b.rules.track} / ${b.rules.powerTrack} mm`,
+            ...(b.fab ? [`made by ${b.fab.house}, ${b.fab.tier}${b.fab.origin === 'imported' ? ` (limits imported from ${b.fab.source.url})` : ''}`] : []),
             ...(b.holes?.length ? [`${b.holes.length} mounting hole${b.holes.length > 1 ? 's' : ''} (${[...new Set(b.holes.map((x) => `Ø${x.d}`))].join(', ')})`] : []),
             ...(b.planes ? [`planes: ${b.planes.map((p) => `${draft.nets[p.netId]?.name ?? p.netId} on ${p.layer}`).join(', ') || 'none'}`] : []),
           ]

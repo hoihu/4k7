@@ -1,4 +1,5 @@
 import type { PackageInfo } from './ingest.ts';
+import { fabSummary, type FabProfile } from './fab.ts';
 
 /**
  * The board: settings stored in the design, and the derived board view (placement, routing,
@@ -27,6 +28,8 @@ export interface BoardSettings {
   height?: number;
   layers: 2 | 4;
   rules: BoardRules;
+  /** The manufacturer the board is made by: its limits, checked by the DRC (set_fab_profile). Absent = none chosen. */
+  fab?: FabProfile;
   /**
    * Copper planes, one net per layer: inner layers are dedicated planes, outer layers get a
    * pour. Absent = automatic (2 layers: GND on B.Cu; 4 layers: GND on In1.Cu, the main supply
@@ -485,6 +488,8 @@ export interface BoardView {
   outline: { w: number; h: number };
   layers: CopperLayer[];
   rules: BoardRules;
+  /** The fab profile the board is checked against, if one is chosen. */
+  fab?: FabProfile;
   parts: BoardPart[];
   tracks: Track[];
   vias: Via[];
@@ -521,6 +526,9 @@ export function boardSummary(b: BoardView, routed = true) {
     outline_mm: b.outline,
     layers: b.layers.length,
     rules: b.rules,
+    fab: b.fab
+      ? { id: b.fab.id, summary: fabSummary(b.fab), limits: b.fab.limits, source: b.fab.source, ...(b.fab.notes?.length ? { notes: b.fab.notes } : {}) }
+      : 'none chosen: set_fab_profile (a preset such as "jlcpcb" or "eurocircuits/6C", or limits read from the manufacturer\'s page) makes the DRC check the board against the manufacturer\'s limits',
     outline_by: b.sizeBy,
     parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, side: p.side, placed: p.locked ? 'locked' : p.intent ? `user${p.intent.anchor ? ` (relative to ${p.intent.anchor})` : ''}` : 'auto' })),
     routing: !routed
