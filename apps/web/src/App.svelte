@@ -83,7 +83,7 @@
       {/each}
     </nav>
     <div class="right">
-      {#if counts}
+      {#if counts && (counts.errors > 0 || counts.warnings > 0)}
         <button class="chipbtn" onclick={openIssues} title="Open issues">
           <span class="n e"><i></i>{counts.errors}</span><span class="n w"><i></i>{counts.warnings}</span>
         </button>
@@ -95,12 +95,7 @@
         <button class="btn pri" disabled={app.running || app.acceptedCount === 0} onclick={() => app.accept()}>Accept</button>
         <button class="btn" disabled={app.running} onclick={() => app.reject()}>Reject</button>
       {/if}
-      {#if app.persistent === false}
-        <button class="chipbtn warnchip" onclick={() => (app.view = 'set')} title="The browser may evict this project under storage pressure. Open Settings to see the storage status and export a backup.">⚠ storage not persistent</button>
-      {/if}
-      {#if bridge.status === 'connected'}
-        <button class="chipbtn ext" onclick={() => (app.view = 'set')} title="Connected to the local bridge on port {bridge.port}">⇄ {bridge.agent ?? 'bridge'}</button>
-      {:else if bridge.status === 'waiting'}
+      {#if bridge.status === 'waiting'}
         <button class="chipbtn" onclick={() => (app.view = 'set')} title="Waiting for the local bridge">⇄ <span class="muted">offline</span></button>
       {:else if bridge.status === 'elsewhere'}
         <button class="chipbtn" onclick={() => bridge.useThisTab()} title="Claude Code is connected in another tab of this app. Click to use this tab instead.">⇄ <span class="muted">other tab · use here</span></button>
@@ -192,9 +187,7 @@
   .nav button { border: 0; background: transparent; padding: 5px 10px; border-radius: 6px; color: var(--txt-2); }
   .nav button[aria-current="true"] { background: var(--panel-2); color: var(--txt); font-weight: 600; }
   .nav button:hover { background: var(--hover); }
-  .ext { color: var(--info); border-color: var(--info-soft); }
   .pending { color: var(--accent-txt); border-color: var(--accent-soft); }
-  .warnchip { color: var(--warn); border-color: var(--warn-soft); }
   .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
   main { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
   .loading { display: grid; place-items: center; color: var(--txt-3); }
@@ -230,7 +223,6 @@
     .app { grid-template-rows: auto minmax(0, 1fr); }
     .bar { flex-wrap: wrap; padding: 6px 10px; row-gap: 6px; }
     .nav { order: 3; width: 100%; margin: 0; overflow-x: auto; }
-    .bar .warnchip { display: none; }
     .sch, .sch.nochat { grid-template-columns: minmax(0, 1fr); }
     .sch > .col { display: none; }
     .partsv, .partsv.nochat { grid-template-columns: minmax(0, 1fr); }
