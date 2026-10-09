@@ -6,6 +6,7 @@
   import BoardCanvas from './BoardCanvas.svelte';
   import type { TopView } from '../three-body.ts';
   import Chat from './Chat.svelte';
+  import FabRules from './FabRules.svelte';
 
   /** Layout workspace: agent chat, the board, and a panel with checks, layers and outputs. */
   $effect(() => {
@@ -201,7 +202,7 @@
             <li><label><input type="checkbox" bind:checked={show[key]} /><span class="sw {key.replace('.', '')}"></span>{label}</label></li>
           {/each}
         </ul>
-        <p class="small mono muted rules">clearance {b.rules.clearance} · track {b.rules.track} / {b.rules.powerTrack} · via {b.rules.viaPad}/{b.rules.viaDrill} mm</p>
+        <FabRules rules={b.rules} fab={b.fab} layers={b.layers.length as 2 | 4} />
         <button class="btn wide" onclick={() => app.designDocument()} disabled={!b.parts.length || app.docBusy} title="The functional blocks described, each with its schematic and its place on the board, then layout, assembly drawing, BOM and schematic">{app.docBusy ? 'Preparing…' : 'Design document (print / PDF)'}</button>
         <p class="small muted">
           {#if desc}{desc.blocks.length} block{desc.blocks.length === 1 ? '' : 's'} described{#if desc.undescribed.length}, <span class="stale">{desc.undescribed.length} part{desc.undescribed.length === 1 ? '' : 's'} in none</span>{/if}.
@@ -245,7 +246,6 @@
   .fold { display: flex; gap: 4px; align-items: center; border: 0; background: none; padding: 0; font: inherit; font-weight: inherit; color: inherit; cursor: pointer; }
   .chev { width: 10px; color: var(--txt-3); }
   .more { border: 0; background: none; color: var(--accent-txt); font-size: 11.5px; padding: 2px; cursor: pointer; }
-  .rules { margin: 8px 0 12px; }
   .diags, .layers { list-style: none; margin: 0; padding: 0; }
   .diags .r { width: 100%; display: flex; gap: 6px; align-items: flex-start; text-align: left; border: 0; background: none; padding: 3px 2px; font-size: 12px; color: var(--txt-2); cursor: pointer; border-radius: 4px; }
   .diags .r:hover { background: var(--hover); }

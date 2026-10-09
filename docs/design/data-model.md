@@ -68,7 +68,7 @@ erDiagram
 ```
 
 ### Rules, diagnostics and waivers
-- `Rule`: design rules and fab-profile limits, scoped by net class, layer or area.
+- `Rule`: design rules and fab-profile limits, scoped by net class, layer or area. The first slice keeps them apart: `board.rules` (what the board is routed with) and `board.fab` (the manufacturer's limits, [fab-rules](fab-rules.md)).
 - `Diagnostic`: produced, never stored as truth. It has a code, severity, entities and a
   suggested fix. It is shown in the UI and sent to the agent.
 - `Waiver`: diagnostic code + entity set + reason + who approved it. Stored and reviewed.

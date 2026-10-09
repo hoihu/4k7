@@ -21,6 +21,8 @@ import {
   type DescriptionView,
   boardSummary,
   DEFAULT_BOARD,
+  fabPresets,
+  fabSummary,
   trackWidthFor,
 } from '@tracewise/schema';
 import { packageChoice, packageOptions, searchParts } from '@tracewise/parts';
@@ -292,6 +294,15 @@ export class Kernel {
       }
       case 'get_diagnostics':
         return this.analyse(d).diagnostics;
+      case 'get_fab_profiles': {
+        const layers = d.board?.layers ?? 2;
+        const cur = d.board?.fab;
+        return {
+          current: cur ? { id: cur.id, summary: fabSummary(cur), origin: cur.origin, source: cur.source, limits: cur.limits, ...(cur.notes?.length ? { notes: cur.notes } : {}) } : 'none',
+          presets: fabPresets().map((p) => ({ id: p.id, house: p.house, tier: p.tier, layers: p.layers, summary: fabSummary(p), source: p.source.url, checked: p.source.checked })),
+          how: `set_fab_profile preset: "jlcpcb" (or a tier id above); a bare house takes the tier for this board's ${layers} layers (Eurocircuits: 6C; any pattern class 3–9 with drill class A–E works, e.g. "eurocircuits/5C"). For another manufacturer, or newer numbers, read its capabilities page and import: house, tier, source_url, checked and limits in mm; never guess a number.`,
+        };
+      }
       case 'get_board': {
         // routing is expensive: use it when it has been computed, otherwise placement only
         const routed = this.boards.get(d);

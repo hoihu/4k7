@@ -43,6 +43,7 @@ import {
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@tracewise/parts';
 import { cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
 import { copperDrc, edgeDrc } from './drc.ts';
+import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { route } from './router.ts';
 
 const SPACING = 0.3; // between courtyards
@@ -869,10 +870,11 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   }
   const planes = settingsPlanes(d, layers.length as 2 | 4);
   const placementKey = hash(JSON.stringify([w, h, cornerR, shape, boardCutouts, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
-  return {
+  const view: BoardView = {
     outline: { w, h },
     layers,
     rules,
+    ...(settings.fab ? { fab: settings.fab } : {}),
     parts,
     tracks: [],
     vias: [],
@@ -891,6 +893,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     cutouts: boardCutouts,
     graphics: boardGraphics,
   };
+  view.diagnostics.push(...fabPlacementDrc(view));
+  return view;
 }
 
 /** The placement to store (propose_layout, place, route): where every part is now. */
@@ -947,7 +951,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   };
   const unrouted = new Map<string, number>();
   for (const f of r.failed) unrouted.set(f.netId, (unrouted.get(f.netId) ?? 0) + 1);
-  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed)];
+  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed)];
   for (const [netId, n] of unrouted) {
     const f = r.failed.find((x) => x.netId === netId)!;
     diags.push({

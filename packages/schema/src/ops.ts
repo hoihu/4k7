@@ -161,9 +161,46 @@ export const SetBoardOp = z.object({
   clearance_mm: z.number().positive().optional().describe('Copper clearance (default 0.2)'),
   track_mm: z.number().positive().optional().describe('Signal track width (default 0.25)'),
   power_track_mm: z.number().positive().optional().describe('Supply/ground track width (default 0.5)'),
+  via_drill_mm: z.number().positive().optional().describe('Via drill (default 0.3)'),
+  via_pad_mm: z.number().positive().optional().describe('Via pad diameter (default 0.6)'),
+  edge_clearance_mm: z.number().positive().optional().describe('Keep copper this far from the board edge (default 0.5)'),
   via_in_pad: z.boolean().optional().describe('Allow vias inside pads (default false; only when the user asks for it, e.g. for tight BGA fan-out or thermal pads)'),
   corner_radius_mm: z.number().min(0).optional().describe('Rounded board corners: the radius (0 = square corners)'),
+}).describe('Board size, layers and design rules. With a fab profile chosen (set_fab_profile) a rule below the manufacturer\'s limit is refused.');
+
+const fabLimitsInput = z.object({
+  track_mm: z.number().positive().describe('Narrowest copper track the fab makes'),
+  clearance_mm: z.number().positive().describe('Smallest copper-to-copper gap'),
+  via_drill_mm: z.number().positive().optional().describe('Smallest via drill (finished hole)'),
+  via_pad_mm: z.number().positive().optional().describe('Smallest via pad diameter'),
+  annular_ring_mm: z.number().positive().optional().describe('Smallest annular ring of a plated component hole, (pad − drill) / 2. If the fab measures it from the drill tool, add half the tool allowance'),
+  pth_drill_mm: z.number().positive().optional().describe('Smallest plated component hole'),
+  npth_drill_mm: z.number().positive().optional().describe('Smallest non-plated (mounting) hole'),
+  hole_to_hole_mm: z.number().positive().optional().describe('Smallest wall between two holes, edge to edge (vias; any hole unless pad_hole_to_hole_mm is given)'),
+  pad_hole_to_hole_mm: z.number().positive().optional().describe('The same when a component or mounting hole is involved'),
+  copper_to_edge_mm: z.number().positive().optional().describe('Copper to the routed board edge (outer layers)'),
+  copper_to_edge_inner_mm: z.number().positive().optional().describe('Copper to the routed board edge on inner layers, when larger'),
+  silk_width_mm: z.number().positive().optional().describe('Narrowest silkscreen line'),
+  silk_height_mm: z.number().positive().optional().describe('Smallest silkscreen text height'),
+  mask_bridge_mm: z.number().positive().optional().describe('Narrowest solder-mask web between pads'),
+  min_board_mm: z.tuple([z.number().positive(), z.number().positive()]).optional().describe('Smallest board [width, height]'),
+  max_board_mm: z.tuple([z.number().positive(), z.number().positive()]).optional().describe('Largest board [width, height]'),
 });
+export type FabLimitsInput = z.infer<typeof fabLimitsInput>;
+
+export const SetFabProfileOp = z.object({
+  op: z.literal('set_fab_profile'),
+  preset: z.string().optional().describe('A built-in profile: "jlcpcb", "pcbway" or "eurocircuits" (the tier matching the board\'s layers; Eurocircuits 6C), or a tier: "jlcpcb/4l-2oz", "pcbway/2l-1oz", "eurocircuits/7D" (any pattern class 3–9 with drill class A–E). design_query get_fab_profiles lists them'),
+  none: z.boolean().optional().describe('true: remove the fab profile (no manufacturer limits are checked)'),
+  house: z.string().min(1).optional().describe('Import: the manufacturer\'s name ("Seeed Fusion"), with tier, source_url and limits, read from its capabilities page. Never guess a number: leave out what the page does not state'),
+  tier: z.string().min(1).optional().describe('Import: the service or class these limits belong to ("2-layer, 1 oz copper", "standard")'),
+  layers: z.array(z.union([z.literal(2), z.literal(4)])).optional().describe('Import: layer counts the tier is made in (default both)'),
+  source_url: z.string().url().optional().describe('Import: the page the limits were read from (required)'),
+  checked: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Import: the date the page was read, YYYY-MM-DD'),
+  limits: fabLimitsInput.optional().describe('Import: the limits as the page states them, in mm (convert mil: 1 mil = 0.0254 mm)'),
+  notes: z.array(z.string()).max(8).optional().describe('Import: caveats the page gives (conditions, surcharges, what a limit applies to)'),
+  keep_rules: z.boolean().optional().describe('true: leave the design rules alone even where they are below the new limits (the DRC then reports the rules as violations). Default: raise rules up to the limits, never lower them'),
+}).describe('Choose the manufacturer the board is made by. Its limits are kept apart from the design rules: rules are raised to the limits where they are below (never lowered), set_board refuses rules below them, and the DRC checks tracks, vias, holes, rings, edge distance and board size against them. Give one of: preset, none, or an import (house, tier, source_url, limits).');
 
 export const SetOutlineOp = z.object({
   op: z.literal('set_outline'),
@@ -309,6 +346,7 @@ export const EditOp = z.discriminatedUnion('op', [
   RenamePartOp,
   SetPackageDefaultsOp,
   SetBoardOp,
+  SetFabProfileOp,
   PlaceOp,
   ProposeLayoutOp,
   RouteOp,
@@ -347,6 +385,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_diagnostics') }),
   z.object({ op: z.literal('get_ledger') }),
   z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
+  z.object({ op: z.literal('get_fab_profiles') }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses'),
   z.object({ op: z.literal('get_board') }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
   z.object({
     op: z.literal('search_parts'),

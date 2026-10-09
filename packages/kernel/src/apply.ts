@@ -20,8 +20,15 @@ import {
   type MountingHole,
   type Cutout,
   type SilkGraphic,
+  type FabProfile,
+  type FabLimits,
   type DescriptionView,
   DEFAULT_BOARD,
+  fabPresets,
+  findFabPreset,
+  raiseRules,
+  ruleLimit,
+  type RuleKey,
 } from '@tracewise/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
 import { layoutSchematic } from './layout.ts';
@@ -93,6 +100,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return setPackageDefaults(d, op);
     case 'set_board':
       return setBoard(d, op);
+    case 'set_fab_profile':
+      return setFabProfile(d, op);
     case 'place':
       return place(d, op);
     case 'propose_layout':
@@ -182,15 +191,29 @@ function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): OpResult
     b.layers = op.layers;
     out.push(`${op.layers} layers`);
   }
-  const rule = (key: 'clearance' | 'track' | 'powerTrack', v: number | undefined, label: string) => {
+  const rule = (key: RuleKey, v: number | undefined, label: string) => {
     if (v === undefined) return;
     if (v < 0.075 || v > 5) reject({ code: 'BOARD_INVALID', message: `${label} ${v} mm is not manufacturable (0.075–5 mm).` });
+    // the manufacturer's limit, when one is chosen
+    const min = b.fab && ruleLimit(b.fab, key, b.layers);
+    if (b.fab && min !== undefined && v < min - 1e-9) {
+      reject({ code: 'FAB_LIMIT', message: `${label} ${v} mm is below ${b.fab.house}'s limit (${min} mm, ${b.fab.tier}). Raise it, or choose another profile with set_fab_profile.` });
+    }
     b.rules[key] = v;
     out.push(`${label} ${v} mm`);
   };
   rule('clearance', op.clearance_mm, 'clearance');
   rule('track', op.track_mm, 'track');
   rule('powerTrack', op.power_track_mm, 'power track');
+  rule('viaDrill', op.via_drill_mm, 'via drill');
+  rule('viaPad', op.via_pad_mm, 'via pad');
+  rule('edgeClearance', op.edge_clearance_mm, 'edge clearance');
+  if (op.layers && b.fab) {
+    // a bigger stack can raise the limit (inner-layer edge distance)
+    const up = raiseRules(b.rules, b.fab, b.layers);
+    b.rules = up.rules;
+    out.push(...up.raised.map((r) => `${r} (${b.fab!.house})`));
+  }
   if (op.corner_radius_mm !== undefined) {
     if (op.corner_radius_mm > 50) reject({ code: 'BOARD_INVALID', message: `A ${op.corner_radius_mm} mm corner radius is too big.` });
     if (op.corner_radius_mm > 0) b.cornerRadius = op.corner_radius_mm;
@@ -205,6 +228,82 @@ function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): OpResult
   if (!out.length) reject({ code: 'BOARD_INVALID', message: 'set_board needs at least one setting.' });
   d.board = b;
   return { op: 'set_board', effect: `board: ${out.join(', ')}`, ids: ['board'] };
+}
+
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+/** Choose the manufacturer: a preset, an imported set of limits, or none. */
+function setFabProfile(d: Design, op: Extract<EditOp, { op: 'set_fab_profile' }>): OpResult {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const imported = op.house !== undefined || op.tier !== undefined || op.limits !== undefined || op.source_url !== undefined;
+  if ([op.preset !== undefined, op.none === true, imported].filter(Boolean).length !== 1) {
+    reject({ code: 'FAB_INVALID', message: 'set_fab_profile needs exactly one of: preset ("jlcpcb", "pcbway", "eurocircuits/6C" …), none: true, or an import (house, tier, source_url and limits).' });
+  }
+  if (op.none) {
+    if (!b.fab) reject({ code: 'FAB_INVALID', message: 'No fab profile is set.' });
+    const was = b.fab!;
+    delete b.fab;
+    d.board = b;
+    return { op: 'set_fab_profile', effect: `fab profile removed (${was.house}); the rules stay as they are`, ids: ['board'] };
+  }
+  let profile: FabProfile;
+  if (op.preset !== undefined) {
+    const r = findFabPreset(op.preset, b.layers);
+    if (!r.ok) reject({ code: 'FAB_UNKNOWN', message: r.message, candidates: r.candidates });
+    profile = r.ok ? r.profile : (undefined as never);
+  } else {
+    if (!op.house || !op.tier || !op.source_url || !op.limits) {
+      reject({ code: 'FAB_INVALID', message: 'An imported profile needs house, tier, source_url (the page the limits were read from) and limits (at least track_mm and clearance_mm).' });
+    }
+    const i = op.limits!;
+    const limits: FabLimits = {
+      track: i.track_mm,
+      clearance: i.clearance_mm,
+      ...(i.via_drill_mm !== undefined ? { viaDrill: i.via_drill_mm } : {}),
+      ...(i.via_pad_mm !== undefined ? { viaPad: i.via_pad_mm } : {}),
+      ...(i.annular_ring_mm !== undefined ? { annularRing: i.annular_ring_mm } : {}),
+      ...(i.pth_drill_mm !== undefined ? { pthDrill: i.pth_drill_mm } : {}),
+      ...(i.npth_drill_mm !== undefined ? { npthDrill: i.npth_drill_mm } : {}),
+      ...(i.hole_to_hole_mm !== undefined ? { holeToHole: i.hole_to_hole_mm } : {}),
+      ...(i.pad_hole_to_hole_mm !== undefined ? { padHoleToHole: i.pad_hole_to_hole_mm } : {}),
+      ...(i.copper_to_edge_mm !== undefined ? { copperToEdge: i.copper_to_edge_mm } : {}),
+      ...(i.copper_to_edge_inner_mm !== undefined ? { copperToEdgeInner: i.copper_to_edge_inner_mm } : {}),
+      ...(i.silk_width_mm !== undefined ? { silkWidth: i.silk_width_mm } : {}),
+      ...(i.silk_height_mm !== undefined ? { silkHeight: i.silk_height_mm } : {}),
+      ...(i.mask_bridge_mm !== undefined ? { maskBridge: i.mask_bridge_mm } : {}),
+      ...(i.min_board_mm ? { minBoard: i.min_board_mm } : {}),
+      ...(i.max_board_mm ? { maxBoard: i.max_board_mm } : {}),
+    };
+    // plausibility: a limit outside these is a unit slip (mil or µm read as mm), not a capability
+    for (const [k, v] of Object.entries(limits)) {
+      if (typeof v === 'number' && (v < 0.02 || v > 3)) reject({ code: 'FAB_INVALID', message: `${k} = ${v} mm is not a plausible fab limit (0.02–3 mm). Convert mil to mm (1 mil = 0.0254 mm).` });
+    }
+    if (limits.viaDrill !== undefined && limits.viaPad !== undefined && limits.viaPad <= limits.viaDrill) {
+      reject({ code: 'FAB_INVALID', message: `via_pad_mm ${limits.viaPad} must be larger than via_drill_mm ${limits.viaDrill}.` });
+    }
+    // the same house and tier as a preset (an update check of one): keep its id, so the picker still shows it
+    const same = fabPresets().find((p) => p.house.toLowerCase() === op.house!.toLowerCase() && p.tier.toLowerCase() === op.tier!.toLowerCase());
+    profile = {
+      id: same?.id ?? `${slug(op.house!)}/${slug(op.tier!)}`,
+      house: op.house!,
+      tier: op.tier!,
+      layers: op.layers?.length ? [...new Set(op.layers)].sort() : [2, 4],
+      limits,
+      source: { url: op.source_url!, ...(op.checked ? { checked: op.checked } : {}) },
+      origin: 'imported',
+      ...(op.notes?.length ? { notes: op.notes } : {}),
+    };
+  }
+  b.fab = profile;
+  const out = [`${profile.house}, ${profile.tier}`];
+  if (!op.keep_rules) {
+    const up = raiseRules(b.rules, profile, b.layers);
+    b.rules = up.rules;
+    out.push(...up.raised.map((r) => `${r} (raised to the limit)`));
+  }
+  if (!profile.layers.includes(b.layers)) out.push(`note: this tier is not made with ${b.layers} layers (${profile.layers.join(' or ')})`);
+  d.board = b;
+  return { op: 'set_fab_profile', effect: `fab profile: ${out.join('; ')}`, ids: ['board'] };
 }
 
 /** Choose the net of a copper plane (or pour) per layer, or go back to automatic planes. */
@@ -961,6 +1060,8 @@ function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpResult {
     if (op.track_mm === null) delete a.trackWidth;
     else {
       if (op.track_mm < 0.1 || op.track_mm > 10) reject({ code: 'PARAM_INVALID', message: `A track of ${op.track_mm} mm cannot be made; give 0.1–10 mm.` });
+      const fab = d.board?.fab;
+      if (fab && op.track_mm < fab.limits.track - 1e-9) reject({ code: 'FAB_LIMIT', message: `A ${op.track_mm} mm track is below ${fab.house}'s limit (${fab.limits.track} mm, ${fab.tier}).` });
       a.trackWidth = Math.round(op.track_mm * 1000) / 1000;
     }
     changes.push(`track ${op.track_mm === null ? 'default' : `${a.trackWidth} mm`}`);

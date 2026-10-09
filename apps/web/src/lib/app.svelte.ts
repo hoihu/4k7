@@ -25,6 +25,7 @@ import { IngestState } from './ingest.svelte.ts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderSchematicPng } from './snapshot.ts';
 import { jlcTool } from './jlc.ts';
+import { fabRefreshPrompt } from './fabRefresh.ts';
 import {
   DEFAULT_SETTINGS,
   deleteKeptProject,
@@ -626,6 +627,14 @@ class AppState {
     } finally {
       this.docBusy = false;
     }
+  }
+
+  /** Ask the agent to re-read the manufacturer page the board's fab limits came from, and import them again. */
+  refreshFabLimits() {
+    const fab = this.board?.fab;
+    if (!fab) return;
+    this.chatOpen = true;
+    void this.send(fabRefreshPrompt(fab, new Date().toISOString().slice(0, 10)));
   }
 
   /** Ask the agent for the words of the design document (it writes them with the describe op). */
