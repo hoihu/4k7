@@ -121,7 +121,7 @@ section { break-before: page; }
 .cover .tag { font-size: 12pt; line-height: 1.45; color: #334155; max-width: 150mm; }
 .cover .tag p { margin: 0; }
 .hero { flex: 1; min-height: 0; margin: 8mm 0; border-radius: 4mm; background: radial-gradient(ellipse at 50% 38%, #334155 0%, #0f172a 70%); display: grid; place-items: center; overflow: hidden; }
-.hero img { max-width: 88%; max-height: 86%; object-fit: contain; filter: drop-shadow(0 6mm 8mm rgba(0, 0, 0, 0.45)); }
+.hero canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
 .hero.flat { background: #f1f5f9; border: 0.2mm solid #e2e8f0; }
 .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3mm; margin: 0 0 7mm; }
 .facts div { border-top: 0.6mm solid ${ACCENT}; background: #fff; padding: 2.5mm 0 0; }
@@ -171,8 +171,8 @@ figcaption b { color: ${INK}; font-weight: 650; }
 .pair { display: flex; flex-wrap: wrap; gap: 4mm; justify-content: center; }
 .pair figure { margin: 0 0 3mm; }
 .card.dark { background: radial-gradient(ellipse at 50% 38%, #334155 0%, #0f172a 70%); border-color: transparent; }
-.card.dark img { display: block; max-width: 100%; max-height: 44mm; object-fit: contain; filter: drop-shadow(0 3mm 4mm rgba(0, 0, 0, 0.45)); }
-.card.dark.half img { width: 76mm; height: 44mm; }
+.card.dark canvas { display: block; max-width: 100%; max-height: 44mm; object-fit: contain; }
+.card.dark.half canvas { width: 76mm; height: 44mm; }
 .key { display: inline-block; width: 2.6mm; height: 2.6mm; border-radius: 0.6mm; vertical-align: -0.3mm; margin: 0 1mm 0 3mm; }
 .schpage { page: land; break-before: page; }
 .schpage svg { display: block; width: 100%; aspect-ratio: ${PAGE.mm.w} / ${PAGE.mm.h - 1}; }
@@ -237,8 +237,8 @@ function frameOf(view: SchematicView, refs: Set<string>): { sheetId: string; she
 const VIEWS_3D = ['iso', 'isoBelow', 'front'] as const;
 type View3D = (typeof VIEWS_3D)[number];
 
-/** The assembled board in 3D (the Layout view's renderer), one PNG per view on a transparent background; null where WebGL is not to be had. */
-async function boardPictures(b: BoardView): Promise<Record<View3D, string> | null> {
+/** The assembled board in 3D (the Layout view's renderer), one picture per view on a transparent background; null where WebGL is not to be had. */
+async function boardPictures(b: BoardView): Promise<Record<View3D, HTMLCanvasElement> | null> {
   try {
     const [{ createBoardViewer }, { body3dFor }] = await Promise.all([import('./three-body.ts'), import('@tracewise/parts')]);
     const viewer = createBoardViewer(document.createElement('canvas'));
@@ -252,12 +252,20 @@ async function boardPictures(b: BoardView): Promise<Record<View3D, string> | nul
       viewer.setBoard(b, bodies);
       // pictures on parts (modules) load after the first frame
       if (b.parts.some((p) => p.topImage)) await new Promise((r) => setTimeout(r, 300));
-      const out: Partial<Record<View3D, string>> = {};
+      const out: Partial<Record<View3D, HTMLCanvasElement>> = {};
       for (const v of VIEWS_3D) {
         viewer.view(v);
-        out[v] = await trimmed(viewer.picture());
+        // a capture with nothing drawn in it (the GPU gave us an empty frame): once more, a frame later
+        let shot = await trimmed(viewer.picture());
+        if (!shot) {
+          await new Promise((r) => requestAnimationFrame(r));
+          viewer.view(v);
+          shot = await trimmed(viewer.picture());
+        }
+        if (!shot) return null; // better the layout drawing on the cover than an empty box
+        out[v] = shot;
       }
-      return out as Record<View3D, string>;
+      return out as Record<View3D, HTMLCanvasElement>;
     } finally {
       viewer.dispose();
     }
@@ -266,8 +274,8 @@ async function boardPictures(b: BoardView): Promise<Record<View3D, string> | nul
   }
 }
 
-/** A picture cut down to what is drawn in it (its transparent border goes), with a little air. */
-async function trimmed(src: string): Promise<string> {
+/** A picture cut down to what is drawn in it (its transparent border goes), with a little air; null if nothing is drawn in it. */
+async function trimmed(src: string): Promise<HTMLCanvasElement | null> {
   const img = new Image();
   img.src = src;
   await img.decode();
@@ -287,13 +295,21 @@ async function trimmed(src: string): Promise<string> {
       if (y > y1) y1 = y;
     }
   }
-  if (x1 < x0) return src;
-  const pad = Math.round(Math.max(x1 - x0, y1 - y0) * 0.04);
+  if (x1 < x0) return null;
+  // the drop shadow is drawn into the picture (no CSS filter for the print to leave out)
+  const size = Math.max(x1 - x0, y1 - y0);
+  const blur = Math.round(size * 0.05);
+  const drop = Math.round(size * 0.04);
+  const pad = Math.round(size * 0.04) + blur * 2;
   const out = document.createElement('canvas');
   out.width = x1 - x0 + 1 + 2 * pad;
-  out.height = y1 - y0 + 1 + 2 * pad;
-  out.getContext('2d')!.drawImage(canvas, x0, y0, x1 - x0 + 1, y1 - y0 + 1, pad, pad, x1 - x0 + 1, y1 - y0 + 1);
-  return out.toDataURL('image/png');
+  out.height = y1 - y0 + 1 + 2 * pad + drop;
+  const octx = out.getContext('2d')!;
+  octx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+  octx.shadowBlur = blur;
+  octx.shadowOffsetY = drop;
+  octx.drawImage(canvas, x0, y0, x1 - x0 + 1, y1 - y0 + 1, pad, pad, x1 - x0 + 1, y1 - y0 + 1);
+  return out;
 }
 
 /** The first sentence of a Markdown text, plain. */
@@ -429,7 +445,7 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
     if (b.routing !== 'done') html.push(`<div class="note">The board is ${b.routing === 'stale' ? 'routed for an earlier placement (out of date)' : 'placed but not routed yet'}: the drawing shows the placement.</div>`);
     html.push(figure(main.svg, `Top view, all layers, scale ${scaleText(main.scale)}.${legend.join('')}${twoSided || sides[0]?.side === 'bottom' ? '. Parts on the bottom side are dashed.' : ''}`));
     if (pictures) {
-      const shot = (v: View3D, caption: string, cls = '') => figure(`<img src="${pictures[v]}" alt="">`, caption, '', `card dark ${cls}`.trim());
+      const shot = (v: View3D, caption: string, cls = '') => figure(`<canvas data-pic="${v}"></canvas>`, caption, '', `card dark ${cls}`.trim());
       html.push(
         `<h3>The board in 3D</h3><div class="pair">` +
           shot('iso', 'From above, front left', 'half') +
@@ -509,7 +525,7 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
 
   /* the cover: the board in 3D (else its layout drawing), the facts, the contents */
   const hero = pictures
-    ? `<div class="hero"><img src="${pictures.iso}" alt=""></div>`
+    ? `<div class="hero"><canvas data-pic="iso"></canvas></div>`
     : b
       ? `<div class="hero flat">${boardSvg(layoutInner, b, 'lay', 150, 105).svg}</div>`
       : `<div class="hero flat"></div>`;
@@ -523,5 +539,15 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
     hero +
     `<div class="facts">${facts.map(([v, l]) => `<div><b>${esc(v!)}</b><span>${esc(l!)}</span></div>`).join('')}</div>` +
     `<ol class="toc">${toc.join('')}</ol></div>`;
-  await printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} · design document</title><style>${style(title)}</style></head><body>${cover}${body.join('')}</body></html>`);
+  /* the pictures go in as canvases, drawn from ours: nothing for the print to load or decode */
+  const drawPictures = (doc: Document) => {
+    for (const c of doc.querySelectorAll<HTMLCanvasElement>('canvas[data-pic]')) {
+      const src = pictures?.[c.dataset.pic as View3D];
+      if (!src) continue;
+      c.width = src.width;
+      c.height = src.height;
+      c.getContext('2d')!.drawImage(src, 0, 0);
+    }
+  };
+  await printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} · design document</title><style>${style(title)}</style></head><body>${cover}${body.join('')}</body></html>`, drawPictures);
 }

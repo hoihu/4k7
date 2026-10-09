@@ -80,8 +80,8 @@ export async function printSchematic(view: SchematicView, designName: string): P
   await printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(designName)} · schematic</title><style>${STYLE}</style></head><body>${pages.join('')}</body></html>`);
 }
 
-/** Print a document of our own through the browser's dialog (which also saves a PDF). */
-export async function printHtml(html: string): Promise<void> {
+/** Print a document of our own through the browser's dialog (which also saves a PDF). `prepare`: last touches to the loaded document (canvases to draw), before the dialog. */
+export async function printHtml(html: string, prepare?: (doc: Document) => void): Promise<void> {
   // a hidden frame of our own document: no popup, no blocker
   const frame = document.createElement('iframe');
   frame.setAttribute('aria-hidden', 'true');
@@ -93,6 +93,7 @@ export async function printHtml(html: string): Promise<void> {
   doc.close();
   const win = frame.contentWindow!;
   if (doc.readyState !== 'complete') await new Promise<void>((r) => win.addEventListener('load', () => r(), { once: true }));
+  prepare?.(doc);
   win.addEventListener('afterprint', () => frame.remove(), { once: true });
   win.focus();
   win.print();
