@@ -51,8 +51,8 @@
     <div class="msgs">
       {#if app.chat.length === 0}
         <div class="intro">
-          <p><b>Describe what you want to build.</b> The agent designs through the kernel's operations; every change comes back here as a changeset to review.</p>
-          <p class="muted">Click parts on the canvas to reference them. Hints like “make C2 100µF” or “put C1 left of U1” are recorded in the ledger and kept on every re-layout.</p>
+          <p><b>Describe it. The agent designs it.</b> Every change comes back here to review.</p>
+          <p class="muted">Click a part to reference it, or say “make C2 100µF” or “put C1 left of U1”. Your hints stick, even after a re-layout.</p>
           {#if app.isDemo}
             <p class="demo">
               Offline demo (scripted). To use a real model, run <code>{__BRIDGE_RUN__}</code> and open its pairing link to chat with your
