@@ -148,6 +148,9 @@
   .md :global(code) { font-family: var(--mono); font-size: 0.92em; background: var(--panel-2); padding: 0 3px; border-radius: 3px; }
   .md :global(pre) { background: var(--panel-2); padding: 6px 8px; border-radius: 5px; overflow-x: auto; margin: 0 0 6px; }
   .md :global(pre code) { background: none; padding: 0; }
+  .md :global(table) { border-collapse: collapse; margin: 0 0 6px; font-size: 0.95em; display: block; overflow-x: auto; max-width: 100%; }
+  .md :global(th), .md :global(td) { border: 1px solid var(--line-2); padding: 2px 6px; text-align: left; vertical-align: top; }
+  .md :global(th) { background: var(--panel-2); font-weight: 600; }
   .md :global(a) { color: var(--accent-txt, var(--accent)); }
   .tl { font-family: var(--mono); font-size: 11px; color: var(--txt-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tl .ok { color: var(--ok); } .tl .er { color: var(--err); }

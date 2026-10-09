@@ -1,6 +1,6 @@
 /**
  * A small Markdown renderer for the agent's chat replies: paragraphs, bullet and numbered lists,
- * headings, **bold**, *italic*, `code`, fenced code blocks and [links](https://…). Everything is
+ * headings, tables, **bold**, *italic*, `code`, fenced code blocks and [links](https://…). Everything is
  * HTML-escaped first; only these tags are added, and links only to http(s) addresses.
  */
 
@@ -19,6 +19,14 @@ function inline(s: string): string {
     .replace(/(^|[^_\w])_([^_\s][^_]*?)_(?!\w)/g, '$1<em>$2</em>');
   return out.replace(/\u0000(\d+)\u0000/g, (_, i: string) => `<code>${codes[Number(i)]}</code>`);
 }
+
+/** The cells of one table row: split on `|` (not `\\|`), outer pipes optional. */
+function cells(line: string): string[] {
+  const t = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '');
+  return t.split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, '|').trim());
+}
+
+const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 
 export function markdown(src: string): string {
   const lines = escape(src.replace(/\r\n?/g, '\n')).split('\n');
@@ -42,6 +50,24 @@ export function markdown(src: string): string {
       for (i++; i < lines.length && !/^\s*```/.test(lines[i]!); i++) code.push(lines[i]!);
       html.push(`<pre><code>${code.join('\n')}</code></pre>`);
       continue;
+    }
+    if (line.includes('|') && i + 1 < lines.length && lines[i + 1]!.includes('-') && TABLE_RULE.test(lines[i + 1]!)) {
+      const head = cells(line);
+      const align = cells(lines[i + 1]!).map((c) => (c.startsWith(':') ? (c.endsWith(':') ? 'center' : 'left') : c.endsWith(':') ? 'right' : ''));
+      if (head.length === align.length) {
+        flushPara();
+        flushList();
+        const td = (tag: 'th' | 'td', row: string[]) =>
+          row.map((c, k) => `<${tag}${align[k] ? ` style="text-align:${align[k]}"` : ''}>${inline(c)}</${tag}>`).join('');
+        const rows: string[] = [];
+        for (i += 2; i < lines.length && lines[i]!.trim() && lines[i]!.includes('|'); i++) {
+          const row = cells(lines[i]!);
+          rows.push(`<tr>${td('td', align.map((_, k) => row[k] ?? ''))}</tr>`);
+        }
+        i--;
+        html.push(`<table><thead><tr>${td('th', head)}</tr></thead><tbody>${rows.join('')}</tbody></table>`);
+        continue;
+      }
     }
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     const bullet = /^\s*[-*+]\s+(.*)$/.exec(line);
