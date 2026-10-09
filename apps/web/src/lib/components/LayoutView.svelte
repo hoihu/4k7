@@ -53,37 +53,17 @@
     ['silk', 'Silkscreen'],
     ['courtyard', 'Courtyards'],
     ['ratsnest', 'Ratsnest'],
+    ['placement', 'Placement · yours / locked'],
   ]);
 
   const selectedPart = $derived(app.selection.length === 1 ? (b?.parts.find((p) => p.refdes === app.selection[0]) ?? null) : null);
-  /* who placed what: the placer, the user (a choice it keeps), or locked */
-  const placed = $derived.by(() => {
-    const parts = (b?.parts ?? []).filter((p) => !p.componentId.startsWith('hole:'));
-    return {
-      choice: parts.filter((p) => !p.locked && p.intent).map((p) => p.refdes),
-      locked: parts.filter((p) => p.locked).map((p) => p.refdes),
-      free: parts.filter((p) => !p.locked && !p.intent).map((p) => p.refdes),
-    };
-  });
-  /** Show the placement overlay and select these parts. */
-  function showPlaced(refs: string[]) {
-    show.placement = true;
-    app.selection = refs;
-  }
+  /* the parts the user placed (a choice the placer keeps) */
+  const choices = $derived((b?.parts ?? []).filter((p) => !p.componentId.startsWith('hole:') && !p.locked && p.intent).map((p) => p.refdes));
   /** Every choice back to the placer; locked parts stay. */
   function releaseAll() {
-    const ids = placed.choice.map((ref) => app.k?.ledger.find((x) => x.text.startsWith(`position(${ref})`))?.id).filter((id): id is string => !!id);
+    const ids = choices.map((ref) => app.k?.ledger.find((x) => x.text.startsWith(`position(${ref})`))?.id).filter((id): id is string => !!id);
     if (ids.length) void app.userEdit(`Let the placer place ${ids.length} part(s) again`, ids.map((id) => ({ op: 'remove_constraint', id })));
   }
-  /** Unlock every locked part (each stays where it is, as the user's choice). */
-  function unlockAll() {
-    const ops = placed.locked.flatMap((ref) => {
-      const p = b?.parts.find((x) => x.refdes === ref);
-      return p ? [{ op: 'place', ref, x_mm: p.x, y_mm: p.y, rot: p.rot as 0 | 90 | 180 | 270, lock: false }] : [];
-    });
-    if (ops.length) void app.userEdit(`Unlock ${ops.length} part(s)`, ops);
-  }
-
   /** Forget the user's placement of a part: the placer decides again. */
   function release(ref: string) {
     const k = app.k?.ledger.find((x) => x.text.startsWith(`position(${ref})`));
@@ -103,21 +83,12 @@
     void app.setSide(ref, p.side === 'bottom' ? 'top' : 'bottom');
   }
 
-  // board size: the proposal's, or the user's
-  let sizeW = $state('');
-  let sizeH = $state('');
-  $effect(() => {
-    sizeW = b ? String(b.outline.w) : '';
-    sizeH = b ? String(b.outline.h) : '';
-  });
-  function setSize() {
-    const w = Number(sizeW);
-    const h = Number(sizeH);
-    if (!(w > 0 && h > 0) || (b && w === b.outline.w && h === b.outline.h && b.sizeBy === 'user')) return;
-    void app.userEdit(`Board ${w} × ${h} mm`, [{ op: 'set_board', width_mm: w, height_mm: h }]);
-  }
   // (routing runs after the placement shows: until its result is in, it is "routing…")
   const routing = $derived(b?.routing === 'done' && app.boardBusy && app.boardStage !== 'routed');
+  const nParts = $derived(b?.parts.filter((p) => !p.componentId.startsWith('hole:')).length ?? 0);
+  let checksOpen = $state(false);
+  let allChecks = $state(false);
+  const CHECKS_SHOWN = 4;
   const routeLabel = $derived(routing ? 'Routing…' : b?.routing === 'done' ? 'Routed' : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
 
   /** Gerbers, drill, BOM and pick-and-place as one zip. */
@@ -166,8 +137,9 @@
       <div class="seg"><button aria-pressed={mode === '2d'} onclick={to2d}>2D</button><button aria-pressed={mode === '3d'} onclick={to3d}>3D</button></div>
       {#if b?.parts.length}
         <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose layout', [{ op: 'propose_layout' }])}>Propose layout</button>
+        {#if choices.length}<button class="btn" disabled={app.running} title="Your {choices.length} placement choice{choices.length > 1 ? 's' : ''} go back to the placer; locked parts stay" onclick={releaseAll}>Release choices ({choices.length})</button>{/if}
         <button class="btn" class:pri={b.routing !== 'done'} disabled={app.running || b.routing === 'done'} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' ? 'Route again' : 'Route'}</button>
-        <span class="chip" class:stale={b.routing === 'stale'} class:ok={b.routing === 'done' && !routing}>{routeLabel}</span>
+        <button class="btn" disabled={!b.parts.length} title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={exportFab}>Fab files ⤓</button>
       {/if}
       {#if app.boardBusy}<span class="busy">updating…</span>{/if}
     </div>
@@ -183,36 +155,20 @@
       <div class="blank"><p><b>No parts yet.</b> Draw the circuit in the schematic (or ask the agent); the board is placed from it automatically.</p></div>
     {/if}
     <div class="status">
-      <span>{mode === '3d' ? 'drag = rotate · right-drag = pan · wheel = zoom' : 'click = reference · drag part = place it (kept as your choice) · R = rotate · L = lock · F = flip to the other side · drag board = pan · wheel = zoom'}</span>
-      <span class="sp mono">{hotNet ? netName(hotNet) : app.selection.join(' ') || '—'}</span>
+      <span class="sp mono">
+        {#if b}{b.outline.w} × {b.outline.h} mm · {b.layers.length} layers<span class="dot">·</span>{/if}
+        {#if b?.parts.length}
+          <span class:stale={b.routing === 'stale'} class:ok={b.routing === 'done' && !routing}>{routeLabel}</span>
+          {#if b.routing === 'done' && !routing}<span> {b.stats.routed}/{b.stats.nets} nets · {b.stats.vias} vias</span>{#if b.ratsnest.length}<span class="stale"> · {b.ratsnest.length} unrouted</span>{/if}{/if}
+          <span class="dot">·</span>{nParts} parts<span class="dot">·</span>
+        {/if}
+        {hotNet ? netName(hotNet) : app.selection.join(' ') || '—'}
+      </span>
     </div>
   </div>
   <aside class="col side">
-    <div class="ph"><b>Board</b><span class="grow"></span>{#if b}<span class="mono muted">{b.outline.w} × {b.outline.h} mm · {b.layers.length} layers</span>{/if}</div>
-    {#if b?.parts.length}
-      <form class="size" onsubmit={(e) => (e.preventDefault(), setSize())}>
-        <input class="mono" aria-label="Board width (mm)" bind:value={sizeW} onblur={setSize} />
-        <span class="muted">×</span>
-        <input class="mono" aria-label="Board height (mm)" bind:value={sizeH} onblur={setSize} />
-        <span class="muted small">mm · {b.sizeBy === 'user' ? 'your size' : 'proposed'}</span>
-        {#if b.sizeBy === 'user'}<button type="button" class="btn" title="Back to the proposed size" onclick={() => void app.userEdit('Board size: proposed', [{ op: 'set_board', width_mm: null, height_mm: null }])}>Auto</button>{/if}
-      </form>
-    {/if}
     <div class="scroll">
       {#if b}
-        <div class="stats">
-          <div><b>{b.parts.filter((p) => !p.componentId.startsWith('hole:')).length}</b><span>parts{#if b.parts.some((p) => p.componentId.startsWith('hole:'))} · {b.parts.filter((p) => p.componentId.startsWith('hole:')).length} holes{/if}</span></div>
-          <div><b>{b.routing === 'done' ? `${b.stats.routed}/${b.stats.nets}` : '—'}</b><span>{b.routing === 'done' ? 'nets routed' : routeLabel.toLowerCase()}</span></div>
-          <div><b>{b.ratsnest.length}</b><span>unrouted</span></div>
-          <div><b>{b.stats.vias}</b><span>vias</span></div>
-        </div>
-        <h4>Checks <span class="tag err">{errors}</span> <span class="tag warn">{warnings}</span></h4>
-        {#if !b.diagnostics.length}<p class="muted small">No problems found.</p>{/if}
-        <ul class="diags">
-          {#each b.diagnostics as d, i (i)}
-            <li><button class="r" onclick={() => focus(d)}><span class="tag {d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info'}">{d.severity[0]!.toUpperCase()}</span><span class="grow">{d.message}</span></button></li>
-          {/each}
-        </ul>
         {#if selectedPart}
           <h4>{selectedPart.refdes} <span class="muted mono">{selectedPart.pkg}</span></h4>
           <p class="small mono">x {selectedPart.x} · y {selectedPart.y} mm · {selectedPart.rot}°{selectedPart.componentId.startsWith('hole:') ? '' : ` · ${selectedPart.side} side`}</p>
@@ -229,32 +185,15 @@
             </div>
           {/if}
         {/if}
-        {#if b.parts.length}
-          <h4>Placement <label class="small muted toggle"><input type="checkbox" bind:checked={show.placement} /> show</label></h4>
-          <div class="placed">
-            <button class="r" title="Select the parts you placed" disabled={!placed.choice.length} onclick={() => showPlaced(placed.choice)}><span class="key choice"></span>Your choices<b>{placed.choice.length}</b></button>
-            <button class="r" title="Select the locked parts" disabled={!placed.locked.length} onclick={() => showPlaced(placed.locked)}><span class="key locked"></span>Locked<b>{placed.locked.length}</b></button>
-            <button class="r" title="Select the parts the placer decides" disabled={!placed.free.length} onclick={() => showPlaced(placed.free)}><span class="key free"></span>Placed automatically<b>{placed.free.length}</b></button>
-          </div>
-          {#if placed.choice.length || placed.locked.length}
-            <div class="row2">
-              {#if placed.choice.length}<button class="btn" disabled={app.running} title="Your choices go back to the placer; locked parts stay" onclick={releaseAll}>Release all choices</button>{/if}
-              {#if placed.locked.length}<button class="btn" disabled={app.running} title="Locked parts stay where they are, as your choices" onclick={unlockAll}>Unlock all</button>{/if}
-            </div>
-          {/if}
-        {/if}
-        <h4>Manufacturing</h4>
-        <button class="btn pri wide" onclick={exportFab} disabled={!b.parts.length}>Download fab files (.zip)</button>
-        <p class="small muted">Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place.{#if errors} Fix the {errors} error{errors > 1 ? 's' : ''} first; the files would not make a working board.{/if}</p>
-        <h4>Documentation</h4>
-        <button class="btn wide" onclick={() => app.designDocument()} disabled={!b.parts.length || app.docBusy}>{app.docBusy ? 'Preparing…' : 'Design document (print / PDF)'}</button>
-        <p class="small muted">
-          The functional blocks described, each with its schematic and its place on the board, then layout, assembly drawing (parts only), BOM and schematic.
-          {#if desc}Description: {desc.blocks.length} block{desc.blocks.length === 1 ? '' : 's'}{#if desc.undescribed.length}, <span class="stale">{desc.undescribed.length} part{desc.undescribed.length === 1 ? '' : 's'} in none of them</span>{/if}.
-          {:else}No description written yet.{/if}
-        </p>
-        {#if b.parts.length && (!desc || desc.undescribed.length)}
-          <button class="btn wide" onclick={() => app.describeDesign()} disabled={app.running || app.isDemo} title={app.isDemo ? 'The offline demo cannot write it: choose an AI provider in Settings' : 'The agent writes the overview and the blocks; you review them like any change'}>{desc ? 'Ask the agent to update the description' : 'Ask the agent to describe the design'}</button>
+        <h4><button class="fold" aria-expanded={checksOpen} onclick={() => (checksOpen = !checksOpen)}><span class="chev">{checksOpen ? '▾' : '▸'}</span>Checks <span class="tag err">{errors}</span> <span class="tag warn">{warnings}</span></button></h4>
+        {#if checksOpen}
+        {#if !b.diagnostics.length}<p class="muted small">No problems found.</p>{/if}
+        <ul class="diags">
+          {#each allChecks ? b.diagnostics : b.diagnostics.slice(0, CHECKS_SHOWN) as d, i (i)}
+            <li><button class="r" title={d.message} onclick={() => focus(d)}><span class="tag {d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info'}">{d.severity[0]!.toUpperCase()}</span><span class="grow clamp">{d.message}</span></button></li>
+          {/each}
+        </ul>
+        {#if b.diagnostics.length > CHECKS_SHOWN}<button class="more" onclick={() => (allChecks = !allChecks)}>{allChecks ? 'Show fewer' : `Show all ${b.diagnostics.length}`}</button>{/if}
         {/if}
         <h4>Layers</h4>
         <ul class="layers">
@@ -262,39 +201,21 @@
             <li><label><input type="checkbox" bind:checked={show[key]} /><span class="sw {key.replace('.', '')}"></span>{label}</label></li>
           {/each}
         </ul>
-        <h4>Planes</h4>
-        {#if b.planes.length}
-          <ul class="plain small">
-            {#each b.planes as p (p.layer)}
-              <li><span class="mono">{b.netNames[p.netId] ?? p.netId}</span> on {p.layer} · {p.layer === 'F.Cu' || p.layer === 'B.Cu' ? 'pour around the tracks' : 'dedicated plane'}{p.auto ? ' · automatic' : ''}</li>
-            {/each}
-          </ul>
-        {:else}<p class="small muted">None.</p>{/if}
-        <p class="small muted">Ask the agent, e.g. “4 layers with GND on In1 and +3V3 on In2”.</p>
-        <h4>Rules</h4>
-        <p class="small mono muted">clearance {b.rules.clearance} · track {b.rules.track} / {b.rules.powerTrack} · via {b.rules.viaPad}/{b.rules.viaDrill} mm</p>
-        <p class="small muted">Workflow: propose the layout, adjust the size and the parts (drag, R, L, F), then route. Or ask the agent, e.g. “make the board 40 × 30 mm”, “lock J1 at the left edge”, “put the decoupling caps on the bottom”, “use 4 layers”.</p>
+        <p class="small mono muted rules">clearance {b.rules.clearance} · track {b.rules.track} / {b.rules.powerTrack} · via {b.rules.viaPad}/{b.rules.viaDrill} mm</p>
+        <button class="btn wide" onclick={() => app.designDocument()} disabled={!b.parts.length || app.docBusy} title="The functional blocks described, each with its schematic and its place on the board, then layout, assembly drawing, BOM and schematic">{app.docBusy ? 'Preparing…' : 'Design document (print / PDF)'}</button>
+        <p class="small muted">
+          {#if desc}{desc.blocks.length} block{desc.blocks.length === 1 ? '' : 's'} described{#if desc.undescribed.length}, <span class="stale">{desc.undescribed.length} part{desc.undescribed.length === 1 ? '' : 's'} in none</span>{/if}.
+          {:else}No description yet. Ask the agent to describe the design.{/if}
+        </p>
       {/if}
     </div>
   </aside>
 </section>
 
 <style>
-  .chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--txt); background: var(--panel); opacity: 0.8; }
-  .chip.ok { color: var(--ok); }
-  .chip.stale, .small .stale { color: var(--warn); }
-  .size { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
-  .size input { width: 52px; padding: 2px 4px; }
+  .ok { color: var(--ok); }
+  .stale { color: var(--warn); }
   .row2 { display: flex; gap: 6px; flex-wrap: wrap; }
-  .toggle { font-weight: 400; margin-left: 6px; display: inline-flex; align-items: center; gap: 4px; }
-  .placed { display: flex; flex-direction: column; margin-bottom: 6px; }
-  .placed .r { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 4px; }
-  .placed .r b { margin-left: auto; font-family: var(--mono); font-weight: 600; }
-  .placed .r:disabled { opacity: 0.5; cursor: default; }
-  .key { width: 10px; height: 10px; border-radius: 3px; flex: none; }
-  .key.choice { background: #6fb5ff; }
-  .key.locked { background: #f0a03c; }
-  .key.free { border: 1px solid var(--txt-3); }
   .lay { display: grid; grid-template-columns: 330px minmax(0, 1fr) 280px; gap: 1px; background: var(--line); height: 100%; min-height: 0; }
   .lay.nochat { grid-template-columns: 0 minmax(0, 1fr) 280px; }
   .col { background: var(--panel); min-height: 0; min-width: 0; display: flex; flex-direction: column; }
@@ -314,16 +235,17 @@
   .blank { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
   .blank p { max-width: 360px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; color: var(--txt-2); }
   .status { position: absolute; bottom: 0; left: 0; right: 0; display: flex; gap: 10px; padding: 3px 10px; font-size: 11px; color: var(--txt-3); background: color-mix(in srgb, var(--panel) 85%, transparent); border-top: 1px solid var(--line); }
-  .status .sp { margin-left: auto; }
+  .status .sp { margin-left: auto; flex: none; white-space: nowrap; }
+  .status .dot { margin: 0 4px; }
   .side .scroll { padding: 8px 10px; }
-  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
-  .stats div { background: var(--panel-2); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; }
-  .stats b { font-size: 15px; font-family: var(--mono); }
-  .stats span { font-size: 11px; color: var(--txt-3); }
   h4 { margin: 12px 0 4px; font-size: 12px; display: flex; gap: 4px; align-items: center; }
   .small { font-size: 11.5px; margin: 2px 0 6px; }
   .wide { width: 100%; margin: 2px 0 4px; }
-  .plain { margin: 0; padding-left: 16px; color: var(--txt-2); }
+  .clamp { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .fold { display: flex; gap: 4px; align-items: center; border: 0; background: none; padding: 0; font: inherit; font-weight: inherit; color: inherit; cursor: pointer; }
+  .chev { width: 10px; color: var(--txt-3); }
+  .more { border: 0; background: none; color: var(--accent-txt); font-size: 11.5px; padding: 2px; cursor: pointer; }
+  .rules { margin: 8px 0 12px; }
   .diags, .layers { list-style: none; margin: 0; padding: 0; }
   .diags .r { width: 100%; display: flex; gap: 6px; align-items: flex-start; text-align: left; border: 0; background: none; padding: 3px 2px; font-size: 12px; color: var(--txt-2); cursor: pointer; border-radius: 4px; }
   .diags .r:hover { background: var(--hover); }
@@ -337,6 +259,7 @@
   .sw.silk { background: #e9ecef; }
   .sw.courtyard { background: #d65db1; }
   .sw.ratsnest { background: #9aa3ad; }
+  .sw.placement { background: linear-gradient(90deg, #6fb5ff 50%, #f0a03c 50%); }
   @media (max-width: 900px) {
     .lay, .lay.nochat { grid-template-columns: minmax(0, 1fr); grid-template-rows: 60% 40%; }
     .chatcol { display: none; }
