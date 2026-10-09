@@ -12,8 +12,9 @@ export const SCHEMATIC_STYLE = `
 .sch-p text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #000; }
 .sch-p .paper { fill: #fff; stroke: none; }
 .sch-p .frame { fill: none; stroke: #000; stroke-width: 10; }
-.sch-p .title { font-size: 220px; font-weight: 700; }
-.sch-p .title-s { font-size: 170px; fill: #333; }
+.sch-p .title { font-size: 170px; }
+.sch-p .tb-label { font-size: 80px; letter-spacing: 8px; fill: #555; }
+.sch-p .tb-val { font-size: 140px; fill: #333; }
 .sch-p .wire { stroke: #000; stroke-width: 14; fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .sch-p .wire-hit, .sch-p .hit, .sch-p .ov, .sch-p .selbox { display: none; }
 .sch-p .junction { fill: #000; }

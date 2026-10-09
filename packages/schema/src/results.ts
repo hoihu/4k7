@@ -234,7 +234,7 @@ export const paperOf = (id?: PaperId) => PAPERS[id ?? DEFAULT_PAPER];
 export interface PageView {
   /** 1-based, counted across the whole design in sheet order. */
   number: number;
-  /** Derived from the main parts on it, e.g. "J1, U1 TPS54331DR". */
+  /** What the page is for, e.g. "Buck converter, Connector": from the description blocks or the main parts on it. */
   name: string;
   /** The paper, in sheet coordinates. Normally the design's paper size; larger when `oversized`. */
   rect: Rect;

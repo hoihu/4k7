@@ -399,7 +399,7 @@ function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[]
       mergeScene(scene, line.scene);
       y = grid(y + line.bbox.h + CELL_GAP);
     }
-    pages.push({ number: i + 1, name: pageName(d, p.lines.flatMap((l) => l.heads), p.lines.flatMap((l) => l.scene.symbols)), rect, ...(oversized ? { oversized: true } : {}) });
+    pages.push({ number: i + 1, name: pageName(d, p.lines.flatMap((l) => l.heads)), rect, ...(oversized ? { oversized: true } : {}) });
   });
   return { scene, pages };
 }
@@ -408,37 +408,27 @@ function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[]
 const centred = (room: number, size: number) => Math.max(0, Math.floor((room - size) / 2 / GRID) * GRID);
 
 /**
- * "U1 TPS54331DR, J1": the parts a page is built around, ICs first, then connectors, in refdes
- * order. A split IC whose units are not all on this page names the ones that are:
- * "U3 STM32F777NIH6 (B, G)".
+ * What the page is for, e.g. "Buck converter, Microcontroller": the title of the description
+ * block a main part belongs to, else the part's own title, else the first words of its
+ * description. ICs first, then connectors, each function once.
  */
-function pageName(d: Design, heads: Component[], symbols: SymbolView[]): string {
+function pageName(d: Design, heads: Component[]): string {
   const seen = new Set<string>();
   const conn = (c: Component) => Number(cardOf(d, c.part)!.category === 'connector');
-  const names = heads
+  const blockOf = (c: Component) => d.description?.blocks.find((b) => b.components.includes(c.id))?.title;
+  const functions = heads
     .filter((c) => !seen.has(c.id) && seen.add(c.id))
     .sort((a, b) => conn(a) - conn(b) || natCmp(a.refdes, b.refdes))
     .map((c) => {
       const card = cardOf(d, c.part)!;
-      const part = card.mpn ?? (card.id.startsWith('generic:') ? '' : card.id.split(':')[1] ?? '');
-      const units = symbols.filter((s) => s.componentId === c.id && s.unit).map((s) => s.unit!).sort();
-      const here = units.length && units.length < unitCount(card) ? ` (${unitRanges(units)})` : '';
-      return `${c.refdes}${part ? ` ${part}` : ''}${here}`;
-    });
+      const generic = card.id.startsWith('generic:');
+      if (generic && card.category === 'connector') return blockOf(c) ?? 'Connector';
+      return blockOf(c) ?? card.title ?? card.description.split(/[,.(;]/)[0]!.trim();
+    })
+    .filter(Boolean);
+  const names = [...new Set(functions)];
   if (!names.length) return heads.length ? 'parts' : 'empty';
-  return names.length > 4 ? `${names.slice(0, 3).join(', ')} +${names.length - 3}` : names.join(', ');
-}
-
-/** ["A", "C", "D", "E"] → "A, C–E". */
-function unitRanges(letters: string[]): string {
-  const out: string[] = [];
-  for (let i = 0; i < letters.length; ) {
-    let j = i;
-    while (j + 1 < letters.length && letters[j + 1]!.charCodeAt(0) === letters[j]!.charCodeAt(0) + 1) j++;
-    out.push(j > i + 1 ? `${letters[i]}–${letters[j]}` : letters.slice(i, j + 1).join(', '));
-    i = j + 1;
-  }
-  return out.join(', ');
+  return names.length > 2 ? `${names[0]} +${names.length - 1}` : names.join(', ');
 }
 
 function pagesBBox(pages: PageView[]): Rect {
