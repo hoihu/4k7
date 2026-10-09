@@ -9,6 +9,7 @@
   import Parts from './lib/components/Parts.svelte';
   import LayoutView from './lib/components/LayoutView.svelte';
   import { printSchematic } from './lib/print.ts';
+  import { PAPER_IDS, type PaperId } from '@tracewise/schema';
 
   let canvas: SchematicCanvas | undefined = $state();
 
@@ -149,6 +150,7 @@
             scopeRect={app.scope && sheet && app.scope.scope.sheet === sheet.id ? app.scope.scope.rect : null}
             designName={app.k?.summary.name}
             pageCount={app.k?.summary.pages}
+            paper={app.k?.view.paper}
             {overlays}
             hot={app.hoverHunk}
             showDiff={app.showDiff}
@@ -164,7 +166,10 @@
               <button aria-pressed={i === app.sheet} onclick={() => (app.sheet = i)}>{s.name}{#if s.pages.length > 1} <span class="muted">{s.pages.length}p</span>{/if}</button>
             {/each}
             <button class="ib" disabled={app.running || !sheet || sheet.symbols.length < 2} onclick={optimize} title="Optimize the area on screen: the agent looks only at what you see and tries to improve how it is drawn. Text in the chat box says what bothers you.">✦ Optimize</button>
-            <button class="ib" onclick={print} title="Print the schematic (⌘P): one A4 page per block, or save as PDF">⎙</button>
+            <select class="paper-sel" value={app.k?.view.paper ?? 'A4'} disabled={app.running || !!app.k?.proposal} onchange={(e) => void app.setPaper(e.currentTarget.value as PaperId)} title="Paper size of the schematic pages: a bigger sheet holds more of the drawing per page" aria-label="Paper size">
+              {#each PAPER_IDS as id (id)}<option value={id}>{id}</option>{/each}
+            </select>
+            <button class="ib" onclick={print} title="Print the schematic (⌘P): one {app.k?.view.paper ?? 'A4'} page per block, or save as PDF">⎙</button>
             <button class="ib" disabled={app.docBusy || !app.k?.summary.components.length} onclick={() => app.designDocument()} title="Design document: description of the blocks, layout, assembly drawing, BOM and schematic (print, or save as PDF)">{app.docBusy ? 'Preparing…' : 'Document'}</button>
           </div>
           {#if app.k?.proposal}
@@ -242,6 +247,8 @@
   .canvas { position: relative; overflow: hidden; background: var(--canvas); background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 16px 16px; }
   .fl { position: absolute; z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
   .sheets { top: 8px; left: 8px; display: flex; gap: 2px; padding: 2px; }
+  .sheets .paper-sel { border: 0; background: transparent; border-radius: 5px; padding: 2px 2px; font-size: 12px; color: var(--txt-3); cursor: pointer; }
+  .sheets .paper-sel:hover:not(:disabled) { background: var(--hover); color: var(--txt); }
   .sheets button[aria-pressed] { border: 0; background: transparent; border-radius: 5px; padding: 2px 8px; font-size: 12px; color: var(--txt-2); }
   .sheets button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-txt); }
   .pend { top: 8px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 10px; font-size: 12px; white-space: nowrap; max-width: calc(100% - 16px); }

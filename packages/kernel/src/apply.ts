@@ -24,6 +24,8 @@ import {
   type FabLimits,
   type DescriptionView,
   DEFAULT_BOARD,
+  DEFAULT_PAPER,
+  PAPERS,
   fabPresets,
   findFabPreset,
   raiseRules,
@@ -98,6 +100,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return describe(d, op);
     case 'set_package_defaults':
       return setPackageDefaults(d, op);
+    case 'set_paper':
+      return setPaper(d, op);
     case 'set_board':
       return setBoard(d, op);
     case 'set_fab_profile':
@@ -724,6 +728,14 @@ function setPackageDefaults(d: Design, op: Extract<EditOp, { op: 'set_package_de
   if (Object.keys(next).length) d.packageDefaults = next;
   else delete d.packageDefaults;
   return { op: 'set_package_defaults', effect: `package defaults: ${changes.join(', ') || 'unchanged'}`, ids: ['packages'] };
+}
+
+/** The paper size of the schematic pages; A4 is the default and stored as nothing. */
+function setPaper(d: Design, op: Extract<EditOp, { op: 'set_paper' }>): OpResult {
+  if (op.size === DEFAULT_PAPER) delete d.paper;
+  else d.paper = op.size;
+  const pages = layoutSchematic(d).sheets.reduce((n, s) => n + s.pages.length, 0);
+  return { op: 'set_paper', effect: `schematic paper: ${op.size} landscape (${PAPERS[op.size].mm.w} × ${PAPERS[op.size].mm.h} mm), ${pages} page${pages === 1 ? '' : 's'}`, ids: ['paper'] };
 }
 
 /** The design description: the overview, the functional blocks, or both. Blocks share no part. */

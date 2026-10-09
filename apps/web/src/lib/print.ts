@@ -1,10 +1,10 @@
 /**
- * Print the schematic: one A4 landscape sheet per page, black on white, through the browser's
+ * Print the schematic: one landscape sheet of the design's paper (A4 unless set otherwise) per page, black on white, through the browser's
  * print dialog (which also saves a PDF). The pages are the ones the layout derived; each is
  * drawn by the same canvas component as on screen, framed on its paper.
  */
 import { mount, tick, unmount, type Component } from 'svelte';
-import { PAGE, type Rect, type SchematicView } from '@tracewise/schema';
+import { PAPERS, type Rect, type SchematicView } from '@tracewise/schema';
 import SchematicCanvas from './components/SchematicCanvas.svelte';
 
 /* The canvas classes, restyled for paper (its own stylesheet is scoped to the app). */
@@ -33,10 +33,10 @@ export const SCHEMATIC_STYLE = `
 .sch-p .nc line { stroke: #000; stroke-width: 12; }
 `;
 
-const STYLE = `
-@page { size: A4 landscape; margin: 0; }
+const style = (paper: SchematicView['paper']) => `
+@page { size: ${paper} landscape; margin: 0; }
 html, body { margin: 0; padding: 0; background: #fff; }
-svg { display: block; width: ${PAGE.mm.w}mm; height: ${PAGE.mm.h}mm; page-break-after: always; break-after: page; }
+svg { display: block; width: ${PAPERS[paper].mm.w}mm; height: ${PAPERS[paper].mm.h}mm; page-break-after: always; break-after: page; }
 svg:last-child { page-break-after: auto; break-after: auto; }
 ${SCHEMATIC_STYLE}`;
 
@@ -63,7 +63,7 @@ export async function drawSheets(view: SchematicView, designName: string): Promi
   const total = view.sheets.reduce((n, s) => n + s.pages.length, 0);
   const out = new Map<string, string>();
   for (const sheet of view.sheets) {
-    out.set(sheet.id, await drawOffscreen(SchematicCanvas, { sheet, designName, pageCount: total, showDiff: false, compact: true }, 'svg.sch'));
+    out.set(sheet.id, await drawOffscreen(SchematicCanvas, { sheet, designName, pageCount: total, paper: view.paper, showDiff: false, compact: true }, 'svg.sch'));
   }
   return out;
 }
@@ -77,7 +77,7 @@ export async function printSchematic(view: SchematicView, designName: string): P
   // draw every sheet with the real canvas, then cut each page out of it
   const sheets = await drawSheets(view, designName);
   const pages = view.sheets.flatMap((sheet) => sheet.pages.map((p) => sheetSvg(sheets.get(sheet.id)!, p.rect)));
-  await printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(designName)} · schematic</title><style>${STYLE}</style></head><body>${pages.join('')}</body></html>`);
+  await printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(designName)} · schematic</title><style>${style(view.paper)}</style></head><body>${pages.join('')}</body></html>`);
 }
 
 /** Print a document of our own through the browser's dialog (which also saves a PDF). `prepare`: last touches to the loaded document (canvases to draw), before the dialog. */

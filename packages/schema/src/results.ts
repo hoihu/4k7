@@ -206,11 +206,26 @@ export interface WireView {
 }
 
 /**
- * The paper the layout flows onto: A4 landscape at 1:1 (rounded to the 100 mil grid), in mils.
- * `margin` is the border around the drawing area; `title` the height of the title strip at the
- * bottom of that area. The drawing area is therefore (w − 2·margin) × (h − 2·margin − title).
+ * The paper sizes the layout flows onto: landscape at 1:1 (rounded to the 100 mil grid), in mils.
+ * A bigger sheet takes more of the drawing per page at the same scale.
  */
-export const PAGE = { w: 11700, h: 8300, margin: 300, title: 500, mm: { w: 297, h: 210 } } as const;
+export const PAPERS = {
+  A4: { w: 11700, h: 8300, mm: { w: 297, h: 210 } },
+  A3: { w: 16500, h: 11700, mm: { w: 420, h: 297 } },
+  A2: { w: 23400, h: 16500, mm: { w: 594, h: 420 } },
+} as const;
+export type PaperId = keyof typeof PAPERS;
+export const PAPER_IDS = Object.keys(PAPERS) as PaperId[];
+export const DEFAULT_PAPER: PaperId = 'A4';
+
+/**
+ * Every page: `margin` is the border around the drawing area; `title` the height of the title
+ * strip at the bottom of that area. The drawing area is therefore (w − 2·margin) × (h − 2·margin − title).
+ */
+export const PAGE = { margin: 300, title: 500 } as const;
+
+/** The paper of a design (A4 unless it says otherwise). */
+export const paperOf = (id?: PaperId) => PAPERS[id ?? DEFAULT_PAPER];
 
 /**
  * One printable page of a sheet. Pages are derived by the layout from the functional blocks
@@ -221,7 +236,7 @@ export interface PageView {
   number: number;
   /** Derived from the main parts on it, e.g. "J1, U1 TPS54331DR". */
   name: string;
-  /** The paper, in sheet coordinates. Normally PAGE-sized; larger when `oversized`. */
+  /** The paper, in sheet coordinates. Normally the design's paper size; larger when `oversized`. */
   rect: Rect;
   /** A single block larger than the paper: the page grew to hold it, and prints scaled down. */
   oversized?: boolean;
@@ -241,6 +256,8 @@ export interface SheetView {
 }
 
 export interface SchematicView {
+  /** The paper the pages are cut for (set_paper). */
+  paper: PaperId;
   sheets: SheetView[];
   /** Placement constraints evaluated against this layout. */
   constraintStatus: Record<string, 'ok' | 'violated' | 'not_applicable'>;

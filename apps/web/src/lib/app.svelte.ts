@@ -18,7 +18,7 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
+import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -264,6 +264,11 @@ class AppState {
     if (e) this.flash(`Redid #${e.id} ${e.summary}`);
     await this.persist();
     await this.refresh();
+  }
+
+  /** The paper size of the schematic pages (A4, A3…). */
+  setPaper(size: PaperId) {
+    return this.userEdit(`Schematic paper ${size}`, [{ op: 'set_paper', size }]);
   }
 
   /** A direct user edit (e.g. removing a ledger entry) commits immediately, attributed to the user. */

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { PAGE, type LabelView, type Prim, type Rect, type SheetView, type SymbolView } from '@tracewise/schema';
+  import { PAGE, type LabelView, type PaperId, type Prim, type Rect, type SheetView, type SymbolView } from '@tracewise/schema';
 
   interface Props {
     sheet: SheetView | undefined;
@@ -7,6 +7,8 @@
     designName?: string;
     /** Pages in the whole design (the "of N" in the title block); defaults to this sheet's count. */
     pageCount?: number;
+    /** The paper the pages are cut for (default A4). */
+    paper?: PaperId;
     /** componentId → overlay kind for pending changes */
     overlays?: Record<string, 'add' | 'change'>;
     hot?: string | null;
@@ -23,7 +25,7 @@
     compact?: boolean;
   }
 
-  let { sheet, designName, pageCount, overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false }: Props = $props();
+  let { sheet, designName, pageCount, paper = 'A4', overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false }: Props = $props();
 
   /** Length of a supply symbol's stem, in mils (keep in sync with labelRect in the kernel). */
   const RAIL_STEM = 200;
@@ -181,7 +183,7 @@
         <rect class="frame" x={p.rect.x + m} y={p.rect.y + m} width={p.rect.w - 2 * m} height={p.rect.h - 2 * m} />
         <line class="frame" x1={p.rect.x + m} y1={ty} x2={p.rect.x + p.rect.w - m} y2={ty} />
         <text class="title" x={p.rect.x + m + 150} y={ty + 320}>{p.name}</text>
-        <text class="title-s" x={p.rect.x + p.rect.w - m - 150} y={ty + 320} text-anchor="end">{[designName, sheet.name, `page ${p.number} of ${pageCount ?? sheet.pages.length}`, p.oversized ? 'larger than A4, prints scaled' : ''].filter(Boolean).join(' · ')}</text>
+        <text class="title-s" x={p.rect.x + p.rect.w - m - 150} y={ty + 320} text-anchor="end">{[designName, sheet.name, `page ${p.number} of ${pageCount ?? sheet.pages.length}`, p.oversized ? `larger than ${paper}, prints scaled` : ''].filter(Boolean).join(' · ')}</text>
       </g>
     {/each}
 
