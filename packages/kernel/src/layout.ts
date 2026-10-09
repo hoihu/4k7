@@ -15,7 +15,7 @@
  *    always electrically complete and correct.
  */
 import { PAGE, parseAs, type Component, type Constraint, type Design, type Net, type PageView, type PartCard, type Point, type Rect, type SchematicView, type SheetView, type SymbolView } from '@tracewise/schema';
-import { isTwoPin, symbolFor, unitCount, uprightSymbol } from '@tracewise/parts';
+import { GRID, isTwoPin, symbolFor, unitCount, uprightSymbol } from '@tracewise/parts';
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, valueOf, type NetPin } from './doc.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
 import {
@@ -387,9 +387,12 @@ function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[]
   sets.forEach((p, i) => {
     const { w, h, oversized } = sizes[i]!;
     const rect: Rect = { x: colX[i % cols]!, y: rowY[Math.floor(i / cols)]!, w, h };
-    let y = rect.y + PAGE.margin;
+    // the block of lines sits centred in the drawing area, on the grid (lines stay left-aligned)
+    const blockW = Math.max(0, ...p.lines.map((l) => l.bbox.w));
+    const x0 = rect.x + PAGE.margin + centred(rect.w - 2 * PAGE.margin, blockW);
+    let y = rect.y + PAGE.margin + centred(rect.h - 2 * PAGE.margin - PAGE.title, p.used);
     for (const line of p.lines) {
-      translateScene(line.scene, rect.x + PAGE.margin - line.bbox.x, y - line.bbox.y);
+      translateScene(line.scene, x0 - line.bbox.x, y - line.bbox.y);
       mergeScene(scene, line.scene);
       y = grid(y + line.bbox.h + CELL_GAP);
     }
@@ -397,6 +400,9 @@ function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[]
   });
   return { scene, pages };
 }
+
+/** Offset that centres `size` in `room`, rounded down to the grid; never negative. */
+const centred = (room: number, size: number) => Math.max(0, Math.floor((room - size) / 2 / GRID) * GRID);
 
 /**
  * "U1 TPS54331DR, J1": the parts a page is built around, ICs first, then connectors, in refdes

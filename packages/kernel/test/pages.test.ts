@@ -46,6 +46,21 @@ describe('pages', () => {
     expect(k.summary().pages).toBe(1);
   });
 
+  it('centres the drawing in the drawing area of its page', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    const s = sheetOf(k);
+    const area = drawArea(s.pages[0]!);
+    const xs = s.symbols.map((x) => x.bbox);
+    const left = Math.min(...xs.map((b) => b.x)) - area.x;
+    const right = area.x + area.w - Math.max(...xs.map((b) => b.x + b.w));
+    const top = Math.min(...xs.map((b) => b.y)) - area.y;
+    const bottom = area.y + area.h - Math.max(...xs.map((b) => b.y + b.h));
+    // within a grid step or two of dead centre (wires and labels stick out past the symbols)
+    expect(Math.abs(left - right)).toBeLessThan(600);
+    expect(Math.abs(top - bottom)).toBeLessThan(600);
+  });
+
   it('shows the paper of an empty sheet', () => {
     const s = sheetOf(new Kernel());
     expect(s.pages).toHaveLength(1);
