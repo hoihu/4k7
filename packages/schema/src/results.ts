@@ -219,7 +219,7 @@ export const PAGE = { w: 11700, h: 8300, margin: 300, title: 500, mm: { w: 297, 
 export interface PageView {
   /** 1-based, counted across the whole design in sheet order. */
   number: number;
-  /** Derived from the main parts on it, e.g. "J1, U1 TPS54331DR". */
+  /** What the page is for, e.g. "Buck converter, Connector": from the description blocks or the main parts on it. */
   name: string;
   /** The paper, in sheet coordinates. Normally PAGE-sized; larger when `oversized`. */
   rect: Rect;

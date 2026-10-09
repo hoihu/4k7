@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { PAGE, type LabelView, type Prim, type Rect, type SheetView, type SymbolView } from '@tracewise/schema';
+  import { PAGE, type LabelView, type PageView, type Prim, type Rect, type SheetView, type SymbolView } from '@tracewise/schema';
 
   interface Props {
     sheet: SheetView | undefined;
@@ -147,6 +147,21 @@
     const s = l.dir === 'left' ? -1 : 1;
     return pts.map(([a, b]) => `${l.x + s * a},${l.y + b}`).join(' ');
   }
+  /** When the drawing was made, for the title block ("2026-10-09 22:54"). */
+  const stamp = new Date();
+  const two = (n: number) => String(n).padStart(2, '0');
+  const date = `${stamp.getFullYear()}-${two(stamp.getMonth() + 1)}-${two(stamp.getDate())} ${two(stamp.getHours())}:${two(stamp.getMinutes())}`;
+  /** The small cells of the title block, left to right, ending at the frame's right edge `right`. */
+  function cells(right: number): { x: number; label: string; text: (p: PageView) => string }[] {
+    const total = pageCount ?? sheet?.pages.length ?? 1;
+    const defs = [
+      { w: 2800, label: 'DESIGN / SHEET', text: () => [designName, sheet?.name].filter(Boolean).join(' / ') },
+      { w: 2000, label: 'DATE', text: () => date },
+      { w: 1000, label: 'PAGE', text: (p: PageView) => `${p.number}/${total}` },
+    ];
+    let x = right;
+    return defs.reverse().map((d) => ({ x: (x -= d.w), label: d.label, text: d.text })).reverse();
+  }
   /** The name inside the tag, from `gap` mils off the pin. Vertical tags read bottom to top. */
   function nameAt(l: LabelView): { transform: string; anchor: 'start' | 'end' } {
     const gap = l.flow === 'out' ? 30 : 60;
@@ -180,8 +195,14 @@
         <rect class="paper" x={p.rect.x} y={p.rect.y} width={p.rect.w} height={p.rect.h} />
         <rect class="frame" x={p.rect.x + m} y={p.rect.y + m} width={p.rect.w - 2 * m} height={p.rect.h - 2 * m} />
         <line class="frame" x1={p.rect.x + m} y1={ty} x2={p.rect.x + p.rect.w - m} y2={ty} />
-        <text class="title" x={p.rect.x + m + 150} y={ty + 320}>{p.name}</text>
-        <text class="title-s" x={p.rect.x + p.rect.w - m - 150} y={ty + 320} text-anchor="end">{[designName, sheet.name, `page ${p.number} of ${pageCount ?? sheet.pages.length}`, p.oversized ? 'larger than A4, prints scaled' : ''].filter(Boolean).join(' · ')}</text>
+        <!-- title block: the title large, then design / sheet, date and page number in small cells -->
+        {#each cells(p.rect.x + p.rect.w - m) as c, i (i)}
+          <line class="frame" x1={c.x} y1={ty} x2={c.x} y2={ty + PAGE.title} />
+          <text class="tb-label" x={c.x + 100} y={ty + 140}>{c.label}</text>
+          <text class="tb-val" x={c.x + 100} y={ty + 380}>{c.text(p)}</text>
+        {/each}
+        <text class="tb-label" x={p.rect.x + m + 100} y={ty + 140}>TITLE</text>
+        <text class="title" x={p.rect.x + m + 100} y={ty + 380}>{p.name}</text>
       </g>
     {/each}
 
@@ -305,8 +326,9 @@
   .sch.compact { position: static; height: 100%; }
   .page .paper { fill: var(--paper); stroke: var(--grid); stroke-width: 12; }
   .page .frame { fill: none; stroke: var(--grid); stroke-width: 10; }
-  .page .title { fill: var(--sch-txt); font-size: 220px; font-weight: 700; }
-  .page .title-s { fill: var(--pin-txt); font-size: 170px; }
+  .page .title { fill: var(--sch-txt); font-size: 170px; }
+  .page .tb-label { fill: var(--pin-txt); font-size: 80px; letter-spacing: 8px; }
+  .page .tb-val { fill: var(--pin-txt); font-size: 140px; }
   .wire { stroke: var(--wire); stroke-width: 14; fill: none; stroke-linecap: round; stroke-linejoin: round; }
   .wire-hit { stroke: transparent; stroke-width: 70; fill: none; pointer-events: stroke; cursor: pointer; }
   .net:hover .wire { stroke-width: 20; }
