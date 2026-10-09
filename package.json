@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev": "npm run dev -w @tracewise/web",
+    "dev:here": "scripts/dev-here.sh",
     "build": "npm run build -w @tracewise/web",
     "test": "vitest run",
     "test:watch": "vitest",
