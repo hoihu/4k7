@@ -22,16 +22,6 @@
     <dt>Browser</dt><dd class="ua">{diag.userAgent}</dd>
   </dl>
   <p class="hint">The bridge logs what each tab reports to <code>~/.tracewise/bridge.log</code>.</p>
-
-  <div class="soon">
-    <b>Coming next</b>
-    <ul>
-      <li><b>M1</b> Datasheet PDF → verified part (Parts view)</li>
-      <li><b>M2</b> Board, stack-up and placement (Layout view)</li>
-      <li><b>M4</b> Your own MCP servers as tools for the in-app agent</li>
-      <li>OpenAI-compatible and local (Ollama) providers</li>
-    </ul>
-  </div>
 </Section>
 
 <style>
@@ -41,7 +31,4 @@
   dd.bad { color: var(--err); }
   .ua { color: var(--txt-3); }
   .hint { font-size: 11px; color: var(--txt-3); margin: 0; padding: 0 10px 8px; }
-  .soon { border-top: 1px solid var(--line); padding: 8px 10px 10px; color: var(--txt-2); font-size: 12.5px; }
-  .soon ul { margin: 4px 0 0; padding-left: 18px; }
-  .soon li { margin: 3px 0; }
 </style>
