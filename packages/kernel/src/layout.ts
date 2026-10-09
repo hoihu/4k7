@@ -14,7 +14,7 @@
  *  - Connections that are not drawn as wires are shown by net labels, so the drawing is
  *    always electrically complete and correct.
  */
-import { PAGE, parseAs, type Component, type Constraint, type Design, type Net, type PageView, type PartCard, type Point, type Rect, type SchematicView, type SheetView, type SymbolView } from '@tracewise/schema';
+import { DEFAULT_PAPER, PAGE, paperOf, parseAs, type Component, type Constraint, type Design, type Net, type PageView, type PartCard, type Point, type Rect, type SchematicView, type SheetView, type SymbolView } from '@tracewise/schema';
 import { GRID, isTwoPin, symbolFor, unitCount, uprightSymbol } from '@tracewise/parts';
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, valueOf, type NetPin } from './doc.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
@@ -91,7 +91,7 @@ export function layoutSchematic(d: Design): SchematicView {
   // pages are numbered through the whole design, as on a printout
   let n = 0;
   for (const v of views) for (const p of v.pages) p.number = ++n;
-  return { sheets: views, constraintStatus: evaluateConstraints(d, views) };
+  return { paper: d.paper ?? DEFAULT_PAPER, sheets: views, constraintStatus: evaluateConstraints(d, views) };
 }
 
 function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
@@ -307,9 +307,6 @@ interface CellRow {
 
 /** Space between pages on the canvas. */
 const PAGE_GAP = 600;
-/** The drawing area of a page. */
-const DRAW_W = PAGE.w - 2 * PAGE.margin;
-const DRAW_H = PAGE.h - 2 * PAGE.margin - PAGE.title;
 
 /**
  * Flow the cells onto pages: each row is broken into lines that fit the page width (order
@@ -320,6 +317,10 @@ const DRAW_H = PAGE.h - 2 * PAGE.margin - PAGE.title;
  * sheet shows its paper.
  */
 function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[] } {
+  const paper = paperOf(d.paper);
+  // the drawing area of a page
+  const DRAW_W = paper.w - 2 * PAGE.margin;
+  const DRAW_H = paper.h - 2 * PAGE.margin - PAGE.title;
   interface Line {
     scene: Scene;
     heads: Component[];
@@ -376,7 +377,7 @@ function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[]
   // its column and deepens its row, so the others stay aligned
   const sizes = sets.map((p) => {
     const wide = Math.max(0, ...p.lines.map((l) => l.bbox.w));
-    return { w: Math.max(PAGE.w, wide + 2 * PAGE.margin), h: Math.max(PAGE.h, p.used + 2 * PAGE.margin + PAGE.title), oversized: wide > DRAW_W || p.used > DRAW_H };
+    return { w: Math.max(paper.w, wide + 2 * PAGE.margin), h: Math.max(paper.h, p.used + 2 * PAGE.margin + PAGE.title), oversized: wide > DRAW_W || p.used > DRAW_H };
   });
   const cols = Math.ceil(Math.sqrt(sets.length));
   const colW = Array.from({ length: cols }, (_, c) => Math.max(0, ...sizes.filter((_, i) => i % cols === c).map((z) => z.w)));

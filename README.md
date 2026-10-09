@@ -12,7 +12,7 @@ geometry and checks every change.
 - **Schematic to manufacturing files**: the board is placed and routed automatically from the schematic (with a ground pour), checked by DRC, shown in 2D and 3D, and exported as Gerber, drill, BOM and pick-and-place. Steer it in words ("make the board 30 × 20 mm", "put J1 at the left edge") or drag parts to pin them.
 - **Manufacturer limits**: pick JLCPCB, PCBWay or Eurocircuits (Layout → Manufacturer) and the design rules are kept above what they can make, with tracks, vias, holes, rings and board size checked against it. For another manufacturer the agent reads its capabilities page and imports the limits, with the source attached for you to review.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
-- **Printable by construction**: the layout flows the schematic onto A4 pages by itself, never splitting a functional block; ⌘P prints them (or saves a PDF) for the bench.
+- **Printable by construction**: the layout flows the schematic onto pages by itself (A4, or A3/A2 for bigger sheets), never splitting a functional block; ⌘P prints them (or saves a PDF) for the bench.
 - **A design document from the design**: ask the agent to describe the design; it writes an overview and the functional blocks (reviewed like any change, kept in the project file). **Document** (schematic toolbar, or Layout → Documentation) prints it or saves a PDF: each block with its text, parts, schematic and place on the board, then the layout, an assembly drawing with only the parts and a tick list for populating a board, the BOM and the schematic pages.
 - **Local-first**: runs entirely in the browser. Your designs and API keys stay on your machine.
 

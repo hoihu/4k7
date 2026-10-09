@@ -87,6 +87,18 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     });
   }
 
+  /* the paper of the schematic pages */
+  if ((base.paper ?? null) !== (draft.paper ?? null)) {
+    hunks.push({
+      id: 'board:paper',
+      kind: 'board',
+      change: base.paper ? 'change' : 'add',
+      entityId: 'paper',
+      title: `schematic paper: ${draft.paper ?? 'A4'}`,
+      details: [],
+    });
+  }
+
   /* the description (the words of the design document) */
   if (JSON.stringify(base.description ?? null) !== JSON.stringify(draft.description ?? null)) {
     const blocks = draft.description?.blocks ?? [];
@@ -226,6 +238,9 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
         if (entity === 'packages') {
           if (draft.packageDefaults) d.packageDefaults = clone(draft.packageDefaults);
           else delete d.packageDefaults;
+        } else if (entity === 'paper') {
+          if (draft.paper) d.paper = draft.paper;
+          else delete d.paper;
         } else if (draft.board) d.board = clone(draft.board);
         else delete d.board;
         break;

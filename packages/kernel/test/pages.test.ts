@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PAGE, type Rect, type SheetView, type Transaction } from '@tracewise/schema';
+import { PAGE, paperOf, type Rect, type SheetView, type Transaction } from '@tracewise/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 
 const sheetOf = (k: Kernel): SheetView => k.state().view.sheets[0]!;
-const DRAW_W = PAGE.w - 2 * PAGE.margin;
-const DRAW_H = PAGE.h - 2 * PAGE.margin - PAGE.title;
+const A4 = paperOf('A4');
+const DRAW_W = A4.w - 2 * PAGE.margin;
+const DRAW_H = A4.h - 2 * PAGE.margin - PAGE.title;
 
 /** The drawing area of a page: inside the margins, above the title strip. */
 function drawArea(p: { rect: Rect }): Rect {
@@ -39,7 +40,7 @@ describe('pages', () => {
     expect(s.pages).toHaveLength(1);
     const p = s.pages[0]!;
     expect(p.number).toBe(1);
-    expect(p.rect).toEqual({ x: 0, y: 0, w: PAGE.w, h: PAGE.h });
+    expect(p.rect).toEqual({ x: 0, y: 0, w: A4.w, h: A4.h });
     expect(p.oversized).toBeUndefined();
     expect(p.name).toBe('Buck converter, Connector');
     for (const sym of s.symbols) expect(inside(sym.bbox, drawArea(p)), `${sym.refdes} on the page`).toBe(true);
@@ -65,7 +66,7 @@ describe('pages', () => {
     const s = sheetOf(new Kernel());
     expect(s.pages).toHaveLength(1);
     expect(s.pages[0]!.name).toBe('empty');
-    expect(s.bbox.w).toBeGreaterThanOrEqual(PAGE.w);
+    expect(s.bbox.w).toBeGreaterThanOrEqual(A4.w);
   });
 
   it('flows blocks onto further pages without splitting one, and numbers them', () => {
@@ -75,8 +76,8 @@ describe('pages', () => {
     expect(s.pages.length).toBeGreaterThan(1);
     expect(s.pages.map((p) => p.number)).toEqual(s.pages.map((_, i) => i + 1));
     for (const p of s.pages) {
-      expect(p.rect.w).toBe(PAGE.w);
-      expect(p.rect.h).toBe(PAGE.h);
+      expect(p.rect.w).toBe(A4.w);
+      expect(p.rect.h).toBe(A4.h);
       expect(p.oversized).toBeUndefined();
     }
     // every symbol lies on exactly one page, and a block (a buck and its parts) is never cut
@@ -103,13 +104,13 @@ describe('pages', () => {
     // pages are named after the blocks on them and sit in a near-square grid with a gap,
     // read left to right and top to bottom
     expect(s.pages[0]!.name).toMatch(/^Buck converter/);
-    expect(s.pages[1]!.rect.x).toBeGreaterThan(PAGE.w);
+    expect(s.pages[1]!.rect.x).toBeGreaterThan(A4.w);
     const cols = Math.ceil(Math.sqrt(s.pages.length));
     s.pages.forEach((p, i) => {
-      expect(p.rect.x).toBe((i % cols) * (PAGE.w + 600));
-      expect(p.rect.y).toBe(Math.floor(i / cols) * (PAGE.h + 600));
+      expect(p.rect.x).toBe((i % cols) * (A4.w + 600));
+      expect(p.rect.y).toBe(Math.floor(i / cols) * (A4.h + 600));
     });
-    if (s.pages.length > 2) expect(s.bbox.h).toBeGreaterThan(PAGE.h);
+    if (s.pages.length > 2) expect(s.bbox.h).toBeGreaterThan(A4.h);
     expect(k.summary().pages).toBe(s.pages.length);
   });
 
@@ -121,8 +122,8 @@ describe('pages', () => {
     k.transact(tx);
     const s = sheetOf(k);
     for (const sym of s.symbols) expect(pageOf(s, sym.bbox), `${sym.refdes} inside a page`).toBeDefined();
-    expect(Math.max(...s.symbols.map((x) => x.bbox.x + x.bbox.w)) - Math.min(...s.symbols.map((x) => x.bbox.x))).toBeLessThanOrEqual(s.pages.length * (PAGE.w + 600));
-    for (const p of s.pages) expect(p.rect.w).toBe(PAGE.w);
+    expect(Math.max(...s.symbols.map((x) => x.bbox.x + x.bbox.w)) - Math.min(...s.symbols.map((x) => x.bbox.x))).toBeLessThanOrEqual(s.pages.length * (A4.w + 600));
+    for (const p of s.pages) expect(p.rect.w).toBe(A4.w);
     expect(DRAW_W).toBeGreaterThan(0);
     expect(DRAW_H).toBeGreaterThan(0);
   });
@@ -141,5 +142,46 @@ describe('pages', () => {
     const by = (a: string, b: string, kind: string) => st.ledger.find((l) => l.text === `${kind}(${a}, ${b})`)!.status;
     expect(by('U51', 'U1', 'above')).toBe('ok');
     expect(by('U1', 'U51', 'left_of')).toBe('violated');
+  });
+
+  it('cuts the pages for the design\'s paper: A3 holds more per page than A4', () => {
+    const a4 = new Kernel();
+    a4.transact(bucks(6));
+    const k = new Kernel();
+    const tx = bucks(6);
+    tx.ops.push({ op: 'set_paper', size: 'A3' });
+    k.transact(tx);
+    const st = k.state();
+    expect(st.view.paper).toBe('A3');
+    const A3 = paperOf('A3');
+    const s = sheetOf(k);
+    expect(s.pages.length).toBeLessThan(sheetOf(a4).pages.length);
+    for (const p of s.pages) {
+      expect(p.rect.w).toBe(A3.w);
+      expect(p.rect.h).toBe(A3.h);
+      expect(p.oversized).toBeUndefined();
+    }
+    for (const sym of s.symbols) expect(pageOf(s, sym.bbox), `${sym.refdes} inside a page`).toBeDefined();
+    expect(sheetOf(a4).pages[0]!.rect.w).toBe(A4.w);
+    expect(a4.state().view.paper).toBe('A4');
+  });
+
+  it('set_paper is a reviewable change; A4 goes back to the default', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    k.accept();
+    k.transact({ summary: 'A3', ops: [{ op: 'set_paper', size: 'A3' }] });
+    expect(k.proposal()!.hunks.map((h) => h.title)).toEqual(['schematic paper: A3']);
+    // the proposal is shown on A3; rejecting it leaves A4
+    expect(k.state().view.paper).toBe('A3');
+    k.reject();
+    expect(k.state().view.paper).toBe('A4');
+    k.transact({ summary: 'A3', ops: [{ op: 'set_paper', size: 'A3' }] });
+    k.accept();
+    expect(k.state().view.paper).toBe('A3');
+    k.transact({ summary: 'A4', ops: [{ op: 'set_paper', size: 'A4' }] });
+    k.accept();
+    expect(k.state().view.paper).toBe('A4');
+    expect(sheetOf(k).pages[0]!.rect.w).toBe(A4.w);
   });
 });

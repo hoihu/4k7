@@ -7,7 +7,7 @@
  */
 import { bomLines } from '@tracewise/fab';
 import type { Body3D } from '@tracewise/parts';
-import { PAGE, type BoardView, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@tracewise/schema';
+import { PAPERS, type BoardView, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@tracewise/schema';
 import BoardCanvas from './components/BoardCanvas.svelte';
 import { markdown } from './markdown.ts';
 import { SCHEMATIC_STYLE, drawOffscreen, drawSheets, esc, printHtml, sheetSvg } from './print.ts';
@@ -81,7 +81,7 @@ const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 /** A string for CSS `content`. */
 const cssString = (v: string) => `"${v.replace(/[\\"]/g, '\\$&').replace(/\n/g, ' ')}"`;
 
-const style = (title: string) => `
+const style = (title: string, paper: SchematicView['paper']) => `
 @page {
   size: A4; margin: 20mm 15mm 18mm;
   @top-left { content: ${cssString(title)}; font: 600 8pt ${SANS}; color: #64748b; vertical-align: bottom; padding-bottom: 3mm; }
@@ -89,7 +89,7 @@ const style = (title: string) => `
   @bottom-right { content: counter(page) " / " counter(pages); font: 8pt ${SANS}; color: #64748b; }
 }
 @page :first { margin: 0; @top-left { content: none; } @top-right { content: none; } @bottom-right { content: none; } }
-@page land { size: A4 landscape; margin: 0; @top-left { content: none; } @top-right { content: none; } @bottom-right { content: none; } }
+@page land { size: ${paper} landscape; margin: 0; @top-left { content: none; } @top-right { content: none; } @bottom-right { content: none; } }
 html, body { margin: 0; padding: 0; background: #fff; color: ${INK}; font: 10pt/1.5 ${SANS}; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 h2 { font-size: 19pt; font-weight: 750; letter-spacing: -0.01em; margin: 0 0 6mm; padding-bottom: 2.5mm; border-bottom: 0.5mm solid ${INK}; display: flex; align-items: baseline; gap: 3.5mm; break-after: avoid; }
 h2 .no { color: ${ACCENT}; font-size: 13pt; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -175,7 +175,7 @@ figcaption b { color: ${INK}; font-weight: 650; }
 .card.dark.half canvas { width: 76mm; height: 44mm; }
 .key { display: inline-block; width: 2.6mm; height: 2.6mm; border-radius: 0.6mm; vertical-align: -0.3mm; margin: 0 1mm 0 3mm; }
 .schpage { page: land; break-before: page; }
-.schpage svg { display: block; width: 100%; aspect-ratio: ${PAGE.mm.w} / ${PAGE.mm.h - 1}; }
+.schpage svg { display: block; width: 100%; aspect-ratio: ${PAPERS[paper].mm.w} / ${PAPERS[paper].mm.h - 1}; }
 ${SCHEMATIC_STYLE}${BOARD_STYLE}`;
 
 
@@ -550,5 +550,5 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
       c.getContext('2d')!.drawImage(src, 0, 0);
     }
   };
-  await printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} · design document</title><style>${style(title)}</style></head><body>${cover}${body.join('')}</body></html>`, drawPictures);
+  await printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} · design document</title><style>${style(title, view.paper)}</style></head><body>${cover}${body.join('')}</body></html>`, drawPictures);
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { PAGE, type LabelView, type PageView, type Prim, type Rect, type SheetView, type SymbolView } from '@tracewise/schema';
+  import { PAGE, type LabelView, type PageView, type PaperId, type Prim, type Rect, type SheetView, type SymbolView } from '@tracewise/schema';
 
   interface Props {
     sheet: SheetView | undefined;
@@ -7,6 +7,8 @@
     designName?: string;
     /** Pages in the whole design (the "of N" in the title block); defaults to this sheet's count. */
     pageCount?: number;
+    /** The paper the pages are cut for (default A4). */
+    paper?: PaperId;
     /** componentId → overlay kind for pending changes */
     overlays?: Record<string, 'add' | 'change'>;
     hot?: string | null;
@@ -23,7 +25,7 @@
     compact?: boolean;
   }
 
-  let { sheet, designName, pageCount, overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false }: Props = $props();
+  let { sheet, designName, pageCount, paper = 'A4', overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false }: Props = $props();
 
   /** Length of a supply symbol's stem, in mils (keep in sync with labelRect in the kernel). */
   const RAIL_STEM = 200;
@@ -203,6 +205,7 @@
         {/each}
         <text class="tb-label" x={p.rect.x + m + 100} y={ty + 140}>TITLE</text>
         <text class="title" x={p.rect.x + m + 100} y={ty + 380}>{p.name}</text>
+        {#if p.oversized}<text class="tb-label" x={p.rect.x + m + 900} y={ty + 140}>LARGER THAN {paper}, PRINTS SCALED</text>{/if}
       </g>
     {/each}
 

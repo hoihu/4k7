@@ -5,6 +5,7 @@
  */
 import { z } from 'zod';
 import { LandPad } from './ingest.ts';
+import { PAPER_IDS, type PaperId } from './results.ts';
 
 /* ---------------------------------- refs ---------------------------------- */
 
@@ -144,6 +145,11 @@ export const SetPackageDefaultsOp = z.object({
   led: pkgName.describe('e.g. "0805", "LED-5mm"'),
   passives: z.string().optional().describe('Shorthand: resistors, ceramic capacitors and LEDs at once, e.g. "0805" for hand soldering'),
   auto_size: z.boolean().optional().describe('Size up where the value demands it (capacitors ≥ 4.7 µF or > 25 V, resistor power, inductor/diode current); default on'),
+});
+
+export const SetPaperOp = z.object({
+  op: z.literal('set_paper'),
+  size: z.enum(PAPER_IDS as [PaperId, ...PaperId[]]).describe('Paper size of the schematic pages, landscape: A4 (297 × 210 mm, the default), A3 (420 × 297) or A2 (594 × 420). Drawn at 1:1, so a bigger sheet holds more per page'),
 });
 
 export const RenamePartOp = z.object({
@@ -345,6 +351,7 @@ export const EditOp = z.discriminatedUnion('op', [
   SetFootprintOp,
   RenamePartOp,
   SetPackageDefaultsOp,
+  SetPaperOp,
   SetBoardOp,
   SetFabProfileOp,
   PlaceOp,
