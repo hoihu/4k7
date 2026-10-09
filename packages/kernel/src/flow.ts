@@ -237,7 +237,7 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
     }
     const dir = p.side === 'left' ? 'left' : p.side === 'right' ? 'right' : p.side === 'top' ? 'up' : 'down';
     const stub = stubs.get(p.number) ?? 100;
-    scene.labels.push(deco(net(id), p.x, p.y, dir, stub, rises.get(p.number) ?? 0));
+    scene.labels.push(deco(net(id), p.x, p.y, dir, stub, rises.get(p.number) ?? 0, plan.card.pins.find((cp) => cp.number === p.number)?.type));
     if (p.side === 'right') gapR = Math.max(gapR, decoWidth(net(id), stub) + 100);
     if (p.side === 'left') gapL = Math.max(gapL, decoWidth(net(id), stub) + 100);
   }
