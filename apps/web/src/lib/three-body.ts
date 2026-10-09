@@ -11,7 +11,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Body3D } from '@tracewise/parts';
 import { boardPolygon, cutoutPolygon, type BoardView } from '@tracewise/schema';
 
-export type ViewPreset = 'iso' | 'top' | 'bottom' | 'front';
+export type ViewPreset = 'iso' | 'isoBelow' | 'top' | 'bottom' | 'front';
 
 export interface BodyViewer {
   /** With `top`: a picture of the part from above (a module's carrier board shows it). */
@@ -118,6 +118,7 @@ function viewerCore(canvas: HTMLCanvasElement) {
       preset === 'top' ? new THREE.Vector3(0, 1, 0.0001) :
       preset === 'bottom' ? new THREE.Vector3(0, -1, 0.0001) :
       preset === 'front' ? new THREE.Vector3(0, 0.25, 1) :
+      preset === 'isoBelow' ? new THREE.Vector3(-0.55, -0.75, 0.9) : // the same corner, from underneath
       new THREE.Vector3(-0.55, 0.75, 0.9); // from the front left, above
     return { target: home.clone(), position: home.clone().addScaledVector(dir.normalize(), dist) };
   }

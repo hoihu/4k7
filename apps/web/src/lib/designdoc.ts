@@ -170,6 +170,9 @@ figcaption b { color: ${INK}; font-weight: 650; }
 .glance li em { grid-column: 2 / 4; font-style: normal; color: #475569; font-size: 8.5pt; }
 .pair { display: flex; flex-wrap: wrap; gap: 4mm; justify-content: center; }
 .pair figure { margin: 0 0 3mm; }
+.card.dark { background: radial-gradient(ellipse at 50% 38%, #334155 0%, #0f172a 70%); border-color: transparent; }
+.card.dark img { display: block; max-width: 100%; max-height: 44mm; object-fit: contain; filter: drop-shadow(0 3mm 4mm rgba(0, 0, 0, 0.45)); }
+.card.dark.half img { width: 76mm; height: 44mm; }
 .key { display: inline-block; width: 2.6mm; height: 2.6mm; border-radius: 0.6mm; vertical-align: -0.3mm; margin: 0 1mm 0 3mm; }
 .schpage { page: land; break-before: page; }
 .schpage svg { display: block; width: 100%; aspect-ratio: ${PAGE.mm.w} / ${PAGE.mm.h - 1}; }
@@ -230,8 +233,12 @@ function frameOf(view: SchematicView, refs: Set<string>): { sheetId: string; she
   return out;
 }
 
-/** The assembled board in 3D (the Layout view's renderer), as a PNG on a transparent background; null where WebGL is not to be had. */
-async function boardPicture(b: BoardView): Promise<string | null> {
+/** The views of the 3D board that the document shows: the cover's, then the layout section's. */
+const VIEWS_3D = ['iso', 'isoBelow', 'front'] as const;
+type View3D = (typeof VIEWS_3D)[number];
+
+/** The assembled board in 3D (the Layout view's renderer), one PNG per view on a transparent background; null where WebGL is not to be had. */
+async function boardPictures(b: BoardView): Promise<Record<View3D, string> | null> {
   try {
     const [{ createBoardViewer }, { body3dFor }] = await Promise.all([import('./three-body.ts'), import('@tracewise/parts')]);
     const viewer = createBoardViewer(document.createElement('canvas'));
@@ -243,10 +250,14 @@ async function boardPicture(b: BoardView): Promise<string | null> {
       }
       viewer.resize(1500, 1000);
       viewer.setBoard(b, bodies);
-      viewer.view('iso');
       // pictures on parts (modules) load after the first frame
       if (b.parts.some((p) => p.topImage)) await new Promise((r) => setTimeout(r, 300));
-      return await trimmed(viewer.picture());
+      const out: Partial<Record<View3D, string>> = {};
+      for (const v of VIEWS_3D) {
+        viewer.view(v);
+        out[v] = await trimmed(viewer.picture());
+      }
+      return out as Record<View3D, string>;
     } finally {
       viewer.dispose();
     }
@@ -313,6 +324,7 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
     sides.push({ side, board: only, inner: await drawOffscreen(BoardCanvas, { board: only, show: on(['board', 'silk']) }, 'svg.board') });
   }
   const twoSided = sides.length > 1;
+  const pictures = b ? await boardPictures(b) : null;
   const layerInner: [CopperLayer, string][] = [];
   if (b && b.routing === 'done') {
     for (const l of b.layers) {
@@ -334,7 +346,7 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
   };
   let figureNo = 0;
   /** A drawing on its card with a numbered caption (`caption` is HTML). */
-  const figure = (drawing: string, caption: string, extra = '') => `<figure>${extra}<div class="card">${drawing}</div><figcaption><b>Figure ${++figureNo}</b>&ensp;${caption}</figcaption></figure>`;
+  const figure = (drawing: string, caption: string, extra = '', card = 'card') => `<figure>${extra}<div class="${card}">${drawing}</div><figcaption><b>Figure ${++figureNo}</b>&ensp;${caption}</figcaption></figure>`;
   const colorOf = (i: number) => BLOCK_COLORS[i % BLOCK_COLORS.length]!;
 
   /* 1 overview */
@@ -416,6 +428,16 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
     });
     if (b.routing !== 'done') html.push(`<div class="note">The board is ${b.routing === 'stale' ? 'routed for an earlier placement (out of date)' : 'placed but not routed yet'}: the drawing shows the placement.</div>`);
     html.push(figure(main.svg, `Top view, all layers, scale ${scaleText(main.scale)}.${legend.join('')}${twoSided || sides[0]?.side === 'bottom' ? '. Parts on the bottom side are dashed.' : ''}`));
+    if (pictures) {
+      const shot = (v: View3D, caption: string, cls = '') => figure(`<img src="${pictures[v]}" alt="">`, caption, '', `card dark ${cls}`.trim());
+      html.push(
+        `<h3>The board in 3D</h3><div class="pair">` +
+          shot('iso', 'From above, front left', 'half') +
+          shot('isoBelow', `From below, front left${twoSided ? ' (the bottom side)' : ''}`, 'half') +
+          `</div>` +
+          shot('front', 'From the front, the heights of the parts'),
+      );
+    }
     html.push(
       `<table class="kv"><tbody>` +
         [
@@ -486,9 +508,8 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
   }
 
   /* the cover: the board in 3D (else its layout drawing), the facts, the contents */
-  const picture = b ? await boardPicture(b) : null;
-  const hero = picture
-    ? `<div class="hero"><img src="${picture}" alt=""></div>`
+  const hero = pictures
+    ? `<div class="hero"><img src="${pictures.iso}" alt=""></div>`
     : b
       ? `<div class="hero flat">${boardSvg(layoutInner, b, 'lay', 150, 105).svg}</div>`
       : `<div class="hero flat"></div>`;
