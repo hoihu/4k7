@@ -914,7 +914,7 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
     }
     const dir: Dir = p.side === 'left' ? 'left' : p.side === 'right' ? 'right' : p.side === 'top' ? 'up' : 'down';
     const stub = stubs.get(p.number) ?? 100;
-    scene.labels.push(deco(net, p.x, p.y, dir, stub, rises.get(p.number) ?? 0));
+    scene.labels.push(deco(net, p.x, p.y, dir, stub, rises.get(p.number) ?? 0, plan.card.pins.find((cp) => cp.number === p.number)?.type));
     if (p.side === 'right') gapRight = Math.max(gapRight, decoWidth(net, stub) + 100);
     if (p.side === 'left') gapLeft = Math.max(gapLeft, decoWidth(net, stub) + 100);
   }

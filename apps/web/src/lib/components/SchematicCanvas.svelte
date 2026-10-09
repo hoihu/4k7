@@ -113,19 +113,35 @@
       ? { x: s.origin.x - 150, y: s.origin.y - 250, w: 300, h: 500, transform: `rotate(${s.rotation} ${s.origin.x} ${s.origin.y})` }
       : { x: s.bbox.x - pad, y: s.bbox.y - pad, w: s.bbox.w + 2 * pad, h: s.bbox.h + 2 * pad, transform: undefined };
 
-  function flag(l: LabelView): string {
-    const w = l.text.length * 50 + 70;
-    const s = l.dir === 'left' ? -1 : 1;
-    const x0 = l.x;
-    const y = l.y;
-    return [x0, y, x0 + s * 40, y - 45, x0 + s * (40 + w), y - 45, x0 + s * (40 + w), y + 45, x0 + s * 40, y + 45].join(',');
+  /**
+   * Tag outline as [along, across] pairs, `along` counted from the wire. A signal into the part
+   * (the default) gives a tag pointing at the pin, one out of the part points away from it and a
+   * bidirectional one points both ways.
+   */
+  function outline(l: LabelView, len: number, h: number): [number, number][] {
+    const t = 40;
+    if (l.flow === 'out') return [[0, -h], [len - t, -h], [len, 0], [len - t, h], [0, h]];
+    if (l.flow === 'io') return [[0, 0], [t, -h], [len - t, -h], [len, 0], [len - t, h], [t, h]];
+    return [[0, 0], [t, -h], [len, -h], [len, h], [t, h]];
   }
-  /** The same tag on a vertical lead: after a short stem, pointing at the wire, the name level inside. */
-  function vflag(l: LabelView): string {
-    const w = l.text.length * 50 + 70;
-    const s = l.dir === 'up' ? -1 : 1;
-    const y0 = l.y + s * 70;
-    return [l.x, y0, l.x + w / 2, y0 + s * 40, l.x + w / 2, y0 + s * 130, l.x - w / 2, y0 + s * 130, l.x - w / 2, y0 + s * 40].join(',');
+  /** Outline of a signal tag, drawn along the lead: sideways for left/right, and for up/down the same tag turned by 90°. */
+  function flag(l: LabelView): string {
+    const len = l.text.length * 50 + 110;
+    const pts = outline(l, len, 45);
+    if (l.dir === 'up' || l.dir === 'down') {
+      const s = l.dir === 'up' ? -1 : 1;
+      return pts.map(([a, b]) => `${l.x + b},${l.y + s * a}`).join(' ');
+    }
+    const s = l.dir === 'left' ? -1 : 1;
+    return pts.map(([a, b]) => `${l.x + s * a},${l.y + b}`).join(' ');
+  }
+  /** The name inside the tag, from `gap` mils off the pin. Vertical tags read bottom to top. */
+  function nameAt(l: LabelView): { transform: string; anchor: 'start' | 'end' } {
+    const gap = l.flow === 'out' ? 30 : 60;
+    if (l.dir === 'up') return { transform: `translate(${l.x} ${l.y - gap}) rotate(-90)`, anchor: 'start' };
+    if (l.dir === 'down') return { transform: `translate(${l.x} ${l.y + gap}) rotate(-90)`, anchor: 'end' };
+    const s = l.dir === 'left' ? -1 : 1;
+    return { transform: `translate(${l.x + s * gap} ${l.y})`, anchor: l.dir === 'left' ? 'end' : 'start' };
   }
 </script>
 
@@ -195,14 +211,10 @@
         </g>
       {:else if l.dir === 'on'}
         <text class="net-t" x={l.x} y={l.y - 30} text-anchor="middle">{l.text}</text>
-      {:else if l.dir === 'left' || l.dir === 'right'}
-        <polygon class="flag" points={flag(l)} />
-        <text class="net-t" x={l.dir === 'left' ? l.x - 60 : l.x + 60} y={l.y + 25} text-anchor={l.dir === 'left' ? 'end' : 'start'}>{l.text}</text>
       {:else}
-        {@const s = l.dir === 'up' ? -1 : 1}
-        <line class="wire" x1={l.x} y1={l.y} x2={l.x} y2={l.y + s * 70} />
-        <polygon class="flag" points={vflag(l)} />
-        <text class="net-t" x={l.x} y={l.dir === 'up' ? l.y - 120 : l.y + 180} text-anchor="middle">{l.text}</text>
+        {@const n = nameAt(l)}
+        <polygon class="flag" points={flag(l)} />
+        <text class="net-t" transform={n.transform} y="25" text-anchor={n.anchor}>{l.text}</text>
       {/if}
       </g>
     {/each}

@@ -184,6 +184,11 @@ export interface LabelView {
    * Supply symbols (kind rail/ground) are always vertical: 'up' or 'down'.
    */
   dir: 'left' | 'right' | 'up' | 'down' | 'on';
+  /**
+   * Which way the signal goes at the pin this label sits on: 'in' = into the part (the flag
+   * points at the pin), 'out' = out of the part (it points away), 'io' = both. Unset = shown as 'in'.
+   */
+  flow?: 'in' | 'out' | 'io';
   /** Supply symbol on a horizontal lead: a stub of `stubLen` mils in this direction comes first. */
   stub?: 'left' | 'right';
   stubLen?: number;

@@ -2,7 +2,7 @@
  * Scene building blocks shared by the schematic layouts: geometry containers, symbol
  * placement, net decorations and extent estimates.
  */
-import type { Component, Design, LabelView, Net, PinView, Point, Prim, Rect, SymbolView, WireView } from '@tracewise/schema';
+import type { Component, Design, LabelView, Net, PinType, PinView, Point, Prim, Rect, SymbolView, WireView } from '@tracewise/schema';
 import { CHAR_W, GRID, type SymbolDef } from '@tracewise/parts';
 import { isGroundNet, isPowerNet, valueLinesOf, valueOf } from './doc.ts';
 
@@ -92,9 +92,9 @@ export function labelRect(l: LabelView): Rect {
     case 'left':
       return { x: l.x - w, y: l.y - 60, w, h: 120 };
     case 'up':
-      return { x: l.x - w / 2, y: l.y - 260, w, h: 260 };
+      return { x: l.x - 60, y: l.y - w, w: 120, h: w };
     case 'down':
-      return { x: l.x - w / 2, y: l.y, w, h: 260 };
+      return { x: l.x - 60, y: l.y, w: 120, h: w };
     case 'on':
       return { x: l.x - w / 2, y: l.y - 110, w, h: 110 };
   }
@@ -194,11 +194,19 @@ export function supplyDir(net: Net): 'up' | 'down' | null {
  * label pointing `dir`; supplies always get a vertical symbol (up for positive rails, down for
  * ground and negative rails), after a horizontal stub when the lead is horizontal.
  */
-export function deco(net: Net, x: number, y: number, dir: Dir, stubLen = 100, rise = 0): LabelView {
+export function deco(net: Net, x: number, y: number, dir: Dir, stubLen = 100, rise = 0, pin?: PinType): LabelView {
   const kind: LabelView['kind'] = isGroundNet(net) ? 'ground' : isPowerNet(net) ? 'rail' : 'net';
   const base = { x, y, text: net.name, netId: net.id, kind };
   if (kind !== 'net' && (dir === 'left' || dir === 'right')) return { ...base, dir: supplyDir(net)!, stub: dir, stubLen, ...(rise ? { rise } : {}) };
-  return { ...base, dir };
+  const flow = flowOf(pin);
+  return { ...base, dir, ...(flow ? { flow } : {}) };
+}
+
+/** The signal direction a pin type gives its net label; inputs and the rest keep the default. */
+function flowOf(pin?: PinType): LabelView['flow'] {
+  if (pin === 'out' || pin === 'pwr_out') return 'out';
+  if (pin === 'bidir' || pin === 'tri') return 'io';
+  return undefined;
 }
 
 /** Horizontal room a decoration at a left/right pin end needs. */
