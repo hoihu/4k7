@@ -20,4 +20,17 @@ describe('chat markdown', () => {
   it('keeps code blocks verbatim (no markup inside)', () => {
     expect(markdown('```\na **b** <c>\n```')).toBe('<pre><code>a **b** &lt;c&gt;</code></pre>');
   });
+
+  it('renders tables, with alignment, escaped pipes and a table right after a paragraph', () => {
+    const md = 'Level shifter\n| LCSC | Part | Price |\n|---|:---|---:|\n| **C7484** | 74HC `a\\|b` | $0.104 |\n| C8545 | 2N7002 |\n\nafter';
+    expect(markdown(md)).toBe(
+      '<p>Level shifter</p><table><thead><tr><th>LCSC</th><th style="text-align:left">Part</th><th style="text-align:right">Price</th></tr></thead><tbody>' +
+        '<tr><td><strong>C7484</strong></td><td style="text-align:left">74HC <code>a|b</code></td><td style="text-align:right">$0.104</td></tr>' +
+        '<tr><td>C8545</td><td style="text-align:left">2N7002</td><td style="text-align:right"></td></tr></tbody></table><p>after</p>',
+    );
+  });
+
+  it('leaves a lone pipe line without a delimiter row as text', () => {
+    expect(markdown('a | b\nc | d')).toBe('<p>a | b<br>c | d</p>');
+  });
 });

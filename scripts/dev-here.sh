@@ -10,6 +10,13 @@ PORT=5173
 cd "$(dirname "$0")/.."
 here="$(pwd -P)"
 
+# A fresh worktree has no node_modules. Install first, so the other checkout's server keeps
+# running if the install fails.
+if [ ! -x node_modules/.bin/vite ]; then
+  echo "Installing dependencies in $here"
+  npm install --no-audit --no-fund
+fi
+
 pid="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
 if [ -n "$pid" ]; then
   owner="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')"
