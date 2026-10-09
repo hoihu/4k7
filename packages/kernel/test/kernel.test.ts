@@ -185,6 +185,27 @@ describe('changesets', () => {
     k.undo();
     expect(k.state().summary.components.some((c) => c.refdes === 'C2')).toBe(true);
   });
+
+  it('redo re-applies an undone commit; a new commit clears it', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    k.accept();
+    k.transact({ summary: 'rm', ops: [{ op: 'remove', ref: 'C2' }] });
+    k.accept();
+    const has = () => k.state().summary.components.some((c) => c.refdes === 'C2');
+    k.undo();
+    expect(k.state().canRedo).toBe(true);
+    expect(k.state().nextRedo?.summary).toBe('rm');
+    expect(k.redo()?.summary).toBe('rm');
+    expect(has()).toBe(false);
+    expect(k.state().history[0]?.summary).toBe('rm');
+    expect(k.state().canRedo).toBe(false);
+    k.undo();
+    k.transact({ summary: 'rm C3', ops: [{ op: 'remove', ref: 'C3' }] });
+    k.accept();
+    expect(k.state().canRedo).toBe(false);
+    expect(k.redo()).toBeNull();
+  });
 });
 
 describe('determinism', () => {
