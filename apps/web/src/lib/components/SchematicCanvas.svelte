@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { PAGE, type LabelView, type Prim, type SheetView, type SymbolView } from '@tracewise/schema';
+  import { PAGE, type LabelView, type Prim, type Rect, type SheetView, type SymbolView } from '@tracewise/schema';
 
   interface Props {
     sheet: SheetView | undefined;
@@ -18,10 +18,12 @@
     /** A click on a wire or a net label. */
     onselectnet?: (netId: string) => void;
     onclear?: () => void;
+    /** Optimize: the area the agent is working in, drawn as a frame. */
+    scopeRect?: Rect | null;
     compact?: boolean;
   }
 
-  let { sheet, designName, pageCount, overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, compact = false }: Props = $props();
+  let { sheet, designName, pageCount, overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false }: Props = $props();
 
   /** Length of a supply symbol's stem, in mils (keep in sync with labelRect in the kernel). */
   const RAIL_STEM = 200;
@@ -54,6 +56,16 @@
       fit();
     }
   });
+
+  /** The area on screen, in sheet coordinates (the view box is fitted into the element, so one side shows more). */
+  export function getVisibleRect(): Rect | null {
+    const r = svg?.getBoundingClientRect();
+    if (!r || r.width <= 0 || r.height <= 0) return null;
+    const aspect = r.width / r.height;
+    const w = aspect > vb.w / vb.h ? vb.h * aspect : vb.w;
+    const h = aspect > vb.w / vb.h ? vb.h : vb.w / aspect;
+    return { x: Math.round(vb.x + vb.w / 2 - w / 2), y: Math.round(vb.y + vb.h / 2 - h / 2), w: Math.round(w), h: Math.round(h) };
+  }
 
   function updateZoom() {
     if (!svg || !sheet) return;
@@ -267,6 +279,9 @@
         <rect class="selbox" x={b.x - 20} y={b.y - 20} width={b.w + 40} height={b.h + 40} rx="50" transform={b.transform} />
       {/if}
     {/each}
+    {#if scopeRect}
+      <rect class="scope" x={scopeRect.x} y={scopeRect.y} width={scopeRect.w} height={scopeRect.h} />
+    {/if}
   {/if}
 </svg>
 {#if !compact}
@@ -316,6 +331,7 @@
   .ov.add { fill: var(--ok); fill-opacity: .08; stroke: var(--ok); }
   .ov.change { fill: var(--warn); fill-opacity: .1; stroke: var(--warn); }
   .ov.hot { fill-opacity: .25; stroke-width: 26; }
+  .scope { fill: none; stroke: var(--accent); stroke-width: 24; stroke-dasharray: 120 70; pointer-events: none; }
   .selbox { fill: var(--accent); fill-opacity: .06; stroke: var(--accent); stroke-width: 16; stroke-dasharray: 50 30; pointer-events: none; }
   .zoom { position: absolute; right: 8px; bottom: 26px; font-size: 11px; color: var(--txt-3); display: flex; align-items: center; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 0 2px 0 8px; z-index: 2; }
 </style>

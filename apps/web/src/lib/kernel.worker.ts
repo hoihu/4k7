@@ -5,7 +5,7 @@
  */
 import { Kernel, registerArtwork, unregisterArtwork } from '@tracewise/kernel';
 import { registerUserParts, unregisterUserPart } from '@tracewise/parts';
-import type { Artwork, Design, PartCard } from '@tracewise/schema';
+import type { Artwork, Design, OptimizeScope, PartCard } from '@tracewise/schema';
 
 const kernel = new Kernel();
 
@@ -13,6 +13,7 @@ const methods = {
   transact: (tx: unknown) => kernel.transact(tx),
   query: (q: unknown) => kernel.query(q),
   state: () => kernel.state(),
+  setScope: (s: OptimizeScope | null) => kernel.setScope(s),
   accept: (ids?: string[], by?: 'user' | 'agent', summary?: string) => kernel.accept(ids, by, summary),
   reject: () => kernel.reject(),
   undo: () => kernel.undo(),

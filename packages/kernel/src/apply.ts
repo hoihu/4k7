@@ -1206,7 +1206,7 @@ function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResul
 }
 
 /** "U3" or one unit of a split symbol, "U3B". */
-function resolveUnitRef(d: Design, ref: string): { comp: Component; unit?: string } {
+export function resolveUnitRef(d: Design, ref: string): { comp: Component; unit?: string } {
   const direct = findComponent(d, ref);
   if (direct) return { comp: direct };
   const m = /^(.*\d)([A-Z])$/i.exec(ref.trim());

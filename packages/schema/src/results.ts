@@ -1,4 +1,5 @@
 import type { EditOp } from './ops.ts';
+import type { ScopeOutcome } from './scope.ts';
 
 /* ------------------------------ diagnostics ------------------------------- */
 
@@ -48,6 +49,7 @@ export type RejectionCode =
   | 'PARAM_INVALID'
   | 'CONSTRAINT_CONFLICT'
   | 'CONSTRAINT_INVALID'
+  | 'OUT_OF_SCOPE'
   | 'SHEET_UNKNOWN'
   | 'WAIVER_UNKNOWN';
 
@@ -87,6 +89,8 @@ export interface TransactionResult {
   introduced: Diagnostic[];
   /** Diagnostics this transaction resolved. */
   resolved: Diagnostic[];
+  /** While an Optimize scope is set: what the working copy looks like in and around it now. */
+  scope?: ScopeOutcome;
 }
 
 /* ------------------------------- changesets ------------------------------- */

@@ -6,3 +6,4 @@ export { canonicalJson } from './canonical.ts';
 export { registerArtwork, unregisterArtwork, listArtwork, findArtwork } from './artwork.ts';
 export { pathFigures } from './outline.ts';
 export { traceBitmap } from './trace.ts';
+export { resolveScope, measure as measureScope } from './scope.ts';

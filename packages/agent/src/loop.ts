@@ -3,7 +3,7 @@
  * finish a turn while the design has open errors (within a fix budget).
  * See docs/design/ai-loop.md.
  */
-import { AskUser, CalcCall, TOOL_NAMES, toolDefinitions } from '@tracewise/schema';
+import { AskUser, CalcCall, TOOL_NAMES, toolDefinitions, type ScopeInfo } from '@tracewise/schema';
 import { CalcError, runCalc } from './calc.ts';
 import { compactTx, describeTx } from './format.ts';
 import { SYSTEM_PROMPT, formatDesignContext, formatVerification } from './prompt.ts';
@@ -50,13 +50,13 @@ export class Agent {
     this.pending = null;
   }
 
-  async run(userText: string, ctx: { selection: string[] }, emit: (e: AgentEvent) => void, signal?: AbortSignal): Promise<void> {
+  async run(userText: string, ctx: { selection: string[]; scope?: ScopeInfo | null }, emit: (e: AgentEvent) => void, signal?: AbortSignal): Promise<void> {
     const { kernel } = this.opts;
     const maxSteps = this.opts.maxSteps ?? 40;
     const fixBudget = this.opts.fixBudget ?? 5;
 
     const snap = await kernel.snapshot();
-    const context = formatDesignContext({ ...snap, selection: ctx.selection });
+    const context = formatDesignContext({ ...snap, selection: ctx.selection, scope: ctx.scope ?? null });
     const content: Block[] = [];
     if (this.pending) {
       content.push(...this.pending.otherResults, { type: 'tool_result', tool_use_id: this.pending.askId, content: `The user answered: ${userText}` });

@@ -10,6 +10,17 @@
   import LayoutView from './lib/components/LayoutView.svelte';
   import { printSchematic } from './lib/print.ts';
 
+  let canvas: SchematicCanvas | undefined = $state();
+
+  /** Optimize the area on screen; text typed in the chat box says what bothers the user. */
+  function optimize() {
+    const rect = canvas?.getVisibleRect();
+    if (!rect) return;
+    const goal = app.input.trim();
+    app.input = '';
+    void app.optimize(rect, goal || undefined);
+  }
+
   let pane = $state<'chat' | 'canvas' | 'insp'>('canvas');
 
   function print() {
@@ -114,7 +125,9 @@
         <div class="col chatcol">{#if app.chatOpen}<Chat />{/if}</div>
         <div class="col canvas">
           <SchematicCanvas
+            bind:this={canvas}
             {sheet}
+            scopeRect={app.scope && sheet && app.scope.scope.sheet === sheet.id ? app.scope.scope.rect : null}
             designName={app.k?.summary.name}
             pageCount={app.k?.summary.pages}
             {overlays}
@@ -131,6 +144,7 @@
             {#each app.k?.view.sheets ?? [] as s, i (s.id)}
               <button aria-pressed={i === app.sheet} onclick={() => (app.sheet = i)}>{s.name}{#if s.pages.length > 1} <span class="muted">{s.pages.length}p</span>{/if}</button>
             {/each}
+            <button class="ib" disabled={app.running || !sheet || sheet.symbols.length < 2} onclick={optimize} title="Optimize the area on screen: the agent looks only at what you see and tries to improve how it is drawn. Text in the chat box says what bothers you.">✦ Optimize</button>
             <button class="ib" onclick={print} title="Print the schematic (⌘P): one A4 page per block, or save as PDF">⎙</button>
             <button class="ib" disabled={app.docBusy || !app.k?.summary.components.length} onclick={() => app.designDocument()} title="Design document: description of the blocks, layout, assembly drawing, BOM and schematic (print, or save as PDF)">{app.docBusy ? 'Preparing…' : 'Document'}</button>
           </div>

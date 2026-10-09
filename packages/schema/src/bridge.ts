@@ -139,6 +139,7 @@ export const DatasheetInput = z.object({
 export const ImageInput = z.object({
   sheet: z.string().optional().describe('Sheet name; defaults to the one shown'),
   page: z.number().int().min(1).optional().describe('One page only (its number from the design summary); the layout flows each sheet onto A4 pages. Default: the whole sheet'),
+  area: z.boolean().optional().describe('Optimize runs only: the area you are asked to work in, close up, instead of the whole sheet'),
   width: z.number().int().min(400).max(2400).default(1400),
 });
 
