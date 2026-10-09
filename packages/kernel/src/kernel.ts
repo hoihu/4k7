@@ -53,6 +53,9 @@ export interface KernelState {
   ledger: { id: string; text: string; strength: 'hard' | 'soft'; quote?: string; status: string }[];
   history: HistoryEntry[];
   canUndo: boolean;
+  canRedo: boolean;
+  /** The commit redo would re-apply, or null. (The one undo would take back is `history[0]`.) */
+  nextRedo: HistoryEntry | null;
   summary: DesignSummary;
   /** The design description (describe), or null while none is written. */
   description: DescriptionView | null;
@@ -64,6 +67,8 @@ export class Kernel {
   private cache = new WeakMap<Design, Analysis>();
   private boards = new WeakMap<Design, BoardView>();
   private undoStack: { design: Design; entry: HistoryEntry }[] = [];
+  /** Commits taken back by undo, newest last; any new commit clears it. */
+  private redoStack: { design: Design; entry: HistoryEntry }[] = [];
   private history: HistoryEntry[] = [];
   private historySeq = 1;
   private pendingSummaries: string[] = [];
@@ -255,6 +260,7 @@ export class Kernel {
       hunks: selected.length,
     };
     this.undoStack.push({ design: this.committed, entry });
+    this.redoStack = [];
     this.history.push(entry);
     this.committed = next;
     this.draft = clone(next);
@@ -270,11 +276,23 @@ export class Kernel {
   undo(): HistoryEntry | null {
     const last = this.undoStack.pop();
     if (!last) return null;
+    this.redoStack.push({ design: this.committed, entry: last.entry });
     this.committed = last.design;
     this.draft = clone(last.design);
     this.pendingSummaries = [];
     this.history = this.history.filter((h) => h.id !== last.entry.id);
     return last.entry;
+  }
+
+  redo(): HistoryEntry | null {
+    const next = this.redoStack.pop();
+    if (!next) return null;
+    this.undoStack.push({ design: this.committed, entry: next.entry });
+    this.committed = next.design;
+    this.draft = clone(next.design);
+    this.pendingSummaries = [];
+    this.history.push(next.entry);
+    return next.entry;
   }
 
   /* -------------------------------- queries ------------------------------- */
@@ -420,6 +438,8 @@ export class Kernel {
         })),
       history: [...this.history].reverse(),
       canUndo: this.undoStack.length > 0,
+      canRedo: this.redoStack.length > 0,
+      nextRedo: this.redoStack.at(-1)?.entry ?? null,
       summary: this.summary(d),
       description: descriptionView(d),
     };
@@ -439,6 +459,7 @@ export class Kernel {
     this.committed = migrate(clone(design));
     this.draft = clone(this.committed);
     this.undoStack = [];
+    this.redoStack = [];
     this.history = [];
     this.pendingSummaries = [];
     this.scoped = null;

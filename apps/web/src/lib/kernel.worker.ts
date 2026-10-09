@@ -17,6 +17,7 @@ const methods = {
   accept: (ids?: string[], by?: 'user' | 'agent', summary?: string) => kernel.accept(ids, by, summary),
   reject: () => kernel.reject(),
   undo: () => kernel.undo(),
+  redo: () => kernel.redo(),
   load: (d: Design) => kernel.load(d),
   exportDesign: () => kernel.exportDesign(),
   rename: (name: string) => kernel.rename(name),

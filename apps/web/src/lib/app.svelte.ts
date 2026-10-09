@@ -259,6 +259,13 @@ class AppState {
     await this.refresh();
   }
 
+  async redo() {
+    const e = await this.kernel.redo();
+    if (e) this.flash(`Redid #${e.id} ${e.summary}`);
+    await this.persist();
+    await this.refresh();
+  }
+
   /** A direct user edit (e.g. removing a ledger entry) commits immediately, attributed to the user. */
   async userEdit(summary: string, ops: unknown[]): Promise<boolean> {
     if (this.k?.proposal) {

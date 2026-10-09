@@ -37,9 +37,11 @@
     fromHash();
     window.addEventListener('hashchange', fromHash);
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !(e.target as HTMLElement).closest('input,textarea')) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !(e.target as HTMLElement).closest('input,textarea')) {
         e.preventDefault();
-        if (app.k?.canUndo && !app.k.proposal) void app.undo();
+        if (e.shiftKey) {
+          if (app.k?.canRedo && !app.k.proposal) void app.redo();
+        } else if (app.k?.canUndo && !app.k.proposal) void app.undo();
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'p' && app.view === 'sch') {
         e.preventDefault();
@@ -52,6 +54,17 @@
       window.removeEventListener('hashchange', fromHash);
       window.removeEventListener('keydown', onKey);
     };
+  });
+
+  const undoTitle = $derived.by(() => {
+    const e = app.k?.history[0];
+    if (!app.k?.canUndo || !e) return 'Nothing to undo (⌘Z)';
+    return app.k.proposal ? 'Accept or reject the pending changes first' : `Undo #${e.id}: ${e.summary} (⌘Z)`;
+  });
+  const redoTitle = $derived.by(() => {
+    const e = app.k?.nextRedo;
+    if (!e) return 'Nothing to redo (⇧⌘Z)';
+    return app.k?.proposal ? 'Accept or reject the pending changes first' : `Redo #${e.id}: ${e.summary} (⇧⌘Z)`;
   });
 
   $effect(() => {
@@ -113,7 +126,13 @@
       {:else if app.settings.provider === 'anthropic' && !app.isDemo}
         <button class="chipbtn" onclick={() => (app.view = 'set')} title="Session spend with the Anthropic API ({app.settings.model})"><span class="muted">${app.spend.toFixed(2)}</span></button>
       {/if}
-      <button class="ib" title="Undo last commit (⌘Z)" disabled={!app.k?.canUndo || !!app.k?.proposal} onclick={() => app.undo()}>↶</button>
+      <button class="undo" title={undoTitle} aria-label={undoTitle} disabled={!app.k?.canUndo || !!app.k?.proposal} onclick={() => app.undo()}>
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 3 2.5 6l3 3"/><path d="M3 6h6.5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        <span class="lbl">Undo</span>
+      </button>
+      <button class="redo" title={redoTitle} aria-label={redoTitle} disabled={!app.k?.canRedo || !!app.k?.proposal} onclick={() => app.redo()}>
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10.5 3 3 3-3 3"/><path d="M13 6H6.5a3.5 3.5 0 0 0 0 7H10"/></svg>
+      </button>
     </div>
   </header>
 
@@ -202,6 +221,12 @@
   .nav button[aria-current="true"] { background: var(--panel-2); color: var(--txt); font-weight: 600; }
   .nav button:hover { background: var(--hover); }
   .pending { color: var(--accent-txt); border-color: var(--accent-soft); }
+  .redo { display: inline-flex; align-items: center; border: 1px solid var(--line-2); background: var(--panel); color: var(--txt-2); border-radius: 6px; padding: 4px 7px; }
+  .redo:hover:not(:disabled) { background: var(--hover); color: var(--txt); }
+  .redo:disabled { border-color: var(--line); background: transparent; color: var(--txt-3); opacity: .6; }
+  .undo { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent-txt); border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .undo:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
+  .undo:disabled { border-color: var(--line); background: transparent; color: var(--txt-3); font-weight: 400; opacity: .7; }
   .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
   main { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
   .loading { display: grid; place-items: center; color: var(--txt-3); }
