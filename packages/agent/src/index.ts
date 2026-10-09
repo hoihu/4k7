@@ -6,3 +6,4 @@ export { AnthropicProvider, ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL, costUsd, 
 export { ScriptedProvider, type Script, type ScriptStep } from './providers/scripted.ts';
 export { DEMO_SCRIPTS, DEMO_FALLBACK } from './demo.ts';
 export { compactTx, describeTx } from './format.ts';
+export { formatScope, optimizePrompt } from './optimize.ts';

@@ -11,13 +11,14 @@ import {
   costUsd,
   describeTx,
   formatDesignContext,
+  optimizePrompt,
   runCalc,
   type AgentEvent,
   type Provider,
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type Rect, type TokenCount } from '@tracewise/schema';
+import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -86,6 +87,8 @@ class AppState {
   chat = $state<ChatItem[]>([]);
   running = $state(false);
   selection = $state<string[]>([]);
+  /** Optimize: the area the agent is restricted to while it works on it. */
+  scope = $state.raw<ScopeInfo | null>(null);
   sheet = $state(0);
   hunkOff = $state<Record<string, boolean>>({});
   hoverHunk = $state<string | null>(null);
@@ -423,7 +426,7 @@ class AppState {
         const p = this.k?.proposal;
         const pending = p ? `\n<pending_changeset hunks="${p.hunks.length}">${p.hunks.map((h) => `${h.change} ${h.title}`).join('; ')}</pending_changeset>` : '';
         log('context', true, `${snap.summary.components.length} parts · ${snap.counts.errors}E ${snap.counts.warnings}W`);
-        return text(formatDesignContext({ ...snap, selection: this.selection }) + pending + `\nautonomy: ${this.settings.mode}`);
+        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope }) + pending + `\nautonomy: ${this.settings.mode}`);
       }
       case 'design_query': {
         if ((input as { op?: string })?.op === 'get_board') {
@@ -537,7 +540,12 @@ class AppState {
         }
         // one page: frame on its paper (pages are numbered through the whole design)
         let frame: Rect | undefined;
-        if (args.page !== undefined) {
+        if (args.area && this.scope) {
+          const i = sheets.findIndex((s) => s.id === this.scope!.scope.sheet);
+          if (i >= 0) this.sheet = i;
+          await tick();
+          frame = this.scope.scope.rect;
+        } else if (args.page !== undefined) {
           const i = sheets.findIndex((s) => s.pages.some((p) => p.number === args.page));
           if (i < 0) return text(`There is no page ${args.page}: the design has ${sheets.reduce((n, s) => n + s.pages.length, 0)} page(s).`, true);
           this.sheet = i;
@@ -546,7 +554,7 @@ class AppState {
         }
         await new Promise((r) => requestAnimationFrame(() => r(null)));
         const img = await renderSchematicPng(args.width, frame);
-        log('schematic image', true, `${args.width}px${frame ? ` · page ${args.page}` : ''}`);
+        log('schematic image', true, `${args.width}px${args.area && frame ? ' · the area' : frame ? ` · page ${args.page}` : ''}`);
         const content: BridgeContent[] = [{ type: 'image', ...img }];
         const shown = sheets[this.sheet];
         if (!frame && shown && shown.pages.length > 1) {
@@ -704,7 +712,29 @@ class AppState {
     return !(this.settings.provider === 'anthropic' && this.apiKey);
   }
 
-  async send(text: string) {
+  /**
+   * Optimize the zoomed area (`rect`, sheet coordinates): the kernel restricts the agent to it for
+   * the length of the run, and it works as in any chat turn (the changeset waits for review).
+   */
+  async optimize(rect: Rect, goal?: string) {
+    const sheet = this.k?.view.sheets[this.sheet];
+    if (this.running || !sheet) return;
+    const g = goal?.trim();
+    const info = await this.kernel.setScope({ view: 'schematic', sheet: sheet.id, rect, ...(g ? { goal: g } : {}) });
+    if (!info || 'error' in info) {
+      this.flash(info ? info.error : 'Nothing to optimize here.');
+      return;
+    }
+    this.scope = info;
+    try {
+      await this.send(optimizePrompt(info), { shown: `Optimize ${info.free.length} parts on ${info.sheetName}${info.widened ? ' (widened to what the wires lead to)' : ''}${g ? `: ${g}` : ''}`, scope: info });
+    } finally {
+      this.scope = null;
+      await this.kernel.setScope(null);
+    }
+  }
+
+  async send(text: string, opts: { shown?: string; scope?: ScopeInfo } = {}) {
     const trimmed = text.trim();
     if (!trimmed || this.running) return;
     if (this.k?.proposal) {
@@ -713,9 +743,9 @@ class AppState {
       const pending = [...this.chat].reverse().find((c) => c.changeset?.state === 'pending');
       if (pending) pending.changeset = { state: 'superseded', note: 'Continued below; review the combined changeset there.' };
     }
-    const refs = [...this.selection];
-    this.chat.push({ id: this.seq++, role: 'user', text: trimmed, refs, segments: [], status: 'done' });
-    for (const q of this.chat) for (const s of q.segments) if (s.type === 'question' && !s.answered) s.answered = trimmed;
+    const refs = opts.scope ? [] : [...this.selection];
+    this.chat.push({ id: this.seq++, role: 'user', text: opts.shown ?? trimmed, refs, segments: [], status: 'done' });
+    for (const q of this.chat) for (const s of q.segments) if (s.type === 'question' && !s.answered) s.answered = opts.shown ?? trimmed;
     const viaClaude = this.settings.provider === 'claude-code';
     this.chat.push({ id: this.seq++, role: 'agent', segments: [], status: 'streaming', ...(viaClaude ? { source: 'Claude Code' } : {}) });
     const item = this.chat[this.chat.length - 1]!;
@@ -727,7 +757,7 @@ class AppState {
       } else {
         this.inAppBusy = true;
         this.abort = new AbortController();
-        await this.agent.run(trimmed, { selection: refs }, (e) => this.onEvent(item, e), this.abort.signal);
+        await this.agent.run(trimmed, { selection: refs, scope: opts.scope ?? null }, (e) => this.onEvent(item, e), this.abort.signal);
       }
     } catch (e) {
       item.segments.push({ type: 'error', text: (e as Error).message });

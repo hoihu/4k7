@@ -15,10 +15,14 @@ import {
   type HistoryEntry,
   type Proposal,
   type Rejection,
+  type OptimizeScope,
   type SchematicView,
+  type ScopeInfo,
+  type ScopeOutcome,
   type TransactionResult,
   type BoardView,
   type DescriptionView,
+  type SheetView,
   boardSummary,
   DEFAULT_BOARD,
   fabPresets,
@@ -33,6 +37,7 @@ import { RejectError, cardOf, clone, componentsSorted, findComponent, findNet, g
 import { layoutSchematic } from './layout.ts';
 import { layoutBoard, placeBoard } from './board.ts';
 import { canonicalJson, migrate } from './canonical.ts';
+import { MIN_FREE, circuitSignature, guardOp, measure, positions, resolveScope, ripple, widenScope, type ResolvedScope } from './scope.ts';
 
 interface Analysis {
   view: SchematicView;
@@ -62,6 +67,8 @@ export class Kernel {
   private history: HistoryEntry[] = [];
   private historySeq = 1;
   private pendingSummaries: string[] = [];
+  /** The Optimize area while the agent works on it, with the state it started from. */
+  private scoped: { sc: ResolvedScope; sheet: SheetView; pos: Map<string, readonly number[]>; circuit: string } | null = null;
 
   constructor(design?: Design) {
     this.committed = design ? migrate(clone(design)) : emptyDesign();
@@ -120,6 +127,7 @@ export class Kernel {
     const results = [];
     for (let i = 0; i < tx.ops.length; i++) {
       try {
+        if (this.scoped) guardOp(work, tx.ops[i]!, this.scoped.sc);
         results.push(applyOp(work, tx.ops[i]!));
       } catch (e) {
         if (e instanceof RejectError) return this.rejected({ opIndex: i, ...e.rejection }, !!tx.dry_run);
@@ -128,7 +136,11 @@ export class Kernel {
     }
     gcNets(work);
     gcParts(work);
-    const after = this.analyse(work).diagnostics;
+    if (this.scoped && circuitSignature(work) !== this.scoped.circuit) {
+      return this.rejected({ opIndex: tx.ops.length - 1, code: 'OUT_OF_SCOPE', message: 'This would change the circuit (parts, values or connections). Optimize only changes how an area is drawn.' }, !!tx.dry_run);
+    }
+    const analysed = this.analyse(work);
+    const after = analysed.diagnostics;
     if (!tx.dry_run) {
       this.draft = work;
       this.pendingSummaries.push(tx.summary);
@@ -144,6 +156,46 @@ export class Kernel {
       counts: countDiagnostics(after),
       introduced: after.filter((x) => !x.waivedBy && !beforeKeys.has(diagKey(x))),
       resolved: before.filter((x) => !x.waivedBy && !afterKeys.has(diagKey(x))),
+      ...(this.scoped ? { scope: this.scopeOutcome(analysed.view) } : {}),
+    };
+  }
+
+  /* ---------------------------- optimize scope ---------------------------- */
+
+  /**
+   * Restrict the agent to an area (Optimize) until `setScope(null)`: edits that move parts outside
+   * it, or change the circuit, are refused, and every result reports ripple and measures.
+   */
+  setScope(scope: OptimizeScope | null): ScopeInfo | { error: string } | null {
+    if (!scope) {
+      this.scoped = null;
+      return null;
+    }
+    const view = this.analyse(this.draft).view;
+    let sc = resolveScope(this.draft, view, scope);
+    if ('error' in sc) return sc;
+    if (sc.free.size < MIN_FREE) {
+      // zoomed onto a wire or a label: work on the parts the view is about
+      const wide = widenScope(this.draft, view, scope);
+      const again = wide ? resolveScope(this.draft, view, wide) : null;
+      if (!again || 'error' in again || again.free.size < MIN_FREE) {
+        return { error: 'There are no parts or connections in this view to optimize. Move the view over some parts.' };
+      }
+      again.info.widened = { asked: scope.rect };
+      sc = again;
+    }
+    const sheet = view.sheets.find((x) => x.id === sc.scope.sheet)!;
+    this.scoped = { sc, sheet, pos: positions(sheet), circuit: circuitSignature(this.draft) };
+    return sc.info;
+  }
+
+  private scopeOutcome(view: SchematicView): ScopeOutcome {
+    const s = this.scoped!;
+    const sheet = view.sheets.find((x) => x.id === s.sc.scope.sheet);
+    return {
+      ripple: sheet ? ripple(s.sheet, s.pos, sheet, s.sc) : [],
+      measures: sheet ? measure(sheet, s.sc.nets) : s.sc.info.measures,
+      baseline: s.sc.info.measures,
     };
   }
 
@@ -389,6 +441,7 @@ export class Kernel {
     this.undoStack = [];
     this.history = [];
     this.pendingSummaries = [];
+    this.scoped = null;
   }
 
   rename(name: string): void {

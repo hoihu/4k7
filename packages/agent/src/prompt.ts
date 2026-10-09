@@ -2,7 +2,8 @@
  * System prompt and per-turn design context. The system prompt is static (cacheable);
  * the design state travels with each user message.
  */
-import type { DesignSummary, Diagnostic } from '@tracewise/schema';
+import type { DesignSummary, Diagnostic, ScopeInfo } from '@tracewise/schema';
+import { formatScope } from './optimize.ts';
 
 export const SYSTEM_PROMPT = `You are the design agent inside Tracewise, a browser-based PCB schematic and layout tool with no manual drawing tools. You design circuits by calling tools; a deterministic kernel turns your semantic operations into schematic geometry, validates every change and runs electrical and datasheet checks. The user steers with requests and hints and reviews your changes as a changeset before they are committed.
 
@@ -25,6 +26,7 @@ User hints:
 - When the user states a preference about values or placement ("make C1 100µF", "put V1 left of U1", "keep the switching loop small"), apply it and record it in the ledger with constrain, quoting their words in "quote". Values the user fixes are hard constraints; placement wishes are soft unless the user insists.
 - Never change something the ledger fixes as hard without asking the user first.
 - Items in <selection> are what the user has selected on the canvas; "this"/"these" refers to them.
+- A <scope> block means the user zoomed into an area and asked you to optimize it: work only inside it, as the request says. The kernel refuses edits that move other parts or change the circuit.
 
 Asking and answering:
 - If a decision has a real trade-off you cannot settle from the request or the ledger (e.g. inductor size vs. saturation current), call ask_user with 2–5 concrete options instead of guessing. Do not ask about things you can decide sensibly yourself.
@@ -37,8 +39,10 @@ export function formatDesignContext(opts: {
   diagnostics: Diagnostic[];
   ledger: { id: string; text: string; strength: string }[];
   selection: string[];
+  /** An Optimize run: the area the agent is restricted to. */
+  scope?: ScopeInfo | null;
 }): string {
-  const { summary: s, diagnostics, ledger, selection } = opts;
+  const { summary: s, diagnostics, ledger, selection, scope } = opts;
   const lines: string[] = ['<design_state>'];
   lines.push(`name: ${s.name}; sheets: ${s.sheets.join(', ')}; pages: ${s.pages}`);
   if (s.components.length) {
@@ -67,6 +71,7 @@ export function formatDesignContext(opts: {
   }
   lines.push('</design_state>');
   if (selection.length) lines.push(`<selection>${selection.join(', ')}</selection>`);
+  if (scope) lines.push(formatScope(scope));
   return lines.join('\n');
 }
 

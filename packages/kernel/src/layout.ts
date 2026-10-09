@@ -18,6 +18,7 @@ import { PAGE, parseAs, type Component, type Constraint, type Design, type Net, 
 import { GRID, isTwoPin, symbolFor, unitCount, uprightSymbol } from '@tracewise/parts';
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, valueOf, type NetPin } from './doc.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
+import { tidyWires } from './tidy.ts';
 import {
   addJunctions,
   deco,
@@ -283,6 +284,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   if (free.length) cellRows.push({ cells: free.map((c) => ({ scene: freePart(ctx, c), heads: isTwoPin(cardFor(c)) ? [] : [c] })), gap: 200 });
 
   const { scene, pages } = paginate(d, cellRows);
+  tidyWires(scene);
   addJunctions(scene);
   const bb = pagesBBox(pages);
   return { id: sheetId, name: sheetName, bbox: bb, pages, ...scene };
