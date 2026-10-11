@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Kernel } from '@tracewise/kernel';
-import { bom, crc32, drill, fabFiles, pickAndPlace, zip } from '../src/index.ts';
+import { bom, crc32, drill, fabFiles, panelFabFiles, pickAndPlace, zip } from '../src/index.ts';
 import { buckTransaction } from '../../kernel/test/fixtures.ts';
 
 function board() {
@@ -89,5 +89,47 @@ describe('fab outputs', () => {
     const top = execFileSync('unzip', ['-p', join(dir, 'f.zip'), 'buck-F_Cu.gbr'], { encoding: 'utf8' });
     expect(top).toBe(files[0]!.content);
     expect(crc32(new TextEncoder().encode('123456789'))).toBe(0xcbf43926);
+  });
+
+  it('writes a panel: every copy, the milled contours, mouse bites, tooling holes and fiducials', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    k.accept();
+    k.transact({ summary: 'panel', ops: [{ op: 'set_board', width_mm: 40, height_mm: 30 }, { op: 'set_panel' }] });
+    const b = k.board();
+    const p = b.panel!;
+    const files = panelFabFiles(b, 'buck');
+    const file = (name: string) => files.find((f) => f.name === name)!.content;
+    expect(files.map((f) => f.name)).toContain('buck-panel-NPTH.drl');
+    // every Gerber coordinate lies on the panel
+    for (const f of files.filter((x) => x.name.endsWith('.gbr'))) {
+      for (const m of f.content.matchAll(/X(-?\d+)Y(-?\d+)D0[123]/g)) {
+        expect(Number(m[1]) / 1e6).toBeGreaterThanOrEqual(0);
+        expect(Number(m[1]) / 1e6).toBeLessThanOrEqual(p.w + 1e-6);
+        expect(Number(m[2]) / 1e6).toBeGreaterThanOrEqual(0);
+        expect(Number(m[2]) / 1e6).toBeLessThanOrEqual(p.h + 1e-6);
+      }
+    }
+    // the outline file draws the panel's contours (each opened with a D02 move)
+    expect(file('buck-panel-Edge_Cuts.gbr').split('\n').filter((l) => l.endsWith('D02*'))).toHaveLength(p.edges.length);
+    // plated holes four times over; non-plated: the bites and the tooling holes
+    const holes = (s: string) => s.split('\n').filter((l) => /^X/.test(l)).length;
+    expect(holes(file('buck-panel-PTH.drl'))).toBe(4 * holes(drill(b)));
+    expect(holes(file('buck-panel-NPTH.drl'))).toBe(p.bites.length + p.tooling.length);
+    expect(file('buck-panel-NPTH.drl')).toContain('C0.500');
+    expect(file('buck-panel-NPTH.drl')).toContain('C2.000');
+    // fiducials: 1 mm copper, 2 mm mask opening
+    expect(file('buck-panel-F_Cu.gbr')).toContain('C,1.000000');
+    expect(file('buck-panel-F_Mask.gbr')).toContain('C,2.000000');
+    expect(file('buck-panel-F_Paste.gbr')).not.toContain('C,1.000000');
+    // one placement per copy, designators numbered by copy; the BOM counts the panel
+    const single = pickAndPlace(b).trim().split('\n');
+    const pnp = file('buck-panel-PnP.csv').trim().split('\n');
+    expect(pnp).toHaveLength(1 + 4 * (single.length - 1));
+    expect(pnp.some((l) => l.startsWith('U1_1,'))).toBe(true);
+    expect(pnp.some((l) => l.startsWith('U1_4,'))).toBe(true);
+    expect(file('buck-panel-BOM.csv')).toContain('TPS54331DR,"U1_1,U1_2,U1_3,U1_4",SOIC-8,4,');
+    // the single-board files stay as they were
+    expect(fabFiles(b, 'buck').map((f) => f.name)).not.toContain('buck-NPTH.drl');
   });
 });

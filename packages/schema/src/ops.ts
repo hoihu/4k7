@@ -285,6 +285,27 @@ export const RemoveCutoutOp = z.object({
   id: z.string().describe('Cutout id ("CO1"), or "all"'),
 });
 
+const panelSide = z.enum(['top', 'right', 'bottom', 'left']);
+
+export const SetPanelOp = z.object({
+  op: z.literal('set_panel'),
+  none: z.boolean().optional().describe('true: remove the panel (single boards)'),
+  cols: z.number().int().min(1).max(20).optional().describe('Copies side by side (default 2)'),
+  rows: z.number().int().min(1).max(20).optional().describe('Copies one above the other (default 2)'),
+  gap_mm: z.number().min(1).max(10).optional().describe('Milled channel between boards and to the frame, the router width (default 2)'),
+  rail_mm: z.number().min(0).max(30).optional().describe('Frame width on all four sides (default 5; 0 = no frame)'),
+  rails_mm: z.object({ top: z.number().min(0).max(30).optional(), right: z.number().min(0).max(30).optional(), bottom: z.number().min(0).max(30).optional(), left: z.number().min(0).max(30).optional() }).optional().describe('Frame width per side, e.g. {"left": 0, "right": 0} for rails on top and bottom only'),
+  tab_sides: z.array(panelSide).optional().describe('The board sides that get tabs (default all four); the other sides are milled through. Places tabs evenly: one on a side up to 30 mm, then one per 50 mm'),
+  tabs_per_side: z.number().int().min(1).max(10).optional().describe('With tab_sides: this many tabs per side instead'),
+  tabs: z.array(z.object({ side: panelSide, at: z.number().min(0).max(1).describe('Position along the side, 0–1: left to right, top to bottom') })).optional().describe('Exact tab positions instead of tab_sides (replaces all tabs)'),
+  tab_width_mm: z.number().min(2).max(20).optional().describe('Tab width along the edge (default 5; JLCPCB asks for at least 5 with mouse bites)'),
+  hole_mm: z.number().min(0.3).max(1.2).optional().describe('Mouse-bite hole diameter (default 0.5)'),
+  hole_pitch_mm: z.number().min(0.5).max(2).optional().describe('Mouse-bite hole centre spacing, at most (default 0.75)'),
+  frame_holes: z.boolean().optional().describe('A row of mouse bites on the frame\'s end of each tab too, so the whole tab breaks out (default true); false: only at the board edge. Tabs between two boards always get a row at each board'),
+  fiducials: z.boolean().optional().describe('Three fiducials on the rails (default true; needs 5 mm rails)'),
+  tooling_holes: z.boolean().optional().describe('Four Ø2 mm tooling holes on the rails (default true; needs 5 mm rails)'),
+}).describe('Make the board in a fabrication panel: copies in a grid inside a frame, milled apart except at tabs with mouse bites (rows of small holes at each board edge, so the boards snap out). Only the given fields change; the first call starts from the defaults (2 × 2, 2 mm gap, 5 mm rails, tabs on every side, fiducials and tooling holes).');
+
 export const PlaceOp = z.object({
   op: z.literal('place'),
   ref: componentRef,
@@ -377,6 +398,7 @@ export const EditOp = z.discriminatedUnion('op', [
   EditGraphicOp,
   RemoveGraphicOp,
   SetOutlineOp,
+  SetPanelOp,
   DescribeOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;

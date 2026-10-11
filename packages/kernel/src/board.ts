@@ -44,6 +44,7 @@ import { footprintFor, isTwoPin, packageOf, type Footprint } from '@tracewise/pa
 import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
 import { copperDrc, edgeDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
+import { panelView } from './panel.ts';
 import { route } from './router.ts';
 
 const SPACING = 0.3; // between courtyards
@@ -893,6 +894,11 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     cutouts: boardCutouts,
     graphics: boardGraphics,
   };
+  if (settings.panel && parts.length) {
+    const panel = panelView(view, settings.panel);
+    view.panel = panel.view;
+    view.diagnostics.push(...panel.diagnostics);
+  }
   view.diagnostics.push(...fabPlacementDrc(view));
   applyWaivers(d, view.diagnostics);
   return view;

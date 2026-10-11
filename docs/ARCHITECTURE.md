@@ -290,6 +290,7 @@ The schematic-to-manufacturing path works end to end for small boards:
 - **Fab outputs** (`packages/fab`): Gerber X2 (copper, mask, paste, silkscreen, outline, pours as regions), Excellon, BOM, pick-and-place, one zip; verified with tracespace's parser/renderer.
 - **Layout workspace**: 2D board (pads, tracks, pours, ratsnest, silk), drag to pin, R to rotate, unpin, DRC list, fab download, and a three.js 3D board built from the same package bodies as the Parts view.
 - **Manufacturer limits** (2026-10-09, [fab-rules](design/fab-rules.md)): `board.fab` holds a fab profile (JLCPCB, PCBWay, Eurocircuits presets, or limits the agent imported from a capabilities page with their source); rules are raised to the limits, `set_board` refuses values below them, `DRC.FAB_*` checks tracks, vias, holes, rings, hole spacing and board size.
+- **Fabrication panels** (2026-10-11, [panel](design/panel.md)): `board.panel` puts copies of the board in a grid inside a frame, milled apart except at tabs with mouse bites (Clipper2 for the geometry); `set_panel`, `PANEL.*` checks, panel Gerbers/drill/BOM/pick-and-place (one entry per placement).
 
 Not yet: bottom-side placement, differential pairs and length/impedance rules, thermal reliefs, non-rectangular outlines, a push-and-shove router for dense boards (the maze router is order-sensitive), and a real fab order as the exit test.
 

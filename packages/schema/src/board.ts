@@ -1,5 +1,6 @@
 import type { PackageInfo } from './ingest.ts';
 import { fabSummary, type FabProfile } from './fab.ts';
+import type { PanelSettings, PanelView } from './panel.ts';
 
 /**
  * The board: settings stored in the design, and the derived board view (placement, routing,
@@ -49,6 +50,8 @@ export interface BoardSettings {
   cutouts?: Cutout[];
   /** Graphics on the silkscreen (logos, clipart, decoration). */
   graphics?: SilkGraphic[];
+  /** The fabrication panel the board is made in (set_panel). Absent: single boards. */
+  panel?: PanelSettings;
   /**
    * The placement as last proposed or adjusted (propose_layout, place, route store it). Later
    * layouts start from it, so a change moves only what it has to. Absent: proposed afresh.
@@ -520,6 +523,8 @@ export interface BoardView {
   cutouts: BoardCutout[];
   /** Silkscreen graphics, placed on this outline. */
   graphics: BoardGraphic[];
+  /** The fabrication panel, resolved for this outline (absent: none set). */
+  panel?: PanelView;
 }
 
 /** Compact board description for agents (design_query get_board). */
@@ -555,6 +560,22 @@ export function boardSummary(b: BoardView, routed = true) {
       inside_board: g.inside ?? true,
       ...(g.over?.length ? { over_parts: g.over } : {}),
     })),
+    ...(b.panel
+      ? {
+          panel: {
+            copies: `${b.panel.settings.cols} × ${b.panel.settings.rows}`,
+            size_mm: [b.panel.w, b.panel.h],
+            gap_mm: b.panel.settings.gap,
+            rails_mm: b.panel.settings.rails,
+            tabs_per_board: b.panel.settings.tabs,
+            tab: { width_mm: b.panel.settings.tab.width, hole_mm: b.panel.settings.tab.hole, pitch_mm: b.panel.settings.tab.pitch },
+            tabs: b.panel.tabs.length,
+            mouse_bites: b.panel.bites.length,
+            fiducials: b.panel.fiducials.length,
+            tooling_holes: b.panel.tooling.length,
+          },
+        }
+      : {}),
     drc: b.diagnostics.filter((x) => !x.waivedBy).map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
     note: 'Workflow: propose_layout (board size and placement), then adjustments (place = the user\'s choice for a part, kept relative to its parent part; lock: true pins it exactly; set_board for the size), then route as the last step. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
