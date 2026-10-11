@@ -70,3 +70,29 @@ browsers.
 
 `npx -y github:hoihu/tracewise` resolves the default branch each time and rebuilds when it moved.
 Pin a version with a tag or commit: `npx -y github:hoihu/tracewise#v0.2.0`.
+
+## Publishing to npm (prepared, not done)
+
+The package is ready for the npm registry but not published: `"private": true` in `package.json`
+makes `npm publish` refuse. Until then the name (`tracewise`) can still change.
+
+- `npm run check:package` builds the package, packs it (`tracewise-<version>.tgz`), installs the
+  tarball into an empty folder without the workspace or dev dependencies and starts the app from
+  it. CI runs it on every push. Try the tarball yourself with `npx -y ./tracewise-0.1.0.tgz`.
+- Installed from the registry, nothing is built on the user's computer: the tarball carries `dist/`
+  and npm installs only `ws`, `@modelcontextprotocol/sdk` and `pdfjs-dist`.
+- `.github/workflows/release.yml` publishes when a `v*` tag is pushed, with provenance, using npm
+  trusted publishing (no token in the repository). Pre-release versions (`0.2.0-beta.1`) go to the
+  `next` dist-tag.
+
+To release:
+
+1. Remove `"private": true` and set `version` in `package.json` (the release checks it matches
+   the tag; `tracewise --version` and the server read it from there).
+2. Change `npx github:hoihu/tracewise` to `npx tracewise` here, in the README and in the
+   `description`.
+3. First version only: npm sets trusted publishers on an existing package, so publish it by hand
+   from a clean checkout (`npm login`, `npm publish --access public`), then on npmjs.com add the
+   trusted publisher: GitHub Actions, `hoihu/tracewise`, workflow `release.yml`, environment `npm`
+   (optionally require a reviewer for the `npm` environment in the repository settings).
+4. Later versions: `git tag v0.2.0 && git push origin v0.2.0`.

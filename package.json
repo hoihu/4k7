@@ -1,8 +1,27 @@
 {
   "name": "tracewise",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "AI-first PCB schematic and layout tool, run locally: npx github:hoihu/tracewise",
+  "keywords": [
+    "pcb",
+    "schematic",
+    "layout",
+    "eda",
+    "electronics",
+    "gerber",
+    "ai",
+    "mcp"
+  ],
+  "license": "MIT",
+  "author": "Martin Fischer",
+  "homepage": "https://github.com/hoihu/tracewise#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hoihu/tracewise.git"
+  },
+  "bugs": "https://github.com/hoihu/tracewise/issues",
   "bin": {
     "tracewise": "dist/tracewise.js"
   },
@@ -25,6 +44,8 @@
     "package": "npm run build && node scripts/package.mjs",
     "start": "npm run package && node dist/tracewise.js",
     "prepare": "npm run package",
+    "check:package": "node scripts/check-package.mjs",
+    "prepublishOnly": "npm run typecheck && npm test && npm run check:package",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && npm run check -w @tracewise/web",
