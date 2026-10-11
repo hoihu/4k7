@@ -54,18 +54,32 @@ try “12 V to 3.3 V buck, 2 A. Put C1 left of U1.”, answer the question, revi
 
 4k7 does not ship a model. Three ways to connect one:
 
-**Your coding agent, via MCP.** The local server is an MCP server. Register it with the agent you use and ask it to
-*“connect to 4k7”*; it answers with the app's link. The command is the same for all of them:
+**Your coding agent, via MCP.** The local server is an MCP server over stdio. Register it with the agent you use,
+ask the agent to *“connect to 4k7”*, and open the link it answers with: that link connects the app to the agent's
+server. The command is the same for all of them:
 
 ```sh
-npx -y github:hoihu/4k7 mcp                        # or, from a checkout:
+npx -y github:hoihu/4k7 mcp                        # or, from a checkout (Node 22.18 or newer):
 node /absolute/path/to/this/repo/tools/server/src/main.ts
 ```
 
 - **Claude Code**: `claude mcp add --scope user 4k7 -- npx -y github:hoihu/4k7 mcp`, or start `claude` in this repository and approve the `4k7` server from `.mcp.json`.
-- **GitHub Copilot** (CLI or VS Code agent mode): add the command above as an MCP server in its MCP configuration.
+- **GitHub Copilot in VS Code** (agent mode): put this in `.vscode/mcp.json` of the workspace, or run *MCP: Add Server*
+  from the command palette for all workspaces. Then *MCP: List Servers → 4k7 → Start*, and tick the 4k7 tools in the
+  chat's tool picker.
+
+  ```json
+  { "servers": { "4k7": { "type": "stdio", "command": "npx", "args": ["-y", "github:hoihu/4k7", "mcp"] } } }
+  ```
+
+- **GitHub Copilot CLI**: the same server in `~/.copilot/mcp-config.json`, under `mcpServers` with `"type": "local"`
+  and `"tools": ["*"]`.
 - **OpenCode**: add it under `mcp` in `opencode.json`.
 - Any other MCP client works the same way. Settings → Local server in the app shows the command to paste.
+
+Each agent runs its own copy of the server, and a tab talks to one of them at a time, so open the link the agent gives
+you rather than reusing a tab opened by another agent. The link always goes to `http://localhost:7777` (your designs
+live there), with `?port=` when the agent's server runs on another port.
 
 The agent works through `get_context`, `design_query`, `design_edit`, `calc`, `get_schematic_image`, `propose` and
 `wait_for_review`, and its changes arrive in the app as a changeset for you to review. `propose` is refused while the
