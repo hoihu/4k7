@@ -1,4 +1,4 @@
-import type { TransactionResult } from '@tracewise/schema';
+import type { TransactionResult } from '@4k7/schema';
 
 /** Transaction result as sent to a model: effects, counts, introduced/resolved diagnostics. */
 export function compactTx(r: TransactionResult) {

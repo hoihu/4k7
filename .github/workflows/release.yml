@@ -62,5 +62,5 @@ jobs:
           v="$(node -p 'require("./package.json").version')"
           [ "$GITHUB_REF_NAME" = "v$v" ] || { echo "tag $GITHUB_REF_NAME, package.json $v"; exit 1; }
       # prepublishOnly runs typecheck, tests and the package check; prepare builds dist/.
-      # Pre-releases (0.2.0-beta.1) go to the `next` dist-tag, so `npx tracewise` keeps the last release.
+      # Pre-releases (0.2.0-beta.1) go to the `next` dist-tag, so `npx 4k7pcb` keeps the last release.
       - run: npm publish --provenance --access public --tag "$(case "$GITHUB_REF_NAME" in *-*) echo next;; *) echo latest;; esac)"

@@ -1,6 +1,6 @@
 /**
  * Jobs answered by the user's local Claude Code, each a headless `claude -p` run whose only
- * Tracewise tools come from this server's MCP endpoint, streamed back to the tab. Uses the
+ * 4k7 tools come from this server's MCP endpoint, streamed back to the tab. Uses the
  * user's own Claude Code login/plan.
  * - chat: a message typed into the app's chat; design tools, no files or shell.
  * - ingest: import a part from a datasheet; read-only access to one prepared datasheet
@@ -12,7 +12,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { CHAT_WEB_PROMPT, INGEST_VERIFY_PROMPT, chatModePrompt, ingestPrompt, type ChatCapability, type ChatEvent, type TabToServer, type TokenCount } from '@tracewise/schema';
+import { CHAT_WEB_PROMPT, INGEST_VERIFY_PROMPT, chatModePrompt, ingestPrompt, type ChatCapability, type ChatEvent, type TabToServer, type TokenCount } from '@4k7/schema';
 import type { LocalServer, ChatMessage } from './server.ts';
 import type { ClaudeProfile } from './config.ts';
 import { secretsMatch, type McpMode } from './mcp.ts';
@@ -52,7 +52,7 @@ export function detectClaude(bin: string, profile?: ClaudeProfile): ChatCapabili
   if (r.error || r.status !== 0) {
     return {
       available: false,
-      reason: `Claude Code CLI not found ("${bin}"). Install it or set TRACEWISE_CLAUDE_BIN.`,
+      reason: `Claude Code CLI not found ("${bin}"). Install it or set FOURK7_CLAUDE_BIN.`,
     };
   }
   return { available: true, version: r.stdout.trim().split('\n')[0] ?? '' };
@@ -106,7 +106,7 @@ export class ChatRunner {
 
   #mcpConfig(token: string): string {
     const url = `http://127.0.0.1:${this.#opts.server.port}/mcp`;
-    return JSON.stringify({ mcpServers: { tracewise: { type: 'http', url, headers: { Authorization: `Bearer ${token}` } } } });
+    return JSON.stringify({ mcpServers: { '4k7': { type: 'http', url, headers: { Authorization: `Bearer ${token}` } } } });
   }
 
   #emit(id: string, event: ChatEvent) {
@@ -126,7 +126,7 @@ export class ChatRunner {
       '--tools',
       msg.web ? 'WebFetch,WebSearch' : '', // never shell or files; the web only when the user allows it
       '--allowedTools',
-      msg.web ? 'mcp__tracewise,WebFetch,WebSearch' : 'mcp__tracewise',
+      msg.web ? 'mcp__4k7,WebFetch,WebSearch' : 'mcp__4k7',
       '--permission-mode',
       'dontAsk',
       '--append-system-prompt',
@@ -218,7 +218,7 @@ export class ChatRunner {
       '--tools',
       'Read,Grep,Glob', // reading inside the job folder needs no permission; everything else is denied
       '--allowedTools',
-      'mcp__tracewise',
+      'mcp__4k7',
       '--permission-mode',
       'dontAsk',
       '--append-system-prompt',
@@ -271,8 +271,8 @@ export class ChatRunner {
         case 'system':
           if (m.subtype === 'init') {
             if (m.session_id) this.#emit(id, { kind: 'session', session: m.session_id });
-            const tw = m.mcp_servers?.find((s) => s.name === 'tracewise');
-            if (tw && tw.status !== 'connected') this.#opts.log?.(`${label}: tracewise MCP status ${tw.status}`);
+            const tw = m.mcp_servers?.find((s) => s.name === '4k7');
+            if (tw && tw.status !== 'connected') this.#opts.log?.(`${label}: 4k7 MCP status ${tw.status}`);
           }
           break;
         case 'stream_event': {
@@ -378,7 +378,7 @@ function describeTool(name = '', input: unknown): string {
 async function download(url: string): Promise<Uint8Array> {
   if (!/^https?:\/\//i.test(url)) throw new Error('only http(s) links can be downloaded');
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Tracewise', Accept: 'application/pdf,*/*' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) 4k7', Accept: 'application/pdf,*/*' },
     redirect: 'follow',
     signal: AbortSignal.timeout(60_000),
   });

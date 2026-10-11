@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Design } from '@tracewise/schema';
+  import type { Design } from '@4k7/schema';
   import { app } from '../../app.svelte.ts';
   import Field from './Field.svelte';
   import Section from './Section.svelte';

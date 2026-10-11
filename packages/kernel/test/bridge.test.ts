@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SheetView, Transaction } from '@tracewise/schema';
+import type { SheetView, Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 
 /** Transformer secondary on J1 → 4-diode bridge → smoothing cap. */

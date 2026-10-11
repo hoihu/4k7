@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Kernel } from '@tracewise/kernel';
-import { MCP_INSTRUCTIONS, DESIGN_GUIDE, agentTools } from '@tracewise/schema';
+import { Kernel } from '@4k7/kernel';
+import { MCP_INSTRUCTIONS, DESIGN_GUIDE, agentTools } from '@4k7/schema';
 import { Agent, DEMO_FALLBACK, DEMO_SCRIPTS, SYSTEM_PROMPT, ScriptedProvider, runCalc, nearestE, type AgentEvent, type KernelPort, type Script } from '../src/index.ts';
 
 function port(k: Kernel): KernelPort {

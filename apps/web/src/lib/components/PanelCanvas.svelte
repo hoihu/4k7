@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { boardPolygon, type BoardView, type PanelSide, type PanelTab, type PanelView } from '@tracewise/schema';
+  import { boardPolygon, type BoardView, type PanelSide, type PanelTab, type PanelView } from '@4k7/schema';
 
   /**
    * The fabrication panel (mm, top view): the frame and the copies, the milled channels between

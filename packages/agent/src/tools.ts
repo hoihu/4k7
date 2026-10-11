@@ -2,7 +2,7 @@
  * Running the agent tools. Every engine (the in-app loop, Claude Code through the server) calls
  * the same executor; it answers with a ToolOutcome that each engine passes on in its own format.
  */
-import { CalcCall, TOOL_NAMES } from '@tracewise/schema';
+import { CalcCall, TOOL_NAMES } from '@4k7/schema';
 import { CalcError, runCalc } from './calc.ts';
 import { compactTx, describeTx } from './format.ts';
 import type { KernelPort } from './types.ts';

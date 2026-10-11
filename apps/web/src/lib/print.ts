@@ -4,7 +4,7 @@
  * drawn by the same canvas component as on screen, framed on its paper.
  */
 import { mount, tick, unmount, type Component } from 'svelte';
-import { PAPERS, type Rect, type SchematicView } from '@tracewise/schema';
+import { PAPERS, type Rect, type SchematicView } from '@4k7/schema';
 import SchematicCanvas from './components/SchematicCanvas.svelte';
 
 /* The canvas classes, restyled for paper (its own stylesheet is scoped to the app). */

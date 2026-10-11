@@ -1,4 +1,4 @@
-# Tracewise (working name)
+# 4k7
 
 An **AI-first, browser-based PCB schematic and layout tool**. It has no pencil, wire or trace tools.
 You describe what you want, give hints ("put V1 on the left", "make C1 100 µF"), and an AI you
@@ -42,7 +42,7 @@ Or with Node 22.18+ and npm, straight from this repository:
 
 ```sh
 npx -y github:hoihu/4k7          # builds once, then serves the app at http://localhost:7777 and opens it
-npm install -g github:hoihu/4k7  # or install it: `tracewise` (add --no-open to skip the browser)
+npm install -g github:hoihu/4k7  # or install it: `4k7pcb` (add --no-open to skip the browser)
 ```
 
 Either way it runs the app and the local server in one process: the page it opens is already connected, and the chat is answered by your
@@ -57,7 +57,7 @@ npm run dev        # http://localhost:5173 with hot reload, plus the server (pri
 npm test           # kernel + agent tests (vitest)
 npm run typecheck  # tsc + svelte-check
 npm run build      # static build in apps/web/dist
-npm start          # build, package and run it like npx does (dist/tracewise.js)
+npm start          # build, package and run it like npx does (dist/4k7pcb.js)
 node scripts/bundle.mjs  # the downloads (DMGs and Linux archives) in build/
 ```
 
@@ -74,15 +74,15 @@ The local server (`tools/server`) connects the app to the Claude Code on your co
 `npm run dev:web` and `npm run server` run them one at a time).
 
 Open the link the server prints, then choose **Settings → AI provider → Claude Code on this computer**. Messages you type in
-the app's chat are answered by `claude -p` running headlessly with **only** the Tracewise tools (no shell, files or web),
+the app's chat are answered by `claude -p` running headlessly with **only** the 4k7 tools (no shell, files or web),
 connected back to the server through a token-protected MCP endpoint. Follow-up messages continue the same session.
 To let it look up datasheets, enable **Settings → Web** (adds read-only WebSearch/WebFetch; still no shell or files).
 
-**Or chat in the Claude Code CLI.** Start `claude` in this repository and approve the `tracewise` server from
+**Or chat in the Claude Code CLI.** Start `claude` in this repository and approve the `4k7` server from
 `.mcp.json` (or register it for every folder with
-`claude mcp add --scope user tracewise -- npx -y github:hoihu/4k7 mcp`, or the command shown in the app's Settings → Local server,, or with
+`claude mcp add --scope user 4k7 -- npx -y github:hoihu/4k7 mcp`, or the command shown in the app's Settings → Local server), or with
 `node /absolute/path/to/this/repo/tools/server/src/main.ts` for a checkout). Ask Claude to
-*“connect to Tracewise”* and open the link it gives you.
+*“connect to 4k7”* and open the link it gives you.
 
 Either way Claude works through `get_context`, `design_query`, `design_edit`, `calc`, `get_schematic_image` and `propose`
 (the CLI also gets `wait_for_review`), and its changes arrive as a changeset for you to review. `propose` is refused
@@ -91,7 +91,7 @@ while the design has open errors.
 **Which Claude account the app chat uses.** The server starts `claude` directly, so shell aliases do not apply. If your
 shell routes Claude Code to Bedrock/Vertex or a different login (e.g. an alias like
 `claude-personal='env -u CLAUDE_CODE_USE_BEDROCK … CLAUDE_CONFIG_DIR=$HOME/.claude-personal claude'`), put the same in
-`~/.tracewise/server.json`:
+`~/.4k7/server.json`:
 
 ```json
 {
@@ -102,12 +102,12 @@ shell routes Claude Code to Bedrock/Vertex or a different login (e.g. an alias l
 }
 ```
 
-The server logs the profile it uses at startup (`TRACEWISE_CLAUDE_CONFIG_DIR` / `TRACEWISE_CLAUDE_UNSET` override it).
+The server logs the profile it uses at startup (`FOURK7_CLAUDE_CONFIG_DIR` / `FOURK7_CLAUDE_UNSET` override it).
 
-The access key in the app's address lives in `~/.tracewise/server.json` (`"accessKey"`), so the address stays the same and
+The access key in the app's address lives in `~/.4k7/server.json` (`"accessKey"`), so the address stays the same and
 a tab reconnects by itself. The server binds to `127.0.0.1`, serves the page only at that address, only accepts the
-app's own pages and needs the key before anything is forwarded. Set `TRACEWISE_APP_URL` if app
-links should point elsewhere and `TRACEWISE_CLAUDE_BIN` if `claude` is not on your PATH.
+app's own pages and needs the key before anything is forwarded. Set `FOURK7_APP_URL` if app
+links should point elsewhere and `FOURK7_CLAUDE_BIN` if `claude` is not on your PATH.
 
 ## Repository layout
 
@@ -119,7 +119,7 @@ links should point elsewhere and `TRACEWISE_CLAUDE_BIN` if `claude` is not on yo
 | `packages/fab` | Gerber X2, Excellon drill, BOM, pick-and-place, zip |
 | `packages/agent` | Agent loop with kernel verification, calculators, Anthropic + offline providers |
 | `apps/web` | Svelte 5 app: schematic workspace (chat + canvas + inspector), parts, settings. The kernel runs in a Web Worker |
-| `tools/server` | Local relay to Claude Code: serves the built app, MCP over stdio (CLI drives the app) or headless `claude -p` for the app chat, WebSocket to the tab, access key and origin checks. Bundled with the app into the `tracewise` package (`scripts/package.mjs`) |
+| `tools/server` | Local relay to Claude Code: serves the built app, MCP over stdio (CLI drives the app) or headless `claude -p` for the app chat, WebSocket to the tab, access key and origin checks. Bundled with the app into the `4k7pcb` package (`scripts/package.mjs`) |
 
 ## Status
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { JlcPart } from '@tracewise/parts';
+import type { JlcPart } from '@4k7/parts';
 import { jlcTool, setJlcSource } from '../src/lib/jlc.ts';
 
 const r10k: JlcPart = { lcsc: 'C25804', mpn: '0603WAF1002T5E', package: '0603', description: '', stock: 37165617, tier: 'basic', price: [{ qty: 1, usd: 0.0017 }], attributes: { Resistance: '10kΩ' }, url: 'https://jlcpcb.com/partdetail/C25804', datasheet: 'https://x/ds.pdf' };

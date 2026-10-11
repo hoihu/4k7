@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boardSummary, cutoutDistance } from '@tracewise/schema';
+import { boardSummary, cutoutDistance } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 
@@ -603,7 +603,7 @@ describe('mounting holes', () => {
   });
 
   it('writes non-plated holes to their own drill file and keeps them out of the BOM', async () => {
-    const { fabFiles } = await import('@tracewise/fab');
+    const { fabFiles } = await import('@4k7/fab');
     const k = buck();
     k.transact({ summary: 'holes', ops: [{ op: 'add_hole', diameter_mm: 3.5, corner: 'all' }] });
     const files = fabFiles(routed(k), 'h');
@@ -660,7 +660,7 @@ describe('milling: rounded corners and cutouts', () => {
       const cy = p.courtyard;
       expect(cy.x + cy.w <= 16 || cy.x >= 24 || cy.y + cy.h <= 12 || cy.y >= 18, p.refdes).toBe(true);
     }
-    const { fabFiles } = await import('@tracewise/fab');
+    const { fabFiles } = await import('@4k7/fab');
     const edge = fabFiles(b, 'm').find((f) => f.name === 'm-Edge_Cuts.gbr')!.content;
     // two contours: the outline and the cutout (each starts with a move D02)
     expect(edge.split('\n').filter((l) => l.endsWith('D02*')).length).toBe(2);
@@ -696,13 +696,13 @@ describe('free-form outline (set_outline)', () => {
     expect(b.shape).toHaveLength(30);
     expect(b.stats.unrouted).toBe(0);
     expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
-    const { insideBoard } = await import('@tracewise/schema');
+    const { insideBoard } = await import('@4k7/schema');
     for (const p of b.parts) {
       const c = p.courtyard;
       for (const [x, y] of [[c.x, c.y], [c.x + c.w, c.y], [c.x, c.y + c.h], [c.x + c.w, c.y + c.h]] as const) expect(insideBoard(b, x, y), p.refdes).toBeGreaterThan(0);
     }
     for (const t of b.tracks) for (let i = 0; i < t.pts.length; i += 2) expect(insideBoard(b, t.pts[i]!, t.pts[i + 1]!) - t.width / 2).toBeGreaterThanOrEqual(b.rules.edgeClearance - 1e-3);
-    const { fabFiles } = await import('@tracewise/fab');
+    const { fabFiles } = await import('@4k7/fab');
     const edge = fabFiles(b, 't').find((f) => f.name === 't-Edge_Cuts.gbr')!.content;
     expect(edge.split('\n').filter((l) => l.endsWith('D01*')).length).toBe(15);
   });
@@ -726,8 +726,8 @@ describe('free-form outline (set_outline)', () => {
 describe('router: direct tracks', () => {
   it('goes straight where it can: no spike up and back down before a pad', async () => {
     const { route } = await import('../src/router.ts');
-    type Pad = import('@tracewise/schema').BoardPad;
-    type Part = import('@tracewise/schema').BoardPart;
+    type Pad = import('@4k7/schema').BoardPad;
+    type Part = import('@4k7/schema').BoardPart;
     // a buck's output corner (from a real board): L2 → C16 on +1V1 passes C14 and D3
     const data: [string, [number, number, number, number, string | undefined][]][] = [
       ['C12', [[31.9, 27, 0.95, 0.628, undefined], [31.9, 25.572, 0.95, 0.628, undefined]]],
@@ -766,8 +766,8 @@ describe('router: direct tracks', () => {
 describe('router: long connections on a big board', () => {
   it('finds the shortest way (no detours, no vias) when the costs run into the thousands', async () => {
     const { route } = await import('../src/router.ts');
-    type Pad = import('@tracewise/schema').BoardPad;
-    type Part = import('@tracewise/schema').BoardPart;
+    type Pad = import('@4k7/schema').BoardPad;
+    type Part = import('@4k7/schema').BoardPart;
     const pad = (x: number, y: number): Pad => ({ number: '1', x, y, w: 1, h: 1, shape: 'rect', netId: 'X', layers: ['F.Cu'] });
     const part = (refdes: string, p: Pad) => ({ componentId: refdes, refdes, x: p.x, y: p.y, rot: 0, pads: [p], courtyard: { x: p.x - 1, y: p.y - 1, w: 2, h: 2 } }) as unknown as Part;
     const r = route({
@@ -788,8 +788,8 @@ describe('router: long connections on a big board', () => {
 describe('router: tracks wider than a via', () => {
   it('changes layer only where the track fits on the other layer too', async () => {
     const { route } = await import('../src/router.ts');
-    type Pad = import('@tracewise/schema').BoardPad;
-    type Part = import('@tracewise/schema').BoardPart;
+    type Pad = import('@4k7/schema').BoardPad;
+    type Part = import('@4k7/schema').BoardPart;
     const pad = (x: number, y: number, w: number, h: number, netId: string, layer: 'F.Cu' | 'B.Cu'): Pad => ({ number: '1', x, y, w, h, shape: 'rect', netId, layers: [layer] });
     const part = (refdes: string, p: Pad) => ({ componentId: refdes, refdes, x: p.x, y: p.y, rot: 0, pads: [p], courtyard: { x: p.x - p.w / 2, y: p.y - p.h / 2, w: p.w, h: p.h } }) as unknown as Part;
     // a 1 mm net from F.Cu on the left to B.Cu on the right, past a wall on each layer: it must
@@ -821,8 +821,8 @@ describe('router: tracks wider than a via', () => {
 
   it('keeps a track as wide as a via off the dedicated plane layers', async () => {
     const { route } = await import('../src/router.ts');
-    type Pad = import('@tracewise/schema').BoardPad;
-    type Part = import('@tracewise/schema').BoardPart;
+    type Pad = import('@4k7/schema').BoardPad;
+    type Part = import('@4k7/schema').BoardPart;
     const pad = (x: number, y: number, w: number, h: number, netId: string, layer: 'F.Cu' | 'B.Cu'): Pad => ({ number: '1', x, y, w, h, shape: 'rect', netId, layers: [layer] });
     const part = (refdes: string, p: Pad) => ({ componentId: refdes, refdes, x: p.x, y: p.y, rot: 0, pads: [p], courtyard: { x: p.x - p.w / 2, y: p.y - p.h / 2, w: p.w, h: p.h } }) as unknown as Part;
     // walls across both outer layers: the only way across would be on the inner (plane) layers
@@ -843,8 +843,8 @@ describe('router: tracks wider than a via', () => {
 
   it('drops onto a plane with the net\'s own track width', async () => {
     const { route } = await import('../src/router.ts');
-    type Pad = import('@tracewise/schema').BoardPad;
-    type Part = import('@tracewise/schema').BoardPart;
+    type Pad = import('@4k7/schema').BoardPad;
+    type Part = import('@4k7/schema').BoardPart;
     const pad = (x: number): Pad => ({ number: '1', x, y: 5, w: 1.2, h: 1.2, shape: 'rect', netId: 'GND', layers: ['F.Cu'] });
     const part = (refdes: string, p: Pad) => ({ componentId: refdes, refdes, x: p.x, y: p.y, rot: 0, pads: [p], courtyard: { x: p.x - 1, y: p.y - 1, w: 2, h: 2 } }) as unknown as Part;
     const r = route({
@@ -864,8 +864,8 @@ describe('router: tracks wider than a via', () => {
 
   it('runs a power track along a pin escape only where it keeps its clearance at that width', async () => {
     const { route } = await import('../src/router.ts');
-    type Pad = import('@tracewise/schema').BoardPad;
-    type Part = import('@tracewise/schema').BoardPart;
+    type Pad = import('@4k7/schema').BoardPad;
+    type Part = import('@4k7/schema').BoardPart;
     const pad = (number: string, x: number, y: number, w: number, h: number, netId?: string): Pad => ({ number, x, y, w, h, shape: 'rect', ...(netId ? { netId } : {}), layers: ['F.Cu'] });
     const part = (refdes: string, x: number, y: number, pads: Pad[]) => ({ componentId: refdes, refdes, x, y, rot: 0, pads, courtyard: { x: x - 1, y: y - 1, w: 2, h: 2 } }) as unknown as Part;
     // a SOIC-like pin on the power net P: its escape stub runs left between pads of Q and R, each
@@ -898,8 +898,8 @@ describe('router: tracks wider than a via', () => {
 describe('router: between IC pins', () => {
   it('takes the middle of the gap between two pins', async () => {
     const { route } = await import('../src/router.ts');
-    type Pad = import('@tracewise/schema').BoardPad;
-    type Part = import('@tracewise/schema').BoardPart;
+    type Pad = import('@4k7/schema').BoardPad;
+    type Part = import('@4k7/schema').BoardPart;
     const pad = (number: string, x: number, y: number, w: number, h: number, netId?: string): Pad => ({ number, x, y, w, h, shape: 'rect', netId, layers: ['F.Cu'] });
     const part = (refdes: string, x: number, y: number, pads: Pad[]) =>
       ({ componentId: refdes, refdes, x, y, rot: 0, pads, courtyard: { x: x - 1, y: y - 1, w: 2, h: 2 }, body: { x, y, w: 0, h: 0 }, pin1: { x, y } }) as unknown as Part;
@@ -1043,7 +1043,7 @@ describe('silkscreen graphics', () => {
     // centred 5 mm in from the bottom-right corner
     expect((g.bounds[0] + g.bounds[2]) / 2).toBeCloseTo(b.outline.w - 5, 1);
     expect((g.bounds[1] + g.bounds[3]) / 2).toBeCloseTo(b.outline.h - 5, 1);
-    const { gerbers } = await import('@tracewise/fab');
+    const { gerbers } = await import('@4k7/fab');
     const silk = gerbers(b, 't').find((f) => f.name.endsWith('F_Silkscreen.gbr'))!.content;
     // the outer figure filled, the inner one cleared
     expect(silk.match(/G36\*/g)!.length).toBeGreaterThanOrEqual(2);
@@ -1154,7 +1154,7 @@ describe('track width per net', () => {
 
 describe('trackWidthFor', () => {
   it('follows IPC-2221 for 1 oz outer copper at 10 °C rise', async () => {
-    const { trackWidthFor } = await import('@tracewise/schema');
+    const { trackWidthFor } = await import('@4k7/schema');
     expect(trackWidthFor(0.1)).toBe(0.15); // floor
     expect(trackWidthFor(1)).toBeCloseTo(0.3, 2);
     expect(trackWidthFor(2)).toBeCloseTo(0.8, 2);

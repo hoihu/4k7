@@ -105,7 +105,7 @@ constraints) + `prompt.md` + optional reference sub-circuit (`.twd` fragment). E
 ## 6. Local relay (`tools/server`), implemented
 
 ```
-Claude Code ──MCP stdio──▶ tracewise-server (Node, 127.0.0.1:7777–7781) ──WebSocket──▶ browser tab (kernel + UI)
+Claude Code ──MCP stdio──▶ 4k7-server (Node, 127.0.0.1:7777–7781) ──WebSocket──▶ browser tab (kernel + UI)
 ```
 
 The server also serves the built app on its port, so `npx github:hoihu/4k7` is the whole app: the page comes from
@@ -113,12 +113,12 @@ The server also serves the built app on its port, so `npx github:hoihu/4k7` is t
 gates behind a permission and Safari blocks).
 
 ```sh
-claude mcp add --scope user tracewise -- node <repo>/tools/server/src/main.ts
+claude mcp add --scope user 4k7 -- node <repo>/tools/server/src/main.ts
 ```
 
-- **Access key**: a random UUID (`accessKey`) is created once and kept in `~/.tracewise/server.json`. The app's address
+- **Access key**: a random UUID (`accessKey`) is created once and kept in `~/.4k7/server.json`. The app's address
   carries it (`http://localhost:7777/<access-key>`, plus `?port=<port>` when another server serves the app); the page is
-  served only at that path, and the tab sends the key when it connects. `npx tracewise` opens that link; if the tab is
+  served only at that path, and the tab sends the key when it connects. `npx 4k7pcb` opens that link; if the tab is
   not connected, every tool answers with it. The tab remembers the key and reconnects by itself when Claude Code restarts.
 - **Security**: loopback only; WebSocket connections from pages other than the app's (localhost on the server ports,
   the configured app address, the dev server in a checkout) are closed before the key is checked, so neither websites
@@ -134,8 +134,8 @@ claude mcp add --scope user tracewise -- node <repo>/tools/server/src/main.ts
 - The in-app agent and an external agent never edit at the same time: server calls are refused while the in-app agent runs.
 - **App chat via Claude Code** (`npm run server`): the tab sends chat messages over the WebSocket; the server runs
   `claude -p --output-format stream-json --include-partial-messages --tools "" --strict-mcp-config --mcp-config <http>
-  --allowedTools mcp__tracewise --permission-mode dontAsk --append-system-prompt <chat rules> [--resume <session>]` in a
-  neutral working directory and streams text back. The headless Claude reaches the Tracewise tools through the server's
+  --allowedTools mcp__4k7 --permission-mode dontAsk --append-system-prompt <chat rules> [--resume <session>]` in a
+  neutral working directory and streams text back. The headless Claude reaches the 4k7 tools through the server's
   `/mcp` (Streamable HTTP) endpoint, which only accepts the bearer token issued to that run and refuses browser origins.
   No `wait_for_review` in chat mode: the user reviews after the turn.
 - Not yet: proxying the user's stdio MCP servers and CORS-blocked providers through the relay.

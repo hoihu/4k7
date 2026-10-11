@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Kernel } from '@tracewise/kernel';
+import { Kernel } from '@4k7/kernel';
 import { bom, crc32, drill, fabFiles, panelFabFiles, pickAndPlace, zip } from '../src/index.ts';
 import { buckTransaction } from '../../kernel/test/fixtures.ts';
 

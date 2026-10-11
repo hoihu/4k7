@@ -4,7 +4,7 @@
  * missing pin number or an impossible ball name is reported back to the AI (and the user)
  * instead of silently becoming a broken symbol.
  */
-import { PartDraft, type IngestIssue, type PartCard, type PartRequirement } from '@tracewise/schema';
+import { PartDraft, type IngestIssue, type PartCard, type PartRequirement } from '@4k7/schema';
 import { bgaRowName, footprintFor } from './footprint.ts';
 import { planSymbolLayout } from './symbolgen.ts';
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * `tracewise`, the packaged entry (bundled to dist/tracewise.js; see scripts/package.mjs):
- *   tracewise              serve the app on http://localhost:7777, chat via the local Claude Code, open the browser
- *   tracewise --no-open    the same without opening the browser
- *   tracewise app          what the downloaded app does when opened: open the app, starting the server in the
- *                          background if none runs; it stops when the tab is closed (see launch.ts)
- *   tracewise mcp          MCP server over stdio, for: claude mcp add --scope user tracewise -- tracewise mcp
+ * `4k7pcb`, the packaged entry (bundled to dist/4k7pcb.js; see scripts/package.mjs):
+ *   4k7pcb             serve the app on http://localhost:7777, chat via the local Claude Code, open the browser
+ *   4k7pcb --no-open   the same without opening the browser
+ *   4k7pcb app         what the downloaded app does when opened (the 4k7 launcher runs it): open the app, starting the
+ *                      server in the background if none runs; it stops when the tab is closed (see launch.ts)
+ *   4k7pcb mcp         MCP server over stdio, for: claude mcp add --scope user 4k7 -- 4k7pcb mcp
  */
 import { VERSION } from './mcp.ts';
 
@@ -17,12 +17,12 @@ if (args.includes('--version') || args.includes('-v')) {
 if (args.includes('--help') || args.includes('-h') || args.some((a) => !['mcp', 'app', '--no-open', '--idle-exit'].includes(a))) {
   process.stdout.write(
     'Usage:\n' +
-      '  tracewise              run the app at http://localhost:7777 (chat answered by your Claude Code) and open it\n' +
-      '  tracewise --no-open    the same, without opening the browser\n' +
-      '  tracewise --idle-exit  stop by itself once no tab has been connected for a while\n' +
-      '  tracewise app          open the app, starting the server in the background when none runs (the downloaded app)\n' +
-      '  tracewise mcp          MCP server for the Claude Code CLI:\n' +
-      '                           claude mcp add --scope user tracewise -- tracewise mcp\n',
+      '  4k7pcb             run the app at http://localhost:7777 (chat answered by your Claude Code) and open it\n' +
+      '  4k7pcb --no-open   the same, without opening the browser\n' +
+      '  4k7pcb --idle-exit stop by itself once no tab has been connected for a while\n' +
+      '  4k7pcb app         open the app, starting the server in the background when none runs (the downloaded app)\n' +
+      '  4k7pcb mcp         MCP server for the Claude Code CLI:\n' +
+      '                           claude mcp add --scope user 4k7 -- 4k7pcb mcp\n',
   );
   process.exit(args.includes('--help') || args.includes('-h') ? 0 : 1);
 }

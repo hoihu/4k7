@@ -12,7 +12,7 @@ Parts → **Import from datasheet…**: part number plus a PDF (dropped) or a li
 the user's local Claude Code through the server, like the app chat.
 
 1. **Server** (`tools/server/src/chat.ts`, `pdf.ts`): downloads or receives the PDF and makes a
-   fresh folder `~/.tracewise/ingest/<job>/` with `datasheet.pdf`, `pages/page-NNN.txt` (text,
+   fresh folder `~/.4k7/ingest/<job>/` with `datasheet.pdf`, `pages/page-NNN.txt` (text,
    table cells separated by ` | `) and `index.txt` (page → first heading). Then it starts
    `claude -p` in that folder with `--tools Read,Grep,Glob`, `--permission-mode dontAsk` and an MCP
    token whose server exposes a single tool, `submit_part`. Reads outside the folder are denied

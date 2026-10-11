@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: draft v0.1, 2026-09-25. Working name **Tracewise**.
+> Status: draft v0.1, 2026-09-25. Name **4k7**.
 
 ## 1. Goals and non-goals
 

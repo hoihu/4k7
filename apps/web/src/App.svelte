@@ -9,7 +9,7 @@
   import Parts from './lib/components/Parts.svelte';
   import LayoutView from './lib/components/LayoutView.svelte';
   import { printSchematic } from './lib/print.ts';
-  import { PAPER_IDS, type PaperId } from '@tracewise/schema';
+  import { PAPER_IDS, type PaperId } from '@4k7/schema';
 
   let canvas: SchematicCanvas | undefined = $state();
 
@@ -25,11 +25,11 @@
   let pane = $state<'chat' | 'canvas' | 'insp'>('canvas');
 
   // the update banner, once dismissed, stays away for that version
-  let updateDismissed = $state(sessionStorage.getItem('tw.update.dismissed'));
+  let updateDismissed = $state(sessionStorage.getItem('4k7.update.dismissed'));
   const update = $derived(server.update && server.update.version !== updateDismissed ? server.update : null);
   function dismissUpdate() {
     updateDismissed = server.update?.version ?? null;
-    if (updateDismissed) sessionStorage.setItem('tw.update.dismissed', updateDismissed);
+    if (updateDismissed) sessionStorage.setItem('4k7.update.dismissed', updateDismissed);
   }
 
   function print() {
@@ -108,7 +108,7 @@
     <div class="logo" aria-hidden="true">
       <svg width="14" height="14" viewBox="0 0 16 16"><path d="M2 12h4l3-8h5" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </div>
-    <span class="proj trunc" title="Project">{app.k?.summary.name ?? 'Tracewise'}</span>
+    <span class="proj trunc" title="Project">{app.k?.summary.name ?? '4k7'}</span>
     <nav class="nav" aria-label="Workspace">
       {#each views as v (v.id)}
         <button aria-current={app.view === v.id} onclick={() => (app.view = v.id)}>{v.label}</button>

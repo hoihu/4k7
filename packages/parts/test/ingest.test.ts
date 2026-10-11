@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PackageInfo, PartDraft } from '@tracewise/schema';
+import type { PackageInfo, PartDraft } from '@4k7/schema';
 import { bgaRowName, draftToCard, footprintFor, planUnits, symbolFor, unitOfPin } from '../src/index.ts';
 
 const lqfp100: PackageInfo = { name: 'LQFP100', family: 'QFP', pins: 100, pitch_mm: 0.5, body_mm: [14, 14], span_mm: [16, 16], lead_length_mm: 0.6, lead_width_mm: 0.22 };

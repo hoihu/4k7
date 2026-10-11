@@ -1,15 +1,15 @@
 /**
- * `tracewise app`: what the downloaded app runs when it is opened. Opens the app in the browser,
+ * `4k7pcb app`: what the downloaded app runs when it is opened. Opens the app in the browser,
  * starting the server first when none is running, and returns at once: the server keeps going on
- * its own (detached, logging to ~/.tracewise/server.log) and stops when the tab is closed
+ * its own (detached, logging to ~/.4k7/server.log) and stops when the tab is closed
  * (--idle-exit). Opening the app again while it runs just opens the tab again, so it can be
  * launched any number of times.
  */
 import { spawn } from 'node:child_process';
 import { mkdirSync, openSync } from 'node:fs';
 import { join } from 'node:path';
-import { SERVER_PORTS } from '@tracewise/schema';
-import { servesTracewise } from './app.ts';
+import { SERVER_PORTS } from '@4k7/schema';
+import { serves4k7 } from './app.ts';
 import { configDir, loadConfig } from './config.ts';
 
 export interface LaunchOptions {
@@ -21,10 +21,10 @@ export interface LaunchOptions {
 }
 
 export async function launchApp(opts: LaunchOptions = {}): Promise<void> {
-  const log = opts.log ?? ((m: string) => process.stderr.write(`[tracewise] ${m}\n`));
+  const log = opts.log ?? ((m: string) => process.stderr.write(`[4k7] ${m}\n`));
   const cfg = loadConfig();
   for (const port of opts.ports ?? SERVER_PORTS) {
-    if (await servesTracewise(port)) {
+    if (await serves4k7(port)) {
       const url = `http://localhost:${port}/${cfg.accessKey}`;
       log(`server already running; opening ${url}`);
       openBrowser(url, log);

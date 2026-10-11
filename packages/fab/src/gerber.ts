@@ -3,7 +3,7 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
-import { boardPolygon, cutoutPolygon, figureDepths, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type PanelView } from '@tracewise/schema';
+import { boardPolygon, cutoutPolygon, figureDepths, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type PanelView } from '@4k7/schema';
 import { textStrokes, textWidth } from './font.ts';
 
 export interface FabFile {
@@ -46,7 +46,7 @@ class Gerber {
     this.body.push(`${this.xy(p.x, p.y)}D03*`);
   }
   /** An exact plane: the outline filled, cutouts cleared (clear polarity), spokes drawn back. */
-  plane(sh: import('@tracewise/schema').ZoneShape) {
+  plane(sh: import('@4k7/schema').ZoneShape) {
     const [x0, y0, x1, y1] = sh.outline;
     // the filled area: the clip polygon (a shaped board), else the rectangle
     const area = sh.clip ?? [x0, y0, x1, y0, x1, y1, x0, y1];
@@ -108,7 +108,7 @@ class Gerber {
       return `%ADD${d}${shape},${params}*%`;
     });
     return [
-      '%TF.GenerationSoftware,Tracewise,Tracewise,0.1*%',
+      '%TF.GenerationSoftware,4k7,4k7,0.1*%',
       ...this.attrs.map((a) => `%TF.${a}*%`),
       '%FSLAX46Y46*%',
       '%MOMM*%',
@@ -257,7 +257,7 @@ export function drill(b: BoardView, plated = true): string {
     ...b.parts.flatMap((p) => p.pads.filter((q) => q.drill && !!q.npth !== plated).map((q) => ({ d: q.drill!, x: q.x, y: q.y }))),
   ];
   const sizes = [...new Set(holes.map((x) => x.d.toFixed(3)))].sort();
-  const lines = ['M48', '; Tracewise 0.1', `; ${plated ? 'PLATED' : 'NON-PLATED'} holes`, '; FORMAT={-:-/ absolute / metric / decimal}', 'FMAT,2', 'METRIC,TZ'];
+  const lines = ['M48', '; 4k7 0.1', `; ${plated ? 'PLATED' : 'NON-PLATED'} holes`, '; FORMAT={-:-/ absolute / metric / decimal}', 'FMAT,2', 'METRIC,TZ'];
   sizes.forEach((s, i) => lines.push(`T${i + 1}C${s}`));
   lines.push('%', 'G90', 'G05');
   sizes.forEach((s, i) => {

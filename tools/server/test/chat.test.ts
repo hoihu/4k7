@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { SERVER_PROTOCOL, type ServerToTab, type ChatEvent } from '@tracewise/schema';
+import { SERVER_PROTOCOL, type ServerToTab, type ChatEvent } from '@4k7/schema';
 import { LocalServer, ChatRunner, detectClaude, mcpHttpHandler, type ClaudeProfile } from '../src/index.ts';
 
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
@@ -74,7 +74,7 @@ describe('app chat via Claude Code', () => {
     expect(welcome).toMatchObject({ type: 'welcome', chat: { available: true, version: '2.1.282 (Claude Code, fake)' } });
   });
 
-  it('runs claude headlessly with only the Tracewise tools and streams the reply', async () => {
+  it('runs claude headlessly with only the 4k7 tools and streams the reply', async () => {
     const { send, calls } = await setup();
     const es = await send('c1', 'build a buck', null, 'sonnet');
     expect(es[0]).toEqual({ kind: 'session', session: 'sess-1234' });
@@ -87,7 +87,7 @@ describe('app chat via Claude Code', () => {
     expect(calls).toEqual(['get_context']);
     expect(reply).toContain('tools=get_context,design_query,design_edit,calc,import_part,jlc_search,pending_import,artwork,read_datasheet,get_schematic_image,propose ');
     const flags = JSON.parse(reply.slice(reply.indexOf('flags=') + 6));
-    expect(flags).toMatchObject({ tools: '', strict: true, allowed: 'mcp__tracewise', permission: 'dontAsk', model: 'sonnet', prompt: 'build a buck' });
+    expect(flags).toMatchObject({ tools: '', strict: true, allowed: 'mcp__4k7', permission: 'dontAsk', model: 'sonnet', prompt: 'build a buck' });
     expect(flags.appended).toMatch(/^You are answering messages typed into/);
     // the chat prompt travels once, in the system prompt; the server instructions only point there
     expect(flags.instructionsLength).toBeGreaterThan(0);
@@ -131,9 +131,9 @@ describe('app chat via Claude Code', () => {
       return JSON.parse(t.slice(t.indexOf('flags=') + 6));
     };
     const off = flagsOf(await send('w0', 'no web'));
-    expect(off).toMatchObject({ tools: '', allowed: 'mcp__tracewise' });
+    expect(off).toMatchObject({ tools: '', allowed: 'mcp__4k7' });
     const on = flagsOf(await send('w1', 'with web', null, undefined, true));
-    expect(on).toMatchObject({ tools: 'WebFetch,WebSearch', allowed: 'mcp__tracewise,WebFetch,WebSearch' });
+    expect(on).toMatchObject({ tools: 'WebFetch,WebSearch', allowed: 'mcp__4k7,WebFetch,WebSearch' });
   });
 
   it('resumes the session on the next message', async () => {
@@ -201,7 +201,7 @@ describe('datasheet import via Claude Code', () => {
     const reply = text(es);
     expect(reply).toContain('tools=submit_part ');
     const flags = JSON.parse(reply.slice(reply.indexOf('flags=') + 6));
-    expect(flags).toMatchObject({ tools: 'Read,Grep,Glob', strict: true, allowed: 'mcp__tracewise', permission: 'dontAsk', model: 'sonnet' });
+    expect(flags).toMatchObject({ tools: 'Read,Grep,Glob', strict: true, allowed: 'mcp__4k7', permission: 'dontAsk', model: 'sonnet' });
     expect(flags.prompt).toBe('Create the part for STM32F777VIT6 (datasheet: ds.pdf).');
     expect(flags.appended).toMatch(/^You extract a part definition/);
     expect(flags.files).toEqual(['datasheet.pdf', 'index.txt', 'pages']);

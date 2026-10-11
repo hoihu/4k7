@@ -2,7 +2,7 @@
  * Canonical, deterministic JSON for the native format: sorted keys, 2-space indent.
  * Same design → byte-identical output, so files diff cleanly in git.
  */
-import { DESIGN_FORMAT_VERSION, type Design } from '@tracewise/schema';
+import { DESIGN_FORMAT_VERSION, type Design } from '@4k7/schema';
 
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortKeys(value), null, 2) + '\n';

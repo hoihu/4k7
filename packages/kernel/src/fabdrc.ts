@@ -3,8 +3,8 @@
  * cannot guarantee by themselves because it comes from parts, holes, per-net widths or the board
  * size. Placement checks need no routing; copper checks (tracks, vias) run with the route.
  */
-import { fabRuleIssues } from '@tracewise/schema';
-import type { BoardDiagnostic, BoardView } from '@tracewise/schema';
+import { fabRuleIssues } from '@4k7/schema';
+import type { BoardDiagnostic, BoardView } from '@4k7/schema';
 
 interface Hole {
   x: number;

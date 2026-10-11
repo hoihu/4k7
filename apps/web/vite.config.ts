@@ -3,14 +3,14 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
-/** How people run the packaged app (installed from the repository, not the npm registry). */
-const pkg = process.env.TW_PKG ?? 'github:hoihu/4k7';
-/** For the downloaded app (scripts/bundle.mjs): what to run instead of the npx command, and how Claude Code starts it. */
-const run = process.env.TW_RUN;
-const mcp = process.env.TW_MCP;
+/** How people run the packaged app (installed from the private repository, not the npm registry). */
+const pkg = process.env.FOURK7_PKG ?? 'github:hoihu/4k7';
+/** For the downloaded app (scripts/bundle.mjs): what to open instead of running the npx command, and how Claude Code starts it. */
+const run = process.env.FOURK7_RUN;
+const mcp = process.env.FOURK7_MCP;
 
 /**
- * A production build is the packaged app, served by the local server (`npx tracewise`): no sourcemaps
+ * A production build is the packaged app, served by the local server (`npx 4k7pcb`): no sourcemaps
  * (smaller package). In development the local server runs from this checkout instead.
  */
 export default defineConfig(({ command }) => {

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { fabFiles, panelFabFiles, zip } from '@tracewise/fab';
-  import type { BoardDiagnostic, CopperLayer } from '@tracewise/schema';
+  import { fabFiles, panelFabFiles, zip } from '@4k7/fab';
+  import type { BoardDiagnostic, CopperLayer } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
   import BoardCanvas from './BoardCanvas.svelte';
@@ -110,7 +110,7 @@
   /** Gerbers, drill, BOM and pick-and-place as one zip: of the board, or of its panel. */
   function exportFab(panel = false) {
     if (!b) return;
-    const name = app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : 'tracewise-board';
+    const name = app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : '4k7-board';
     const files = panel ? panelFabFiles(b, name) : fabFiles(b, name);
     const url = URL.createObjectURL(new Blob([zip(files) as BlobPart], { type: 'application/zip' }));
     const a = document.createElement('a');

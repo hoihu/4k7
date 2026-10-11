@@ -1,8 +1,8 @@
 /**
  * Low-level design document helpers: ids, lookups, reference resolution.
  */
-import type { Component, Design, Net, PartCard, PartPin, Rejection } from '@tracewise/schema';
-import { getBuiltinPart } from '@tracewise/parts';
+import type { Component, Design, Net, PartCard, PartPin, Rejection } from '@4k7/schema';
+import { getBuiltinPart } from '@4k7/parts';
 
 export class RejectError extends Error {
   constructor(public rejection: Omit<Rejection, 'opIndex'>) {

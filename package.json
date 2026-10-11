@@ -1,5 +1,5 @@
 {
-  "name": "tracewise",
+  "name": "4k7pcb",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -23,7 +23,7 @@
   },
   "bugs": "https://github.com/hoihu/4k7/issues",
   "bin": {
-    "tracewise": "dist/tracewise.js"
+    "4k7pcb": "dist/4k7pcb.js"
   },
   "files": [
     "dist"
@@ -39,16 +39,16 @@
   "scripts": {
     "dev": "scripts/dev.sh",
     "dev:here": "scripts/dev.sh",
-    "dev:web": "npm run dev -w @tracewise/web",
-    "build": "npm run build -w @tracewise/web",
+    "dev:web": "npm run dev -w @4k7/web",
+    "build": "npm run build -w @4k7/web",
     "package": "npm run build && node scripts/package.mjs",
-    "start": "npm run package && node dist/tracewise.js",
+    "start": "npm run package && node dist/4k7pcb.js",
     "prepare": "npm run package",
     "check:package": "node scripts/check-package.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run check:package",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json --noEmit && npm run check -w @tracewise/web",
+    "typecheck": "tsc -p tsconfig.json --noEmit && npm run check -w @4k7/web",
     "server": "node --watch tools/server/src/main.ts --serve"
   },
   "devDependencies": {

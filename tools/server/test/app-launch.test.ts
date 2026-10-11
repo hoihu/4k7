@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SERVER_PORTS } from '@tracewise/schema';
+import { SERVER_PORTS } from '@4k7/schema';
 import { candidateDirs, checkForUpdate, compareVersions, extendPathFor, LocalServer } from '../src/index.ts';
-import { servesTracewise } from '../src/app.ts';
+import { serves4k7 } from '../src/app.ts';
 import { launchApp } from '../src/launch.ts';
 
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -115,7 +115,7 @@ describe('idle exit', () => {
   });
 });
 
-describe('tracewise app', () => {
+describe('4k7pcb app', () => {
   it('starts the server detached when none runs, and only opens the link when one does', async () => {
     // a stub `open`/`xdg-open` so no browser appears; its own home so the real config is untouched
     const stub = mkdtempSync(join(tmpdir(), 'tw-stub-'));
@@ -123,18 +123,18 @@ describe('tracewise app', () => {
       writeFileSync(join(stub, name), `#!/bin/sh\necho "$1" >> "${stub}/opened"\n`);
       chmodSync(join(stub, name), 0o755);
     }
-    const env = { PATH: process.env.PATH, TRACEWISE_HOME: process.env.TRACEWISE_HOME, TRACEWISE_ACCESS_KEY: process.env.TRACEWISE_ACCESS_KEY, TRACEWISE_NO_UPDATE_CHECK: process.env.TRACEWISE_NO_UPDATE_CHECK };
+    const env = { PATH: process.env.PATH, FOURK7_HOME: process.env.FOURK7_HOME, FOURK7_ACCESS_KEY: process.env.FOURK7_ACCESS_KEY, FOURK7_NO_UPDATE_CHECK: process.env.FOURK7_NO_UPDATE_CHECK };
     cleanups.push(() => {
       for (const [k, v] of Object.entries(env)) if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     });
     process.env.PATH = `${stub}${delimiter}${process.env.PATH}`;
-    process.env.TRACEWISE_HOME = join(stub, 'home');
-    process.env.TRACEWISE_ACCESS_KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
-    process.env.TRACEWISE_NO_UPDATE_CHECK = '1';
+    process.env.FOURK7_HOME = join(stub, 'home');
+    process.env.FOURK7_ACCESS_KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
+    process.env.FOURK7_NO_UPDATE_CHECK = '1';
 
     const before = new Set<number>();
-    for (const p of SERVER_PORTS) if (await servesTracewise(p)) before.add(p);
+    for (const p of SERVER_PORTS) if (await serves4k7(p)) before.add(p);
     if (before.size === SERVER_PORTS.length) return; // every port busy on this machine: nothing to test
 
     // ports that already serve (another server on this computer) are left out, so a new one is started
@@ -154,7 +154,7 @@ describe('tracewise app', () => {
     let port: number | null = null;
     for (let i = 0; i < 100 && port === null; i++) {
       await new Promise((r) => setTimeout(r, 100));
-      for (const p of SERVER_PORTS) if (!before.has(p) && (await servesTracewise(p))) port = p;
+      for (const p of SERVER_PORTS) if (!before.has(p) && (await serves4k7(p))) port = p;
     }
     expect(port).not.toBeNull();
     for (let i = 0; i < 50 && !existsSync(join(stub, 'opened')); i++) await new Promise((r) => setTimeout(r, 100));

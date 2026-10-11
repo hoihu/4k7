@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * tracewise-server: connects the Tracewise app in the browser to Claude Code.
+ * 4k7-server: connects the 4k7 app in the browser to Claude Code.
  *
  * Either way it serves the built app on its port, at http://localhost:7777/<access-key>: the key (kept
- * in ~/.tracewise/server.json) is what lets the tab connect to the server.
+ * in ~/.4k7/server.json) is what lets the tab connect to the server.
  *
  * Two ways to use it:
  *   1. You type in the app's chat and your local Claude Code answers:
- *        node tools/server/src/main.ts --serve [--open]   (npm run server; `npx tracewise` runs this with --open)
- *      The server runs `claude -p` headlessly per message, with only the Tracewise tools.
+ *        node tools/server/src/main.ts --serve [--open]   (npm run server; `npx 4k7pcb` runs this with --open)
+ *      The server runs `claude -p` headlessly per message, with only the 4k7 tools.
  *      With --idle-exit (the downloaded app) it stops by itself once no tab has been connected for a while.
  *   2. Claude Code drives the app (you type in the Claude Code CLI):
- *        claude mcp add --scope user tracewise -- node /path/to/repo/tools/server/src/main.ts
+ *        claude mcp add --scope user 4k7 -- node /path/to/repo/tools/server/src/main.ts
  *      Claude Code starts the server as an MCP server over stdio.
  *
  * In stdio mode stdout is reserved for the MCP protocol; all logging goes to stderr.
@@ -19,8 +19,8 @@
 import { appendFileSync, existsSync, renameSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { SERVER_PORTS } from '@tracewise/schema';
-import { appHandler, reachable, servesTracewise } from './app.ts';
+import { SERVER_PORTS } from '@4k7/schema';
+import { appHandler, reachable, serves4k7 } from './app.ts';
 import { LocalServer } from './server.ts';
 import { ChatRunner, detectClaude } from './chat.ts';
 import { extendPathFor } from './claude-bin.ts';
@@ -30,7 +30,7 @@ import { createMcpServer, mcpHttpHandler, VERSION } from './mcp.ts';
 import { checkForUpdate } from './update.ts';
 
 const serve = process.argv.includes('--serve');
-/** Open the app link in the browser (what `npx tracewise` does). */
+/** Open the app link in the browser (what `npx 4k7pcb` does). */
 const open = process.argv.includes('--open');
 /**
  * Stop when no tab is connected: the downloaded app has no terminal to Ctrl-C in and no window to
@@ -41,9 +41,9 @@ const idleExit = process.argv.includes('--idle-exit');
 const IDLE_START_MS = 3 * 60_000;
 /** After the last tab went away. */
 const IDLE_MS = 90_000;
-/** Logs go to stderr and to ~/.tracewise/server.log (kept small), which helps diagnose connection issues. */
+/** Logs go to stderr and to ~/.4k7/server.log (kept small), which helps diagnose connection issues. */
 const log = (msg: string) => {
-  process.stderr.write(`[tracewise] ${msg}\n`);
+  process.stderr.write(`[4k7] ${msg}\n`);
   try {
     const file = join(configDir(), 'server.log');
     if (existsSync(file) && statSync(file).size > 512 * 1024) renameSync(file, `${file}.1`);
@@ -77,7 +77,7 @@ async function main() {
   const dir = appDir();
 
   // chat in the app, answered by the local Claude Code
-  const claudeBin = process.env.TRACEWISE_CLAUDE_BIN ?? 'claude';
+  const claudeBin = process.env.FOURK7_CLAUDE_BIN ?? 'claude';
   let capability = detectClaude(claudeBin, cfg.claude);
   if (!capability.available && !claudeBin.includes(sep)) {
     // started from the Finder or a launcher: look where installers put it, then where the user's shell does
@@ -128,7 +128,7 @@ async function main() {
     idle(IDLE_START_MS);
   }
   // the downloaded app does not update itself the way npx did; tell the tab when a newer release is out
-  if (!inCheckout() && !process.env.TRACEWISE_NO_UPDATE_CHECK) {
+  if (!inCheckout() && !process.env.FOURK7_NO_UPDATE_CHECK) {
     void checkForUpdate(VERSION, join(configDir(), 'update.json'), { log }).then((u) => u && server.setUpdate(u));
   }
   if (!serve) {
@@ -147,7 +147,7 @@ async function appUrl(configured: string | undefined, port: number, dir: string 
   if (inCheckout() && (await reachable(DEV_APP))) return DEV_APP;
   const home = SERVER_PORTS[0];
   if (port !== home) {
-    if (await servesTracewise(home)) return `http://localhost:${home}`;
+    if (await serves4k7(home)) return `http://localhost:${home}`;
     log(`note: port ${home} is used by another program, so the app opens at http://localhost:${port}; designs saved at another address do not show there`);
   }
   if (!dir) log('note: the app is not built (run npm run build); the app link will not load until it is');

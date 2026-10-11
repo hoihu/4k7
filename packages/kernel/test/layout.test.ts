@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseQuantity, formatQuantity, type Rect, type SheetView } from '@tracewise/schema';
+import { parseQuantity, formatQuantity, type Rect, type SheetView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 

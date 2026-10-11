@@ -1,10 +1,10 @@
 /**
  * Update check for the downloaded app (the DMG and the Linux archive do not update themselves the
  * way `npx` re-resolved the latest version on every run). Asks GitHub for the latest release at most
- * once a day, remembers the answer in ~/.tracewise/update.json, and tells the tab when it is newer.
+ * once a day, remembers the answer in ~/.4k7/update.json, and tells the tab when it is newer.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import type { UpdateInfo } from '@tracewise/schema';
+import type { UpdateInfo } from '@4k7/schema';
 
 /** Where the latest release is published. */
 export const RELEASES_API = 'https://api.github.com/repos/hoihu/4k7/releases/latest';

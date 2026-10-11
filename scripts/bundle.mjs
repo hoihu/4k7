@@ -212,7 +212,7 @@ To add it to your applications menu: move this folder to /opt/${NAME} and copy $
 ~/.local/share/applications/ (edit the paths in it if the folder lives elsewhere).
 
 The chat in the app is answered by your Claude Code, if "claude" is installed; otherwise add an API key in Settings.
-Logs: ~/.tracewise/server.log
+Logs: ~/.4k7/server.log
 `,
   );
   const tgz = join(build, `${label}.tar.gz`);

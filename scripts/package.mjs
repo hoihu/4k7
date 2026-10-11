@@ -1,4 +1,4 @@
-// Builds the `tracewise` package in dist/: the server bundled into one file (the workspace packages
+// Builds the `4k7pcb` package in dist/: the server bundled into one file (the workspace packages
 // inlined: Node does not strip types under node_modules) and the built web app next to it.
 // Run by `npm run package`, and by npm's `prepare` when someone installs from the repository
 // (npx github:hoihu/4k7). Expects apps/web/dist to be built (npm run build).
@@ -20,9 +20,9 @@ const bundle = await rolldown({
   platform: 'node',
   external: (id) => id.startsWith('node:') || builtinModules.includes(id) || external.some((e) => id === e || id.startsWith(`${e}/`)),
 });
-await bundle.write({ file: `${root}dist/tracewise.js`, format: 'esm', codeSplitting: false });
+await bundle.write({ file: `${root}dist/4k7pcb.js`, format: 'esm', codeSplitting: false });
 await bundle.close();
-chmodSync(`${root}dist/tracewise.js`, 0o755);
+chmodSync(`${root}dist/4k7pcb.js`, 0o755);
 
 cpSync(web, `${root}dist/app`, { recursive: true });
-console.log('dist/tracewise.js + dist/app');
+console.log('dist/4k7pcb.js + dist/app');

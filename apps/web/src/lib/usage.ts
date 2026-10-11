@@ -1,4 +1,4 @@
-import type { TokenCount } from '@tracewise/schema';
+import type { TokenCount } from '@4k7/schema';
 
 /** "48.2k" */
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n));

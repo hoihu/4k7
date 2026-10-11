@@ -4,6 +4,6 @@ declare const __PACKAGED__: boolean;
 declare const __SERVER_RUN__: string;
 /** The downloaded app (__SERVER_RUN__ names it; it opens the link itself) rather than a command that prints it. */
 declare const __APP_RUN__: boolean;
-/** What Claude Code starts as the Tracewise MCP server. */
+/** What Claude Code starts as the 4k7 MCP server. */
 declare const __SERVER_MCP__: string;
 declare const __BUILD_ID__: string;

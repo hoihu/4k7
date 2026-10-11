@@ -5,9 +5,9 @@
  * Printed like the schematic, through the browser's print dialog (which also saves a PDF);
  * schematic and board are drawn by the same canvas components as on screen.
  */
-import { bomLines } from '@tracewise/fab';
-import type { Body3D } from '@tracewise/parts';
-import { PAPERS, type BoardView, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@tracewise/schema';
+import { bomLines } from '@4k7/fab';
+import type { Body3D } from '@4k7/parts';
+import { PAPERS, type BoardView, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@4k7/schema';
 import BoardCanvas from './components/BoardCanvas.svelte';
 import { markdown } from './markdown.ts';
 import { SCHEMATIC_STYLE, drawOffscreen, drawSheets, esc, printHtml, sheetSvg } from './print.ts';
@@ -240,7 +240,7 @@ type View3D = (typeof VIEWS_3D)[number];
 /** The assembled board in 3D (the Layout view's renderer), one picture per view on a transparent background; null where WebGL is not to be had. */
 async function boardPictures(b: BoardView): Promise<Record<View3D, HTMLCanvasElement> | null> {
   try {
-    const [{ createBoardViewer }, { body3dFor }] = await Promise.all([import('./three-body.ts'), import('@tracewise/parts')]);
+    const [{ createBoardViewer }, { body3dFor }] = await Promise.all([import('./three-body.ts'), import('@4k7/parts')]);
     const viewer = createBoardViewer(document.createElement('canvas'));
     try {
       const bodies = new Map<string, Body3D>();
@@ -533,7 +533,7 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
   const date = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
   const logo = `<span class="logo"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M2 12h4l3-8h5" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`;
   const cover =
-    `<div class="cover"><div class="brand">${logo}Tracewise<span class="date">${esc(date)}</span></div>` +
+    `<div class="cover"><div class="brand">${logo}4k7<span class="date">${esc(date)}</span></div>` +
     `<h1>${esc(title)}</h1><div class="kind">Design document</div>` +
     (description?.overview ? `<div class="tag">${esc(firstSentence(description.overview))}</div>` : '') +
     (input.pending ? `<div class="note" style="margin-top:5mm">Draft: this document includes changes that are still waiting for review.</div>` : '') +

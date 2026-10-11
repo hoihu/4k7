@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ScopeInfo, TransactionResult } from '@tracewise/schema';
+import type { ScopeInfo, TransactionResult } from '@4k7/schema';
 import { compactTx, describeTx, formatDesignContext, formatScope, optimizePrompt } from '../src/index.ts';
 
 const info: ScopeInfo = {

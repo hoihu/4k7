@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoTabs, type BoardView } from '@tracewise/schema';
+import { autoTabs, type BoardView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 

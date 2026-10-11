@@ -3,7 +3,7 @@
  * finish a turn while the design has open errors (within a fix budget).
  * See docs/design/ai-loop.md.
  */
-import { AskUser, TOOL_NAMES, agentTools, type ScopeInfo } from '@tracewise/schema';
+import { AskUser, TOOL_NAMES, agentTools, type ScopeInfo } from '@4k7/schema';
 import { SYSTEM_PROMPT, formatDesignContext, formatVerification } from './prompt.ts';
 import { runKernelTool, unknownTool, type ToolExecutor, type ToolOutcome } from './tools.ts';
 import type { AgentEvent, Block, KernelPort, Message, Provider } from './types.ts';

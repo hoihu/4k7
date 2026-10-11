@@ -28,8 +28,8 @@ import {
   fabPresets,
   fabSummary,
   trackWidthFor,
-} from '@tracewise/schema';
-import { packageChoice, packageOptions, searchParts } from '@tracewise/parts';
+} from '@4k7/schema';
+import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
 import { applyOp, describeConstraint, descriptionView } from './apply.ts';
 import { countDiagnostics, diagKey, runChecks } from './checks.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
