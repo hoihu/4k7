@@ -547,6 +547,9 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const viaFree = viaFreeFor(net);
     const run = ++searchNo;
     const inPad = widths[k]! / 2 - 0.01;
+    // a track wider than a via pad may not fit where a via does (its clearance reaches farther):
+    // only then must a via's landing be checked for the track as well
+    const wide = widths[k]! > rules.viaPad;
     const costOf = (st: number) => (seenAt[st] === run ? cost[st]! : Infinity);
     const heap = new Heap();
     const [bx0, by0, bx1, by1] = 'x0' in target ? [target.x0, target.y0, target.x1, target.y1] : [target.x / G, target.y / G, target.x / G, target.y / G];
@@ -612,7 +615,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         if (L > 1 && viaFree(i)) {
           for (let l2 = 0; l2 < L; l2++) {
             const ns = l2 * N + i;
-            if (seen[ns] === run) continue;
+            if (seen[ns] === run || (wide && !free(l2, i) && !isGoal(ns))) continue;
             seen[ns] = run;
             queue[tail++] = ns;
           }
@@ -689,6 +692,8 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         for (let l2 = 0; l2 < L; l2++) {
           if (l2 === l) continue;
           const ns = l2 * N + i;
+          // the track goes on from the via: it must fit there too (see wide)
+          if (wide && !free(l2, i) && !isGoal(ns)) continue;
           const nc = base + VIA_COST;
           if (nc < costOf(ns)) {
             seenAt[ns] = run;
