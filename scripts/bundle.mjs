@@ -34,8 +34,8 @@ mkdirSync(cache, { recursive: true });
 // 1. the package, built for the downloaded app: its Settings say to open the app, not to run npx
 log('building the package');
 run('npm', ['run', 'package'], root, {
-  TW_RUN: `the ${NAME} app`,
-  TW_MCP: process.platform === 'darwin' ? `/Applications/${NAME}.app/Contents/MacOS/${NAME} mcp` : `/path/to/${NAME}/${NAME} mcp`,
+  FOURK7_RUN: `the ${NAME} app`,
+  FOURK7_MCP: process.platform === 'darwin' ? `/Applications/${NAME}.app/Contents/MacOS/${NAME} mcp` : `/path/to/${NAME}/${NAME} mcp`,
 });
 const [packed] = JSON.parse(run('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', build]));
 const tarball = join(build, packed.filename);
