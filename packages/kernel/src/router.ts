@@ -18,6 +18,7 @@ const CENTRE_COST = 0.5; // per step and grid step off the middle of the gap bet
 const CLIP_COST = 3; // a step whose copper runs half over one of the net's own pads, off its centre line
 const COARSE = 5; // coarse routing grid, in grid steps (0.5 mm)
 const CORRIDOR = 4; // coarse cells either side of the coarse way (2 mm)
+const MAX_STUB = 30; // longest drop stub reserved for a pour, in grid steps (3 mm)
 
 export interface RouteInput {
   outline: { w: number; h: number };
@@ -73,9 +74,15 @@ export function route(input: RouteInput, passes = 8): RouteResult {
   let order = conns.filter((c) => !dedicated.has(c.netId)).sort((x, y) => x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
   const t0 = now();
   const deadline = t0 + (input.budgetMs ?? 15_000);
+  // nets poured on an outer layer and without an inner plane (see routeOnce): on a tie, the pass
+  // that leaves fewer of their connections open wins (one open pad of a pour is the worse defect)
+  const pourNets = new Set((input.planes ?? []).filter((pl) => OUTER.has(pl.layer) && !dedicated.has(pl.netId)).map((pl) => pl.netId));
+  const pourOpen = (x: { failed: Conn[] }) => x.failed.filter((c) => pourNets.has(c.netId)).length;
+  // the connections that failed in the pass before (a pour's net routes them with the signals)
+  let early = new Set<Conn>();
   for (let pass = 0; pass < passes; pass++) {
-    const r = routeOnce(input, pads, owner, order, deadline, planeOnly);
-    const improved = !best || r.failed.length < best.failed.length;
+    const r = routeOnce(input, pads, owner, order, deadline, planeOnly, early);
+    const improved = !best || r.failed.length < best.failed.length || (r.failed.length === best.failed.length && pourOpen(r) < pourOpen(best));
     if (improved) best = r;
     if (!r.failed.length || r.timedOut) break;
     // a pass without an improvement: more orders will not help (the same connections are
@@ -86,6 +93,7 @@ export function route(input: RouteInput, passes = 8): RouteResult {
     // failures first; the rest alternately in the old order and longest first (a different
     // order gives the router different room; the best pass wins)
     const failed = new Set(r.failed);
+    early = failed;
     const rest = order.filter((c) => !failed.has(c));
     order = [...order.filter((c) => failed.has(c)), ...(pass % 2 ? [...rest].sort((x, y) => y.len - x.len || x.netId.localeCompare(y.netId)) : rest)];
   }
@@ -136,7 +144,7 @@ function connections(pads: BoardPad[]): Conn[] {
   return out;
 }
 
-function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], order: Conn[], deadline: number, planeOnly: Conn[] = []) {
+function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], order: Conn[], deadline: number, planeOnly: Conn[] = [], early = new Set<Conn>()) {
   const { rules, layers } = input;
   const W = Math.ceil(input.outline.w / G) + 1;
   const H = Math.ceil(input.outline.h / G) + 1;
@@ -361,6 +369,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     return Math.max(dx, dy) + (Math.SQRT2 - 1) * m + (m > 1e-6 && Math.abs(dx - dy) > 1e-6 ? TURN_COST : 0);
   };
   escapes.forEach((e, idx) => e && padCells[idx]!.push(e.state));
+  const escapeOf = new Map(escapes.flatMap((e, idx) => (e ? [[e.state, idx] as const] : [])));
   // reserve every escape stub for its net before routing, so earlier routes cannot wall it off
   escapes.forEach((e, idx) => {
     if (!e) return;
@@ -479,6 +488,8 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   const vias: Via[] = [];
   const failed: Conn[] = [];
 
+  // where searches stop: the deadline (with a pour, the signals stop a little earlier)
+  let until = deadline;
   // A* buffers
   const S = L * N;
   const cost = new Float32Array(S);
@@ -555,13 +566,16 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
    * A* from any start state to a goal state; returns the path (start → goal) or null. `corr`: only
    * within that corridor (a number from widen; 0: anywhere). `floodFirst`: check that a goal can
    * be reached at all before searching (for a connection that is probably impossible).
+   * `within`: no way dearer than that.
    */
   /*
    * The estimate of the way left (A*): the distance to the target: a point, or the box round all
    * goal cells. With a group of copper as the goal, a point (one pad of it) would overestimate
    * the way to the group's nearer parts, and the search would run past them to that pad.
    */
-  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean, corr = 0, floodFirst = false): number[] | null => {
+  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean, corr = 0, floodFirst = false, within = Infinity): number[] | null => {
+    // no new search once the time is up (its reachability flood alone can take a while)
+    if (now() > until) return null;
     const free = freeFor(net, k);
     const viaFree = viaFreeFor(net);
     const run = ++searchNo;
@@ -658,7 +672,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const LIMIT = S * 3;
     while (heap.size) {
       const s = heap.pop();
-      if (heap.lastPrio >= best - 1e-6) break;
+      if (heap.lastPrio >= best - 1e-6 || heap.lastPrio > within) break;
       // outdated entry: this state was reached more cheaply since it was pushed. (Costs are kept
       // as 32-bit floats and the priorities as 64-bit numbers: at a cost of a few hundred the
       // rounding alone is ~1e-4, so the tolerance must be above that; real differences are ≥ 0.05.)
@@ -671,9 +685,12 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       // a long search with no way found yet: give up if there is none
       // (in a corridor the search is small anyway, and the flood would cover the whole board)
       if (expanded === (floodFirst ? 1 : FLOOD_AFTER) && reached < 0 && !corr && !reachable()) break;
-      if ((expanded & 4095) === 0 && now() > deadline) break;
+      if ((expanded & 4095) === 0 && now() > until) break;
       const l = Math.floor(s / N);
       const i = s % N;
+      // copper of the net where this width does not fit (a goal: thinner copper, e.g. a drop to a
+      // pour): a way may end there, not run on along it (its copper would reach beyond the thin one)
+      if (from[s]! >= 0 && ownCopper[s] !== net && maps[k]![l]![i] !== 0 && maps[k]![l]![i] !== net) continue;
       const x = i % W;
       const y = (i - x) / W;
       const base = cost[s]!;
@@ -839,7 +856,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     while (heap.size) {
       const s = heap.pop();
       if (heap.lastPrio >= best) break;
-      if ((++pops & 4095) === 0 && now() > deadline) return null;
+      if ((++pops & 4095) === 0 && now() > until) return null;
       const l = Math.floor(s / CN);
       const c = s - l * CN;
       if (heap.lastPrio - h(c) > ccost[s]! + 1e-9) continue;
@@ -1129,8 +1146,8 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     if (startPad >= 0 && lines[0]) lines[0].pts = reversePts(alignEnd(reversePts(simplify(lines[0].pts)), pads[startPad]!, lines[0].l, net, width, lines.length === 1 ? dropVia : undefined));
     if (endPad >= 0) last.pts = alignEnd(simplify(last.pts), pads[endPad]!, last.l, net, width);
     // an end on a track of the net (a join): exactly onto that track's centre line
-    if (startPad < 0 && lines[0] && !(lines.length === 1 && endVia)) lines[0].pts = reversePts(joinTrack(reversePts(simplify(lines[0].pts)), lines[0].l, net));
-    if (endPad < 0 && !endVia) last.pts = joinTrack(simplify(last.pts), last.l, net);
+    if (startPad < 0 && lines[0] && !(lines.length === 1 && endVia)) lines[0].pts = reversePts(joinTrack(reversePts(simplify(lines[0].pts)), lines[0].l, net, width));
+    if (endPad < 0 && !endVia) last.pts = joinTrack(simplify(last.pts), last.l, net, width);
     for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, width);
     // the copper as it finally lies (aligned ends moved it): the cells later routes may join
     const onCopper = new Set<number>();
@@ -1277,9 +1294,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   /*
    * A path that ends on a track of its net joins it somewhere inside its copper, which on a wide
    * track can be off its centre line: the last run slides on along its direction onto the centre
-   * line (or, running alongside it, a short step across). Only with exact clearance.
+   * line (or, running alongside it, a short step across). Only with exact clearance, for the
+   * copper that moves: this track's, at its width.
    */
-  const joinTrack = (pts: number[], l: number, net: number): number[] => {
+  const joinTrack = (pts: number[], l: number, net: number, width: number): number[] => {
     const n = pts.length / 2;
     if (n < 2) return pts;
     const [px, py] = [pts[2 * n - 2]!, pts[2 * n - 1]!];
@@ -1311,10 +1329,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       const l2 = dx * dx + dy * dy;
       const s2 = l2 ? Math.max(0, Math.min(1, ((px - cx) * dx + (py - cy) * dy) / l2)) : 0;
       q = [cx + dx * s2, cy + dy * s2];
-      if (!clearOf(net, l, best.w, [[px, py, q[0], q[1]]])) return pts;
+      if (!clearOf(net, l, width, [[px, py, q[0], q[1]]])) return pts;
       return [...pts, q[0], q[1]];
     }
-    if (!clearOf(net, l, best.w, [[ax, ay, q[0], q[1]]])) return pts;
+    if (!clearOf(net, l, width, [[ax, ay, q[0], q[1]]])) return pts;
     return [...pts.slice(0, 2 * n - 2), q[0], q[1]];
   };
 
@@ -1377,6 +1395,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   };
 
   /** The segments (of the given width, on layer l) keep the clearance from all copper of other nets. */
+  // drop sites reserved for pours (see reserveDrops): pad → its drop path (pad → via site) and
+  // width class, and the copper held for them (a via's on every layer: l = -1)
+  const reserved = new Map<number, { path: number[]; k: number }>();
+  const held: { net: number; l: number; ax: number; ay: number; bx: number; by: number; w: number }[] = [];
   const clearOf = (net: number, l: number, width: number, segs: [number, number, number, number][]) => {
     const need = rules.clearance + width / 2 - 1e-3;
     const layer = layers[l]!;
@@ -1405,6 +1427,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         for (let q = 0; q + 3 < t.pts.length; q += 2) if (segSegDist(ax, ay, bx, by, t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!) < gap) return false;
       }
       for (const v of vias) if (numOf(v.netId) !== net && near(v.x, v.y) < rules.clearance + (width + v.pad) / 2 - 1e-3) return false;
+      for (const c of held) if (c.net !== net && (c.l < 0 || c.l === l) && segSegDist(ax, ay, bx, by, c.ax, c.ay, c.bx, c.by) < rules.clearance + (width + c.w) / 2 - 1e-3) return false;
     }
     return true;
   };
@@ -1413,8 +1436,9 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   /*
    * Planes and pours. Inner planes are dedicated to their net (no tracks there); pours on outer
    * layers fill what the tracks leave. Every group of a plane net that does not reach its plane
-   * drops onto it (short track + via). Order: inner-plane drops → signal routing → outer-pour
-   * drops → final areas (clear of every via of other nets) → connectivity.
+   * drops onto it (short track + via). Order: inner-plane drops → pour drop sites reserved →
+   * signal routing → outer-pour drops → the pour net's remaining tracks → final areas (clear of
+   * every via of other nets) → connectivity.
    */
   const zones: Zone[] = [];
   const planes = (input.planes ?? []).filter((pl) => layerIdx.has(pl.layer) && netNum.has(pl.netId));
@@ -1600,8 +1624,78 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   };
 
   // 1. provisional areas; 2. drops of every group that does not reach its plane
-  const dropVias = new Map<number, { x: number; y: number }[]>(); // pad root → drop vias
+  const dropVias = new Map<number, { x: number; y: number }[]>(); // pad root (when it dropped) → drop vias
   let timedOut = false;
+  /** The groups of a plane's net that reach its main area (they are connected through it). */
+  const reachMain = (pl: (typeof planes)[number], rg: ReturnType<typeof region>) => {
+    const roots = [...new Set(pads.map((_, idx) => find(idx)).filter((r) => padNet[r] === rg.pnet))];
+    const inMain = (x: number, y: number) => rg.island[Math.round(x / G) + Math.round(y / G) * W] === rg.main;
+    // (drop vias are listed under the root their group had when it dropped)
+    const dropped = new Set([...dropVias].filter(([, vs]) => vs.some((v) => inMain(v.x, v.y))).map(([r]) => find(r)));
+    return roots.filter(
+      (r) =>
+        groupCells.get(r)!.some((st) => Math.floor(st / N) === rg.l && rg.island[st % N] === rg.main) ||
+        dropped.has(r) ||
+        pads.some((p, idx) => find(idx) === r && (p.drill || p.layers.includes(pl.layer)) && inMain(p.x, p.y)),
+    );
+  };
+  /** The net's own width for a drop where all the group's pads can take it, else the signal width. */
+  const dropClass = (netId: string, root: number) => {
+    const own = input.netWidths?.[netId];
+    return own && (own <= rules.track || pads.every((p, idx) => find(idx) !== root || Math.min(p.w, p.h) >= own * 0.9)) ? trackClass(own) : 0;
+  };
+  /*
+   * Drop sites for outer pours, reserved before the signals: every SMD pad of the pour's net off
+   * the pour layer gets the nearest via site with a short stub (on its own layer, within
+   * MAX_STUB), and that copper is kept clear of other nets (as the escape stubs are). It is laid
+   * only after the signals, where the pad still needs it: routed among the signals, the pour
+   * net's many tracks would wall them off; routed after them, its pads could be shut off from
+   * every via site. (A reservation that is not laid stays marked in the clearance maps: harmless,
+   * as only the pour's own net routes after the drops.)
+   */
+  const reserveDrops = (list: typeof planes) => {
+    for (const pl of list) {
+      const l = layerIdx.get(pl.layer)!;
+      const pnet = numOf(pl.netId);
+      const viaFree = viaFreeFor(pnet);
+      const rr = rules.viaPad / 2 + margin + rules.clearance;
+      pads.forEach((p, idx) => {
+        if (padNet[idx] !== pnet || p.drill || p.layers.includes(pl.layer) || now() > until) return;
+        const k = dropClass(pl.netId, idx);
+        const free = freeFor(pnet, k);
+        const path = search(pnet, k, padCells[idx]!, (st) => {
+          if (Math.floor(st / N) === l) return false;
+          const i = st % N;
+          if (viaAt[i] === pnet) return true; // another pad's site
+          if (!viaFree(i)) return false;
+          // room for the pour round the via
+          const vx = (i % W) * G;
+          const vy = Math.floor(i / W) * G;
+          for (const [dx, dy] of [[rr, 0], [-rr, 0], [0, rr], [0, -rr]] as const) {
+            const ii = Math.round((vx + dx) / G) + Math.round((vy + dy) / G) * W;
+            if (ii < 0 || ii >= N || !free(l, ii)) return false;
+          }
+          return true;
+        }, p, undefined, 0, false, 2 * MAX_STUB);
+        // (a long way to a via site, or one over other layers, would block more than it saves)
+        if (!path || path.length > MAX_STUB || path.some((st) => Math.floor(st / N) !== Math.floor(path[0]! / N))) return;
+        const l0 = Math.floor(path[0]! / N);
+        const e = escapes[idx];
+        const pts = simplify([...(e && e.state === path[0] ? [p.x, p.y, e.p1.x, e.p1.y] : [p.x, p.y]), ...path.flatMap((st) => [((st % N) % W) * G, Math.floor((st % N) / W) * G])]);
+        for (let q = 0; q + 3 < pts.length; q += 2) {
+          const [ax, ay, bx, by] = [pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!];
+          stampSeg(l0, pnet, ax, ay, bx, by, widths[k]!);
+          held.push({ net: pnet, l: l0, ax, ay, bx, by, w: widths[k]! });
+        }
+        const [vx, vy] = [pts.at(-2)!, pts.at(-1)!];
+        if (viaAt[Math.round(vy / G) * W + Math.round(vx / G)] !== pnet) {
+          stampVia(pnet, vx, vy);
+          held.push({ net: pnet, l: -1, ax: vx, ay: vy, bx: vx, by: vy, w: rules.viaPad });
+        }
+        reserved.set(idx, { path, k });
+      });
+    }
+  };
   const dropOnto = (list: typeof planes) => {
   for (const pl of list) {
     const rg = region(pl);
@@ -1610,12 +1704,27 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     // copper of the drops so far → the via it leads down to: a later drop may simply join it
     const dropCopper = new Map<number, { x: number; y: number }>();
     for (const r of roots) {
-      if (timedOut || now() > deadline) break;
       const reaches = groupCells.get(r)!.some((st) => Math.floor(st / N) === rg.l && rg.island[st % N] === rg.main);
       if (reaches) continue;
+      const k = dropClass(pl.netId, r);
+      // a site reserved before the signals that lies in the main area: laid as it is (no search,
+      // so even once the time is up)
+      const site = pads.findIndex((_, idx) => find(idx) === r && reserved.has(idx) && rg.island[reserved.get(idx)!.path.at(-1)! % N] === rg.main);
+      if (site >= 0) {
+        const { path, k: ks } = reserved.get(site)!;
+        const joins = dropCopper.get(path.at(-1)!);
+        const copper = commit(pl.netId, rg.pnet, ks, path, site, -1, !joins);
+        groupCells.get(r)!.push(...copper);
+        const end = path.at(-1)! % N;
+        const via = joins ?? { x: (end % W) * G, y: Math.floor(end / W) * G };
+        for (const st of copper) dropCopper.set(st, via);
+        dropVias.set(r, [...(dropVias.get(r) ?? []), via]);
+        continue;
+      }
+      if (now() > deadline) continue;
       const starts = groupCells.get(r)!.filter((st) => Math.floor(st / N) !== rg.l);
       if (!starts.length) continue;
-      const path = search(rg.pnet, 0, starts, (st) => {
+      const path = search(rg.pnet, k, starts, (st) => {
         // a via site well inside the main area (the via then joins the plane)
         if (Math.floor(st / N) === rg.l) return false;
         if (dropCopper.has(st)) return true; // join an earlier drop
@@ -1633,9 +1742,16 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       }, pads[r]!);
       if (!path) continue;
       const joins = dropCopper.get(path.at(-1)!);
-      const copper = commit(pl.netId, rg.pnet, 0, path, padAt(r, path[0]!), -1, !joins);
-      groupCells.get(r)!.push(...copper);
+      // a way that changed layer itself already has a via: not another one right next to it
       const end = path.at(-1)! % N;
+      const crowded = (q: number) => {
+        if (q === 0 || Math.floor(path[q]! / N) === Math.floor(path[q - 1]! / N)) return false;
+        const d = Math.hypot(((path[q]! % N) % W) - (end % W), Math.floor((path[q]! % N) / W) - Math.floor(end / W)) * G;
+        return d > 1e-9 && d < VIA_SPACING;
+      };
+      if (!joins && path.some((_, q) => crowded(q) && q < path.length - 1)) continue;
+      const copper = commit(pl.netId, rg.pnet, k, path, padAt(r, path[0]!), -1, !joins);
+      groupCells.get(r)!.push(...copper);
       const via = joins ?? { x: (end % W) * G, y: Math.floor(end / W) * G };
       for (const st of copper) dropCopper.set(st, via);
       dropVias.set(r, [...(dropVias.get(r) ?? []), via]);
@@ -1645,16 +1761,32 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   /*
    * Fan-out first: pads on a net with a dedicated inner plane drop onto it before the signals are
    * routed (the signals then go round the drop vias; routed first, a signal can shut a pad off
-   * from every via site). Outer pours come last: they fill what the tracks leave.
+   * from every via site). Outer pours come last: they fill what the tracks leave; their drop
+   * sites are reserved now (see reserveDrops).
    */
   dropOnto(planes.filter((pl) => !OUTER.has(pl.layer)));
-  for (const c of order) {
+  // pours of nets without an inner plane (GND on B.Cu of a 2-layer board)
+  const pours = planes.filter((pl) => OUTER.has(pl.layer) && !planes.some((q) => q.netId === pl.netId && !OUTER.has(q.layer)));
+  reserveDrops(pours);
+  /*
+   * A pour's net is joined through its pour, so a connection between two pads that can each
+   * reach the pour without a track (a reserved drop site, or a through-hole pad) waits until
+   * the signals are routed and the drops laid; then it is routed only if the pour will not join
+   * it. Except: pads closer than two via spacings (neighbouring pins) are simply joined first
+   * (two drops would crowd each other), and so are connections that failed in the pass before.
+   */
+  const poured = new Set(pours.map((pl) => pl.netId));
+  const reachesPour = (idx: number) => reserved.has(idx) || !!pads[idx]!.drill;
+  const later = (c: Conn) => poured.has(c.netId) && c.len >= 2 * VIA_SPACING && !early.has(c) && reachesPour(c.a) && reachesPour(c.b);
+  // connections left to the pour: open unless the final areas join them
+  const leftToPour: Conn[] = [];
+  const routeConn = (c: Conn) => {
     const net = numOf(c.netId);
-    if (find(c.a) === find(c.b)) continue;
-    if (timedOut || now() > deadline) {
+    if (find(c.a) === find(c.b)) return;
+    if (now() > until) {
       timedOut = true;
       failed.push(c);
-      continue;
+      return;
     }
     const pa = pads[c.a]!;
     const pb = pads[c.b]!;
@@ -1665,10 +1797,19 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     // too wide for a pad: the widest class that still fits (never below the signal width)
     const fitting = (w: number) => widths.reduce((best, x, i) => (i !== 2 && x <= w && takes(x) && x > widths[best]! ? i : best), 0);
     const k = own ? (own <= rules.track || takes(own) ? trackClass(own) : fitting(own)) : wide ? 1 : 0;
+    // an escape stub is reserved at the signal width: a wider track may run along it only where
+    // it keeps its clearance at that width
+    const escapeOk = (st: number) => {
+      const idx = escapeOf.get(st);
+      if (idx === undefined || widths[k]! <= rules.track) return true;
+      const e = escapes[idx]!;
+      const p = pads[idx]!;
+      return clearOf(net, e.l, widths[k]!, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
+    };
     epoch++;
     const goalStamp = epoch;
-    for (const st of groupCells.get(find(c.a))!) goal[st] = goalStamp;
-    const goalCells = groupCells.get(find(c.a))!;
+    const goalCells = groupCells.get(find(c.a))!.filter(escapeOk);
+    for (const st of goalCells) goal[st] = goalStamp;
     // end where the track fits, on its pad's centre line; failing that where it fits; failing
     // that deepest inside the pad
     const fits = (st: number) => freeFor(net, k)(Math.floor(st / N), st % N);
@@ -1686,7 +1827,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       if (y < gy0) gy0 = y;
       if (y > gy1) gy1 = y;
     }
-    const starts = groupCells.get(find(c.b))!;
+    const starts = groupCells.get(find(c.b))!.filter(escapeOk);
     const isGoal = (st: number) => goal[st] === goalStamp;
     const target = { x0: gx0, y0: gy0, x1: gx1, y1: gy1 };
     // within the corridor of the coarse way first, then a wider one; failing that, anywhere (a
@@ -1703,28 +1844,44 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     }
     if (!path) {
       failed.push(c);
-      continue;
+      return;
     }
     // (a route may also start on copper laid earlier for this net: then it starts right there)
     const copper = commit(c.netId, net, k, path, padAt(find(c.b), path[0]!), padAt(find(c.a), path.at(-1)!));
     union(c.a, c.b);
     groupCells.get(find(c.a))!.push(...copper);
-  }
-
+  };
+  // with a pour, the signals leave a tenth of the time left to its drops and tracks (they take
+  // far less than the signals, and without them the pour's pads stay apart)
+  if (pours.length) until = deadline - (deadline - now()) / 10;
+  for (const c of order) if (!later(c)) routeConn(c);
+  until = deadline;
   dropOnto(planes.filter((pl) => OUTER.has(pl.layer)));
+  /*
+   * The waiting connections of the pours' nets: routed unless both ends already reach the main
+   * area of their pour. That is an estimate (tracks routed after it, of another pour's net, may
+   * still cut the pour), so nothing is joined here: the final areas decide, and a connection the
+   * pour fails to join counts as open.
+   */
+  if (order.some(later)) {
+    const viaPour = new Set<number>();
+    for (const pl of pours) {
+      const rg = region(pl);
+      if (rg.main === undefined || rg.sizes[rg.main]! * G * G < 1) continue;
+      for (const r of reachMain(pl, rg)) pads.forEach((_, idx) => find(idx) === r && viaPour.add(idx));
+    }
+    for (const c of order) {
+      if (!later(c)) continue;
+      if (viaPour.has(c.a) && viaPour.has(c.b)) leftToPour.push(c);
+      else routeConn(c);
+    }
+  }
 
   // 3. final areas, clear of all drops; 4. what reaches the main area is connected through it
   for (const pl of planes) {
     const rg = region(pl);
     if (rg.main === undefined || rg.sizes[rg.main]! * G * G < 1) continue;
-    const roots = [...new Set(pads.map((_, idx) => find(idx)).filter((r) => padNet[r] === rg.pnet))];
-    const inMain = (x: number, y: number) => rg.island[Math.round(x / G) + Math.round(y / G) * W] === rg.main;
-    const joined = roots.filter(
-      (r) =>
-        groupCells.get(r)!.some((st) => Math.floor(st / N) === rg.l && rg.island[st % N] === rg.main) ||
-        (dropVias.get(r) ?? []).some((v) => inMain(v.x, v.y)) ||
-        pads.some((p, idx) => find(idx) === r && (p.drill || p.layers.includes(pl.layer)) && inMain(p.x, p.y)),
-    );
+    const joined = reachMain(pl, rg);
     for (let q = 1; q < joined.length; q++) union(joined[0]!, joined[q]!);
     // keep areas touched by the net's copper; the rest would be dead copper
     const alive = new Set<number>([rg.main, ...rg.touched]);
@@ -1750,8 +1907,9 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     }
     zones.push({ netId: pl.netId, layer: pl.layer, rects, shape: planeShape(pl, rg, alive) });
   }
-  // connections made through a plane count as routed
+  // connections made through a plane count as routed; those left to a pour it did not join, open
   for (let q = failed.length - 1; q >= 0; q--) if (find(failed[q]!.a) === find(failed[q]!.b)) failed.splice(q, 1);
+  for (const c of leftToPour) if (find(c.a) !== find(c.b)) failed.push(c);
   // plane nets were not routed as tracks: their connections are open unless the plane joined them
   const planeNets = new Set(planes.filter((pl) => !OUTER.has(pl.layer)).map((pl) => pl.netId));
   for (const c of planeOnly) if (planeNets.has(c.netId) && find(c.a) !== find(c.b)) failed.push(c);
