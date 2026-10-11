@@ -16,6 +16,6 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      # the hosted build, as Cloudflare makes it (no sourcemaps, no local paths)
-      - run: npm run build
-      - run: "! find apps/web/dist -name '*.map' | grep -q . && ! grep -rq 'tools/bridge/src/main.ts' apps/web/dist"
+      # the package as `npx github:hoihu/tracewise` builds it (npm ci ran prepare): no sourcemaps, no local paths, and it starts
+      - run: "! find dist -name '*.map' | grep -q . && ! grep -rq 'tools/bridge/src/main.ts' dist/app"
+      - run: node dist/tracewise.js --version

@@ -8,7 +8,7 @@
   let copied = $state(false);
   const mcpCommand = `claude mcp add --scope user tracewise -- ${__BRIDGE_MCP__}`;
   const bridgeRun = __BRIDGE_RUN__;
-  const where = __HOSTED__ ? '' : ' (in this repository)';
+  const where = __PACKAGED__ ? '' : ' (in this repository)';
 
   async function copyCommand() {
     try {
@@ -72,12 +72,16 @@
       </div>
       <div class="way">
         <b>Drive this tab from the Claude Code CLI</b>
-        <p>Start <code>claude</code> in this repository and approve the <b>tracewise</b> MCP server it offers from <code>.mcp.json</code>. To use it from any folder, register it once:</p>
+        {#if where}
+          <p>Start <code>claude</code> in this repository and approve the <b>tracewise</b> MCP server it offers from <code>.mcp.json</code>. To use it from any folder, register it once:</p>
+        {:else}
+          <p>Register the <b>tracewise</b> MCP server once:</p>
+        {/if}
         <div class="cmd"><code>{mcpCommand}</code><button class="ib" onclick={copyCommand}>{copied ? 'copied' : 'copy'}</button></div>
         <p>Then ask Claude to <i>“connect to Tracewise”</i>. It gives you the pairing link; opening it pairs this tab.</p>
       </div>
     </div>
-    <p class="note">On the hosted app, Chrome asks once for “Local network access” (allow it). Safari does not let a website reach the bridge; use another browser for it. The tab reconnects by itself when Claude Code restarts.</p>
+    <p class="note">The tab reconnects by itself when the bridge or Claude Code restarts.</p>
   </details>
 </Section>
 

@@ -67,16 +67,7 @@ class BridgeClient {
       if (typeof r === 'string') denied = r;
     }
     if (denied && !opts.silent) this.error = denied === 'wrong pairing code' ? 'Wrong pairing code. Ask Claude Code for the current one.' : denied;
-    else if (!opts.silent) {
-      // a website (not localhost) reaching the bridge on this computer needs the browser's permission
-      const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
-      const safari = /^((?!chrome|chromium|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent);
-      this.error = local
-        ? 'No bridge found. Is Claude Code running with the tracewise MCP server?'
-        : safari
-          ? 'Safari does not let a website connect to the bridge on your computer. Use Chrome, Edge or Firefox for the local bridge (or the app run locally); everything else works in Safari.'
-          : 'No bridge reachable. If it is running, your browser may be blocking this site from your computer: in Chrome, allow "Local network access" when asked (or in the site settings next to the address).';
-    }
+    else if (!opts.silent) this.error = `No bridge found. Is it running (${__BRIDGE_RUN__}, or Claude Code with the tracewise MCP server)?`;
     this.status = 'waiting';
     this.#scheduleRetry();
     return false;

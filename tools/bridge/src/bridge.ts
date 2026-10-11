@@ -3,6 +3,8 @@
  * the WebSocket; tool calls (from stdio MCP or the HTTP /mcp endpoint) are forwarded to the tab,
  * which executes them against its kernel. Chat messages from the tab go to a chat handler.
  *
+ * It also serves the built app itself, so the page and the bridge share an origin on this computer.
+ *
  * Security: binds to loopback only, accepts only local http(s) origins on the WebSocket (so
  * arbitrary websites cannot connect), and requires the pairing code before anything is forwarded.
  */
@@ -26,10 +28,8 @@ export interface BridgeOptions {
   code: string;
   ports?: readonly number[];
   host?: string;
-  /** Extra allowed page origins besides localhost / 127.0.0.1 (e.g. a deployed app URL). */
-  origins?: string[];
   callTimeoutMs?: number;
-  /** Where the app runs; used to give the user a one-click pairing link. */
+  /** Where the app runs, for the one-click pairing link; default: the app this bridge serves. */
   appUrl?: string;
   log?: (msg: string) => void;
 }
@@ -43,25 +43,6 @@ interface Pending {
 }
 
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
-
-/**
- * An allowed origin: exact; "https://*.example.dev" for its subdomains (one level); or
- * "https://*-name.example.dev" for a prefixed first label (Workers preview versions). https only.
- */
-export function originMatches(allowed: string, origin: string): boolean {
-  if (allowed === origin) return true;
-  const sub = /^https:\/\/\*\.(.+)$/.exec(allowed);
-  if (sub) {
-    const host = /^https:\/\/([a-z0-9-]+)\.(.+)$/i.exec(origin);
-    return !!host && host[2]!.toLowerCase() === sub[1]!.toLowerCase();
-  }
-  const pre = /^https:\/\/\*-(.+)$/.exec(allowed);
-  if (pre) {
-    const host = /^https:\/\/([a-z0-9]+)-(.+)$/i.exec(origin);
-    return !!host && host[2]!.toLowerCase() === pre[1]!.toLowerCase();
-  }
-  return false;
-}
 
 export class Bridge {
   readonly code: string;
@@ -108,7 +89,7 @@ export class Bridge {
     throw new Error(`All bridge ports are in use (${ports.join(', ')}). Is another Claude Code session already running the bridge?`);
   }
 
-  /** Serve HTTP requests (the /mcp endpoint for the headless Claude Code). */
+  /** Serve HTTP requests (the app, and the /mcp endpoint for the headless Claude Code). */
   setHttpHandler(h: HttpHandler) {
     this.#httpHandler = h;
   }
@@ -156,8 +137,14 @@ export class Bridge {
     this.#send({ type: 'agent', name });
   }
 
+  /** Point pairing links at another address of the app (the dev server, or another bridge's port). */
+  setAppUrl(url: string | undefined) {
+    this.#opts.appUrl = url;
+  }
+
+  /** Opens the app and pairs it with this bridge (the port makes the tab try this one first). */
   pairingLink(): string {
-    return `${(this.#opts.appUrl ?? 'http://localhost:5173').replace(/\/$/, '')}/#pair=${this.code}`;
+    return `${(this.#opts.appUrl ?? `http://localhost:${this.port}`).replace(/\/$/, '')}/#pair=${this.code}@${this.port}`;
   }
 
   status() {
@@ -194,8 +181,7 @@ export class Bridge {
 
   #onConnection(ws: WebSocket, req: IncomingMessage) {
     const origin = req.headers.origin ?? '';
-    const allowed = LOCAL_ORIGIN.test(origin) || (this.#opts.origins ?? []).some((o) => originMatches(o, origin));
-    if (!allowed) {
+    if (!LOCAL_ORIGIN.test(origin)) {
       this.#log(`rejected connection from origin "${origin}"`);
       ws.close(1008, 'origin not allowed');
       return;

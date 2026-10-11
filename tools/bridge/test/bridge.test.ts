@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { get as httpGet } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -5,6 +9,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Kernel } from '@tracewise/kernel';
 import { BRIDGE_PROTOCOL, type BridgeToTab } from '@tracewise/schema';
 import { Bridge, createMcpServer } from '../src/index.ts';
+import { appHandler, PROBE_PATH, servesTracewise } from '../src/app.ts';
 
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
@@ -133,21 +138,56 @@ describe('MCP server', () => {
   });
 });
 
-describe('allowed page origins', () => {
-  it('matches the hosted app exactly and its preview subdomains, nothing else', async () => {
-    const { originMatches } = await import('../src/bridge.ts');
-    const { hostedOrigins } = await import('../src/config.ts');
-    const allowed = hostedOrigins();
-    const ok = (o: string) => allowed.some((a) => originMatches(a, o));
-    expect(allowed[0]).toBe('https://tracewise.fischer-carlito.workers.dev');
-    expect(ok('https://tracewise.fischer-carlito.workers.dev')).toBe(true);
-    // a Workers preview version
-    expect(ok('https://a1b2c3d4-tracewise.fischer-carlito.workers.dev')).toBe(true);
-    expect(ok('https://evil-tracewise.someone-else.workers.dev')).toBe(false);
-    expect(ok('https://other.fischer-carlito.workers.dev')).toBe(false);
-    expect(ok('https://evil.pages.dev')).toBe(false);
-    expect(ok('http://a1b2c3d4-tracewise.fischer-carlito.workers.dev')).toBe(false);
-    expect(originMatches('https://*.tracewise.pages.dev', 'https://abc123.tracewise.pages.dev')).toBe(true);
-    expect(originMatches('https://*.tracewise.pages.dev', 'https://a.b.tracewise.pages.dev')).toBe(false);
+describe('serving the app', () => {
+  async function serveApp() {
+    const dir = mkdtempSync(join(tmpdir(), 'tw-app-'));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, 'assets'));
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Tracewise</title>');
+    writeFileSync(join(dir, 'assets', 'index-abc.js'), 'export {}');
+    writeFileSync(join(dir, '..', 'tw-secret.txt'), 'secret');
+    cleanups.push(() => rmSync(join(dir, '..', 'tw-secret.txt'), { force: true }));
+    const { bridge, port } = await startBridge();
+    bridge.setHttpHandler(appHandler(dir, '9.9.9'));
+    return { bridge, port };
+  }
+  const get = (port: number, path: string, host = `localhost:${port}`) =>
+    new Promise<{ status: number; type: string; cache: string; body: string }>((resolve, reject) => {
+      // node's fetch does not let a Host header be set; http.get does
+      httpGet({ host: '127.0.0.1', port, path, headers: { host } }, (res) => {
+        let body = '';
+        res.on('data', (c) => (body += c));
+        res.on('end', () => resolve({ status: res.statusCode!, type: String(res.headers['content-type']), cache: String(res.headers['cache-control']), body }));
+      }).on('error', reject);
+    });
+
+  it('serves the built app, with long caching only for hashed assets', async () => {
+    const { port } = await serveApp();
+    const index = await get(port, '/');
+    expect(index).toMatchObject({ status: 200, type: 'text/html; charset=utf-8', cache: 'no-cache' });
+    expect(index.body).toContain('Tracewise');
+    expect(await get(port, '/assets/index-abc.js')).toMatchObject({ status: 200, type: 'text/javascript; charset=utf-8', cache: 'public, max-age=31536000, immutable' });
+    expect((await get(port, '/nope.js')).status).toBe(404);
+  });
+
+  it('answers the probe, so a second bridge finds the first', async () => {
+    const { port } = await serveApp();
+    expect(JSON.parse((await get(port, PROBE_PATH)).body)).toEqual({ name: 'tracewise-bridge', version: '9.9.9' });
+    expect(await servesTracewise(port)).toBe(true);
+  });
+
+  it('serves nothing outside the app folder, and only to local host names', async () => {
+    const { port } = await serveApp();
+    expect((await get(port, '/../tw-secret.txt')).status).not.toBe(200);
+    expect((await get(port, '/%2e%2e/tw-secret.txt')).status).toBe(403);
+    // DNS rebinding: a website whose name resolves to 127.0.0.1
+    expect((await get(port, '/', `evil.example:${port}`)).status).toBe(421);
+  });
+
+  it('points pairing links at the app it serves, with its port', async () => {
+    const { bridge, port } = await startBridge();
+    expect(bridge.pairingLink()).toBe(`http://localhost:${port}/#pair=123456@${port}`);
+    bridge.setAppUrl('http://localhost:5173/');
+    expect(bridge.pairingLink()).toBe(`http://localhost:5173/#pair=123456@${port}`);
   });
 });

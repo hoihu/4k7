@@ -22,36 +22,28 @@ export interface ClaudeProfile {
   env: Record<string, string>;
 }
 
-/**
- * The hosted app (Cloudflare): allowed to connect by default, with its preview deploys, and where
- * pairing links point unless this runs from a checkout with its own dev server.
- * TRACEWISE_HOSTED_URL overrides it (another domain).
- */
-export const HOSTED_APP = (process.env.TRACEWISE_HOSTED_URL ?? 'https://tracewise.fischer-carlito.workers.dev').replace(/\/$/, '');
-const LOCAL_APP = 'http://localhost:5173';
+/** The Vite dev server of a checkout (npm run dev). */
+export const DEV_APP = 'http://localhost:5173';
 
-/**
- * Origins allowed besides localhost: the hosted app and its preview deploys. Pages previews are
- * subdomains (https://<hash>.<project>.pages.dev: "https://*."), Workers previews prefix the
- * worker's name (https://<version>-<worker>.<account>.workers.dev: "https://*-").
- */
-export function hostedOrigins(): string[] {
-  const u = new URL(HOSTED_APP);
-  const [first, ...rest] = u.host.split('.');
-  return [u.origin, `${u.protocol}//*.${u.host}`, ...(u.host.endsWith('.workers.dev') ? [`${u.protocol}//*-${first}.${rest.join('.')}`] : [])];
+/** Running from a checkout of the repository (with the web app next to it), not from a package. */
+export function inCheckout(): boolean {
+  return existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'apps', 'web', 'package.json'));
 }
 
-/** Running from a checkout of the repository (with the web app next to it), not from npm. */
-function inCheckout(): boolean {
-  return existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'apps', 'web', 'package.json'));
+/**
+ * The built web app the bridge serves: next to the bundled CLI (dist/app) in the package, or
+ * apps/web/dist in a checkout once built. TRACEWISE_APP_DIR overrides it.
+ */
+export function appDir(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [process.env.TRACEWISE_APP_DIR, join(here, 'app'), join(here, '..', '..', '..', 'apps', 'web', 'dist')];
+  return candidates.find((d): d is string => !!d && existsSync(join(d, 'index.html'))) ?? null;
 }
 
 export interface BridgeConfig {
   code: string;
-  origins: string[];
-  appUrl: string;
-  /** The other app to mention (the hosted one when pairing links point to the local dev server, and vice versa). */
-  otherAppUrl: string;
+  /** Where pairing links point when set (TRACEWISE_APP_URL or "appUrl"); else the app this bridge serves. */
+  appUrl?: string;
   claude: ClaudeProfile;
 }
 
@@ -72,14 +64,12 @@ export function loadConfig(): BridgeConfig {
     // first run
   }
   const code = process.env.TRACEWISE_BRIDGE_CODE ?? (cfg.code && /^\d{6}$/.test(cfg.code) ? cfg.code : newCode());
-  const origins = [...hostedOrigins(), ...(cfg.origins ?? []), ...(process.env.TRACEWISE_ORIGINS?.split(',').filter(Boolean) ?? [])];
   if (code !== cfg.code && !process.env.TRACEWISE_BRIDGE_CODE) {
     mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 });
     // keep every other setting in the file
-    writeFileSync(path, JSON.stringify({ ...cfg, code, origins: cfg.origins ?? [] }, null, 2) + '\n', { mode: 0o600 });
+    writeFileSync(path, JSON.stringify({ ...cfg, code }, null, 2) + '\n', { mode: 0o600 });
   }
-  const appUrl = process.env.TRACEWISE_APP_URL ?? cfg.appUrl ?? (inCheckout() ? LOCAL_APP : HOSTED_APP);
-  const otherAppUrl = appUrl === LOCAL_APP ? HOSTED_APP : LOCAL_APP;
+  const appUrl = process.env.TRACEWISE_APP_URL ?? cfg.appUrl;
   const c = (cfg.claude ?? {}) as Partial<ClaudeProfile>;
   const configDir = process.env.TRACEWISE_CLAUDE_CONFIG_DIR ?? c.configDir;
   const claude: ClaudeProfile = {
@@ -87,7 +77,7 @@ export function loadConfig(): BridgeConfig {
     unsetEnv: [...(c.unsetEnv ?? []), ...(process.env.TRACEWISE_CLAUDE_UNSET?.split(',').filter(Boolean) ?? [])],
     env: c.env ?? {},
   };
-  return { code, origins, appUrl, otherAppUrl, claude };
+  return { code, ...(appUrl ? { appUrl } : {}), claude };
 }
 
 function expandHome(p: string): string {

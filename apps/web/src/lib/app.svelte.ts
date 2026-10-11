@@ -44,8 +44,10 @@ import {
   type Settings,
 } from './persist.ts';
 
-/** A pairing link (#pair=123456) opened from the terminal; read before the router rewrites the hash. */
-const pairFromLink = /^#pair=(\d{6})$/.exec(location.hash)?.[1] ?? null;
+/** A pairing link (#pair=123456@7777: code, bridge port) opened from the terminal; read before the router rewrites the hash. */
+const pairLink = /^#pair=(\d{6})(?:@(\d+))?$/.exec(location.hash);
+const pairFromLink = pairLink?.[1] ?? null;
+const pairPort = pairLink?.[2] ? Number(pairLink[2]) : null;
 
 export type View = 'sch' | 'lay' | 'parts' | 'set';
 export type InspectorTab = 'issues' | 'ledger' | 'history' | 'sel';
@@ -176,7 +178,7 @@ class AppState {
     this.persistent = await storagePersistent();
     if (pairFromLink) {
       history.replaceState(null, '', '#sch');
-      void bridge.connect(pairFromLink).then((ok) => this.flash(ok ? `Paired with ${bridge.agent ?? 'the bridge'}` : (bridge.error ?? 'Pairing failed')));
+      void bridge.connect(pairFromLink, { preferPort: pairPort }).then((ok) => this.flash(ok ? `Paired with ${bridge.agent ?? 'the bridge'}` : (bridge.error ?? 'Pairing failed')));
     } else if (this.settings.bridgeCode) {
       void bridge.connect(this.settings.bridgeCode, { silent: true, preferPort: this.settings.bridgePort });
     }
