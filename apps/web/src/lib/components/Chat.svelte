@@ -175,7 +175,7 @@
   .composer { border-top: 1px solid var(--line); padding: 6px 8px 8px; display: flex; flex-direction: column; gap: 5px; flex: none; }
   .inp { display: flex; gap: 4px; align-items: flex-end; border: 1px solid var(--line-2); border-radius: 7px; background: var(--canvas); padding: 2px 2px 2px 8px; }
   .inp:focus-within { border-color: var(--accent); }
-  .inp textarea { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; padding: 5px 0; resize: none; field-sizing: content; max-height: 140px; }
+  .inp textarea { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; padding: 5px 0; resize: none; field-sizing: content; line-height: 1.4; min-height: calc(1.4em + 10px); max-height: 140px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
   .sugg { display: flex; gap: 4px; flex-wrap: wrap; }
   .sugg button { border: 1px solid var(--line); background: var(--panel-2); border-radius: 99px; padding: 0 8px; font-size: 11.5px; line-height: 20px; color: var(--txt-2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sugg button:hover { border-color: var(--accent); color: var(--accent-txt); }
