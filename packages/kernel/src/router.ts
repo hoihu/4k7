@@ -1129,8 +1129,8 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     if (startPad >= 0 && lines[0]) lines[0].pts = reversePts(alignEnd(reversePts(simplify(lines[0].pts)), pads[startPad]!, lines[0].l, net, width, lines.length === 1 ? dropVia : undefined));
     if (endPad >= 0) last.pts = alignEnd(simplify(last.pts), pads[endPad]!, last.l, net, width);
     // an end on a track of the net (a join): exactly onto that track's centre line
-    if (startPad < 0 && lines[0] && !(lines.length === 1 && endVia)) lines[0].pts = reversePts(joinTrack(reversePts(simplify(lines[0].pts)), lines[0].l, net));
-    if (endPad < 0 && !endVia) last.pts = joinTrack(simplify(last.pts), last.l, net);
+    if (startPad < 0 && lines[0] && !(lines.length === 1 && endVia)) lines[0].pts = reversePts(joinTrack(reversePts(simplify(lines[0].pts)), lines[0].l, net, width));
+    if (endPad < 0 && !endVia) last.pts = joinTrack(simplify(last.pts), last.l, net, width);
     for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, width);
     // the copper as it finally lies (aligned ends moved it): the cells later routes may join
     const onCopper = new Set<number>();
@@ -1277,9 +1277,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   /*
    * A path that ends on a track of its net joins it somewhere inside its copper, which on a wide
    * track can be off its centre line: the last run slides on along its direction onto the centre
-   * line (or, running alongside it, a short step across). Only with exact clearance.
+   * line (or, running alongside it, a short step across). Only with exact clearance, for the
+   * copper that moves: this track's, at its width.
    */
-  const joinTrack = (pts: number[], l: number, net: number): number[] => {
+  const joinTrack = (pts: number[], l: number, net: number, width: number): number[] => {
     const n = pts.length / 2;
     if (n < 2) return pts;
     const [px, py] = [pts[2 * n - 2]!, pts[2 * n - 1]!];
@@ -1311,10 +1312,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       const l2 = dx * dx + dy * dy;
       const s2 = l2 ? Math.max(0, Math.min(1, ((px - cx) * dx + (py - cy) * dy) / l2)) : 0;
       q = [cx + dx * s2, cy + dy * s2];
-      if (!clearOf(net, l, best.w, [[px, py, q[0], q[1]]])) return pts;
+      if (!clearOf(net, l, width, [[px, py, q[0], q[1]]])) return pts;
       return [...pts, q[0], q[1]];
     }
-    if (!clearOf(net, l, best.w, [[ax, ay, q[0], q[1]]])) return pts;
+    if (!clearOf(net, l, width, [[ax, ay, q[0], q[1]]])) return pts;
     return [...pts.slice(0, 2 * n - 2), q[0], q[1]];
   };
 
