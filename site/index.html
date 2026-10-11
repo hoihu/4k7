@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#121211">
+<title>4k7 — describe a circuit, get a board</title>
+<meta name="description" content="4k7 is an AI-first PCB schematic and layout tool. No pencil, no wire tool: you describe the circuit, an agent designs it, you review every change, and you get Gerbers.">
+<meta property="og:title" content="4k7 — describe a circuit, get a board">
+<meta property="og:description" content="AI-first PCB schematic and layout tool. Describe the circuit, review every change, get Gerbers.">
+<meta property="og:url" content="https://4k7.dev">
+<meta property="og:image" content="https://4k7.dev/brand/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  :root {
+    color-scheme: dark;
+    --text: #ecebe6;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    /* 4k7 = yellow · violet · red · gold */
+    --yellow: #f2c230;
+    --violet: #7a3fb0;
+    --red: #d6382f;
+    --gold: #d7a63a;
+    --code-fg: #f3f2ee;
+    --bg: #121211;
+    --panel: #1b1a18;
+    --line: #2e2c28;
+    --muted: #9b958a;
+    --body: #d9c69f;
+    --body-shade: #b39d73;
+    --lead: #8f887d;
+    --accent: #e08a4f;
+    --code-bg: #0c0c0b;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font: 16px/1.55 var(--sans);
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  code, kbd, .mono { font-family: var(--mono); }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 0;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; letter-spacing: .02em; }
+  .brand svg { width: 40px; height: 20px; }
+  nav a { margin-left: 22px; font-size: 14px; color: var(--muted); text-decoration: none; }
+  nav a:hover { color: var(--text); }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 56px 0 40px; text-align: center; }
+  .resistor { width: min(520px, 92vw); height: auto; display: block; margin: 0 auto 36px; }
+  .resistor .band { transition: filter .25s ease; }
+  .resistor:hover .band { filter: brightness(1.12) saturate(1.15); }
+  .band-label {
+    font: 500 11px/1 var(--mono);
+    fill: var(--muted);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    opacity: 0; transition: opacity .25s ease;
+  }
+  .resistor:hover .band-label { opacity: 1; }
+  @media (hover: none) { .band-label { opacity: 1; } }
+
+  h1 {
+    margin: 0 0 14px;
+    font-size: clamp(34px, 6vw, 54px);
+    line-height: 1.08;
+    font-weight: 650;
+    letter-spacing: -.02em;
+  }
+  .lede {
+    max-width: 560px; margin: 0 auto 26px;
+    font-size: 18px; color: var(--muted);
+  }
+
+  .install {
+    display: inline-flex; align-items: center; gap: 14px;
+    background: var(--code-bg); color: var(--code-fg);
+    border-radius: 12px; padding: 12px 14px 12px 18px;
+    font: 500 15px/1 var(--mono);
+    box-shadow: 0 1px 0 rgba(0,0,0,.08), 0 10px 30px -18px rgba(0,0,0,.6);
+  }
+  .install .prompt { color: var(--gold); }
+  .install button {
+    appearance: none; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06);
+    color: inherit; border-radius: 8px; padding: 7px 10px; cursor: pointer;
+    font: 500 12px/1 var(--sans);
+  }
+  .install button:hover { background: rgba(255,255,255,.12); }
+  .install button.done { border-color: var(--gold); color: var(--gold); }
+  .sub { margin: 14px 0 0; font-size: 13px; color: var(--muted); }
+  .sub a { text-decoration-color: var(--line); }
+
+  /* ---------- key facts ---------- */
+  .facts {
+    list-style: none; margin: 30px auto 0; padding: 0;
+    display: flex; justify-content: center; flex-wrap: wrap; gap: 10px 34px;
+  }
+  .facts li { display: grid; grid-template-columns: 6px auto; grid-template-rows: auto auto; column-gap: 12px; text-align: left; }
+  .facts i { grid-row: 1 / span 2; width: 6px; border-radius: 3px; }
+  .facts b { font-size: 14px; font-weight: 650; }
+  .facts span { font-size: 13px; color: var(--muted); }
+
+  /* ---------- sections ---------- */
+  section { padding: 56px 0; border-top: 1px solid var(--line); }
+  h2 {
+    margin: 0 0 8px; font-size: 13px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+    display: flex; align-items: center; gap: 10px;
+  }
+  h2::before { content: ""; width: 6px; height: 18px; border-radius: 2px; background: var(--band, var(--accent)); }
+  .section-title { margin: 0 0 28px; font-size: clamp(22px, 3vw, 28px); font-weight: 650; letter-spacing: -.015em; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px;
+    transition: transform .15s ease, border-color .15s ease;
+  }
+  .card:hover { transform: translateY(-2px); border-color: var(--band, var(--line)); }
+  .card h3 { margin: 0 0 8px; font-size: 16px; font-weight: 650; }
+  .card p { margin: 0; font-size: 14px; color: var(--muted); }
+  .card .tag { display: inline-block; width: 26px; height: 5px; border-radius: 3px; background: var(--band); margin-bottom: 14px; }
+
+  /* ---------- how it works ---------- */
+  .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; counter-reset: step; }
+  .step { position: relative; padding: 0 22px 0 0; }
+  .step + .step { padding-left: 22px; border-left: 1px dashed var(--line); }
+  .step::before {
+    counter-increment: step; content: counter(step);
+    display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--band); color: #fff; font: 600 12px/1 var(--mono); margin-bottom: 12px;
+  }
+  .step h3 { margin: 0 0 6px; font-size: 15px; font-weight: 650; }
+  .step p { margin: 0; font-size: 14px; color: var(--muted); }
+  .step code { font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
+  @media (max-width: 720px) {
+    .flow { grid-template-columns: 1fr; gap: 22px; }
+    .step, .step + .step { padding: 0; border: 0; }
+  }
+
+  /* ---------- chat sample ---------- */
+  .sample {
+    margin-top: 32px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+    font-size: 14px;
+  }
+  .sample .bar { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .sample .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  .msg { padding: 12px 16px; display: grid; grid-template-columns: 54px 1fr; gap: 12px; }
+  .msg + .msg { border-top: 1px solid var(--line); }
+  .msg .who { font: 500 11px/1.6 var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .08em; padding-top: 4px; }
+  .msg p { margin: 0; }
+  .change { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; font-family: var(--mono); font-size: 13px; padding: 4px 0; }
+  .change .k { font-weight: 700; }
+  .change .k.add { color: #2f7d4f; } .change .k.mod { color: var(--accent); }
+  .change .ok { color: var(--muted); font-size: 12px; }
+  .accept { display: inline-flex; gap: 8px; margin-top: 10px; }
+  .accept span { font: 500 12px/1 var(--sans); padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line); }
+  .accept span:first-child { background: var(--text); color: var(--bg); border-color: var(--text); }
+
+  /* ---------- footer ---------- */
+  footer { border-top: 1px solid var(--line); padding: 28px 0 44px; font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  footer a { text-decoration: none; margin-right: 18px; }
+  footer a:hover { color: var(--text); }
+  .bands-mini { display: inline-flex; gap: 3px; vertical-align: middle; margin-right: 8px; }
+  .bands-mini i { width: 4px; height: 12px; border-radius: 1px; display: inline-block; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <a class="brand" href="/">
+      <svg viewBox="0 0 80 40" aria-hidden="true">
+        <rect x="0" y="18" width="80" height="4" fill="var(--lead)"/>
+        <rect x="14" y="7" width="52" height="26" rx="9" fill="var(--body)"/>
+        <rect x="22" y="7" width="6" height="26" fill="var(--yellow)"/>
+        <rect x="32" y="7" width="6" height="26" fill="var(--violet)"/>
+        <rect x="42" y="7" width="6" height="26" fill="var(--red)"/>
+        <rect x="54" y="7" width="6" height="26" fill="var(--gold)"/>
+      </svg>
+      4k7
+    </a>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#why">Why</a>
+      <a href="https://github.com/hoihu/4k7">GitHub</a>
+    </nav>
+  </header>
+
+  <section class="hero" style="border-top:0">
+    <!-- The resistor: yellow · violet · red · gold = 4.7 kΩ ±5 % -->
+    <svg class="resistor" viewBox="0 0 520 170" role="img" aria-label="A 4.7 kilo-ohm resistor with yellow, violet, red and gold bands">
+      <defs>
+          <!-- cylinder shading, shared by body and bands (userSpaceOnUse so every piece lines up) -->
+          <linearGradient id="h-cyl" gradientUnits="userSpaceOnUse" x1="0" y1="38" x2="0" y2="116">
+            <stop offset="0"    stop-color="#fff" stop-opacity=".35"/>
+            <stop offset=".18"  stop-color="#fff" stop-opacity=".12"/>
+            <stop offset=".45"  stop-color="#fff" stop-opacity="0"/>
+            <stop offset=".75"  stop-color="#000" stop-opacity=".18"/>
+            <stop offset="1"    stop-color="#000" stop-opacity=".42"/>
+          </linearGradient>
+          <!-- lead: drawn copper-nickel wire -->
+          <linearGradient id="h-wire" gradientUnits="userSpaceOnUse" x1="0" y1="73" x2="0" y2="83">
+            <stop offset="0"   stop-color="#6f6a62"/>
+            <stop offset=".25" stop-color="#e9e4da"/>
+            <stop offset=".5"  stop-color="#b9b3a8"/>
+            <stop offset="1"   stop-color="#5b564f"/>
+          </linearGradient>
+          <!-- end cap (metal ferrule under the paint) -->
+          <linearGradient id="h-cap" gradientUnits="userSpaceOnUse" x1="0" y1="40" x2="0" y2="114">
+            <stop offset="0"  stop-color="#cfc3a9"/>
+            <stop offset=".5" stop-color="#9d8f72"/>
+            <stop offset="1"  stop-color="#5e533f"/>
+          </linearGradient>
+          <radialGradient id="h-shadow" cx=".5" cy=".5" r=".5">
+            <stop offset="0" stop-color="#000" stop-opacity=".45"/>
+            <stop offset="1" stop-color="#000" stop-opacity="0"/>
+          </radialGradient>
+          <!-- body silhouette: bulged ends, slimmer middle -->
+          <clipPath id="h-bodyClip"><use href="#h-bodyShape"/></clipPath>
+          <path id="h-bodyShape" d="M140 40 h40 q14 0 20 4 q5 2 10 2 h120 q5 0 10 -2 q6 -4 20 -4 h40 a37 37 0 0 1 0 74 h-40 q-14 0 -20 -4 q-5 -2 -10 -2 h-120 q-5 0 -10 2 q-6 4 -20 4 h-40 a37 37 0 0 1 0 -74 z"/>
+        </defs>
+
+        <!-- shadow -->
+        <ellipse cx="260" cy="134" rx="190" ry="14" fill="url(#h-shadow)"/>
+
+        <!-- leads -->
+        <rect x="0" y="73" width="520" height="10" rx="5" fill="url(#h-wire)"/>
+        <rect x="0" y="75" width="520" height="2" rx="1" fill="#fff" opacity=".35"/>
+        <!-- ferrules where the wire enters the body -->
+        <rect x="112" y="52" width="16" height="50" rx="5" fill="url(#h-cap)"/>
+        <rect x="392" y="52" width="16" height="50" rx="5" fill="url(#h-cap)"/>
+
+        <!-- body -->
+        <use href="#h-bodyShape" fill="#e3d3b3"/>
+        <g clip-path="url(#h-bodyClip)">
+          <!-- bands, wrapped by the same cylinder gradient -->
+          <rect class="band" x="158" y="30" width="22" height="100" fill="#f2c230"/>
+          <rect class="band" x="214" y="30" width="22" height="100" fill="#7a3fb0"/>
+          <rect class="band" x="252" y="30" width="22" height="100" fill="#d6382f"/>
+          <rect class="band" x="338" y="30" width="22" height="100" fill="#d7a63a"/>
+          <!-- thin dark seams at the band edges, as paint has -->
+          <g fill="#000" opacity=".10">
+            <rect x="157" y="30" width="1.5" height="100"/><rect x="179.5" y="30" width="1.5" height="100"/>
+            <rect x="213" y="30" width="1.5" height="100"/><rect x="235.5" y="30" width="1.5" height="100"/>
+            <rect x="251" y="30" width="1.5" height="100"/><rect x="273.5" y="30" width="1.5" height="100"/>
+            <rect x="337" y="30" width="1.5" height="100"/><rect x="359.5" y="30" width="1.5" height="100"/>
+          </g>
+          <!-- cylinder light -->
+          <rect x="90" y="30" width="340" height="100" fill="url(#h-cyl)"/>
+          <!-- specular streak -->
+          <rect x="124" y="48" width="272" height="7" rx="3.5" fill="#fff" opacity=".28"/>
+        </g>
+        <!-- soft edge on the ends -->
+        <use href="#h-bodyShape" fill="none" stroke="#000" stroke-opacity=".18" stroke-width="1.5"/>
+      <!-- labels on hover -->
+      <text class="band-label" x="169" y="162" text-anchor="middle">4</text>
+      <text class="band-label" x="225" y="162" text-anchor="middle">7</text>
+      <text class="band-label" x="263" y="162" text-anchor="middle">×100</text>
+      <text class="band-label" x="349" y="162" text-anchor="middle">±5%</text>
+    </svg>
+
+    <h1>Describe a circuit.<br>Get a board.</h1>
+    <p class="lede">
+      4k7 is an AI-first schematic and layout tool. There is no pencil and no wire tool.
+      You say what you want, an agent designs it, you review every change — and out come the Gerbers.
+    </p>
+
+    <div class="install" id="install">
+      <span><span class="prompt">$</span> npx 4k7pcb</span>
+      <button type="button" onclick="copyCmd(this)">Copy</button>
+    </div>
+    <p class="sub">Runs on your machine, in your browser. Nothing to install but Node.</p>
+
+    <ul class="facts">
+      <li><i style="background:var(--yellow)"></i><b>MIT licensed</b><span>open source, yours to fork</span></li>
+      <li><i style="background:var(--violet)"></i><b>Bring your own AI</b><span>any model, or Claude Code over MCP</span></li>
+      <li><i style="background:var(--red)"></i><b>Complexity-free</b><span>no toolbars to learn, just say it</span></li>
+    </ul>
+
+  </section>
+
+  <section id="how">
+    <h2 style="--band:var(--yellow)">How it works</h2>
+    <p class="section-title">Four steps, no drawing.</p>
+    <div class="flow">
+      <div class="step" style="--band:var(--yellow)">
+        <h3>Say it</h3>
+        <p><code>12 V to 3.3 V buck, 2 A. Put C1 left of U1.</code> Hints are welcome, wires are not needed.</p>
+      </div>
+      <div class="step" style="--band:var(--violet)">
+        <h3>The agent designs</h3>
+        <p>Your model of choice works through a typed operation API. A deterministic kernel turns intent into geometry.</p>
+      </div>
+      <div class="step" style="--band:var(--red)">
+        <h3>You review</h3>
+        <p>Every change is a checked, reviewable changeset. ERC and DRC run before you see it. Accept, reject, or ask again.</p>
+      </div>
+      <div class="step" style="--band:var(--gold)">
+        <h3>Get the board</h3>
+        <p>Auto-placed, auto-routed, ground pour, 2D and 3D, exported as Gerber, drill, BOM and pick-and-place.</p>
+      </div>
+    </div>
+
+    <div class="sample" aria-label="Example of a reviewed change">
+      <div class="bar"><i></i><i></i><i></i></div>
+      <div class="msg"><span class="who">you</span><p>Add a USB-C port for power and pull CC1/CC2 down with 5k1.</p></div>
+      <div class="msg"><span class="who">agent</span>
+        <div>
+          <p style="margin-bottom:8px">Added J1 and the two CC pull-downs. Checked: no new ERC warnings.</p>
+          <div class="change"><span class="k add">+</span><span>J1 USB-C receptacle, 16 pin</span><span class="ok">✓</span></div>
+          <div class="change"><span class="k add">+</span><span>R3 5k1 CC1 → GND</span><span class="ok">✓</span></div>
+          <div class="change"><span class="k add">+</span><span>R4 5k1 CC2 → GND</span><span class="ok">✓</span></div>
+          <div class="change"><span class="k mod">~</span><span>VBUS net: J1.VBUS joined</span><span class="ok">✓</span></div>
+          <div class="accept"><span>Accept 4</span><span>Reject</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="why">
+    <h2 style="--band:var(--violet)">Why 4k7</h2>
+    <p class="section-title">Built for agent workflows, not for clicking.</p>
+    <div class="grid">
+      <div class="card" style="--band:var(--yellow)">
+        <span class="tag"></span>
+        <h3>Correct by construction</h3>
+        <p>Every AI change is a transaction: validated, ERC/DRC-checked, shown as a diff. Nothing lands unchecked.</p>
+      </div>
+      <div class="card" style="--band:var(--violet)">
+        <span class="tag"></span>
+        <h3>Bring your own AI, over MCP</h3>
+        <p>Anthropic, OpenAI-compatible, Gemini or local models. 4k7 is an MCP server, so any agent can drive it.</p>
+      </div>
+      <div class="card" style="--band:var(--red)">
+        <span class="tag"></span>
+        <h3>Parts that are real</h3>
+        <p>Drop a datasheet PDF and get symbol and footprint. Source from JLCPCB on demand, LCSC numbers in the BOM.</p>
+      </div>
+      <div class="card" style="--band:var(--gold)">
+        <span class="tag"></span>
+        <h3>Intuitive, free of clutter</h3>
+        <p>No toolbars to learn. Chat, canvas and a review of each change; the design owns the screen. Runs locally, keys stay with you. MIT licensed.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div>
+      <span class="bands-mini"><i style="background:var(--yellow)"></i><i style="background:var(--violet)"></i><i style="background:var(--red)"></i><i style="background:var(--gold)"></i></span>
+      4k7 · MIT licensed.
+    </div>
+    <div>
+      <a href="https://github.com/hoihu/4k7">GitHub</a>
+      <a href="https://www.npmjs.com/package/4k7pcb">npm</a>
+    </div>
+  </footer>
+</div>
+
+<script>
+  function copyCmd(btn) {
+    navigator.clipboard.writeText('npx 4k7pcb').then(() => {
+      btn.textContent = 'Copied'; btn.classList.add('done');
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1600);
+    });
+  }
+</script>
+</body>
+</html>
