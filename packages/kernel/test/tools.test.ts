@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { bridgeTools, toolDefinitions } from '@tracewise/schema';
+import { agentTools } from '@tracewise/schema';
 
 describe('tool schemas', () => {
-  const all = [...toolDefinitions(), ...bridgeTools()];
+  const all = [...agentTools('app'), ...agentTools('cli')];
 
   it.each(all.map((t) => [t.name, t] as const))('%s has a plain object input schema (Anthropic + MCP requirement)', (_n, t) => {
     expect(t.input_schema.type).toBe('object');
@@ -12,7 +12,7 @@ describe('tool schemas', () => {
   });
 
   it('flattens the query union into an op enum', () => {
-    const q = toolDefinitions().find((t) => t.name === 'design_query')!.input_schema as {
+    const q = agentTools('app').find((t) => t.name === 'design_query')!.input_schema as {
       properties: Record<string, { enum?: string[] }>;
       required: string[];
     };

@@ -3,6 +3,7 @@
  * the catalogue the Inspector's "Find on JLCPCB" uses. The browser calls the catalogue directly;
  * answers are kept for a few minutes so the Inspector and the agent do not ask twice.
  */
+import type { ToolOutcome } from '@tracewise/agent';
 import { JlcSearchInput } from '@tracewise/schema';
 import { describeJlcPart, tscircuitSource, type JlcPart, type JlcQuery, type JlcSource } from '@tracewise/parts';
 
@@ -29,13 +30,6 @@ export const jlc: JlcSource = {
   search: (q: JlcQuery) => memo(`s:${JSON.stringify(q)}`, () => source.search(q)),
   lookup: (lcsc: string) => memo(`l:${lcsc.trim().toUpperCase()}`, () => source.lookup(lcsc)),
 };
-
-export interface ToolOutcome {
-  content: string;
-  isError: boolean;
-  label: string;
-  detail: string;
-}
 
 /** The jlc_search tool: text or parametric search, or one part by LCSC number. */
 export async function jlcTool(input: unknown): Promise<ToolOutcome> {

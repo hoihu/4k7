@@ -138,7 +138,15 @@ function toApi(messages: Message[]): Anthropic.Beta.BetaMessageParam[] {
     const content: Anthropic.Beta.BetaContentBlockParam[] = [];
     for (const b of m.content) {
       if (b.type === 'text') content.push({ type: 'text', text: b.text });
-      else if (b.type === 'tool_result') content.push({ type: 'tool_result', tool_use_id: b.tool_use_id, content: b.content, ...(b.is_error ? { is_error: true } : {}) });
+      else if (b.type === 'tool_result') {
+        const body = b.images?.length
+          ? [
+              { type: 'text' as const, text: b.content },
+              ...b.images.map((i) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: i.mimeType as 'image/png' | 'image/jpeg', data: i.data } })),
+            ]
+          : b.content;
+        content.push({ type: 'tool_result', tool_use_id: b.tool_use_id, content: body, ...(b.is_error ? { is_error: true } : {}) });
+      }
       else if (b.type === 'tool_use') content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input as Record<string, unknown> });
     }
     return { role: m.role, content };

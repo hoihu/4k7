@@ -88,6 +88,9 @@ describe('app chat via Claude Code', () => {
     const flags = JSON.parse(reply.slice(reply.indexOf('flags=') + 6));
     expect(flags).toMatchObject({ tools: '', strict: true, allowed: 'mcp__tracewise', permission: 'dontAsk', model: 'sonnet', prompt: 'build a buck' });
     expect(flags.appended).toMatch(/^You are answering messages typed into/);
+    // the chat prompt travels once, in the system prompt; the server instructions only point there
+    expect(flags.instructionsLength).toBeGreaterThan(0);
+    expect(flags.instructionsLength).toBeLessThan(100);
   });
 
   it('counts the tokens of every model call and sends the totals (live and with the end)', async () => {

@@ -3,10 +3,9 @@
  * finish a turn while the design has open errors (within a fix budget).
  * See docs/design/ai-loop.md.
  */
-import { AskUser, CalcCall, TOOL_NAMES, toolDefinitions, type ScopeInfo } from '@tracewise/schema';
-import { CalcError, runCalc } from './calc.ts';
-import { compactTx, describeTx } from './format.ts';
+import { AskUser, TOOL_NAMES, agentTools, type ScopeInfo } from '@tracewise/schema';
 import { SYSTEM_PROMPT, formatDesignContext, formatVerification } from './prompt.ts';
+import { runKernelTool, unknownTool, type ToolExecutor, type ToolOutcome } from './tools.ts';
 import type { AgentEvent, Block, KernelPort, Message, Provider } from './types.ts';
 
 export interface AgentOptions {
@@ -16,11 +15,9 @@ export interface AgentOptions {
   maxSteps?: number;
   /** Verification rounds before giving up and reporting remaining errors. */
   fixBudget?: number;
-  /** Tools the app provides beyond the kernel ones (jlc_search), by tool name. */
-  tools?: Record<string, ToolHandler>;
+  /** Runs the tools (the app's executor, shared with the bridge). Default: the kernel tools only. */
+  exec?: ToolExecutor;
 }
-
-export type ToolHandler = (input: unknown) => Promise<{ content: string; isError: boolean; label: string; detail: string }>;
 
 interface PendingQuestion {
   askId: string;
@@ -32,7 +29,7 @@ const MAX_RESULT_CHARS = 16000;
 export class Agent {
   readonly messages: Message[] = [];
   private pending: PendingQuestion | null = null;
-  private readonly tools = toolDefinitions();
+  private readonly tools = agentTools('app');
 
   constructor(private opts: AgentOptions) {}
 
@@ -125,7 +122,7 @@ export class Agent {
           }
           const r = await this.execTool(u.name, u.input);
           emit({ type: 'tool', id: u.id, name: u.name, label: r.label, ok: !r.isError, detail: r.detail });
-          results.push({ type: 'tool_result', tool_use_id: u.id, content: truncate(r.content), ...(r.isError ? { is_error: true } : {}) });
+          results.push({ type: 'tool_result', tool_use_id: u.id, content: truncate(r.content), ...(r.images?.length ? { images: r.images } : {}), ...(r.isError ? { is_error: true } : {}) });
         }
         if (question) {
           this.pending = { askId: question.id, otherResults: results };
@@ -171,46 +168,15 @@ export class Agent {
     this.messages.push({ role: 'user', content: uses.map((u) => ({ type: 'tool_result', tool_use_id: u.id, content: reason, is_error: true })) });
   }
 
-  private async execTool(name: string, input: unknown): Promise<{ content: string; isError: boolean; label: string; detail: string }> {
-    const { kernel } = this.opts;
+  private async execTool(name: string, input: unknown): Promise<ToolOutcome> {
+    const { exec, kernel } = this.opts;
     try {
-      switch (name) {
-        case TOOL_NAMES.query: {
-          const out = await kernel.query(input);
-          const op = (input as { op?: string })?.op ?? '?';
-          const isError = !!(out && typeof out === 'object' && 'error' in out);
-          return { content: JSON.stringify(out), isError, label: `query · ${op}`, detail: summariseQuery(input, out) };
-        }
-        case TOOL_NAMES.edit: {
-          const r = await kernel.transact(input);
-          const tx = input as { summary?: string; ops?: unknown[]; dry_run?: boolean };
-          const label = `${tx.dry_run ? 'dry-run' : 'edit'} · ${tx.ops?.length ?? 0} ops · ${tx.summary ?? ''}`;
-          return { content: JSON.stringify(compactTx(r)), isError: r.status !== 'ok', label, detail: describeTx(r) };
-        }
-        case TOOL_NAMES.calc: {
-          const parsed = CalcCall.safeParse(input);
-          if (!parsed.success) return { content: `Invalid calc input: ${parsed.error.message}`, isError: true, label: 'calc', detail: 'invalid input' };
-          const out = runCalc(parsed.data, (await kernel.snapshot()).summary.valueSeries);
-          return { content: JSON.stringify(out), isError: false, label: `calc · ${parsed.data.fn}`, detail: Object.entries(out).filter(([k]) => k !== 'note').map(([k, v]) => `${k}=${v}`).join(', ') };
-        }
-        default: {
-          const extra = this.opts.tools?.[name];
-          if (extra) return await extra(input);
-          return { content: `Unknown tool ${name}`, isError: true, label: name, detail: 'unknown tool' };
-        }
-      }
+      return exec ? await exec(name, input) : ((await runKernelTool(kernel, name, input)) ?? unknownTool(name));
     } catch (e) {
-      const msg = e instanceof CalcError ? e.message : errorMessage(e);
+      const msg = errorMessage(e);
       return { content: `Tool failed: ${msg}`, isError: true, label: name, detail: msg };
     }
   }
-}
-
-function summariseQuery(input: unknown, out: unknown): string {
-  if (Array.isArray(out)) return `${out.length} result(s)`;
-  if (out && typeof out === 'object' && 'error' in out) return String((out as { error: unknown }).error);
-  const op = (input as { op?: string })?.op;
-  return op === 'get_summary' ? 'design summary' : 'ok';
 }
 
 function truncate(s: string): string {

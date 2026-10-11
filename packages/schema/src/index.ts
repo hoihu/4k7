@@ -4,6 +4,7 @@ export * from './ops.ts';
 export * from './results.ts';
 export * from './units.ts';
 export * from './tools.ts';
+export * from './guide.ts';
 export * from './bridge.ts';
 export * from './ingest.ts';
 export * from './board.ts';
