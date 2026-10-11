@@ -1,0 +1,13 @@
+// Cloudflare Workers config for 4k7.dev: a static-assets Worker that serves this folder.
+// Deployed by Cloudflare Workers Builds on every push to main (root directory: site), or by hand
+// with `npx wrangler deploy` from this folder. See README.md.
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "4k7",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash"
+  }
+}
