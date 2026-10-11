@@ -43,8 +43,8 @@ export const SetParamOp = z.object({
 export const RenameOp = z.object({
   op: z.literal('rename'),
   ref: componentRef,
-  refdes: z.string().regex(/^[A-Z]+[0-9]+$/),
-});
+  refdes: z.string().regex(/^[A-Z]+[0-9]+$/).describe('New reference designator, e.g. "U2". Connections, constraints, description blocks and waivers follow the part.'),
+}).describe('Change a component\'s reference designator. Ops apply in order, so swap two names through a free one: U1→U99, U2→U1, U99→U2.');
 
 export const ConnectOp = z.object({
   op: z.literal('connect'),

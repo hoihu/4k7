@@ -163,6 +163,9 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     const b = draft.waivers[id];
     if (!a && b) hunks.push({ id: `waiver:${id}`, kind: 'waiver', change: 'add', entityId: id, title: `waive ${b.code}`, details: [b.entities.join(', '), b.reason] });
     if (a && !b) hunks.push({ id: `waiver:${id}`, kind: 'waiver', change: 'remove', entityId: id, title: `waive ${a.code}`, details: [] });
+    if (a && b && a.entities.join(',') !== b.entities.join(',')) {
+      hunks.push({ id: `waiver:${id}`, kind: 'waiver', change: 'change', entityId: id, title: `waive ${b.code}`, details: [`${a.entities.join(', ')} → ${b.entities.join(', ')}`] });
+    }
   }
   for (const id of Object.keys(draft.sheets)) {
     if (!base.sheets[id]) hunks.push({ id: `sheet:${id}`, kind: 'sheet', change: 'add', entityId: id, title: `sheet ${draft.sheets[id]!.name}`, details: [] });

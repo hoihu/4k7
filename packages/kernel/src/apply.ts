@@ -937,9 +937,20 @@ export function sameValue(a: string, b: string): boolean {
 function rename(d: Design, ref: string, refdes: string): OpResult {
   const c = resolveComponent(d, ref);
   const other = findComponent(d, refdes);
-  if (other && other.id !== c.id) reject({ code: 'REFDES_TAKEN', message: `${refdes} already exists.` });
+  if (other && other.id !== c.id) {
+    const free = allocRefdes(d, refdes.replace(/\d+$/, ''));
+    reject({
+      code: 'REFDES_TAKEN',
+      message: `${refdes} already exists. To swap ${c.refdes} and ${refdes}, rename one through a free name first (${refdes} → ${free}, ${c.refdes} → ${refdes}, ${free} → ${c.refdes}).`,
+      candidates: [free],
+    });
+  }
   const old = c.refdes;
   c.refdes = refdes;
+  // waivers name entities by refdes ("U1", "U1.EN"); keep them on the renamed part
+  for (const w of Object.values(d.waivers)) {
+    w.entities = w.entities.map((e) => (e === old ? refdes : e.startsWith(`${old}.`) ? refdes + e.slice(old.length) : e));
+  }
   return { op: 'rename', effect: `renamed ${old} → ${refdes}`, ids: [c.id] };
 }
 
