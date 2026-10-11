@@ -4,7 +4,6 @@
   import Field from './Field.svelte';
   import Section from './Section.svelte';
 
-  let pairCode = $state(app.settings.bridgeCode);
   let copied = $state(false);
   const mcpCommand = `claude mcp add --scope user tracewise -- ${__BRIDGE_MCP__}`;
   const bridgeRun = __BRIDGE_RUN__;
@@ -20,20 +19,17 @@
     }
   }
 
-  async function pair() {
-    if (!/^\d{6}$/.test(pairCode.trim())) {
-      bridge.error = 'The pairing code has 6 digits.';
-      return;
-    }
-    if (await bridge.connect(pairCode)) app.flash(`Connected to ${bridge.agent ?? 'the bridge'}`);
+  async function reconnect() {
+    if (await bridge.connect(app.settings.bridgeToken, { preferPort: app.settings.bridgePort })) app.flash(`Connected to ${bridge.agent ?? 'the bridge'}`);
   }
 
-  function unpair() {
+  /** Forgets the access key too: this tab connects again only when opened with the bridge's link. */
+  function disconnect() {
     bridge.disconnect();
-    void app.updateSettings({ bridgeCode: '', bridgePort: null });
+    void app.updateSettings({ bridgeToken: '', bridgePort: null });
   }
 
-  const paired = $derived(bridge.status === 'connected' || bridge.status === 'waiting');
+  const linked = $derived(bridge.status === 'connected' || bridge.status === 'waiting');
 </script>
 
 <Section id="bridge" title="Local bridge">
@@ -45,14 +41,14 @@
     {:else}<span class="tag">off</span>{/if}
   {/snippet}
 
-  <Field label="Pairing code">
+  <Field label="Connection">
     {#snippet hint()}
-      Opening the pairing link the bridge prints pairs this tab by itself. The code is also in <code>~/.tracewise/bridge.json</code>.
+      The app's address (<code>http://localhost:7777/…</code>) carries the bridge's access key. Opening the link the bridge prints connects this tab.
     {/snippet}
     <div class="row">
-      <input class="text mono code" bind:value={pairCode} inputmode="numeric" maxlength="6" placeholder="123456" aria-label="Pairing code" />
-      <button class="btn pri" onclick={pair} disabled={bridge.status === 'connecting'}>Connect</button>
-      {#if paired}<button class="btn" onclick={unpair}>Disconnect</button>{/if}
+      {#if linked}<button class="btn" onclick={disconnect}>Disconnect</button>
+      {:else if app.settings.bridgeToken && bridge.status === 'off'}<button class="btn pri" onclick={reconnect}>Connect</button>
+      {:else if !app.settings.bridgeToken}<span class="muted">Not connected. Open the link the bridge prints.</span>{/if}
     </div>
     {#if bridge.error}<div class="err">{bridge.error}</div>{/if}
   </Field>
@@ -66,7 +62,7 @@
     <div class="ways">
       <div class="way">
         <b>Chat in this app</b>
-        <p>Start the bridge in a terminal and open the pairing link it prints. Then choose <a href="#provider">Claude Code</a> as chat provider.</p>
+        <p>Start the bridge in a terminal and open the link it prints. Then choose <a href="#provider">Claude Code</a> as chat provider.</p>
         <div class="cmd"><code>{bridgeRun}</code></div>
         {#if where}<p class="muted">Run it in this repository.</p>{/if}
       </div>
@@ -78,7 +74,7 @@
           <p>Register the <b>tracewise</b> MCP server once:</p>
         {/if}
         <div class="cmd"><code>{mcpCommand}</code><button class="ib" onclick={copyCommand}>{copied ? 'copied' : 'copy'}</button></div>
-        <p>Then ask Claude to <i>“connect to Tracewise”</i>. It gives you the pairing link; opening it pairs this tab.</p>
+        <p>Then ask Claude to <i>“connect to Tracewise”</i>. It gives you the app's link; opening it connects this tab.</p>
       </div>
     </div>
     <p class="note">The tab reconnects by itself when the bridge or Claude Code restarts.</p>
@@ -87,7 +83,6 @@
 
 <style>
   .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .code { width: 90px; letter-spacing: .15em; }
   .err { color: var(--err); margin-top: 6px; font-size: 12px; }
   .how { padding: 8px 10px 10px; font-size: 12.5px; border-top: 1px solid var(--line); }
   .how summary { cursor: pointer; color: var(--txt-3); }

@@ -2,7 +2,8 @@
 /**
  * tracewise-bridge: connects the Tracewise app in the browser to Claude Code.
  *
- * Either way it serves the built app on its port (http://localhost:7777) and pairs the tab with it.
+ * Either way it serves the built app on its port, at http://localhost:7777/<token>: the token (the
+ * access key, kept in ~/.tracewise/bridge.json) is what lets the tab connect to the bridge.
  *
  * Two ways to use it:
  *   1. You type in the app's chat and your local Claude Code answers:
@@ -26,9 +27,9 @@ import { appDir, configDir, configPath, DEV_APP, inCheckout, loadConfig } from '
 import { createMcpServer, mcpHttpHandler, VERSION } from './mcp.ts';
 
 const serve = process.argv.includes('--serve');
-/** Open the pairing link in the browser (what `npx tracewise` does). */
+/** Open the app link in the browser (what `npx tracewise` does). */
 const open = process.argv.includes('--open');
-/** Logs go to stderr and to ~/.tracewise/bridge.log (kept small), which helps diagnose pairing issues. */
+/** Logs go to stderr and to ~/.tracewise/bridge.log (kept small), which helps diagnose connection issues. */
 const log = (msg: string) => {
   process.stderr.write(`[tracewise-bridge] ${msg}\n`);
   try {
@@ -42,7 +43,7 @@ const log = (msg: string) => {
 
 async function main() {
   const cfg = loadConfig();
-  const bridge = new Bridge({ code: cfg.code, log });
+  const bridge = new Bridge({ token: cfg.token, log, ...(inCheckout() ? { devPorts: [Number(new URL(DEV_APP).port)] } : {}) });
   const port = await bridge.start();
   const dir = appDir();
 
@@ -52,11 +53,11 @@ async function main() {
   const chat = new ChatRunner({ bridge, claudeBin, workDir: join(configDir(), 'claude-workspace'), ingestDir: join(configDir(), 'ingest'), profile: cfg.claude, log });
   bridge.setChatHandler(chat.handle, capability);
   const mcp = mcpHttpHandler(bridge, (t) => chat.modeFor(t));
-  const app = appHandler(dir, VERSION);
+  const app = appHandler(dir, VERSION, cfg.token);
   bridge.setHttpHandler((req, res) => ((req.url ?? '').split('?')[0] === '/mcp' ? mcp(req, res) : app(req, res)));
   bridge.setAppUrl(await appUrl(cfg.appUrl, port, dir));
 
-  log(`v${VERSION} on 127.0.0.1:${port} · pairing code ${cfg.code} (${configPath()})`);
+  log(`v${VERSION} on 127.0.0.1:${port} · access key in ${configPath()}`);
   log(`app chat via Claude Code: ${capability.available ? `yes (${capability.version})` : `no, ${capability.reason}`}`);
   const p = cfg.claude;
   if (p.configDir || p.unsetEnv.length) {
@@ -67,8 +68,8 @@ async function main() {
 
   let server: ReturnType<typeof createMcpServer> | null = null;
   if (serve) {
-    log(`${open ? 'opening' : 'open'} ${bridge.pairingLink()} to pair the app (Ctrl-C to stop)`);
-    if (open) openBrowser(bridge.pairingLink());
+    log(`${open ? 'opening' : 'open'} ${bridge.appLink()} (Ctrl-C to stop)`);
+    if (open) openBrowser(bridge.appLink());
   } else {
     server = createMcpServer(bridge);
     await server.connect(new StdioServerTransport());
@@ -89,7 +90,7 @@ async function main() {
 }
 
 /**
- * Where pairing links point. Projects live in the browser's storage per origin (host and port), so
+ * Where app links point. Projects live in the browser's storage per origin (host and port), so
  * the app should always open at the same address: http://localhost:7777, served by this bridge or
  * by another one that started first. A checkout's dev server (npm run dev) takes precedence there.
  */
@@ -101,7 +102,7 @@ async function appUrl(configured: string | undefined, port: number, dir: string 
     if (await servesTracewise(home)) return `http://localhost:${home}`;
     log(`note: port ${home} is used by another program, so the app opens at http://localhost:${port}; designs saved at another address do not show there`);
   }
-  if (!dir) log('note: the app is not built (run npm run build); pairing links will not load until it is');
+  if (!dir) log('note: the app is not built (run npm run build); the app link will not load until it is');
   return undefined;
 }
 

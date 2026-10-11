@@ -254,8 +254,8 @@ export interface Settings {
   mode: Mode;
   fixBudget: number;
   theme: 'system' | 'light' | 'dark';
-  /** Local bridge pairing, remembered so the tab reconnects by itself. */
-  bridgeCode: string;
+  /** The local bridge's access key and port, remembered so the tab reconnects by itself. */
+  bridgeToken: string;
   bridgePort: number | null;
   /** Model alias for Claude Code in the app chat ('' = Claude Code's default). */
   claudeModel: string;
@@ -270,7 +270,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mode: 'review',
   fixBudget: 5,
   theme: 'dark',
-  bridgeCode: '',
+  bridgeToken: '',
   bridgePort: null,
   claudeModel: '',
   claudeWeb: false,
@@ -282,7 +282,8 @@ const SETTINGS_VERSION = 2;
 export async function loadSettings(): Promise<Settings> {
   try {
     const saved = (await get<Partial<Settings> & { version?: number }>('settings', 'settings')) ?? {};
-    const merged = { ...DEFAULT_SETTINGS, ...saved };
+    const { bridgeCode: _pairingCode, ...rest } = saved as typeof saved & { bridgeCode?: string }; // 6-digit code of older versions
+    const merged = { ...DEFAULT_SETTINGS, ...rest };
     // v1 stored theme "system" without the user ever choosing it
     if ((saved.version ?? 1) < 2 && saved.theme === 'system') merged.theme = DEFAULT_SETTINGS.theme;
     return merged;

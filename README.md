@@ -41,15 +41,15 @@ npx -y github:hoihu/tracewise          # builds once, then serves the app at htt
 npm install -g github:hoihu/tracewise  # or install it: `tracewise` (add --no-open to skip the browser)
 ```
 
-It runs the app and the local bridge in one process: the page is already paired, and the chat is answered by your
+It runs the app and the local bridge in one process: the page it opens is already connected, and the chat is answered by your
 Claude Code if `claude` is installed (see below). Designs are kept by the browser for `http://localhost:7777`, so the app
-always opens at that address. Nothing is published to the npm registry; see [docs/distribution.md](docs/distribution.md).
+always opens at that address (with an access key in the path: `http://localhost:7777/<token>`). Nothing is published to the npm registry; see [docs/distribution.md](docs/distribution.md).
 
 From a checkout:
 
 ```sh
 npm install
-npm run dev        # http://localhost:5173 with hot reload, plus the bridge (prints a pairing link)
+npm run dev        # http://localhost:5173 with hot reload, plus the bridge (prints the app's link)
 npm test           # kernel + agent tests (vitest)
 npm run typecheck  # tsc + svelte-check
 npm run build      # static build in apps/web/dist
@@ -68,7 +68,7 @@ The local bridge (`tools/bridge`) connects the app to the Claude Code on your co
 `npm run dev` runs the dev server and the bridge together (the bridge restarts itself when its code changes;
 `npm run dev:web` and `npm run bridge` run them one at a time).
 
-Open the pairing link, then choose **Settings → AI provider → Claude Code on this computer**. Messages you type in
+Open the link the bridge prints, then choose **Settings → AI provider → Claude Code on this computer**. Messages you type in
 the app's chat are answered by `claude -p` running headlessly with **only** the Tracewise tools (no shell, files or web),
 connected back to the bridge through a token-protected MCP endpoint. Follow-up messages continue the same session.
 To let it look up datasheets, enable **Settings → Web** (adds read-only WebSearch/WebFetch; still no shell or files).
@@ -77,7 +77,7 @@ To let it look up datasheets, enable **Settings → Web** (adds read-only WebSea
 `.mcp.json` (or register it for every folder with
 `claude mcp add --scope user tracewise -- npx -y github:hoihu/tracewise mcp`, or with
 `node /absolute/path/to/this/repo/tools/bridge/src/main.ts` for a checkout). Ask Claude to
-*“connect to Tracewise”* and open the pairing link it gives you.
+*“connect to Tracewise”* and open the link it gives you.
 
 Either way Claude works through `get_context`, `design_query`, `design_edit`, `calc`, `get_schematic_image` and `propose`
 (the CLI also gets `wait_for_review`), and its changes arrive as a changeset for you to review. `propose` is refused
@@ -99,8 +99,9 @@ shell routes Claude Code to Bedrock/Vertex or a different login (e.g. an alias l
 
 The bridge logs the profile it uses at startup (`TRACEWISE_CLAUDE_CONFIG_DIR` / `TRACEWISE_CLAUDE_UNSET` override it).
 
-The pairing code lives in `~/.tracewise/bridge.json`, so you pair once. The bridge binds to `127.0.0.1`, only accepts
-pages served from localhost, and needs the pairing code before anything is forwarded. Set `TRACEWISE_APP_URL` if pairing
+The access key in the app's address lives in `~/.tracewise/bridge.json` (`"token"`), so the address stays the same and
+a tab reconnects by itself. The bridge binds to `127.0.0.1`, serves the page only at that address, only accepts the
+app's own pages and needs the key before anything is forwarded. Set `TRACEWISE_APP_URL` if app
 links should point elsewhere and `TRACEWISE_CLAUDE_BIN` if `claude` is not on your PATH.
 
 ## Repository layout
@@ -113,7 +114,7 @@ links should point elsewhere and `TRACEWISE_CLAUDE_BIN` if `claude` is not on yo
 | `packages/fab` | Gerber X2, Excellon drill, BOM, pick-and-place, zip |
 | `packages/agent` | Agent loop with kernel verification, calculators, Anthropic + offline providers |
 | `apps/web` | Svelte 5 app: schematic workspace (chat + canvas + inspector), parts, settings. The kernel runs in a Web Worker |
-| `tools/bridge` | Local relay to Claude Code: serves the built app, MCP over stdio (CLI drives the app) or headless `claude -p` for the app chat, WebSocket to the tab, pairing and origin checks. Bundled with the app into the `tracewise` package (`scripts/package.mjs`) |
+| `tools/bridge` | Local relay to Claude Code: serves the built app, MCP over stdio (CLI drives the app) or headless `claude -p` for the app chat, WebSocket to the tab, access key and origin checks. Bundled with the app into the `tracewise` package (`scripts/package.mjs`) |
 
 ## Status
 

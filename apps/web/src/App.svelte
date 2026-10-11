@@ -31,7 +31,6 @@
   onMount(() => {
     void app.init();
     const fromHash = () => {
-      if (location.hash.startsWith('#pair=')) return; // handled by app.init
       const h = location.hash.slice(1) as View;
       if (['sch', 'lay', 'parts', 'set'].includes(h)) app.view = h;
     };
@@ -69,7 +68,7 @@
   });
 
   $effect(() => {
-    if (location.hash.slice(1) !== app.view && !location.hash.startsWith('#pair=')) history.replaceState(null, '', `#${app.view}`);
+    if (location.hash.slice(1) !== app.view) history.replaceState(null, '', `#${app.view}`);
   });
 
   const views: { id: View; label: string }[] = [

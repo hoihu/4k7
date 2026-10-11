@@ -1,15 +1,17 @@
 /**
- * The relay core: an HTTP + WebSocket server on 127.0.0.1. One paired browser tab connects over
+ * The relay core: an HTTP + WebSocket server on 127.0.0.1. One browser tab of the app connects over
  * the WebSocket; tool calls (from stdio MCP or the HTTP /mcp endpoint) are forwarded to the tab,
  * which executes them against its kernel. Chat messages from the tab go to a chat handler.
  *
  * It also serves the built app itself, so the page and the bridge share an origin on this computer.
  *
- * Security: binds to loopback only, accepts only local http(s) origins on the WebSocket (so
- * arbitrary websites cannot connect), and requires the pairing code before anything is forwarded.
+ * Security: binds to loopback only, accepts WebSocket connections only from the app's own pages
+ * (localhost on the bridge ports, the app's address, the dev server), and requires the access key
+ * (token) from the app's address before anything is forwarded.
  */
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { tokenMatches } from './mcp.ts';
 import {
   BRIDGE_PORTS,
   BRIDGE_PROTOCOL,
@@ -25,12 +27,14 @@ export interface CallResult {
 }
 
 export interface BridgeOptions {
-  code: string;
+  token: string;
   ports?: readonly number[];
   host?: string;
   callTimeoutMs?: number;
-  /** Where the app runs, for the one-click pairing link; default: the app this bridge serves. */
+  /** Where the app runs, for the app link; default: the app this bridge serves. */
   appUrl?: string;
+  /** More localhost ports whose pages may connect (the dev server of a checkout). */
+  devPorts?: readonly number[];
   log?: (msg: string) => void;
 }
 
@@ -42,10 +46,10 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>;
 }
 
-const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::(\d+))?$/;
 
 export class Bridge {
-  readonly code: string;
+  readonly token: string;
   #opts: BridgeOptions;
   #http: HttpServer | null = null;
   #wss: WebSocketServer | null = null;
@@ -60,7 +64,7 @@ export class Bridge {
 
   constructor(opts: BridgeOptions) {
     this.#opts = opts;
-    this.code = opts.code;
+    this.token = opts.token;
   }
 
   get connected(): boolean {
@@ -94,7 +98,7 @@ export class Bridge {
     this.#httpHandler = h;
   }
 
-  /** Receive chat messages from the paired tab. */
+  /** Receive chat messages from the connected tab. */
   setChatHandler(h: (msg: ChatMessage) => void, capability: ChatCapability) {
     this.#chatHandler = h;
     this.#chat = capability;
@@ -104,7 +108,7 @@ export class Bridge {
     return this.#chat;
   }
 
-  /** Send a message to the paired tab (no-op when none is connected). */
+  /** Send a message to the connected tab (no-op when none is connected). */
   sendToTab(msg: BridgeToTab) {
     this.#send(msg);
   }
@@ -137,18 +141,32 @@ export class Bridge {
     this.#send({ type: 'agent', name });
   }
 
-  /** Point pairing links at another address of the app (the dev server, or another bridge's port). */
+  /** Point app links at another address of the app (the dev server, or another bridge's port). */
   setAppUrl(url: string | undefined) {
     this.#opts.appUrl = url;
   }
 
-  /** Opens the app and pairs it with this bridge (the port makes the tab try this one first). */
-  pairingLink(): string {
-    return `${(this.#opts.appUrl ?? `http://localhost:${this.port}`).replace(/\/$/, '')}/#pair=${this.code}@${this.port}`;
+  /**
+   * Opens the app connected to this bridge: the token in the path is the access key. When the app is
+   * served elsewhere (another bridge, the dev server), `?bridge=` makes the tab try this port first.
+   */
+  appLink(): string {
+    const base = (this.#opts.appUrl ?? `http://localhost:${this.port}`).replace(/\/$/, '');
+    const elsewhere = new URL(base).port !== String(this.port);
+    return `${base}/${this.token}${elsewhere ? `?bridge=${this.port}` : ''}`;
+  }
+
+  /** Pages of the app: localhost on the bridge ports, on the app's address or on the dev server. */
+  #allowedOrigin(origin: string): boolean {
+    const m = LOCAL_ORIGIN.exec(origin);
+    if (!m) return false;
+    const port = Number(m[2] ?? (origin.startsWith('https:') ? 443 : 80));
+    const app = this.#opts.appUrl ? Number(new URL(this.#opts.appUrl).port || 80) : null;
+    return port === this.port || port === app || (BRIDGE_PORTS as readonly number[]).includes(port) || !!this.#opts.devPorts?.includes(port);
   }
 
   status() {
-    return { port: this.port, connected: this.connected, code: this.code, agent: this.#agent };
+    return { port: this.port, connected: this.connected, agent: this.#agent };
   }
 
   /** Forward a tool call to the tab and wait for its result. */
@@ -156,9 +174,7 @@ export class Bridge {
     if (!this.#tab) {
       return Promise.resolve(
         errorResult(
-          `The Tracewise app is not connected to this bridge. Give the user this link to open (it pairs the app in one click): ` +
-            `${this.pairingLink()}\n` +
-            `Alternatively they can enter pairing code ${this.code} under Settings → Local bridge in the app (bridge on port ${this.port}).`,
+          `The Tracewise app is not connected to this bridge. Give the user this link to open (it connects the app): ${this.appLink()}`,
         ),
       );
     }
@@ -181,13 +197,13 @@ export class Bridge {
 
   #onConnection(ws: WebSocket, req: IncomingMessage) {
     const origin = req.headers.origin ?? '';
-    if (!LOCAL_ORIGIN.test(origin)) {
+    if (!this.#allowedOrigin(origin)) {
       this.#log(`rejected connection from origin "${origin}"`);
       ws.close(1008, 'origin not allowed');
       return;
     }
-    let paired = false;
-    const helloTimer = setTimeout(() => !paired && ws.close(1008, 'no hello'), 5000);
+    let accepted = false;
+    const helloTimer = setTimeout(() => !accepted && ws.close(1008, 'no hello'), 5000);
 
     ws.on('message', (raw) => {
       let msg: TabToBridge;
@@ -196,7 +212,7 @@ export class Bridge {
       } catch {
         return;
       }
-      if (!paired) {
+      if (!accepted) {
         if (msg.type !== 'hello') return;
         clearTimeout(helloTimer);
         if (msg.protocol !== BRIDGE_PROTOCOL) {
@@ -204,19 +220,19 @@ export class Bridge {
           ws.close(1008, 'protocol');
           return;
         }
-        if (msg.code !== this.code) {
-          ws.send(JSON.stringify({ type: 'denied', reason: 'wrong pairing code' } satisfies BridgeToTab));
-          ws.close(1008, 'wrong code');
-          this.#log('rejected tab: wrong pairing code');
+        if (typeof msg.token !== 'string' || !tokenMatches(msg.token, this.token)) {
+          ws.send(JSON.stringify({ type: 'denied', reason: 'wrong access key' } satisfies BridgeToTab));
+          ws.close(1008, 'wrong token');
+          this.#log(`rejected tab: wrong access key (origin ${origin})`);
           return;
         }
-        paired = true;
+        accepted = true;
         if (this.#tab && this.#tab !== ws) this.#tab.close(4000, 'replaced by another tab');
         this.#tab = ws;
         ws.send(JSON.stringify({ type: 'welcome', protocol: BRIDGE_PROTOCOL, agent: this.#agent ?? 'Claude Code', chat: this.#chat } satisfies BridgeToTab));
         const i = msg.info;
         this.#log(
-          `tab paired (${msg.client}, origin ${origin})` +
+          `tab connected (${msg.client}, origin ${origin})` +
             (i ? ` · build ${i.build} · provider ${i.provider} · storage ${i.storage} · ${browserName(i.userAgent)}` : ' · old app build (reload the tab)'),
         );
         return;

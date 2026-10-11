@@ -29,7 +29,7 @@ is cached afterwards. `prepare` also runs on `npm install` in a checkout (about 
 ## The command
 
 - `tracewise`: serve the app and the bridge on `127.0.0.1:7777`, answer the app's chat with
-  the local `claude -p`, and open the pairing link (`http://localhost:7777/#pair=<code>@7777`).
+  the local `claude -p`, and open the app (`http://localhost:7777/<token>`, see Security).
 - `tracewise --no-open`: the same without opening the browser.
 - `tracewise mcp`: MCP server over stdio for the Claude Code CLI
   (`claude mcp add --scope user tracewise -- npx -y github:hoihu/tracewise mcp`). It serves the
@@ -39,13 +39,13 @@ is cached afterwards. `prepare` also runs on `npm install` in a checkout (about 
 
 The browser keeps designs per origin (host *and* port), so the app always opens at
 `http://localhost:7777`. When 7777 is taken by another Tracewise bridge (say the CLI's MCP
-server), a second one takes the next port of 7777–7781 but still points its pairing link at
-7777, adding its own port (`@7778`) so the tab connects to it. When 7777 belongs to another
+server), a second one takes the next port of 7777–7781 but still points its link at
+7777, adding its own port (`?bridge=7778`) so the tab connects to it. When 7777 belongs to another
 program, the app opens on the bridge's own port and the bridge says that designs saved at
 7777 do not show there.
 
 A checkout's dev server (`http://localhost:5173`) takes precedence: `npm run dev` points the
-bridge's pairing links there, and a bridge run on its own from the checkout does so while the
+bridge's links there, and a bridge run on its own from the checkout does so while the
 dev server answers.
 
 So, in a checkout: `npm run dev` while working on the code (hot reload, the bridge from source),
@@ -54,8 +54,17 @@ So, in a checkout: `npm run dev` while working on the code (hot reload, the brid
 ## Security
 
 Loopback only. The app's files are served only to `localhost` / `127.0.0.1` host names (a
-DNS-rebinding page gets 421). The WebSocket accepts only localhost origins and needs the pairing
-code; `/mcp` needs the token issued to a running chat process and refuses browsers.
+DNS-rebinding page gets 421).
+
+The app's address carries an access key: `http://localhost:7777/<token>`, a random UUID created
+once and kept in `~/.tracewise/bridge.json` (`"token"`), so the address stays the same across
+restarts and every bridge on this computer accepts it. The page is served only at that path (`/`
+gets a page that says to use the link); the build files under `/assets` hold no secrets. The tab
+reads the key from its address, remembers it, and sends it when it connects to the WebSocket,
+which also accepts only the app's own pages (localhost on the bridge ports, the configured app
+address and, in a checkout, the dev server). Other pages and programs on this computer get neither
+the app nor the bridge. `/mcp` needs the token issued to a running chat process and refuses
+browsers.
 
 ## Updating
 

@@ -56,7 +56,7 @@
         <div class="hint">{bridge.chat?.reason ?? 'This bridge is too old for the app chat. Restart it.'}</div>
       {:else}
         <span class="tag warn">not connected</span>
-        <div class="hint">Run <code>{bridgeRun}</code>{where} and open the pairing link it prints, or pair under <a href="#bridge">Local bridge</a>.</div>
+        <div class="hint">Run <code>{bridgeRun}</code>{where} and open the link it prints (see <a href="#bridge">Local bridge</a>).</div>
       {/if}
     </Field>
     <Field label="Model">

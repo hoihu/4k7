@@ -2,11 +2,17 @@
  * Serves the built web app from the bridge's port, so `npx tracewise` is the whole app: the page
  * and the bridge share an origin on 127.0.0.1 (no website reaching into the computer, which
  * browsers restrict). Static files only; designs stay in the browser's storage.
+ *
+ * The page itself is served only at /<token>, the access key the tab then hands to the bridge: another
+ * page or program on this computer that does not know it gets neither the app nor the bridge. The
+ * build files (/assets/…) hold no secrets and are served to any local request.
  */
 import { createReadStream, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
+import { BRIDGE_TOKEN } from '@tracewise/schema';
 import type { HttpHandler } from './bridge.ts';
+import { tokenMatches } from './mcp.ts';
 
 /** Answers on every bridge, so a second one can tell that a port already serves Tracewise. */
 export const PROBE_PATH = '/tracewise-bridge.json';
@@ -31,7 +37,7 @@ const TYPES: Record<string, string> = {
 /** Host headers the app answers to (a page at another name that resolves here is a DNS-rebinding attempt). */
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
-export function appHandler(dir: string | null, version: string): HttpHandler {
+export function appHandler(dir: string | null, version: string, token: string): HttpHandler {
   return (req: IncomingMessage, res: ServerResponse) => {
     if (!LOCAL_HOST.test(req.headers.host ?? '')) {
       res.writeHead(421).end('wrong host');
@@ -56,7 +62,15 @@ export function appHandler(dir: string | null, version: string): HttpHandler {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('The app is not built yet. Run `npm run build` in the repository, then reload.');
       return;
     }
-    const file = normalize(join(dir, path === '/' ? 'index.html' : path));
+    const key = /^\/([^/]+)\/?$/.exec(path)?.[1] ?? '';
+    const page = BRIDGE_TOKEN.test(key);
+    if (page ? !tokenMatches(key, token) : path === '/' || path === '/index.html') {
+      res
+        .writeHead(403, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY' })
+        .end(NO_KEY_PAGE);
+      return;
+    }
+    const file = normalize(join(dir, page ? 'index.html' : path));
     if (file !== dir && !file.startsWith(dir.endsWith(sep) ? dir : dir + sep)) {
       res.writeHead(403).end();
       return;
@@ -74,7 +88,7 @@ export function appHandler(dir: string | null, version: string): HttpHandler {
       'content-type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
       'content-length': size,
       // hashed build files never change; everything else is checked on every load
-      'cache-control': path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'cache-control': path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : page ? 'no-store' : 'no-cache',
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'strict-origin-when-cross-origin',
       'x-frame-options': 'DENY',
@@ -83,6 +97,14 @@ export function appHandler(dir: string | null, version: string): HttpHandler {
     else createReadStream(file).pipe(res);
   };
 }
+
+const NO_KEY_PAGE = `<!doctype html><meta charset="utf-8"><title>Tracewise</title>
+<body style="font:15px system-ui,sans-serif;max-width:34em;margin:4em auto;padding:0 1em;color:#ddd;background:#14161a">
+<h1 style="font-size:20px">Open Tracewise with its link</h1>
+<p>The app's address includes an access key: <code>http://localhost:7777/&lt;key&gt;</code>. Use the link the
+<code>tracewise</code> command opened or printed (running it again opens it), or the one Claude Code gave you.</p>
+<p style="color:#999">The key is also in <code>~/.tracewise/bridge.json</code> (<code>"token"</code>).</p>
+</body>`;
 
 /** Whether a Tracewise bridge serves the app on this port (another one started first). */
 export async function servesTracewise(port: number): Promise<boolean> {

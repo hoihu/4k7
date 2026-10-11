@@ -16,23 +16,26 @@ afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
 });
 
-async function startBridge(code = '123456') {
+const TOKEN = '0cd22f19-30de-4d39-9287-ab0123456789';
+const OTHER = '11111111-2222-4333-8444-555555555555';
+
+async function startBridge(token = TOKEN) {
   const base = 40000 + Math.floor(Math.random() * 20000);
-  const bridge = new Bridge({ code, ports: [base, base + 1] });
+  const bridge = new Bridge({ token, ports: [base, base + 1], devPorts: [5173] });
   const port = await bridge.start();
   cleanups.push(() => bridge.stop());
   return { bridge, port };
 }
 
 /** A fake browser tab that executes design_edit / design_query against a real kernel. */
-function connectTab(port: number, code: string, origin = 'http://localhost:5173') {
+function connectTab(port: number, token: string, origin = 'http://localhost:5173') {
   const kernel = new Kernel();
   const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin } });
   cleanups.push(() => ws.close());
   const messages: BridgeToTab[] = [];
   const closed = new Promise<number>((resolve) => ws.on('close', (c) => resolve(c)));
   const welcomed = new Promise<BridgeToTab>((resolve, reject) => {
-    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, code, client: 'test-tab' })));
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, token, client: 'test-tab' })));
     ws.on('message', (raw) => {
       const msg = JSON.parse(String(raw)) as BridgeToTab;
       messages.push(msg);
@@ -50,10 +53,10 @@ function connectTab(port: number, code: string, origin = 'http://localhost:5173'
   return { ws, kernel, messages, welcomed, closed };
 }
 
-describe('bridge pairing', () => {
-  it('pairs with the right code and forwards calls', async () => {
+describe('bridge access', () => {
+  it('accepts the tab with the right access key and forwards calls', async () => {
     const { bridge, port } = await startBridge();
-    const tab = connectTab(port, '123456');
+    const tab = connectTab(port, TOKEN);
     expect(await tab.welcomed).toMatchObject({ type: 'welcome' });
     expect(bridge.connected).toBe(true);
     const r = await bridge.call('design_query', { op: 'search_parts', text: 'buck' });
@@ -61,34 +64,41 @@ describe('bridge pairing', () => {
     expect(JSON.parse((r.content[0] as { text: string }).text)[0].id).toBe('ti:TPS54331DR');
   });
 
-  it('rejects a wrong code', async () => {
+  it('rejects a wrong access key', async () => {
     const { bridge, port } = await startBridge();
-    const tab = connectTab(port, '000000');
-    expect(await tab.welcomed).toMatchObject({ type: 'denied', reason: 'wrong pairing code' });
+    const tab = connectTab(port, OTHER);
+    expect(await tab.welcomed).toMatchObject({ type: 'denied', reason: 'wrong access key' });
     await tab.closed;
     expect(bridge.connected).toBe(false);
   });
 
-  it('rejects pages from other origins before any pairing', async () => {
+  it('rejects pages from other origins, local ones on other ports included, before the key is checked', async () => {
     const { bridge, port } = await startBridge();
-    const tab = connectTab(port, '123456', 'https://evil.example');
-    expect(await tab.closed).toBe(1008);
+    for (const origin of ['https://evil.example', 'http://localhost:3000', 'http://127.0.0.1:8888']) {
+      const tab = connectTab(port, TOKEN, origin);
+      expect(await tab.closed).toBe(1008);
+    }
     expect(bridge.connected).toBe(false);
   });
 
-  it('tells the agent how to pair when no tab is connected', async () => {
-    const { bridge, port } = await startBridge('654321');
+  it('accepts the app served by another bridge port', async () => {
+    const { bridge, port } = await startBridge();
+    const tab = connectTab(port, TOKEN, 'http://localhost:7777');
+    expect(await tab.welcomed).toMatchObject({ type: 'welcome' });
+    expect(bridge.connected).toBe(true);
+  });
+
+  it('gives the agent the app link when no tab is connected', async () => {
+    const { bridge, port } = await startBridge(OTHER);
     const r = await bridge.call('get_context', {});
     expect(r.isError).toBe(true);
-    const msg = (r.content[0] as { text: string }).text;
-    expect(msg).toContain('654321');
-    expect(msg).toContain(String(port));
+    expect((r.content[0] as { text: string }).text).toContain(`http://localhost:${port}/${OTHER}`);
   });
 
   it('falls through to the next port when one is taken', async () => {
     const base = 40000 + Math.floor(Math.random() * 20000);
-    const a = new Bridge({ code: '111111', ports: [base, base + 1] });
-    const b = new Bridge({ code: '222222', ports: [base, base + 1] });
+    const a = new Bridge({ token: TOKEN, ports: [base, base + 1] });
+    const b = new Bridge({ token: OTHER, ports: [base, base + 1] });
     expect(await a.start()).toBe(base);
     expect(await b.start()).toBe(base + 1);
     cleanups.push(() => a.stop(), () => b.stop());
@@ -96,9 +106,9 @@ describe('bridge pairing', () => {
 
   it('fails pending calls when the tab goes away', async () => {
     const { bridge, port } = await startBridge();
-    const kernelLess = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: 'http://127.0.0.1:4173' } });
+    const kernelLess = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: `http://127.0.0.1:${port}` } });
     await new Promise((r) => kernelLess.on('open', r));
-    kernelLess.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, code: '123456', client: 'silent' }));
+    kernelLess.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, token: TOKEN, client: 'silent' }));
     await new Promise((r) => kernelLess.on('message', r));
     const pending = bridge.call('design_query', { op: 'get_summary' });
     kernelLess.close();
@@ -109,9 +119,9 @@ describe('bridge pairing', () => {
 });
 
 describe('MCP server', () => {
-  it('lists the tools and drives the kernel through a paired tab', async () => {
+  it('lists the tools and drives the kernel through a connected tab', async () => {
     const { bridge, port } = await startBridge();
-    const tab = connectTab(port, '123456');
+    const tab = connectTab(port, TOKEN);
     await tab.welcomed;
 
     const server = createMcpServer(bridge);
@@ -148,7 +158,7 @@ describe('serving the app', () => {
     writeFileSync(join(dir, '..', 'tw-secret.txt'), 'secret');
     cleanups.push(() => rmSync(join(dir, '..', 'tw-secret.txt'), { force: true }));
     const { bridge, port } = await startBridge();
-    bridge.setHttpHandler(appHandler(dir, '9.9.9'));
+    bridge.setHttpHandler(appHandler(dir, '9.9.9', TOKEN));
     return { bridge, port };
   }
   const get = (port: number, path: string, host = `localhost:${port}`) =>
@@ -161,13 +171,26 @@ describe('serving the app', () => {
       }).on('error', reject);
     });
 
-  it('serves the built app, with long caching only for hashed assets', async () => {
+  it('serves the built app at its access key, with long caching only for hashed assets', async () => {
     const { port } = await serveApp();
-    const index = await get(port, '/');
-    expect(index).toMatchObject({ status: 200, type: 'text/html; charset=utf-8', cache: 'no-cache' });
-    expect(index.body).toContain('Tracewise');
+    for (const path of [`/${TOKEN}`, `/${TOKEN}/`]) {
+      const index = await get(port, path);
+      expect(index).toMatchObject({ status: 200, type: 'text/html; charset=utf-8', cache: 'no-store' });
+      expect(index.body).toContain('<title>Tracewise</title>');
+    }
     expect(await get(port, '/assets/index-abc.js')).toMatchObject({ status: 200, type: 'text/javascript; charset=utf-8', cache: 'public, max-age=31536000, immutable' });
     expect((await get(port, '/nope.js')).status).toBe(404);
+  });
+
+  it('serves the page only with the access key, and never gives it away', async () => {
+    const { port } = await serveApp();
+    for (const path of ['/', '/index.html', `/${OTHER}`]) {
+      const r = await get(port, path);
+      expect(r.status).toBe(403);
+      expect(r.body).toContain('Open Tracewise with its link');
+      expect(r.body).not.toContain(TOKEN);
+    }
+    expect(JSON.stringify(await get(port, PROBE_PATH))).not.toContain(TOKEN);
   });
 
   it('answers the probe, so a second bridge finds the first', async () => {
@@ -181,13 +204,13 @@ describe('serving the app', () => {
     expect((await get(port, '/../tw-secret.txt')).status).not.toBe(200);
     expect((await get(port, '/%2e%2e/tw-secret.txt')).status).toBe(403);
     // DNS rebinding: a website whose name resolves to 127.0.0.1
-    expect((await get(port, '/', `evil.example:${port}`)).status).toBe(421);
+    expect((await get(port, `/${TOKEN}`, `evil.example:${port}`)).status).toBe(421);
   });
 
-  it('points pairing links at the app it serves, with its port', async () => {
+  it('links to the app it serves, or to the app elsewhere naming its own port', async () => {
     const { bridge, port } = await startBridge();
-    expect(bridge.pairingLink()).toBe(`http://localhost:${port}/#pair=123456@${port}`);
+    expect(bridge.appLink()).toBe(`http://localhost:${port}/${TOKEN}`);
     bridge.setAppUrl('http://localhost:5173/');
-    expect(bridge.pairingLink()).toBe(`http://localhost:5173/#pair=123456@${port}`);
+    expect(bridge.appLink()).toBe(`http://localhost:5173/${TOKEN}?bridge=${port}`);
   });
 });

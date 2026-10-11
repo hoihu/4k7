@@ -116,12 +116,13 @@ gates behind a permission and Safari blocks).
 claude mcp add --scope user tracewise -- node <repo>/tools/bridge/src/main.ts
 ```
 
-- **Pairing**: a 6-digit code is created once and kept in `~/.tracewise/bridge.json`. The pairing link
-  (`http://localhost:7777/#pair=<code>@<port>`) pairs the tab with that bridge in one click; `npx tracewise` opens it. If the
-  tab is not connected, every tool answers with the link and the code, which the user can also enter under Settings → Local bridge. The tab
-  remembers the code and reconnects by itself when Claude Code restarts.
-- **Security**: loopback only; WebSocket connections from non-localhost origins are closed before pairing (so a website
-  cannot reach the bridge); no call is forwarded before the code matches; one paired tab at a time.
+- **Access key**: a random UUID (`token`) is created once and kept in `~/.tracewise/bridge.json`. The app's address
+  carries it (`http://localhost:7777/<token>`, plus `?bridge=<port>` when another bridge serves the app); the page is
+  served only at that path, and the tab sends the key when it connects. `npx tracewise` opens that link; if the tab is
+  not connected, every tool answers with it. The tab remembers the key and reconnects by itself when Claude Code restarts.
+- **Security**: loopback only; WebSocket connections from pages other than the app's (localhost on the bridge ports,
+  the configured app address, the dev server in a checkout) are closed before the key is checked, so neither websites
+  nor other local pages reach the bridge; no call is forwarded before the key matches; one connected tab at a time.
 - **Tools**: one set for every engine (`agentTools(engine)` in `packages/schema/src/tools.ts`), run by one executor
   in the tab (`App.runTool`): `design_query`, `design_edit`, `calc`, `jlc_search`, `import_part`, `pending_import`,
   `artwork`, `read_datasheet`, `get_schematic_image`. Only how a turn starts and ends differs: Claude Code gets

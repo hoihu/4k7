@@ -1,12 +1,13 @@
 /**
- * The pairing code is created once and kept in ~/.tracewise/bridge.json, so restarting
- * Claude Code does not require pairing the browser tab again.
+ * The access key (token) is created once and kept in ~/.tracewise/bridge.json, so the app's address
+ * (http://localhost:7777/<token>) stays the same across restarts and every bridge accepts the same tab.
  */
-import { randomInt } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BRIDGE_TOKEN } from '@tracewise/schema';
 
 /**
  * How to run the headless Claude Code for the app chat. Mirrors a shell alias such as
@@ -41,8 +42,8 @@ export function appDir(): string | null {
 }
 
 export interface BridgeConfig {
-  code: string;
-  /** Where pairing links point when set (TRACEWISE_APP_URL or "appUrl"); else the app this bridge serves. */
+  token: string;
+  /** Where app links point when set (TRACEWISE_APP_URL or "appUrl"); else the app this bridge serves. */
   appUrl?: string;
   claude: ClaudeProfile;
 }
@@ -63,11 +64,13 @@ export function loadConfig(): BridgeConfig {
   } catch {
     // first run
   }
-  const code = process.env.TRACEWISE_BRIDGE_CODE ?? (cfg.code && /^\d{6}$/.test(cfg.code) ? cfg.code : newCode());
-  if (code !== cfg.code && !process.env.TRACEWISE_BRIDGE_CODE) {
+  const env = process.env.TRACEWISE_BRIDGE_TOKEN;
+  const token = env && BRIDGE_TOKEN.test(env) ? env : cfg.token && BRIDGE_TOKEN.test(cfg.token) ? cfg.token : randomUUID();
+  if (token !== cfg.token && token !== env) {
     mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 });
-    // keep every other setting in the file
-    writeFileSync(path, JSON.stringify({ ...cfg, code }, null, 2) + '\n', { mode: 0o600 });
+    // keep every other setting in the file; the 6-digit "code" of older versions is gone
+    const { code: _old, ...rest } = cfg as typeof cfg & { code?: string };
+    writeFileSync(path, JSON.stringify({ ...rest, token }, null, 2) + '\n', { mode: 0o600 });
   }
   const appUrl = process.env.TRACEWISE_APP_URL ?? cfg.appUrl;
   const c = (cfg.claude ?? {}) as Partial<ClaudeProfile>;
@@ -77,13 +80,9 @@ export function loadConfig(): BridgeConfig {
     unsetEnv: [...(c.unsetEnv ?? []), ...(process.env.TRACEWISE_CLAUDE_UNSET?.split(',').filter(Boolean) ?? [])],
     env: c.env ?? {},
   };
-  return { code, ...(appUrl ? { appUrl } : {}), claude };
+  return { token, ...(appUrl ? { appUrl } : {}), claude };
 }
 
 function expandHome(p: string): string {
   return p.replace(/^~(?=$|\/)/, homedir()).replace(/^\$HOME(?=$|\/)/, homedir());
-}
-
-function newCode(): string {
-  return String(randomInt(0, 1_000_000)).padStart(6, '0');
 }

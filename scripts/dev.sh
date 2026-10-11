@@ -37,7 +37,7 @@ vite=$!
 bridge=
 trap 'kill $vite $bridge 2>/dev/null' EXIT
 trap 'exit 130' INT TERM
-# its pairing link opens the dev server
+# its app link opens the dev server
 TRACEWISE_APP_URL="http://localhost:$PORT" node --watch tools/bridge/src/main.ts --serve &
 bridge=$!
 wait "$vite"
