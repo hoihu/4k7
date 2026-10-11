@@ -16,6 +16,8 @@ const TURN_COST = 0.6;
 const OFF_AXIS_COST = 0.15; // prefer horizontal on F.Cu, vertical on B.Cu
 const CENTRE_COST = 0.5; // per step and grid step off the middle of the gap between two IC pins
 const CLIP_COST = 3; // a step whose copper runs half over one of the net's own pads, off its centre line
+const COARSE = 5; // coarse routing grid, in grid steps (0.5 mm)
+const CORRIDOR = 4; // coarse cells either side of the coarse way (2 mm)
 
 export interface RouteInput {
   outline: { w: number; h: number };
@@ -161,6 +163,13 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   for (const w of Object.values(input.netWidths ?? {})) if (w > 0 && trackClass(w) < 0) widths.push(w);
   const maps = widths.map(() => Array.from({ length: L }, () => new Int32Array(N)));
 
+  // the coarse grid (see corridor): the coarse cell of grid point (i, j) is crow[j] + ccol[i]
+  const CW = Math.ceil(W / COARSE);
+  const CH = Math.ceil(H / COARSE);
+  const CN = CW * CH;
+  const crow = Int32Array.from({ length: H }, (_, j) => Math.floor(j / COARSE) * CW);
+  const ccol = Int32Array.from({ length: W }, (_, i) => Math.floor(i / COARSE));
+  const coarseOf = (i: number) => crow[(i / W) | 0]! + ccol[i % W]!;
   const mark = (k: number, l: number, i: number, net: number) => {
     const m = maps[k]![l]!;
     const v = m[i]!;
@@ -483,6 +492,9 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   // the reachability flood (see search); its buffers only once a search needs one
   let floodAt: Int32Array | null = null;
   let floodQueue: Int32Array | null = null;
+  // the corridors (coarse cells) searches keep to, by number (see widen)
+  const corridorAt = new Int32Array(CN);
+  let corridorNo = 0;
   // a search this long without a way found floods first (a flood costs about as much as S / 8
   // expansions of the search; most routable connections are found well before)
   const FLOOD_AFTER = Math.max(1 << 16, S >> 3);
@@ -539,13 +551,17 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     return cells.filter((st) => ownInset[st]! >= m - G / 2 - 1e-6);
   };
 
-  /** A* from any start state to a goal state; returns the path (start → goal) or null. */
+  /**
+   * A* from any start state to a goal state; returns the path (start → goal) or null. `corr`: only
+   * within that corridor (a number from widen; 0: anywhere). `floodFirst`: check that a goal can
+   * be reached at all before searching (for a connection that is probably impossible).
+   */
   /*
    * The estimate of the way left (A*): the distance to the target: a point, or the box round all
    * goal cells. With a group of copper as the goal, a point (one pad of it) would overestimate
    * the way to the group's nearer parts, and the search would run past them to that pad.
    */
-  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean): number[] | null => {
+  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean, corr = 0, floodFirst = false): number[] | null => {
     const free = freeFor(net, k);
     const viaFree = viaFreeFor(net);
     const run = ++searchNo;
@@ -653,7 +669,8 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       }
       if (++expanded > LIMIT) break;
       // a long search with no way found yet: give up if there is none
-      if (expanded === FLOOD_AFTER && reached < 0 && !reachable()) break;
+      // (in a corridor the search is small anyway, and the flood would cover the whole board)
+      if (expanded === (floodFirst ? 1 : FLOOD_AFTER) && reached < 0 && !corr && !reachable()) break;
       if ((expanded & 4095) === 0 && now() > deadline) break;
       const l = Math.floor(s / N);
       const i = s % N;
@@ -677,6 +694,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         const ny = y + dy;
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
         const ni = ny * W + nx;
+        if (corr && corridorAt[crow[ny]! + ccol[nx]!] !== corr) continue;
         const ns = lo + ni;
         if (!ok(ni) && !isGoal(ns)) continue;
         // diagonal steps: both orthogonal neighbours must be clear too (no corner cutting)
@@ -714,6 +732,175 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const path: number[] = [];
     for (let s = reached; s >= 0; s = from[s]!) path.push(s);
     return path.reverse();
+  };
+
+  /*
+   * Coarse routing (global routing): an A* over coarse cells finds roughly where a connection can
+   * go, and the fine search then keeps within a corridor round that way (left to itself, most of
+   * its work goes into states far from where the track ends up). A step between two coarse cells
+   * is open where a track can cross their boundary: grid points on both sides of it open for the
+   * net (free, or a start or goal), side by side; the fewer such lanes, the dearer. A diagonal
+   * step is open where one of its two detours through a neighbour is. A via fits in a cell where
+   * it fits on any of its grid points. Every fine path crossing a boundary needs such a lane (a
+   * diagonal step needs both its orthogonal neighbours free), so with no coarse way there is no
+   * fine one either. Like the fine search, the way pays for the piece from a pad cell to the pad
+   * centre at both ends (else it would aim at pad corners and escape ends). The starts are marked
+   * in goal[] with the negated stamp. Returns the way (coarse cells), or null if there is none
+   * (or the time is up).
+   */
+  const ccost = new Float64Array(L * CN);
+  const cfrom = new Int32Array(L * CN);
+  const cseen = new Int32Array(L * CN);
+  const cgoal = new Int32Array(L * CN);
+  const cend = new Float64Array(L * CN); // the cheapest piece on to a pad centre, per goal state
+  const viaSeen = new Int32Array(CN);
+  const viaFits = new Uint8Array(CN);
+  let coarseNo = 0;
+  const corridor = (net: number, k: number, starts: number[], goals: number[], goalStamp: number): number[] | null => {
+    const run = ++coarseNo;
+    for (const st of starts) if (goal[st] !== goalStamp) goal[st] = -goalStamp;
+    const mk = maps[k]!;
+    const inPad = widths[k]! / 2 - 0.01;
+    /** freeFor(net, k), or a start or goal. */
+    const open = (l: number, i: number) => {
+      const v = mk[l]![i]!;
+      if (v === 0 || v === net) return true;
+      const st = l * N + i;
+      return (ownCopper[st] === net && ownInset[st]! >= inPad) || goal[st] === goalStamp || goal[st] === -goalStamp;
+    };
+    const viaFree = viaFreeFor(net);
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const st of goals) {
+      const c = coarseOf(st % N);
+      const cs = Math.floor(st / N) * CN + c;
+      const e = toCentre(st);
+      if (cgoal[cs] !== run || e < cend[cs]!) cend[cs] = e;
+      cgoal[cs] = run;
+      const x = c % CW;
+      const y = (c - x) / CW;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+    /** Lanes across the boundary between cell (x, y) and its neighbour (x + dx, y + dy), dx or dy 0. */
+    const lanes = (l: number, x: number, y: number, dx: number, dy: number) => {
+      let n = 0;
+      // the last grid points of this cell and the first of the next, side by side
+      if (dx) {
+        const ia = dx > 0 ? x * COARSE + COARSE - 1 : x * COARSE;
+        const ib = ia + dx; // (on the board: the neighbour cell is)
+        for (let ja = y * COARSE; ja < Math.min(H, y * COARSE + COARSE); ja++) if (open(l, ja * W + ia) && open(l, ja * W + ib)) n++;
+      } else {
+        const ja = dy > 0 ? y * COARSE + COARSE - 1 : y * COARSE;
+        const jb = ja + dy;
+        for (let ia = x * COARSE; ia < Math.min(W, x * COARSE + COARSE); ia++) if (open(l, ja * W + ia) && open(l, jb * W + ia)) n++;
+      }
+      return n;
+    };
+    const viaIn = (c: number) => {
+      if (viaSeen[c] !== run) {
+        viaSeen[c] = run;
+        viaFits[c] = 0;
+        const x = c % CW;
+        const y = (c - x) / CW;
+        for (let j = y * COARSE; j < Math.min(H, y * COARSE + COARSE) && !viaFits[c]; j++) {
+          for (let i = x * COARSE; i < Math.min(W, x * COARSE + COARSE); i++) {
+            if (viaFree(j * W + i)) {
+              viaFits[c] = 1;
+              break;
+            }
+          }
+        }
+      }
+      return viaFits[c] === 1;
+    };
+    // (the distance to the box round the goal cells)
+    const h = (c: number) => {
+      const x = c % CW;
+      const y = (c - x) / CW;
+      const dx = Math.max(x0 - x, 0, x - x1);
+      const dy = Math.max(y0 - y, 0, y - y1);
+      return COARSE * (Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy));
+    };
+    const heap = new Heap();
+    for (const st of starts) {
+      const cs = Math.floor(st / N) * CN + coarseOf(st % N);
+      const c0 = toCentre(st);
+      if (cseen[cs] === run && ccost[cs]! <= c0) continue;
+      cseen[cs] = run;
+      ccost[cs] = c0;
+      cfrom[cs] = -1;
+      heap.push(cs, c0 + h(cs % CN));
+    }
+    let reached = -1;
+    let best = Infinity; // the cheapest arrival so far, including the piece on to the pad centre
+    let pops = 0;
+    while (heap.size) {
+      const s = heap.pop();
+      if (heap.lastPrio >= best) break;
+      if ((++pops & 4095) === 0 && now() > deadline) return null;
+      const l = Math.floor(s / CN);
+      const c = s - l * CN;
+      if (heap.lastPrio - h(c) > ccost[s]! + 1e-9) continue;
+      if (cgoal[s] === run && ccost[s]! + cend[s]! < best) {
+        best = ccost[s]! + cend[s]!;
+        reached = s;
+      }
+      const x = c % CW;
+      const y = (c - x) / CW;
+      const kind = layerKind[l]!;
+      for (let d = 0; d < 8; d++) {
+        const dx = DX[d]!;
+        const dy = DY[d]!;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= CW || ny >= CH) continue;
+        const ncell = ny * CW + nx;
+        const ns = l * CN + ncell;
+        // (a step costs at least COARSE: no use counting lanes into a cell already that cheap)
+        if (cseen[ns] === run && ccost[ns]! <= ccost[s]! + COARSE) continue;
+        const n = dx && dy ? Math.max(Math.min(lanes(l, x, y, dx, 0), lanes(l, nx, y, 0, dy)), Math.min(lanes(l, x, y, 0, dy), lanes(l, x, ny, dx, 0))) : lanes(l, x, y, dx, dy);
+        if (!n) continue;
+        const off = kind === 1 ? dy !== 0 : kind === 2 ? dx !== 0 : false;
+        const ncost = ccost[s]! + COARSE * (STEP[d]! * (2 - n / COARSE) + (off ? OFF_AXIS_COST : 0));
+        if (cseen[ns] !== run || ncost < ccost[ns]!) {
+          cseen[ns] = run;
+          ccost[ns] = ncost;
+          cfrom[ns] = s;
+          heap.push(ns, ncost + h(ncell));
+        }
+      }
+      if (L < 2) continue;
+      let gain = false; // (a via only where it can make another layer cheaper)
+      for (let l2 = 0; l2 < L && !gain; l2++) if (l2 !== l && (cseen[l2 * CN + c] !== run || ccost[s]! + VIA_COST < ccost[l2 * CN + c]!)) gain = true;
+      if (!gain || !viaIn(c)) continue;
+      for (let l2 = 0; l2 < L; l2++) {
+        if (l2 === l) continue;
+        const ns = l2 * CN + c;
+        const ncost = ccost[s]! + VIA_COST;
+        if (cseen[ns] !== run || ncost < ccost[ns]!) {
+          cseen[ns] = run;
+          ccost[ns] = ncost;
+          cfrom[ns] = s;
+          heap.push(ns, ncost + h(c));
+        }
+      }
+    }
+    if (reached < 0) return null;
+    const way: number[] = [];
+    for (let s = reached; s >= 0; s = cfrom[s]!) way.push(s % CN);
+    return way;
+  };
+  /** Mark a corridor: the coarse cells within r of the way. Returns its number (for search). */
+  const widen = (way: number[], r: number): number => {
+    const no = ++corridorNo;
+    for (const c of way) {
+      const x = c % CW;
+      const y = (c - x) / CW;
+      for (let j = Math.max(0, y - r); j <= Math.min(CH - 1, y + r); j++) for (let i = Math.max(0, x - r); i <= Math.min(CW - 1, x + r); i++) corridorAt[j * CW + i] = no;
+    }
+    return no;
   };
 
   /** Turn a path into tracks and vias, reserve its copper; pad ends start/stop at pad centres. */
@@ -1499,7 +1686,21 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       if (y < gy0) gy0 = y;
       if (y > gy1) gy1 = y;
     }
-    const path = search(net, k, groupCells.get(find(c.b))!, (st) => goal[st] === goalStamp, { x0: gx0, y0: gy0, x1: gx1, y1: gy1 }, accept);
+    const starts = groupCells.get(find(c.b))!;
+    const isGoal = (st: number) => goal[st] === goalStamp;
+    const target = { x0: gx0, y0: gy0, x1: gx1, y1: gy1 };
+    // within the corridor of the coarse way first, then a wider one; failing that, anywhere (a
+    // connection that hard is likely impossible: check that first). No coarse way: no way at all.
+    // (No new attempt once the time is up.)
+    const way = corridor(net, k, starts, goalCells, goalStamp);
+    let path: number[] | null = null;
+    if (way) {
+      for (const r of [CORRIDOR, 3 * CORRIDOR]) {
+        if (path || now() > deadline) break;
+        path = search(net, k, starts, isGoal, target, accept, widen(way, r));
+      }
+      if (!path && now() <= deadline) path = search(net, k, starts, isGoal, target, accept, 0, true);
+    }
     if (!path) {
       failed.push(c);
       continue;
