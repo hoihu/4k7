@@ -361,6 +361,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     return Math.max(dx, dy) + (Math.SQRT2 - 1) * m + (m > 1e-6 && Math.abs(dx - dy) > 1e-6 ? TURN_COST : 0);
   };
   escapes.forEach((e, idx) => e && padCells[idx]!.push(e.state));
+  const escapeOf = new Map(escapes.flatMap((e, idx) => (e ? [[e.state, idx] as const] : [])));
   // reserve every escape stub for its net before routing, so earlier routes cannot wall it off
   escapes.forEach((e, idx) => {
     if (!e) return;
@@ -1669,10 +1670,19 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     // too wide for a pad: the widest class that still fits (never below the signal width)
     const fitting = (w: number) => widths.reduce((best, x, i) => (i !== 2 && x <= w && takes(x) && x > widths[best]! ? i : best), 0);
     const k = own ? (own <= rules.track || takes(own) ? trackClass(own) : fitting(own)) : wide ? 1 : 0;
+    // an escape stub is reserved at the signal width: a wider track may run along it only where
+    // it keeps its clearance at that width
+    const escapeOk = (st: number) => {
+      const idx = escapeOf.get(st);
+      if (idx === undefined || widths[k]! <= rules.track) return true;
+      const e = escapes[idx]!;
+      const p = pads[idx]!;
+      return clearOf(net, e.l, widths[k]!, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
+    };
     epoch++;
     const goalStamp = epoch;
-    for (const st of groupCells.get(find(c.a))!) goal[st] = goalStamp;
-    const goalCells = groupCells.get(find(c.a))!;
+    const goalCells = groupCells.get(find(c.a))!.filter(escapeOk);
+    for (const st of goalCells) goal[st] = goalStamp;
     // end where the track fits, on its pad's centre line; failing that where it fits; failing
     // that deepest inside the pad
     const fits = (st: number) => freeFor(net, k)(Math.floor(st / N), st % N);
@@ -1690,7 +1700,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       if (y < gy0) gy0 = y;
       if (y > gy1) gy1 = y;
     }
-    const starts = groupCells.get(find(c.b))!;
+    const starts = groupCells.get(find(c.b))!.filter(escapeOk);
     const isGoal = (st: number) => goal[st] === goalStamp;
     const target = { x0: gx0, y0: gy0, x1: gx1, y1: gy1 };
     // within the corridor of the coarse way first, then a wider one; failing that, anywhere (a

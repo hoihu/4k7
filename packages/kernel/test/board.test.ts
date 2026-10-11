@@ -840,6 +840,38 @@ describe('router: tracks wider than a via', () => {
     });
     expect(r.tracks.filter((t) => t.layer === 'In1.Cu' || t.layer === 'In2.Cu')).toEqual([]);
   });
+
+  it('runs a power track along a pin escape only where it keeps its clearance at that width', async () => {
+    const { route } = await import('../src/router.ts');
+    type Pad = import('@tracewise/schema').BoardPad;
+    type Part = import('@tracewise/schema').BoardPart;
+    const pad = (number: string, x: number, y: number, w: number, h: number, netId?: string): Pad => ({ number, x, y, w, h, shape: 'rect', ...(netId ? { netId } : {}), layers: ['F.Cu'] });
+    const part = (refdes: string, x: number, y: number, pads: Pad[]) => ({ componentId: refdes, refdes, x, y, rot: 0, pads, courtyard: { x: x - 1, y: y - 1, w: 2, h: 2 } }) as unknown as Part;
+    // a SOIC-like pin on the power net P: its escape stub runs left between pads of Q and R, each
+    // 0.3 mm from the stub's centre line (room for a 0.15 mm track, not for a 0.5 mm one)
+    const pins = [pad('1', 7.5, 8.73, 1.5, 0.6), pad('2', 7.5, 10, 1.5, 0.6, 'P'), pad('3', 7.5, 11.27, 1.5, 0.6), pad('4', 12.5, 10, 1.5, 0.6)];
+    const others = [pad('1', 6.35, 10.45, 0.3, 0.3, 'Q'), pad('1', 6.35, 9.55, 0.3, 0.3, 'R')];
+    const clearance = 0.15;
+    const r = route({
+      outline: { w: 16, h: 20 },
+      layers: ['F.Cu', 'B.Cu'],
+      rules: { clearance, track: 0.15, powerTrack: 0.5, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 },
+      parts: [part('U1', 10, 10, pins), ...others.map((o, i) => part(`Q${i}`, o.x, o.y, [o])), part('J1', 2, 10, [pad('1', 2, 10, 1.5, 1.5, 'P')])],
+      powerNets: new Set(['P']),
+    });
+    for (const t of r.tracks.filter((x) => x.layer === 'F.Cu')) {
+      for (let k = 0; k + 3 < t.pts.length; k += 2) {
+        for (let s = 0; s <= 100; s++) {
+          const x = t.pts[k]! + ((t.pts[k + 2]! - t.pts[k]!) * s) / 100;
+          const y = t.pts[k + 1]! + ((t.pts[k + 3]! - t.pts[k + 1]!) * s) / 100;
+          for (const q of others) {
+            const gap = Math.hypot(Math.max(Math.abs(x - q.x) - q.w / 2, 0), Math.max(Math.abs(y - q.y) - q.h / 2, 0)) - t.width / 2;
+            expect(gap).toBeGreaterThanOrEqual(clearance - 1e-6);
+          }
+        }
+      }
+    }
+  });
 });
 
 describe('router: between IC pins', () => {
