@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Kernel } from '@tracewise/kernel';
-import { Agent, DEMO_FALLBACK, DEMO_SCRIPTS, ScriptedProvider, runCalc, nearestE, type AgentEvent, type KernelPort, type Script } from '../src/index.ts';
+import { BRIDGE_INSTRUCTIONS, DESIGN_GUIDE, agentTools } from '@tracewise/schema';
+import { Agent, DEMO_FALLBACK, DEMO_SCRIPTS, SYSTEM_PROMPT, ScriptedProvider, runCalc, nearestE, type AgentEvent, type KernelPort, type Script } from '../src/index.ts';
 
 function port(k: Kernel): KernelPort {
   return {
@@ -102,6 +103,40 @@ describe('agent loop (offline demo)', () => {
     const last = agent.messages.at(-1)!;
     expect(last.role).toBe('user');
     expect(events.at(-1)).toMatchObject({ type: 'done', reason: 'aborted' });
+  });
+});
+
+describe('one agent, two engines', () => {
+  it('gives the in-app agent and Claude Code the same design tools and guide', () => {
+    const names = (e: 'app' | 'chat' | 'cli') => agentTools(e).map((t) => t.name);
+    const design = ['design_query', 'design_edit', 'calc', 'import_part', 'jlc_search', 'pending_import', 'artwork', 'read_datasheet', 'get_schematic_image'];
+    expect(names('app')).toEqual([...design, 'ask_user']);
+    expect(names('chat')).toEqual(['get_context', ...design, 'propose']);
+    expect(names('cli')).toEqual(['get_context', ...design, 'propose', 'wait_for_review']);
+    expect(SYSTEM_PROMPT).toContain(DESIGN_GUIDE);
+    expect(BRIDGE_INSTRUCTIONS).toContain(DESIGN_GUIDE);
+  });
+
+  it('runs tools through the executor it is given, pictures included', async () => {
+    const script: Script = {
+      name: 'look',
+      match: /./,
+      steps: [[{ type: 'tool_use', id: '', name: 'get_schematic_image', input: {} }], [{ type: 'text', text: 'Looks fine.' }]],
+    };
+    const calls: string[] = [];
+    const agent = new Agent({
+      provider: new ScriptedProvider([script]),
+      kernel: port(new Kernel()),
+      exec: async (name) => {
+        calls.push(name);
+        return { content: '', images: [{ data: 'iVBOR', mimeType: 'image/png' }], isError: false, label: 'schematic image', detail: '1400px' };
+      },
+    });
+    const ev = await turn(agent, 'look at it');
+    expect(calls).toEqual(['get_schematic_image']);
+    expect(ev).toContainEqual(expect.objectContaining({ type: 'tool', label: 'schematic image', ok: true }));
+    const result = agent.messages.flatMap((m) => m.content).find((b) => b.type === 'tool_result');
+    expect(result).toMatchObject({ images: [{ data: 'iVBOR', mimeType: 'image/png' }] });
   });
 });
 
