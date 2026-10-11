@@ -23,6 +23,8 @@ import {
   type FabProfile,
   type FabLimits,
   type DescriptionView,
+  type ESeries,
+  type ValueSeries,
   DEFAULT_BOARD,
   DEFAULT_PAPER,
   PAPERS,
@@ -100,6 +102,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return describe(d, op);
     case 'set_package_defaults':
       return setPackageDefaults(d, op);
+    case 'set_value_series':
+      return setValueSeries(d, op);
     case 'set_paper':
       return setPaper(d, op);
     case 'set_board':
@@ -728,6 +732,27 @@ function setPackageDefaults(d: Design, op: Extract<EditOp, { op: 'set_package_de
   if (Object.keys(next).length) d.packageDefaults = next;
   else delete d.packageDefaults;
   return { op: 'set_package_defaults', effect: `package defaults: ${changes.join(', ') || 'unchanged'}`, ids: ['packages'] };
+}
+
+/** Standard-value series per kind of generic passive; null clears one (any value). */
+function setValueSeries(d: Design, op: Extract<EditOp, { op: 'set_value_series' }>): OpResult {
+  const next = { ...(d.valueSeries ?? {}) };
+  const pick = (one: ESeries | null | undefined) => (one !== undefined ? one : op.all);
+  const given: [keyof ValueSeries, ESeries | null | undefined][] = [
+    ['resistor', pick(op.resistors)],
+    ['capacitor', pick(op.capacitors)],
+    ['inductor', pick(op.inductors)],
+  ];
+  const changes: string[] = [];
+  for (const [kind, series] of given) {
+    if (series === undefined) continue;
+    if (series === null) delete next[kind];
+    else next[kind] = series;
+    changes.push(`${kind}s ${series ?? 'any value'}`);
+  }
+  if (Object.keys(next).length) d.valueSeries = next;
+  else delete d.valueSeries;
+  return { op: 'set_value_series', effect: `value series: ${changes.join(', ') || 'unchanged'}`, ids: ['series'] };
 }
 
 /** The paper size of the schematic pages; A4 is the default and stored as nothing. */

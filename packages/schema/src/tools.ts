@@ -11,10 +11,11 @@ export const CalcCall = z.object({
     .enum(['divider', 'buck', 'led_resistor', 'rc', 'nearest_e'])
     .describe(
       'divider: {vout, vref, r_bottom?, series?} → E-series R top/bottom and resulting vout. ' +
-        'buck: {vin, vout, iout, fsw, ripple_ratio?} → inductance, ripple current, peak current. ' +
-        'led_resistor: {vsupply, vf, i} → resistor and power. ' +
-        'rc: {r?, c?, f?} → give two, get the third (f = 1/(2πRC)). ' +
-        'nearest_e: {value, series} → nearest standard value.',
+        'buck: {vin, vout, iout, fsw, ripple_ratio?, series?} → inductance, ripple current, peak current. ' +
+        'led_resistor: {vsupply, vf, i, series?} → resistor and power. ' +
+        'rc: {r?, c?, f?, series?} → give two, get the third (f = 1/(2πRC)). ' +
+        'nearest_e: {value, kind?, series?, round?} → standard value (kind resistor/capacitor/inductor takes the design\'s series; round up/down). ' +
+        'series: E3, E6, E12, E24, E48, E96 or E192; default: the design\'s series for that kind (set_value_series), else E96 for resistors, E12 caps, E6 inductors.',
     ),
   args: z.record(z.string(), z.union([z.number(), z.string()])),
 });

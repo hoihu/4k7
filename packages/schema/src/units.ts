@@ -122,3 +122,52 @@ function trimNum(v: number): string {
 export function approxEqual(a: number, b: number, rel = 1e-6): boolean {
   return Math.abs(a - b) <= rel * Math.max(Math.abs(a), Math.abs(b));
 }
+
+/* ------------------------- standard values (IEC 60063) ------------------------- */
+
+export const E_SERIES = ['E3', 'E6', 'E12', 'E24', 'E48', 'E96', 'E192'] as const;
+export type ESeries = (typeof E_SERIES)[number];
+
+const E24 = [10, 11, 12, 13, 15, 16, 18, 20, 22, 24, 27, 30, 33, 36, 39, 43, 47, 51, 56, 62, 68, 75, 82, 91];
+const E192 = [
+  100, 101, 102, 104, 105, 106, 107, 109, 110, 111, 113, 114, 115, 117, 118, 120, 121, 123, 124, 126, 127, 129, 130, 132, 133, 135, 137, 138,
+  140, 142, 143, 145, 147, 149, 150, 152, 154, 156, 158, 160, 162, 164, 165, 167, 169, 172, 174, 176, 178, 180, 182, 184, 187, 189, 191, 193,
+  196, 198, 200, 203, 205, 208, 210, 213, 215, 218, 221, 223, 226, 229, 232, 234, 237, 240, 243, 246, 249, 252, 255, 258, 261, 264, 267, 271,
+  274, 277, 280, 284, 287, 291, 294, 298, 301, 305, 309, 312, 316, 320, 324, 328, 332, 336, 340, 344, 348, 352, 357, 361, 365, 370, 374, 379,
+  383, 388, 392, 397, 402, 407, 412, 417, 422, 427, 432, 437, 442, 448, 453, 459, 464, 470, 475, 481, 487, 493, 499, 505, 511, 517, 523, 530,
+  536, 542, 549, 556, 562, 569, 576, 583, 590, 597, 604, 612, 619, 626, 634, 642, 649, 657, 665, 673, 681, 690, 698, 706, 715, 723, 732, 741,
+  750, 759, 768, 777, 787, 796, 806, 816, 825, 835, 845, 856, 866, 876, 887, 898, 909, 920, 931, 942, 953, 965, 976, 988,
+];
+const every = (s: number[], n: number) => s.filter((_, i) => i % n === 0);
+/** Mantissas in [1, 10) per series. E3–E24 have their own (historic) values; E48–E192 are one table thinned out. */
+const MANTISSAS: Record<ESeries, number[]> = {
+  E3: every(E24, 8).map((v) => v / 10),
+  E6: every(E24, 4).map((v) => v / 10),
+  E12: every(E24, 2).map((v) => v / 10),
+  E24: E24.map((v) => v / 10),
+  E48: every(E192, 4).map((v) => v / 100),
+  E96: every(E192, 2).map((v) => v / 100),
+  E192: E192.map((v) => v / 100),
+};
+
+/** The series' mantissas (1.0 … 9.x), or null for an unknown name ("e12" is fine). */
+export function eSeriesValues(name: string): number[] | null {
+  return MANTISSAS[name.toUpperCase() as ESeries] ?? null;
+}
+
+const sig = (v: number) => Number(v.toPrecision(6));
+
+/** Nearest value of the series; 'up' / 'down' round towards that side. */
+export function nearestInSeries(value: number, series: ESeries, mode: 'nearest' | 'up' | 'down' = 'nearest'): number {
+  const decade = Math.floor(Math.log10(value));
+  const candidates: number[] = [];
+  for (const d of [decade - 1, decade, decade + 1]) for (const m of MANTISSAS[series]) candidates.push(sig(m * 10 ** d));
+  const eps = value * 1e-9;
+  const pool = mode === 'up' ? candidates.filter((c) => c >= value - eps) : mode === 'down' ? candidates.filter((c) => c <= value + eps) : candidates;
+  return pool.reduce((best, c) => (Math.abs(Math.log(c / value)) < Math.abs(Math.log(best / value)) ? c : best));
+}
+
+/** Whether the value is one of the series' standard values (any decade). */
+export function inSeries(value: number, series: ESeries): boolean {
+  return value > 0 && approxEqual(nearestInSeries(value, series), value, 1e-4);
+}

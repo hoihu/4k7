@@ -4,6 +4,8 @@
  */
 import {
   formatQuantity,
+  inSeries,
+  nearestInSeries,
   parseAs,
   type Component,
   type Design,
@@ -37,6 +39,7 @@ export function runChecks(d: Design, placement?: SchematicView['constraintStatus
   powerChecks(ctx);
   requirementChecks(ctx);
   ratingChecks(ctx);
+  seriesChecks(ctx);
   ledgerChecks(ctx, placement);
   applyWaivers(d, ctx.out);
   return ctx.out.sort(
@@ -324,6 +327,32 @@ function ratingChecks(ctx: Ctx) {
 const RATINGS = [6.3, 10, 16, 25, 35, 50, 63, 100];
 function suggestRating(v: number): number {
   return RATINGS.find((r) => r >= v * 1.5) ?? Math.ceil(v * 2);
+}
+
+/* ------------------------------ value series ------------------------------ */
+
+const SERIES_PARAM = { resistor: ['resistance', 'Ω'], capacitor: ['capacitance', 'F'], inductor: ['inductance', 'H'] } as const;
+
+/** Values of generic passives outside the design's E-series. A value the user fixed in the ledger is theirs to keep. */
+function seriesChecks(ctx: Ctx) {
+  const { d } = ctx;
+  if (!d.valueSeries) return;
+  const fixed = new Set(Object.values(d.ledger).filter((k) => k.kind === 'param' && k.a).map((k) => `${k.a}|${k.key}`));
+  for (const c of componentsSorted(d)) {
+    const card = cardOf(d, c.part);
+    const kind = card?.category as keyof typeof SERIES_PARAM | undefined;
+    const series = kind && d.valueSeries[kind];
+    if (!kind || !series) continue;
+    const [key, unit] = SERIES_PARAM[kind];
+    const v = parseAs(c.params[key], unit);
+    if (v === null || !(v > 0) || fixed.has(`${c.id}|${key}`) || inSeries(v, series)) continue;
+    const near = formatQuantity(nearestInSeries(v, series), unit);
+    const down = formatQuantity(nearestInSeries(v, series, 'down'), unit);
+    const up = formatQuantity(nearestInSeries(v, series, 'up'), unit);
+    push(ctx, 'warning', 'SEM.VALUE_SERIES', [c.refdes], `${c.refdes} = ${c.params[key]} is not an ${series} value (${down} or ${up}; nearest ${near}).`, {
+      fixHints: [{ op: 'set_param', ref: c.refdes, params: { [key]: near } }],
+    });
+  }
 }
 
 /* ---------------------------------- ledger -------------------------------- */

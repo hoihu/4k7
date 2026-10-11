@@ -162,4 +162,20 @@ describe('calc', () => {
     expect(nearestE(101, 'E24', 'up')).toBe(110);
     expect(runCalc({ fn: 'led_resistor', args: { vsupply: 5, vf: 2, i: '10mA' } }).r).toBe('300Ω');
   });
+
+  it('every IEC series, and the design series as the default', () => {
+    expect(nearestE(3.4e3, 'E3')).toBe(4700);
+    expect(nearestE(1.22e3, 'E48')).toBe(1210);
+    expect(nearestE(9.25e3, 'E192')).toBe(9200);
+    expect(() => nearestE(1, 'E7')).toThrow(/E3, E6, E12, E24, E48, E96, E192/);
+    // the design's resistor series replaces each calculator's own default; an explicit series wins
+    const divider = runCalc({ fn: 'divider', args: { vout: 3.3, vref: 0.8 } }, { resistor: 'E12' });
+    expect(divider.series).toBe('E12');
+    expect(nearestE(Number(String(divider.r_top).replace('k', 'e3')), 'E12')).toBe(Number(String(divider.r_top).replace('k', 'e3')));
+    expect(runCalc({ fn: 'led_resistor', args: { vsupply: 5, vf: 2, i: '10mA' } }, { resistor: 'E6' }).r).toBe('330Ω');
+    expect(runCalc({ fn: 'rc', args: { r: '10k', f: '1kHz' } }, { capacitor: 'E6' }).c).toBe('15nF');
+    expect(runCalc({ fn: 'nearest_e', args: { value: 5300, kind: 'resistor' } }, { resistor: 'E12' }).value).toBe('5.6k');
+    expect(runCalc({ fn: 'nearest_e', args: { value: 5300, kind: 'resistor', series: 'E24' } }, { resistor: 'E12' }).value).toBe('5.1k');
+    expect(runCalc({ fn: 'nearest_e', args: { value: 5300, kind: 'resistor', round: 'down' } }, { resistor: 'E6' }).value).toBe('4.7k');
+  });
 });

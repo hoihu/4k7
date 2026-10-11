@@ -6,6 +6,7 @@
 import type { BoardSettings } from './board.ts';
 import type { PartCard } from './part.ts';
 import type { PaperId } from './results.ts';
+import type { ESeries } from './units.ts';
 
 export const DESIGN_FORMAT_VERSION = 2;
 
@@ -25,6 +26,8 @@ export interface Design {
   board?: BoardSettings;
   /** Packages of generic parts without their own package parameter (set_package_defaults). */
   packageDefaults?: PackageDefaults;
+  /** Standard-value series generic passives are chosen from (set_value_series); absent = any value. */
+  valueSeries?: ValueSeries;
   /** Paper size of the schematic pages (set_paper); absent = A4. */
   paper?: PaperId;
   /** What the design does, in words (describe): the text of the design document. */
@@ -62,6 +65,13 @@ export interface PackageDefaults {
   led?: string;
   /** Size up where the value demands it (default true). */
   autoSize?: boolean;
+}
+
+/** The E-series values of generic resistors, capacitors and inductors are picked from, per kind. */
+export interface ValueSeries {
+  resistor?: ESeries;
+  capacitor?: ESeries;
+  inductor?: ESeries;
 }
 
 export interface Component {

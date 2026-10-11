@@ -415,6 +415,7 @@ export class Kernel {
       ledger: Object.keys(d.ledger).length,
       waivers: Object.keys(d.waivers).length,
       ...(d.description ? { description: { blocks: d.description.blocks.length, undescribed: descriptionView(d)!.undescribed } } : {}),
+      ...(d.valueSeries ? { valueSeries: { ...d.valueSeries } } : {}),
     };
   }
 

@@ -1051,3 +1051,34 @@ describe('trackWidthFor', () => {
     expect(trackWidthFor(3)).toBeGreaterThan(1.2);
   });
 });
+
+describe('value series', () => {
+  it('flags generic passives outside the design series with the nearest value as the fix; the review carries it', () => {
+    const k = buck();
+    const series = (ref: string) => k.state().diagnostics.find((d) => d.code === 'SEM.VALUE_SERIES' && d.entities[0] === ref);
+    expect(series('R1')).toBeUndefined();
+    const r = k.transact({ summary: 'E12 resistors, E6 caps', ops: [{ op: 'set_value_series', resistors: 'E12', capacitors: 'E6' }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    expect(k.proposal()?.hunks.find((h) => h.id === 'board:series')?.title).toBe('value series: resistors E12, capacitors E6');
+    expect(k.summary().valueSeries).toEqual({ resistor: 'E12', capacitor: 'E6' });
+    expect(series('R1')).toMatchObject({ severity: 'warning', fixHints: [{ op: 'set_param', ref: 'R1', params: { resistance: '33kΩ' } }] });
+    expect(series('R1')!.message).toContain('27kΩ or 33kΩ');
+    expect(series('R2')?.fixHints).toEqual([{ op: 'set_param', ref: 'R2', params: { resistance: '10kΩ' } }]);
+    expect(series('R3')).toBeUndefined(); // 8.2k is E12
+    expect(k.state().diagnostics.filter((d) => d.code === 'SEM.VALUE_SERIES' && d.entities[0]!.startsWith('C'))).toEqual([]);
+    k.accept();
+    expect(k.committedDesign().valueSeries).toEqual({ resistor: 'E12', capacitor: 'E6' });
+
+    // a value the user fixed in the ledger is theirs
+    k.transact({ summary: 'keep R2', ops: [{ op: 'constrain', kind: 'param', a: 'R2', key: 'resistance', value: '10.2k', strength: 'hard', quote: 'R2 stays 10.2k' }] });
+    expect(series('R2')).toBeUndefined();
+
+    // null clears a kind, all sets every kind
+    k.transact({ summary: 'any', ops: [{ op: 'set_value_series', resistors: null }] });
+    expect(k.summary().valueSeries).toEqual({ capacitor: 'E6' });
+    expect(series('R1')).toBeUndefined();
+    k.transact({ summary: 'E24', ops: [{ op: 'set_value_series', all: 'E24' }] });
+    expect(k.summary().valueSeries).toEqual({ resistor: 'E24', capacitor: 'E24', inductor: 'E24' });
+    expect(series('R1')?.fixHints).toEqual([{ op: 'set_param', ref: 'R1', params: { resistance: '33kΩ' } }]); // 31.6k: 33k is nearer than 30k on a log scale
+  });
+});

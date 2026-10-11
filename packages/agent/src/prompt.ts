@@ -35,6 +35,7 @@ export function formatDesignContext(opts: {
         s.nets.map((n) => `${n.name}(${n.pins}${n.voltage !== undefined ? `, ${n.voltage}V` : ''}${n.external ? ', ext' : ''})`).join(' '),
     );
   }
+  if (s.valueSeries) lines.push('value series: ' + Object.entries(s.valueSeries).map(([k, v]) => `${k}s ${v}`).join(', '));
   const open = diagnostics.filter((d) => !d.waivedBy);
   const c = s.counts;
   lines.push(`diagnostics: ${c.errors} errors, ${c.warnings} warnings, ${c.waived} waived`);
