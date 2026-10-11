@@ -1,36 +1,23 @@
 # 4k7
 
+> **Alpha.** 4k7 is in alpha (0.1.x). The schematic side works end to end; board placement, routing and
+> fabrication output work for small boards. Expect rough edges, missing parts and breaking changes to the
+> project file. See the [roadmap](docs/ARCHITECTURE.md#7-roadmap).
+
 An **AI-first, browser-based PCB schematic and layout tool**. It has no pencil, wire or trace tools.
 You describe what you want, give hints ("put V1 on the left", "make C1 100 µF"), and an AI you
 choose does the design through a typed operation API. A deterministic kernel turns that intent into
 geometry and checks every change.
 
-- **Bring your own AI**: Anthropic, OpenAI-compatible (incl. OpenRouter), Gemini, or local models (Ollama / LM Studio).
+- **Bring your own AI**: the coding agent you already have (Claude Code, GitHub Copilot, OpenCode or any other MCP client) drives 4k7 through its MCP server, on your existing plan. Or add an Anthropic API key and chat in the app.
 - **Bring your own tools**: attach any MCP server (distributor stock, company part DB, simulation…).
-- **Parts from datasheets**: drop a manufacturer PDF (Parts → Import from datasheet); your local Claude Code extracts the pin table and package, the app checks it, and deterministic generators build the symbol and footprint.
-- **Sourcing from JLCPCB**: parts are fetched on demand from JLCPCB's assembly catalogue (LCSC numbers, stock, price, Basic/Extended), by you in the Inspector or by the agent ("a cheap buzzer from JLC"). Passives stay generic and just get the number; parts with pins are imported from the catalogue's datasheet link. The BOM carries the LCSC column JLCPCB reads.
+- **Parts from datasheets**: drop a manufacturer PDF (Parts → Import from datasheet); your agent extracts the pin table and package, the app checks it, and deterministic generators build the symbol and footprint.
+- **Sourcing from JLCPCB**: parts are fetched on demand from JLCPCB's assembly catalogue (LCSC numbers, stock, price, Basic/Extended), by you in the Inspector or by the agent ("a cheap buzzer from JLC"). The BOM carries the LCSC column JLCPCB reads.
 - **Schematic to manufacturing files**: the board is placed and routed automatically from the schematic (with a ground pour), checked by DRC, shown in 2D and 3D, and exported as Gerber, drill, BOM and pick-and-place. Steer it in words ("make the board 30 × 20 mm", "put J1 at the left edge") or drag parts to pin them.
-- **Manufacturer limits**: pick JLCPCB, PCBWay or Eurocircuits (Layout → Manufacturer) and the design rules are kept above what they can make, with tracks, vias, holes, rings and board size checked against it. For another manufacturer the agent reads its capabilities page and imports the limits, with the source attached for you to review.
+- **Manufacturer limits**: pick JLCPCB, PCBWay or Eurocircuits (Layout → Manufacturer) and the design rules are kept above what they can make. For another manufacturer the agent reads its capabilities page and imports the limits for you to review.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
-- **Printable by construction**: the layout flows the schematic onto pages by itself (A4, or A3/A2 for bigger sheets), never splitting a functional block; ⌘P prints them (or saves a PDF) for the bench.
-- **A design document from the design**: ask the agent to describe the design; it writes an overview and the functional blocks (reviewed like any change, kept in the project file). **Document** (schematic toolbar, or Layout → Documentation) prints it or saves a PDF: each block with its text, parts, schematic and place on the board, then the layout, an assembly drawing with only the parts and a tick list for populating a board, the BOM and the schematic pages.
+- **Printable by construction**: the schematic flows onto pages by itself (A4, A3 or A2), never splitting a functional block. **Document** writes a design document with the functional blocks, layout, assembly drawing, BOM and schematic pages.
 - **Local-first**: runs on your computer, in your browser (download from [4k7.dev](https://4k7.dev), or `npx github:hoihu/4k7`). Your designs and API keys stay on your machine.
-
-## Documents
-
-| Document | What it covers |
-|---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System overview, principles, components, roadmap, risks |
-| [docs/design/data-model.md](docs/design/data-model.md) | Design graph, constraints, native file format |
-| [docs/design/ops-api.md](docs/design/ops-api.md) | The operation catalogue that AI, MCP and UI all use |
-| [docs/design/ai-loop.md](docs/design/ai-loop.md) | Agent loop, verification loop, hints, BYO AI, MCP, relay |
-| [docs/design/part-ingest.md](docs/design/part-ingest.md) | Getting from a PDF datasheet to a verified part |
-| [docs/design/fab-rules.md](docs/design/fab-rules.md) | Manufacturer limits: fab profiles, presets, import by the agent, DRC |
-| [docs/design/sourcing.md](docs/design/sourcing.md) | Parts from JLCPCB's assembly catalogue, on demand; the `lcsc` parameter and the BOM |
-| [docs/distribution.md](docs/distribution.md) | How the app is run and shared: the downloads (DMG, Linux archive), `npx github:hoihu/4k7`, the package, the port |
-| [docs/design/ui.md](docs/design/ui.md) | UI concept: workspaces, density rules |
-| [docs/ui/prototype.html](docs/ui/prototype.html) | Clickable prototype of the chosen UI (open in a browser) |
-| [docs/ui/proposals.html](docs/ui/proposals.html) | Earlier exploration: proposals A, B, C |
 
 ## Running it
 
@@ -45,9 +32,8 @@ npx -y github:hoihu/4k7          # builds once, then serves the app at http://lo
 npm install -g github:hoihu/4k7  # or install it: `4k7pcb` (add --no-open to skip the browser)
 ```
 
-Either way it runs the app and the local server in one process: the page it opens is already connected, and the chat is answered by your
-Claude Code if `claude` is installed (see below). Designs are kept by the browser for `http://localhost:7777`, so the app
-always opens at that address (with an access key in the path: `http://localhost:7777/<access-key>`). Nothing is published to the npm registry; see [docs/distribution.md](docs/distribution.md).
+Either way it runs the app and the local server in one process. Designs are kept by the browser for `http://localhost:7777`, so the app
+always opens at that address, with an access key in the path. Nothing is published to the npm registry; see [docs/distribution.md](docs/distribution.md).
 
 From a checkout:
 
@@ -61,37 +47,37 @@ npm start          # build, package and run it like npx does (dist/4k7pcb.js)
 node scripts/bundle.mjs  # the downloads (DMGs and Linux archives) in build/
 ```
 
-Without an API key the app runs an **offline demo** (a scripted agent that goes through the real kernel):
+Without an AI the app runs an **offline demo** (a scripted agent that goes through the real kernel):
 try “12 V to 3.3 V buck, 2 A. Put C1 left of U1.”, answer the question, review the changeset, then “make C2 100uF”.
-Add an Anthropic API key in **Settings** to use a real model. It is encrypted in your browser and sent only to `api.anthropic.com`.
 
-## Using Claude Code (no API key needed)
+## Bring your own AI
 
-The local server (`tools/server`) connects the app to the Claude Code on your computer, so it runs on your existing plan.
+4k7 does not ship a model. Three ways to connect one:
 
-**Chat in the app (recommended).** The downloaded app and `npx github:hoihu/4k7` do all of it. From a checkout, while developing,
-`npm run dev` runs the Vite dev server and the local server together (the server restarts itself when its code changes;
-`npm run dev:web` and `npm run server` run them one at a time).
+**Your coding agent, via MCP.** The local server is an MCP server. Register it with the agent you use and ask it to
+*“connect to 4k7”*; it answers with the app's link. The command is the same for all of them:
 
-Open the link the server prints, then choose **Settings → AI provider → Claude Code on this computer**. Messages you type in
-the app's chat are answered by `claude -p` running headlessly with **only** the 4k7 tools (no shell, files or web),
-connected back to the server through a token-protected MCP endpoint. Follow-up messages continue the same session.
-To let it look up datasheets, enable **Settings → Web** (adds read-only WebSearch/WebFetch; still no shell or files).
+```sh
+npx -y github:hoihu/4k7 mcp                        # or, from a checkout:
+node /absolute/path/to/this/repo/tools/server/src/main.ts
+```
 
-**Or chat in the Claude Code CLI.** Start `claude` in this repository and approve the `4k7` server from
-`.mcp.json` (or register it for every folder with
-`claude mcp add --scope user 4k7 -- npx -y github:hoihu/4k7 mcp`, or the command shown in the app's Settings → Local server), or with
-`node /absolute/path/to/this/repo/tools/server/src/main.ts` for a checkout). Ask Claude to
-*“connect to 4k7”* and open the link it gives you.
+- **Claude Code**: `claude mcp add --scope user 4k7 -- npx -y github:hoihu/4k7 mcp`, or start `claude` in this repository and approve the `4k7` server from `.mcp.json`.
+- **GitHub Copilot** (CLI or VS Code agent mode): add the command above as an MCP server in its MCP configuration.
+- **OpenCode**: add it under `mcp` in `opencode.json`.
+- Any other MCP client works the same way. Settings → Local server in the app shows the command to paste.
 
-Either way Claude works through `get_context`, `design_query`, `design_edit`, `calc`, `get_schematic_image` and `propose`
-(the CLI also gets `wait_for_review`), and its changes arrive as a changeset for you to review. `propose` is refused
-while the design has open errors.
+The agent works through `get_context`, `design_query`, `design_edit`, `calc`, `get_schematic_image`, `propose` and
+`wait_for_review`, and its changes arrive in the app as a changeset for you to review. `propose` is refused while the
+design has open errors.
 
-**Which Claude account the app chat uses.** The server starts `claude` directly, so shell aliases do not apply. If your
-shell routes Claude Code to Bedrock/Vertex or a different login (e.g. an alias like
-`claude-personal='env -u CLAUDE_CODE_USE_BEDROCK … CLAUDE_CONFIG_DIR=$HOME/.claude-personal claude'`), put the same in
-`~/.4k7/server.json`:
+**Chat in the app with Claude Code.** If `claude` is installed, choose **Settings → AI provider → Claude Code on this
+computer**. Messages you type in the app's chat are answered by `claude -p` running headlessly with **only** the 4k7 tools
+(no shell, files or web), on your existing plan. To let it look up datasheets, enable **Settings → Web** (read-only
+WebSearch/WebFetch). In-app chat for other agents is on the roadmap.
+
+If your shell routes Claude Code to Bedrock/Vertex or a different login, put the same in `~/.4k7/server.json`
+(`FOURK7_CLAUDE_CONFIG_DIR` / `FOURK7_CLAUDE_UNSET` / `FOURK7_CLAUDE_BIN` override it):
 
 ```json
 {
@@ -102,12 +88,25 @@ shell routes Claude Code to Bedrock/Vertex or a different login (e.g. an alias l
 }
 ```
 
-The server logs the profile it uses at startup (`FOURK7_CLAUDE_CONFIG_DIR` / `FOURK7_CLAUDE_UNSET` override it).
+**Chat in the app with an API key.** Add an Anthropic API key in **Settings**. It is encrypted in your browser and sent
+only to `api.anthropic.com`. Other API providers are on the roadmap.
 
-The access key in the app's address lives in `~/.4k7/server.json` (`"accessKey"`), so the address stays the same and
-a tab reconnects by itself. The server binds to `127.0.0.1`, serves the page only at that address, only accepts the
-app's own pages and needs the key before anything is forwarded. Set `FOURK7_APP_URL` if app
-links should point elsewhere and `FOURK7_CLAUDE_BIN` if `claude` is not on your PATH.
+The server binds to `127.0.0.1`, serves the page only at that address and needs the access key (kept in
+`~/.4k7/server.json`) before anything is forwarded.
+
+## Documents
+
+| Document | What it covers |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System overview, principles, components, roadmap, risks |
+| [docs/design/data-model.md](docs/design/data-model.md) | Design graph, constraints, native file format |
+| [docs/design/ops-api.md](docs/design/ops-api.md) | The operation catalogue that AI, MCP and UI all use |
+| [docs/design/ai-loop.md](docs/design/ai-loop.md) | Agent loop, verification loop, hints, BYO AI, MCP, relay |
+| [docs/design/part-ingest.md](docs/design/part-ingest.md) | Getting from a PDF datasheet to a verified part |
+| [docs/design/fab-rules.md](docs/design/fab-rules.md) | Manufacturer limits: fab profiles, presets, import by the agent, DRC |
+| [docs/design/sourcing.md](docs/design/sourcing.md) | Parts from JLCPCB's assembly catalogue; the `lcsc` parameter and the BOM |
+| [docs/design/ui.md](docs/design/ui.md) | UI concept: workspaces, density rules |
+| [docs/distribution.md](docs/distribution.md) | How the app is run and shared: downloads, `npx github:hoihu/4k7`, the package, the port |
 
 ## Repository layout
 
@@ -119,12 +118,4 @@ links should point elsewhere and `FOURK7_CLAUDE_BIN` if `claude` is not on your 
 | `packages/fab` | Gerber X2, Excellon drill, BOM, pick-and-place, zip |
 | `packages/agent` | Agent loop with kernel verification, calculators, Anthropic + offline providers |
 | `apps/web` | Svelte 5 app: schematic workspace (chat + canvas + inspector), parts, settings. The kernel runs in a Web Worker |
-| `tools/server` | Local relay to Claude Code: serves the built app, MCP over stdio (CLI drives the app) or headless `claude -p` for the app chat, WebSocket to the tab, access key and origin checks. Bundled with the app into the `4k7pcb` package (`scripts/package.mjs`) |
-
-## Status
-
-**M0 (schematic)** is in progress, and a first slice of **M2/M3 (board, routing, fab)** works end to end for small boards (see [ARCHITECTURE.md](docs/ARCHITECTURE.md#m2m3-first-slice-board-routing-fab-2026-09-26)). Working now: the full loop from prompt → typed ops → atomic transactions → checks →
-auto-layout → reviewable changeset with per-change accept, a constraint ledger that survives re-layout, undo, and local
-persistence. Deviations from the architecture for now: the kernel is TypeScript behind the same API (Rust/WASM later),
-the document is stored as plain JSON (the CRDT arrives with collaboration), and there is one in-app provider (Anthropic) plus the local server to Claude Code.
-See [ARCHITECTURE.md §7](docs/ARCHITECTURE.md#7-roadmap).
+| `tools/server` | Local server: serves the built app, MCP over stdio for your agent, headless `claude -p` for the app chat, WebSocket to the tab, access key and origin checks. Bundled with the app into the `4k7pcb` package |
