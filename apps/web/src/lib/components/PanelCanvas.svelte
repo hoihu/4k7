@@ -255,13 +255,14 @@
   <!-- milled (hatched) where the material is not -->
   <rect class="milled" x="0" y="0" width={panel.w} height={panel.h} />
   <path class="material" d={material} fill-rule="evenodd" />
-  {#each panel.copies as c, i (i)}<use href="#pcopy" x={c.dx} y={c.dy} />{/each}
 
   {#each panel.tabs as t, i (i)}
     {#if i !== hidden}
       <rect class="tab" class:hot={hoverTab === i} class:edit={!!ontabs} data-tab={i} x={t.x} y={t.y} width={t.w} height={t.h}><title>{tabTitle(t)}</title></rect>
     {/if}
   {/each}
+  <!-- the boards over the tabs: each board's outline runs across its tabs, the holes just inside it -->
+  {#each panel.copies as c, i (i)}<use href="#pcopy" x={c.dx} y={c.dy} />{/each}
   {#each panel.bites as m, i (i)}<circle class="bite" cx={m.x} cy={m.y} r={m.d / 2} />{/each}
   {#each ghosts as g, gi (gi)}
     {#each panel.copies as c, ci (ci)}
@@ -280,12 +281,13 @@
 <style>
   .panel { width: 100%; height: 100%; display: block; background: var(--canvas); touch-action: none; }
   .panel:focus { outline: none; }
+  use { pointer-events: none; }
   .panel.adding { cursor: copy; }
   .milled { fill: url(#mill); }
   .hatch { stroke: #3a4552; stroke-width: 0.25; }
   .material { fill: #0f2a22; }
   .edge { fill: none; stroke: #e0c341; stroke-width: 0.12; pointer-events: none; }
-  .outline { fill: none; stroke: #e0c341; stroke-width: 0.08; opacity: 0.5; }
+  .outline { fill: none; stroke: #e0c341; stroke-width: 1px; vector-effect: non-scaling-stroke; stroke-dasharray: 3 2; opacity: 0.9; }
   .zone { stroke: none; opacity: 0.12; }
   .zone.f { fill: #c9463d; }
   .zone.b { fill: #3f7fd6; }
