@@ -41,7 +41,7 @@ import {
   figureDepths,
 } from '@tracewise/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@tracewise/parts';
-import { cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
+import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
 import { copperDrc, edgeDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { route } from './router.ts';
@@ -894,6 +894,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     graphics: boardGraphics,
   };
   view.diagnostics.push(...fabPlacementDrc(view));
+  applyWaivers(d, view.diagnostics);
   return view;
 }
 
@@ -970,6 +971,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
       entities: [],
     });
   }
+  applyWaivers(d, diags);
   return { ...routed, diagnostics: diags };
 }
 

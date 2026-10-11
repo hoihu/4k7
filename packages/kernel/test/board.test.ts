@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cutoutDistance } from '@tracewise/schema';
+import { boardSummary, cutoutDistance } from '@tracewise/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 
@@ -957,6 +957,18 @@ describe('silkscreen graphics', () => {
     k.transact({ summary: 'over', ops: [{ op: 'edit_graphic', id: 'G1', anchor: 'top_left', x_mm: u1.x, y_mm: u1.y }] });
     expect(k.board().graphics[0]!.over).toContain('U1');
     expect(k.board().diagnostics.some((x) => x.code === 'DRC.SILK_OVER_PARTS')).toBe(true);
+  });
+
+  it('a waived board check stays listed but is marked', () => {
+    const k = buck();
+    const u1 = k.board().parts.find((p) => p.refdes === 'U1')!;
+    k.transact({ summary: 'over', ops: [{ op: 'add_graphic', svg_path: ring, width_mm: 3, anchor: 'top_left', x_mm: u1.x, y_mm: u1.y }] });
+    const over = () => k.board().diagnostics.find((x) => x.code === 'DRC.SILK_OVER_PARTS')!;
+    expect(over().waivedBy).toBeUndefined();
+    const { code, entities } = over();
+    k.transact({ summary: 'ok', ops: [{ op: 'add_waiver', code, entities, reason: 'intended: logo over the IC' }] });
+    expect(over().waivedBy).toBeDefined();
+    expect(boardSummary(k.board()).drc.some((x) => x.includes('lies over'))).toBe(false);
   });
 
   it('places saved artwork by name, at its saved size unless told otherwise', async () => {

@@ -42,8 +42,10 @@
   let marker = $state<{ x: number; y: number } | null>(null);
   const netName = (id: string | null) => (id ? (b?.netNames[id] ?? id) : '');
   const desc = $derived(app.k?.description ?? null);
-  const errors = $derived(b?.diagnostics.filter((d) => d.severity === 'error').length ?? 0);
-  const warnings = $derived(b?.diagnostics.filter((d) => d.severity === 'warning').length ?? 0);
+  const openChecks = $derived(b?.diagnostics.filter((d) => !d.waivedBy) ?? []);
+  const waivedChecks = $derived(b?.diagnostics.filter((d) => d.waivedBy) ?? []);
+  const errors = $derived(openChecks.filter((d) => d.severity === 'error').length);
+  const warnings = $derived(openChecks.filter((d) => d.severity === 'warning').length);
   const layerNames: [string, string][] = $derived([
     ['board', 'Board · substrate / solder mask'],
     ...(b?.layers ?? ['F.Cu', 'B.Cu']).map((l: CopperLayer): [string, string] => {
@@ -89,6 +91,7 @@
   const nParts = $derived(b?.parts.filter((p) => !p.componentId.startsWith('hole:')).length ?? 0);
   let checksOpen = $state(false);
   let allChecks = $state(false);
+  let waivedOpen = $state(false);
   const CHECKS_SHOWN = 4;
   const routeLabel = $derived(routing ? 'Routing…' : b?.routing === 'done' ? 'Routed' : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
 
@@ -188,13 +191,29 @@
         {/if}
         <h4><button class="fold" aria-expanded={checksOpen} onclick={() => (checksOpen = !checksOpen)}><span class="chev">{checksOpen ? '▾' : '▸'}</span>Checks <span class="tag err">{errors}</span> <span class="tag warn">{warnings}</span></button></h4>
         {#if checksOpen}
-        {#if !b.diagnostics.length}<p class="muted small">No problems found.</p>{/if}
+        {#if !openChecks.length}<p class="muted small">No problems found.</p>{/if}
         <ul class="diags">
-          {#each allChecks ? b.diagnostics : b.diagnostics.slice(0, CHECKS_SHOWN) as d, i (i)}
-            <li><button class="r" title={d.message} onclick={() => focus(d)}><span class="tag {d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info'}">{d.severity[0]!.toUpperCase()}</span><span class="grow clamp">{d.message}</span></button></li>
+          {#each allChecks ? openChecks : openChecks.slice(0, CHECKS_SHOWN) as d (d.code + d.entities.join() + d.message)}
+            <li>
+              <button class="r" title={d.message} onclick={() => focus(d)}><span class="tag {d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info'}">{d.severity[0]!.toUpperCase()}</span><span class="grow clamp">{d.message}</span></button>
+              {#if d.entities.length}<button class="x" title="Not a problem: intended, so this check goes away" aria-label="Mark as not a problem" disabled={app.running} onclick={() => void app.waiveCheck(d)}>✕</button>{/if}
+            </li>
           {/each}
         </ul>
-        {#if b.diagnostics.length > CHECKS_SHOWN}<button class="more" onclick={() => (allChecks = !allChecks)}>{allChecks ? 'Show fewer' : `Show all ${b.diagnostics.length}`}</button>{/if}
+        {#if openChecks.length > CHECKS_SHOWN}<button class="more" onclick={() => (allChecks = !allChecks)}>{allChecks ? 'Show fewer' : `Show all ${openChecks.length}`}</button>{/if}
+        {#if waivedChecks.length}
+          <button class="more" aria-expanded={waivedOpen} onclick={() => (waivedOpen = !waivedOpen)}>{waivedOpen ? 'Hide' : 'Show'} {waivedChecks.length} marked as not a problem</button>
+          {#if waivedOpen}
+            <ul class="diags">
+              {#each waivedChecks as d (d.code + d.entities.join() + d.message)}
+                <li>
+                  <button class="r" title={d.message} onclick={() => focus(d)}><span class="tag info">{d.severity[0]!.toUpperCase()}</span><span class="grow clamp muted">{d.message}</span></button>
+                  <button class="x" title="Check this again" aria-label="Check this again" disabled={app.running} onclick={() => void app.restoreCheck(d.waivedBy!)}>↺</button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        {/if}
         {/if}
         <h4>Layers</h4>
         <ul class="layers">
@@ -247,8 +266,12 @@
   .chev { width: 10px; color: var(--txt-3); }
   .more { border: 0; background: none; color: var(--accent-txt); font-size: 11.5px; padding: 2px; cursor: pointer; }
   .diags, .layers { list-style: none; margin: 0; padding: 0; }
-  .diags .r { width: 100%; display: flex; gap: 6px; align-items: flex-start; text-align: left; border: 0; background: none; padding: 3px 2px; font-size: 12px; color: var(--txt-2); cursor: pointer; border-radius: 4px; }
+  .diags .r { display: flex; gap: 6px; align-items: flex-start; text-align: left; border: 0; background: none; padding: 3px 2px; font-size: 12px; color: var(--txt-2); cursor: pointer; border-radius: 4px; }
   .diags .r:hover { background: var(--hover); }
+  .diags li { display: flex; align-items: flex-start; }
+  .diags .r { flex: 1; min-width: 0; }
+  .diags .x { border: 0; background: none; color: var(--txt-3); font-size: 12px; padding: 3px 5px; cursor: pointer; border-radius: 4px; }
+  .diags .x:hover:not(:disabled) { background: var(--hover); color: var(--txt); }
   .layers label { display: flex; gap: 6px; align-items: center; font-size: 12px; padding: 2px 0; cursor: pointer; }
   .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; background: var(--line-2); }
   .sw.board { background: #0f2a22; border: 1px solid var(--line-2); }

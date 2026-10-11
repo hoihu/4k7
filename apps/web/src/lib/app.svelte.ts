@@ -18,7 +18,7 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardView, type BridgeContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
+import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type BridgeContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -286,6 +286,16 @@ class AppState {
     await this.persist();
     await this.refresh();
     return true;
+  }
+
+  /** Mark a board check as intended ("not a problem"): a waiver, so it drops out of the checks and stays out. */
+  waiveCheck(d: BoardDiagnostic): Promise<boolean> {
+    return this.userEdit(`Not a problem: ${d.code} on ${d.entities.join(', ')}`, [{ op: 'add_waiver', code: d.code, entities: d.entities, reason: 'Marked as intended in the layout checks' }]);
+  }
+
+  /** Bring a waived board check back. */
+  restoreCheck(waiverId: string): Promise<boolean> {
+    return this.userEdit(`Check back on (${waiverId})`, [{ op: 'remove_waiver', id: waiverId }]);
   }
 
   /** Put a part on the bottom or the top side of the board (a layer constraint; top is the default, so none). */

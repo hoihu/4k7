@@ -295,3 +295,12 @@ export function connectorRole(d: Design, c: Component, supplied: Set<string>): '
   }
   return feeds ? 'input' : takes ? 'output' : 'neutral';
 }
+
+/** Mark the diagnostics a waiver covers (same code, every entity listed in the waiver). */
+export function applyWaivers(d: Design, out: { code: string; entities: string[]; waivedBy?: string }[]) {
+  const ws = Object.values(d.waivers);
+  for (const x of out) {
+    const w = ws.find((w) => w.code === x.code && x.entities.length > 0 && x.entities.every((e) => w.entities.includes(e)));
+    if (w) x.waivedBy = w.id;
+  }
+}
