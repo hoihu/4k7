@@ -4,8 +4,6 @@
 import {
   Agent,
   AnthropicProvider,
-  DEMO_FALLBACK,
-  DEMO_SCRIPTS,
   ScriptedProvider,
   costUsd,
   formatDesignContext,
@@ -168,9 +166,7 @@ class AppState {
       (tool, input) => this.handleServerCall(tool, input),
       (accessKey, port) => {
         // connecting to a server that can run Claude Code makes it the chat provider, unless the user has an API key set up
-        // "no real model configured" = offline demo, or Anthropic chosen without a key
-        const noModel = this.settings.provider === 'demo' || (this.settings.provider === 'anthropic' && !this.apiKey);
-        const useClaude = server.chat?.available && noModel;
+        const useClaude = server.chat?.available && this.noModel;
         if (accessKey !== this.settings.serverAccessKey || port !== this.settings.serverPort || useClaude) {
           void this.updateSettings({ serverAccessKey: accessKey, serverPort: port, ...(useClaude ? { provider: 'claude-code' as const } : {}) });
         }
@@ -723,7 +719,7 @@ class AppState {
     if (this.settings.provider === 'anthropic' && this.apiKey) {
       return new AnthropicProvider({ apiKey: this.apiKey, model: this.settings.model, effort: this.settings.effort });
     }
-    return new ScriptedProvider(DEMO_SCRIPTS, { fallback: DEMO_FALLBACK, label: 'Offline demo', streamDelayMs: 12 });
+    return new ScriptedProvider([], { fallback: 'No chat provider is set up. Connect Claude Code or add an API key in Settings.', label: 'No model' });
   }
 
   get providerLabel() {
@@ -731,9 +727,9 @@ class AppState {
     return this.agent?.provider.label ?? '';
   }
 
-  get isDemo() {
-    if (this.settings.provider === 'claude-code') return false;
-    return !(this.settings.provider === 'anthropic' && this.apiKey);
+  /** Anthropic chosen without an API key: there is nothing to chat with. */
+  get noModel() {
+    return this.settings.provider === 'anthropic' && !this.apiKey;
   }
 
   /**

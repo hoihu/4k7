@@ -296,7 +296,7 @@ export async function loadDatasheet(hash: string): Promise<StoredDatasheet | und
 
 /* -------------------------------- settings -------------------------------- */
 
-export type ProviderKind = 'anthropic' | 'claude-code' | 'demo';
+export type ProviderKind = 'anthropic' | 'claude-code';
 export type Mode = 'auto' | 'review';
 
 export interface Settings {
@@ -316,7 +316,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  provider: 'demo',
+  provider: 'claude-code',
   model: 'claude-opus-5',
   effort: 'high',
   mode: 'review',
@@ -339,6 +339,8 @@ export async function loadSettings(): Promise<Settings> {
     const merged = { ...DEFAULT_SETTINGS, ...rest };
     // v1 stored theme "system" without the user ever choosing it
     if ((saved.version ?? 1) < 2 && saved.theme === 'system') merged.theme = DEFAULT_SETTINGS.theme;
+    // the offline demo is gone
+    if ((merged.provider as string) === 'demo') merged.provider = DEFAULT_SETTINGS.provider;
     return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };

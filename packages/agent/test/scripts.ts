@@ -1,10 +1,10 @@
 /**
- * Offline demo scenarios for the ScriptedProvider. They exercise the real loop: the
+ * Scripted scenarios for the ScriptedProvider. They exercise the real loop: the
  * kernel validates every op and the verification loop catches a deliberate omission.
  */
 import type { Transaction } from '@4k7/schema';
-import type { Block, Message } from './types.ts';
-import type { Script } from './providers/scripted.ts';
+import type { Block, Message } from '../src/types.ts';
+import type { Script } from '../src/providers/scripted.ts';
 
 const tool = (name: string, input: unknown): Block => ({ type: 'tool_use', id: '', name, input });
 const text = (t: string): Block => ({ type: 'text', text: t });

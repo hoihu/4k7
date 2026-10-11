@@ -47,9 +47,6 @@ npm start          # build, package and run it like npx does (dist/4k7pcb.js)
 node scripts/bundle.mjs  # the downloads (DMGs and Linux archives) in build/
 ```
 
-Without an AI the app runs an **offline demo** (a scripted agent that goes through the real kernel):
-try “12 V to 3.3 V buck, 2 A. Put C1 left of U1.”, answer the question, review the changeset, then “make C2 100uF”.
-
 ## Bring your own AI
 
 4k7 ships no model. Pick one of two setups.
