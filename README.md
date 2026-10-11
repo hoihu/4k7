@@ -52,75 +52,69 @@ try “12 V to 3.3 V buck, 2 A. Put C1 left of U1.”, answer the question, revi
 
 ## Bring your own AI
 
-4k7 does not ship a model. Three ways to connect one:
+4k7 ships no model. Pick one of two setups.
 
-**Your coding agent, via MCP.** The local server is an MCP server over stdio. Register it with the agent you use,
-ask the agent to *“connect to 4k7”*, and open the link it answers with: that link connects the app to the agent's
-server. The command is the same for all of them:
+### A. API key (chat in the app)
+
+1. Create a key in the [Anthropic Console](https://console.anthropic.com/) (`sk-ant-…`).
+2. In 4k7: **Settings → Chat provider**, select **Anthropic API**.
+3. Paste the key into **API key**, press **Save**.
+4. Pick **Model** and **Effort**, then use the chat.
+
+- Key is encrypted and stored in your browser only; sent only to `api.anthropic.com`.
+- Billed per token; **Session spend** shows the cost.
+- Empty field + **Save** removes the key.
+
+### B. Existing harness (Claude Code, Copilot, OpenCode, any MCP client)
+
+The agent drives 4k7 over MCP, on your existing plan. Server command (needs Node 22.18+):
 
 ```sh
-npx -y github:hoihu/4k7 mcp                        # or, from a checkout (Node 22.18 or newer):
-node /absolute/path/to/this/repo/tools/server/src/main.ts
+npx -y github:hoihu/4k7 mcp
 ```
 
-- **Claude Code**: register the server once for all projects (`--scope user`), then check it in the session:
+1. Register the server with your agent (below).
+2. Tell the agent *"connect to 4k7"*.
+3. Open the link it returns.
+4. Review the agent's changes in the app as a changeset.
 
-  ```sh
-  claude mcp add --scope user 4k7 -- npx -y github:hoihu/4k7 mcp   # from the GitHub package, or
-  claude mcp add --scope user 4k7 -- node /absolute/path/to/this/repo/tools/server/src/main.ts
-  claude mcp list                                                   # 4k7: ... - ✓ Connected
-  ```
+- One tab talks to one agent's server; always use the link the agent gives you.
 
-  In a checkout, starting `claude` in the repository offers the `4k7` server from `.mcp.json` instead (approve it
-  when asked; it runs `node tools/server/src/main.ts` relative to the repository, so start `claude` at its root).
-  Then, in the session, `/mcp` shows the server as connected, and *“connect to 4k7”* answers with the link.
-  If `/mcp` says *failed* or *connection closed*: `node --version` must be 22.18 or newer in the shell Claude Code
-  uses (the server is TypeScript run directly), and `~/.4k7/server.log` has the server's own error. In a checkout
-  the link only loads once the app is built (`npm run build`). Running `claude` with a different config directory
-  (`CLAUDE_CONFIG_DIR`) means a different user scope: register the server there too.
-- **GitHub Copilot in VS Code** (agent mode): put this in `.vscode/mcp.json` of the workspace, or run *MCP: Add Server*
-  from the command palette for all workspaces. Then *MCP: List Servers → 4k7 → Start*, and tick the 4k7 tools in the
-  chat's tool picker.
+#### Claude Code
+
+```sh
+claude mcp add --scope user 4k7 -- npx -y github:hoihu/4k7 mcp
+claude mcp list   # 4k7: ✓ Connected
+```
+
+- From a checkout: start `claude` at the repo root and approve the `4k7` server from `.mcp.json` (run `npm run build` first).
+- *failed* / *connection closed*: check `node --version` and `~/.4k7/server.log`.
+- Optional in-app chat: **Settings → Chat provider → Claude Code**. Runs `claude -p` with only the 4k7 tools; tick **Web** to allow read-only web lookups.
+- Bedrock/Vertex or another login: set `claude.configDir` / `claude.unsetEnv` in `~/.4k7/server.json`.
+
+#### GitHub Copilot
+
+- VS Code (agent mode): `.vscode/mcp.json`, then *MCP: List Servers → 4k7 → Start* and tick the 4k7 tools.
 
   ```json
   { "servers": { "4k7": { "type": "stdio", "command": "npx", "args": ["-y", "github:hoihu/4k7", "mcp"] } } }
   ```
 
-- **GitHub Copilot CLI**: the same server in `~/.copilot/mcp-config.json`, under `mcpServers` with `"type": "local"`
-  and `"tools": ["*"]`.
-- **OpenCode**: add it under `mcp` in `opencode.json`.
-- Any other MCP client works the same way. Settings → Local server in the app shows the command to paste.
+- CLI: same server in `~/.copilot/mcp-config.json` under `mcpServers`, with `"type": "local"` and `"tools": ["*"]`.
 
-Each agent runs its own copy of the server, and a tab talks to one of them at a time, so open the link the agent gives
-you rather than reusing a tab opened by another agent. The link always goes to `http://localhost:7777` (your designs
-live there), with `?port=` when the agent's server runs on another port.
+#### OpenCode
 
-The agent works through `get_context`, `design_query`, `design_edit`, `calc`, `get_schematic_image`, `propose` and
-`wait_for_review`, and its changes arrive in the app as a changeset for you to review. `propose` is refused while the
-design has open errors.
+- Add to `opencode.json`, restart OpenCode:
 
-**Chat in the app with Claude Code.** If `claude` is installed, choose **Settings → AI provider → Claude Code on this
-computer**. Messages you type in the app's chat are answered by `claude -p` running headlessly with **only** the 4k7 tools
-(no shell, files or web), on your existing plan. To let it look up datasheets, enable **Settings → Web** (read-only
-WebSearch/WebFetch). In-app chat for other agents is on the roadmap.
+  ```json
+  { "mcp": { "4k7": { "type": "local", "command": ["npx", "-y", "github:hoihu/4k7", "mcp"], "enabled": true } } }
+  ```
 
-If your shell routes Claude Code to Bedrock/Vertex or a different login, put the same in `~/.4k7/server.json`
-(`FOURK7_CLAUDE_CONFIG_DIR` / `FOURK7_CLAUDE_UNSET` / `FOURK7_CLAUDE_BIN` override it):
+#### Other MCP clients
 
-```json
-{
-  "claude": {
-    "configDir": "~/.claude-personal",
-    "unsetEnv": ["ANTHROPIC_API_KEY", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"]
-  }
-}
-```
+- Register the stdio command above. **Settings → Local server** shows it.
 
-**Chat in the app with an API key.** Add an Anthropic API key in **Settings**. It is encrypted in your browser and sent
-only to `api.anthropic.com`. Other API providers are on the roadmap.
-
-The server binds to `127.0.0.1`, serves the page only at that address and needs the access key (kept in
-`~/.4k7/server.json`) before anything is forwarded.
+The server binds to `127.0.0.1` and requires the access key in `~/.4k7/server.json`.
 
 ## Documents
 
