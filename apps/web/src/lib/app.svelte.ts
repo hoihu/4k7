@@ -7,18 +7,18 @@ import {
   DEMO_FALLBACK,
   DEMO_SCRIPTS,
   ScriptedProvider,
-  compactTx,
   costUsd,
-  describeTx,
   formatDesignContext,
   optimizePrompt,
-  runCalc,
+  runKernelTool,
+  unknownTool,
   type AgentEvent,
   type Provider,
+  type ToolOutcome,
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, CalcCall, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type BridgeContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
+import { ArtworkInput, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type BridgeContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -43,6 +43,9 @@ import {
   type KeptProject,
   type Settings,
 } from './persist.ts';
+
+/** A tool's answer before the chat's label is put on it. */
+type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
 
 /** A pairing link (#pair=123456) opened from the terminal; read before the router rewrites the hash. */
 const pairFromLink = /^#pair=(\d{6})$/.exec(location.hash)?.[1] ?? null;
@@ -149,7 +152,7 @@ class AppState {
     const newer = this.ingest.newer + this.artwork.newer;
     if (newer) this.flash(`${newer} saved ${newer === 1 ? 'library item was' : 'library items were'} written by a newer version of the app and not loaded`);
     await this.ingest.adoptFootprints(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
-    this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget, tools: { jlc_search: jlcTool } });
+    this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget, exec: (tool, input) => this.runTool(tool, input) });
     this.settingsChannel?.addEventListener('message', (e: MessageEvent<{ type: string; code?: string }>) => {
       if (e.data?.type === 'bridge-held' && e.data.code) bridge.heldElsewhere(e.data.code);
       else void this.reloadSettings();
@@ -309,8 +312,8 @@ class AppState {
    * result (accepted, both passes agree) goes straight into the library; disagreements between
    * the passes wait for the user's review in Parts.
    */
-  private async importPart(args: { mpn: string; datasheet_url: string; notes?: string; timeout_s: number }): Promise<{ isError: boolean; content: BridgeContent[] }> {
-    const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
+  private async importPart(args: { mpn: string; datasheet_url: string; notes?: string; timeout_s: number }): Promise<ToolResult> {
+    const text = (content: string, isError = false): ToolResult => ({ content, isError });
     const ing = this.ingest;
     const same = ing.request?.mpn.toLowerCase() === args.mpn.trim().toLowerCase();
     const known = ing.library.find((p) => p.mpn?.toLowerCase() === args.mpn.trim().toLowerCase());
@@ -350,8 +353,8 @@ class AppState {
   }
 
   /** The read_datasheet tool: page index, text search, or one page (text and picture). */
-  private async readDatasheet(args: { part: string; page?: number; find?: string; region?: [number, number, number, number] }): Promise<{ isError: boolean; content: BridgeContent[] }> {
-    const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
+  private async readDatasheet(args: { part: string; page?: number; find?: string; region?: [number, number, number, number] }): Promise<ToolResult> {
+    const text = (content: string, isError = false): ToolResult => ({ content, isError });
     let id = args.part;
     const comp = (await this.kernel.query({ op: 'get_component', ref: args.part })) as { part?: string };
     if (comp?.part) id = comp.part;
@@ -372,10 +375,8 @@ class AppState {
       const src = await cropPage(doc, args.page, args.region ?? [0, 0, 1, 1], args.region ? 1600 : 1400);
       return {
         isError: false,
-        content: [
-          { type: 'text', text: `${card.id} datasheet, page ${args.page} of ${n}${args.region ? ` (region ${args.region.join(', ')})` : ''}:\n${body}` },
-          { type: 'image', data: src.slice(src.indexOf(',') + 1), mimeType: 'image/jpeg' },
-        ],
+        content: `${card.id} datasheet, page ${args.page} of ${n}${args.region ? ` (region ${args.region.join(', ')})` : ''}:\n${body}`,
+        images: [{ data: src.slice(src.indexOf(',') + 1), mimeType: 'image/jpeg' }],
       };
     }
     const pages = await Promise.all(Array.from({ length: n }, (_, i) => pageText(doc, i + 1)));
@@ -431,125 +432,55 @@ class AppState {
     return this.chat[this.chat.length - 1]!;
   }
 
-  /** Execute one tool call forwarded by the local bridge. */
-  async handleBridgeCall(tool: string, input: unknown): Promise<{ isError: boolean; content: BridgeContent[] }> {
-    const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
-    if (tool === 'submit_part') return this.ingest.submit(input); // datasheet import, not a design change
-    if (this.inAppBusy) return text('The in-app agent is working on this design right now. Try again when it has finished.', true);
-
-    // the activity block is created lazily, so waiting for review does not open a new one
-    let current: ChatItem | null = null;
-    const item = () => (current ??= this.externalItem());
-    const log = (label: string, ok: boolean, detail: string) => item().segments.push({ type: 'tool', label, ok, detail });
-
+  /**
+   * Run one agent tool. The in-app agent and Claude Code through the bridge share this executor;
+   * how a turn starts and ends (get_context, propose, wait_for_review, ask_user) is up to each.
+   */
+  async runTool(tool: string, input: unknown): Promise<ToolOutcome> {
+    const fail = (label: string, detail: string): ToolOutcome => ({ content: detail, isError: true, label, detail });
+    const first = (t: string) => t.split('\n')[0]!;
     switch (tool) {
-      case 'get_context': {
-        const snap = await this.kernel.port.snapshot();
-        const p = this.k?.proposal;
-        const pending = p ? `\n<pending_changeset hunks="${p.hunks.length}">${p.hunks.map((h) => `${h.change} ${h.title}`).join('; ')}</pending_changeset>` : '';
-        log('context', true, `${snap.summary.components.length} parts · ${snap.counts.errors}E ${snap.counts.warnings}W`);
-        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope }) + pending + `\nautonomy: ${this.settings.mode}`);
-      }
       case 'design_query': {
-        if ((input as { op?: string })?.op === 'get_board') {
-          // routed in the board worker, so the kernel stays responsive
-          const b = await this.routedBoard();
-          log('query · get_board', !!b, b ? `${b.stats.routed}/${b.stats.nets} nets routed` : 'failed');
-          return b ? text(JSON.stringify(boardSummary(b))) : text('The board could not be computed.', true);
-        }
-        const out = await this.kernel.query(input);
-        const isError = !!(out && typeof out === 'object' && 'error' in out);
-        log(`query · ${(input as { op?: string })?.op ?? '?'}`, !isError, isError ? String((out as { error: unknown }).error) : 'ok');
-        return text(JSON.stringify(out), isError);
+        if ((input as { op?: string })?.op !== 'get_board') break;
+        // routed in the board worker, so the kernel stays responsive
+        const b = await this.routedBoard();
+        if (!b) return fail('query · get_board', 'The board could not be computed.');
+        return { content: JSON.stringify(boardSummary(b)), isError: false, label: 'query · get_board', detail: `${b.stats.routed}/${b.stats.nets} nets routed` };
       }
-      case 'design_edit': {
-        const r = await this.kernel.transact(input);
-        const tx = input as { summary?: string; ops?: unknown[]; dry_run?: boolean };
-        log(`${tx.dry_run ? 'dry-run' : 'edit'} · ${tx.ops?.length ?? 0} ops · ${tx.summary ?? ''}`, r.status === 'ok', describeTx(r));
-        await this.refresh();
-        return text(JSON.stringify(compactTx(r)), r.status !== 'ok');
-      }
-      case 'calc': {
-        const parsed = CalcCall.safeParse(input);
-        if (!parsed.success) return text(`Invalid calc input: ${parsed.error.message}`, true);
-        try {
-          const out = runCalc(parsed.data);
-          log(`calc · ${parsed.data.fn}`, true, Object.entries(out).filter(([k]) => k !== 'note').map(([k, v]) => `${k}=${v}`).join(', '));
-          return text(JSON.stringify(out));
-        } catch (e) {
-          return text((e as Error).message, true);
-        }
-      }
-      case 'jlc_search': {
-        const out = await jlcTool(input);
-        log(out.label, !out.isError, out.detail);
-        return text(out.content, out.isError);
-      }
+      case 'jlc_search':
+        return jlcTool(input);
       case 'import_part': {
         const args = ImportPartInput.safeParse(input);
-        if (!args.success) return text(args.error.message, true);
-        log(`import · ${args.data.mpn}`, true, 'reading the datasheet…');
+        if (!args.success) return fail('import', args.error.message);
         const out = await this.importPart(args.data);
-        log(`import · ${args.data.mpn}`, !out.isError, out.content[0]?.type === 'text' ? out.content[0].text.split('\n')[0]! : '');
-        return out;
+        return { ...out, label: `import · ${args.data.mpn}`, detail: first(out.content) };
       }
       case 'artwork': {
         const args = ArtworkInput.safeParse(input);
-        if (!args.success) return text(args.error.message, true);
-        const a = args.data;
+        if (!args.success) return fail('artwork', args.error.message);
         try {
-          switch (a.action) {
-            case 'list': {
-              const items = this.artwork.items;
-              log('artwork · list', true, `${items.length} saved`);
-              return text(items.length ? items.map((x) => `- "${x.name}": ${x.w} × ${x.h} mm, ${x.mode === 'fill' ? 'filled' : `outlines ${x.line} mm`}, ${x.polys.length} figure(s)${x.source ? ` (from ${x.source})` : ''}`).join('\n') : 'The artwork library is empty.');
-            }
-            case 'save': {
-              const design = await this.kernel.draftDesign();
-              const g = design.board?.graphics?.find((x) => x.id.toUpperCase() === a.graphic.toUpperCase());
-              if (!g) return text(`No silkscreen graphic "${a.graphic}" on the board (${(design.board?.graphics ?? []).map((x) => x.id).join(', ') || 'none'}).`, true);
-              const saved = await this.artwork.saveGraphic(g, a.name.trim());
-              log('artwork · save', true, `${g.id} as "${saved.name}"`);
-              this.flash(`Saved "${saved.name}" to the artwork library`);
-              return text(`Saved ${g.id} as "${saved.name}" (${saved.w} × ${saved.h} mm). Place it with add_graphic artwork: "${saved.name}".`);
-            }
-            case 'rename': {
-              const x = this.artwork.find(a.name);
-              if (!x) return text(`No saved artwork "${a.name}".`, true);
-              await this.artwork.rename(x.id, a.to.trim());
-              log('artwork · rename', true, `"${a.name}" → "${a.to}"`);
-              return text(`Renamed "${a.name}" to "${a.to}".`);
-            }
-            case 'delete': {
-              const x = this.artwork.find(a.name);
-              if (!x) return text(`No saved artwork "${a.name}".`, true);
-              await this.artwork.remove(x.id);
-              log('artwork · delete', true, `"${x.name}"`);
-              return text(`Deleted "${x.name}" from the library; boards that use it keep their copy.`);
-            }
-          }
+          return await this.artworkTool(args.data);
         } catch (e) {
-          return text((e as Error).message, true);
+          return fail(`artwork · ${args.data.action}`, (e as Error).message);
         }
-        break;
       }
       case 'pending_import': {
         const args = PendingImportInput.safeParse(input);
-        if (!args.success) return text(args.error.message, true);
+        if (!args.success) return fail('import review', args.error.message);
         const out = await this.ingest.agentEdit(args.data);
-        if (args.data.action === 'save' && !out.isError) this.flash(out.text.split('\n')[0]!);
-        log(`import review · ${args.data.action}`, !out.isError, out.text.split('\n')[0]!.slice(0, 120));
-        return text(out.text, out.isError);
+        if (args.data.action === 'save' && !out.isError) this.flash(first(out.text));
+        return { content: out.text, isError: out.isError, label: `import review · ${args.data.action}`, detail: first(out.text).slice(0, 120) };
       }
       case 'read_datasheet': {
         const args = DatasheetInput.safeParse(input);
-        if (!args.success) return text(args.error.message, true);
+        if (!args.success) return fail('datasheet', args.error.message);
         const out = await this.readDatasheet(args.data);
-        log(`datasheet · ${args.data.part}${args.data.page ? ` p.${args.data.page}` : args.data.find ? ` "${args.data.find}"` : ''}`, !out.isError, out.isError ? 'failed' : 'ok');
-        return out;
+        return { ...out, label: `datasheet · ${args.data.part}${args.data.page ? ` p.${args.data.page}` : args.data.find ? ` "${args.data.find}"` : ''}`, detail: out.isError ? first(out.content) : 'ok' };
       }
       case 'get_schematic_image': {
-        const args = ImageInput.parse(input ?? {});
+        const parsed = ImageInput.safeParse(input ?? {});
+        if (!parsed.success) return fail('schematic image', parsed.error.message);
+        const args = parsed.data;
         if (this.view !== 'sch') {
           this.view = 'sch';
           await tick();
@@ -569,20 +500,76 @@ class AppState {
           frame = this.scope.scope.rect;
         } else if (args.page !== undefined) {
           const i = sheets.findIndex((s) => s.pages.some((p) => p.number === args.page));
-          if (i < 0) return text(`There is no page ${args.page}: the design has ${sheets.reduce((n, s) => n + s.pages.length, 0)} page(s).`, true);
+          if (i < 0) return fail('schematic image', `There is no page ${args.page}: the design has ${sheets.reduce((n, s) => n + s.pages.length, 0)} page(s).`);
           this.sheet = i;
           await tick();
           frame = sheets[i]!.pages.find((p) => p.number === args.page)!.rect;
         }
         await new Promise((r) => requestAnimationFrame(() => r(null)));
         const img = await renderSchematicPng(args.width, frame);
-        log('schematic image', true, `${args.width}px${args.area && frame ? ' · the area' : frame ? ` · page ${args.page}` : ''}`);
-        const content: BridgeContent[] = [{ type: 'image', ...img }];
         const shown = sheets[this.sheet];
-        if (!frame && shown && shown.pages.length > 1) {
-          content.push({ type: 'text', text: `Sheet ${shown.name} is ${shown.pages.length} pages: ${shown.pages.map((p) => `${p.number} ${p.name}`).join('; ')}. Pass page: n to see one at full size.` });
-        }
-        return { isError: false, content };
+        return {
+          content: !frame && shown && shown.pages.length > 1 ? `Sheet ${shown.name} is ${shown.pages.length} pages: ${shown.pages.map((p) => `${p.number} ${p.name}`).join('; ')}. Pass page: n to see one at full size.` : '',
+          images: [img],
+          isError: false,
+          label: 'schematic image',
+          detail: `${args.width}px${args.area && frame ? ' · the area' : frame ? ` · page ${args.page}` : ''}`,
+        };
+      }
+    }
+    return (await runKernelTool(this.kernel.port, tool, input)) ?? unknownTool(tool);
+  }
+
+  /** The artwork tool: the saved silkscreen graphics. */
+  private async artworkTool(a: ArtworkInput): Promise<ToolOutcome> {
+    const ok = (label: string, detail: string, content: string): ToolOutcome => ({ content, isError: false, label: `artwork · ${label}`, detail });
+    const fail = (content: string): ToolOutcome => ({ content, isError: true, label: `artwork · ${a.action}`, detail: content });
+    switch (a.action) {
+      case 'list': {
+        const items = this.artwork.items;
+        return ok('list', `${items.length} saved`, items.length ? items.map((x) => `- "${x.name}": ${x.w} × ${x.h} mm, ${x.mode === 'fill' ? 'filled' : `outlines ${x.line} mm`}, ${x.polys.length} figure(s)${x.source ? ` (from ${x.source})` : ''}`).join('\n') : 'The artwork library is empty.');
+      }
+      case 'save': {
+        const design = await this.kernel.draftDesign();
+        const g = design.board?.graphics?.find((x) => x.id.toUpperCase() === a.graphic.toUpperCase());
+        if (!g) return fail(`No silkscreen graphic "${a.graphic}" on the board (${(design.board?.graphics ?? []).map((x) => x.id).join(', ') || 'none'}).`);
+        const saved = await this.artwork.saveGraphic(g, a.name.trim());
+        this.flash(`Saved "${saved.name}" to the artwork library`);
+        return ok('save', `${g.id} as "${saved.name}"`, `Saved ${g.id} as "${saved.name}" (${saved.w} × ${saved.h} mm). Place it with add_graphic artwork: "${saved.name}".`);
+      }
+      case 'rename': {
+        const x = this.artwork.find(a.name);
+        if (!x) return fail(`No saved artwork "${a.name}".`);
+        await this.artwork.rename(x.id, a.to.trim());
+        return ok('rename', `"${a.name}" → "${a.to}"`, `Renamed "${a.name}" to "${a.to}".`);
+      }
+      case 'delete': {
+        const x = this.artwork.find(a.name);
+        if (!x) return fail(`No saved artwork "${a.name}".`);
+        await this.artwork.remove(x.id);
+        return ok('delete', `"${x.name}"`, `Deleted "${x.name}" from the library; boards that use it keep their copy.`);
+      }
+    }
+  }
+
+  /** Execute one tool call forwarded by the local bridge: the turn tools here, the design tools in runTool. */
+  async handleBridgeCall(tool: string, input: unknown): Promise<{ isError: boolean; content: BridgeContent[] }> {
+    const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
+    if (tool === 'submit_part') return this.ingest.submit(input); // datasheet import, not a design change
+    if (this.inAppBusy) return text('The in-app agent is working on this design right now. Try again when it has finished.', true);
+
+    // the activity block is created lazily, so waiting for review does not open a new one
+    let current: ChatItem | null = null;
+    const item = () => (current ??= this.externalItem());
+    const log = (label: string, ok: boolean, detail: string) => item().segments.push({ type: 'tool', label, ok, detail });
+
+    switch (tool) {
+      case 'get_context': {
+        const snap = await this.kernel.port.snapshot();
+        const p = this.k?.proposal;
+        const pending = p ? `\n<pending_changeset hunks="${p.hunks.length}">${p.hunks.map((h) => `${h.change} ${h.title}`).join('; ')}</pending_changeset>` : '';
+        log('context', true, `${snap.summary.components.length} parts · ${snap.counts.errors}E ${snap.counts.warnings}W`);
+        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope }) + pending + `\nautonomy: ${this.settings.mode}`);
       }
       case 'propose': {
         const args = ProposeInput.safeParse(input);
@@ -626,9 +613,15 @@ class AppState {
         });
         return text(result);
       }
-      default:
-        return text(`Unknown tool ${tool}`, true);
     }
+    if (tool === 'import_part') log('import', true, 'reading the datasheet…'); // takes minutes
+    const out = await this.runTool(tool, input);
+    log(out.label, !out.isError, out.detail);
+    if (tool === 'design_edit') await this.refresh();
+    return {
+      isError: out.isError,
+      content: [...(out.images ?? []).map((i) => ({ type: 'image' as const, ...i })), ...(out.content ? [{ type: 'text' as const, text: out.content }] : [])],
+    };
   }
 
   private async persist() {

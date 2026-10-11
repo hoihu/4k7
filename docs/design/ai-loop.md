@@ -117,12 +117,15 @@ claude mcp add --scope user tracewise -- node <repo>/tools/bridge/src/main.ts
   remembers the code and reconnects by itself when Claude Code restarts.
 - **Security**: loopback only; WebSocket connections from non-localhost origins are closed before pairing (so a website
   cannot reach the bridge); no call is forwarded before the code matches; one paired tab at a time.
-- **Tools**: `get_context` (design state + canvas selection + pending changeset), `design_query`, `design_edit`, `calc`
-  (same schemas as the in-app agent), `get_schematic_image` (PNG of the current sheet), `propose` (hands the working copy
-  to the user; **refused while errors are open**, commits directly in Auto mode) and `wait_for_review` (blocks until the
-  user accepts or rejects).
+- **Tools**: one set for every engine (`agentTools(engine)` in `packages/schema/src/tools.ts`), run by one executor
+  in the tab (`App.runTool`): `design_query`, `design_edit`, `calc`, `jlc_search`, `import_part`, `pending_import`,
+  `artwork`, `read_datasheet`, `get_schematic_image`. Only how a turn starts and ends differs: Claude Code gets
+  `get_context` (design state + canvas selection + pending changeset), `propose` (hands the working copy to the user;
+  **refused while errors are open**, commits directly in Auto mode) and, from a terminal, `wait_for_review` (blocks until
+  the user accepts or rejects); the in-app agent gets the state with each message and asks with `ask_user`.
+- **Prompt**: the design guidance is one text (`DESIGN_GUIDE`, `packages/schema/src/guide.ts`); the in-app system prompt
+  and the server `instructions` (the external agent's equivalent of the system prompt) only add their engine's framing.
 - The in-app agent and an external agent never edit at the same time: bridge calls are refused while the in-app agent runs.
-- Server `instructions` carry the workflow rules (the external agent's equivalent of the system prompt).
 - **App chat via Claude Code** (`npm run bridge`): the tab sends chat messages over the WebSocket; the bridge runs
   `claude -p --output-format stream-json --include-partial-messages --tools "" --strict-mcp-config --mcp-config <http>
   --allowedTools mcp__tracewise --permission-mode dontAsk --append-system-prompt <chat rules> [--resume <session>]` in a

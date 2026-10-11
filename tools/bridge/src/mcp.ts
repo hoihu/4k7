@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { BRIDGE_INSTRUCTIONS, bridgeTools, chatModePrompt, ingestPrompt, ingestTools } from '@tracewise/schema';
+import { BRIDGE_INSTRUCTIONS, agentTools, chatModePrompt, ingestPrompt, ingestTools } from '@tracewise/schema';
 import type { Bridge, HttpHandler } from './bridge.ts';
 
 export const VERSION = '0.1.0';
@@ -20,7 +20,7 @@ export function createMcpServer(bridge: Bridge, opts: { mode?: McpMode } = {}): 
     { name: 'tracewise', version: VERSION },
     { capabilities: { tools: {} }, instructions: mode === 'chat' ? chatModePrompt() : mode === 'ingest' ? ingestPrompt() : BRIDGE_INSTRUCTIONS },
   );
-  const tools = mode === 'ingest' ? ingestTools() : bridgeTools({ chat: mode === 'chat' });
+  const tools = mode === 'ingest' ? ingestTools() : agentTools(mode);
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema as { type: 'object' } })),
