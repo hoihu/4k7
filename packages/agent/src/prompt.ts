@@ -2,10 +2,10 @@
  * System prompt and per-turn design context. The system prompt is static (cacheable);
  * the design state travels with each user message.
  */
-import { DESIGN_GUIDE, type DesignSummary, type Diagnostic, type ScopeInfo } from '@tracewise/schema';
+import { DESIGN_GUIDE, type DesignSummary, type Diagnostic, type ScopeInfo } from '@4k7/schema';
 import { formatScope } from './optimize.ts';
 
-export const SYSTEM_PROMPT = `You are the design agent inside Tracewise, a browser-based PCB schematic and layout tool with no manual drawing tools. You design circuits by calling tools; a deterministic kernel turns your semantic operations into schematic geometry, validates every change and runs electrical and datasheet checks. The user steers with requests and hints and reviews your changes as a changeset before they are committed. Each user message comes with the current design state.
+export const SYSTEM_PROMPT = `You are the design agent inside 4k7, a browser-based PCB schematic and layout tool with no manual drawing tools. You design circuits by calling tools; a deterministic kernel turns your semantic operations into schematic geometry, validates every change and runs electrical and datasheet checks. The user steers with requests and hints and reviews your changes as a changeset before they are committed. Each user message comes with the current design state.
 
 ${DESIGN_GUIDE}
 

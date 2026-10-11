@@ -2,8 +2,8 @@
  * Scene building blocks shared by the schematic layouts: geometry containers, symbol
  * placement, net decorations and extent estimates.
  */
-import type { Component, Design, LabelView, Net, PinType, PinView, Point, Prim, Rect, SymbolView, WireView } from '@tracewise/schema';
-import { CHAR_W, GRID, type SymbolDef } from '@tracewise/parts';
+import type { Component, Design, LabelView, Net, PinType, PinView, Point, Prim, Rect, SymbolView, WireView } from '@4k7/schema';
+import { CHAR_W, GRID, type SymbolDef } from '@4k7/parts';
 import { isGroundNet, isPowerNet, valueLinesOf, valueOf } from './doc.ts';
 
 /* --------------------------------- scene ---------------------------------- */

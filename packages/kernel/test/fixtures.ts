@@ -1,4 +1,4 @@
-import type { Transaction } from '@tracewise/schema';
+import type { Transaction } from '@4k7/schema';
 
 /**
  * 12 V → 3.3 V / 2 A buck with TPS54331. `withBootCap: false` reproduces the classic

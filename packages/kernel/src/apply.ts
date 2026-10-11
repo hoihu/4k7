@@ -38,12 +38,12 @@ import {
   DEFAULT_PANEL,
   PANEL_SIDES,
   autoTabs,
-} from '@tracewise/schema';
+} from '@4k7/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
 import { layoutSchematic } from './layout.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
-import { footprintFor, isTwoPin, packageOptions, planUnits, searchParts, standardPackage } from '@tracewise/parts';
+import { footprintFor, isTwoPin, packageOptions, planUnits, searchParts, standardPackage } from '@4k7/parts';
 import {
   allocRefdes,
   cardOf,

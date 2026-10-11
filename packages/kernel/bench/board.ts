@@ -8,7 +8,7 @@
  * Prints the time, the board stats, the unrouted nets and a hash of the routes.
  */
 import { createHash } from 'node:crypto';
-import type { Transaction } from '@tracewise/schema';
+import type { Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from '../test/fixtures.ts';
 

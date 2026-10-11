@@ -7,7 +7,7 @@
 # keeps the projects. If another checkout's dev server holds 5173, it is stopped (by PID, only the
 # process listening on that port), then this one starts there.
 set -euo pipefail
-PORT="${TW_DEV_PORT:-5173}"
+PORT="${FOURK7_DEV_PORT:-5173}"
 cd "$(dirname "$0")/.."
 here="$(pwd -P)"
 
@@ -38,6 +38,6 @@ server=
 trap 'kill $vite $server 2>/dev/null' EXIT
 trap 'exit 130' INT TERM
 # its app link opens the dev server
-TRACEWISE_APP_URL="http://localhost:$PORT" node --watch tools/server/src/main.ts --serve &
+FOURK7_APP_URL="http://localhost:$PORT" node --watch tools/server/src/main.ts --serve &
 server=$!
 wait "$vite"

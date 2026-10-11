@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { autoTabs, PANEL_SIDES, type PanelSide, type PanelView } from '@tracewise/schema';
+  import { autoTabs, PANEL_SIDES, type PanelSide, type PanelView } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
 
   /** The fabrication panel's settings (set_panel): copies, gap, rails, tabs, marks. */

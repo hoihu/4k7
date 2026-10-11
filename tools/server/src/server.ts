@@ -19,7 +19,7 @@ import {
   type ServerToTab,
   type ChatCapability,
   type TabToServer,
-} from '@tracewise/schema';
+} from '@4k7/schema';
 
 export interface CallResult {
   isError: boolean;
@@ -127,7 +127,7 @@ export class LocalServer {
   async stop(): Promise<void> {
     for (const p of this.#pending.values()) {
       clearTimeout(p.timer);
-      p.resolve(errorResult('The Tracewise server is shutting down.'));
+      p.resolve(errorResult('The 4k7 server is shutting down.'));
     }
     this.#pending.clear();
     this.#tab?.close(1001, 'server stopped');
@@ -174,7 +174,7 @@ export class LocalServer {
     if (!this.#tab) {
       return Promise.resolve(
         errorResult(
-          `The Tracewise app is not connected to this server. Give the user this link to open (it connects the app): ${this.appLink()}`,
+          `The 4k7 app is not connected to this server. Give the user this link to open (it connects the app): ${this.appLink()}`,
         ),
       );
     }

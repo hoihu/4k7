@@ -1,4 +1,4 @@
-import type { DesignSummary, Diagnostic, DiagnosticCounts, ToolDefinition, TransactionResult } from '@tracewise/schema';
+import type { DesignSummary, Diagnostic, DiagnosticCounts, ToolDefinition, TransactionResult } from '@4k7/schema';
 
 /** Provider-neutral conversation blocks. Assistant messages also keep the raw provider payload. */
 export type Block =

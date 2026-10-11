@@ -2,8 +2,8 @@
  * Copper design-rule check on exact geometry, independent of the router's grid: clearance
  * between tracks, vias and pads of different nets on the same layer.
  */
-import { cutoutDistance, insideBoard } from '@tracewise/schema';
-import type { BoardDiagnostic, BoardView, CopperLayer } from '@tracewise/schema';
+import { cutoutDistance, insideBoard } from '@4k7/schema';
+import type { BoardDiagnostic, BoardView, CopperLayer } from '@4k7/schema';
 
 type Shape =
   | { kind: 'seg'; ax: number; ay: number; bx: number; by: number; r: number }

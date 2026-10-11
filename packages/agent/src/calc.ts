@@ -2,7 +2,7 @@
  * Deterministic engineering calculators exposed to the agent as the `calc` tool.
  * The model decides *what* to compute; arithmetic and standard-value snapping happen here.
  */
-import { E_SERIES, eSeriesValues, formatQuantity, nearestInSeries, parseQuantity, type CalcCall, type ESeries, type ValueSeries } from '@tracewise/schema';
+import { E_SERIES, eSeriesValues, formatQuantity, nearestInSeries, parseQuantity, type CalcCall, type ESeries, type ValueSeries } from '@4k7/schema';
 
 export function seriesValues(name: string): number[] {
   const s = eSeriesValues(name);

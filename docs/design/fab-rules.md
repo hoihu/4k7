@@ -3,7 +3,7 @@
 > Part of the [architecture](../ARCHITECTURE.md). Status: first slice implemented (2026-10-09).
 
 A board is made by someone, and every manufacturer has a floor: the narrowest track, the smallest
-drill, the thinnest ring. Tracewise keeps that floor apart from the **design rules** the board is
+drill, the thinnest ring. 4k7 keeps that floor apart from the **design rules** the board is
 routed with:
 
 | | What it is | Who sets it | Where |

@@ -1,5 +1,5 @@
 /**
- * How to design in Tracewise: the guidance every design agent gets, whichever engine runs the
+ * How to design in 4k7: the guidance every design agent gets, whichever engine runs the
  * conversation (the in-app agent on the user's API key, or Claude Code through the local server).
  * Each engine adds only its own framing: SYSTEM_PROMPT in packages/agent, MCP_INSTRUCTIONS in server.ts.
  */

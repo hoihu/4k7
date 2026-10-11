@@ -3,8 +3,8 @@
  * project. Saved from a board graphic (the agent's artwork tool) or imported from an SVG file;
  * exported as SVG. The kernel worker gets every artwork so add_graphic can place it by name.
  */
-import { pathFigures, traceBitmap } from '@tracewise/kernel';
-import type { Artwork, SilkGraphic } from '@tracewise/schema';
+import { pathFigures, traceBitmap } from '@4k7/kernel';
+import type { Artwork, SilkGraphic } from '@4k7/schema';
 import { deleteArtwork, loadArtwork, saveArtwork } from './persist.ts';
 
 interface KernelArtwork {

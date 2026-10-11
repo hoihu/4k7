@@ -1,4 +1,4 @@
-import type { BoardView, Design } from '@tracewise/schema';
+import type { BoardView, Design } from '@4k7/schema';
 
 export type BoardStage = 'placed' | 'routed';
 

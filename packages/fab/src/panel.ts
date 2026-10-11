@@ -4,7 +4,7 @@
  * fiducials. Designators get the copy's number ("R1_2"), so the BOM counts the whole panel and
  * the pick-and-place lists every placement on it.
  */
-import type { BoardPart, BoardView, PanelView, Zone, ZoneCut } from '@tracewise/schema';
+import type { BoardPart, BoardView, PanelView, Zone, ZoneCut } from '@4k7/schema';
 import { bom, gerbers, pickAndPlace, type FabFile } from './gerber.ts';
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;

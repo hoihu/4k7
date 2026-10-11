@@ -4,7 +4,7 @@
  * IPC-7351 nominal-density rules of thumb: toe/heel extensions on gull-wing leads, pads
  * reaching out past the body edge on no-lead packages, balls at ~80 % diameter.
  */
-import type { PackageInfo } from '@tracewise/schema';
+import type { PackageInfo } from '@4k7/schema';
 
 export interface Pad {
   number: string;

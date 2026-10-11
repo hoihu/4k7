@@ -1,5 +1,5 @@
 {
-  "name": "@tracewise/web",
+  "name": "@4k7/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,17 +10,18 @@
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings"
   },
   "dependencies": {
-    "@tracewise/agent": "0.1.0",
-    "@tracewise/kernel": "0.1.0",
-    "@tracewise/parts": "0.1.0",
-    "@tracewise/schema": "0.1.0",
+    "@4k7/agent": "0.1.0",
+    "@4k7/fab": "0.1.0",
+    "@4k7/kernel": "0.1.0",
+    "@4k7/parts": "0.1.0",
+    "@4k7/schema": "0.1.0",
     "pdfjs-dist": "^6.3.289",
-    "three": "^0.181.2",
-    "@tracewise/fab": "0.1.0"
+    "three": "^0.181.2"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/three": "^0.181.0",
+    "fake-indexeddb": "^6.2.5",
     "svelte": "^5.57.1",
     "svelte-check": "^4.7.6",
     "vite": "^8.3.1"

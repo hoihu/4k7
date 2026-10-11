@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "tracewise": {
+    "4k7": {
       "command": "node",
       "args": ["tools/server/src/main.ts"]
     }

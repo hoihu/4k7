@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { body3dFor } from '@tracewise/parts';
-  import type { PartCard } from '@tracewise/schema';
+  import { body3dFor } from '@4k7/parts';
+  import type { PartCard } from '@4k7/schema';
   import type { BodyViewer, TopView, ViewPreset } from '../three-body.ts';
 
   /** 3D preview of the generated package body (three.js, loaded when first shown). */

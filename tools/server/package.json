@@ -1,11 +1,11 @@
 {
-  "name": "@tracewise/server",
+  "name": "@4k7/server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local relay: exposes the Tracewise op catalogue as an MCP server and forwards calls to the open browser tab",
+  "description": "Local relay: exposes the 4k7 op catalogue as an MCP server and forwards calls to the open browser tab",
   "bin": {
-    "tracewise-server": "./src/main.ts"
+    "4k7-server": "./src/main.ts"
   },
   "exports": {
     ".": "./src/index.ts"
@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",
-    "@tracewise/schema": "0.1.0",
+    "@4k7/schema": "0.1.0",
     "pdfjs-dist": "^6.3.289",
     "ws": "^8.21.3"
   },

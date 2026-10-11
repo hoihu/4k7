@@ -39,8 +39,8 @@ import {
   placeCutout,
   placeGraphic,
   figureDepths,
-} from '@tracewise/schema';
-import { footprintFor, isTwoPin, packageOf, type Footprint } from '@tracewise/parts';
+} from '@4k7/schema';
+import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
 import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
 import { copperDrc, edgeDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';

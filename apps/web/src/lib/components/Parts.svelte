@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { BUILTIN_PARTS, footprintFor, isModule, packageOf, partTitle, planUnits, searchParts, symbolFor, unitCount } from '@tracewise/parts';
-  import type { PartCard, PartPin, SheetView, SymbolView } from '@tracewise/schema';
+  import { BUILTIN_PARTS, footprintFor, isModule, packageOf, partTitle, planUnits, searchParts, symbolFor, unitCount } from '@4k7/parts';
+  import type { PartCard, PartPin, SheetView, SymbolView } from '@4k7/schema';
   import { app, tokenCost } from '../app.svelte.ts';
   import { USAGE_TITLE, usageLine } from '../usage.ts';
   import type { Datasheet } from '../ingest.svelte.ts';
   import type { TopView } from '../three-body.ts';
   import { artworkSvg, keepPicture, rasterize, type RasterOptions } from '../artwork.svelte.ts';
-  import type { Artwork } from '@tracewise/schema';
+  import type { Artwork } from '@4k7/schema';
   import Body3DView from './Body3DView.svelte';
   import DatasheetView from './DatasheetView.svelte';
   import FootprintView from './FootprintView.svelte';
