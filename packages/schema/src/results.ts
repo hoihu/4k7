@@ -1,5 +1,6 @@
 import type { EditOp } from './ops.ts';
 import type { ScopeOutcome } from './scope.ts';
+import type { ValueSeries } from './model.ts';
 
 /* ------------------------------ diagnostics ------------------------------- */
 
@@ -287,4 +288,6 @@ export interface DesignSummary {
   waivers: number;
   /** Present when the design has a description: its blocks, and the parts none of them covers. */
   description?: { blocks: number; undescribed: string[] };
+  /** Present when generic passives are held to standard-value series (set_value_series). */
+  valueSeries?: ValueSeries;
 }

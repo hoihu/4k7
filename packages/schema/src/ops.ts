@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { LandPad } from './ingest.ts';
 import { PAPER_IDS, type PaperId } from './results.ts';
+import { E_SERIES } from './units.ts';
 
 /* ---------------------------------- refs ---------------------------------- */
 
@@ -146,6 +147,15 @@ export const SetPackageDefaultsOp = z.object({
   passives: z.string().optional().describe('Shorthand: resistors, ceramic capacitors and LEDs at once, e.g. "0805" for hand soldering'),
   auto_size: z.boolean().optional().describe('Size up where the value demands it (capacitors ≥ 4.7 µF or > 25 V, resistor power, inductor/diode current); default on'),
 });
+
+const seriesName = z.enum(E_SERIES).nullable().optional();
+export const SetValueSeriesOp = z.object({
+  op: z.literal('set_value_series'),
+  resistors: seriesName.describe('Series generic resistors take their values from, e.g. "E24" (5 %), "E96" (1 %); null = any value'),
+  capacitors: seriesName.describe('Ceramic and electrolytic capacitors, e.g. "E6" or "E12"'),
+  inductors: seriesName.describe('Inductors, e.g. "E6"'),
+  all: z.enum(E_SERIES).optional().describe('Shorthand: resistors, capacitors and inductors at once'),
+}).describe('The standard-value ranges (E-series) of generic resistors, capacitors and inductors. calc rounds to them, and the checks warn about values outside them.');
 
 export const SetPaperOp = z.object({
   op: z.literal('set_paper'),
@@ -351,6 +361,7 @@ export const EditOp = z.discriminatedUnion('op', [
   SetFootprintOp,
   RenamePartOp,
   SetPackageDefaultsOp,
+  SetValueSeriesOp,
   SetPaperOp,
   SetBoardOp,
   SetFabProfileOp,

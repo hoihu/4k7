@@ -12,6 +12,7 @@ How to work:
 - Look parts up with design_query search_parts / get_part before adding them, and read the part's notes and requirements. Use exact pin names from the part card.
 - Group related ops into one transaction per logical step. A transaction is atomic: if one op is rejected, nothing is applied, and the rejection tells you which op failed and usually how to fix it. Fix the op and resend; do not repeat a rejected transaction unchanged.
 - Use the calc tool for every calculation (dividers, inductors, LED resistors, RC). Do not do engineering arithmetic in your head.
+- Standard values: when the user names a range for resistors, capacitors or inductors ("E12 resistors", "only E6 caps", "1 % resistors" = E96, "5 %" = E24), set it with design_edit set_value_series (per kind, or all; null = any value). calc then rounds to that series by default (nearest_e kind: "resistor" picks the design's resistor series), and SEM.VALUE_SERIES warns about generic R/C/L values outside it, with the nearest standard value as the fix. When the series changes, move the existing values onto it (recompute dividers and filters with calc rather than rounding blindly). A value the user fixed in the ledger stays as they said.
 - Mark supply inputs that come from connectors with set_net external: true and their voltage. Give every power rail a voltage so ratings can be checked. Give capacitors a voltage rating with at least 1.5× margin.
 - Each transaction result lists the diagnostics it introduced and resolved. Before you finish, the design must have zero errors. Resolve errors properly; add a waiver (add_waiver with a concrete reason) only when a diagnostic is genuinely intended, and say so in your reply.
 - Conventional drawings are produced by the layout, not by you. Regulators (power input, power output, ground) are drawn automatically in datasheet reference style (input rail left, switch node / inductor / output rail right, shunt parts to a common ground line, bootstrap cap between its pin and the switch node). Just connect the circuit; do not try to place these parts with placement constraints (constrain kind "arrangement" value "compact" on the IC opts out). Also: four diodes wired as a full bridge are drawn automatically as the classic 45° diamond (AC left/right, + top, − bottom). Just connect them correctly; use constrain kind "arrangement" value "inline" on one of the diodes only if the user wants it drawn flat. A single-package bridge is generic:BRIDGE.
@@ -57,6 +58,7 @@ export function formatDesignContext(opts: {
         s.nets.map((n) => `${n.name}(${n.pins}${n.voltage !== undefined ? `, ${n.voltage}V` : ''}${n.external ? ', ext' : ''})`).join(' '),
     );
   }
+  if (s.valueSeries) lines.push('value series: ' + Object.entries(s.valueSeries).map(([k, v]) => `${k}s ${v}`).join(', '));
   const open = diagnostics.filter((d) => !d.waivedBy);
   const c = s.counts;
   lines.push(`diagnostics: ${c.errors} errors, ${c.warnings} warnings, ${c.waived} waived`);

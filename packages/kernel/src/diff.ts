@@ -87,6 +87,19 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     });
   }
 
+  /* standard-value series of generic passives */
+  if (JSON.stringify(base.valueSeries ?? null) !== JSON.stringify(draft.valueSeries ?? null)) {
+    const set = Object.entries(draft.valueSeries ?? {}).map(([k, v]) => `${k}s ${v}`);
+    hunks.push({
+      id: 'board:series',
+      kind: 'board',
+      change: base.valueSeries ? 'change' : 'add',
+      entityId: 'series',
+      title: `value series: ${set.join(', ') || 'any value'}`,
+      details: [],
+    });
+  }
+
   /* the paper of the schematic pages */
   if ((base.paper ?? null) !== (draft.paper ?? null)) {
     hunks.push({
@@ -241,6 +254,9 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
         if (entity === 'packages') {
           if (draft.packageDefaults) d.packageDefaults = clone(draft.packageDefaults);
           else delete d.packageDefaults;
+        } else if (entity === 'series') {
+          if (draft.valueSeries) d.valueSeries = clone(draft.valueSeries);
+          else delete d.valueSeries;
         } else if (entity === 'paper') {
           if (draft.paper) d.paper = draft.paper;
           else delete d.paper;
