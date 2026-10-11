@@ -111,9 +111,31 @@ type Json = Record<string, unknown>;
 export function schemaOf(t: z.ZodType): Json {
   const s = z.toJSONSchema(t, { io: 'input', unrepresentable: 'any' }) as Json;
   delete s.$schema;
+  tuplesAsArrays(s);
   const variants = (s.anyOf ?? s.oneOf) as Json[] | undefined;
   if (s.type === 'object' || !variants) return s;
   return flattenUnion(variants);
+}
+
+/**
+ * zod emits a tuple as `prefixItems` with `items: false` (JSON Schema 2020-12). Some MCP
+ * clients (VS Code's Copilot) refuse any array whose `items` is not a schema, so every tuple
+ * also gets `items`: the element schema when all positions share one, else their union. The
+ * length is already fixed by minItems/maxItems; zod still validates the exact shape.
+ */
+function tuplesAsArrays(node: unknown): void {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const n of node) tuplesAsArrays(n);
+    return;
+  }
+  const s = node as Json;
+  const prefix = s.prefixItems as Json[] | undefined;
+  if (s.type === 'array' && prefix && typeof s.items !== 'object') {
+    const first = JSON.stringify(prefix[0]);
+    s.items = prefix.every((p) => JSON.stringify(p) === first) ? { ...prefix[0] } : { anyOf: prefix.map((p) => ({ ...p })) };
+  }
+  for (const v of Object.values(s)) tuplesAsArrays(v);
 }
 
 function flattenUnion(variants: Json[]): Json {
