@@ -474,6 +474,17 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   const dirOf = new Int8Array(S);
   const goal = new Int32Array(S);
   let epoch = 0;
+  // cost[s] is valid only where seenAt[s] is the current search (no clearing of S cells per search)
+  const seenAt = new Int32Array(S);
+  let searchNo = 0;
+  // the reachability flood (see search); its buffers only once a search needs one
+  let floodAt: Int32Array | null = null;
+  let floodQueue: Int32Array | null = null;
+  // a search this long without a way found floods first (a flood costs about as much as S / 8
+  // expansions of the search; most routable connections are found well before)
+  const FLOOD_AFTER = Math.max(1 << 16, S >> 3);
+  // 1 F.Cu (prefers horizontal steps), 2 B.Cu (vertical), 0 inner
+  const layerKind = layers.map((l) => (l === 'F.Cu' ? 1 : l === 'B.Cu' ? 2 : 0));
   const DX = [1, 1, 0, -1, -1, -1, 0, 1];
   const DY = [0, 1, 1, 1, 0, -1, -1, -1];
   const STEP = [1, Math.SQRT2, 1, Math.SQRT2, 1, Math.SQRT2, 1, Math.SQRT2];
@@ -534,7 +545,9 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean): number[] | null => {
     const free = freeFor(net, k);
     const viaFree = viaFreeFor(net);
-    cost.fill(Infinity);
+    const run = ++searchNo;
+    const inPad = widths[k]! / 2 - 0.01;
+    const costOf = (st: number) => (seenAt[st] === run ? cost[st]! : Infinity);
     const heap = new Heap();
     const [bx0, by0, bx1, by1] = 'x0' in target ? [target.x0, target.y0, target.x1, target.y1] : [target.x / G, target.y / G, target.x / G, target.y / G];
     const h = (s: number) => {
@@ -551,8 +564,65 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const centred = (st: number) => usable(st) && !offCentre(net, k, st);
     const seeds = starts.filter(centred);
     if (!seeds.length) seeds.push(...starts.filter(usable));
+    const from0 = seeds.length ? seeds : deepestCells(starts);
+    const goalOk = (st: number) => isGoal(st) && (accept ? accept(st) : usable(st));
+    /*
+     * Can any goal be reached at all? A plain flood over the same steps as the search (it reaches
+     * exactly what the search would, given time), far cheaper per cell than the search.
+     * An unroutable connection would otherwise expand all the copper it can reach.
+     */
+    const reachable = () => {
+      floodAt ??= new Int32Array(S);
+      floodQueue ??= new Int32Array(S);
+      const seen = floodAt;
+      const queue = floodQueue;
+      let head = 0;
+      let tail = 0;
+      for (const st of from0) {
+        if (seen[st] === run) continue;
+        seen[st] = run;
+        queue[tail++] = st;
+      }
+      while (head < tail) {
+        const st = queue[head++]!;
+        if (goalOk(st)) return true;
+        const l = Math.floor(st / N);
+        const i = st - l * N;
+        const x = i % W;
+        const y = (i - x) / W;
+        const m = maps[k]![l]!;
+        const lo = l * N;
+        const ok = (c: number) => {
+          const v = m[c]!;
+          return v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad);
+        };
+        for (let d = 0; d < 8; d++) {
+          const dx = DX[d]!;
+          const dy = DY[d]!;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const ni = ny * W + nx;
+          const ns = lo + ni;
+          if (seen[ns] === run || (!ok(ni) && !isGoal(ns))) continue;
+          if (dx !== 0 && dy !== 0 && (!ok(y * W + nx) || !ok(ny * W + x))) continue;
+          seen[ns] = run;
+          queue[tail++] = ns;
+        }
+        if (L > 1 && viaFree(i)) {
+          for (let l2 = 0; l2 < L; l2++) {
+            const ns = l2 * N + i;
+            if (seen[ns] === run) continue;
+            seen[ns] = run;
+            queue[tail++] = ns;
+          }
+        }
+      }
+      return false;
+    };
     // a start on a pad pays for the piece from the pad centre, so tracks leave near the centre
-    for (const s of seeds.length ? seeds : deepestCells(starts)) {
+    for (const s of from0) {
+      seenAt[s] = run;
       cost[s] = toCentre(s);
       from[s] = -1;
       dirOf[s] = -1;
@@ -571,31 +641,44 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       // as 32-bit floats and the priorities as 64-bit numbers: at a cost of a few hundred the
       // rounding alone is ~1e-4, so the tolerance must be above that; real differences are ≥ 0.05.)
       if (heap.lastPrio - h(s) > cost[s]! + 0.01) continue;
-      if (isGoal(s) && (accept ? accept(s) : usable(s)) && cost[s]! + toCentre(s) < best) {
+      if (goalOk(s) && cost[s]! + toCentre(s) < best) {
         best = cost[s]! + toCentre(s);
         reached = s;
       }
       if (++expanded > LIMIT) break;
+      // a long search with no way found yet: give up if there is none
+      if (expanded === FLOOD_AFTER && reached < 0 && !reachable()) break;
       if ((expanded & 4095) === 0 && now() > deadline) break;
       const l = Math.floor(s / N);
       const i = s % N;
       const x = i % W;
       const y = (i - x) / W;
       const base = cost[s]!;
+      const dir = dirOf[s]!;
+      // free(l, ·) for this layer, inlined (the hottest test of the search)
+      const m = maps[k]![l]!;
+      const lo = l * N;
+      const ok = (c: number) => {
+        const v = m[c]!;
+        return v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad);
+      };
+      const kind = layerKind[l]!;
+      const tch = k < 2 ? touch[k]! : null;
       for (let d = 0; d < 8; d++) {
-        const nx = x + DX[d]!;
-        const ny = y + DY[d]!;
+        const dx = DX[d]!;
+        const dy = DY[d]!;
+        const nx = x + dx;
+        const ny = y + dy;
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
         const ni = ny * W + nx;
-        const ns = l * N + ni;
-        if (!free(l, ni) && !isGoal(ns)) continue;
+        const ns = lo + ni;
+        if (!ok(ni) && !isGoal(ns)) continue;
         // diagonal steps: both orthogonal neighbours must be clear too (no corner cutting)
-        if (DX[d] !== 0 && DY[d] !== 0 && (!free(l, y * W + nx) || !free(l, ny * W + x))) continue;
-        const horizontal = DY[d] === 0;
-        const vertical = DX[d] === 0;
-        const off = layers[l] === 'F.Cu' ? !horizontal : layers[l] === 'B.Cu' ? !vertical : false;
-        const nc = base + STEP[d]! + (dirOf[s]! >= 0 && dirOf[s] !== d ? TURN_COST : 0) + (off ? OFF_AXIS_COST : 0) + (clips(net, k, l, ni, DX[d]!, DY[d]!) ? CLIP_COST : 0) + offMiddle[ns]!;
-        if (nc < cost[ns]!) {
+        if (dx !== 0 && dy !== 0 && (!ok(y * W + nx) || !ok(ny * W + x))) continue;
+        const off = kind === 1 ? dy !== 0 : kind === 2 ? dx !== 0 : false;
+        const nc = base + STEP[d]! + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? OFF_AXIS_COST : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]!;
+        if (nc < costOf(ns)) {
+          seenAt[ns] = run;
           cost[ns] = nc;
           from[ns] = s;
           dirOf[ns] = d;
@@ -607,7 +690,8 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
           if (l2 === l) continue;
           const ns = l2 * N + i;
           const nc = base + VIA_COST;
-          if (nc < cost[ns]!) {
+          if (nc < costOf(ns)) {
+            seenAt[ns] = run;
             cost[ns] = nc;
             from[ns] = s;
             dirOf[ns] = -1;
@@ -1604,26 +1688,33 @@ function simplify(pts: number[]): number[] {
   return out;
 }
 
-/** Binary min-heap of (state, priority). */
+/** Binary min-heap of (state, priority), in typed arrays that grow as needed. */
 class Heap {
-  private s: number[] = [];
-  private p: number[] = [];
-  get size() {
-    return this.s.length;
-  }
+  private s = new Int32Array(1024);
+  private p = new Float64Array(1024);
+  size = 0;
   push(state: number, prio: number) {
+    if (this.size === this.s.length) {
+      const s = new Int32Array(this.s.length * 2);
+      s.set(this.s);
+      this.s = s;
+      const p = new Float64Array(this.p.length * 2);
+      p.set(this.p);
+      this.p = p;
+    }
     const s = this.s;
     const p = this.p;
-    s.push(state);
-    p.push(prio);
-    let i = s.length - 1;
+    // move the hole up rather than swapping entries
+    let i = this.size++;
     while (i > 0) {
       const up = (i - 1) >> 1;
-      if (p[up]! <= p[i]!) break;
-      [s[up], s[i]] = [s[i]!, s[up]!];
-      [p[up], p[i]] = [p[i]!, p[up]!];
+      if (p[up]! <= prio) break;
+      s[i] = s[up]!;
+      p[i] = p[up]!;
       i = up;
     }
+    s[i] = state;
+    p[i] = prio;
   }
   /** Priority of the entry returned by the last pop(). */
   lastPrio = 0;
@@ -1632,23 +1723,23 @@ class Heap {
     const p = this.p;
     const top = s[0]!;
     this.lastPrio = p[0]!;
-    const ls = s.pop()!;
-    const lp = p.pop()!;
-    if (s.length) {
-      s[0] = ls;
-      p[0] = lp;
+    const n = --this.size;
+    if (n > 0) {
+      // the last entry sinks from the top, the hole moving down
+      const ls = s[n]!;
+      const lp = p[n]!;
       let i = 0;
       for (;;) {
-        const l = 2 * i + 1;
-        const r = l + 1;
-        let m = i;
-        if (l < s.length && p[l]! < p[m]!) m = l;
-        if (r < s.length && p[r]! < p[m]!) m = r;
-        if (m === i) break;
-        [s[m], s[i]] = [s[i]!, s[m]!];
-        [p[m], p[i]] = [p[i]!, p[m]!];
-        i = m;
+        let c = 2 * i + 1;
+        if (c >= n) break;
+        if (c + 1 < n && p[c + 1]! < p[c]!) c++;
+        if (p[c]! >= lp) break;
+        s[i] = s[c]!;
+        p[i] = p[c]!;
+        i = c;
       }
+      s[i] = ls;
+      p[i] = lp;
     }
     return top;
   }
