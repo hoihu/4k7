@@ -9,16 +9,26 @@ parameters, deterministic code makes geometry, and every value can be traced bac
 ## 0. What is implemented
 
 Parts → **Import from datasheet…**: part number plus a PDF (dropped) or a link. The import runs on
-the user's local Claude Code through the server, like the app chat.
+a coding agent on the user's computer through the server, like the app chat: Claude Code, GitHub
+Copilot CLI or OpenCode (`tools/server/src/harness/*.ts`, `ingest()`). The form picks the chat's
+agent when it can import, else Claude Code, else the first one the server found.
 
 1. **Server** (`tools/server/src/chat.ts`, `pdf.ts`): downloads or receives the PDF and makes a
    fresh folder `~/.4k7/ingest/<job>/` with `datasheet.pdf`, `pages/page-NNN.txt` (text,
-   table cells separated by ` | `) and `index.txt` (page → first heading). Then it starts
-   `claude -p` in that folder with `--tools Read,Grep,Glob`, `--permission-mode dontAsk` and an MCP
-   token whose server exposes a single tool, `submit_part`. Reads outside the folder are denied
-   (verified), and there is no shell, no web access and no design tools. The folder is deleted
-   when the job ends. A downloaded PDF is also sent to the tab (`datasheet` event).
-2. **Claude Code** decodes the ordering code (e.g. `STM32F777VIT6` → LQFP100), finds the pin table
+   table cells separated by ` | `) and `index.txt` (page → first heading). Then it starts the
+   agent in that folder with its read-only file tools and an MCP token whose server exposes a
+   single tool, `submit_part`; no shell, no web access, no design tools:
+   - Claude Code: `claude -p --tools Read,Grep,Glob --permission-mode dontAsk` (reads outside the
+     folder are denied, verified);
+   - Copilot CLI: `copilot -p --available-tools view grep glob 4k7 --disallow-temp-dir` (it checks
+     every path against its working directory); the rules open the message, as it has no
+     system-prompt option;
+   - OpenCode: `opencode run --agent 4k7-ingest`, the agent given in `OPENCODE_CONFIG_CONTENT` with
+     only `read`, `grep`, `glob` and the 4k7 tools, and `external_directory: deny`.
+   Progress (pages read, pins written while `submit_part` streams in) reads the same in the app for
+   all three, as far as each CLI reports it (OpenCode reports tool calls only once done). The
+   folder is deleted when the job ends. A downloaded PDF is also sent to the tab (`datasheet` event).
+2. **The agent** decodes the ordering code (e.g. `STM32F777VIT6` → LQFP100), finds the pin table
    column for that package and the package drawing, and submits a `PartDraft`
    (`packages/schema/src/ingest.ts`): pins with number, name, type, alternate functions and the
    **page of each pin's table row**, plus package family, nominal dimensions and drawing page,
@@ -26,12 +36,14 @@ the user's local Claude Code through the server, like the app chat.
 3. **The tab checks every submission** with `draftToCard` (`packages/parts/src/ingest.ts`):
    schema, duplicate numbers, pin count against the package (exposed pad excluded), numbering 1…N
    for leaded packages, valid JEDEC ball names for BGA, supply/ground presence, pages present, and
-   whether a footprint can be generated with a pad for every pin. Errors go back to Claude as the
-   tool result ("Missing pin numbers: 37–38"), and it resubmits.
-4. **Second pass (optional, on by default)**: the server starts a second, fresh Claude Code session
+   a package family that contradicts the package's name (a TSSOP read as QFP would get pads on four
+   sides), and whether a footprint can be generated with a pad for every pin. Errors go back to the
+   agent as the tool result ("Missing pin numbers: 37–38"), and it resubmits.
+4. **Second pass (optional, on by default)**: the server starts a second, fresh session of the agent
    (no memory of the first) with an extra instruction to work in a different order (count groups
    first, read the table backwards, re-derive dimensions). `compareDrafts` compares both accepted
-   drafts pin by pin (name, type) and on every footprint-relevant package dimension; the review
+   drafts pin by pin (name, type) and on every footprint-relevant package dimension (of `span_mm`
+   only what the footprint uses: both values for QFP, the row distance for two-row packages); the review
    lists each disagreement with both values and the user picks (`mergeDrafts`).
 5. **Generators** (`symbolgen.ts`, `footprint.ts`, `body3d.ts`):
    - symbols for big ICs (`planSymbolLayout`): supplies at the top of the left side (stacked by

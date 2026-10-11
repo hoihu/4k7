@@ -34,17 +34,31 @@ const session = arg('--session') ?? 'ses_fake1';
 const client = new Client({ name: 'opencode', version: 'fake' });
 await client.connect(new StreamableHTTPClientTransport(new URL(tw.url), { requestInit: { headers: tw.headers } }));
 const tools = (await client.listTools()).tools.map((t) => t.name);
-await client.callTool({ name: 'get_context', arguments: {} });
+const ingest = !tools.includes('get_context');
+await (ingest ? client.callTool({ name: 'submit_part', arguments: { mpn: 'FAKE1' } }) : client.callTool({ name: 'get_context', arguments: {} }));
 await client.close();
+const files = (await import('node:fs')).readdirSync('.').filter((f) => !f.startsWith('opencode-')).sort();
 
 if (message.includes('please fail')) {
   out({ type: 'error', sessionID: session, error: { name: 'ProviderModelNotFoundError', data: { message: 'Model not found: nope/nope' } } });
   process.exit(1);
 }
-const flags = { message, agentTools: agent.tools, permission: agent.permission, rules: agent.prompt.startsWith('You are answering messages typed into'), web: agent.prompt.includes('Web access is enabled'), model: arg('--model') ?? null, tools };
+const flags = {
+  message,
+  agent: arg('--agent'),
+  agentTools: agent.tools,
+  permission: agent.permission,
+  rules: agent.prompt.startsWith(ingest ? 'You extract a part definition' : 'You are answering messages typed into'),
+  verify: agent.prompt.includes('independent verification pass'),
+  web: agent.prompt.includes('Web access is enabled'),
+  model: arg('--model') ?? null,
+  tools,
+  files,
+};
 const step1 = [
   { id: 'p1', type: 'step-start' },
-  { id: 'p2', type: 'tool', tool: '4k7_get_context', state: { status: 'completed' } },
+  ...(ingest ? [{ id: 'p2r', type: 'tool', tool: 'read', state: { status: 'completed', input: { filePath: `${process.cwd()}/pages/page-001.txt` } } }] : []),
+  { id: 'p2', type: 'tool', tool: ingest ? '4k7_submit_part' : '4k7_get_context', state: { status: 'completed' } },
   { id: 'p3', type: 'step-finish', reason: 'tool-calls', tokens: { input: 900, output: 40, reasoning: 10, cache: { read: 5000, write: 100 } }, cost: 0.004 },
 ];
 const step2 = [
@@ -58,6 +72,5 @@ const messages = [...before, { info: { role: 'user' }, parts: [{ id: 'u', type: 
 writeFileSync(file, JSON.stringify({ info: { id: session }, messages }, null, 2));
 // streamed: only the first step
 out({ type: 'step_start', sessionID: session, part: step1[0] });
-out({ type: 'tool_use', sessionID: session, part: step1[1] });
-out({ type: 'step_finish', sessionID: session, part: step1[2] });
+for (const p of step1.slice(1)) out({ type: p.type === 'step-finish' ? 'step_finish' : 'tool_use', sessionID: session, part: p });
 out({ type: 'step_start', sessionID: session, part: step2[0] });

@@ -35,6 +35,10 @@ export function draftToCard(input: unknown): IngestResult {
   const dups = [...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k);
   if (dups.length) err(`Duplicate pin numbers: ${dups.slice(0, 20).join(', ')}.`);
 
+  /* ---- family against the package's name: a TSSOP called QFP gets pads on four sides ---- */
+  const expected = familiesNamed(pkg.name);
+  if (expected && !expected.includes(pkg.family)) err(`Package family ${pkg.family} does not fit "${pkg.name}"; use ${expected.join(' or ')}.`);
+
   const isEp = (n: string) => /^(EP|PAD)$/i.test(n) || (!!pkg.exposed_pad_mm && Number(n) === pkg.pins + 1);
   const counted = draft.pins.filter((p) => !isEp(p.number));
   if (counted.length !== pkg.pins) {
@@ -62,8 +66,9 @@ export function draftToCard(input: unknown): IngestResult {
   }
 
   /* ---- names and types ---- */
-  const supplies = draft.pins.filter((p) => p.type === 'pwr_in' && !/^(VSS|GND|V-|VREF-)/i.test(p.name));
-  const grounds = draft.pins.filter((p) => /^(VSS|GND|EP|PAD)/i.test(p.name));
+  // analog, power and digital grounds count too (AGND, PGND, DVSS, AVSS)
+  const supplies = draft.pins.filter((p) => p.type === 'pwr_in' && !/^([ADP]?(GND|VSS)|V-|VREF-)/i.test(p.name));
+  const grounds = draft.pins.filter((p) => /^([ADP]?(GND|VSS)|EP|PAD)/i.test(p.name));
   if (draft.category === 'ic' && !supplies.length) warn('No supply pins (type pwr_in) found; check VDD/VCC pins.');
   if (draft.category === 'ic' && !grounds.length) warn('No ground pins (VSS/GND) found.');
   const mistyped = grounds.filter((p) => p.type !== 'pwr_in' && p.type !== 'passive');
@@ -156,6 +161,26 @@ const sameValue = (x: unknown, y: unknown): boolean => {
   return x === y;
 };
 
+/** The families a package name stands for, when it says (null: the name does not tell). */
+function familiesNamed(name: string): PartDraft['package']['family'][] | null {
+  const n = name.toUpperCase();
+  if (/QFP/.test(n)) return ['QFP'];
+  if (/QFN|LFCSP|MLF/.test(n)) return ['QFN'];
+  if (/DFN|\bW?SON\b|\bVSON|\bUSON/.test(n)) return ['DFN'];
+  if (/BGA/.test(n)) return ['BGA', 'CSP'];
+  if (/MSOP|[TV]?SSOP|SOIC|\bSO-?\d|\bSOP/.test(n)) return ['SOIC', 'SSOP', 'TSSOP', 'MSOP'];
+  if (/\bP?DIP/.test(n)) return ['DIP'];
+  return null;
+}
+
+/** The part of span_mm the footprint uses: both values for QFP, the row distance for two-row packages, none for QFN/DFN/BGA. */
+function spanUsed(p: PartDraft['package']): number[] | undefined {
+  if (!p.span_mm) return undefined;
+  if (p.family === 'QFP') return p.span_mm;
+  if (['SOIC', 'SSOP', 'TSSOP', 'MSOP', 'DIP', 'MODULE'].includes(p.family)) return [p.span_mm[0]];
+  return undefined;
+}
+
 /**
  * Compare two independent extractions of the same part: pin by pin (name and type) and the
  * package dimensions that shape the footprint. Alternate-function lists are not compared.
@@ -174,8 +199,8 @@ export function compareDrafts(a: PartDraft, b: PartDraft): Disagreement[] {
     out.push({ key: `pin:${n}`, label: `Pin ${n}`, a: pinStr(x), b: pinStr(y) });
   }
   for (const f of PKG_FIELDS) {
-    const x = a.package[f];
-    const y = b.package[f];
+    const x = f === 'span_mm' ? spanUsed(a.package) : a.package[f];
+    const y = f === 'span_mm' ? spanUsed(b.package) : b.package[f];
     if (x === undefined && y === undefined) continue;
     if (!sameValue(x, y)) out.push({ key: `package:${f}`, label: `Package ${f.replace(/_mm$/, ' (mm)').replace(/_/g, ' ')}`, a: show(x), b: show(y) });
   }

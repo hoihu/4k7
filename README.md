@@ -57,13 +57,16 @@ The local server runs your agent's CLI headlessly for every chat message, with o
 
 | Agent | Runs | Notes |
 |---|---|---|
-| Claude Code | `claude -p` | Model: default/opus/sonnet/fable/haiku. Also imports datasheets. |
+| Claude Code | `claude -p` | Model: default/opus/sonnet/fable/haiku. |
 | GitHub Copilot CLI | `copilot -p` | Your Copilot plan (personal or company). Model: default, `auto` or any Copilot model. |
 | OpenCode | `opencode run` | Whatever providers OpenCode is logged in to (`opencode models`), e.g. `github-copilot/…`, a company gateway, local models. |
 
 1. Install the agent and sign in once in a terminal.
 2. Start the app (`npx -y github:hoihu/4k7`, or the download) and open the link it prints.
 3. **Settings → Chat provider → Coding agent**, pick the agent (and a model if you like).
+
+All three also import parts from datasheets (Parts → Import from datasheet, where you pick the agent and model).
+On a Copilot plan or organisation that restricts the CLI's models, only `auto` may run; the CLI's error says so.
 
 - Tick **Web** to allow read-only web lookups (datasheets).
 - The server finds the CLIs on your PATH; `FOURK7_CLAUDE_BIN`, `FOURK7_COPILOT_BIN`, `FOURK7_OPENCODE_BIN` point it elsewhere.

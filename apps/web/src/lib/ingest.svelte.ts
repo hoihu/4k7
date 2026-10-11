@@ -1,12 +1,12 @@
 /**
- * Datasheet import: the local Claude Code (through the server) reads the datasheet and submits
+ * Datasheet import: a coding agent on this computer (Claude Code, Copilot CLI, OpenCode; through the server) reads the datasheet and submits
  * a draft; this tab checks every submission deterministically (draftToCard) and answers with
  * the problems to fix. Optionally a second, independent pass extracts everything again and the
  * two are compared fact by fact; the user decides where they disagree. The datasheet is kept
  * so every pin can be shown on its page. Nothing is saved before the user's review.
  */
 import { compareDrafts, draftToCard, listUserParts, mergeDrafts, planUnits, registerUserParts, unregisterUserPart, type Disagreement } from '@4k7/parts';
-import { PartDraft, type ToolContent, type DraftPin, type PackageInfo, type Design, type IngestIssue, type PartCard, type TokenCount } from '@4k7/schema';
+import { PartDraft, type HarnessCapability, type HarnessId, type ToolContent, type DraftPin, type PackageInfo, type Design, type IngestIssue, type PartCard, type TokenCount } from '@4k7/schema';
 import { server } from './server.svelte.ts';
 import { deleteDatasheet, deleteLibraryPart, loadDatasheet, loadLibrary, loadPendingImport, saveDatasheet, saveLibraryPart, savePendingImport, type StoredDatasheet } from './persist.ts';
 
@@ -15,6 +15,8 @@ export interface IngestRequest {
   file?: File;
   url?: string;
   notes?: string;
+  /** Which agent reads the datasheet (default: Claude Code if it is there, else the first that can). */
+  harness?: HarnessId;
   model?: string;
   /** Run a second, independent extraction and compare. */
   verify?: boolean;
@@ -52,7 +54,7 @@ export class IngestState {
   phase = $state<IngestPhase>('idle');
   /** Progress lines (downloading, reading page 69, submitting …). */
   log = $state<string[]>([]);
-  /** Claude's closing words. */
+  /** The agent's closing words. */
   reply = $state('');
   error = $state<string | null>(null);
   /** Issues of the latest submission (shown while running). */
@@ -65,7 +67,7 @@ export class IngestState {
   library = $state<PartCard[]>([]);
   /** Saved parts a newer version of the app wrote; not loaded, left in storage. */
   newer = 0;
-  request = $state<{ mpn: string; source: string; url?: string } | null>(null);
+  request = $state<{ mpn: string; source: string; url?: string; agent?: string } | null>(null);
   pass = $state(1);
   passes = $state(1);
   /** Accepted draft of each pass. */
@@ -177,15 +179,28 @@ export class IngestState {
     }
   }
 
+  /** The agents the server can import with (servers before the other agents: Claude Code). */
+  get agents(): HarnessCapability[] {
+    if (server.status !== 'connected') return [];
+    return server.harnesses.filter((h) => h.available && (h.ingest || h.id === 'claude-code'));
+  }
+
   get available(): boolean {
-    return server.status === 'connected' && !!server.chat?.available;
+    return this.agents.length > 0;
+  }
+
+  /** The agent to import with: the preferred one if it can, else Claude Code, else the first that can. */
+  agentFor(preferred?: HarnessId): HarnessCapability | undefined {
+    const a = this.agents;
+    return a.find((h) => h.id === preferred) ?? a.find((h) => h.id === 'claude-code') ?? a[0];
   }
 
   async start(req: IngestRequest): Promise<void> {
     if (this.phase === 'running') return;
     const mpn = req.mpn.trim();
     this.#reset();
-    this.request = { mpn, source: req.file?.name ?? req.url ?? '', ...(req.url && !req.file ? { url: req.url.trim() } : {}) };
+    const agent = this.agentFor(req.harness);
+    this.request = { mpn, source: req.file?.name ?? req.url ?? '', ...(req.url && !req.file ? { url: req.url.trim() } : {}), ...(agent ? { agent: agent.name } : {}) };
     this.phase = 'running';
     this.passes = req.verify ? 2 : 1;
     const fail = (msg: string) => {
@@ -193,7 +208,7 @@ export class IngestState {
       this.phase = 'failed';
     };
     if (!mpn) return fail('Enter the full part number (the ordering code picks the package).');
-    if (!this.available) return fail('Connect the local server first (Settings → Local server).');
+    if (!agent) return fail(server.status === 'connected' ? 'The server found no coding agent that can import (Claude Code, GitHub Copilot CLI, OpenCode).' : 'Connect the local server first (Settings → Local server).');
     let pdf: { name: string; base64: string } | undefined;
     if (req.file) {
       if (req.file.size > MAX_BYTES) return fail(`The PDF is larger than ${MAX_BYTES >> 20} MB.`);
@@ -211,6 +226,8 @@ export class IngestState {
         mpn,
         ...(pdf ? { pdf } : { url: req.url!.trim() }),
         ...(req.notes?.trim() ? { notes: req.notes.trim() } : {}),
+        // older servers know only Claude Code and take a missing harness for it
+        ...(agent.id !== 'claude-code' ? { harness: agent.id } : {}),
         ...(req.model ? { model: req.model } : {}),
         ...(req.verify ? { passes: 2 } : {}),
       },
@@ -244,7 +261,7 @@ export class IngestState {
               if (this.passes > 1 && !this.drafts[1]) this.secondPassFailed = e.ok ? 'The second pass finished without an accepted part.' : (e.error ?? 'failed');
               this.split = this.drafts[0].pins.length > SPLIT_ABOVE;
               this.phase = 'review';
-            } else fail(e.ok ? 'Claude Code finished without an accepted part.' : (e.error ?? 'The import failed.'));
+            } else fail(e.ok ? `${agent.name} finished without an accepted part.` : (e.error ?? 'The import failed.'));
             break;
         }
       },

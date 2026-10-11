@@ -3,7 +3,7 @@
  * each a headless run whose only 4k7 tools come from this server's MCP endpoint, streamed back to
  * the tab. Uses the user's own login and plan for that agent (harness/*.ts: how each is run).
  * - chat: a message typed into the app's chat; design tools, no files or shell.
- * - ingest: import a part from a datasheet (Claude Code); read-only access to one prepared
+ * - ingest: import a part from a datasheet; read-only access to one prepared
  *   datasheet folder and a single tool, submit_part, whose answers the tab checks.
  * Every run gets its own bearer token, and the token decides which tools it sees.
  */
@@ -53,14 +53,12 @@ interface Run {
 
 export class ChatRunner {
   #opts: ChatRunnerOptions;
-  #claude: ClaudeHarness;
   #harnesses = new Map<HarnessId, Harness>();
   #runs = new Map<string, Run>();
 
   constructor(opts: ChatRunnerOptions) {
     this.#opts = opts;
-    this.#claude = new ClaudeHarness(opts.claudeBin, opts.profile);
-    for (const h of [this.#claude, ...(opts.harnesses ?? [])]) this.#harnesses.set(h.id, h);
+    for (const h of [new ClaudeHarness(opts.claudeBin, opts.profile), ...(opts.harnesses ?? [])]) this.#harnesses.set(h.id, h);
     mkdirSync(opts.workDir, { recursive: true, mode: 0o700 });
   }
 
@@ -107,7 +105,7 @@ export class ChatRunner {
     this.#runs.set(msg.id, run);
     this.#opts.log?.(`chat ${msg.id}: started ${harness.id} (${msg.session ? `resume ${msg.session.slice(0, 8)}` : 'new session'})`);
     void this.#spawn(msg.id, run, harness, this.#opts.workDir, (sink) =>
-      harness.chat({ text: msg.text, session: msg.session, ...(msg.model ? { model: msg.model } : {}), web: !!msg.web, mcpUrl: this.#mcpUrl(), token }, sink),
+      harness.chat({ text: msg.text, session: msg.session, ...(msg.model ? { model: msg.model } : {}), web: !!msg.web, mcpUrl: this.#mcpUrl(), token, cwd: this.#opts.workDir }, sink),
     ).then((done) => this.#end(msg.id, run, done));
   }
 
@@ -133,11 +131,16 @@ export class ChatRunner {
   }
 
   /**
-   * Datasheet import: fetch/unpack the PDF into a fresh folder, then let Claude Code read it
-   * (Read/Grep/Glob, confined to that folder) and hand its extraction to submit_part.
+   * Datasheet import: fetch/unpack the PDF into a fresh folder, then let the agent read it (its
+   * read-only file tools, confined to that folder) and hand its extraction to submit_part.
    */
   async ingest(msg: IngestMessage) {
-    if (this.#busy(msg.id, 'ingest', this.#claude.name)) return;
+    const harness = this.#harnesses.get(msg.harness ?? 'claude-code');
+    if (!harness?.ingest) {
+      this.#emit(msg.id, { kind: 'done', ok: false, error: `This server cannot import datasheets with ${harness?.name ?? msg.harness}. Update it (restart it).` });
+      return;
+    }
+    if (this.#busy(msg.id, 'ingest', harness.name)) return;
     const token = randomBytes(24).toString('hex');
     const run: Run = { child: null, token, mode: 'ingest', done: false, cancelled: false };
     this.#runs.set(msg.id, run);
@@ -185,9 +188,9 @@ export class ChatRunner {
     let done: DoneEvent = { kind: 'done', ok: false, error: 'Stopped.' };
     for (let n = 1; n <= passes && !run.cancelled; n++) {
       if (passes > 1) this.#emit(msg.id, { kind: 'pass', n, of: passes });
-      this.#opts.log?.(`ingest ${msg.id}: pass ${n}/${passes} for ${msg.mpn}`);
-      done = await this.#spawn(msg.id, run, this.#claude, dir, (sink) =>
-        this.#claude.ingest({ prompt, ...(msg.model ? { model: msg.model } : {}), mcpUrl: this.#mcpUrl(), token, pass: n }, sink),
+      this.#opts.log?.(`ingest ${msg.id}: pass ${n}/${passes} for ${msg.mpn} with ${harness.id}`);
+      done = await this.#spawn(msg.id, run, harness, dir, (sink) =>
+        harness.ingest!({ prompt, ...(msg.model ? { model: msg.model } : {}), mcpUrl: this.#mcpUrl(), token, cwd: dir, pass: n }, sink),
       );
       cost += done.costUsd ?? 0;
       if (!done.ok) {

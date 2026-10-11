@@ -18,6 +18,19 @@ export interface ChatJob {
   /** The server's MCP endpoint and the bearer token of this run (it decides which tools it sees). */
   mcpUrl: string;
   token: string;
+  /** The run's working directory. */
+  cwd: string;
+}
+
+/** One pass of a datasheet import: the agent reads the prepared folder (its working directory) and calls submit_part. */
+export interface IngestJob {
+  prompt: string;
+  model?: string;
+  mcpUrl: string;
+  token: string;
+  cwd: string;
+  /** 2 = the independent verification pass. */
+  pass: number;
 }
 
 /** Where a run's output goes. */
@@ -49,6 +62,8 @@ export interface Harness {
   /** The models the CLI offers, if it can list them. */
   models?(): Promise<string[]>;
   chat(job: ChatJob, sink: RunSink): Invocation;
+  /** A datasheet import pass, for the agents that can do it. */
+  ingest?(job: IngestJob, sink: RunSink): Invocation;
 }
 
 /** `<bin> --version`, the first line of it; unavailable when it does not run. */

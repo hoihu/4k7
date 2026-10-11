@@ -1,6 +1,6 @@
 <script lang="ts">
   import { BUILTIN_PARTS, footprintFor, isModule, packageOf, partTitle, planUnits, searchParts, symbolFor, unitCount } from '@4k7/parts';
-  import type { PartCard, PartPin, SheetView, SymbolView } from '@4k7/schema';
+  import type { HarnessId, PartCard, PartPin, SheetView, SymbolView } from '@4k7/schema';
   import { app, tokenCost } from '../app.svelte.ts';
   import { USAGE_TITLE, usageLine } from '../usage.ts';
   import type { Datasheet } from '../ingest.svelte.ts';
@@ -207,8 +207,15 @@
   let url = $state('');
   let notes = $state('');
   let file = $state<File | null>(null);
-  let model = $state('sonnet');
   let verify = $state(true);
+  /** The agent that imports: picked here, else the chat's agent, else Claude Code; and its model, as changed here. */
+  let pickedAgent = $state<HarnessId | null>(null);
+  let pickedModels = $state<Partial<Record<HarnessId, string>>>({});
+  const importAgent = $derived(ingest.agentFor(pickedAgent ?? (app.settings.provider === 'agent' ? app.settings.harness : undefined)));
+  const importModel = $derived(importAgent ? (pickedModels[importAgent.id] ?? app.importModel(importAgent.id)) : '');
+  function setImportModel(m: string) {
+    if (importAgent) pickedModels = { ...pickedModels, [importAgent.id]: m.trim() };
+  }
   /** Footprint or 3D body next to the symbol. */
   let mech = $state<'fp' | '3d'>('fp');
   // switching: 3D starts from the footprint's top-down view and flies into 3D; back, it flies to
@@ -327,7 +334,7 @@
     pick([...(e.dataTransfer?.files ?? [])].find((f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name)));
   }
   function startImport() {
-    void ingest.start({ mpn, ...(file ? { file } : { url }), notes, model, verify });
+    void ingest.start({ mpn, ...(file ? { file } : { url }), notes, ...(importAgent ? { harness: importAgent.id } : {}), model: importModel, verify });
   }
   async function save() {
     const card = await ingest.save();
@@ -684,7 +691,7 @@
         <button class="btn pri" onclick={save}>Add to library</button>
       </div>
       <div class="scroll body">
-        <p class="hint">Claude Code extracted the pins and package from the datasheet; the symbol, footprint and 3D body are generated from them.{#if sheetDoc}&nbsp;Click a pin to see the table row it was read from.{/if}</p>
+        <p class="hint">{ingest.request?.agent ?? 'The agent'} extracted the pins and package from the datasheet; the symbol, footprint and 3D body are generated from them.{#if sheetDoc}&nbsp;Click a pin to see the table row it was read from.{/if}</p>
         {@render crossCheck()}
         {@render issueList(ingest.issues)}
         {@render detail(card)}
@@ -704,7 +711,7 @@
       </div>
       <div class="scroll body">
         {#if ingest.phase === 'running'}
-          <p class="desc"><b class="mono">{ingest.request?.mpn}</b> · {ingest.request?.source}{#if ingest.passes > 1} · pass {ingest.pass} of {ingest.passes}{/if}</p>
+          <p class="desc"><b class="mono">{ingest.request?.mpn}</b> · {ingest.request?.source}{#if ingest.request?.agent} · {ingest.request.agent}{/if}{#if ingest.passes > 1} · pass {ingest.pass} of {ingest.passes}{/if}</p>
           {#if ingest.tokens}<p class="usage" title={USAGE_TITLE}>{usageLine(ingest.tokens, tokenCost(ingest.tokens, ''))}</p>{/if}
           <ol class="log">
             {#each ingest.log as l, i (i)}<li class:last={i === ingest.log.length - 1}>{l}</li>{/each}
@@ -713,7 +720,7 @@
           {#if ingest.reply}<p class="reply">{ingest.reply}</p>{/if}
         {:else}
           {#if !ingest.available}
-            <p class="notice">The import runs on your local Claude Code. Start the local server and connect it in <button class="link" onclick={() => (app.view = 'set')}>Settings</button> first.</p>
+            <p class="notice">The import runs on a coding agent on this computer (Claude Code, GitHub Copilot CLI or OpenCode). Start the local server and connect it in <button class="link" onclick={() => (app.view = 'set')}>Settings</button> first.</p>
           {/if}
           <form class="form" onsubmit={(e) => (e.preventDefault(), startImport())}>
             <label>Part number <span class="muted">(full ordering code: it selects the package)</span>
@@ -738,13 +745,27 @@
               <input class="text" placeholder="https://www.st.com/resource/en/datasheet/stm32f777vi.pdf" bind:value={url} oninput={() => (file = null)} />
             </label>
             <div class="row">
+              {#if ingest.agents.length > 1}
+                <label>Agent
+                  <select class="text" value={importAgent?.id} onchange={(e) => (pickedAgent = (e.currentTarget as HTMLSelectElement).value as HarnessId)}>
+                    {#each ingest.agents as a (a.id)}<option value={a.id}>{a.name}</option>{/each}
+                  </select>
+                </label>
+              {/if}
               <label>Model
-                <select class="text" bind:value={model}>
-                  <option value="sonnet">Sonnet (recommended)</option>
-                  <option value="opus">Opus (most careful)</option>
-                  <option value="haiku">Haiku (cheapest)</option>
-                  <option value="">Claude Code default</option>
-                </select>
+                {#if !importAgent || importAgent.id === 'claude-code'}
+                  <select class="text" value={importModel} onchange={(e) => setImportModel((e.currentTarget as HTMLSelectElement).value)}>
+                    <option value="sonnet">Sonnet (recommended)</option>
+                    <option value="opus">Opus (most careful)</option>
+                    <option value="haiku">Haiku (cheapest)</option>
+                    <option value="">Claude Code default</option>
+                  </select>
+                {:else}
+                  {#key importAgent.id}
+                    <input class="text mono" list="import-models" value={importModel} placeholder={importAgent.id === 'opencode' ? 'default, or provider/model' : 'default, or e.g. claude-sonnet-5'} spellcheck="false" autocomplete="off" onchange={(e) => setImportModel((e.currentTarget as HTMLInputElement).value)} />
+                  {/key}
+                  <datalist id="import-models">{#each importAgent.models ?? [] as m (m)}<option value={m}></option>{/each}</datalist>
+                {/if}
               </label>
               <label class="check"><input type="checkbox" bind:checked={verify} /> Verify with a second, independent pass <span class="muted">(about twice the time and cost)</span></label>
             </div>
@@ -755,7 +776,7 @@
             {@render issueList(ingest.lastIssues)}
             <div><button class="btn pri" type="submit" disabled={!ingest.available || !mpn.trim() || (!file && !url.trim())}>Import</button></div>
           </form>
-          <p class="hint">Claude Code reads the datasheet text (only that file) and extracts the pin table and package dimensions. The app checks every submission (pin count, numbering, ball names, footprint) and sends problems back until it is consistent. With verification, a second session extracts everything again without seeing the first, and you decide wherever the two differ. Symbol, footprint and 3D body are generated deterministically. Large datasheets take a few minutes per pass.</p>
+          <p class="hint">The agent reads the datasheet text (only that file) and extracts the pin table and package dimensions. The app checks every submission (pin count, numbering, ball names, footprint) and sends problems back until it is consistent. With verification, a second session extracts everything again without seeing the first, and you decide wherever the two differ. Symbol, footprint and 3D body are generated deterministically. Large datasheets take a few minutes per pass.</p>
         {/if}
       </div>
     {/if}

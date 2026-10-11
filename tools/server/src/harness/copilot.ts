@@ -3,10 +3,16 @@
  * for the run, and every other tool (shell, files, the GitHub MCP server, the user's own MCP
  * servers) is filtered out with --available-tools. The CLI has no system-prompt option, so the
  * chat rules open the first message of a conversation.
+ * Datasheet imports add its read-only file tools (view, grep, glob), which only reach the job's
+ * folder: the CLI checks every path against its working directory.
  */
 import { randomUUID } from 'node:crypto';
-import { CHAT_WEB_PROMPT, chatModePrompt, type HarnessCapability, type TokenCount } from '@4k7/schema';
-import { detectCli, parseLine, type ChatJob, type Harness, type Invocation, type RunSink } from './types.ts';
+import { CHAT_WEB_PROMPT, INGEST_VERIFY_PROMPT, chatModePrompt, ingestPrompt, type HarnessCapability, type TokenCount } from '@4k7/schema';
+import { describeTool, pinCounter } from './ingest.ts';
+import { capture, detectCli, parseLine, type ChatJob, type Harness, type IngestJob, type Invocation, type RunSink } from './types.ts';
+
+/** The CLI's read-only file tools. */
+const FILE_TOOLS = ['view', 'grep', 'glob'];
 
 export class CopilotHarness implements Harness {
   readonly id = 'copilot' as const;
@@ -27,43 +33,83 @@ export class CopilotHarness implements Harness {
   }
 
   detect(): HarnessCapability {
-    return { id: this.id, name: this.name, ...detectCli(this.bin, 'GitHub Copilot', this.#env(), 'FOURK7_COPILOT_BIN') };
+    return { id: this.id, name: this.name, ingest: true, ...detectCli(this.bin, 'GitHub Copilot', this.#env(), 'FOURK7_COPILOT_BIN') };
+  }
+
+  /**
+   * The models of the CLI's catalogue (`copilot help config`, under `model`), plus auto. Which of
+   * them a run may use depends on the user's plan and organisation; the CLI says so when it refuses.
+   */
+  async models(): Promise<string[]> {
+    const out = await capture(this.bin, ['help', 'config'], { env: this.#env(), timeoutMs: 20_000 });
+    const section = /`model`:[^\n]*\n((?:\s+- "[^"]+"\n?)+)/.exec(out ?? '')?.[1] ?? '';
+    const ids = [...section.matchAll(/- "([^"]+)"/g)].map((m) => m[1]!);
+    return ids.length ? ['auto', ...ids] : [];
   }
 
   chat(job: ChatJob, sink: RunSink): Invocation {
     // a new conversation gets its id now, so the tab has it even if the run is stopped
     const session = job.session ?? randomUUID();
     const rules = job.session ? (job.web ? `${CHAT_WEB_PROMPT}\n\n` : '') : `${chatModePrompt()}${job.web ? `\n\n${CHAT_WEB_PROMPT}` : ''}\n\n---\n\nThe user's message:\n\n`;
-    const mcp = { mcpServers: { '4k7': { type: 'http', url: job.mcpUrl, headers: { Authorization: `Bearer ${job.token}` }, tools: ['*'] } } };
     sink.emit({ kind: 'session', session });
     return {
       args: [
         '-p',
         rules + job.text,
-        '--output-format',
-        'json',
-        '--stream',
-        'on',
-        '--additional-mcp-config',
-        JSON.stringify(mcp),
-        '--disable-builtin-mcps',
+        ...this.#common(job),
         '--available-tools',
         ...(job.web ? ['4k7', 'web_fetch'] : ['4k7']),
-        '--allow-tool',
-        '4k7',
         ...(job.web ? ['--allow-all-urls'] : []),
-        '--no-ask-user',
-        '--no-custom-instructions',
-        '--no-auto-update',
         `--session-id=${session}`,
-        ...(job.model ? ['--model', job.model] : []),
       ],
       env: this.#env(),
-      ...this.#reader(session, job.session !== null, sink),
+      ...this.#reader(session, job.session !== null, sink, false),
     };
   }
 
-  #reader(session: string, resumed: boolean, sink: RunSink): Pick<Invocation, 'line'> {
+  /** Datasheet import: the file tools in the job folder (the working directory) and submit_part; a fresh session per pass. */
+  ingest(job: IngestJob, sink: RunSink): Invocation {
+    const session = randomUUID();
+    const rules = job.pass === 1 ? ingestPrompt() : `${ingestPrompt()}\n\n${INGEST_VERIFY_PROMPT}`;
+    return {
+      args: [
+        '-p',
+        `${rules}\n\n---\n\n${job.prompt}`,
+        ...this.#common(job),
+        '--available-tools',
+        ...FILE_TOOLS,
+        '4k7',
+        '--disallow-temp-dir', // the folder only, not the temporary directory the CLI may read by default
+        `--session-id=${session}`,
+      ],
+      env: this.#env(),
+      ...this.#reader(session, false, sink, true),
+    };
+  }
+
+  /** What every run gets: JSONL output, the 4k7 endpoint as an MCP server it may call, nothing of the user's setup. */
+  #common(job: { mcpUrl: string; token: string; model?: string }): string[] {
+    const mcp = { mcpServers: { '4k7': { type: 'http', url: job.mcpUrl, headers: { Authorization: `Bearer ${job.token}` }, tools: ['*'] } } };
+    return [
+      '--output-format',
+      'json',
+      '--stream',
+      'on',
+      '--additional-mcp-config',
+      JSON.stringify(mcp),
+      '--disable-builtin-mcps',
+      '--allow-tool',
+      '4k7',
+      '--no-ask-user',
+      '--no-custom-instructions',
+      '--no-auto-update',
+      ...(job.model ? ['--model', job.model] : []),
+    ];
+  }
+
+  #reader(session: string, resumed: boolean, sink: RunSink, ingest: boolean): Pick<Invocation, 'line'> {
+    const pins = pinCounter(sink);
+    let writing: string | null = null; // the submit_part call being streamed
     const streamed = new Set<string>();
     let wrote = false;
     let model: string | undefined;
@@ -93,6 +139,19 @@ export class CopilotHarness implements Harness {
               wrote = true;
               sink.emit({ kind: 'text', text: d.content });
             }
+            break;
+          case 'assistant.tool_call_delta':
+            // the part is written as one long tool call; report pins as they stream in
+            if (ingest && d.toolName?.endsWith('submit_part') && d.toolCallId) {
+              if (writing !== d.toolCallId) {
+                writing = d.toolCallId;
+                pins.start();
+              }
+              pins.add(d.inputDelta ?? '');
+            }
+            break;
+          case 'tool.execution_start':
+            if (ingest && d.toolName && FILE_TOOLS.includes(d.toolName)) sink.emit({ kind: 'status', text: describeTool(d.toolName, d.arguments) });
             break;
           case 'assistant.reasoning_delta':
             if (d.deltaContent) sink.emit({ kind: 'thinking', text: d.deltaContent });
@@ -160,6 +219,10 @@ interface CopilotEvent {
   data?: {
     messageId?: string;
     deltaContent?: string;
+    toolCallId?: string;
+    toolName?: string;
+    inputDelta?: string;
+    arguments?: unknown;
     content?: string;
     model?: string;
     chosenModel?: string;

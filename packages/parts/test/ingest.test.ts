@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PackageInfo, PartDraft } from '@4k7/schema';
-import { bgaRowName, draftToCard, footprintFor, planUnits, symbolFor, unitOfPin } from '../src/index.ts';
+import { bgaRowName, compareDrafts, draftToCard, footprintFor, planUnits, symbolFor, unitOfPin } from '../src/index.ts';
 
 const lqfp100: PackageInfo = { name: 'LQFP100', family: 'QFP', pins: 100, pitch_mm: 0.5, body_mm: [14, 14], span_mm: [16, 16], lead_length_mm: 0.6, lead_width_mm: 0.22 };
 
@@ -66,6 +66,35 @@ describe('footprints', () => {
 });
 
 describe('draft → part card', () => {
+  it('refuses a family the package name contradicts (a TSSOP read as QFP gets four-sided pads)', () => {
+    const tssop: PackageInfo = { name: 'TSSOP-24 (PW0024A)', family: 'QFP', pins: 24, pitch_mm: 0.65, body_mm: [4.4, 7.8], span_mm: [6.4, 7.8], lead_length_mm: 0.6, lead_width_mm: 0.25 };
+    const pins: PartDraft['pins'] = Array.from({ length: 24 }, (_, i) => ({ number: String(i + 1), name: i === 11 ? 'GND' : i === 23 ? 'VCC' : `IO${i}`, type: i === 11 || i === 23 ? 'pwr_in' : 'bidir' }));
+    const draft = { mpn: 'TCA9548APWR', manufacturer: 'TI', description: 'I2C switch', category: 'ic' as const, package: tssop, pins };
+    const bad = draftToCard(draft);
+    expect(bad.card).toBeNull();
+    expect(bad.issues.map((i) => i.message)).toContain('Package family QFP does not fit "TSSOP-24 (PW0024A)"; use SOIC or SSOP or TSSOP or MSOP.');
+    expect(draftToCard({ ...draft, package: { ...tssop, family: 'TSSOP' } }).card).not.toBeNull();
+  });
+
+  it('compares only the span the footprint uses', () => {
+    const base = { mpn: 'X', manufacturer: 'TI', description: 'I2C switch', category: 'ic' as const, pins: [{ number: '1', name: 'A', type: 'in' as const }] };
+    const tssop = (span: [number, number]): PartDraft => ({ ...base, package: { name: 'TSSOP-24', family: 'TSSOP', pins: 24, pitch_mm: 0.65, body_mm: [4.4, 7.8], span_mm: span } });
+    // the second value of a two-row package's span (the body length) shapes nothing
+    expect(compareDrafts(tssop([6.4, 7.8]), tssop([6.4, 6.4]))).toEqual([]);
+    expect(compareDrafts(tssop([6.4, 7.8]), tssop([6.2, 7.8])).map((d) => d.key)).toEqual(['package:span_mm']);
+    const qfn = (span?: [number, number]): PartDraft => ({ ...base, package: { name: 'VQFN-16', family: 'QFN', pins: 16, pitch_mm: 0.5, body_mm: [3, 3], ...(span ? { span_mm: span } : {}) } });
+    expect(compareDrafts(qfn([3, 3]), qfn())).toEqual([]);
+  });
+
+  it('counts analog, power and digital grounds (AGND, PGND, DVSS) as grounds, and not as supplies', () => {
+    const qfn: PackageInfo = { name: 'VQFN-16', family: 'QFN', pins: 16, pitch_mm: 0.5, body_mm: [3, 3], exposed_pad_mm: [1.68, 1.68], lead_length_mm: 0.4, lead_width_mm: 0.24 };
+    const names = ['SW', 'SW', 'SW', 'PG', 'FB', 'DVSS', 'FSW', 'DEF', 'SS/TR', 'AVIN', 'PVIN', 'PVIN', 'EN', 'VOS', 'PGND', 'PGND'];
+    const pins: PartDraft['pins'] = names.map((name, i) => ({ number: String(i + 1), name, type: /GND|VIN/.test(name) ? 'pwr_in' : 'passive' }));
+    const { card, issues } = draftToCard({ mpn: 'TPS62130RGTR', manufacturer: 'TI', description: 'Step-down converter', category: 'ic', package: qfn, pins: [...pins, { number: 'EP', name: 'PGND', type: 'pwr_in' }] });
+    expect(card).not.toBeNull();
+    expect(issues.map((i) => i.message).filter((m) => /ground|supply/i.test(m))).toEqual([]);
+  });
+
   it('accepts a consistent draft and lays out the symbol like an MCU', () => {
     const { card, issues } = draftToCard(mcuDraft());
     expect(issues.filter((i) => i.severity === 'error')).toEqual([]);
