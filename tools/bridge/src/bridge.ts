@@ -7,11 +7,11 @@
  *
  * Security: binds to loopback only, accepts WebSocket connections only from the app's own pages
  * (localhost on the bridge ports, the app's address, the dev server), and requires the access key
- * (token) from the app's address before anything is forwarded.
+ * from the app's address before anything is forwarded.
  */
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { tokenMatches } from './mcp.ts';
+import { secretsMatch } from './mcp.ts';
 import {
   BRIDGE_PORTS,
   BRIDGE_PROTOCOL,
@@ -27,7 +27,7 @@ export interface CallResult {
 }
 
 export interface BridgeOptions {
-  token: string;
+  accessKey: string;
   ports?: readonly number[];
   host?: string;
   callTimeoutMs?: number;
@@ -49,7 +49,7 @@ interface Pending {
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::(\d+))?$/;
 
 export class Bridge {
-  readonly token: string;
+  readonly accessKey: string;
   #opts: BridgeOptions;
   #http: HttpServer | null = null;
   #wss: WebSocketServer | null = null;
@@ -64,7 +64,7 @@ export class Bridge {
 
   constructor(opts: BridgeOptions) {
     this.#opts = opts;
-    this.token = opts.token;
+    this.accessKey = opts.accessKey;
   }
 
   get connected(): boolean {
@@ -147,13 +147,13 @@ export class Bridge {
   }
 
   /**
-   * Opens the app connected to this bridge: the token in the path is the access key. When the app is
+   * Opens the app connected to this bridge: its path is the access key. When the app is
    * served elsewhere (another bridge, the dev server), `?bridge=` makes the tab try this port first.
    */
   appLink(): string {
     const base = (this.#opts.appUrl ?? `http://localhost:${this.port}`).replace(/\/$/, '');
     const elsewhere = new URL(base).port !== String(this.port);
-    return `${base}/${this.token}${elsewhere ? `?bridge=${this.port}` : ''}`;
+    return `${base}/${this.accessKey}${elsewhere ? `?bridge=${this.port}` : ''}`;
   }
 
   /** Pages of the app: localhost on the bridge ports, on the app's address or on the dev server. */
@@ -220,9 +220,9 @@ export class Bridge {
           ws.close(1008, 'protocol');
           return;
         }
-        if (typeof msg.token !== 'string' || !tokenMatches(msg.token, this.token)) {
+        if (typeof msg.accessKey !== 'string' || !secretsMatch(msg.accessKey, this.accessKey)) {
           ws.send(JSON.stringify({ type: 'denied', reason: 'wrong access key' } satisfies BridgeToTab));
-          ws.close(1008, 'wrong token');
+          ws.close(1008, 'wrong access key');
           this.#log(`rejected tab: wrong access key (origin ${origin})`);
           return;
         }

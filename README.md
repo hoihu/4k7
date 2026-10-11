@@ -43,7 +43,7 @@ npm install -g github:hoihu/tracewise  # or install it: `tracewise` (add --no-op
 
 It runs the app and the local bridge in one process: the page it opens is already connected, and the chat is answered by your
 Claude Code if `claude` is installed (see below). Designs are kept by the browser for `http://localhost:7777`, so the app
-always opens at that address (with an access key in the path: `http://localhost:7777/<token>`). Nothing is published to the npm registry; see [docs/distribution.md](docs/distribution.md).
+always opens at that address (with an access key in the path: `http://localhost:7777/<access-key>`). Nothing is published to the npm registry; see [docs/distribution.md](docs/distribution.md).
 
 From a checkout:
 
@@ -99,7 +99,7 @@ shell routes Claude Code to Bedrock/Vertex or a different login (e.g. an alias l
 
 The bridge logs the profile it uses at startup (`TRACEWISE_CLAUDE_CONFIG_DIR` / `TRACEWISE_CLAUDE_UNSET` override it).
 
-The access key in the app's address lives in `~/.tracewise/bridge.json` (`"token"`), so the address stays the same and
+The access key in the app's address lives in `~/.tracewise/bridge.json` (`"accessKey"`), so the address stays the same and
 a tab reconnects by itself. The bridge binds to `127.0.0.1`, serves the page only at that address, only accepts the
 app's own pages and needs the key before anything is forwarded. Set `TRACEWISE_APP_URL` if app
 links should point elsewhere and `TRACEWISE_CLAUDE_BIN` if `claude` is not on your PATH.

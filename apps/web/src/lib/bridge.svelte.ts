@@ -36,16 +36,16 @@ class BridgeClient {
   #chatListeners = new Map<string, (e: ChatEvent) => void>();
 
   #ws: WebSocket | null = null;
-  #token = '';
+  #accessKey = '';
   #handler: BridgeHandler | null = null;
   #retry: ReturnType<typeof setTimeout> | null = null;
-  #onConnected: ((token: string, port: number) => void) | null = null;
+  #onConnected: ((accessKey: string, port: number) => void) | null = null;
   #onLost: (() => void) | null = null;
   #wanted = false;
 
   #info: () => TabInfo = () => ({ origin: location.origin, build: '', userAgent: navigator.userAgent, provider: '', storage: '', persistent: null });
 
-  init(handler: BridgeHandler, onConnected: (token: string, port: number) => void, onLost?: () => void, info?: () => TabInfo) {
+  init(handler: BridgeHandler, onConnected: (accessKey: string, port: number) => void, onLost?: () => void, info?: () => TabInfo) {
     this.#handler = handler;
     this.#onConnected = onConnected;
     this.#onLost = onLost ?? null;
@@ -53,8 +53,8 @@ class BridgeClient {
   }
 
   /** Try the access key on every bridge port. `silent` = background reconnect. */
-  async connect(token: string, opts: { silent?: boolean; preferPort?: number | null } = {}): Promise<boolean> {
-    this.#token = token;
+  async connect(accessKey: string, opts: { silent?: boolean; preferPort?: number | null } = {}): Promise<boolean> {
+    this.#accessKey = accessKey;
     this.#wanted = true;
     if (this.#retry) clearTimeout(this.#retry);
     this.status = 'connecting';
@@ -85,7 +85,7 @@ class BridgeClient {
 
   #scheduleRetry() {
     if (!this.#wanted) return;
-    this.#retry = setTimeout(() => void this.connect(this.#token, { silent: true, preferPort: this.port }), RETRY_MS);
+    this.#retry = setTimeout(() => void this.connect(this.#accessKey, { silent: true, preferPort: this.port }), RETRY_MS);
   }
 
   /** true = connected, string = denied reason, false = nothing there. */
@@ -108,7 +108,7 @@ class BridgeClient {
       };
       const timer = setTimeout(() => done(false), 1500);
       ws.onopen = () =>
-        ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, token: this.#token, client: 'tracewise-web', info: this.#info() } satisfies TabToBridge));
+        ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, accessKey: this.#accessKey, client: 'tracewise-web', info: this.#info() } satisfies TabToBridge));
       ws.onerror = () => done(false);
       ws.onclose = (ev) => {
         if (!settled) done(false);
@@ -125,7 +125,7 @@ class BridgeClient {
           this.chat = msg.chat ?? null;
           this.status = 'connected';
           this.error = null;
-          this.#onConnected?.(this.#token, port);
+          this.#onConnected?.(this.#accessKey, port);
           done(true);
           return;
         }
@@ -179,13 +179,13 @@ class BridgeClient {
 
   /** Take the bridge back from another tab. */
   useThisTab() {
-    if (this.#token) void this.connect(this.#token);
+    if (this.#accessKey) void this.connect(this.#accessKey);
   }
 
   /** Another tab announced that it holds the bridge connection. */
-  heldElsewhere(token: string) {
+  heldElsewhere(accessKey: string) {
     if (this.status === 'connected' || this.status === 'connecting') return;
-    this.#token = token;
+    this.#accessKey = accessKey;
     this.#wanted = false;
     if (this.#retry) clearTimeout(this.#retry);
     this.status = 'elsewhere';

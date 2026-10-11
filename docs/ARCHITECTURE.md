@@ -243,7 +243,7 @@ the decisions, the kernel owns geometry and truth, and the UI owns review.
 - API keys never leave the browser except toward the provider the user configured. They are encrypted at rest.
 - MCP servers have **trust levels**: *read-only* (e.g. stock lookup) runs freely; *mutating* tools need approval per call or per session. Every MCP call is logged in the changeset.
 - Datasheet content and MCP tool results are treated as **untrusted data** in prompts (prompt-injection defence: delimited, never followed as instructions, and the agent cannot run mutating ops that a tool result asks for without the plan explaining why).
-- The relay binds to `127.0.0.1` only and serves the app at an address carrying an access key (`http://localhost:7777/<token>`); the tab must present that key to connect. Its MCP server can only reach the connected tab.
+- The relay binds to `127.0.0.1` only and serves the app at an address carrying an access key (`http://localhost:7777/<access-key>`); the tab must present that key to connect. Its MCP server can only reach the connected tab.
 - Strict CSP. The app is served as static files. Optional COOP/COEP for threads.
 
 ## 7. Roadmap

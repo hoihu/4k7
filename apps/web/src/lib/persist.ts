@@ -255,7 +255,7 @@ export interface Settings {
   fixBudget: number;
   theme: 'system' | 'light' | 'dark';
   /** The local bridge's access key and port, remembered so the tab reconnects by itself. */
-  bridgeToken: string;
+  bridgeAccessKey: string;
   bridgePort: number | null;
   /** Model alias for Claude Code in the app chat ('' = Claude Code's default). */
   claudeModel: string;
@@ -270,7 +270,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mode: 'review',
   fixBudget: 5,
   theme: 'dark',
-  bridgeToken: '',
+  bridgeAccessKey: '',
   bridgePort: null,
   claudeModel: '',
   claudeWeb: false,

@@ -15,7 +15,7 @@ import { createInterface } from 'node:readline';
 import { CHAT_WEB_PROMPT, INGEST_VERIFY_PROMPT, chatModePrompt, ingestPrompt, type ChatCapability, type ChatEvent, type TabToBridge, type TokenCount } from '@tracewise/schema';
 import type { Bridge, ChatMessage } from './bridge.ts';
 import type { ClaudeProfile } from './config.ts';
-import { tokenMatches, type McpMode } from './mcp.ts';
+import { secretsMatch, type McpMode } from './mcp.ts';
 import { prepareDatasheet } from './pdf.ts';
 
 type IngestMessage = Extract<TabToBridge, { type: 'ingest' }>;
@@ -83,7 +83,7 @@ export class ChatRunner {
 
   /** Which tool set a bearer token unlocks: only tokens of runs still going are valid. */
   modeFor(token: string): McpMode | null {
-    for (const r of this.#runs.values()) if (!r.done && tokenMatches(r.token, token)) return r.mode;
+    for (const r of this.#runs.values()) if (!r.done && secretsMatch(r.token, token)) return r.mode;
     return null;
   }
 

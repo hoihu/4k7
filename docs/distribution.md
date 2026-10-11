@@ -29,7 +29,7 @@ is cached afterwards. `prepare` also runs on `npm install` in a checkout (about 
 ## The command
 
 - `tracewise`: serve the app and the bridge on `127.0.0.1:7777`, answer the app's chat with
-  the local `claude -p`, and open the app (`http://localhost:7777/<token>`, see Security).
+  the local `claude -p`, and open the app (`http://localhost:7777/<access-key>`, see Security).
 - `tracewise --no-open`: the same without opening the browser.
 - `tracewise mcp`: MCP server over stdio for the Claude Code CLI
   (`claude mcp add --scope user tracewise -- npx -y github:hoihu/tracewise mcp`). It serves the
@@ -56,8 +56,8 @@ So, in a checkout: `npm run dev` while working on the code (hot reload, the brid
 Loopback only. The app's files are served only to `localhost` / `127.0.0.1` host names (a
 DNS-rebinding page gets 421).
 
-The app's address carries an access key: `http://localhost:7777/<token>`, a random UUID created
-once and kept in `~/.tracewise/bridge.json` (`"token"`), so the address stays the same across
+The app's address carries an access key: `http://localhost:7777/<access-key>`, a random UUID created
+once and kept in `~/.tracewise/bridge.json` (`"accessKey"`), so the address stays the same across
 restarts and every bridge on this computer accepts it. The page is served only at that path (`/`
 gets a page that says to use the link); the build files under `/assets` hold no secrets. The tab
 reads the key from its address, remembers it, and sends it when it connects to the WebSocket,

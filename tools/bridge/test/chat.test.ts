@@ -7,7 +7,7 @@ import WebSocket from 'ws';
 import { BRIDGE_PROTOCOL, type BridgeToTab, type ChatEvent } from '@tracewise/schema';
 import { Bridge, ChatRunner, detectClaude, mcpHttpHandler, type ClaudeProfile } from '../src/index.ts';
 
-const TOKEN = '0cd22f19-30de-4d39-9287-ab0123456789';
+const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 const FAKE = fileURLToPath(new URL('./fake-claude.mjs', import.meta.url));
 const cleanups: (() => unknown)[] = [];
 afterEach(async () => {
@@ -16,7 +16,7 @@ afterEach(async () => {
 
 async function setup(bin = FAKE, profile?: ClaudeProfile) {
   const base = 40000 + Math.floor(Math.random() * 20000);
-  const bridge = new Bridge({ token: TOKEN, ports: [base, base + 1], devPorts: [5173] });
+  const bridge = new Bridge({ accessKey: KEY, ports: [base, base + 1], devPorts: [5173] });
   const port = await bridge.start();
   cleanups.push(() => bridge.stop());
   const capability = detectClaude(bin, profile);
@@ -31,7 +31,7 @@ async function setup(bin = FAKE, profile?: ClaudeProfile) {
   const calls: string[] = [];
   const events = new Map<string, ChatEvent[]>();
   const welcome = await new Promise<BridgeToTab>((resolve) => {
-    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, token: TOKEN, client: 'test' })));
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, accessKey: KEY, client: 'test' })));
     ws.on('message', (raw) => {
       const m = JSON.parse(String(raw)) as BridgeToTab;
       if (m.type === 'welcome') resolve(m);

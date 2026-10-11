@@ -2,8 +2,8 @@
 /**
  * tracewise-bridge: connects the Tracewise app in the browser to Claude Code.
  *
- * Either way it serves the built app on its port, at http://localhost:7777/<token>: the token (the
- * access key, kept in ~/.tracewise/bridge.json) is what lets the tab connect to the bridge.
+ * Either way it serves the built app on its port, at http://localhost:7777/<access-key>: the key (kept
+ * in ~/.tracewise/bridge.json) is what lets the tab connect to the bridge.
  *
  * Two ways to use it:
  *   1. You type in the app's chat and your local Claude Code answers:
@@ -43,7 +43,7 @@ const log = (msg: string) => {
 
 async function main() {
   const cfg = loadConfig();
-  const bridge = new Bridge({ token: cfg.token, log, ...(inCheckout() ? { devPorts: [Number(new URL(DEV_APP).port)] } : {}) });
+  const bridge = new Bridge({ accessKey: cfg.accessKey, log, ...(inCheckout() ? { devPorts: [Number(new URL(DEV_APP).port)] } : {}) });
   const port = await bridge.start();
   const dir = appDir();
 
@@ -53,7 +53,7 @@ async function main() {
   const chat = new ChatRunner({ bridge, claudeBin, workDir: join(configDir(), 'claude-workspace'), ingestDir: join(configDir(), 'ingest'), profile: cfg.claude, log });
   bridge.setChatHandler(chat.handle, capability);
   const mcp = mcpHttpHandler(bridge, (t) => chat.modeFor(t));
-  const app = appHandler(dir, VERSION, cfg.token);
+  const app = appHandler(dir, VERSION, cfg.accessKey);
   bridge.setHttpHandler((req, res) => ((req.url ?? '').split('?')[0] === '/mcp' ? mcp(req, res) : app(req, res)));
   bridge.setAppUrl(await appUrl(cfg.appUrl, port, dir));
 

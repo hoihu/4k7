@@ -18,7 +18,7 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, BRIDGE_TOKEN, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type BridgeContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
+import { ArtworkInput, BRIDGE_ACCESS_KEY, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type BridgeContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
 import { bridge } from './bridge.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -48,11 +48,11 @@ import {
 type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
 
 /**
- * The local bridge's access key, from the app's address (http://localhost:7777/<token>, as the bridge
+ * The local bridge's access key, from the app's address (http://localhost:7777/<access-key>, as the bridge
  * opens it). `?bridge=7778` names the bridge to try first when the app is served by another one.
  */
-const addressToken = /^\/([^/]+)\/?$/.exec(location.pathname)?.[1] ?? '';
-const tokenFromAddress = BRIDGE_TOKEN.test(addressToken) ? addressToken : null;
+const addressPath = /^\/([^/]+)\/?$/.exec(location.pathname)?.[1] ?? '';
+const keyFromAddress = BRIDGE_ACCESS_KEY.test(addressPath) ? addressPath : null;
 const portFromAddress = Number(new URLSearchParams(location.search).get('bridge')) || null;
 
 export type View = 'sch' | 'lay' | 'parts' | 'set';
@@ -158,23 +158,23 @@ class AppState {
     if (newer) this.flash(`${newer} saved ${newer === 1 ? 'library item was' : 'library items were'} written by a newer version of the app and not loaded`);
     await this.ingest.adoptFootprints(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
     this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget, exec: (tool, input) => this.runTool(tool, input) });
-    this.settingsChannel?.addEventListener('message', (e: MessageEvent<{ type: string; token?: string }>) => {
-      if (e.data?.type === 'bridge-held' && e.data.token) bridge.heldElsewhere(e.data.token);
+    this.settingsChannel?.addEventListener('message', (e: MessageEvent<{ type: string; accessKey?: string }>) => {
+      if (e.data?.type === 'bridge-held' && e.data.accessKey) bridge.heldElsewhere(e.data.accessKey);
       else void this.reloadSettings();
     });
     this.applyTheme();
     await this.refresh();
     bridge.init(
       (tool, input) => this.handleBridgeCall(tool, input),
-      (token, port) => {
+      (accessKey, port) => {
         // connecting to a bridge that can run Claude Code makes it the chat provider, unless the user has an API key set up
         // "no real model configured" = offline demo, or Anthropic chosen without a key
         const noModel = this.settings.provider === 'demo' || (this.settings.provider === 'anthropic' && !this.apiKey);
         const useClaude = bridge.chat?.available && noModel;
-        if (token !== this.settings.bridgeToken || port !== this.settings.bridgePort || useClaude) {
-          void this.updateSettings({ bridgeToken: token, bridgePort: port, ...(useClaude ? { provider: 'claude-code' as const } : {}) });
+        if (accessKey !== this.settings.bridgeAccessKey || port !== this.settings.bridgePort || useClaude) {
+          void this.updateSettings({ bridgeAccessKey: accessKey, bridgePort: port, ...(useClaude ? { provider: 'claude-code' as const } : {}) });
         }
-        this.settingsChannel?.postMessage({ type: 'bridge-held', token });
+        this.settingsChannel?.postMessage({ type: 'bridge-held', accessKey });
         if (useClaude) this.flash('Connected: the chat now runs on your Claude Code');
       },
       () => {
@@ -185,10 +185,10 @@ class AppState {
     );
     this.persistent = await storagePersistent();
     // the address's key wins over the saved one (the dev server's address carries none)
-    const token = tokenFromAddress ?? this.settings.bridgeToken;
-    if (token) {
-      const silent = token === this.settings.bridgeToken;
-      void bridge.connect(token, { silent, preferPort: portFromAddress ?? this.settings.bridgePort }).then((ok) => {
+    const accessKey = keyFromAddress ?? this.settings.bridgeAccessKey;
+    if (accessKey) {
+      const silent = accessKey === this.settings.bridgeAccessKey;
+      void bridge.connect(accessKey, { silent, preferPort: portFromAddress ?? this.settings.bridgePort }).then((ok) => {
         if (!ok && !silent && bridge.error) this.flash(bridge.error);
       });
     }

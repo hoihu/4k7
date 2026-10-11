@@ -116,8 +116,8 @@ gates behind a permission and Safari blocks).
 claude mcp add --scope user tracewise -- node <repo>/tools/bridge/src/main.ts
 ```
 
-- **Access key**: a random UUID (`token`) is created once and kept in `~/.tracewise/bridge.json`. The app's address
-  carries it (`http://localhost:7777/<token>`, plus `?bridge=<port>` when another bridge serves the app); the page is
+- **Access key**: a random UUID (`accessKey`) is created once and kept in `~/.tracewise/bridge.json`. The app's address
+  carries it (`http://localhost:7777/<access-key>`, plus `?bridge=<port>` when another bridge serves the app); the page is
   served only at that path, and the tab sends the key when it connects. `npx tracewise` opens that link; if the tab is
   not connected, every tool answers with it. The tab remembers the key and reconnects by itself when Claude Code restarts.
 - **Security**: loopback only; WebSocket connections from pages other than the app's (localhost on the bridge ports,

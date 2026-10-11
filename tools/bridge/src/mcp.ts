@@ -86,7 +86,7 @@ export function mcpHttpHandler(bridge: Bridge, modeForToken: (token: string) => 
   };
 }
 
-export function tokenMatches(a: string, b: string): boolean {
+export function secretsMatch(a: string, b: string): boolean {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);

@@ -20,13 +20,13 @@
   }
 
   async function reconnect() {
-    if (await bridge.connect(app.settings.bridgeToken, { preferPort: app.settings.bridgePort })) app.flash(`Connected to ${bridge.agent ?? 'the bridge'}`);
+    if (await bridge.connect(app.settings.bridgeAccessKey, { preferPort: app.settings.bridgePort })) app.flash(`Connected to ${bridge.agent ?? 'the bridge'}`);
   }
 
   /** Forgets the access key too: this tab connects again only when opened with the bridge's link. */
   function disconnect() {
     bridge.disconnect();
-    void app.updateSettings({ bridgeToken: '', bridgePort: null });
+    void app.updateSettings({ bridgeAccessKey: '', bridgePort: null });
   }
 
   const linked = $derived(bridge.status === 'connected' || bridge.status === 'waiting');
@@ -47,8 +47,8 @@
     {/snippet}
     <div class="row">
       {#if linked}<button class="btn" onclick={disconnect}>Disconnect</button>
-      {:else if app.settings.bridgeToken && bridge.status === 'off'}<button class="btn pri" onclick={reconnect}>Connect</button>
-      {:else if !app.settings.bridgeToken}<span class="muted">Not connected. Open the link the bridge prints.</span>{/if}
+      {:else if app.settings.bridgeAccessKey && bridge.status === 'off'}<button class="btn pri" onclick={reconnect}>Connect</button>
+      {:else if !app.settings.bridgeAccessKey}<span class="muted">Not connected. Open the link the bridge prints.</span>{/if}
     </div>
     {#if bridge.error}<div class="err">{bridge.error}</div>{/if}
   </Field>

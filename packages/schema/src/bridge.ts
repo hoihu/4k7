@@ -6,18 +6,18 @@ import { schemaOf, type ToolDefinition } from './tools.ts';
 import { PartDraft } from './ingest.ts';
 import { DESIGN_GUIDE } from './guide.ts';
 
-/** 2: the tab sends the access key from its address (`token`) instead of a 6-digit pairing code. */
+/** 2: the tab sends the access key from its address (`accessKey`) instead of a 6-digit pairing code. */
 export const BRIDGE_PROTOCOL = 2;
 export const BRIDGE_PORTS = [7777, 7778, 7779, 7780, 7781] as const;
 
 /**
  * The bridge's access key (a random UUID kept in ~/.tracewise/bridge.json). The app's address carries
- * it (http://localhost:7777/<token>), and the tab sends it to the bridge when it connects.
+ * it (http://localhost:7777/<access-key>), and the tab sends it to the bridge when it connects.
  */
-export const BRIDGE_TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const BRIDGE_ACCESS_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export type TabToBridge =
-  | { type: 'hello'; protocol: number; token: string; client: string; info?: TabInfo }
+  | { type: 'hello'; protocol: number; accessKey: string; client: string; info?: TabInfo }
   | { type: 'result'; id: number; isError: boolean; content: BridgeContent[] }
   /** A message typed into the app's chat, to be answered by the local Claude Code. */
   | {
