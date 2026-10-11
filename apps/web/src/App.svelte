@@ -106,7 +106,7 @@
 <div class="app">
   <header class="bar">
     <div class="logo" aria-hidden="true">
-      <svg width="14" height="14" viewBox="0 0 16 16"><path d="M2 12h4l3-8h5" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+      <svg width="22" height="22" viewBox="0 0 64 64"><rect x="0" y="29" width="64" height="6" rx="3" fill="#b8b0a4"/><rect x="8" y="16" width="48" height="32" rx="12" fill="#e8d9bd"/><rect x="16" y="16" width="6" height="32" fill="#f2c230"/><rect x="25" y="16" width="6" height="32" fill="#7a3fb0"/><rect x="34" y="16" width="6" height="32" fill="#d6382f"/><rect x="45" y="16" width="6" height="32" fill="#d7a63a"/></svg>
     </div>
     <span class="proj trunc" title="Project">{app.k?.summary.name ?? '4k7'}</span>
     <nav class="nav" aria-label="Workspace">
@@ -232,7 +232,7 @@
 <style>
   .app { display: grid; grid-template-rows: 40px minmax(0, 1fr); height: 100vh; height: 100dvh; }
   .bar { display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); min-width: 0; }
-  .logo { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; flex: none; }
+  .logo { width: 22px; height: 22px; display: grid; place-items: center; flex: none; }
   .proj { font-weight: 600; max-width: 180px; }
   .nav { display: flex; gap: 2px; margin-left: 6px; }
   .nav button { border: 0; background: transparent; padding: 5px 10px; border-radius: 6px; color: var(--txt-2); }
