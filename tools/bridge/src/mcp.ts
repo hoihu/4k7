@@ -6,10 +6,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { BRIDGE_INSTRUCTIONS, agentTools, chatModePrompt, ingestPrompt, ingestTools } from '@tracewise/schema';
+import { BRIDGE_INSTRUCTIONS, agentTools, ingestTools } from '@tracewise/schema';
 import type { Bridge, HttpHandler } from './bridge.ts';
 
 export const VERSION = '0.1.0';
+
+/** Server instructions for the runs the bridge starts itself; their real prompt is in the system prompt. */
+const RUN_INSTRUCTIONS = 'Tracewise tools. How to use them is in your system prompt.';
 
 /** 'cli': Claude Code CLI drives the app; 'chat': it answers the app's chat; 'ingest': it imports a datasheet. */
 export type McpMode = 'cli' | 'chat' | 'ingest';
@@ -18,7 +21,9 @@ export function createMcpServer(bridge: Bridge, opts: { mode?: McpMode } = {}): 
   const mode = opts.mode ?? 'cli';
   const server = new Server(
     { name: 'tracewise', version: VERSION },
-    { capabilities: { tools: {} }, instructions: mode === 'chat' ? chatModePrompt() : mode === 'ingest' ? ingestPrompt() : BRIDGE_INSTRUCTIONS },
+    // chat and ingest runs are started by this bridge, which appends their prompt to the system prompt
+    // (chat.ts); repeating it here would send it twice with every message
+    { capabilities: { tools: {} }, instructions: mode === 'cli' ? BRIDGE_INSTRUCTIONS : RUN_INSTRUCTIONS },
   );
   const tools = mode === 'ingest' ? ingestTools() : agentTools(mode);
 
