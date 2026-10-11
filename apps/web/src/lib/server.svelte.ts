@@ -11,6 +11,7 @@ import {
   type ChatEvent,
   type TabInfo,
   type TabToServer,
+  type UpdateInfo,
 } from '@tracewise/schema';
 
 /** 'elsewhere': another tab of the app took over the server; this tab stops retrying. */
@@ -33,6 +34,8 @@ class ServerClient {
   calls = $state(0);
   /** Whether the server can answer the app's chat with the local Claude Code. */
   chat = $state<ChatCapability | null>(null);
+  /** A newer release of the app than the server runs (the downloaded app does not update itself). */
+  update = $state<UpdateInfo | null>(null);
   #chatListeners = new Map<string, (e: ChatEvent) => void>();
 
   #ws: WebSocket | null = null;
@@ -67,7 +70,7 @@ class ServerClient {
       if (typeof r === 'string') denied = r;
     }
     if (denied && !opts.silent) this.error = denied === 'wrong access key' ? 'The server did not accept this address. Open the link the tracewise command printed.' : denied;
-    else if (!opts.silent) this.error = `No server found. Is it running (${__SERVER_RUN__}, or Claude Code with the tracewise MCP server)?`;
+    else if (!opts.silent) this.error = `No server found. Is it running (${__APP_RUN__ ? `open ${__SERVER_RUN__}` : __SERVER_RUN__}, or Claude Code with the tracewise MCP server)?`;
     this.status = 'waiting';
     this.#scheduleRetry();
     return false;
@@ -123,6 +126,7 @@ class ServerClient {
           this.port = port;
           this.agent = msg.agent;
           this.chat = msg.chat ?? null;
+          if (msg.update) this.update = msg.update;
           this.status = 'connected';
           this.error = null;
           this.#onConnected?.(this.#accessKey, port);
@@ -130,6 +134,7 @@ class ServerClient {
           return;
         }
         if (msg.type === 'agent') this.agent = msg.name;
+        if (msg.type === 'update') this.update = msg.update;
         if (msg.type === 'call') void this.#call(ws, msg.id, msg.tool, msg.input);
         if (msg.type === 'chat_event') {
           this.#chatListeners.get(msg.id)?.(msg.event);

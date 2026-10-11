@@ -14,7 +14,7 @@ geometry and checks every change.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
 - **Printable by construction**: the layout flows the schematic onto pages by itself (A4, or A3/A2 for bigger sheets), never splitting a functional block; ⌘P prints them (or saves a PDF) for the bench.
 - **A design document from the design**: ask the agent to describe the design; it writes an overview and the functional blocks (reviewed like any change, kept in the project file). **Document** (schematic toolbar, or Layout → Documentation) prints it or saves a PDF: each block with its text, parts, schematic and place on the board, then the layout, an assembly drawing with only the parts and a tick list for populating a board, the BOM and the schematic pages.
-- **Local-first**: runs on your computer (`npx github:hoihu/tracewise`) in your browser. Your designs and API keys stay on your machine.
+- **Local-first**: runs on your computer, in your browser (download from [4k7.dev](https://4k7.dev), or `npx github:hoihu/4k7`). Your designs and API keys stay on your machine.
 
 ## Documents
 
@@ -27,21 +27,25 @@ geometry and checks every change.
 | [docs/design/part-ingest.md](docs/design/part-ingest.md) | Getting from a PDF datasheet to a verified part |
 | [docs/design/fab-rules.md](docs/design/fab-rules.md) | Manufacturer limits: fab profiles, presets, import by the agent, DRC |
 | [docs/design/sourcing.md](docs/design/sourcing.md) | Parts from JLCPCB's assembly catalogue, on demand; the `lcsc` parameter and the BOM |
-| [docs/distribution.md](docs/distribution.md) | How the app is run and shared: `npx github:hoihu/tracewise`, the package, the port |
+| [docs/distribution.md](docs/distribution.md) | How the app is run and shared: the downloads (DMG, Linux archive), `npx github:hoihu/4k7`, the package, the port |
 | [docs/design/ui.md](docs/design/ui.md) | UI concept: workspaces, density rules |
 | [docs/ui/prototype.html](docs/ui/prototype.html) | Clickable prototype of the chosen UI (open in a browser) |
 | [docs/ui/proposals.html](docs/ui/proposals.html) | Earlier exploration: proposals A, B, C |
 
 ## Running it
 
-Requires Node 22.18+ and access to this (private) repository:
+Download it from [4k7.dev](https://4k7.dev/#download): a `4k7.app` for the Mac (Apple silicon or Intel) or a folder for Linux,
+with Node inside, so nothing else is needed. Opening it opens the app in your browser; closing the tab stops it. The Mac app is
+not signed yet, so the first time macOS asks you to allow it under System Settings → Privacy & Security → Open Anyway.
+
+Or with Node 22.18+ and npm, straight from this repository:
 
 ```sh
-npx -y github:hoihu/tracewise          # builds once, then serves the app at http://localhost:7777 and opens it
-npm install -g github:hoihu/tracewise  # or install it: `tracewise` (add --no-open to skip the browser)
+npx -y github:hoihu/4k7          # builds once, then serves the app at http://localhost:7777 and opens it
+npm install -g github:hoihu/4k7  # or install it: `tracewise` (add --no-open to skip the browser)
 ```
 
-It runs the app and the local server in one process: the page it opens is already connected, and the chat is answered by your
+Either way it runs the app and the local server in one process: the page it opens is already connected, and the chat is answered by your
 Claude Code if `claude` is installed (see below). Designs are kept by the browser for `http://localhost:7777`, so the app
 always opens at that address (with an access key in the path: `http://localhost:7777/<access-key>`). Nothing is published to the npm registry; see [docs/distribution.md](docs/distribution.md).
 
@@ -54,6 +58,7 @@ npm test           # kernel + agent tests (vitest)
 npm run typecheck  # tsc + svelte-check
 npm run build      # static build in apps/web/dist
 npm start          # build, package and run it like npx does (dist/tracewise.js)
+node scripts/bundle.mjs  # the downloads (DMGs and Linux archives) in build/
 ```
 
 Without an API key the app runs an **offline demo** (a scripted agent that goes through the real kernel):
@@ -64,7 +69,7 @@ Add an Anthropic API key in **Settings** to use a real model. It is encrypted in
 
 The local server (`tools/server`) connects the app to the Claude Code on your computer, so it runs on your existing plan.
 
-**Chat in the app (recommended).** `npx github:hoihu/tracewise` does all of it. From a checkout, while developing,
+**Chat in the app (recommended).** The downloaded app and `npx github:hoihu/4k7` do all of it. From a checkout, while developing,
 `npm run dev` runs the Vite dev server and the local server together (the server restarts itself when its code changes;
 `npm run dev:web` and `npm run server` run them one at a time).
 
@@ -75,7 +80,7 @@ To let it look up datasheets, enable **Settings → Web** (adds read-only WebSea
 
 **Or chat in the Claude Code CLI.** Start `claude` in this repository and approve the `tracewise` server from
 `.mcp.json` (or register it for every folder with
-`claude mcp add --scope user tracewise -- npx -y github:hoihu/tracewise mcp`, or with
+`claude mcp add --scope user tracewise -- npx -y github:hoihu/4k7 mcp`, or the command shown in the app's Settings → Local server,, or with
 `node /absolute/path/to/this/repo/tools/server/src/main.ts` for a checkout). Ask Claude to
 *“connect to Tracewise”* and open the link it gives you.
 

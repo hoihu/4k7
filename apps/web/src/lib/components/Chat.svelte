@@ -55,13 +55,13 @@
           <p class="muted">Click a part to reference it, or say “make C2 100µF” or “put C1 left of U1”. Your hints stick, even after a re-layout.</p>
           {#if app.isDemo}
             <p class="demo">
-              Offline demo (scripted). To use a real model, run <code>{__SERVER_RUN__}</code> and open the link it prints to chat with your
+              Offline demo (scripted). To use a real model, {#if __APP_RUN__}open {__SERVER_RUN__}{:else}run <code>{__SERVER_RUN__}</code> and open the link it prints{/if} to chat with your
               <b>Claude Code</b>, or <button class="linkbtn" onclick={() => (app.view = 'set')}>add an API key</button>.
             </p>
           {:else if app.settings.provider === 'claude-code' && server.status !== 'connected'}
             <p class="demo">
               The chat uses your Claude Code, but the server is {server.status === 'elsewhere' ? 'connected in another tab' : 'not connected'}.
-              {#if server.status === 'elsewhere'}<button class="linkbtn" onclick={() => server.useThisTab()}>Use this tab</button>{:else}Run <code>{__SERVER_RUN__}</code> and open the link it prints.{/if}
+              {#if server.status === 'elsewhere'}<button class="linkbtn" onclick={() => server.useThisTab()}>Use this tab</button>{:else if __APP_RUN__}Open {__SERVER_RUN__} again.{:else}Run <code>{__SERVER_RUN__}</code> and open the link it prints.{/if}
             </p>
           {/if}
         </div>

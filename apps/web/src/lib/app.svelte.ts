@@ -808,7 +808,7 @@ class AppState {
   private async runClaudeCode(text: string, item: ChatItem): Promise<void> {
     const fail = (t: string) => item.segments.push({ type: 'error', text: t });
     if (server.status !== 'connected') {
-      fail(`Claude Code is not connected. Start the server (${__SERVER_RUN__}) and open the app with the link it prints.`);
+      fail(__APP_RUN__ ? `Claude Code is not connected. Open ${__SERVER_RUN__} again.` : `Claude Code is not connected. Start the server (${__SERVER_RUN__}) and open the app with the link it prints.`);
       return;
     }
     if (!server.chat?.available) {

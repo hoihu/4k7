@@ -1,7 +1,7 @@
 // Builds the `tracewise` package in dist/: the server bundled into one file (the workspace packages
 // inlined: Node does not strip types under node_modules) and the built web app next to it.
 // Run by `npm run package`, and by npm's `prepare` when someone installs from the repository
-// (npx github:hoihu/tracewise). Expects apps/web/dist to be built (npm run build).
+// (npx github:hoihu/4k7). Expects apps/web/dist to be built (npm run build).
 import { chmodSync, cpSync, existsSync, rmSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import { fileURLToPath } from 'node:url';

@@ -9,26 +9,38 @@
  *   1. You type in the app's chat and your local Claude Code answers:
  *        node tools/server/src/main.ts --serve [--open]   (npm run server; `npx tracewise` runs this with --open)
  *      The server runs `claude -p` headlessly per message, with only the Tracewise tools.
+ *      With --idle-exit (the downloaded app) it stops by itself once no tab has been connected for a while.
  *   2. Claude Code drives the app (you type in the Claude Code CLI):
  *        claude mcp add --scope user tracewise -- node /path/to/repo/tools/server/src/main.ts
  *      Claude Code starts the server as an MCP server over stdio.
  *
  * In stdio mode stdout is reserved for the MCP protocol; all logging goes to stderr.
  */
-import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, renameSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { SERVER_PORTS } from '@tracewise/schema';
 import { appHandler, reachable, servesTracewise } from './app.ts';
 import { LocalServer } from './server.ts';
 import { ChatRunner, detectClaude } from './chat.ts';
+import { extendPathFor } from './claude-bin.ts';
 import { appDir, configDir, configPath, DEV_APP, inCheckout, loadConfig } from './config.ts';
+import { openBrowser } from './launch.ts';
 import { createMcpServer, mcpHttpHandler, VERSION } from './mcp.ts';
+import { checkForUpdate } from './update.ts';
 
 const serve = process.argv.includes('--serve');
 /** Open the app link in the browser (what `npx tracewise` does). */
 const open = process.argv.includes('--open');
+/**
+ * Stop when no tab is connected: the downloaded app has no terminal to Ctrl-C in and no window to
+ * close, so closing the app's tab is how it is quit. A reload reconnects well within the grace period.
+ */
+const idleExit = process.argv.includes('--idle-exit');
+/** No tab within this time of starting (the browser did not open, or the tab was closed at once). */
+const IDLE_START_MS = 3 * 60_000;
+/** After the last tab went away. */
+const IDLE_MS = 90_000;
 /** Logs go to stderr and to ~/.tracewise/server.log (kept small), which helps diagnose connection issues. */
 const log = (msg: string) => {
   process.stderr.write(`[tracewise] ${msg}\n`);
@@ -43,13 +55,38 @@ const log = (msg: string) => {
 
 async function main() {
   const cfg = loadConfig();
-  const server = new LocalServer({ accessKey: cfg.accessKey, log, ...(inCheckout() ? { devPorts: [Number(new URL(DEV_APP).port)] } : {}) });
+  let onIdle: (() => void) | null = null;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const idle = (ms: number) => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => onIdle?.(), ms);
+  };
+  const onTab = (connected: boolean) => {
+    if (connected) {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = null;
+    } else idle(IDLE_MS);
+  };
+  const server = new LocalServer({
+    accessKey: cfg.accessKey,
+    log,
+    ...(inCheckout() ? { devPorts: [Number(new URL(DEV_APP).port)] } : {}),
+    ...(serve && idleExit ? { onTab } : {}),
+  });
   const port = await server.start();
   const dir = appDir();
 
   // chat in the app, answered by the local Claude Code
   const claudeBin = process.env.TRACEWISE_CLAUDE_BIN ?? 'claude';
-  const capability = detectClaude(claudeBin, cfg.claude);
+  let capability = detectClaude(claudeBin, cfg.claude);
+  if (!capability.available && !claudeBin.includes(sep)) {
+    // started from the Finder or a launcher: look where installers put it, then where the user's shell does
+    const added = extendPathFor(() => detectClaude(claudeBin, cfg.claude).available);
+    if (added) {
+      capability = detectClaude(claudeBin, cfg.claude);
+      log(`claude found after adding to PATH: ${added.join(', ')}`);
+    }
+  }
   const chat = new ChatRunner({ server, claudeBin, workDir: join(configDir(), 'claude-workspace'), ingestDir: join(configDir(), 'ingest'), profile: cfg.claude, log });
   server.setChatHandler(chat.handle, capability);
   const mcpHttp = mcpHttpHandler(server, (t) => chat.modeFor(t));
@@ -69,7 +106,7 @@ async function main() {
   let stdio: ReturnType<typeof createMcpServer> | null = null;
   if (serve) {
     log(`${open ? 'opening' : 'open'} ${server.appLink()} (Ctrl-C to stop)`);
-    if (open) openBrowser(server.appLink());
+    if (open) openBrowser(server.appLink(), log);
   } else {
     stdio = createMcpServer(server);
     await stdio.connect(new StdioServerTransport());
@@ -83,6 +120,17 @@ async function main() {
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  if (serve && idleExit) {
+    onIdle = () => {
+      log('no tab connected; stopping');
+      void shutdown();
+    };
+    idle(IDLE_START_MS);
+  }
+  // the downloaded app does not update itself the way npx did; tell the tab when a newer release is out
+  if (!inCheckout() && !process.env.TRACEWISE_NO_UPDATE_CHECK) {
+    void checkForUpdate(VERSION, join(configDir(), 'update.json'), { log }).then((u) => u && server.setUpdate(u));
+  }
   if (!serve) {
     process.stdin.on('end', shutdown);
     process.stdin.on('close', shutdown);
@@ -104,15 +152,6 @@ async function appUrl(configured: string | undefined, port: number, dir: string 
   }
   if (!dir) log('note: the app is not built (run npm run build); the app link will not load until it is');
   return undefined;
-}
-
-function openBrowser(url: string) {
-  const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
-  try {
-    spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => log(`could not open a browser; open ${url}`)).unref();
-  } catch {
-    log(`could not open a browser; open ${url}`);
-  }
 }
 
 main().catch((e) => {

@@ -108,7 +108,7 @@ constraints) + `prompt.md` + optional reference sub-circuit (`.twd` fragment). E
 Claude Code ──MCP stdio──▶ tracewise-server (Node, 127.0.0.1:7777–7781) ──WebSocket──▶ browser tab (kernel + UI)
 ```
 
-The server also serves the built app on its port, so `npx github:hoihu/tracewise` is the whole app: the page comes from
+The server also serves the built app on its port, so `npx github:hoihu/4k7` is the whole app: the page comes from
 `http://localhost:7777` and talks to the server on its own origin (no website reaching into the computer, which Chrome
 gates behind a permission and Safari blocks).
 
