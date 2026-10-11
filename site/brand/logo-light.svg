@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 230 56" width="230" height="56">
+  <!-- 4k7 logo: mark + wordmark. Light wordmark for dark backgrounds. -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e8d9bd"/><stop offset=".55" stop-color="#e8d9bd"/><stop offset="1" stop-color="#cdb98f"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(0,6)">
+    <rect x="0" y="20" width="120" height="4" rx="2" fill="#b8b0a4"/>
+    <rect x="22" y="4" width="76" height="36" rx="15" fill="url(#body)"/>
+    <rect x="35" y="4" width="8" height="36" fill="#f2c230"/>
+    <rect x="48" y="4" width="8" height="36" fill="#7a3fb0"/>
+    <rect x="61" y="4" width="8" height="36" fill="#d6382f"/>
+    <rect x="80" y="4" width="8" height="36" fill="#d7a63a"/>
+    <rect x="26" y="7" width="68" height="5" rx="2.5" fill="#fff" opacity=".28"/>
+  </g>
+  <text x="136" y="40" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif" font-size="34" font-weight="650" letter-spacing="-0.5" fill="#ecebe6">4k7</text>
+</svg>

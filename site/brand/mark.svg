@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 170" width="520" height="170">
+  <!-- 4k7 mark: a 4.7 kΩ carbon-film resistor. Bands: yellow 4 · violet 7 · red ×100 · gold ±5 % -->
+  <defs>
+    <!-- cylinder shading, shared by body and bands (userSpaceOnUse so every piece lines up) -->
+    <linearGradient id="cyl" gradientUnits="userSpaceOnUse" x1="0" y1="38" x2="0" y2="116">
+      <stop offset="0"    stop-color="#fff" stop-opacity=".35"/>
+      <stop offset=".18"  stop-color="#fff" stop-opacity=".12"/>
+      <stop offset=".45"  stop-color="#fff" stop-opacity="0"/>
+      <stop offset=".75"  stop-color="#000" stop-opacity=".18"/>
+      <stop offset="1"    stop-color="#000" stop-opacity=".42"/>
+    </linearGradient>
+    <!-- lead: drawn copper-nickel wire -->
+    <linearGradient id="wire" gradientUnits="userSpaceOnUse" x1="0" y1="73" x2="0" y2="83">
+      <stop offset="0"   stop-color="#6f6a62"/>
+      <stop offset=".25" stop-color="#e9e4da"/>
+      <stop offset=".5"  stop-color="#b9b3a8"/>
+      <stop offset="1"   stop-color="#5b564f"/>
+    </linearGradient>
+    <!-- end cap (metal ferrule under the paint) -->
+    <linearGradient id="cap" gradientUnits="userSpaceOnUse" x1="0" y1="40" x2="0" y2="114">
+      <stop offset="0"  stop-color="#cfc3a9"/>
+      <stop offset=".5" stop-color="#9d8f72"/>
+      <stop offset="1"  stop-color="#5e533f"/>
+    </linearGradient>
+    <radialGradient id="shadow" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#000" stop-opacity=".45"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+    <!-- body silhouette: bulged ends, slimmer middle -->
+    <clipPath id="bodyClip"><use href="#bodyShape"/></clipPath>
+    <path id="bodyShape" d="M140 40 h40 q14 0 20 4 q5 2 10 2 h120 q5 0 10 -2 q6 -4 20 -4 h40 a37 37 0 0 1 0 74 h-40 q-14 0 -20 -4 q-5 -2 -10 -2 h-120 q-5 0 -10 2 q-6 4 -20 4 h-40 a37 37 0 0 1 0 -74 z"/>
+  </defs>
+
+  <!-- shadow -->
+  <ellipse cx="260" cy="134" rx="190" ry="14" fill="url(#shadow)"/>
+
+  <!-- leads -->
+  <rect x="0" y="73" width="520" height="10" rx="5" fill="url(#wire)"/>
+  <rect x="0" y="75" width="520" height="2" rx="1" fill="#fff" opacity=".35"/>
+  <!-- ferrules where the wire enters the body -->
+  <rect x="112" y="52" width="16" height="50" rx="5" fill="url(#cap)"/>
+  <rect x="392" y="52" width="16" height="50" rx="5" fill="url(#cap)"/>
+
+  <!-- body -->
+  <use href="#bodyShape" fill="#e3d3b3"/>
+  <g clip-path="url(#bodyClip)">
+    <!-- bands, wrapped by the same cylinder gradient -->
+    <rect x="158" y="30" width="22" height="100" fill="#f2c230"/>
+    <rect x="214" y="30" width="22" height="100" fill="#7a3fb0"/>
+    <rect x="252" y="30" width="22" height="100" fill="#d6382f"/>
+    <rect x="338" y="30" width="22" height="100" fill="#d7a63a"/>
+    <!-- thin dark seams at the band edges, as paint has -->
+    <g fill="#000" opacity=".10">
+      <rect x="157" y="30" width="1.5" height="100"/><rect x="179.5" y="30" width="1.5" height="100"/>
+      <rect x="213" y="30" width="1.5" height="100"/><rect x="235.5" y="30" width="1.5" height="100"/>
+      <rect x="251" y="30" width="1.5" height="100"/><rect x="273.5" y="30" width="1.5" height="100"/>
+      <rect x="337" y="30" width="1.5" height="100"/><rect x="359.5" y="30" width="1.5" height="100"/>
+    </g>
+    <!-- cylinder light -->
+    <rect x="90" y="30" width="340" height="100" fill="url(#cyl)"/>
+    <!-- specular streak -->
+    <rect x="124" y="48" width="272" height="7" rx="3.5" fill="#fff" opacity=".28"/>
+  </g>
+  <!-- soft edge on the ends -->
+  <use href="#bodyShape" fill="none" stroke="#000" stroke-opacity=".18" stroke-width="1.5"/>
+</svg>
