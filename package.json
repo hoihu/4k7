@@ -18,8 +18,9 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run dev -w @tracewise/web",
-    "dev:here": "scripts/dev-here.sh",
+    "dev": "scripts/dev.sh",
+    "dev:here": "scripts/dev.sh",
+    "dev:web": "npm run dev -w @tracewise/web",
     "build": "npm run build -w @tracewise/web",
     "package": "npm run build && node scripts/package.mjs",
     "start": "npm run package && node dist/tracewise.js",

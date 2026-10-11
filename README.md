@@ -49,7 +49,7 @@ From a checkout:
 
 ```sh
 npm install
-npm run dev        # http://localhost:5173 — the schematic workspace
+npm run dev        # http://localhost:5173 with hot reload, plus the bridge (prints a pairing link)
 npm test           # kernel + agent tests (vitest)
 npm run typecheck  # tsc + svelte-check
 npm run build      # static build in apps/web/dist
@@ -64,14 +64,11 @@ Add an Anthropic API key in **Settings** to use a real model. It is encrypted in
 
 The local bridge (`tools/bridge`) connects the app to the Claude Code on your computer, so it runs on your existing plan.
 
-**Chat in the app (recommended).** `npx github:hoihu/tracewise` does all of it. From a checkout, while developing:
+**Chat in the app (recommended).** `npx github:hoihu/tracewise` does all of it. From a checkout, while developing,
+`npm run dev` runs the dev server and the bridge together (the bridge restarts itself when its code changes;
+`npm run dev:web` and `npm run bridge` run them one at a time).
 
-```sh
-npm run dev       # the app
-npm run bridge    # in a second terminal; prints a pairing link, restarts itself when its code changes
-```
-
-Open the pairing link (it points to the dev server when one runs), then choose **Settings → AI provider → Claude Code on this computer**. Messages you type in
+Open the pairing link, then choose **Settings → AI provider → Claude Code on this computer**. Messages you type in
 the app's chat are answered by `claude -p` running headlessly with **only** the Tracewise tools (no shell, files or web),
 connected back to the bridge through a token-protected MCP endpoint. Follow-up messages continue the same session.
 To let it look up datasheets, enable **Settings → Web** (adds read-only WebSearch/WebFetch; still no shell or files).

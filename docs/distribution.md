@@ -44,8 +44,12 @@ server), a second one takes the next port of 7777–7781 but still points its pa
 program, the app opens on the bridge's own port and the bridge says that designs saved at
 7777 do not show there.
 
-A checkout's dev server (`npm run dev`, `http://localhost:5173`) takes precedence: a bridge run
-from the checkout points pairing links there while it runs.
+A checkout's dev server (`http://localhost:5173`) takes precedence: `npm run dev` points the
+bridge's pairing links there, and a bridge run on its own from the checkout does so while the
+dev server answers.
+
+So, in a checkout: `npm run dev` while working on the code (hot reload, the bridge from source),
+`npm start` to check the package as users get it.
 
 ## Security
 
