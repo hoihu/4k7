@@ -1,7 +1,7 @@
 /**
  * How to design in Tracewise: the guidance every design agent gets, whichever engine runs the
- * conversation (the in-app agent on the user's API key, or Claude Code through the local bridge).
- * Each engine adds only its own framing: SYSTEM_PROMPT in packages/agent, BRIDGE_INSTRUCTIONS here.
+ * conversation (the in-app agent on the user's API key, or Claude Code through the local server).
+ * Each engine adds only its own framing: SYSTEM_PROMPT in packages/agent, MCP_INSTRUCTIONS in server.ts.
  */
 export const DESIGN_GUIDE = `How to work:
 - Look parts up with design_query search_parts / get_part before adding them, and read their notes and requirements. Use exact pin names from the part card.

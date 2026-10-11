@@ -1,13 +1,13 @@
 /**
- * The access key is created once and kept in ~/.tracewise/bridge.json, so the app's address
- * (http://localhost:7777/<access-key>) stays the same across restarts and every bridge accepts the same tab.
+ * The access key is created once and kept in ~/.tracewise/server.json, so the app's address
+ * (http://localhost:7777/<access-key>) stays the same across restarts and every server accepts the same tab.
  */
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BRIDGE_ACCESS_KEY } from '@tracewise/schema';
+import { SERVER_ACCESS_KEY } from '@tracewise/schema';
 
 /**
  * How to run the headless Claude Code for the app chat. Mirrors a shell alias such as
@@ -32,7 +32,7 @@ export function inCheckout(): boolean {
 }
 
 /**
- * The built web app the bridge serves: next to the bundled CLI (dist/app) in the package, or
+ * The built web app the server serves: next to the bundled CLI (dist/app) in the package, or
  * apps/web/dist in a checkout once built. TRACEWISE_APP_DIR overrides it.
  */
 export function appDir(): string | null {
@@ -41,10 +41,10 @@ export function appDir(): string | null {
   return candidates.find((d): d is string => !!d && existsSync(join(d, 'index.html'))) ?? null;
 }
 
-export interface BridgeConfig {
+export interface ServerConfig {
   /** In the app's address; the tab needs it to connect. */
   accessKey: string;
-  /** Where app links point when set (TRACEWISE_APP_URL or "appUrl"); else the app this bridge serves. */
+  /** Where app links point when set (TRACEWISE_APP_URL or "appUrl"); else the app this server serves. */
   appUrl?: string;
   claude: ClaudeProfile;
 }
@@ -54,19 +54,20 @@ export function configDir(): string {
 }
 
 export function configPath(): string {
-  return join(configDir(), 'bridge.json');
+  return join(configDir(), 'server.json');
 }
 
-export function loadConfig(): BridgeConfig {
+export function loadConfig(): ServerConfig {
   const path = configPath();
-  let cfg: Partial<Omit<BridgeConfig, 'claude'>> & { claude?: Partial<ClaudeProfile> } = {};
+  let cfg: Partial<Omit<ServerConfig, 'claude'>> & { claude?: Partial<ClaudeProfile> } = {};
   try {
-    cfg = JSON.parse(readFileSync(path, 'utf8')) as Partial<BridgeConfig>;
+    // bridge.json: the name before the bridge became the server (its claude profile and appUrl carry over)
+    cfg = JSON.parse(readFileSync(existsSync(path) ? path : join(dirname(path), 'bridge.json'), 'utf8')) as Partial<ServerConfig>;
   } catch {
     // first run
   }
   const env = process.env.TRACEWISE_ACCESS_KEY;
-  const accessKey = env && BRIDGE_ACCESS_KEY.test(env) ? env : cfg.accessKey && BRIDGE_ACCESS_KEY.test(cfg.accessKey) ? cfg.accessKey : randomUUID();
+  const accessKey = env && SERVER_ACCESS_KEY.test(env) ? env : cfg.accessKey && SERVER_ACCESS_KEY.test(cfg.accessKey) ? cfg.accessKey : randomUUID();
   if (accessKey !== cfg.accessKey && accessKey !== env) {
     mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 });
     // keep every other setting in the file; the 6-digit "code" of older versions is gone

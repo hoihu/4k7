@@ -1,13 +1,13 @@
 /**
- * Datasheet import: the local Claude Code (through the bridge) reads the datasheet and submits
+ * Datasheet import: the local Claude Code (through the server) reads the datasheet and submits
  * a draft; this tab checks every submission deterministically (draftToCard) and answers with
  * the problems to fix. Optionally a second, independent pass extracts everything again and the
  * two are compared fact by fact; the user decides where they disagree. The datasheet is kept
  * so every pin can be shown on its page. Nothing is saved before the user's review.
  */
 import { compareDrafts, draftToCard, listUserParts, mergeDrafts, planUnits, registerUserParts, unregisterUserPart, type Disagreement } from '@tracewise/parts';
-import { PartDraft, type BridgeContent, type DraftPin, type PackageInfo, type Design, type IngestIssue, type PartCard, type TokenCount } from '@tracewise/schema';
-import { bridge } from './bridge.svelte.ts';
+import { PartDraft, type ToolContent, type DraftPin, type PackageInfo, type Design, type IngestIssue, type PartCard, type TokenCount } from '@tracewise/schema';
+import { server } from './server.svelte.ts';
 import { deleteDatasheet, deleteLibraryPart, loadDatasheet, loadLibrary, loadPendingImport, saveDatasheet, saveLibraryPart, savePendingImport, type StoredDatasheet } from './persist.ts';
 
 export interface IngestRequest {
@@ -178,7 +178,7 @@ export class IngestState {
   }
 
   get available(): boolean {
-    return bridge.status === 'connected' && !!bridge.chat?.available;
+    return server.status === 'connected' && !!server.chat?.available;
   }
 
   async start(req: IngestRequest): Promise<void> {
@@ -193,11 +193,11 @@ export class IngestState {
       this.phase = 'failed';
     };
     if (!mpn) return fail('Enter the full part number (the ordering code picks the package).');
-    if (!this.available) return fail('Pair the local bridge first (Settings → Local bridge).');
+    if (!this.available) return fail('Connect the local server first (Settings → Local server).');
     let pdf: { name: string; base64: string } | undefined;
     if (req.file) {
       if (req.file.size > MAX_BYTES) return fail(`The PDF is larger than ${MAX_BYTES >> 20} MB.`);
-      this.log.push(`Uploading ${req.file.name} to the bridge`);
+      this.log.push(`Uploading ${req.file.name} to the server`);
       const data = await req.file.arrayBuffer();
       this.datasheet = { name: req.file.name, data, hash: await sha256(data) };
       pdf = { name: req.file.name, base64: toBase64(data) };
@@ -205,7 +205,7 @@ export class IngestState {
 
     const id = `ingest-${Date.now().toString(36)}`;
     this.#run = id;
-    const sent = bridge.sendIngest(
+    const sent = server.sendIngest(
       {
         id,
         mpn,
@@ -249,7 +249,7 @@ export class IngestState {
         }
       },
     );
-    if (!sent) fail('The bridge is not connected.');
+    if (!sent) fail('The server is not connected.');
   }
 
   /**
@@ -362,11 +362,11 @@ export class IngestState {
   }
 
   cancel() {
-    if (this.#run) bridge.cancelChat(this.#run);
+    if (this.#run) server.cancelChat(this.#run);
   }
 
   /** submit_part from the importer: check the draft, answer with what to fix. */
-  submit(input: unknown): { isError: boolean; content: BridgeContent[] } {
+  submit(input: unknown): { isError: boolean; content: ToolContent[] } {
     const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
     if (!this.#run) return text('No datasheet import is running in the app.', true);
     this.submissions++;

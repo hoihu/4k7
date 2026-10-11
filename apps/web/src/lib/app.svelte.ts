@@ -18,8 +18,8 @@ import {
 } from '@tracewise/agent';
 import type { KernelState } from '@tracewise/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, BRIDGE_ACCESS_KEY, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type BridgeContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
-import { bridge } from './bridge.svelte.ts';
+import { ArtworkInput, SERVER_ACCESS_KEY, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
+import { server } from './server.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
@@ -48,12 +48,12 @@ import {
 type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
 
 /**
- * The local bridge's access key, from the app's address (http://localhost:7777/<access-key>, as the bridge
- * opens it). `?bridge=7778` names the bridge to try first when the app is served by another one.
+ * The local server's access key, from the app's address (http://localhost:7777/<access-key>, as the server
+ * opens it). `?port=7778` names the server to try first when the app is served by another one.
  */
 const addressPath = /^\/([^/]+)\/?$/.exec(location.pathname)?.[1] ?? '';
-const keyFromAddress = BRIDGE_ACCESS_KEY.test(addressPath) ? addressPath : null;
-const portFromAddress = Number(new URLSearchParams(location.search).get('bridge')) || null;
+const keyFromAddress = SERVER_ACCESS_KEY.test(addressPath) ? addressPath : null;
+const portFromAddress = Number(new URLSearchParams(location.search).get('port')) || null;
 
 export type View = 'sch' | 'lay' | 'parts' | 'set';
 export type InspectorTab = 'issues' | 'ledger' | 'history' | 'sel';
@@ -73,7 +73,7 @@ export interface ChatItem {
   refs?: string[];
   segments: Segment[];
   status: 'streaming' | 'done';
-  /** External agent driving the app through the bridge (e.g. "Claude Code"). */
+  /** External agent driving the app through the server (e.g. "Claude Code"). */
   source?: string;
   /** This turn produced the proposal that is currently pending (or was decided). */
   changeset?: { state: 'pending' | 'accepted' | 'rejected' | 'superseded'; note?: string };
@@ -133,7 +133,7 @@ class AppState {
   private inAppBusy = false;
   /** The saved project could not be read nor kept aside: do not save over it until the user replaces it. */
   private saveBlocked = false;
-  /** Claude Code answering the app chat through the bridge: session and current run. */
+  /** Claude Code answering the app chat through the server: session and current run. */
   private claudeSession: string | null = null;
   private claudeRun: { id: string; item: ChatItem } | null = null;
 
@@ -159,22 +159,22 @@ class AppState {
     await this.ingest.adoptFootprints(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
     this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget, exec: (tool, input) => this.runTool(tool, input) });
     this.settingsChannel?.addEventListener('message', (e: MessageEvent<{ type: string; accessKey?: string }>) => {
-      if (e.data?.type === 'bridge-held' && e.data.accessKey) bridge.heldElsewhere(e.data.accessKey);
+      if (e.data?.type === 'server-held' && e.data.accessKey) server.heldElsewhere(e.data.accessKey);
       else void this.reloadSettings();
     });
     this.applyTheme();
     await this.refresh();
-    bridge.init(
-      (tool, input) => this.handleBridgeCall(tool, input),
+    server.init(
+      (tool, input) => this.handleServerCall(tool, input),
       (accessKey, port) => {
-        // connecting to a bridge that can run Claude Code makes it the chat provider, unless the user has an API key set up
+        // connecting to a server that can run Claude Code makes it the chat provider, unless the user has an API key set up
         // "no real model configured" = offline demo, or Anthropic chosen without a key
         const noModel = this.settings.provider === 'demo' || (this.settings.provider === 'anthropic' && !this.apiKey);
-        const useClaude = bridge.chat?.available && noModel;
-        if (accessKey !== this.settings.bridgeAccessKey || port !== this.settings.bridgePort || useClaude) {
-          void this.updateSettings({ bridgeAccessKey: accessKey, bridgePort: port, ...(useClaude ? { provider: 'claude-code' as const } : {}) });
+        const useClaude = server.chat?.available && noModel;
+        if (accessKey !== this.settings.serverAccessKey || port !== this.settings.serverPort || useClaude) {
+          void this.updateSettings({ serverAccessKey: accessKey, serverPort: port, ...(useClaude ? { provider: 'claude-code' as const } : {}) });
         }
-        this.settingsChannel?.postMessage({ type: 'bridge-held', accessKey });
+        this.settingsChannel?.postMessage({ type: 'server-held', accessKey });
         if (useClaude) this.flash('Connected: the chat now runs on your Claude Code');
       },
       () => {
@@ -185,11 +185,11 @@ class AppState {
     );
     this.persistent = await storagePersistent();
     // the address's key wins over the saved one (the dev server's address carries none)
-    const accessKey = keyFromAddress ?? this.settings.bridgeAccessKey;
+    const accessKey = keyFromAddress ?? this.settings.serverAccessKey;
     if (accessKey) {
-      const silent = accessKey === this.settings.bridgeAccessKey;
-      void bridge.connect(accessKey, { silent, preferPort: portFromAddress ?? this.settings.bridgePort }).then((ok) => {
-        if (!ok && !silent && bridge.error) this.flash(bridge.error);
+      const silent = accessKey === this.settings.serverAccessKey;
+      void server.connect(accessKey, { silent, preferPort: portFromAddress ?? this.settings.serverPort }).then((ok) => {
+        if (!ok && !silent && server.error) this.flash(server.error);
       });
     }
     this.ready = true;
@@ -417,7 +417,7 @@ class AppState {
     for (const w of waiters) w(state === 'accepted' ? `accepted: ${note}` : 'rejected by the user. Ask them what to change.');
   }
 
-  /** What this tab reports about itself (Settings → Diagnostics, and to the bridge log). */
+  /** What this tab reports about itself (Settings → Diagnostics, and to the server log). */
   diagnostics() {
     return {
       origin: location.origin,
@@ -434,7 +434,7 @@ class AppState {
   /** The chat item that collects an external agent's activity; one per burst of work. */
   private externalItem(): ChatItem {
     if (this.claudeRun) return this.claudeRun.item; // tool calls of the chat turn in progress
-    const agent = bridge.agent ?? 'External agent';
+    const agent = server.agent ?? 'External agent';
     const last = this.chat[this.chat.length - 1];
     if (last?.role === 'agent' && last.source === agent && last.status === 'streaming') return last;
     this.chat.push({ id: this.seq++, role: 'agent', source: agent, segments: [], status: 'streaming' });
@@ -442,7 +442,7 @@ class AppState {
   }
 
   /**
-   * Run one agent tool. The in-app agent and Claude Code through the bridge share this executor;
+   * Run one agent tool. The in-app agent and Claude Code through the server share this executor;
    * how a turn starts and ends (get_context, propose, wait_for_review, ask_user) is up to each.
    */
   async runTool(tool: string, input: unknown): Promise<ToolOutcome> {
@@ -561,8 +561,8 @@ class AppState {
     }
   }
 
-  /** Execute one tool call forwarded by the local bridge: the turn tools here, the design tools in runTool. */
-  async handleBridgeCall(tool: string, input: unknown): Promise<{ isError: boolean; content: BridgeContent[] }> {
+  /** Execute one tool call forwarded by the local server: the turn tools here, the design tools in runTool. */
+  async handleServerCall(tool: string, input: unknown): Promise<{ isError: boolean; content: ToolContent[] }> {
     const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
     if (tool === 'submit_part') return this.ingest.submit(input); // datasheet import, not a design change
     if (this.inAppBusy) return text('The in-app agent is working on this design right now. Try again when it has finished.', true);
@@ -603,7 +603,7 @@ class AppState {
           await this.accept();
           return text(`Committed (autonomy is Auto): ${p.hunks.length} changes.`);
         }
-        this.flash(`${bridge.agent ?? 'External agent'} proposed ${p.hunks.length} changes`);
+        this.flash(`${server.agent ?? 'External agent'} proposed ${p.hunks.length} changes`);
         return text(`Proposed ${p.hunks.length} changes for review. Call wait_for_review to get the user's decision.`);
       }
       case 'wait_for_review': {
@@ -800,25 +800,25 @@ class AppState {
   }
 
   stop() {
-    if (this.claudeRun) bridge.cancelChat(this.claudeRun.id);
+    if (this.claudeRun) server.cancelChat(this.claudeRun.id);
     this.abort?.abort();
   }
 
-  /** One chat turn answered by the local Claude Code through the bridge. */
+  /** One chat turn answered by the local Claude Code through the server. */
   private async runClaudeCode(text: string, item: ChatItem): Promise<void> {
     const fail = (t: string) => item.segments.push({ type: 'error', text: t });
-    if (bridge.status !== 'connected') {
-      fail(`Claude Code is not connected. Start the bridge (${__BRIDGE_RUN__}) and open the app with the link it prints.`);
+    if (server.status !== 'connected') {
+      fail(`Claude Code is not connected. Start the server (${__SERVER_RUN__}) and open the app with the link it prints.`);
       return;
     }
-    if (!bridge.chat?.available) {
-      fail(bridge.chat?.reason ?? 'This bridge cannot run Claude Code for the chat. Update the bridge (restart it).');
+    if (!server.chat?.available) {
+      fail(server.chat?.reason ?? 'This server cannot run Claude Code for the chat. Update the server (restart it).');
       return;
     }
     const id = crypto.randomUUID();
     this.claudeRun = { id, item };
     await new Promise<void>((resolve) => {
-      const sent = bridge.sendChat(
+      const sent = server.sendChat(
         {
           id,
           text,
@@ -867,7 +867,7 @@ class AppState {
         },
       );
       if (!sent) {
-        fail('The bridge connection is not open.');
+        fail('The server connection is not open.');
         resolve();
       }
     });
@@ -924,7 +924,7 @@ class AppState {
     this.settingsChannel?.postMessage({ type: 'settings' });
   }
 
-  /** Tabs of the app tell each other about settings changes and who holds the bridge. */
+  /** Tabs of the app tell each other about settings changes and who holds the server. */
   private settingsChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('tracewise-settings') : null;
 
   private async reloadSettings() {

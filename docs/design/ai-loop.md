@@ -102,27 +102,27 @@ A recipe is a small package: `recipe.json` (name, match hints, tool allow-list, 
 constraints) + `prompt.md` + optional reference sub-circuit (`.twd` fragment). Examples:
 "USB-C sink with ESD", "STM32 minimum system", "Buck, TPS5433x family", "RS-485 with isolation".
 
-## 6. Local relay (`tools/bridge`), implemented
+## 6. Local relay (`tools/server`), implemented
 
 ```
-Claude Code ──MCP stdio──▶ tracewise-bridge (Node, 127.0.0.1:7777–7781) ──WebSocket──▶ browser tab (kernel + UI)
+Claude Code ──MCP stdio──▶ tracewise-server (Node, 127.0.0.1:7777–7781) ──WebSocket──▶ browser tab (kernel + UI)
 ```
 
-The bridge also serves the built app on its port, so `npx github:hoihu/tracewise` is the whole app: the page comes from
-`http://localhost:7777` and talks to the bridge on its own origin (no website reaching into the computer, which Chrome
+The server also serves the built app on its port, so `npx github:hoihu/tracewise` is the whole app: the page comes from
+`http://localhost:7777` and talks to the server on its own origin (no website reaching into the computer, which Chrome
 gates behind a permission and Safari blocks).
 
 ```sh
-claude mcp add --scope user tracewise -- node <repo>/tools/bridge/src/main.ts
+claude mcp add --scope user tracewise -- node <repo>/tools/server/src/main.ts
 ```
 
-- **Access key**: a random UUID (`accessKey`) is created once and kept in `~/.tracewise/bridge.json`. The app's address
-  carries it (`http://localhost:7777/<access-key>`, plus `?bridge=<port>` when another bridge serves the app); the page is
+- **Access key**: a random UUID (`accessKey`) is created once and kept in `~/.tracewise/server.json`. The app's address
+  carries it (`http://localhost:7777/<access-key>`, plus `?port=<port>` when another server serves the app); the page is
   served only at that path, and the tab sends the key when it connects. `npx tracewise` opens that link; if the tab is
   not connected, every tool answers with it. The tab remembers the key and reconnects by itself when Claude Code restarts.
-- **Security**: loopback only; WebSocket connections from pages other than the app's (localhost on the bridge ports,
+- **Security**: loopback only; WebSocket connections from pages other than the app's (localhost on the server ports,
   the configured app address, the dev server in a checkout) are closed before the key is checked, so neither websites
-  nor other local pages reach the bridge; no call is forwarded before the key matches; one connected tab at a time.
+  nor other local pages reach the server; no call is forwarded before the key matches; one connected tab at a time.
 - **Tools**: one set for every engine (`agentTools(engine)` in `packages/schema/src/tools.ts`), run by one executor
   in the tab (`App.runTool`): `design_query`, `design_edit`, `calc`, `jlc_search`, `import_part`, `pending_import`,
   `artwork`, `read_datasheet`, `get_schematic_image`. Only how a turn starts and ends differs: Claude Code gets
@@ -131,11 +131,11 @@ claude mcp add --scope user tracewise -- node <repo>/tools/bridge/src/main.ts
   the user accepts or rejects); the in-app agent gets the state with each message and asks with `ask_user`.
 - **Prompt**: the design guidance is one text (`DESIGN_GUIDE`, `packages/schema/src/guide.ts`); the in-app system prompt
   and the server `instructions` (the external agent's equivalent of the system prompt) only add their engine's framing.
-- The in-app agent and an external agent never edit at the same time: bridge calls are refused while the in-app agent runs.
-- **App chat via Claude Code** (`npm run bridge`): the tab sends chat messages over the WebSocket; the bridge runs
+- The in-app agent and an external agent never edit at the same time: server calls are refused while the in-app agent runs.
+- **App chat via Claude Code** (`npm run server`): the tab sends chat messages over the WebSocket; the server runs
   `claude -p --output-format stream-json --include-partial-messages --tools "" --strict-mcp-config --mcp-config <http>
   --allowedTools mcp__tracewise --permission-mode dontAsk --append-system-prompt <chat rules> [--resume <session>]` in a
-  neutral working directory and streams text back. The headless Claude reaches the Tracewise tools through the bridge's
+  neutral working directory and streams text back. The headless Claude reaches the Tracewise tools through the server's
   `/mcp` (Streamable HTTP) endpoint, which only accepts the bearer token issued to that run and refuses browser origins.
   No `wait_for_review` in chat mode: the user reviews after the turn.
 - Not yet: proxying the user's stdio MCP servers and CORS-blocked providers through the relay.

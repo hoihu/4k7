@@ -2,7 +2,7 @@
   "mcpServers": {
     "tracewise": {
       "command": "node",
-      "args": ["tools/bridge/src/main.ts"]
+      "args": ["tools/server/src/main.ts"]
     }
   }
 }

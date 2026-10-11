@@ -1,12 +1,12 @@
 <script lang="ts">
   import { app } from '../../app.svelte.ts';
-  import { bridge } from '../../bridge.svelte.ts';
+  import { server } from '../../server.svelte.ts';
   import Field from './Field.svelte';
   import Section from './Section.svelte';
 
   let copied = $state(false);
-  const mcpCommand = `claude mcp add --scope user tracewise -- ${__BRIDGE_MCP__}`;
-  const bridgeRun = __BRIDGE_RUN__;
+  const mcpCommand = `claude mcp add --scope user tracewise -- ${__SERVER_MCP__}`;
+  const serverRun = __SERVER_RUN__;
   const where = __PACKAGED__ ? '' : ' (in this repository)';
 
   async function copyCommand() {
@@ -20,37 +20,37 @@
   }
 
   async function reconnect() {
-    if (await bridge.connect(app.settings.bridgeAccessKey, { preferPort: app.settings.bridgePort })) app.flash(`Connected to ${bridge.agent ?? 'the bridge'}`);
+    if (await server.connect(app.settings.serverAccessKey, { preferPort: app.settings.serverPort })) app.flash(`Connected to ${server.agent ?? 'the server'}`);
   }
 
-  /** Forgets the access key too: this tab connects again only when opened with the bridge's link. */
+  /** Forgets the access key too: this tab connects again only when opened with the server's link. */
   function disconnect() {
-    bridge.disconnect();
-    void app.updateSettings({ bridgeAccessKey: '', bridgePort: null });
+    server.disconnect();
+    void app.updateSettings({ serverAccessKey: '', serverPort: null });
   }
 
-  const linked = $derived(bridge.status === 'connected' || bridge.status === 'waiting');
+  const linked = $derived(server.status === 'connected' || server.status === 'waiting');
 </script>
 
-<Section id="bridge" title="Local bridge">
+<Section id="server" title="Local server">
   {#snippet status()}
-    {#if bridge.status === 'connected'}<span class="tag ok">connected · {bridge.agent ?? 'MCP client'} · :{bridge.port}</span>
-    {:else if bridge.status === 'connecting'}<span class="tag info">connecting…</span>
-    {:else if bridge.status === 'waiting'}<span class="tag warn">waiting for bridge</span>
-    {:else if bridge.status === 'elsewhere'}<span class="tag warn">connected in another tab</span> <button class="btn" onclick={() => bridge.useThisTab()}>Use this tab</button>
+    {#if server.status === 'connected'}<span class="tag ok">connected · {server.agent ?? 'MCP client'} · :{server.port}</span>
+    {:else if server.status === 'connecting'}<span class="tag info">connecting…</span>
+    {:else if server.status === 'waiting'}<span class="tag warn">waiting for server</span>
+    {:else if server.status === 'elsewhere'}<span class="tag warn">connected in another tab</span> <button class="btn" onclick={() => server.useThisTab()}>Use this tab</button>
     {:else}<span class="tag">off</span>{/if}
   {/snippet}
 
   <Field label="Connection">
     {#snippet hint()}
-      The app's address (<code>http://localhost:7777/…</code>) carries the bridge's access key. Opening the link the bridge prints connects this tab.
+      The app's address (<code>http://localhost:7777/…</code>) carries the server's access key. Opening the link the server prints connects this tab.
     {/snippet}
     <div class="row">
       {#if linked}<button class="btn" onclick={disconnect}>Disconnect</button>
-      {:else if app.settings.bridgeAccessKey && bridge.status === 'off'}<button class="btn pri" onclick={reconnect}>Connect</button>
-      {:else if !app.settings.bridgeAccessKey}<span class="muted">Not connected. Open the link the bridge prints.</span>{/if}
+      {:else if app.settings.serverAccessKey && server.status === 'off'}<button class="btn pri" onclick={reconnect}>Connect</button>
+      {:else if !app.settings.serverAccessKey}<span class="muted">Not connected. Open the link the server prints.</span>{/if}
     </div>
-    {#if bridge.error}<div class="err">{bridge.error}</div>{/if}
+    {#if server.error}<div class="err">{server.error}</div>{/if}
   </Field>
 
   <Field label="Access">
@@ -62,8 +62,8 @@
     <div class="ways">
       <div class="way">
         <b>Chat in this app</b>
-        <p>Start the bridge in a terminal and open the link it prints. Then choose <a href="#provider">Claude Code</a> as chat provider.</p>
-        <div class="cmd"><code>{bridgeRun}</code></div>
+        <p>Start the server in a terminal and open the link it prints. Then choose <a href="#provider">Claude Code</a> as chat provider.</p>
+        <div class="cmd"><code>{serverRun}</code></div>
         {#if where}<p class="muted">Run it in this repository.</p>{/if}
       </div>
       <div class="way">
@@ -77,7 +77,7 @@
         <p>Then ask Claude to <i>“connect to Tracewise”</i>. It gives you the app's link; opening it connects this tab.</p>
       </div>
     </div>
-    <p class="note">The tab reconnects by itself when the bridge or Claude Code restarts.</p>
+    <p class="note">The tab reconnects by itself when the server or Claude Code restarts.</p>
   </details>
 </Section>
 

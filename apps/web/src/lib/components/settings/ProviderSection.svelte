@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ANTHROPIC_MODELS } from '@tracewise/agent';
   import { app } from '../../app.svelte.ts';
-  import { bridge } from '../../bridge.svelte.ts';
+  import { server } from '../../server.svelte.ts';
   import type { Settings } from '../../persist.ts';
   import Field from './Field.svelte';
   import Section from './Section.svelte';
@@ -10,11 +10,11 @@
   let reveal = $state(false);
   let saved = $state(false);
 
-  const bridgeRun = __BRIDGE_RUN__;
+  const serverRun = __SERVER_RUN__;
   const where = __PACKAGED__ ? '' : ' (in this repository)';
 
   const choices: { id: Settings['provider']; name: string; blurb: string }[] = [
-    { id: 'claude-code', name: 'Claude Code', blurb: 'On this computer, with your plan. Needs the local bridge.' },
+    { id: 'claude-code', name: 'Claude Code', blurb: 'On this computer, with your plan. Needs the local server.' },
     { id: 'anthropic', name: 'Anthropic API', blurb: 'Your own API key, billed per token.' },
     { id: 'demo', name: 'Offline demo', blurb: 'Scripted answers, no key, nothing leaves the browser.' },
   ];
@@ -49,14 +49,14 @@
 
   {#if provider === 'claude-code'}
     <Field label="Status">
-      {#if bridge.status === 'connected' && bridge.chat?.available}
-        <span class="tag ok">ready</span> <span class="muted">{bridge.chat.version} · runs your local Claude Code with only the Tracewise tools</span>
-      {:else if bridge.status === 'connected'}
-        <span class="tag warn">bridge connected, chat unavailable</span>
-        <div class="hint">{bridge.chat?.reason ?? 'This bridge is too old for the app chat. Restart it.'}</div>
+      {#if server.status === 'connected' && server.chat?.available}
+        <span class="tag ok">ready</span> <span class="muted">{server.chat.version} · runs your local Claude Code with only the Tracewise tools</span>
+      {:else if server.status === 'connected'}
+        <span class="tag warn">server connected, chat unavailable</span>
+        <div class="hint">{server.chat?.reason ?? 'This server is too old for the app chat. Restart it.'}</div>
       {:else}
         <span class="tag warn">not connected</span>
-        <div class="hint">Run <code>{bridgeRun}</code>{where} and open the link it prints (see <a href="#bridge">Local bridge</a>).</div>
+        <div class="hint">Run <code>{serverRun}</code>{where} and open the link it prints (see <a href="#server">Local server</a>).</div>
       {/if}
     </Field>
     <Field label="Model">

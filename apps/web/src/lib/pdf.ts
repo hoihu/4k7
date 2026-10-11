@@ -48,7 +48,7 @@ export async function renderPage(doc: Doc, pageNo: number, canvas: HTMLCanvasEle
   const content = await page.getTextContent();
   type Item = { str: string; transform: number[]; width: number; height: number };
   const items = (content.items as Item[]).filter((i) => i.str?.trim());
-  // group items into lines by baseline, like the bridge's text extraction
+  // group items into lines by baseline, like the server's text extraction
   const lines = new Map<number, Item[]>();
   for (const it of items) {
     const y = Math.round(it.transform[5]! / 2) * 2;

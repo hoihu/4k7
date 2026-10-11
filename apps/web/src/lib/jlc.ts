@@ -1,5 +1,5 @@
 /**
- * JLCPCB sourcing in the app: the jlc_search tool (the in-app agent and the bridge share it) and
+ * JLCPCB sourcing in the app: the jlc_search tool (the in-app agent and the server share it) and
  * the catalogue the Inspector's "Find on JLCPCB" uses. The browser calls the catalogue directly;
  * answers are kept for a few minutes so the Inspector and the agent do not ask twice.
  */

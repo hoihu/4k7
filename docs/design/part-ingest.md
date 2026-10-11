@@ -9,9 +9,9 @@ parameters, deterministic code makes geometry, and every value can be traced bac
 ## 0. What is implemented
 
 Parts → **Import from datasheet…**: part number plus a PDF (dropped) or a link. The import runs on
-the user's local Claude Code through the bridge, like the app chat.
+the user's local Claude Code through the server, like the app chat.
 
-1. **Bridge** (`tools/bridge/src/chat.ts`, `pdf.ts`): downloads or receives the PDF and makes a
+1. **Server** (`tools/server/src/chat.ts`, `pdf.ts`): downloads or receives the PDF and makes a
    fresh folder `~/.tracewise/ingest/<job>/` with `datasheet.pdf`, `pages/page-NNN.txt` (text,
    table cells separated by ` | `) and `index.txt` (page → first heading). Then it starts
    `claude -p` in that folder with `--tools Read,Grep,Glob`, `--permission-mode dontAsk` and an MCP
@@ -28,7 +28,7 @@ the user's local Claude Code through the bridge, like the app chat.
    for leaded packages, valid JEDEC ball names for BGA, supply/ground presence, pages present, and
    whether a footprint can be generated with a pad for every pin. Errors go back to Claude as the
    tool result ("Missing pin numbers: 37–38"), and it resubmits.
-4. **Second pass (optional, on by default)**: the bridge starts a second, fresh Claude Code session
+4. **Second pass (optional, on by default)**: the server starts a second, fresh Claude Code session
    (no memory of the first) with an extra instruction to work in a different order (count groups
    first, read the table backwards, re-derive dimensions). `compareDrafts` compares both accepted
    drafts pin by pin (name, type) and on every footprint-relevant package dimension; the review

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { app, type View } from './lib/app.svelte.ts';
-  import { bridge } from './lib/bridge.svelte.ts';
+  import { server } from './lib/server.svelte.ts';
   import Chat from './lib/components/Chat.svelte';
   import Inspector from './lib/components/Inspector.svelte';
   import SchematicCanvas from './lib/components/SchematicCanvas.svelte';
@@ -119,10 +119,10 @@
         <button class="btn pri" disabled={app.running || app.acceptedCount === 0} onclick={() => app.accept()}>Accept</button>
         <button class="btn" disabled={app.running} onclick={() => app.reject()}>Reject</button>
       {/if}
-      {#if bridge.status === 'waiting'}
-        <button class="chipbtn" onclick={() => (app.view = 'set')} title="Waiting for the local bridge">⇄ <span class="muted">offline</span></button>
-      {:else if bridge.status === 'elsewhere'}
-        <button class="chipbtn" onclick={() => bridge.useThisTab()} title="Claude Code is connected in another tab of this app. Click to use this tab instead.">⇄ <span class="muted">other tab · use here</span></button>
+      {#if server.status === 'waiting'}
+        <button class="chipbtn" onclick={() => (app.view = 'set')} title="Waiting for the local server">⇄ <span class="muted">offline</span></button>
+      {:else if server.status === 'elsewhere'}
+        <button class="chipbtn" onclick={() => server.useThisTab()} title="Claude Code is connected in another tab of this app. Click to use this tab instead.">⇄ <span class="muted">other tab · use here</span></button>
       {:else if app.settings.provider === 'anthropic' && !app.isDemo}
         <button class="chipbtn" onclick={() => (app.view = 'set')} title="Session spend with the Anthropic API ({app.settings.model})"><span class="muted">${app.spend.toFixed(2)}</span></button>
       {/if}

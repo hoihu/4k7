@@ -1,7 +1,7 @@
 # Running and sharing the app
 
 There is no hosted website. Tracewise runs on the user's computer as one Node process that
-serves the built app and runs the local bridge to Claude Code:
+serves the built app and runs the local server to Claude Code:
 
 ```sh
 npx -y github:hoihu/tracewise          # or: npm install -g github:hoihu/tracewise && tracewise
@@ -16,7 +16,7 @@ Installing from git, npm clones the repository, installs it with its dev depende
 `prepare` (`npm run package`):
 
 1. `npm run build`: the web app into `apps/web/dist` (no sourcemaps).
-2. `scripts/package.mjs`: the bridge (`tools/bridge/src/cli.ts`) bundled with rolldown into
+2. `scripts/package.mjs`: the server (`tools/server/src/cli.ts`) bundled with rolldown into
    `dist/tracewise.js` with the workspace packages inlined (Node does not strip types under
    `node_modules`), and the web app copied to `dist/app`.
 
@@ -28,7 +28,7 @@ is cached afterwards. `prepare` also runs on `npm install` in a checkout (about 
 
 ## The command
 
-- `tracewise`: serve the app and the bridge on `127.0.0.1:7777`, answer the app's chat with
+- `tracewise`: serve the app and the server on `127.0.0.1:7777`, answer the app's chat with
   the local `claude -p`, and open the app (`http://localhost:7777/<access-key>`, see Security).
 - `tracewise --no-open`: the same without opening the browser.
 - `tracewise mcp`: MCP server over stdio for the Claude Code CLI
@@ -38,17 +38,17 @@ is cached afterwards. `prepare` also runs on `npm install` in a checkout (about 
 ## The address matters
 
 The browser keeps designs per origin (host *and* port), so the app always opens at
-`http://localhost:7777`. When 7777 is taken by another Tracewise bridge (say the CLI's MCP
+`http://localhost:7777`. When 7777 is taken by another Tracewise server (say the CLI's MCP
 server), a second one takes the next port of 7777–7781 but still points its link at
-7777, adding its own port (`?bridge=7778`) so the tab connects to it. When 7777 belongs to another
-program, the app opens on the bridge's own port and the bridge says that designs saved at
+7777, adding its own port (`?port=7778`) so the tab connects to it. When 7777 belongs to another
+program, the app opens on the server's own port and the server says that designs saved at
 7777 do not show there.
 
 A checkout's dev server (`http://localhost:5173`) takes precedence: `npm run dev` points the
-bridge's links there, and a bridge run on its own from the checkout does so while the
+server's links there, and a server run on its own from the checkout does so while the
 dev server answers.
 
-So, in a checkout: `npm run dev` while working on the code (hot reload, the bridge from source),
+So, in a checkout: `npm run dev` while working on the code (hot reload, the server from source),
 `npm start` to check the package as users get it.
 
 ## Security
@@ -57,13 +57,13 @@ Loopback only. The app's files are served only to `localhost` / `127.0.0.1` host
 DNS-rebinding page gets 421).
 
 The app's address carries an access key: `http://localhost:7777/<access-key>`, a random UUID created
-once and kept in `~/.tracewise/bridge.json` (`"accessKey"`), so the address stays the same across
-restarts and every bridge on this computer accepts it. The page is served only at that path (`/`
+once and kept in `~/.tracewise/server.json` (`"accessKey"`), so the address stays the same across
+restarts and every server on this computer accepts it. The page is served only at that path (`/`
 gets a page that says to use the link); the build files under `/assets` hold no secrets. The tab
 reads the key from its address, remembers it, and sends it when it connects to the WebSocket,
-which also accepts only the app's own pages (localhost on the bridge ports, the configured app
+which also accepts only the app's own pages (localhost on the server ports, the configured app
 address and, in a checkout, the dev server). Other pages and programs on this computer get neither
-the app nor the bridge. `/mcp` needs the token issued to a running chat process and refuses
+the app nor the server. `/mcp` needs the token issued to a running chat process and refuses
 browsers.
 
 ## Updating

@@ -1,21 +1,21 @@
 /**
- * Serves the built web app from the bridge's port, so `npx tracewise` is the whole app: the page
- * and the bridge share an origin on 127.0.0.1 (no website reaching into the computer, which
+ * Serves the built web app from the server's port, so `npx tracewise` is the whole app: the page
+ * and the server share an origin on 127.0.0.1 (no website reaching into the computer, which
  * browsers restrict). Static files only; designs stay in the browser's storage.
  *
- * The page itself is served only at /<access-key>, the key the tab then hands to the bridge: another
- * page or program on this computer that does not know it gets neither the app nor the bridge. The
+ * The page itself is served only at /<access-key>, the key the tab then hands to the server: another
+ * page or program on this computer that does not know it gets neither the app nor the server. The
  * build files (/assets/…) hold no secrets and are served to any local request.
  */
 import { createReadStream, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
-import { BRIDGE_ACCESS_KEY } from '@tracewise/schema';
-import type { HttpHandler } from './bridge.ts';
+import { SERVER_ACCESS_KEY } from '@tracewise/schema';
+import type { HttpHandler } from './server.ts';
 import { secretsMatch } from './mcp.ts';
 
-/** Answers on every bridge, so a second one can tell that a port already serves Tracewise. */
-export const PROBE_PATH = '/tracewise-bridge.json';
+/** Answers on every server, so a second one can tell that a port already serves Tracewise. */
+export const PROBE_PATH = '/tracewise-server.json';
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -55,7 +55,7 @@ export function appHandler(dir: string | null, version: string, accessKey: strin
       return;
     }
     if (path === PROBE_PATH) {
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify({ name: 'tracewise-bridge', version }));
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify({ name: 'tracewise-server', version }));
       return;
     }
     if (!dir) {
@@ -63,7 +63,7 @@ export function appHandler(dir: string | null, version: string, accessKey: strin
       return;
     }
     const key = /^\/([^/]+)\/?$/.exec(path)?.[1] ?? '';
-    const page = BRIDGE_ACCESS_KEY.test(key);
+    const page = SERVER_ACCESS_KEY.test(key);
     if (page ? !secretsMatch(key, accessKey) : path === '/' || path === '/index.html') {
       res
         .writeHead(403, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY' })
@@ -103,14 +103,14 @@ const NO_KEY_PAGE = `<!doctype html><meta charset="utf-8"><title>Tracewise</titl
 <h1 style="font-size:20px">Open Tracewise with its link</h1>
 <p>The app's address includes an access key: <code>http://localhost:7777/&lt;key&gt;</code>. Use the link the
 <code>tracewise</code> command opened or printed (running it again opens it), or the one Claude Code gave you.</p>
-<p style="color:#999">The key is also in <code>~/.tracewise/bridge.json</code> (<code>"accessKey"</code>).</p>
+<p style="color:#999">The key is also in <code>~/.tracewise/server.json</code> (<code>"accessKey"</code>).</p>
 </body>`;
 
-/** Whether a Tracewise bridge serves the app on this port (another one started first). */
+/** Whether a Tracewise server serves the app on this port (another one started first). */
 export async function servesTracewise(port: number): Promise<boolean> {
   try {
     const r = await fetch(`http://127.0.0.1:${port}${PROBE_PATH}`, { signal: AbortSignal.timeout(800) });
-    return r.ok && ((await r.json()) as { name?: string }).name === 'tracewise-bridge';
+    return r.ok && ((await r.json()) as { name?: string }).name === 'tracewise-server';
   } catch {
     return false;
   }

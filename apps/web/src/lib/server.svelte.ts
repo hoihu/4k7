@@ -1,43 +1,43 @@
 /**
- * Browser side of the local bridge to Claude Code (tools/bridge). Connects to the local relay over a
+ * Browser side of the local server to Claude Code (tools/server). Connects to the local relay over a
  * WebSocket with the access key from the app's address, and executes forwarded tool calls against the kernel.
  */
 import {
-  BRIDGE_PORTS,
-  BRIDGE_PROTOCOL,
-  type BridgeContent,
-  type BridgeToTab,
+  SERVER_PORTS,
+  SERVER_PROTOCOL,
+  type ToolContent,
+  type ServerToTab,
   type ChatCapability,
   type ChatEvent,
   type TabInfo,
-  type TabToBridge,
+  type TabToServer,
 } from '@tracewise/schema';
 
-/** 'elsewhere': another tab of the app took over the bridge; this tab stops retrying. */
-export type BridgeStatus = 'off' | 'connecting' | 'connected' | 'waiting' | 'elsewhere';
+/** 'elsewhere': another tab of the app took over the server; this tab stops retrying. */
+export type ServerStatus = 'off' | 'connecting' | 'connected' | 'waiting' | 'elsewhere';
 
-/** Close code the bridge uses when a newer tab replaces this one. */
+/** Close code the server uses when a newer tab replaces this one. */
 const REPLACED = 4000;
 
-export interface BridgeHandler {
-  (tool: string, input: unknown): Promise<{ isError: boolean; content: BridgeContent[] }>;
+export interface ServerHandler {
+  (tool: string, input: unknown): Promise<{ isError: boolean; content: ToolContent[] }>;
 }
 
 const RETRY_MS = 4000;
 
-class BridgeClient {
-  status = $state<BridgeStatus>('off');
+class ServerClient {
+  status = $state<ServerStatus>('off');
   port = $state<number | null>(null);
   agent = $state<string | null>(null);
   error = $state<string | null>(null);
   calls = $state(0);
-  /** Whether the bridge can answer the app's chat with the local Claude Code. */
+  /** Whether the server can answer the app's chat with the local Claude Code. */
   chat = $state<ChatCapability | null>(null);
   #chatListeners = new Map<string, (e: ChatEvent) => void>();
 
   #ws: WebSocket | null = null;
   #accessKey = '';
-  #handler: BridgeHandler | null = null;
+  #handler: ServerHandler | null = null;
   #retry: ReturnType<typeof setTimeout> | null = null;
   #onConnected: ((accessKey: string, port: number) => void) | null = null;
   #onLost: (() => void) | null = null;
@@ -45,29 +45,29 @@ class BridgeClient {
 
   #info: () => TabInfo = () => ({ origin: location.origin, build: '', userAgent: navigator.userAgent, provider: '', storage: '', persistent: null });
 
-  init(handler: BridgeHandler, onConnected: (accessKey: string, port: number) => void, onLost?: () => void, info?: () => TabInfo) {
+  init(handler: ServerHandler, onConnected: (accessKey: string, port: number) => void, onLost?: () => void, info?: () => TabInfo) {
     this.#handler = handler;
     this.#onConnected = onConnected;
     this.#onLost = onLost ?? null;
     if (info) this.#info = info;
   }
 
-  /** Try the access key on every bridge port. `silent` = background reconnect. */
+  /** Try the access key on every server port. `silent` = background reconnect. */
   async connect(accessKey: string, opts: { silent?: boolean; preferPort?: number | null } = {}): Promise<boolean> {
     this.#accessKey = accessKey;
     this.#wanted = true;
     if (this.#retry) clearTimeout(this.#retry);
     this.status = 'connecting';
     if (!opts.silent) this.error = null;
-    const ports = opts.preferPort ? [opts.preferPort, ...BRIDGE_PORTS.filter((p) => p !== opts.preferPort)] : [...BRIDGE_PORTS];
+    const ports = opts.preferPort ? [opts.preferPort, ...SERVER_PORTS.filter((p) => p !== opts.preferPort)] : [...SERVER_PORTS];
     let denied: string | null = null;
     for (const port of ports) {
       const r = await this.#tryPort(port);
       if (r === true) return true;
       if (typeof r === 'string') denied = r;
     }
-    if (denied && !opts.silent) this.error = denied === 'wrong access key' ? 'The bridge did not accept this address. Open the link the tracewise command printed.' : denied;
-    else if (!opts.silent) this.error = `No bridge found. Is it running (${__BRIDGE_RUN__}, or Claude Code with the tracewise MCP server)?`;
+    if (denied && !opts.silent) this.error = denied === 'wrong access key' ? 'The server did not accept this address. Open the link the tracewise command printed.' : denied;
+    else if (!opts.silent) this.error = `No server found. Is it running (${__SERVER_RUN__}, or Claude Code with the tracewise MCP server)?`;
     this.status = 'waiting';
     this.#scheduleRetry();
     return false;
@@ -108,14 +108,14 @@ class BridgeClient {
       };
       const timer = setTimeout(() => done(false), 1500);
       ws.onopen = () =>
-        ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, accessKey: this.#accessKey, client: 'tracewise-web', info: this.#info() } satisfies TabToBridge));
+        ws.send(JSON.stringify({ type: 'hello', protocol: SERVER_PROTOCOL, accessKey: this.#accessKey, client: 'tracewise-web', info: this.#info() } satisfies TabToServer));
       ws.onerror = () => done(false);
       ws.onclose = (ev) => {
         if (!settled) done(false);
         else if (this.#ws === ws) this.#lost(ev.code);
       };
       ws.onmessage = (e) => {
-        const msg = JSON.parse(String(e.data)) as BridgeToTab;
+        const msg = JSON.parse(String(e.data)) as ServerToTab;
         if (msg.type === 'denied') return done(msg.reason);
         if (msg.type === 'welcome') {
           this.#ws?.close();
@@ -140,33 +140,33 @@ class BridgeClient {
   }
 
   /** Send a chat message to the local Claude Code; events stream to `onEvent` until 'done'. */
-  sendChat(msg: Omit<Extract<TabToBridge, { type: 'chat' }>, 'type'>, onEvent: (e: ChatEvent) => void): boolean {
+  sendChat(msg: Omit<Extract<TabToServer, { type: 'chat' }>, 'type'>, onEvent: (e: ChatEvent) => void): boolean {
     if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) return false;
     this.#chatListeners.set(msg.id, onEvent);
-    this.#ws.send(JSON.stringify({ type: 'chat', ...msg } satisfies TabToBridge));
+    this.#ws.send(JSON.stringify({ type: 'chat', ...msg } satisfies TabToServer));
     return true;
   }
 
   /** Import a part from a datasheet with the local Claude Code; events stream like chat. */
-  sendIngest(msg: Omit<Extract<TabToBridge, { type: 'ingest' }>, 'type'>, onEvent: (e: ChatEvent) => void): boolean {
+  sendIngest(msg: Omit<Extract<TabToServer, { type: 'ingest' }>, 'type'>, onEvent: (e: ChatEvent) => void): boolean {
     if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) return false;
     this.#chatListeners.set(msg.id, onEvent);
-    this.#ws.send(JSON.stringify({ type: 'ingest', ...msg } satisfies TabToBridge));
+    this.#ws.send(JSON.stringify({ type: 'ingest', ...msg } satisfies TabToServer));
     return true;
   }
 
   cancelChat(id: string) {
-    this.#ws?.send(JSON.stringify({ type: 'chat_cancel', id } satisfies TabToBridge));
+    this.#ws?.send(JSON.stringify({ type: 'chat_cancel', id } satisfies TabToServer));
   }
 
   #lost(code?: number) {
-    for (const [id, l] of this.#chatListeners) l({ kind: 'done', ok: false, error: 'The bridge disconnected.' });
+    for (const [id, l] of this.#chatListeners) l({ kind: 'done', ok: false, error: 'The server disconnected.' });
     this.#chatListeners.clear();
     this.#onLost?.();
     this.#ws = null;
     this.agent = null;
     if (code === REPLACED) {
-      // Another tab connected to the bridge. Retrying would kick it out again (ping-pong),
+      // Another tab connected to the server. Retrying would kick it out again (ping-pong),
       // so this tab steps back until the user asks for it.
       this.#wanted = false;
       this.status = 'elsewhere';
@@ -177,12 +177,12 @@ class BridgeClient {
     this.#scheduleRetry();
   }
 
-  /** Take the bridge back from another tab. */
+  /** Take the server back from another tab. */
   useThisTab() {
     if (this.#accessKey) void this.connect(this.#accessKey);
   }
 
-  /** Another tab announced that it holds the bridge connection. */
+  /** Another tab announced that it holds the server connection. */
   heldElsewhere(accessKey: string) {
     if (this.status === 'connected' || this.status === 'connecting') return;
     this.#accessKey = accessKey;
@@ -194,7 +194,7 @@ class BridgeClient {
 
   async #call(ws: WebSocket, id: number, tool: string, input: unknown) {
     this.calls++;
-    let reply: TabToBridge;
+    let reply: TabToServer;
     try {
       const r = await this.#handler!(tool, input);
       reply = { type: 'result', id, ...r };
@@ -205,4 +205,4 @@ class BridgeClient {
   }
 }
 
-export const bridge = new BridgeClient();
+export const server = new ServerClient();

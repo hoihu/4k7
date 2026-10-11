@@ -17,5 +17,5 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       # the package as `npx github:hoihu/tracewise` builds it (npm ci ran prepare): no sourcemaps, no local paths, and it starts
-      - run: "! find dist -name '*.map' | grep -q . && ! grep -rq 'tools/bridge/src/main.ts' dist/app"
+      - run: "! find dist -name '*.map' | grep -q . && ! grep -rq 'tools/server/src/main.ts' dist/app"
       - run: node dist/tracewise.js --version

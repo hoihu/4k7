@@ -3,35 +3,35 @@
  * the WebSocket; tool calls (from stdio MCP or the HTTP /mcp endpoint) are forwarded to the tab,
  * which executes them against its kernel. Chat messages from the tab go to a chat handler.
  *
- * It also serves the built app itself, so the page and the bridge share an origin on this computer.
+ * It also serves the built app itself, so the page and the server share an origin on this computer.
  *
  * Security: binds to loopback only, accepts WebSocket connections only from the app's own pages
- * (localhost on the bridge ports, the app's address, the dev server), and requires the access key
+ * (localhost on the server ports, the app's address, the dev server), and requires the access key
  * from the app's address before anything is forwarded.
  */
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { secretsMatch } from './mcp.ts';
 import {
-  BRIDGE_PORTS,
-  BRIDGE_PROTOCOL,
-  type BridgeContent,
-  type BridgeToTab,
+  SERVER_PORTS,
+  SERVER_PROTOCOL,
+  type ToolContent,
+  type ServerToTab,
   type ChatCapability,
-  type TabToBridge,
+  type TabToServer,
 } from '@tracewise/schema';
 
 export interface CallResult {
   isError: boolean;
-  content: BridgeContent[];
+  content: ToolContent[];
 }
 
-export interface BridgeOptions {
+export interface LocalServerOptions {
   accessKey: string;
   ports?: readonly number[];
   host?: string;
   callTimeoutMs?: number;
-  /** Where the app runs, for the app link; default: the app this bridge serves. */
+  /** Where the app runs, for the app link; default: the app this server serves. */
   appUrl?: string;
   /** More localhost ports whose pages may connect (the dev server of a checkout). */
   devPorts?: readonly number[];
@@ -39,7 +39,7 @@ export interface BridgeOptions {
 }
 
 export type HttpHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
-export type ChatMessage = Extract<TabToBridge, { type: 'chat' | 'ingest' | 'chat_cancel' }>;
+export type ChatMessage = Extract<TabToServer, { type: 'chat' | 'ingest' | 'chat_cancel' }>;
 
 interface Pending {
   resolve: (r: CallResult) => void;
@@ -48,9 +48,9 @@ interface Pending {
 
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::(\d+))?$/;
 
-export class Bridge {
+export class LocalServer {
   readonly accessKey: string;
-  #opts: BridgeOptions;
+  #opts: LocalServerOptions;
   #http: HttpServer | null = null;
   #wss: WebSocketServer | null = null;
   #tab: WebSocket | null = null;
@@ -62,7 +62,7 @@ export class Bridge {
   #agent: string | null = null;
   port: number | null = null;
 
-  constructor(opts: BridgeOptions) {
+  constructor(opts: LocalServerOptions) {
     this.#opts = opts;
     this.accessKey = opts.accessKey;
   }
@@ -77,7 +77,7 @@ export class Bridge {
 
   /** Listen on the first free port of the range (HTTP and WebSocket share it). */
   async start(): Promise<number> {
-    const ports = this.#opts.ports ?? BRIDGE_PORTS;
+    const ports = this.#opts.ports ?? SERVER_PORTS;
     for (const port of ports) {
       try {
         this.#http = await listen(port, this.#opts.host ?? '127.0.0.1', (req, res) => this.#onHttp(req, res));
@@ -90,7 +90,7 @@ export class Bridge {
         if ((e as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw e;
       }
     }
-    throw new Error(`All bridge ports are in use (${ports.join(', ')}). Is another Claude Code session already running the bridge?`);
+    throw new Error(`All server ports are in use (${ports.join(', ')}). Is another Claude Code session already running the server?`);
   }
 
   /** Serve HTTP requests (the app, and the /mcp endpoint for the headless Claude Code). */
@@ -109,7 +109,7 @@ export class Bridge {
   }
 
   /** Send a message to the connected tab (no-op when none is connected). */
-  sendToTab(msg: BridgeToTab) {
+  sendToTab(msg: ServerToTab) {
     this.#send(msg);
   }
 
@@ -127,10 +127,10 @@ export class Bridge {
   async stop(): Promise<void> {
     for (const p of this.#pending.values()) {
       clearTimeout(p.timer);
-      p.resolve(errorResult('Bridge is shutting down.'));
+      p.resolve(errorResult('The Tracewise server is shutting down.'));
     }
     this.#pending.clear();
-    this.#tab?.close(1001, 'bridge stopped');
+    this.#tab?.close(1001, 'server stopped');
     this.#wss?.close();
     await new Promise<void>((resolve) => (this.#http ? this.#http.close(() => resolve()) : resolve()));
     this.#http?.closeAllConnections();
@@ -141,28 +141,28 @@ export class Bridge {
     this.#send({ type: 'agent', name });
   }
 
-  /** Point app links at another address of the app (the dev server, or another bridge's port). */
+  /** Point app links at another address of the app (the dev server, or another server's port). */
   setAppUrl(url: string | undefined) {
     this.#opts.appUrl = url;
   }
 
   /**
-   * Opens the app connected to this bridge: its path is the access key. When the app is
-   * served elsewhere (another bridge, the dev server), `?bridge=` makes the tab try this port first.
+   * Opens the app connected to this server: its path is the access key. When the app is
+   * served elsewhere (another server, the dev server), `?port=` makes the tab try this port first.
    */
   appLink(): string {
     const base = (this.#opts.appUrl ?? `http://localhost:${this.port}`).replace(/\/$/, '');
     const elsewhere = new URL(base).port !== String(this.port);
-    return `${base}/${this.accessKey}${elsewhere ? `?bridge=${this.port}` : ''}`;
+    return `${base}/${this.accessKey}${elsewhere ? `?port=${this.port}` : ''}`;
   }
 
-  /** Pages of the app: localhost on the bridge ports, on the app's address or on the dev server. */
+  /** Pages of the app: localhost on the server ports, on the app's address or on the dev server. */
   #allowedOrigin(origin: string): boolean {
     const m = LOCAL_ORIGIN.exec(origin);
     if (!m) return false;
     const port = Number(m[2] ?? (origin.startsWith('https:') ? 443 : 80));
     const app = this.#opts.appUrl ? Number(new URL(this.#opts.appUrl).port || 80) : null;
-    return port === this.port || port === app || (BRIDGE_PORTS as readonly number[]).includes(port) || !!this.#opts.devPorts?.includes(port);
+    return port === this.port || port === app || (SERVER_PORTS as readonly number[]).includes(port) || !!this.#opts.devPorts?.includes(port);
   }
 
   status() {
@@ -174,7 +174,7 @@ export class Bridge {
     if (!this.#tab) {
       return Promise.resolve(
         errorResult(
-          `The Tracewise app is not connected to this bridge. Give the user this link to open (it connects the app): ${this.appLink()}`,
+          `The Tracewise app is not connected to this server. Give the user this link to open (it connects the app): ${this.appLink()}`,
         ),
       );
     }
@@ -191,7 +191,7 @@ export class Bridge {
     });
   }
 
-  #send(msg: BridgeToTab) {
+  #send(msg: ServerToTab) {
     if (this.#tab?.readyState === 1) this.#tab.send(JSON.stringify(msg));
   }
 
@@ -206,22 +206,22 @@ export class Bridge {
     const helloTimer = setTimeout(() => !accepted && ws.close(1008, 'no hello'), 5000);
 
     ws.on('message', (raw) => {
-      let msg: TabToBridge;
+      let msg: TabToServer;
       try {
-        msg = JSON.parse(String(raw)) as TabToBridge;
+        msg = JSON.parse(String(raw)) as TabToServer;
       } catch {
         return;
       }
       if (!accepted) {
         if (msg.type !== 'hello') return;
         clearTimeout(helloTimer);
-        if (msg.protocol !== BRIDGE_PROTOCOL) {
-          ws.send(JSON.stringify({ type: 'denied', reason: `protocol ${msg.protocol} not supported (bridge speaks ${BRIDGE_PROTOCOL})` } satisfies BridgeToTab));
+        if (msg.protocol !== SERVER_PROTOCOL) {
+          ws.send(JSON.stringify({ type: 'denied', reason: `protocol ${msg.protocol} not supported (server speaks ${SERVER_PROTOCOL})` } satisfies ServerToTab));
           ws.close(1008, 'protocol');
           return;
         }
         if (typeof msg.accessKey !== 'string' || !secretsMatch(msg.accessKey, this.accessKey)) {
-          ws.send(JSON.stringify({ type: 'denied', reason: 'wrong access key' } satisfies BridgeToTab));
+          ws.send(JSON.stringify({ type: 'denied', reason: 'wrong access key' } satisfies ServerToTab));
           ws.close(1008, 'wrong access key');
           this.#log(`rejected tab: wrong access key (origin ${origin})`);
           return;
@@ -229,7 +229,7 @@ export class Bridge {
         accepted = true;
         if (this.#tab && this.#tab !== ws) this.#tab.close(4000, 'replaced by another tab');
         this.#tab = ws;
-        ws.send(JSON.stringify({ type: 'welcome', protocol: BRIDGE_PROTOCOL, agent: this.#agent ?? 'Claude Code', chat: this.#chat } satisfies BridgeToTab));
+        ws.send(JSON.stringify({ type: 'welcome', protocol: SERVER_PROTOCOL, agent: this.#agent ?? 'Claude Code', chat: this.#chat } satisfies ServerToTab));
         const i = msg.info;
         this.#log(
           `tab connected (${msg.client}, origin ${origin})` +
@@ -239,7 +239,7 @@ export class Bridge {
       }
       if (msg.type === 'chat' || msg.type === 'ingest' || msg.type === 'chat_cancel') {
         if (this.#chatHandler) this.#chatHandler(msg);
-        else if (msg.type !== 'chat_cancel') this.#send({ type: 'chat_event', id: msg.id, event: { kind: 'done', ok: false, error: this.#chat.reason ?? 'Chat is not available on this bridge.' } });
+        else if (msg.type !== 'chat_cancel') this.#send({ type: 'chat_event', id: msg.id, event: { kind: 'done', ok: false, error: this.#chat.reason ?? 'Chat is not available on this server.' } });
         return;
       }
       if (msg.type === 'result') {
@@ -277,12 +277,12 @@ function errorResult(text: string): CallResult {
 
 function listen(port: number, host: string, handler: (req: IncomingMessage, res: ServerResponse) => void): Promise<HttpServer> {
   return new Promise((resolve, reject) => {
-    const server = createServer(handler);
-    server.once('listening', () => resolve(server));
-    server.once('error', (e) => {
-      server.close();
+    const http = createServer(handler);
+    http.once('listening', () => resolve(http));
+    http.once('error', (e) => {
+      http.close();
       reject(e);
     });
-    server.listen(port, host);
+    http.listen(port, host);
   });
 }

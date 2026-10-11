@@ -7,8 +7,8 @@ import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Kernel } from '@tracewise/kernel';
-import { BRIDGE_PROTOCOL, type BridgeToTab } from '@tracewise/schema';
-import { Bridge, createMcpServer } from '../src/index.ts';
+import { SERVER_PROTOCOL, type ServerToTab } from '@tracewise/schema';
+import { LocalServer, createMcpServer } from '../src/index.ts';
 import { appHandler, PROBE_PATH, servesTracewise } from '../src/app.ts';
 
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -19,12 +19,12 @@ afterEach(async () => {
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 const OTHER = '11111111-2222-4333-8444-555555555555';
 
-async function startBridge(accessKey = KEY) {
+async function startServer(accessKey = KEY) {
   const base = 40000 + Math.floor(Math.random() * 20000);
-  const bridge = new Bridge({ accessKey, ports: [base, base + 1], devPorts: [5173] });
-  const port = await bridge.start();
-  cleanups.push(() => bridge.stop());
-  return { bridge, port };
+  const server = new LocalServer({ accessKey, ports: [base, base + 1], devPorts: [5173] });
+  const port = await server.start();
+  cleanups.push(() => server.stop());
+  return { server, port };
 }
 
 /** A fake browser tab that executes design_edit / design_query against a real kernel. */
@@ -32,12 +32,12 @@ function connectTab(port: number, accessKey: string, origin = 'http://localhost:
   const kernel = new Kernel();
   const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin } });
   cleanups.push(() => ws.close());
-  const messages: BridgeToTab[] = [];
+  const messages: ServerToTab[] = [];
   const closed = new Promise<number>((resolve) => ws.on('close', (c) => resolve(c)));
-  const welcomed = new Promise<BridgeToTab>((resolve, reject) => {
-    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, accessKey, client: 'test-tab' })));
+  const welcomed = new Promise<ServerToTab>((resolve, reject) => {
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', protocol: SERVER_PROTOCOL, accessKey, client: 'test-tab' })));
     ws.on('message', (raw) => {
-      const msg = JSON.parse(String(raw)) as BridgeToTab;
+      const msg = JSON.parse(String(raw)) as ServerToTab;
       messages.push(msg);
       if (msg.type === 'welcome' || msg.type === 'denied') resolve(msg);
       if (msg.type === 'call') {
@@ -53,64 +53,64 @@ function connectTab(port: number, accessKey: string, origin = 'http://localhost:
   return { ws, kernel, messages, welcomed, closed };
 }
 
-describe('bridge access', () => {
+describe('server access', () => {
   it('accepts the tab with the right access key and forwards calls', async () => {
-    const { bridge, port } = await startBridge();
+    const { server, port } = await startServer();
     const tab = connectTab(port, KEY);
     expect(await tab.welcomed).toMatchObject({ type: 'welcome' });
-    expect(bridge.connected).toBe(true);
-    const r = await bridge.call('design_query', { op: 'search_parts', text: 'buck' });
+    expect(server.connected).toBe(true);
+    const r = await server.call('design_query', { op: 'search_parts', text: 'buck' });
     expect(r.isError).toBe(false);
     expect(JSON.parse((r.content[0] as { text: string }).text)[0].id).toBe('ti:TPS54331DR');
   });
 
   it('rejects a wrong access key', async () => {
-    const { bridge, port } = await startBridge();
+    const { server, port } = await startServer();
     const tab = connectTab(port, OTHER);
     expect(await tab.welcomed).toMatchObject({ type: 'denied', reason: 'wrong access key' });
     await tab.closed;
-    expect(bridge.connected).toBe(false);
+    expect(server.connected).toBe(false);
   });
 
   it('rejects pages from other origins, local ones on other ports included, before the key is checked', async () => {
-    const { bridge, port } = await startBridge();
+    const { server, port } = await startServer();
     for (const origin of ['https://evil.example', 'http://localhost:3000', 'http://127.0.0.1:8888']) {
       const tab = connectTab(port, KEY, origin);
       expect(await tab.closed).toBe(1008);
     }
-    expect(bridge.connected).toBe(false);
+    expect(server.connected).toBe(false);
   });
 
-  it('accepts the app served by another bridge port', async () => {
-    const { bridge, port } = await startBridge();
+  it('accepts the app served by another server port', async () => {
+    const { server, port } = await startServer();
     const tab = connectTab(port, KEY, 'http://localhost:7777');
     expect(await tab.welcomed).toMatchObject({ type: 'welcome' });
-    expect(bridge.connected).toBe(true);
+    expect(server.connected).toBe(true);
   });
 
   it('gives the agent the app link when no tab is connected', async () => {
-    const { bridge, port } = await startBridge(OTHER);
-    const r = await bridge.call('get_context', {});
+    const { server, port } = await startServer(OTHER);
+    const r = await server.call('get_context', {});
     expect(r.isError).toBe(true);
     expect((r.content[0] as { text: string }).text).toContain(`http://localhost:${port}/${OTHER}`);
   });
 
   it('falls through to the next port when one is taken', async () => {
     const base = 40000 + Math.floor(Math.random() * 20000);
-    const a = new Bridge({ accessKey: KEY, ports: [base, base + 1] });
-    const b = new Bridge({ accessKey: OTHER, ports: [base, base + 1] });
+    const a = new LocalServer({ accessKey: KEY, ports: [base, base + 1] });
+    const b = new LocalServer({ accessKey: OTHER, ports: [base, base + 1] });
     expect(await a.start()).toBe(base);
     expect(await b.start()).toBe(base + 1);
     cleanups.push(() => a.stop(), () => b.stop());
   });
 
   it('fails pending calls when the tab goes away', async () => {
-    const { bridge, port } = await startBridge();
+    const { server, port } = await startServer();
     const kernelLess = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: `http://127.0.0.1:${port}` } });
     await new Promise((r) => kernelLess.on('open', r));
-    kernelLess.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, accessKey: KEY, client: 'silent' }));
+    kernelLess.send(JSON.stringify({ type: 'hello', protocol: SERVER_PROTOCOL, accessKey: KEY, client: 'silent' }));
     await new Promise((r) => kernelLess.on('message', r));
-    const pending = bridge.call('design_query', { op: 'get_summary' });
+    const pending = server.call('design_query', { op: 'get_summary' });
     kernelLess.close();
     const r = await pending;
     expect(r.isError).toBe(true);
@@ -120,13 +120,13 @@ describe('bridge access', () => {
 
 describe('MCP server', () => {
   it('lists the tools and drives the kernel through a connected tab', async () => {
-    const { bridge, port } = await startBridge();
+    const { server, port } = await startServer();
     const tab = connectTab(port, KEY);
     await tab.welcomed;
 
-    const server = createMcpServer(bridge);
+    const mcp = createMcpServer(server);
     const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-    await server.connect(serverT);
+    await mcp.connect(serverT);
     const client = new Client({ name: 'claude-code', version: '1.0.0' });
     await client.connect(clientT);
     cleanups.push(() => client.close());
@@ -157,9 +157,9 @@ describe('serving the app', () => {
     writeFileSync(join(dir, 'assets', 'index-abc.js'), 'export {}');
     writeFileSync(join(dir, '..', 'tw-secret.txt'), 'secret');
     cleanups.push(() => rmSync(join(dir, '..', 'tw-secret.txt'), { force: true }));
-    const { bridge, port } = await startBridge();
-    bridge.setHttpHandler(appHandler(dir, '9.9.9', KEY));
-    return { bridge, port };
+    const { server, port } = await startServer();
+    server.setHttpHandler(appHandler(dir, '9.9.9', KEY));
+    return { server, port };
   }
   const get = (port: number, path: string, host = `localhost:${port}`) =>
     new Promise<{ status: number; type: string; cache: string; body: string }>((resolve, reject) => {
@@ -193,9 +193,9 @@ describe('serving the app', () => {
     expect(JSON.stringify(await get(port, PROBE_PATH))).not.toContain(KEY);
   });
 
-  it('answers the probe, so a second bridge finds the first', async () => {
+  it('answers the probe, so a second server finds the first', async () => {
     const { port } = await serveApp();
-    expect(JSON.parse((await get(port, PROBE_PATH)).body)).toEqual({ name: 'tracewise-bridge', version: '9.9.9' });
+    expect(JSON.parse((await get(port, PROBE_PATH)).body)).toEqual({ name: 'tracewise-server', version: '9.9.9' });
     expect(await servesTracewise(port)).toBe(true);
   });
 
@@ -208,9 +208,9 @@ describe('serving the app', () => {
   });
 
   it('links to the app it serves, or to the app elsewhere naming its own port', async () => {
-    const { bridge, port } = await startBridge();
-    expect(bridge.appLink()).toBe(`http://localhost:${port}/${KEY}`);
-    bridge.setAppUrl('http://localhost:5173/');
-    expect(bridge.appLink()).toBe(`http://localhost:5173/${KEY}?bridge=${port}`);
+    const { server, port } = await startServer();
+    expect(server.appLink()).toBe(`http://localhost:${port}/${KEY}`);
+    server.setAppUrl('http://localhost:5173/');
+    expect(server.appLink()).toBe(`http://localhost:5173/${KEY}?port=${port}`);
   });
 });

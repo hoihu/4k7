@@ -1,5 +1,5 @@
 /**
- * Running the agent tools. Every engine (the in-app loop, Claude Code through the bridge) calls
+ * Running the agent tools. Every engine (the in-app loop, Claude Code through the server) calls
  * the same executor; it answers with a ToolOutcome that each engine passes on in its own format.
  */
 import { CalcCall, TOOL_NAMES } from '@tracewise/schema';

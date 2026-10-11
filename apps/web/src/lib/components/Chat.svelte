@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app } from '../app.svelte.ts';
-  import { bridge } from '../bridge.svelte.ts';
+  import { server } from '../server.svelte.ts';
   import ChangesetCard from './ChangesetCard.svelte';
   import { markdown } from '../markdown.ts';
   import { USAGE_TITLE, usageLine } from '../usage.ts';
@@ -55,13 +55,13 @@
           <p class="muted">Click a part to reference it, or say “make C2 100µF” or “put C1 left of U1”. Your hints stick, even after a re-layout.</p>
           {#if app.isDemo}
             <p class="demo">
-              Offline demo (scripted). To use a real model, run <code>{__BRIDGE_RUN__}</code> and open the link it prints to chat with your
+              Offline demo (scripted). To use a real model, run <code>{__SERVER_RUN__}</code> and open the link it prints to chat with your
               <b>Claude Code</b>, or <button class="linkbtn" onclick={() => (app.view = 'set')}>add an API key</button>.
             </p>
-          {:else if app.settings.provider === 'claude-code' && bridge.status !== 'connected'}
+          {:else if app.settings.provider === 'claude-code' && server.status !== 'connected'}
             <p class="demo">
-              The chat uses your Claude Code, but the bridge is {bridge.status === 'elsewhere' ? 'connected in another tab' : 'not connected'}.
-              {#if bridge.status === 'elsewhere'}<button class="linkbtn" onclick={() => bridge.useThisTab()}>Use this tab</button>{:else}Run <code>{__BRIDGE_RUN__}</code> and open the link it prints.{/if}
+              The chat uses your Claude Code, but the server is {server.status === 'elsewhere' ? 'connected in another tab' : 'not connected'}.
+              {#if server.status === 'elsewhere'}<button class="linkbtn" onclick={() => server.useThisTab()}>Use this tab</button>{:else}Run <code>{__SERVER_RUN__}</code> and open the link it prints.{/if}
             </p>
           {/if}
         </div>
@@ -74,7 +74,7 @@
           </div>
         {:else}
           <div class="m a">
-            {#if m.source}<div class="src"><span class="ext">⇄</span> {m.source} <span class="muted">via bridge</span></div>{/if}
+            {#if m.source}<div class="src"><span class="ext">⇄</span> {m.source} <span class="muted">via local server</span></div>{/if}
             {#each m.segments as s, i (i)}
               {#if s.type === 'text'}
                 <!-- the agent's reply, rendered from Markdown (escaped; see markdown.ts) -->

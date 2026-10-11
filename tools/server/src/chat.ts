@@ -1,6 +1,6 @@
 /**
  * Jobs answered by the user's local Claude Code, each a headless `claude -p` run whose only
- * Tracewise tools come from this bridge's MCP endpoint, streamed back to the tab. Uses the
+ * Tracewise tools come from this server's MCP endpoint, streamed back to the tab. Uses the
  * user's own Claude Code login/plan.
  * - chat: a message typed into the app's chat; design tools, no files or shell.
  * - ingest: import a part from a datasheet; read-only access to one prepared datasheet
@@ -12,18 +12,18 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { CHAT_WEB_PROMPT, INGEST_VERIFY_PROMPT, chatModePrompt, ingestPrompt, type ChatCapability, type ChatEvent, type TabToBridge, type TokenCount } from '@tracewise/schema';
-import type { Bridge, ChatMessage } from './bridge.ts';
+import { CHAT_WEB_PROMPT, INGEST_VERIFY_PROMPT, chatModePrompt, ingestPrompt, type ChatCapability, type ChatEvent, type TabToServer, type TokenCount } from '@tracewise/schema';
+import type { LocalServer, ChatMessage } from './server.ts';
 import type { ClaudeProfile } from './config.ts';
 import { secretsMatch, type McpMode } from './mcp.ts';
 import { prepareDatasheet } from './pdf.ts';
 
-type IngestMessage = Extract<TabToBridge, { type: 'ingest' }>;
+type IngestMessage = Extract<TabToServer, { type: 'ingest' }>;
 type DoneEvent = Extract<ChatEvent, { kind: 'done' }>;
 const MAX_PDF_BYTES = 24 * 1024 * 1024;
 
 export interface ChatRunnerOptions {
-  bridge: Bridge;
+  server: LocalServer;
   /** Path or name of the Claude Code executable. */
   claudeBin: string;
   /** Neutral working directory for the headless sessions (no project files, no CLAUDE.md). */
@@ -60,7 +60,7 @@ export function detectClaude(bin: string, profile?: ClaudeProfile): ChatCapabili
 
 /**
  * Environment for the headless Claude: the profile's changes, and never the markers of the
- * Claude Code session that may have started the bridge (it is not nested inside it).
+ * Claude Code session that may have started the server (it is not nested inside it).
  */
 export function childEnv(profile?: ClaudeProfile): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -105,12 +105,12 @@ export class ChatRunner {
   }
 
   #mcpConfig(token: string): string {
-    const url = `http://127.0.0.1:${this.#opts.bridge.port}/mcp`;
+    const url = `http://127.0.0.1:${this.#opts.server.port}/mcp`;
     return JSON.stringify({ mcpServers: { tracewise: { type: 'http', url, headers: { Authorization: `Bearer ${token}` } } } });
   }
 
   #emit(id: string, event: ChatEvent) {
-    this.#opts.bridge.sendToTab({ type: 'chat_event', id, event });
+    this.#opts.server.sendToTab({ type: 'chat_event', id, event });
   }
 
   start(msg: Extract<ChatMessage, { type: 'chat' }>) {

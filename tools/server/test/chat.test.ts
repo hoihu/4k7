@@ -4,8 +4,8 @@ import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { BRIDGE_PROTOCOL, type BridgeToTab, type ChatEvent } from '@tracewise/schema';
-import { Bridge, ChatRunner, detectClaude, mcpHttpHandler, type ClaudeProfile } from '../src/index.ts';
+import { SERVER_PROTOCOL, type ServerToTab, type ChatEvent } from '@tracewise/schema';
+import { LocalServer, ChatRunner, detectClaude, mcpHttpHandler, type ClaudeProfile } from '../src/index.ts';
 
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 const FAKE = fileURLToPath(new URL('./fake-claude.mjs', import.meta.url));
@@ -16,24 +16,24 @@ afterEach(async () => {
 
 async function setup(bin = FAKE, profile?: ClaudeProfile) {
   const base = 40000 + Math.floor(Math.random() * 20000);
-  const bridge = new Bridge({ accessKey: KEY, ports: [base, base + 1], devPorts: [5173] });
-  const port = await bridge.start();
-  cleanups.push(() => bridge.stop());
+  const server = new LocalServer({ accessKey: KEY, ports: [base, base + 1], devPorts: [5173] });
+  const port = await server.start();
+  cleanups.push(() => server.stop());
   const capability = detectClaude(bin, profile);
   const ingestDir = mkdtempSync(join(tmpdir(), 'tw-ingest-'));
-  const chat = new ChatRunner({ bridge, claudeBin: bin, workDir: mkdtempSync(join(tmpdir(), 'tw-chat-')), ingestDir, ...(profile ? { profile } : {}) });
-  bridge.setChatHandler(chat.handle, capability);
-  bridge.setHttpHandler(mcpHttpHandler(bridge, (t) => chat.modeFor(t)));
+  const chat = new ChatRunner({ server, claudeBin: bin, workDir: mkdtempSync(join(tmpdir(), 'tw-chat-')), ingestDir, ...(profile ? { profile } : {}) });
+  server.setChatHandler(chat.handle, capability);
+  server.setHttpHandler(mcpHttpHandler(server, (t) => chat.modeFor(t)));
 
   // a tab that answers tool calls
   const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: 'http://localhost:5173' } });
   cleanups.push(() => ws.close());
   const calls: string[] = [];
   const events = new Map<string, ChatEvent[]>();
-  const welcome = await new Promise<BridgeToTab>((resolve) => {
-    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', protocol: BRIDGE_PROTOCOL, accessKey: KEY, client: 'test' })));
+  const welcome = await new Promise<ServerToTab>((resolve) => {
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', protocol: SERVER_PROTOCOL, accessKey: KEY, client: 'test' })));
     ws.on('message', (raw) => {
-      const m = JSON.parse(String(raw)) as BridgeToTab;
+      const m = JSON.parse(String(raw)) as ServerToTab;
       if (m.type === 'welcome') resolve(m);
       if (m.type === 'call') {
         calls.push(m.tool);
@@ -63,7 +63,7 @@ async function setup(bin = FAKE, profile?: ClaudeProfile) {
         }
       }, 20);
     });
-  return { bridge, port, welcome, calls, send, run, ingestDir };
+  return { server, port, welcome, calls, send, run, ingestDir };
 }
 
 const text = (es: ChatEvent[]) => es.filter((e) => e.kind === 'text').map((e) => (e as { text: string }).text).join('');

@@ -34,7 +34,7 @@ filter keeps the fee-free ones.
 `packages/parts/src/jlc.ts` defines a small `JlcSource` interface (`search`, `lookup`) so the
 provider can be swapped. The current source is [jlcsearch.tscircuit.com](https://jlcsearch.tscircuit.com),
 an open-source in-stock search over JLCPCB's catalogue with a JSON API and CORS headers, so the
-**browser calls it directly** (no bridge needed):
+**browser calls it directly** (no local server needed):
 
 - `/components/list.json?search=…&package=…`: text search over catalogue descriptions.
 - `/resistors/list.json?resistance=<ohms>`, `/capacitors/list.json?capacitance=<farads>`: parametric.
@@ -50,7 +50,7 @@ human fallback.
 
 ## Agent and user
 
-- The agent has one tool, `jlc_search` (in-app agent and MCP bridge alike): text or parametric
+- The agent has one tool, `jlc_search` (in-app agent and Claude Code alike): text or parametric
   search, or a lookup by number. Its prompt tells it to source only when asked, to keep passives
   generic, to prefer Basic parts and to offer two or three candidates when the user wants something
   cheap or available.

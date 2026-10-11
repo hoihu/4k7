@@ -165,7 +165,7 @@ flowchart LR
   end
   LLM["User's AI provider<br/>(cloud or local)"]
   MCP["User MCP servers<br/>(HTTP)"]
-  BR["tools/bridge<br/>(optional local relay)"]
+  BR["tools/server<br/>(optional local relay)"]
   EXT["External agents<br/>Claude Code, Cursor…"]
 
   UI <--> K
@@ -193,7 +193,7 @@ flowchart LR
 | `packages/ingest` | TS | pdf.js text/image extraction, page classification, prompts for structured extraction, cross-checks, provenance |
 | `apps/web` | TS (SvelteKit or React + Vite) | Workspaces (see [ui.md](design/ui.md)): schematic = chat + canvas + inspector with inline changeset review; layout = full canvas + command bar; parts; settings |
 | Renderer | TS + WGSL | Shared scene graph with layers, instanced primitives, SDF text. Schematic and board views. 3D (three.js) later |
-| `tools/bridge` | TS (Node/Deno, `npx`) | Local relay: MCP server for external agents, proxy for stdio MCP servers and CORS-blocked providers |
+| `tools/server` | TS (Node/Deno, `npx`) | Local relay: MCP server for external agents, proxy for stdio MCP servers and CORS-blocked providers |
 | `evals/` | TS + Rust | Golden designs, task scripts, scoring, model compatibility report |
 
 ### Why Rust → WASM for the kernel
@@ -276,7 +276,7 @@ Deviations (deliberate, to revisit):
 - **Counter-based ids** (`c_1a`) instead of ULIDs, for deterministic tests and diffs.
 - **Autonomy modes**: Auto and Review. Step mode (plan approval) is not built yet.
 
-Pulled forward from M4: the **local bridge** (`tools/bridge`), an MCP server that relays to the open tab, so an external agent on the user's own plan can drive the design through the same op catalogue and review flow.
+Pulled forward from M4: the **local server** (`tools/server`), an MCP server that relays to the open tab, so an external agent on the user's own plan can drive the design through the same op catalogue and review flow.
 
 Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models, and layout quality on 30+ part designs.
 

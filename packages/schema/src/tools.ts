@@ -1,6 +1,6 @@
 /**
  * The agent tool surface, generated from the op catalogue: one set of tools for every engine
- * that runs a design conversation (the in-app agent, Claude Code through the local bridge).
+ * that runs a design conversation (the in-app agent, Claude Code through the local server).
  */
 import { z } from 'zod';
 import { DraftPin, PackageInfo } from './ingest.ts';
@@ -155,7 +155,7 @@ export const TOOL_NAMES = {
   waitForReview: 'wait_for_review',
 } as const;
 
-/** The jlc_search tool, shared by the in-app agent and the MCP bridge. */
+/** The jlc_search tool, shared by the in-app agent and the MCP server. */
 export const JLC_TOOL: ToolDefinition = {
   name: TOOL_NAMES.jlc,
   description:
@@ -168,7 +168,7 @@ export const JLC_TOOL: ToolDefinition = {
 /**
  * Who runs the conversation. app: the in-app agent on the user's API key (the design state comes
  * with each message, it asks with ask_user, the app proposes the changes after the turn). chat:
- * Claude Code answering the app's chat through the bridge (reads the state with get_context,
+ * Claude Code answering the app's chat through the server (reads the state with get_context,
  * proposes itself; the user reviews after the turn). cli: Claude Code driving the app from a
  * terminal, which also waits for the review.
  */
@@ -176,9 +176,9 @@ export type AgentEngine = 'app' | 'chat' | 'cli';
 
 /** The design tools, the same for every engine, plus the few that differ in how a turn starts and ends. */
 export function agentTools(engine: AgentEngine): ToolDefinition[] {
-  const viaBridge = engine !== 'app';
+  const viaClaudeCode = engine !== 'app';
   return [
-    ...(viaBridge
+    ...(viaClaudeCode
       ? [{
           name: TOOL_NAMES.context,
           description:
@@ -214,7 +214,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
       description:
         "Import a part into the user's library from its datasheet PDF (the app's datasheet import: pins, package, footprint, " +
         'decoupling, checked and cross-checked by a second independent pass). Takes a few minutes; the part is then in the library for add_part. ' +
-        'Needs the local bridge.',
+        'Needs the local server.',
       input_schema: schemaOf(ImportPartInput),
     },
     JLC_TOOL,
@@ -244,7 +244,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
       description: 'PNG rendering of the current schematic (working copy, with pending changes highlighted).',
       input_schema: schemaOf(ImageInput),
     },
-    ...(viaBridge
+    ...(viaClaudeCode
       ? [{
           name: TOOL_NAMES.propose,
           description:
