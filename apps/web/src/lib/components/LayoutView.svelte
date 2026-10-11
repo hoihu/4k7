@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fabFiles, zip } from '@tracewise/fab';
+  import { fabFiles, panelFabFiles, zip } from '@tracewise/fab';
   import type { BoardDiagnostic, CopperLayer } from '@tracewise/schema';
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
@@ -7,6 +7,8 @@
   import type { TopView } from '../three-body.ts';
   import Chat from './Chat.svelte';
   import FabRules from './FabRules.svelte';
+  import PanelCanvas from './PanelCanvas.svelte';
+  import PanelSetup from './PanelSetup.svelte';
 
   /** Layout workspace: agent chat, the board, and a panel with checks, layers and outputs. */
   $effect(() => {
@@ -16,7 +18,7 @@
   const b = $derived(app.board);
   let show = $state<Record<string, boolean>>({ board: true, 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true, placement: false });
   let hotNet = $state<string | null>(null);
-  let mode = $state<'2d' | '3d'>('2d');
+  let mode = $state<'2d' | '3d' | 'panel'>('2d');
   // switching views: the 3D view starts from the 2D view's area and flies into 3D; back, it flies
   // to straight above and the 2D view takes over that area. The 2D view stays up until 3D is drawn.
   let canvas2d: BoardCanvas | undefined = $state();
@@ -26,18 +28,28 @@
   let switching = false;
   function to3d() {
     if (mode === '3d' || switching) return;
-    from2d = canvas2d?.getView() ?? null;
+    from2d = mode === '2d' ? (canvas2d?.getView() ?? null) : null;
     show2d = true;
     mode = '3d';
   }
   async function to2d() {
     if (mode === '2d' || switching) return;
+    if (mode === 'panel') {
+      mode = '2d';
+      show2d = true;
+      return;
+    }
     switching = true;
     const v = await view3d?.flyToTop();
     if (v) canvas2d?.setView(v);
     show2d = true;
     mode = '2d';
     switching = false;
+  }
+  /** The panel: the copies in their frame, with tabs edited on it. */
+  function toPanel() {
+    if (mode === 'panel' || switching) return;
+    mode = 'panel';
   }
   let marker = $state<{ x: number; y: number } | null>(null);
   const netName = (id: string | null) => (id ? (b?.netNames[id] ?? id) : '');
@@ -95,15 +107,15 @@
   const CHECKS_SHOWN = 4;
   const routeLabel = $derived(routing ? 'Routing…' : b?.routing === 'done' ? 'Routed' : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
 
-  /** Gerbers, drill, BOM and pick-and-place as one zip. */
-  function exportFab() {
+  /** Gerbers, drill, BOM and pick-and-place as one zip: of the board, or of its panel. */
+  function exportFab(panel = false) {
     if (!b) return;
     const name = app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : 'tracewise-board';
-    const files = fabFiles(b, name);
+    const files = panel ? panelFabFiles(b, name) : fabFiles(b, name);
     const url = URL.createObjectURL(new Blob([zip(files) as BlobPart], { type: 'application/zip' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${name.replace(/[^\w.-]+/g, '_')}-fab.zip`;
+    a.download = `${name.replace(/[^\w.-]+/g, '_')}-${panel ? 'panel' : 'fab'}.zip`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
     app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}`);
@@ -118,8 +130,10 @@
 <section class="lay" class:nochat={!app.chatOpen}>
   <div class="col chatcol">{#if app.chatOpen}<Chat />{/if}</div>
   <div class="col canvas">
+    {#if mode === 'panel' && b?.panel}<div class="stagep"><PanelCanvas board={b} ontabs={(tabs) => void app.userEdit('Panel tabs', [{ op: 'set_panel', tabs }])} /></div>
+    {:else if mode === 'panel' && b?.parts.length}<div class="blank"><p><b>No panel yet.</b> A panel holds copies of the board in a frame, milled apart except at tabs with mouse bites. Make one in the side panel, or ask the agent.</p></div>{/if}
     {#if mode === '3d' && b}<Board3DView bind:this={view3d} board={b} from={from2d} onready={() => (show2d = false)} />{/if}
-    <div class="stage2d" class:hidden={!show2d}>
+    <div class="stage2d" class:hidden={!show2d || mode === 'panel'}>
     <BoardCanvas
       bind:this={canvas2d}
       board={b}
@@ -138,12 +152,13 @@
     </div>
     <div class="fl tl">
       {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
-      <div class="seg"><button aria-pressed={mode === '2d'} onclick={to2d}>2D</button><button aria-pressed={mode === '3d'} onclick={to3d}>3D</button></div>
+      <div class="seg"><button aria-pressed={mode === '2d'} onclick={to2d}>2D</button><button aria-pressed={mode === '3d'} onclick={to3d}>3D</button><button aria-pressed={mode === 'panel'} title="The fabrication panel: copies in a frame, tabs with mouse bites" onclick={toPanel}>Panel</button></div>
       {#if b?.parts.length}
         <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose layout', [{ op: 'propose_layout' }])}>Propose layout</button>
         {#if choices.length}<button class="btn" disabled={app.running} title="Your {choices.length} placement choice{choices.length > 1 ? 's' : ''} go back to the placer; locked parts stay" onclick={releaseAll}>Release choices ({choices.length})</button>{/if}
         <button class="btn" class:pri={b.routing !== 'done'} disabled={app.running || b.routing === 'done'} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' ? 'Route again' : 'Route'}</button>
-        <button class="btn" disabled={!b.parts.length} title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={exportFab}>Fab files ⤓</button>
+        <button class="btn" disabled={!b.parts.length} title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
+        {#if b.panel}<button class="btn" title="The {b.panel.settings.cols} × {b.panel.settings.rows} panel ({b.panel.w} × {b.panel.h} mm): Gerber, drill with the mouse bites and tooling holes, BOM and pick-and-place of every copy, as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}` : ''}" onclick={() => exportFab(true)}>Panel files ⤓</button>{/if}
       {/if}
       {#if app.boardBusy}<span class="busy">updating…</span>{/if}
     </div>
@@ -160,7 +175,8 @@
     {/if}
     <div class="status">
       <span class="sp mono">
-        {#if b}{b.outline.w} × {b.outline.h} mm · {b.layers.length} layers<span class="dot">·</span>{/if}
+        {#if b && mode === 'panel' && b.panel}Panel {b.panel.w} × {b.panel.h} mm · {b.panel.settings.cols} × {b.panel.settings.rows} boards of {b.outline.w} × {b.outline.h} mm<span class="dot">·</span>
+        {:else if b}{b.outline.w} × {b.outline.h} mm · {b.layers.length} layers<span class="dot">·</span>{/if}
         {#if b?.parts.length}
           <span class:stale={b.routing === 'stale'} class:ok={b.routing === 'done' && !routing}>{routeLabel}</span>
           {#if b.routing === 'done' && !routing}<span> {b.stats.routed}/{b.stats.nets} nets · {b.stats.vias} vias</span>{#if b.ratsnest.length}<span class="stale"> · {b.ratsnest.length} unrouted</span>{/if}{/if}
@@ -173,7 +189,8 @@
   <aside class="col side">
     <div class="scroll">
       {#if b}
-        {#if selectedPart}
+        {#if mode === 'panel' && b.parts.length}<PanelSetup panel={b.panel} size={b.outline} onexport={() => exportFab(true)} />{/if}
+        {#if selectedPart && mode !== 'panel'}
           <h4>{selectedPart.refdes} <span class="muted mono">{selectedPart.pkg}</span></h4>
           <p class="small mono">x {selectedPart.x} · y {selectedPart.y} mm · {selectedPart.rot}°{selectedPart.componentId.startsWith('hole:') ? '' : ` · ${selectedPart.side} side`}</p>
           <p class="small">
@@ -215,12 +232,14 @@
           {/if}
         {/if}
         {/if}
+        {#if mode !== 'panel'}
         <h4>Layers</h4>
         <ul class="layers">
           {#each layerNames as [key, label] (key)}
             <li><label><input type="checkbox" bind:checked={show[key]} /><span class="sw {key.replace('.', '')}"></span>{label}</label></li>
           {/each}
         </ul>
+        {/if}
         <FabRules rules={b.rules} fab={b.fab} layers={b.layers.length as 2 | 4} />
         <button class="btn wide" onclick={() => app.designDocument()} disabled={!b.parts.length || app.docBusy} title="The functional blocks described, each with its schematic and its place on the board, then layout, assembly drawing, BOM and schematic">{app.docBusy ? 'Preparing…' : 'Design document (print / PDF)'}</button>
         <p class="small muted">
@@ -244,6 +263,7 @@
   .tl { top: 8px; left: 8px; z-index: 2; }
   .stage2d { position: absolute; inset: 0; }
   .stage2d.hidden { visibility: hidden; }
+  .stagep { position: absolute; inset: 0; }
   .seg { display: inline-flex; }
   .seg button { border: 1px solid var(--line-2); background: var(--panel); color: var(--txt-2); padding: 2px 10px; font-size: 12px; cursor: pointer; }
   .seg button:first-child { border-radius: 6px 0 0 6px; }

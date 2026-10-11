@@ -85,6 +85,17 @@ export function fabPlacementDrc(b: BoardView): BoardDiagnostic[] {
     const lim = small ? l.minBoard! : l.maxBoard!;
     out.push({ code: 'DRC.FAB_BOARD_SIZE', severity: 'error', message: `The board (${w} × ${h} mm) is ${small ? 'smaller' : 'larger'} than ${who} makes (${small ? 'min' : 'max'} ${lim[0]} × ${lim[1]} mm).`, entities: [] });
   }
+  // the panel is what goes through the machines: its size and its holes
+  if (b.panel) {
+    const [pw, ph] = [b.panel.w, b.panel.h];
+    if (l.maxBoard && (Math.min(pw, ph) > Math.min(...l.maxBoard) + EPS || Math.max(pw, ph) > Math.max(...l.maxBoard) + EPS)) {
+      out.push({ code: 'PANEL.SIZE', severity: 'error', message: `The panel (${pw} × ${ph} mm) is larger than ${who} makes (max ${l.maxBoard[0]} × ${l.maxBoard[1]} mm); use fewer copies (set_panel).`, entities: ['panel'] });
+    }
+    const hole = b.panel.settings.tab.hole;
+    if (l.npthDrill !== undefined && hole < l.npthDrill - EPS) {
+      out.push({ code: 'PANEL.HOLE', severity: 'error', message: `The mouse-bite holes (Ø${mm(hole)}) are smaller than ${who}'s smallest non-plated hole (${mm(l.npthDrill)}); set_panel hole_mm.`, entities: ['panel'] });
+    }
+  }
 
   const flagged = new Set<string>();
   for (const p of b.parts) {

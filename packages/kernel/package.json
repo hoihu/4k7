@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "dependencies": { "@tracewise/schema": "0.1.0", "@tracewise/parts": "0.1.0" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tracewise/parts": "0.1.0",
+    "@tracewise/schema": "0.1.0",
+    "clipper2-ts": "^2.0.1"
+  }
 }

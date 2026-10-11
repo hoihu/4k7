@@ -33,6 +33,11 @@ import {
   raiseRules,
   ruleLimit,
   type RuleKey,
+  type PanelSettings,
+  type PanelSide,
+  DEFAULT_PANEL,
+  PANEL_SIDES,
+  autoTabs,
 } from '@tracewise/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
 import { layoutSchematic } from './layout.ts';
@@ -124,6 +129,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return addCutout(d, op);
     case 'set_outline':
       return setOutline(d, op);
+    case 'set_panel':
+      return setPanel(d, op);
     case 'add_graphic':
       return addGraphic(d, op);
     case 'edit_graphic':
@@ -368,6 +375,56 @@ function setOutline(d: Design, op: Extract<EditOp, { op: 'set_outline' }>): OpRe
   b.width = w;
   b.height = h;
   return { op: 'set_outline', effect: `free-form outline, ${pts.length / 2} points, ${w} × ${h} mm`, ids: ['board'] };
+}
+
+/** The fabrication panel: changes only what the op gives; the first one starts from the defaults. */
+function setPanel(d: Design, op: Extract<EditOp, { op: 'set_panel' }>): OpResult {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  d.board = b;
+  if (op.none) {
+    if (!b.panel) reject({ code: 'BOARD_INVALID', message: 'There is no panel to remove.' });
+    delete b.panel;
+    return { op: 'set_panel', effect: 'no panel: single boards', ids: ['board'] };
+  }
+  if (op.tabs && (op.tab_sides || op.tabs_per_side)) reject({ code: 'BOARD_INVALID', message: 'Give either tabs (exact positions) or tab_sides / tabs_per_side, not both.' });
+  const p: PanelSettings = b.panel ? structuredClone(b.panel) : { ...structuredClone(DEFAULT_PANEL), tabs: [] };
+  const fresh = !b.panel;
+  const out: string[] = [];
+  if (op.cols !== undefined) p.cols = op.cols;
+  if (op.rows !== undefined) p.rows = op.rows;
+  if (op.gap_mm !== undefined) p.gap = op.gap_mm;
+  if (op.rail_mm !== undefined) p.rails = { top: op.rail_mm, right: op.rail_mm, bottom: op.rail_mm, left: op.rail_mm };
+  for (const side of PANEL_SIDES) if (op.rails_mm?.[side] !== undefined) p.rails[side] = op.rails_mm[side]!;
+  if (op.tab_width_mm !== undefined) p.tab.width = op.tab_width_mm;
+  if (op.hole_mm !== undefined) p.tab.hole = op.hole_mm;
+  if (op.hole_pitch_mm !== undefined) p.tab.pitch = op.hole_pitch_mm;
+  if (p.tab.pitch <= p.tab.hole + 0.1) reject({ code: 'BOARD_INVALID', message: `Mouse-bite holes Ø${p.tab.hole} mm at ${p.tab.pitch} mm pitch leave less than 0.1 mm between them; the pitch must be larger.` });
+  if (op.fiducials !== undefined) p.fiducials = op.fiducials;
+  if (op.tooling_holes !== undefined) p.toolingHoles = op.tooling_holes;
+  if (p.cols * p.rows < 2 && !Object.values(p.rails).some((r) => r > 0)) reject({ code: 'BOARD_INVALID', message: 'A panel of one board without a frame is just the board; give it more copies or rails.' });
+  // tabs: exact, regenerated for the sides asked for, or (a new panel) on every side
+  const w = b.width ?? b.placement?.outline.w;
+  const h = b.height ?? b.placement?.outline.h;
+  if (op.tabs) p.tabs = op.tabs.map((t) => ({ side: t.side as PanelSide, at: t.at }));
+  else if (op.tab_sides || op.tabs_per_side || fresh) {
+    if (!w || !h) reject({ code: 'BOARD_INVALID', message: 'The board has no size yet (propose_layout or set_board first), so tabs cannot be spread along its sides.' });
+    const sides = (op.tab_sides as PanelSide[] | undefined) ?? [...new Set(p.tabs.map((t) => t.side))];
+    p.tabs = autoTabs(sides.length ? sides : PANEL_SIDES, w!, h!, op.tabs_per_side);
+  }
+  b.panel = p;
+  const pw = (side: PanelSide) => p.rails[side] + (p.rails[side] > 0 ? p.gap : 0);
+  if (w && h) {
+    const W = pw('left') + p.cols * w + (p.cols - 1) * p.gap + pw('right');
+    const H = pw('top') + p.rows * h + (p.rows - 1) * p.gap + pw('bottom');
+    out.push(`${Math.round(W * 10) / 10} × ${Math.round(H * 10) / 10} mm`);
+  }
+  const rails = [...new Set(Object.values(p.rails))].length === 1 ? `${p.rails.top} mm rails` : `rails ${PANEL_SIDES.map((s) => `${s} ${p.rails[s]}`).join(', ')} mm`;
+  const sides = [...new Set(p.tabs.map((t) => t.side))];
+  return {
+    op: 'set_panel',
+    effect: `panel ${p.cols} × ${p.rows}${out.length ? ` (${out.join(', ')})` : ''}, ${p.gap} mm gap, ${rails}, ${p.tabs.length} tabs per board (${sides.join(', ') || 'none'}), ${p.tab.width} mm wide with Ø${p.tab.hole} mm mouse bites`,
+    ids: ['board'],
+  };
 }
 
 /** A milled cutout: a rectangle, circle or slot, positioned from an anchor point. */

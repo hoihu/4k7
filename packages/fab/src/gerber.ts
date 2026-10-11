@@ -3,7 +3,7 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
-import { boardPolygon, cutoutPolygon, figureDepths, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer } from '@tracewise/schema';
+import { boardPolygon, cutoutPolygon, figureDepths, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type PanelView } from '@tracewise/schema';
 import { textStrokes, textWidth } from './font.ts';
 
 export interface FabFile {
@@ -124,7 +124,8 @@ class Gerber {
 
 const onLayer = (p: BoardPad, layer: CopperLayer) => !p.npth && (!!p.drill || p.layers.includes(layer));
 
-export function gerbers(b: BoardView, project: string): FabFile[] {
+/** The Gerber set and drill files; with `panel`, `b` is the whole panel (panelBoard) and the panel's contours and fiducials are drawn. */
+export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFile[] {
   const { w, h } = b.outline;
   const base = project.replace(/[^\w.-]+/g, '_') || 'board';
   const files: FabFile[] = [];
@@ -139,6 +140,7 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
     for (const p of pads) if (onLayer(p, layer)) g.pad(p);
     for (const v of b.vias) g.circle(v.x, v.y, v.pad);
     for (const t of b.tracks) if (t.layer === layer) g.line(t.pts, t.width);
+    if (i === 0 || i === n - 1) for (const f of panel?.fiducials ?? []) g.circle(f.x, f.y, f.d);
     files.push({ name: `${base}-${layer.replace('.', '_')}.gbr`, content: g.toString() });
   });
 
@@ -149,6 +151,7 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
       if (p.npth) mask.circle(p.x, p.y, p.drill! + 2 * MASK_MARGIN); // bare hole: no mask over it
       else if (onLayer(p, layer)) mask.pad(p, MASK_MARGIN);
     }
+    for (const f of panel?.fiducials ?? []) mask.circle(f.x, f.y, f.mask);
     files.push({ name: `${base}-${side === 'Top' ? 'F' : 'B'}_Mask.gbr`, content: mask.toString() });
     const paste = new Gerber(h, [`FileFunction,Paste,${side}`, 'FilePolarity,Positive']);
     for (const p of pads) if (!p.drill && p.layers.includes(layer)) paste.pad(p);
@@ -232,10 +235,10 @@ export function gerbers(b: BoardView, project: string): FabFile[] {
   }
 
   /* outline */
-  // the board outline (rounded corners too) and every milled cutout, as closed contours
+  // the board outline (rounded corners too; a panel: its milled contours) and every milled cutout, as closed contours
   const edge = new Gerber(h, ['FileFunction,Profile,NP', 'FilePolarity,Positive']);
   const closed = (pts: number[]) => [...pts, pts[0]!, pts[1]!];
-  edge.line(closed(boardPolygon(b)), 0.1);
+  for (const contour of panel ? panel.edges : [boardPolygon(b)]) edge.line(closed(contour), 0.1);
   for (const c of b.cutouts ?? []) edge.line(closed(cutoutPolygon(c)), 0.1);
   files.push({ name: `${base}-Edge_Cuts.gbr`, content: edge.toString() });
 
