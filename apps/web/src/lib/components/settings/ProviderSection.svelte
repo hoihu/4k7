@@ -16,7 +16,6 @@
   const choices: { id: Settings['provider']; name: string; blurb: string }[] = [
     { id: 'claude-code', name: 'Claude Code', blurb: 'On this computer, with your plan. Needs the local server.' },
     { id: 'anthropic', name: 'Anthropic API', blurb: 'Your own API key, billed per token.' },
-    { id: 'demo', name: 'Offline demo', blurb: 'Scripted answers, no key, nothing leaves the browser.' },
   ];
 
   function set<K extends keyof Settings>(k: K, v: Settings[K]) {
@@ -24,7 +23,7 @@
   }
 
   async function saveKey() {
-    await app.updateSettings({ provider: key.trim() ? 'anthropic' : 'demo' }, key);
+    await app.updateSettings({ provider: key.trim() ? 'anthropic' : 'claude-code' }, key);
     saved = true;
     setTimeout(() => (saved = false), 1500);
   }
@@ -35,7 +34,7 @@
 
 <Section id="provider" title="Chat provider">
   {#snippet status()}
-    {#if app.isDemo}<span class="tag warn">offline demo</span>{:else}<span class="tag ok">{app.providerLabel}</span>{/if}
+    {#if app.noModel}<span class="tag warn">no API key</span>{:else}<span class="tag ok">{app.providerLabel}</span>{/if}
   {/snippet}
 
   <div class="choices" role="radiogroup" aria-label="Chat provider">
@@ -97,21 +96,15 @@
         {/each}
       </div>
     </Field>
-  {:else}
-    <Field label="Demo">
-      <span class="muted">Scripted conversations for trying the app. Pick another provider for real design work.</span>
-    </Field>
   {/if}
 
-  {#if provider !== 'demo'}
-    <Field label="Session spend" hint="API price of the tokens used. A Claude Code subscription is not billed per token.">
-      <span class="mono">${app.spend.toFixed(3)}</span>{#if provider === 'anthropic' && app.lastModel}<span class="muted"> · last reply from <span class="mono">{app.lastModel}</span></span>{/if}
-    </Field>
-  {/if}
+  <Field label="Session spend" hint="API price of the tokens used. A Claude Code subscription is not billed per token.">
+    <span class="mono">${app.spend.toFixed(3)}</span>{#if provider === 'anthropic' && app.lastModel}<span class="muted"> · last reply from <span class="mono">{app.lastModel}</span></span>{/if}
+  </Field>
 </Section>
 
 <style>
-  .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .choices { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
   .choice { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left; padding: 7px 9px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel-2); color: var(--txt-2); font-size: 12px; }
   .choice b { color: var(--txt); font-size: 12.5px; }
   .choice span { font-size: 11px; color: var(--txt-3); }

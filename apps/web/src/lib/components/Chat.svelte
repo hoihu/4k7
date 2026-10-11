@@ -9,13 +9,11 @@
 
   const suggestions = $derived.by(() => {
     if (!app.k || app.k.summary.components.length === 0) {
-      return app.isDemo
-        ? ['12 V to 3.3 V buck, 2 A. Put C1 left of U1.']
-        : ['12 V to 3.3 V buck converter, 2 A', '555 LED blinker at 1 Hz from 9 V', 'ATtiny85 with ISP header and power LED'];
+      return ['12 V to 3.3 V buck converter, 2 A', '555 LED blinker at 1 Hz from 9 V', 'ATtiny85 with ISP header and power LED'];
     }
     const sel = app.selection[0];
     if (sel?.startsWith('C')) return [`make ${sel} 100uF`, `put ${sel} left of U1`];
-    return app.isDemo ? ['make C2 100uF'] : ['Review the design for problems', 'Add a power LED on +3V3'];
+    return ['Review the design for problems', 'Add a power LED on +3V3'];
   });
 
   $effect(() => {
@@ -42,7 +40,7 @@
 <div class="pane chat">
   <div class="ph">
     <b>Agent</b>
-    <span class="tag" class:info={!app.isDemo} title={app.lastModel || undefined}>{app.providerLabel}</span>
+    <span class="tag" class:info={!app.noModel} title={app.lastModel || undefined}>{app.providerLabel}</span>
     <span class="grow"></span>
     {#if app.chat.length}<button class="ib" onclick={() => app.clearChat()} title="New conversation (the design is kept)">clear</button>{/if}
     <button class="ib" onclick={() => (app.chatOpen = false)} title="Collapse chat">⟨</button>
@@ -53,10 +51,10 @@
         <div class="intro">
           <p><b>Describe it. The agent designs it.</b> Every change comes back here to review.</p>
           <p class="muted">Click a part to reference it, or say “make C2 100µF” or “put C1 left of U1”. Your hints stick, even after a re-layout.</p>
-          {#if app.isDemo}
+          {#if app.noModel}
             <p class="demo">
-              Offline demo (scripted). To use a real model, {#if __APP_RUN__}open {__SERVER_RUN__}{:else}run <code>{__SERVER_RUN__}</code> and open the link it prints{/if} to chat with your
-              <b>Claude Code</b>, or <button class="linkbtn" onclick={() => (app.view = 'set')}>add an API key</button>.
+              No API key set. <button class="linkbtn" onclick={() => (app.view = 'set')}>Add one</button>, or {#if __APP_RUN__}open {__SERVER_RUN__}{:else}run <code>{__SERVER_RUN__}</code> and open the link it prints{/if} to chat with your
+              <b>Claude Code</b>.
             </p>
           {:else if app.settings.provider === 'claude-code' && server.status !== 'connected'}
             <p class="demo">

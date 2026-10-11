@@ -131,7 +131,7 @@
         <button class="chipbtn" onclick={() => (app.view = 'set')} title="Waiting for the local server">⇄ <span class="muted">offline</span></button>
       {:else if server.status === 'elsewhere'}
         <button class="chipbtn" onclick={() => server.useThisTab()} title="Claude Code is connected in another tab of this app. Click to use this tab instead.">⇄ <span class="muted">other tab · use here</span></button>
-      {:else if app.settings.provider === 'anthropic' && !app.isDemo}
+      {:else if app.settings.provider === 'anthropic' && !app.noModel}
         <button class="chipbtn" onclick={() => (app.view = 'set')} title="Session spend with the Anthropic API ({app.settings.model})"><span class="muted">${app.spend.toFixed(2)}</span></button>
       {/if}
       <button class="undo" title={undoTitle} aria-label={undoTitle} disabled={!app.k?.canUndo || !!app.k?.proposal} onclick={() => app.undo()}>
