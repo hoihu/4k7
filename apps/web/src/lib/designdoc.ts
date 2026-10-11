@@ -368,7 +368,7 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
   /* 1 overview */
   const parts = summary.components.length;
   const lines = b ? bomLines(b) : [];
-  const drc = b ? { e: b.diagnostics.filter((d) => d.severity === 'error').length, w: b.diagnostics.filter((d) => d.severity === 'warning').length } : null;
+  const drc = b ? { e: b.diagnostics.filter((d) => d.severity === 'error' && !d.waivedBy).length, w: b.diagnostics.filter((d) => d.severity === 'warning' && !d.waivedBy).length } : null;
   const rails = summary.nets.filter((n) => n.voltage !== undefined);
   const facts = [
     [String(parts), 'parts' + (lines.length ? ` · ${plural(lines.length, 'BOM line')}` : '')],

@@ -17,7 +17,7 @@ import {
   type Severity,
 } from '@tracewise/schema';
 import { sameValue, describeConstraint } from './apply.ts';
-import { allocRefdes, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
+import { allocRefdes, applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 
 const DRIVERS = new Set(['out', 'bidir', 'tri', 'pwr_out', 'oc', 'passive']);
 /** IC pin types that may stay unconnected without being an error. */
@@ -345,15 +345,5 @@ function ledgerChecks(ctx: Ctx, placement?: SchematicView['constraintStatus']) {
       push(ctx, k.strength === 'hard' ? 'error' : 'warning', 'LEDGER.PLACEMENT', [k.id],
         `Schematic placement does not satisfy ${describeConstraint(d, k)}.`);
     }
-  }
-}
-
-/* --------------------------------- waivers -------------------------------- */
-
-function applyWaivers(d: Design, out: Diagnostic[]) {
-  const ws = Object.values(d.waivers);
-  for (const x of out) {
-    const w = ws.find((w) => w.code === x.code && x.entities.every((e) => w.entities.includes(e)));
-    if (w) x.waivedBy = w.id;
   }
 }

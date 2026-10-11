@@ -482,6 +482,8 @@ export interface BoardDiagnostic {
   /** Where to look. */
   at?: { x: number; y: number };
   entities: string[];
+  /** Set when a waiver covers this check (the user or agent marked it intended). */
+  waivedBy?: string;
 }
 
 export interface BoardView {
@@ -553,7 +555,7 @@ export function boardSummary(b: BoardView, routed = true) {
       inside_board: g.inside ?? true,
       ...(g.over?.length ? { over_parts: g.over } : {}),
     })),
-    drc: b.diagnostics.map((x) => `${x.severity}: ${x.message}`),
+    drc: b.diagnostics.filter((x) => !x.waivedBy).map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
     note: 'Workflow: propose_layout (board size and placement), then adjustments (place = the user\'s choice for a part, kept relative to its parent part; lock: true pins it exactly; set_board for the size), then route as the last step. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
   };
