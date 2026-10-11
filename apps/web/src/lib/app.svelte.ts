@@ -473,7 +473,7 @@ class AppState {
         const parsed = CalcCall.safeParse(input);
         if (!parsed.success) return text(`Invalid calc input: ${parsed.error.message}`, true);
         try {
-          const out = runCalc(parsed.data);
+          const out = runCalc(parsed.data, (await this.kernel.port.snapshot()).summary.valueSeries);
           log(`calc · ${parsed.data.fn}`, true, Object.entries(out).filter(([k]) => k !== 'note').map(([k, v]) => `${k}=${v}`).join(', '));
           return text(JSON.stringify(out));
         } catch (e) {
