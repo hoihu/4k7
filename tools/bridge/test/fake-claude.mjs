@@ -22,6 +22,7 @@ out({ type: 'system', subtype: 'init', session_id: session, mcp_servers: [{ name
 const client = new Client({ name: 'claude-code', version: 'fake' });
 await client.connect(new StreamableHTTPClientTransport(new URL(tw.url), { requestInit: { headers: tw.headers } }));
 const tools = (await client.listTools()).tools.map((t) => t.name);
+const instructions = client.getInstructions() ?? '';
 const ctx = tools.includes('get_context')
   ? await client.callTool({ name: 'get_context', arguments: {} })
   : await client.callTool({ name: 'submit_part', arguments: { mpn: 'FAKE1' } });
@@ -35,6 +36,7 @@ const flags = {
   model: args.includes('--model') ? arg('--model') : null,
   prompt: arg('-p'),
   appended: (arg('--append-system-prompt') ?? '').slice(0, 40),
+  instructionsLength: instructions.length,
   verify: (arg('--append-system-prompt') ?? '').includes('independent verification pass'),
   files: (await import('node:fs')).readdirSync('.').sort(),
   env: {
