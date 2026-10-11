@@ -111,9 +111,24 @@ type Json = Record<string, unknown>;
 export function schemaOf(t: z.ZodType): Json {
   const s = z.toJSONSchema(t, { io: 'input', unrepresentable: 'any' }) as Json;
   delete s.$schema;
+  plainTuples(s);
   const variants = (s.anyOf ?? s.oneOf) as Json[] | undefined;
   if (s.type === 'object' || !variants) return s;
   return flattenUnion(variants);
+}
+
+/** Some MCP clients (VS Code) reject `prefixItems` with `items: false`; a tuple becomes an array with fixed length. */
+function plainTuples(n: unknown): void {
+  if (Array.isArray(n)) return n.forEach(plainTuples);
+  if (!n || typeof n !== 'object') return;
+  const o = n as Json;
+  if (Array.isArray(o.prefixItems)) {
+    const items = o.prefixItems as Json[];
+    const same = items.every((x) => JSON.stringify(x) === JSON.stringify(items[0]));
+    o.items = same ? items[0] : { anyOf: items };
+    delete o.prefixItems;
+  }
+  for (const v of Object.values(o)) plainTuples(v);
 }
 
 function flattenUnion(variants: Json[]): Json {
