@@ -1,11 +1,11 @@
 <script lang="ts">
   import { app } from '../../app.svelte.ts';
-  import { bridge } from '../../bridge.svelte.ts';
+  import { server } from '../../server.svelte.ts';
   import Section from './Section.svelte';
 
   const diag = $derived.by(() => {
     void app.settings;
-    void bridge.status;
+    void server.status;
     return app.diagnostics();
   });
 </script>
@@ -17,11 +17,11 @@
     <dt>App build</dt><dd>{diag.build}</dd>
     <dt>Chat provider</dt><dd>{diag.provider}</dd>
     <dt>Storage</dt><dd class:bad={diag.storage !== 'ok'}>{diag.storage}{diag.persistent === true ? ' · persistent' : ' · best-effort'}</dd>
-    <dt>Bridge</dt><dd>{bridge.status}{bridge.port ? ` · port ${bridge.port}` : ''}{bridge.error ? ` · ${bridge.error}` : ''}</dd>
-    <dt>Claude Code</dt><dd>{bridge.chat ? (bridge.chat.available ? `available (${bridge.chat.version})` : `unavailable: ${bridge.chat.reason}`) : 'unknown (not connected)'}</dd>
+    <dt>Local server</dt><dd>{server.status}{server.port ? ` · port ${server.port}` : ''}{server.error ? ` · ${server.error}` : ''}</dd>
+    <dt>Claude Code</dt><dd>{server.chat ? (server.chat.available ? `available (${server.chat.version})` : `unavailable: ${server.chat.reason}`) : 'unknown (not connected)'}</dd>
     <dt>Browser</dt><dd class="ua">{diag.userAgent}</dd>
   </dl>
-  <p class="hint">The bridge logs what each tab reports to <code>~/.tracewise/bridge.log</code>.</p>
+  <p class="hint">The server logs what each tab reports to <code>~/.tracewise/server.log</code>.</p>
 </Section>
 
 <style>

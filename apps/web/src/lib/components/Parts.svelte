@@ -713,7 +713,7 @@
           {#if ingest.reply}<p class="reply">{ingest.reply}</p>{/if}
         {:else}
           {#if !ingest.available}
-            <p class="notice">The import runs on your local Claude Code. Pair the bridge in <button class="link" onclick={() => (app.view = 'set')}>Settings</button> first.</p>
+            <p class="notice">The import runs on your local Claude Code. Start the local server and connect it in <button class="link" onclick={() => (app.view = 'set')}>Settings</button> first.</p>
           {/if}
           <form class="form" onsubmit={(e) => (e.preventDefault(), startImport())}>
             <label>Part number <span class="muted">(full ordering code: it selects the package)</span>

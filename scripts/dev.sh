@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Development: the app from source with hot reload (Vite) on localhost:5173, plus the local bridge
+# Development: the app from source with hot reload (Vite) on localhost:5173, plus the local server
 # from source (restarts when its code changes), in one terminal. Ctrl-C stops both.
 #
 # Projects live in the browser's IndexedDB, per origin (host + port). Every checkout or worktree
@@ -31,13 +31,13 @@ if [ -n "$pid" ]; then
 fi
 
 echo "Serving $here on http://localhost:$PORT"
-# vite and the bridge run directly (not through npm), so stopping this script stops them
+# vite and the server run directly (not through npm), so stopping this script stops them
 (cd apps/web && exec ../../node_modules/.bin/vite --port "$PORT" --strictPort) &
 vite=$!
-bridge=
-trap 'kill $vite $bridge 2>/dev/null' EXIT
+server=
+trap 'kill $vite $server 2>/dev/null' EXIT
 trap 'exit 130' INT TERM
-# its pairing link opens the dev server
-TRACEWISE_APP_URL="http://localhost:$PORT" node --watch tools/bridge/src/main.ts --serve &
-bridge=$!
+# its app link opens the dev server
+TRACEWISE_APP_URL="http://localhost:$PORT" node --watch tools/server/src/main.ts --serve &
+server=$!
 wait "$vite"

@@ -2,13 +2,13 @@
   import AboutSection from './settings/AboutSection.svelte';
   import AgentSection from './settings/AgentSection.svelte';
   import AppearanceSection from './settings/AppearanceSection.svelte';
-  import BridgeSection from './settings/BridgeSection.svelte';
+  import ServerSection from './settings/ServerSection.svelte';
   import ProjectSection from './settings/ProjectSection.svelte';
   import ProviderSection from './settings/ProviderSection.svelte';
 
   const nav = [
     { id: 'provider', label: 'Chat provider' },
-    { id: 'bridge', label: 'Local bridge' },
+    { id: 'server', label: 'Local server' },
     { id: 'agent', label: 'Agent' },
     { id: 'appearance', label: 'Appearance' },
     { id: 'project', label: 'Project' },
@@ -28,7 +28,7 @@
   </nav>
   <div class="col" bind:this={scroller}>
     <ProviderSection />
-    <BridgeSection />
+    <ServerSection />
     <AgentSection />
     <AppearanceSection />
     <ProjectSection />

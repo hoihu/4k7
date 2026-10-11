@@ -7,8 +7,8 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/,
 const pkg = process.env.TW_PKG ?? 'github:hoihu/tracewise';
 
 /**
- * A production build is the packaged app, served by the bridge (`npx tracewise`): no sourcemaps
- * (smaller package). The dev server runs the bridge from this checkout instead.
+ * A production build is the packaged app, served by the local server (`npx tracewise`): no sourcemaps
+ * (smaller package). In development the local server runs from this checkout instead.
  */
 export default defineConfig(({ command }) => {
   const packaged = command === 'build';
@@ -18,10 +18,10 @@ export default defineConfig(({ command }) => {
     // shown in Settings so the Claude Code setup command can be copied as-is
     define: {
       __PACKAGED__: JSON.stringify(packaged),
-      // the command that runs the bridge for the app's chat, and the one Claude Code starts as MCP server
-      __BRIDGE_RUN__: JSON.stringify(packaged ? `npx -y ${pkg}` : 'npm run bridge'),
-      __BRIDGE_MCP__: JSON.stringify(packaged ? `npx -y ${pkg} mcp` : `node ${repoRoot}/tools/bridge/src/main.ts`),
-      // identifies which app build a tab runs (shown in diagnostics and the bridge log)
+      // the command that runs the server for the app's chat, and the one Claude Code starts as MCP server
+      __SERVER_RUN__: JSON.stringify(packaged ? `npx -y ${pkg}` : 'npm run server'),
+      __SERVER_MCP__: JSON.stringify(packaged ? `npx -y ${pkg} mcp` : `node ${repoRoot}/tools/server/src/main.ts`),
+      // identifies which app build a tab runs (shown in diagnostics and the server log)
       __BUILD_ID__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')),
     },
     build: { target: 'es2022', sourcemap: !packaged },

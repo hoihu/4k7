@@ -15,7 +15,7 @@ export interface AgentOptions {
   maxSteps?: number;
   /** Verification rounds before giving up and reporting remaining errors. */
   fixBudget?: number;
-  /** Runs the tools (the app's executor, shared with the bridge). Default: the kernel tools only. */
+  /** Runs the tools (the app's executor, shared with the server). Default: the kernel tools only. */
   exec?: ToolExecutor;
 }
 

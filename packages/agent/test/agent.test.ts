@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Kernel } from '@tracewise/kernel';
-import { BRIDGE_INSTRUCTIONS, DESIGN_GUIDE, agentTools } from '@tracewise/schema';
+import { MCP_INSTRUCTIONS, DESIGN_GUIDE, agentTools } from '@tracewise/schema';
 import { Agent, DEMO_FALLBACK, DEMO_SCRIPTS, SYSTEM_PROMPT, ScriptedProvider, runCalc, nearestE, type AgentEvent, type KernelPort, type Script } from '../src/index.ts';
 
 function port(k: Kernel): KernelPort {
@@ -114,7 +114,7 @@ describe('one agent, two engines', () => {
     expect(names('chat')).toEqual(['get_context', ...design, 'propose']);
     expect(names('cli')).toEqual(['get_context', ...design, 'propose', 'wait_for_review']);
     expect(SYSTEM_PROMPT).toContain(DESIGN_GUIDE);
-    expect(BRIDGE_INSTRUCTIONS).toContain(DESIGN_GUIDE);
+    expect(MCP_INSTRUCTIONS).toContain(DESIGN_GUIDE);
   });
 
   it('runs tools through the executor it is given, pictures included', async () => {

@@ -91,7 +91,7 @@ The existing propose / verify / commit loop is unchanged ([ai-loop.md](ai-loop.m
   change does not improve at least one number and worsen none, the run reports "no improvement".
 - **Review.** Proposed through the normal changeset card. Nothing outside the scope is in the diff
   (section 3).
-- **Providers.** Works with both the in-app agent and Claude Code through the bridge, because the
+- **Providers.** Works with both the in-app agent and Claude Code through the local server, because the
   scope travels in the same context channel as the selection, and enforcement is in the kernel.
 
 ## 5. Edge cases

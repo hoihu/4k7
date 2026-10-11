@@ -1,60 +1,60 @@
 /**
- * MCP server side: lists the Tracewise tools and forwards calls through the bridge.
+ * MCP server side: lists the Tracewise tools and forwards calls through the server.
  */
 import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { BRIDGE_INSTRUCTIONS, agentTools, ingestTools } from '@tracewise/schema';
-import type { Bridge, HttpHandler } from './bridge.ts';
+import { MCP_INSTRUCTIONS, agentTools, ingestTools } from '@tracewise/schema';
+import type { LocalServer, HttpHandler } from './server.ts';
 
 export const VERSION = '0.1.0';
 
-/** Server instructions for the runs the bridge starts itself; their real prompt is in the system prompt. */
+/** Server instructions for the runs the server starts itself; their real prompt is in the system prompt. */
 const RUN_INSTRUCTIONS = 'Tracewise tools. How to use them is in your system prompt.';
 
 /** 'cli': Claude Code CLI drives the app; 'chat': it answers the app's chat; 'ingest': it imports a datasheet. */
 export type McpMode = 'cli' | 'chat' | 'ingest';
 
-export function createMcpServer(bridge: Bridge, opts: { mode?: McpMode } = {}): Server {
+export function createMcpServer(server: LocalServer, opts: { mode?: McpMode } = {}): Server {
   const mode = opts.mode ?? 'cli';
-  const server = new Server(
+  const mcp = new Server(
     { name: 'tracewise', version: VERSION },
-    // chat and ingest runs are started by this bridge, which appends their prompt to the system prompt
+    // chat and ingest runs are started by this server, which appends their prompt to the system prompt
     // (chat.ts); repeating it here would send it twice with every message
-    { capabilities: { tools: {} }, instructions: mode === 'cli' ? BRIDGE_INSTRUCTIONS : RUN_INSTRUCTIONS },
+    { capabilities: { tools: {} }, instructions: mode === 'cli' ? MCP_INSTRUCTIONS : RUN_INSTRUCTIONS },
   );
   const tools = mode === 'ingest' ? ingestTools() : agentTools(mode);
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema as { type: 'object' } })),
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const name = req.params.name;
     if (!tools.some((t) => t.name === name)) {
       return { isError: true, content: [{ type: 'text' as const, text: `Unknown tool ${name}` }] };
     }
-    const r = await bridge.call(name, req.params.arguments ?? {});
+    const r = await server.call(name, req.params.arguments ?? {});
     return { isError: r.isError, content: r.content };
   });
 
   if (mode === 'cli') {
-    server.oninitialized = () => {
-      const client = server.getClientVersion();
-      bridge.setAgent(client ? prettyAgent(client.name) : null);
+    mcp.oninitialized = () => {
+      const client = mcp.getClientVersion();
+      server.setAgent(client ? prettyAgent(client.name) : null);
     };
   }
-  return server;
+  return mcp;
 }
 
 /**
- * Streamable-HTTP MCP endpoint (/mcp) for the headless Claude Code the bridge starts for the
+ * Streamable-HTTP MCP endpoint (/mcp) for the headless Claude Code the server starts for the
  * app's chat. Stateless: one server + transport per request. Only requests carrying a token
  * issued to a running chat process are accepted; browsers (any Origin header) are refused.
  */
-export function mcpHttpHandler(bridge: Bridge, modeForToken: (token: string) => McpMode | null): HttpHandler {
+export function mcpHttpHandler(server: LocalServer, modeForToken: (token: string) => McpMode | null): HttpHandler {
   return async (req: IncomingMessage, res: ServerResponse) => {
     if ((req.url ?? '').split('?')[0] !== '/mcp') {
       res.writeHead(404).end();
@@ -75,18 +75,18 @@ export function mcpHttpHandler(bridge: Bridge, modeForToken: (token: string) => 
       return;
     }
     const body = await readJson(req);
-    const server = createMcpServer(bridge, { mode });
+    const mcp = createMcpServer(server, { mode });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => {
       void transport.close();
-      void server.close();
+      void mcp.close();
     });
-    await server.connect(transport);
+    await mcp.connect(transport);
     await transport.handleRequest(req, res, body);
   };
 }
 
-export function tokenMatches(a: string, b: string): boolean {
+export function secretsMatch(a: string, b: string): boolean {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);

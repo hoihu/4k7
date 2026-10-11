@@ -1,11 +1,11 @@
 {
-  "name": "@tracewise/bridge",
+  "name": "@tracewise/server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Local relay: exposes the Tracewise op catalogue as an MCP server and forwards calls to the open browser tab",
   "bin": {
-    "tracewise-bridge": "./src/main.ts"
+    "tracewise-server": "./src/main.ts"
   },
   "exports": {
     ".": "./src/index.ts"
