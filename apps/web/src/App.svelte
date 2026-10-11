@@ -24,6 +24,14 @@
 
   let pane = $state<'chat' | 'canvas' | 'insp'>('canvas');
 
+  // the update banner, once dismissed, stays away for that version
+  let updateDismissed = $state(sessionStorage.getItem('4k7.update.dismissed'));
+  const update = $derived(server.update && server.update.version !== updateDismissed ? server.update : null);
+  function dismissUpdate() {
+    updateDismissed = server.update?.version ?? null;
+    if (updateDismissed) sessionStorage.setItem('4k7.update.dismissed', updateDismissed);
+  }
+
   function print() {
     if (app.k) void printSchematic(app.k.view, app.k.summary.name);
   }
@@ -213,6 +221,12 @@
     {/if}
   </main>
   {#if app.toast}<div class="toast" role="status">{app.toast}</div>{/if}
+  {#if update}
+    <div class="update" role="status">
+      Version {update.version} is available. <a href={update.url} target="_blank" rel="noopener">Download</a>
+      <button class="ib" onclick={dismissUpdate} aria-label="Dismiss">×</button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -257,6 +271,8 @@
   .blank p { max-width: 360px; text-align: center; color: var(--txt-3); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
   .status { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; display: flex; align-items: center; gap: 12px; padding: 0 10px; font-size: 11.5px; color: var(--txt-3); background: color-mix(in srgb, var(--canvas) 85%, transparent); border-top: 1px solid var(--line); z-index: 2; white-space: nowrap; overflow: hidden; }
   .status .sp { margin-left: auto; }
+  .update { position: fixed; top: 48px; right: 12px; display: flex; align-items: center; gap: 8px; background: var(--panel); color: var(--txt); border: 1px solid var(--line); padding: 5px 6px 5px 10px; border-radius: 8px; font-size: 12px; z-index: 50; box-shadow: var(--shadow); }
+  .update a { color: var(--accent); font-weight: 600; }
   .toast { position: fixed; bottom: 34px; left: 50%; transform: translateX(-50%); background: var(--txt); color: var(--bg); padding: 6px 12px; border-radius: 8px; font-size: 12px; z-index: 50; box-shadow: var(--shadow); max-width: calc(100vw - 32px); }
   .mobnav { display: none; }
 

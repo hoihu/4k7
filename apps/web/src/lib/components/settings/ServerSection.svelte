@@ -62,9 +62,13 @@
     <div class="ways">
       <div class="way">
         <b>Chat in this app</b>
-        <p>Start the server in a terminal and open the link it prints. Then choose <a href="#provider">Claude Code</a> as chat provider.</p>
-        <div class="cmd"><code>{serverRun}</code></div>
-        {#if where}<p class="muted">Run it in this repository.</p>{/if}
+        {#if __APP_RUN__}
+          <p>Open {serverRun}: it starts the server and opens this page connected to it. Then choose <a href="#provider">Claude Code</a> as chat provider.</p>
+        {:else}
+          <p>Start the server in a terminal and open the link it prints. Then choose <a href="#provider">Claude Code</a> as chat provider.</p>
+          <div class="cmd"><code>{serverRun}</code></div>
+          {#if where}<p class="muted">Run it in this repository.</p>{/if}
+        {/if}
       </div>
       <div class="way">
         <b>Drive this tab from the Claude Code CLI</b>

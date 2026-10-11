@@ -19,6 +19,7 @@ import {
   type ServerToTab,
   type ChatCapability,
   type TabToServer,
+  type UpdateInfo,
 } from '@4k7/schema';
 
 export interface CallResult {
@@ -35,6 +36,8 @@ export interface LocalServerOptions {
   appUrl?: string;
   /** More localhost ports whose pages may connect (the dev server of a checkout). */
   devPorts?: readonly number[];
+  /** Called when a tab connects (true) or the connected tab goes away (false). */
+  onTab?: (connected: boolean) => void;
   log?: (msg: string) => void;
 }
 
@@ -57,6 +60,7 @@ export class LocalServer {
   #httpHandler: HttpHandler | null = null;
   #chatHandler: ((msg: ChatMessage) => void) | null = null;
   #chat: ChatCapability = { available: false, reason: 'chat not enabled' };
+  #update: UpdateInfo | null = null;
   #pending = new Map<number, Pending>();
   #seq = 0;
   #agent: string | null = null;
@@ -106,6 +110,12 @@ export class LocalServer {
 
   get chatCapability(): ChatCapability {
     return this.#chat;
+  }
+
+  /** A newer release is available: told to the connected tab now and to every tab that connects later. */
+  setUpdate(update: UpdateInfo) {
+    this.#update = update;
+    this.#send({ type: 'update', update });
   }
 
   /** Send a message to the connected tab (no-op when none is connected). */
@@ -227,9 +237,13 @@ export class LocalServer {
           return;
         }
         accepted = true;
+        const first = this.#tab === null;
         if (this.#tab && this.#tab !== ws) this.#tab.close(4000, 'replaced by another tab');
         this.#tab = ws;
-        ws.send(JSON.stringify({ type: 'welcome', protocol: SERVER_PROTOCOL, agent: this.#agent ?? 'Claude Code', chat: this.#chat } satisfies ServerToTab));
+        ws.send(
+          JSON.stringify({ type: 'welcome', protocol: SERVER_PROTOCOL, agent: this.#agent ?? 'Claude Code', chat: this.#chat, ...(this.#update ? { update: this.#update } : {}) } satisfies ServerToTab),
+        );
+        if (first) this.#opts.onTab?.(true);
         const i = msg.info;
         this.#log(
           `tab connected (${msg.client}, origin ${origin})` +
@@ -256,6 +270,7 @@ export class LocalServer {
       if (this.#tab !== ws) return;
       this.#tab = null;
       this.#log('tab disconnected');
+      this.#opts.onTab?.(false);
       for (const [id, p] of this.#pending) {
         clearTimeout(p.timer);
         p.resolve(errorResult('The app disconnected before answering.'));

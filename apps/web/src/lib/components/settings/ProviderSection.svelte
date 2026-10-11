@@ -56,7 +56,7 @@
         <div class="hint">{server.chat?.reason ?? 'This server is too old for the app chat. Restart it.'}</div>
       {:else}
         <span class="tag warn">not connected</span>
-        <div class="hint">Run <code>{serverRun}</code>{where} and open the link it prints (see <a href="#server">Local server</a>).</div>
+        <div class="hint">{#if __APP_RUN__}Open {serverRun} again{:else}Run <code>{serverRun}</code>{where} and open the link it prints{/if} (see <a href="#server">Local server</a>).</div>
       {/if}
     </Field>
     <Field label="Model">

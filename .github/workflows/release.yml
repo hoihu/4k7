@@ -1,17 +1,50 @@
-# Publishes the package to npm when a version tag (v0.1.0) is pushed. Inert until the release:
-# "private": true in package.json makes npm refuse to publish, and npm must trust this workflow
-# (npmjs.com → package settings → Trusted publishing: hoihu/4k7, release.yml). See docs/distribution.md.
+# When a version tag (v0.1.0) is pushed: builds the downloadable app (scripts/bundle.mjs) and attaches
+# it to a GitHub release, which 4k7.dev links to (…/releases/latest/download/<file>). See docs/distribution.md.
+#
+# The npm job is inert until the package is published: "private": true in package.json makes npm refuse
+# to publish, and npm must trust this workflow (npmjs.com → package settings → Trusted publishing:
+# hoihu/4k7, release.yml).
 name: Release
 on:
   push:
     tags: ['v*']
 
 permissions:
-  contents: read
+  contents: write # the release and its files
   id-token: write # npm trusted publishing and provenance
 
 jobs:
+  bundles:
+    # macOS for hdiutil (the DMGs); the Linux archives are built on the same run
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: The tag matches the version in package.json
+        run: |
+          v="$(node -p 'require("./package.json").version')"
+          [ "$GITHUB_REF_NAME" = "v$v" ] || { echo "tag $GITHUB_REF_NAME, package.json $v"; exit 1; }
+      - run: npm run typecheck
+      - run: npm test
+      - run: node scripts/bundle.mjs
+      - name: Attach to the release (created here if the tag has none; pre-releases are marked)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files="build/4k7-macos-arm64.dmg build/4k7-macos-x64.dmg build/4k7-linux-x64.tar.gz build/4k7-linux-arm64.tar.gz"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload --clobber "$GITHUB_REF_NAME" $files
+          else
+            case "$GITHUB_REF_NAME" in *-*) pre=--prerelease;; *) pre=;; esac
+            gh release create "$GITHUB_REF_NAME" --generate-notes $pre $files
+          fi
+
   publish:
+    if: false # not published to npm yet; see docs/distribution.md
     runs-on: ubuntu-latest
     environment: npm
     steps:

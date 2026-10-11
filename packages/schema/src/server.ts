@@ -62,6 +62,12 @@ export interface ChatCapability {
   reason?: string;
 }
 
+/** A newer release of the app than the one the server runs, and where to get it. */
+export interface UpdateInfo {
+  version: string;
+  url: string;
+}
+
 export type ChatEvent =
   | { kind: 'status'; text: string }
   /** Datasheet import: which extraction pass is running (a second, independent pass cross-checks the first). */
@@ -85,8 +91,10 @@ export interface TokenCount {
 }
 
 export type ServerToTab =
-  | { type: 'welcome'; protocol: number; agent: string; chat: ChatCapability }
+  | { type: 'welcome'; protocol: number; agent: string; chat: ChatCapability; update?: UpdateInfo }
   | { type: 'denied'; reason: string }
+  /** A newer release was found after the tab connected. */
+  | { type: 'update'; update: UpdateInfo }
   | { type: 'call'; id: number; tool: string; input: unknown }
   | { type: 'agent'; name: string | null }
   | { type: 'chat_event'; id: string; event: ChatEvent };

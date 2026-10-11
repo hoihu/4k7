@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "AI-first PCB schematic and layout tool, run locally: npx github:hoihu/4k7",
+  "description": "AI-first PCB schematic and layout tool, run locally: download from 4k7.dev or npx github:hoihu/4k7",
   "keywords": [
     "pcb",
     "schematic",
@@ -16,7 +16,7 @@
   ],
   "license": "MIT",
   "author": "Martin Fischer",
-  "homepage": "https://github.com/hoihu/4k7#readme",
+  "homepage": "https://4k7.dev",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hoihu/4k7.git"
