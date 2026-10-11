@@ -1,0 +1,4 @@
+# Not uploaded to Cloudflare (same syntax as .gitignore)
+wrangler.jsonc
+.assetsignore
+README.md

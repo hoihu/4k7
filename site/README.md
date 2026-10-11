@@ -2,10 +2,16 @@
 
 The landing page and brand assets. Plain HTML, no build step.
 
-## Deploy (Cloudflare Pages)
+## Deploy (Cloudflare Workers)
 
-Upload this `site/` folder as the project's assets (Workers & Pages → Create → Pages → Upload assets),
-or point Pages at the repo with build output directory `site`. Custom domain: `4k7.dev`.
+Deployed automatically by Cloudflare Workers Builds: Workers & Pages → Create → Import a repository →
+`hoihu/4k7`, project name `4k7`, no build command, deploy command `npx wrangler deploy`, and under
+Advanced settings the **root directory** `site`. Every push to `main` then redeploys; other branches
+get preview URLs. `wrangler.jsonc` here names the Worker and marks this folder as its static assets
+(`.assetsignore` keeps this README and the config out of the upload). Custom domain `4k7.dev`: Worker →
+Settings → Domains & Routes.
+
+By hand: `cd site && npx wrangler deploy` (after `npx wrangler login`).
 
 ## Files
 
