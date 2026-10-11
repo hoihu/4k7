@@ -108,12 +108,17 @@ constraints) + `prompt.md` + optional reference sub-circuit (`.twd` fragment). E
 Claude Code ──MCP stdio──▶ tracewise-bridge (Node, 127.0.0.1:7777–7781) ──WebSocket──▶ browser tab (kernel + UI)
 ```
 
+The bridge also serves the built app on its port, so `npx github:hoihu/tracewise` is the whole app: the page comes from
+`http://localhost:7777` and talks to the bridge on its own origin (no website reaching into the computer, which Chrome
+gates behind a permission and Safari blocks).
+
 ```sh
 claude mcp add --scope user tracewise -- node <repo>/tools/bridge/src/main.ts
 ```
 
-- **Pairing**: a 6-digit code is created once and kept in `~/.tracewise/bridge.json`. If the tab is not connected, every tool
-  answers with the code and asks the agent to tell the user, who enters it under Settings → Local bridge. The tab
+- **Pairing**: a 6-digit code is created once and kept in `~/.tracewise/bridge.json`. The pairing link
+  (`http://localhost:7777/#pair=<code>@<port>`) pairs the tab with that bridge in one click; `npx tracewise` opens it. If the
+  tab is not connected, every tool answers with the link and the code, which the user can also enter under Settings → Local bridge. The tab
   remembers the code and reconnects by itself when Claude Code restarts.
 - **Security**: loopback only; WebSocket connections from non-localhost origins are closed before pairing (so a website
   cannot reach the bridge); no call is forwarded before the code matches; one paired tab at a time.

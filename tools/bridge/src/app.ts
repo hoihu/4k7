@@ -1,0 +1,105 @@
+/**
+ * Serves the built web app from the bridge's port, so `npx tracewise` is the whole app: the page
+ * and the bridge share an origin on 127.0.0.1 (no website reaching into the computer, which
+ * browsers restrict). Static files only; designs stay in the browser's storage.
+ */
+import { createReadStream, statSync } from 'node:fs';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { extname, join, normalize, sep } from 'node:path';
+import type { HttpHandler } from './bridge.ts';
+
+/** Answers on every bridge, so a second one can tell that a port already serves Tracewise. */
+export const PROBE_PATH = '/tracewise-bridge.json';
+
+const TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.wasm': 'application/wasm',
+  '.bcmap': 'application/octet-stream',
+  '.pfb': 'application/octet-stream',
+  '.ttf': 'font/ttf',
+};
+
+/** Host headers the app answers to (a page at another name that resolves here is a DNS-rebinding attempt). */
+const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+
+export function appHandler(dir: string | null, version: string): HttpHandler {
+  return (req: IncomingMessage, res: ServerResponse) => {
+    if (!LOCAL_HOST.test(req.headers.host ?? '')) {
+      res.writeHead(421).end('wrong host');
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { allow: 'GET, HEAD' }).end();
+      return;
+    }
+    let path: string;
+    try {
+      path = decodeURIComponent((req.url ?? '/').split('?')[0]!);
+    } catch {
+      res.writeHead(400).end();
+      return;
+    }
+    if (path === PROBE_PATH) {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify({ name: 'tracewise-bridge', version }));
+      return;
+    }
+    if (!dir) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('The app is not built yet. Run `npm run build` in the repository, then reload.');
+      return;
+    }
+    const file = normalize(join(dir, path === '/' ? 'index.html' : path));
+    if (file !== dir && !file.startsWith(dir.endsWith(sep) ? dir : dir + sep)) {
+      res.writeHead(403).end();
+      return;
+    }
+    let size: number;
+    try {
+      const st = statSync(file);
+      if (!st.isFile()) throw new Error('not a file');
+      size = st.size;
+    } catch {
+      res.writeHead(404).end();
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
+      'content-length': size,
+      // hashed build files never change; everything else is checked on every load
+      'cache-control': path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'strict-origin-when-cross-origin',
+      'x-frame-options': 'DENY',
+    });
+    if (req.method === 'HEAD') res.end();
+    else createReadStream(file).pipe(res);
+  };
+}
+
+/** Whether a Tracewise bridge serves the app on this port (another one started first). */
+export async function servesTracewise(port: number): Promise<boolean> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}${PROBE_PATH}`, { signal: AbortSignal.timeout(800) });
+    return r.ok && ((await r.json()) as { name?: string }).name === 'tracewise-bridge';
+  } catch {
+    return false;
+  }
+}
+
+/** Whether something answers on this URL (the Vite dev server of a checkout). */
+export async function reachable(url: string): Promise<boolean> {
+  try {
+    await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(800) });
+    return true;
+  } catch {
+    return false;
+  }
+}

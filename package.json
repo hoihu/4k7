@@ -2,23 +2,43 @@
   "name": "tracewise",
   "private": true,
   "type": "module",
+  "description": "AI-first PCB schematic and layout tool, run locally: npx github:hoihu/tracewise",
+  "bin": {
+    "tracewise": "dist/tracewise.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
   "workspaces": [
     "packages/*",
     "tools/*",
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run dev -w @tracewise/web",
-    "dev:here": "scripts/dev-here.sh",
+    "dev": "scripts/dev.sh",
+    "dev:here": "scripts/dev.sh",
+    "dev:web": "npm run dev -w @tracewise/web",
     "build": "npm run build -w @tracewise/web",
+    "package": "npm run build && node scripts/package.mjs",
+    "start": "npm run package && node dist/tracewise.js",
+    "prepare": "npm run package",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && npm run check -w @tracewise/web",
     "bridge": "node --watch tools/bridge/src/main.ts --serve"
   },
   "devDependencies": {
+    "rolldown": "^1.2.11",
     "typescript": "^5.9.3",
     "vite": "^8.3.1",
     "vitest": "^5.0.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "pdfjs-dist": "^6.3.289",
+    "ws": "^8.21.3"
   }
 }

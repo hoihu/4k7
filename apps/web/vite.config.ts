@@ -3,27 +3,27 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
-const bridgePkg = process.env.TW_BRIDGE_PKG ?? 'tracewise-bridge';
+/** How people run the packaged app (installed from the private repository, not the npm registry). */
+const pkg = process.env.TW_PKG ?? 'github:hoihu/tracewise';
 
 /**
- * Every production build is a hosted one (whatever the host sets): no sourcemaps (the source
- * stays private) and the bridge started from npm. The dev server, or a build with TW_LOCAL=1,
- * runs the bridge from this checkout instead.
+ * A production build is the packaged app, served by the bridge (`npx tracewise`): no sourcemaps
+ * (smaller package). The dev server runs the bridge from this checkout instead.
  */
 export default defineConfig(({ command }) => {
-  const hosted = command === 'build' && process.env.TW_LOCAL !== '1';
+  const packaged = command === 'build';
   return {
     plugins: [svelte()],
     worker: { format: 'es' },
     // shown in Settings so the Claude Code setup command can be copied as-is
     define: {
-      __HOSTED__: JSON.stringify(hosted),
+      __PACKAGED__: JSON.stringify(packaged),
       // the command that runs the bridge for the app's chat, and the one Claude Code starts as MCP server
-      __BRIDGE_RUN__: JSON.stringify(hosted ? `npx -y ${bridgePkg} --serve` : 'npm run bridge'),
-      __BRIDGE_MCP__: JSON.stringify(hosted ? `npx -y ${bridgePkg}` : `node ${repoRoot}/tools/bridge/src/main.ts`),
+      __BRIDGE_RUN__: JSON.stringify(packaged ? `npx -y ${pkg}` : 'npm run bridge'),
+      __BRIDGE_MCP__: JSON.stringify(packaged ? `npx -y ${pkg} mcp` : `node ${repoRoot}/tools/bridge/src/main.ts`),
       // identifies which app build a tab runs (shown in diagnostics and the bridge log)
       __BUILD_ID__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')),
     },
-    build: { target: 'es2022', sourcemap: !hosted },
+    build: { target: 'es2022', sourcemap: !packaged },
   };
 });

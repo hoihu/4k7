@@ -11,7 +11,7 @@
   let saved = $state(false);
 
   const bridgeRun = __BRIDGE_RUN__;
-  const where = __HOSTED__ ? '' : ' (in this repository)';
+  const where = __PACKAGED__ ? '' : ' (in this repository)';
 
   const choices: { id: Settings['provider']; name: string; blurb: string }[] = [
     { id: 'claude-code', name: 'Claude Code', blurb: 'On this computer, with your plan. Needs the local bridge.' },
