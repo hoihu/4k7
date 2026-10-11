@@ -63,7 +63,21 @@ npx -y github:hoihu/4k7 mcp                        # or, from a checkout (Node 2
 node /absolute/path/to/this/repo/tools/server/src/main.ts
 ```
 
-- **Claude Code**: `claude mcp add --scope user 4k7 -- npx -y github:hoihu/4k7 mcp`, or start `claude` in this repository and approve the `4k7` server from `.mcp.json`.
+- **Claude Code**: register the server once for all projects (`--scope user`), then check it in the session:
+
+  ```sh
+  claude mcp add --scope user 4k7 -- npx -y github:hoihu/4k7 mcp   # from the GitHub package, or
+  claude mcp add --scope user 4k7 -- node /absolute/path/to/this/repo/tools/server/src/main.ts
+  claude mcp list                                                   # 4k7: ... - ✓ Connected
+  ```
+
+  In a checkout, starting `claude` in the repository offers the `4k7` server from `.mcp.json` instead (approve it
+  when asked; it runs `node tools/server/src/main.ts` relative to the repository, so start `claude` at its root).
+  Then, in the session, `/mcp` shows the server as connected, and *“connect to 4k7”* answers with the link.
+  If `/mcp` says *failed* or *connection closed*: `node --version` must be 22.18 or newer in the shell Claude Code
+  uses (the server is TypeScript run directly), and `~/.4k7/server.log` has the server's own error. In a checkout
+  the link only loads once the app is built (`npm run build`). Running `claude` with a different config directory
+  (`CLAUDE_CONFIG_DIR`) means a different user scope: register the server there too.
 - **GitHub Copilot in VS Code** (agent mode): put this in `.vscode/mcp.json` of the workspace, or run *MCP: Add Server*
   from the command palette for all workspaces. Then *MCP: List Servers → 4k7 → Start*, and tick the 4k7 tools in the
   chat's tool picker.
