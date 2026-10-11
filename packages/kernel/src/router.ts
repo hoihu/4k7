@@ -674,6 +674,9 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       if ((expanded & 4095) === 0 && now() > deadline) break;
       const l = Math.floor(s / N);
       const i = s % N;
+      // copper of the net where this width does not fit (a goal: thinner copper, e.g. a drop to a
+      // pour): a way may end there, not run on along it (its copper would reach beyond the thin one)
+      if (from[s]! >= 0 && ownCopper[s] !== net && maps[k]![l]![i] !== 0 && maps[k]![l]![i] !== net) continue;
       const x = i % W;
       const y = (i - x) / W;
       const base = cost[s]!;
