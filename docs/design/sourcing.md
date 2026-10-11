@@ -3,7 +3,7 @@
 > Part of the [architecture](../ARCHITECTURE.md). Status: first slice implemented (2026-10-02).
 
 JLCPCB assembles boards from its own stock, identified by **LCSC part numbers** (`C25804`). The
-catalogue has hundreds of thousands of parts, so Tracewise never imports it. Parts are fetched
+catalogue has hundreds of thousands of parts, so 4k7 never imports it. Parts are fetched
 **on demand**, and two kinds of parts are treated differently:
 
 | Kind | What happens | Why |

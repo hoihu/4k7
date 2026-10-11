@@ -1,5 +1,5 @@
 /**
- * Serves the built web app from the server's port, so `npx tracewise` is the whole app: the page
+ * Serves the built web app from the server's port, so `npx 4k7pcb` is the whole app: the page
  * and the server share an origin on 127.0.0.1 (no website reaching into the computer, which
  * browsers restrict). Static files only; designs stay in the browser's storage.
  *
@@ -10,12 +10,12 @@
 import { createReadStream, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
-import { SERVER_ACCESS_KEY } from '@tracewise/schema';
+import { SERVER_ACCESS_KEY } from '@4k7/schema';
 import type { HttpHandler } from './server.ts';
 import { secretsMatch } from './mcp.ts';
 
-/** Answers on every server, so a second one can tell that a port already serves Tracewise. */
-export const PROBE_PATH = '/tracewise-server.json';
+/** Answers on every server, so a second one can tell that a port already serves 4k7. */
+export const PROBE_PATH = '/4k7-server.json';
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -55,7 +55,7 @@ export function appHandler(dir: string | null, version: string, accessKey: strin
       return;
     }
     if (path === PROBE_PATH) {
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify({ name: 'tracewise-server', version }));
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify({ name: '4k7-server', version }));
       return;
     }
     if (!dir) {
@@ -98,19 +98,19 @@ export function appHandler(dir: string | null, version: string, accessKey: strin
   };
 }
 
-const NO_KEY_PAGE = `<!doctype html><meta charset="utf-8"><title>Tracewise</title>
+const NO_KEY_PAGE = `<!doctype html><meta charset="utf-8"><title>4k7</title>
 <body style="font:15px system-ui,sans-serif;max-width:34em;margin:4em auto;padding:0 1em;color:#ddd;background:#14161a">
-<h1 style="font-size:20px">Open Tracewise with its link</h1>
+<h1 style="font-size:20px">Open 4k7 with its link</h1>
 <p>The app's address includes an access key: <code>http://localhost:7777/&lt;key&gt;</code>. Use the link the
-<code>tracewise</code> command opened or printed (running it again opens it), or the one Claude Code gave you.</p>
-<p style="color:#999">The key is also in <code>~/.tracewise/server.json</code> (<code>"accessKey"</code>).</p>
+<code>4k7</code> command opened or printed (running it again opens it), or the one Claude Code gave you.</p>
+<p style="color:#999">The key is also in <code>~/.4k7/server.json</code> (<code>"accessKey"</code>).</p>
 </body>`;
 
-/** Whether a Tracewise server serves the app on this port (another one started first). */
-export async function servesTracewise(port: number): Promise<boolean> {
+/** Whether a 4k7 server serves the app on this port (another one started first). */
+export async function serves4k7(port: number): Promise<boolean> {
   try {
     const r = await fetch(`http://127.0.0.1:${port}${PROBE_PATH}`, { signal: AbortSignal.timeout(800) });
-    return r.ok && ((await r.json()) as { name?: string }).name === 'tracewise-server';
+    return r.ok && ((await r.json()) as { name?: string }).name === '4k7-server';
   } catch {
     return false;
   }

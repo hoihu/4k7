@@ -3,9 +3,9 @@
  * Hosts the design kernel off the main thread. Every call is a plain method name +
  * structured-cloneable arguments; the Rust/WASM kernel will slot in behind the same RPC.
  */
-import { Kernel, registerArtwork, unregisterArtwork } from '@tracewise/kernel';
-import { registerUserParts, unregisterUserPart } from '@tracewise/parts';
-import type { Artwork, Design, OptimizeScope, PartCard } from '@tracewise/schema';
+import { Kernel, registerArtwork, unregisterArtwork } from '@4k7/kernel';
+import { registerUserParts, unregisterUserPart } from '@4k7/parts';
+import type { Artwork, Design, OptimizeScope, PartCard } from '@4k7/schema';
 
 const kernel = new Kernel();
 

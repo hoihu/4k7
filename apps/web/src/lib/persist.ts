@@ -2,9 +2,9 @@
  * Local-first persistence in IndexedDB. The API key is encrypted with a non-extractable
  * AES-GCM key that never leaves this browser profile.
  */
-import type { Artwork, PartCard } from '@tracewise/schema';
+import type { Artwork, PartCard } from '@4k7/schema';
 
-const DB = 'tracewise';
+const DB = 'tracewise'; // kept from the old name: renaming it would hide every saved design
 /** v2: 'library' store for imported parts; v3: 'datasheets' (PDFs by SHA-256); v4: 'artwork' (silkscreen graphics). */
 const VERSION = 4;
 

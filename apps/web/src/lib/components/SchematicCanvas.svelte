@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { PAGE, type LabelView, type PageView, type PaperId, type Prim, type Rect, type SheetView, type SymbolView } from '@tracewise/schema';
+  import { PAGE, type LabelView, type PageView, type PaperId, type Prim, type Rect, type SheetView, type SymbolView } from '@4k7/schema';
 
   interface Props {
     sheet: SheetView | undefined;

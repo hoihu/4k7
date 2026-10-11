@@ -1,4 +1,4 @@
-import type { KernelPort } from '@tracewise/agent';
+import type { KernelPort } from '@4k7/agent';
 import type { KernelMethods } from './kernel.worker.ts';
 
 type Remote = { [K in keyof KernelMethods]: (...args: Parameters<KernelMethods[K]>) => Promise<ReturnType<KernelMethods[K]>> };

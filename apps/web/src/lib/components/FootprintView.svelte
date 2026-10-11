@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { footprintFor } from '@tracewise/parts';
-  import type { PartCard } from '@tracewise/schema';
+  import { footprintFor } from '@4k7/parts';
+  import type { PartCard } from '@4k7/schema';
   import type { TopView } from '../three-body.ts';
 
   /** Top view of the generated land pattern: pads, body outline, courtyard and pin 1. */

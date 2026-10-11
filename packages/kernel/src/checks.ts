@@ -17,7 +17,7 @@ import {
   type PartPin,
   type SchematicView,
   type Severity,
-} from '@tracewise/schema';
+} from '@4k7/schema';
 import { sameValue, describeConstraint } from './apply.ts';
 import { allocRefdes, applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 

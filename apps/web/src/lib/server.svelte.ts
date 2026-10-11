@@ -11,7 +11,7 @@ import {
   type ChatEvent,
   type TabInfo,
   type TabToServer,
-} from '@tracewise/schema';
+} from '@4k7/schema';
 
 /** 'elsewhere': another tab of the app took over the server; this tab stops retrying. */
 export type ServerStatus = 'off' | 'connecting' | 'connected' | 'waiting' | 'elsewhere';
@@ -66,8 +66,8 @@ class ServerClient {
       if (r === true) return true;
       if (typeof r === 'string') denied = r;
     }
-    if (denied && !opts.silent) this.error = denied === 'wrong access key' ? 'The server did not accept this address. Open the link the tracewise command printed.' : denied;
-    else if (!opts.silent) this.error = `No server found. Is it running (${__SERVER_RUN__}, or Claude Code with the tracewise MCP server)?`;
+    if (denied && !opts.silent) this.error = denied === 'wrong access key' ? 'The server did not accept this address. Open the link the 4k7 command printed.' : denied;
+    else if (!opts.silent) this.error = `No server found. Is it running (${__SERVER_RUN__}, or Claude Code with the 4k7 MCP server)?`;
     this.status = 'waiting';
     this.#scheduleRetry();
     return false;
@@ -108,7 +108,7 @@ class ServerClient {
       };
       const timer = setTimeout(() => done(false), 1500);
       ws.onopen = () =>
-        ws.send(JSON.stringify({ type: 'hello', protocol: SERVER_PROTOCOL, accessKey: this.#accessKey, client: 'tracewise-web', info: this.#info() } satisfies TabToServer));
+        ws.send(JSON.stringify({ type: 'hello', protocol: SERVER_PROTOCOL, accessKey: this.#accessKey, client: '4k7-web', info: this.#info() } satisfies TabToServer));
       ws.onerror = () => done(false);
       ws.onclose = (ev) => {
         if (!settled) done(false);

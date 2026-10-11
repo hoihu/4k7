@@ -1,9 +1,9 @@
 {
-  "name": "@tracewise/fab",
+  "name": "@4k7/fab",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
-  "dependencies": { "@tracewise/schema": "0.1.0" },
-  "devDependencies": { "@tracewise/kernel": "0.1.0" }
+  "dependencies": { "@4k7/schema": "0.1.0" },
+  "devDependencies": { "@4k7/kernel": "0.1.0" }
 }

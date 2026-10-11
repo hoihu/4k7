@@ -38,6 +38,6 @@ server=
 trap 'kill $vite $server 2>/dev/null' EXIT
 trap 'exit 130' INT TERM
 # its app link opens the dev server
-TRACEWISE_APP_URL="http://localhost:$PORT" node --watch tools/server/src/main.ts --serve &
+FOURK7_APP_URL="http://localhost:$PORT" node --watch tools/server/src/main.ts --serve &
 server=$!
 wait "$vite"

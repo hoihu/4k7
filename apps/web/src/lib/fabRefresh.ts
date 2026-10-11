@@ -1,4 +1,4 @@
-import type { FabProfile } from '@tracewise/schema';
+import type { FabProfile } from '@4k7/schema';
 
 /**
  * The message that asks the agent to re-read the page a fab profile's limits came from and

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { LabelView, SheetView, SymbolView } from '@tracewise/schema';
+import type { LabelView, SheetView, SymbolView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { emptyScene, type Scene } from '../src/scene.ts';
 import { tidyWires } from '../src/tidy.ts';

@@ -6,10 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { Kernel } from '@tracewise/kernel';
-import { SERVER_PROTOCOL, type ServerToTab } from '@tracewise/schema';
+import { Kernel } from '@4k7/kernel';
+import { SERVER_PROTOCOL, type ServerToTab } from '@4k7/schema';
 import { LocalServer, createMcpServer } from '../src/index.ts';
-import { appHandler, PROBE_PATH, servesTracewise } from '../src/app.ts';
+import { appHandler, PROBE_PATH, serves4k7 } from '../src/app.ts';
 
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
@@ -131,7 +131,7 @@ describe('MCP server', () => {
     await client.connect(clientT);
     cleanups.push(() => client.close());
 
-    expect(client.getInstructions()).toMatch(/Tracewise/);
+    expect(client.getInstructions()).toMatch(/4k7/);
     const tools = (await client.listTools()).tools.map((t) => t.name);
     expect(tools).toEqual(['get_context', 'design_query', 'design_edit', 'calc', 'import_part', 'jlc_search', 'pending_import', 'artwork', 'read_datasheet', 'get_schematic_image', 'propose', 'wait_for_review']);
 
@@ -153,7 +153,7 @@ describe('serving the app', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tw-app-'));
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
     mkdirSync(join(dir, 'assets'));
-    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Tracewise</title>');
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>4k7</title>');
     writeFileSync(join(dir, 'assets', 'index-abc.js'), 'export {}');
     writeFileSync(join(dir, '..', 'tw-secret.txt'), 'secret');
     cleanups.push(() => rmSync(join(dir, '..', 'tw-secret.txt'), { force: true }));
@@ -176,7 +176,7 @@ describe('serving the app', () => {
     for (const path of [`/${KEY}`, `/${KEY}/`]) {
       const index = await get(port, path);
       expect(index).toMatchObject({ status: 200, type: 'text/html; charset=utf-8', cache: 'no-store' });
-      expect(index.body).toContain('<title>Tracewise</title>');
+      expect(index.body).toContain('<title>4k7</title>');
     }
     expect(await get(port, '/assets/index-abc.js')).toMatchObject({ status: 200, type: 'text/javascript; charset=utf-8', cache: 'public, max-age=31536000, immutable' });
     expect((await get(port, '/nope.js')).status).toBe(404);
@@ -187,7 +187,7 @@ describe('serving the app', () => {
     for (const path of ['/', '/index.html', `/${OTHER}`]) {
       const r = await get(port, path);
       expect(r.status).toBe(403);
-      expect(r.body).toContain('Open Tracewise with its link');
+      expect(r.body).toContain('Open 4k7 with its link');
       expect(r.body).not.toContain(KEY);
     }
     expect(JSON.stringify(await get(port, PROBE_PATH))).not.toContain(KEY);
@@ -195,8 +195,8 @@ describe('serving the app', () => {
 
   it('answers the probe, so a second server finds the first', async () => {
     const { port } = await serveApp();
-    expect(JSON.parse((await get(port, PROBE_PATH)).body)).toEqual({ name: 'tracewise-server', version: '9.9.9' });
-    expect(await servesTracewise(port)).toBe(true);
+    expect(JSON.parse((await get(port, PROBE_PATH)).body)).toEqual({ name: '4k7-server', version: '9.9.9' });
+    expect(await serves4k7(port)).toBe(true);
   });
 
   it('serves nothing outside the app folder, and only to local host names', async () => {

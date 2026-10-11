@@ -3,7 +3,7 @@
  * add_graphic can place it by name. Placing copies the figures into the design: a later change
  * to the artwork does not touch boards that use it.
  */
-import type { Artwork } from '@tracewise/schema';
+import type { Artwork } from '@4k7/schema';
 
 const saved = new Map<string, Artwork>();
 

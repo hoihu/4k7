@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findFabPreset } from '@tracewise/schema';
+import { findFabPreset } from '@4k7/schema';
 import { fabRefreshPrompt } from '../src/lib/fabRefresh.ts';
 
 describe('fab refresh message', () => {

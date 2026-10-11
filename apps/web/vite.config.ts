@@ -4,10 +4,10 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '');
 /** How people run the packaged app (installed from the private repository, not the npm registry). */
-const pkg = process.env.TW_PKG ?? 'github:hoihu/tracewise';
+const pkg = process.env.TW_PKG ?? 'github:hoihu/4k7';
 
 /**
- * A production build is the packaged app, served by the local server (`npx tracewise`): no sourcemaps
+ * A production build is the packaged app, served by the local server (`npx 4k7pcb`): no sourcemaps
  * (smaller package). In development the local server runs from this checkout instead.
  */
 export default defineConfig(({ command }) => {

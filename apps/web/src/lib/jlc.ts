@@ -3,9 +3,9 @@
  * the catalogue the Inspector's "Find on JLCPCB" uses. The browser calls the catalogue directly;
  * answers are kept for a few minutes so the Inspector and the agent do not ask twice.
  */
-import type { ToolOutcome } from '@tracewise/agent';
-import { JlcSearchInput } from '@tracewise/schema';
-import { describeJlcPart, tscircuitSource, type JlcPart, type JlcQuery, type JlcSource } from '@tracewise/parts';
+import type { ToolOutcome } from '@4k7/agent';
+import { JlcSearchInput } from '@4k7/schema';
+import { describeJlcPart, tscircuitSource, type JlcPart, type JlcQuery, type JlcSource } from '@4k7/parts';
 
 let source: JlcSource = tscircuitSource();
 /** Tests swap the catalogue for a fake. */

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { boardPolygon, cutoutPolygon, type BoardView, type CopperLayer } from '@tracewise/schema';
+  import { boardPolygon, cutoutPolygon, type BoardView, type CopperLayer } from '@4k7/schema';
   import type { TopView } from '../three-body.ts';
 
   /** 2D board view (mm, top view): outline, pads, tracks, vias, silkscreen, ratsnest. */

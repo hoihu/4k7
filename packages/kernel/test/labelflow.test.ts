@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { LabelView } from '@tracewise/schema';
+import type { LabelView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 
 const labels = (k: Kernel): LabelView[] => k.state().view.sheets.flatMap((s) => s.labels);

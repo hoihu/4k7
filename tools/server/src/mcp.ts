@@ -1,12 +1,12 @@
 /**
- * MCP server side: lists the Tracewise tools and forwards calls through the server.
+ * MCP server side: lists the 4k7 tools and forwards calls through the server.
  */
 import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { MCP_INSTRUCTIONS, agentTools, ingestTools } from '@tracewise/schema';
+import { MCP_INSTRUCTIONS, agentTools, ingestTools } from '@4k7/schema';
 import pkg from '../../../package.json' with { type: 'json' };
 import type { LocalServer, HttpHandler } from './server.ts';
 
@@ -14,7 +14,7 @@ import type { LocalServer, HttpHandler } from './server.ts';
 export const VERSION: string = pkg.version;
 
 /** Server instructions for the runs the server starts itself; their real prompt is in the system prompt. */
-const RUN_INSTRUCTIONS = 'Tracewise tools. How to use them is in your system prompt.';
+const RUN_INSTRUCTIONS = '4k7 tools. How to use them is in your system prompt.';
 
 /** 'cli': Claude Code CLI drives the app; 'chat': it answers the app's chat; 'ingest': it imports a datasheet. */
 export type McpMode = 'cli' | 'chat' | 'ingest';
@@ -22,7 +22,7 @@ export type McpMode = 'cli' | 'chat' | 'ingest';
 export function createMcpServer(server: LocalServer, opts: { mode?: McpMode } = {}): Server {
   const mode = opts.mode ?? 'cli';
   const mcp = new Server(
-    { name: 'tracewise', version: VERSION },
+    { name: '4k7', version: VERSION },
     // chat and ingest runs are started by this server, which appends their prompt to the system prompt
     // (chat.ts); repeating it here would send it twice with every message
     { capabilities: { tools: {} }, instructions: mode === 'cli' ? MCP_INSTRUCTIONS : RUN_INSTRUCTIONS },

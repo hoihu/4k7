@@ -2,7 +2,7 @@
  * Offline demo scenarios for the ScriptedProvider. They exercise the real loop: the
  * kernel validates every op and the verification loop catches a deliberate omission.
  */
-import type { Transaction } from '@tracewise/schema';
+import type { Transaction } from '@4k7/schema';
 import type { Block, Message } from './types.ts';
 import type { Script } from './providers/scripted.ts';
 

@@ -1,6 +1,6 @@
 /**
  * three.js views, loaded on demand: a single package body (Parts view) and the assembled board
- * (Layout view). Both are built from Body3D data (@tracewise/parts) and the board view model.
+ * (Layout view). Both are built from Body3D data (@4k7/parts) and the board view model.
  *
  * Body3D and board coordinates: millimetres, x right and y down as in the top view, z up.
  * three.js is y-up, so (x, y, z) → (x, z, y); a camera above, looking down, then shows the
@@ -8,8 +8,8 @@
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { Body3D } from '@tracewise/parts';
-import { boardPolygon, cutoutPolygon, type BoardView } from '@tracewise/schema';
+import type { Body3D } from '@4k7/parts';
+import { boardPolygon, cutoutPolygon, type BoardView } from '@4k7/schema';
 
 export type ViewPreset = 'iso' | 'isoBelow' | 'top' | 'bottom' | 'front';
 

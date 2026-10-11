@@ -1,5 +1,5 @@
 /**
- * The access key is created once and kept in ~/.tracewise/server.json, so the app's address
+ * The access key is created once and kept in ~/.4k7/server.json, so the app's address
  * (http://localhost:7777/<access-key>) stays the same across restarts and every server accepts the same tab.
  */
 import { randomUUID } from 'node:crypto';
@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SERVER_ACCESS_KEY } from '@tracewise/schema';
+import { SERVER_ACCESS_KEY } from '@4k7/schema';
 
 /**
  * How to run the headless Claude Code for the app chat. Mirrors a shell alias such as
@@ -33,24 +33,24 @@ export function inCheckout(): boolean {
 
 /**
  * The built web app the server serves: next to the bundled CLI (dist/app) in the package, or
- * apps/web/dist in a checkout once built. TRACEWISE_APP_DIR overrides it.
+ * apps/web/dist in a checkout once built. FOURK7_APP_DIR overrides it.
  */
 export function appDir(): string | null {
   const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [process.env.TRACEWISE_APP_DIR, join(here, 'app'), join(here, '..', '..', '..', 'apps', 'web', 'dist')];
+  const candidates = [process.env.FOURK7_APP_DIR, join(here, 'app'), join(here, '..', '..', '..', 'apps', 'web', 'dist')];
   return candidates.find((d): d is string => !!d && existsSync(join(d, 'index.html'))) ?? null;
 }
 
 export interface ServerConfig {
   /** In the app's address; the tab needs it to connect. */
   accessKey: string;
-  /** Where app links point when set (TRACEWISE_APP_URL or "appUrl"); else the app this server serves. */
+  /** Where app links point when set (FOURK7_APP_URL or "appUrl"); else the app this server serves. */
   appUrl?: string;
   claude: ClaudeProfile;
 }
 
 export function configDir(): string {
-  return process.env.TRACEWISE_HOME ?? join(homedir(), '.tracewise');
+  return process.env.FOURK7_HOME ?? join(homedir(), '.4k7');
 }
 
 export function configPath(): string {
@@ -66,7 +66,7 @@ export function loadConfig(): ServerConfig {
   } catch {
     // first run
   }
-  const env = process.env.TRACEWISE_ACCESS_KEY;
+  const env = process.env.FOURK7_ACCESS_KEY;
   const accessKey = env && SERVER_ACCESS_KEY.test(env) ? env : cfg.accessKey && SERVER_ACCESS_KEY.test(cfg.accessKey) ? cfg.accessKey : randomUUID();
   if (accessKey !== cfg.accessKey && accessKey !== env) {
     mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 });
@@ -74,12 +74,12 @@ export function loadConfig(): ServerConfig {
     const { code: _old, ...rest } = cfg as typeof cfg & { code?: string };
     writeFileSync(path, JSON.stringify({ ...rest, accessKey }, null, 2) + '\n', { mode: 0o600 });
   }
-  const appUrl = process.env.TRACEWISE_APP_URL ?? cfg.appUrl;
+  const appUrl = process.env.FOURK7_APP_URL ?? cfg.appUrl;
   const c = (cfg.claude ?? {}) as Partial<ClaudeProfile>;
-  const configDir = process.env.TRACEWISE_CLAUDE_CONFIG_DIR ?? c.configDir;
+  const configDir = process.env.FOURK7_CLAUDE_CONFIG_DIR ?? c.configDir;
   const claude: ClaudeProfile = {
     ...(configDir ? { configDir: expandHome(configDir) } : {}),
-    unsetEnv: [...(c.unsetEnv ?? []), ...(process.env.TRACEWISE_CLAUDE_UNSET?.split(',').filter(Boolean) ?? [])],
+    unsetEnv: [...(c.unsetEnv ?? []), ...(process.env.FOURK7_CLAUDE_UNSET?.split(',').filter(Boolean) ?? [])],
     env: c.env ?? {},
   };
   return { accessKey, ...(appUrl ? { appUrl } : {}), claude };

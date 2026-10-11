@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ANTHROPIC_MODELS } from '@tracewise/agent';
+  import { ANTHROPIC_MODELS } from '@4k7/agent';
   import { app } from '../../app.svelte.ts';
   import { server } from '../../server.svelte.ts';
   import type { Settings } from '../../persist.ts';
@@ -50,7 +50,7 @@
   {#if provider === 'claude-code'}
     <Field label="Status">
       {#if server.status === 'connected' && server.chat?.available}
-        <span class="tag ok">ready</span> <span class="muted">{server.chat.version} · runs your local Claude Code with only the Tracewise tools</span>
+        <span class="tag ok">ready</span> <span class="muted">{server.chat.version} · runs your local Claude Code with only the 4k7 tools</span>
       {:else if server.status === 'connected'}
         <span class="tag warn">server connected, chat unavailable</span>
         <div class="hint">{server.chat?.reason ?? 'This server is too old for the app chat. Restart it.'}</div>

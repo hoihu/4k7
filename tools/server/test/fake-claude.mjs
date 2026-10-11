@@ -15,9 +15,9 @@ const arg = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : unde
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const session = arg('--resume') ?? 'sess-1234';
 const cfg = JSON.parse(arg('--mcp-config'));
-const tw = cfg.mcpServers.tracewise;
+const tw = cfg.mcpServers['4k7'];
 
-out({ type: 'system', subtype: 'init', session_id: session, mcp_servers: [{ name: 'tracewise', status: 'connected' }] });
+out({ type: 'system', subtype: 'init', session_id: session, mcp_servers: [{ name: '4k7', status: 'connected' }] });
 
 const client = new Client({ name: 'claude-code', version: 'fake' });
 await client.connect(new StreamableHTTPClientTransport(new URL(tw.url), { requestInit: { headers: tw.headers } }));
@@ -51,7 +51,7 @@ const flags = {
 out({ type: 'stream_event', event: { type: 'message_start', message: { model: 'claude-sonnet-5', usage: { input_tokens: 1200, cache_read_input_tokens: 8000, cache_creation_input_tokens: 500, output_tokens: 1 } } } });
 if (!tools.includes('get_context')) {
   // the importer writes its part as one long tool call
-  out({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'tool_use', name: 'mcp__tracewise__submit_part' } } });
+  out({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'tool_use', name: 'mcp__4k7__submit_part' } } });
   for (let i = 1; i <= 45; i++) out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: `{"number":"${i}",` } } });
 }
 for (const chunk of ['Got it. ', `tools=${tools.join(',')} `, `context=${JSON.stringify(ctx.content[0].text).slice(0, 30)} `, `flags=${JSON.stringify(flags)}`]) {

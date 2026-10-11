@@ -1,9 +1,9 @@
 {
-  "name": "tracewise",
+  "name": "4k7pcb",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "AI-first PCB schematic and layout tool, run locally: npx github:hoihu/tracewise",
+  "description": "AI-first PCB schematic and layout tool, run locally: npx github:hoihu/4k7",
   "keywords": [
     "pcb",
     "schematic",
@@ -16,14 +16,14 @@
   ],
   "license": "MIT",
   "author": "Martin Fischer",
-  "homepage": "https://github.com/hoihu/tracewise#readme",
+  "homepage": "https://github.com/hoihu/4k7#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hoihu/tracewise.git"
+    "url": "git+https://github.com/hoihu/4k7.git"
   },
-  "bugs": "https://github.com/hoihu/tracewise/issues",
+  "bugs": "https://github.com/hoihu/4k7/issues",
   "bin": {
-    "tracewise": "dist/tracewise.js"
+    "4k7": "dist/4k7.js"
   },
   "files": [
     "dist"
@@ -39,16 +39,16 @@
   "scripts": {
     "dev": "scripts/dev.sh",
     "dev:here": "scripts/dev.sh",
-    "dev:web": "npm run dev -w @tracewise/web",
-    "build": "npm run build -w @tracewise/web",
+    "dev:web": "npm run dev -w @4k7/web",
+    "build": "npm run build -w @4k7/web",
     "package": "npm run build && node scripts/package.mjs",
-    "start": "npm run package && node dist/tracewise.js",
+    "start": "npm run package && node dist/4k7.js",
     "prepare": "npm run package",
     "check:package": "node scripts/check-package.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run check:package",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json --noEmit && npm run check -w @tracewise/web",
+    "typecheck": "tsc -p tsconfig.json --noEmit && npm run check -w @4k7/web",
     "server": "node --watch tools/server/src/main.ts --serve"
   },
   "devDependencies": {

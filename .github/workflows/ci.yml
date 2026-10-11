@@ -16,8 +16,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      # the package as `npx github:hoihu/tracewise` builds it (npm ci ran prepare): no sourcemaps, no local paths, and it starts
+      # the package as `npx github:hoihu/4k7` builds it (npm ci ran prepare): no sourcemaps, no local paths, and it starts
       - run: "! find dist -name '*.map' | grep -q . && ! grep -rq 'tools/server/src/main.ts' dist/app"
-      - run: node dist/tracewise.js --version
+      - run: node dist/4k7.js --version
       # the package as the npm registry would serve it: the tarball installed on its own, and the app served from it
       - run: npm run check:package

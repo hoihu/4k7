@@ -5,8 +5,8 @@
  * two are compared fact by fact; the user decides where they disagree. The datasheet is kept
  * so every pin can be shown on its page. Nothing is saved before the user's review.
  */
-import { compareDrafts, draftToCard, listUserParts, mergeDrafts, planUnits, registerUserParts, unregisterUserPart, type Disagreement } from '@tracewise/parts';
-import { PartDraft, type ToolContent, type DraftPin, type PackageInfo, type Design, type IngestIssue, type PartCard, type TokenCount } from '@tracewise/schema';
+import { compareDrafts, draftToCard, listUserParts, mergeDrafts, planUnits, registerUserParts, unregisterUserPart, type Disagreement } from '@4k7/parts';
+import { PartDraft, type ToolContent, type DraftPin, type PackageInfo, type Design, type IngestIssue, type PartCard, type TokenCount } from '@4k7/schema';
 import { server } from './server.svelte.ts';
 import { deleteDatasheet, deleteLibraryPart, loadDatasheet, loadLibrary, loadPendingImport, saveDatasheet, saveLibraryPart, savePendingImport, type StoredDatasheet } from './persist.ts';
 

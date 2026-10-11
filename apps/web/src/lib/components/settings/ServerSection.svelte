@@ -5,7 +5,7 @@
   import Section from './Section.svelte';
 
   let copied = $state(false);
-  const mcpCommand = `claude mcp add --scope user tracewise -- ${__SERVER_MCP__}`;
+  const mcpCommand = `claude mcp add --scope user 4k7 -- ${__SERVER_MCP__}`;
   const serverRun = __SERVER_RUN__;
   const where = __PACKAGED__ ? '' : ' (in this repository)';
 
@@ -69,12 +69,12 @@
       <div class="way">
         <b>Drive this tab from the Claude Code CLI</b>
         {#if where}
-          <p>Start <code>claude</code> in this repository and approve the <b>tracewise</b> MCP server it offers from <code>.mcp.json</code>. To use it from any folder, register it once:</p>
+          <p>Start <code>claude</code> in this repository and approve the <b>4k7</b> MCP server it offers from <code>.mcp.json</code>. To use it from any folder, register it once:</p>
         {:else}
-          <p>Register the <b>tracewise</b> MCP server once:</p>
+          <p>Register the <b>4k7</b> MCP server once:</p>
         {/if}
         <div class="cmd"><code>{mcpCommand}</code><button class="ib" onclick={copyCommand}>{copied ? 'copied' : 'copy'}</button></div>
-        <p>Then ask Claude to <i>“connect to Tracewise”</i>. It gives you the app's link; opening it connects this tab.</p>
+        <p>Then ask Claude to <i>“connect to 4k7”</i>. It gives you the app's link; opening it connects this tab.</p>
       </div>
     </div>
     <p class="note">The tab reconnects by itself when the server or Claude Code restarts.</p>

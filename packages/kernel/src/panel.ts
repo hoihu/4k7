@@ -18,7 +18,7 @@ import {
   type PanelSettings,
   type PanelSide,
   type PanelView,
-} from '@tracewise/schema';
+} from '@4k7/schema';
 
 /** Clipper's precision: decimal places (µm). */
 const PREC = 3;

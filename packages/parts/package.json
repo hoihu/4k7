@@ -1,8 +1,8 @@
 {
-  "name": "@tracewise/parts",
+  "name": "@4k7/parts",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
-  "dependencies": { "@tracewise/schema": "0.1.0" }
+  "dependencies": { "@4k7/schema": "0.1.0" }
 }

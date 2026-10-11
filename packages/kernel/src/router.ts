@@ -6,7 +6,7 @@
  * tree, shortest first; a connection may end on any copper already joined to its net.
  * Failed connections are routed first in the next pass (simple rip-up and retry).
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape } from '@tracewise/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape } from '@4k7/schema';
 
 const G = 0.1; // grid pitch, mm
 const MULTI = -1; // near copper of two nets: nobody may route here

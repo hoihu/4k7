@@ -3,7 +3,7 @@
  * pinouts are well known. Every card is marked `builtin` and must be re-verified
  * through the datasheet ingest pipeline (M1) before production use.
  */
-import type { PartCard, PartPin, Provenance } from '@tracewise/schema';
+import type { PartCard, PartPin, Provenance } from '@4k7/schema';
 
 const builtin = (note?: string): Provenance => ({ source: 'builtin', note: note ?? 'M0 seed, verify against datasheet' });
 

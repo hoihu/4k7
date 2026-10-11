@@ -21,7 +21,7 @@
     <dt>Claude Code</dt><dd>{server.chat ? (server.chat.available ? `available (${server.chat.version})` : `unavailable: ${server.chat.reason}`) : 'unknown (not connected)'}</dd>
     <dt>Browser</dt><dd class="ua">{diag.userAgent}</dd>
   </dl>
-  <p class="hint">The server logs what each tab reports to <code>~/.tracewise/server.log</code>.</p>
+  <p class="hint">The server logs what each tab reports to <code>~/.4k7/server.log</code>.</p>
 </Section>
 
 <style>
