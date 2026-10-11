@@ -114,7 +114,7 @@ section { break-before: page; }
 /* cover: the whole first page */
 .cover { height: 297mm; box-sizing: border-box; padding: 18mm 18mm 14mm; display: flex; flex-direction: column; break-after: page; background: linear-gradient(180deg, #f8fafc 0%, #fff 55%); }
 .brand { display: flex; align-items: center; gap: 2.5mm; font-size: 9pt; font-weight: 650; letter-spacing: 0.14em; text-transform: uppercase; color: #475569; }
-.brand .logo { width: 6mm; height: 6mm; border-radius: 1.6mm; background: ${ACCENT}; display: grid; place-items: center; }
+.brand .logo { width: 6mm; height: 6mm; display: grid; place-items: center; }
 .brand .date { margin-left: auto; font-weight: 500; letter-spacing: 0.04em; text-transform: none; color: #64748b; }
 .cover h1 { font-size: 40pt; line-height: 1.05; font-weight: 800; letter-spacing: -0.025em; margin: 16mm 0 3mm; }
 .cover .kind { font-size: 13pt; color: ${ACCENT}; font-weight: 650; margin-bottom: 4mm; }
@@ -531,7 +531,7 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
       ? `<div class="hero flat">${boardSvg(layoutInner, b, 'lay', 150, 105).svg}</div>`
       : `<div class="hero flat"></div>`;
   const date = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-  const logo = `<span class="logo"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M2 12h4l3-8h5" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`;
+  const logo = `<span class="logo"><svg width="22" height="22" viewBox="0 0 64 64"><rect x="0" y="29" width="64" height="6" rx="3" fill="#b8b0a4"/><rect x="8" y="16" width="48" height="32" rx="12" fill="#e8d9bd"/><rect x="16" y="16" width="6" height="32" fill="#f2c230"/><rect x="25" y="16" width="6" height="32" fill="#7a3fb0"/><rect x="34" y="16" width="6" height="32" fill="#d6382f"/><rect x="45" y="16" width="6" height="32" fill="#d7a63a"/></svg></span>`;
   const cover =
     `<div class="cover"><div class="brand">${logo}4k7<span class="date">${esc(date)}</span></div>` +
     `<h1>${esc(title)}</h1><div class="kind">Design document</div>` +
