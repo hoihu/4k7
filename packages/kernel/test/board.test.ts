@@ -841,6 +841,27 @@ describe('router: tracks wider than a via', () => {
     expect(r.tracks.filter((t) => t.layer === 'In1.Cu' || t.layer === 'In2.Cu')).toEqual([]);
   });
 
+  it('drops onto a plane with the net\'s own track width', async () => {
+    const { route } = await import('../src/router.ts');
+    type Pad = import('@tracewise/schema').BoardPad;
+    type Part = import('@tracewise/schema').BoardPart;
+    const pad = (x: number): Pad => ({ number: '1', x, y: 5, w: 1.2, h: 1.2, shape: 'rect', netId: 'GND', layers: ['F.Cu'] });
+    const part = (refdes: string, p: Pad) => ({ componentId: refdes, refdes, x: p.x, y: p.y, rot: 0, pads: [p], courtyard: { x: p.x - 1, y: p.y - 1, w: 2, h: 2 } }) as unknown as Part;
+    const r = route({
+      outline: { w: 20, h: 10 },
+      layers: ['F.Cu', 'B.Cu'],
+      rules: { clearance: 0.15, track: 0.15, powerTrack: 0.4, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 },
+      parts: [part('C1', pad(5))],
+      powerNets: new Set(['GND']),
+      netWidths: { GND: 0.5 },
+      planes: [{ netId: 'GND', layer: 'B.Cu' }],
+    });
+    // the SMD pad's stub down to the pour
+    expect(r.vias).toHaveLength(1);
+    expect(r.tracks.length).toBeGreaterThan(0);
+    expect(r.tracks.every((t) => t.width === 0.5)).toBe(true);
+  });
+
   it('runs a power track along a pin escape only where it keeps its clearance at that width', async () => {
     const { route } = await import('../src/router.ts');
     type Pad = import('@tracewise/schema').BoardPad;

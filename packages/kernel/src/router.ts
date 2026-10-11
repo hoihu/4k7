@@ -1620,7 +1620,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       if (reaches) continue;
       const starts = groupCells.get(r)!.filter((st) => Math.floor(st / N) !== rg.l);
       if (!starts.length) continue;
-      const path = search(rg.pnet, 0, starts, (st) => {
+      // the net's own width where all its pads in the group can take it, else the signal width
+      const own = input.netWidths?.[pl.netId];
+      const k = own && (own <= rules.track || pads.every((p, idx) => find(idx) !== r || Math.min(p.w, p.h) >= own * 0.9)) ? trackClass(own) : 0;
+      const path = search(rg.pnet, k, starts, (st) => {
         // a via site well inside the main area (the via then joins the plane)
         if (Math.floor(st / N) === rg.l) return false;
         if (dropCopper.has(st)) return true; // join an earlier drop
@@ -1638,9 +1641,16 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
       }, pads[r]!);
       if (!path) continue;
       const joins = dropCopper.get(path.at(-1)!);
-      const copper = commit(pl.netId, rg.pnet, 0, path, padAt(r, path[0]!), -1, !joins);
-      groupCells.get(r)!.push(...copper);
+      // a way that changed layer itself already has a via: not another one right next to it
       const end = path.at(-1)! % N;
+      const crowded = (q: number) => {
+        if (q === 0 || Math.floor(path[q]! / N) === Math.floor(path[q - 1]! / N)) return false;
+        const d = Math.hypot(((path[q]! % N) % W) - (end % W), Math.floor((path[q]! % N) / W) - Math.floor(end / W)) * G;
+        return d > 1e-9 && d < VIA_SPACING;
+      };
+      if (!joins && path.some((_, q) => crowded(q) && q < path.length - 1)) continue;
+      const copper = commit(pl.netId, rg.pnet, k, path, padAt(r, path[0]!), -1, !joins);
+      groupCells.get(r)!.push(...copper);
       const via = joins ?? { x: (end % W) * G, y: Math.floor(end / W) * G };
       for (const st of copper) dropCopper.set(st, via);
       dropVias.set(r, [...(dropVias.get(r) ?? []), via]);
