@@ -785,6 +785,63 @@ describe('router: long connections on a big board', () => {
   });
 });
 
+describe('router: tracks wider than a via', () => {
+  it('changes layer only where the track fits on the other layer too', async () => {
+    const { route } = await import('../src/router.ts');
+    type Pad = import('@tracewise/schema').BoardPad;
+    type Part = import('@tracewise/schema').BoardPart;
+    const pad = (x: number, y: number, w: number, h: number, netId: string, layer: 'F.Cu' | 'B.Cu'): Pad => ({ number: '1', x, y, w, h, shape: 'rect', netId, layers: [layer] });
+    const part = (refdes: string, p: Pad) => ({ componentId: refdes, refdes, x: p.x, y: p.y, rot: 0, pads: [p], courtyard: { x: p.x - p.w / 2, y: p.y - p.h / 2, w: p.w, h: p.h } }) as unknown as Part;
+    // a 1 mm net from F.Cu on the left to B.Cu on the right, past a wall on each layer: it must
+    // change layer between the walls, where the via fits but the 1 mm track does not
+    const walls = [pad(21.3, 10, 0.4, 22, 'WF', 'F.Cu'), pad(19.6, 10, 0.4, 22, 'WB', 'B.Cu')];
+    const clearance = 0.15;
+    const r = route({
+      outline: { w: 40, h: 20 },
+      layers: ['F.Cu', 'B.Cu'],
+      rules: { clearance, track: 0.15, powerTrack: 0.4, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 },
+      parts: [...walls.map((w, i) => part(`W${i}`, w)), part('S', pad(10, 10, 1.2, 1.2, 'P', 'F.Cu')), part('T', pad(30, 10, 1.2, 1.2, 'P', 'B.Cu'))],
+      powerNets: new Set(),
+      netWidths: { P: 1 },
+    });
+    // no copper of P within the clearance of a wall on its layer (an unrouted connection is fine)
+    for (const t of r.tracks) {
+      for (const w of walls.filter((x) => x.layers[0] === t.layer)) {
+        for (let q = 0; q + 3 < t.pts.length; q += 2) {
+          for (let s = 0; s <= 100; s++) {
+            const x = t.pts[q]! + ((t.pts[q + 2]! - t.pts[q]!) * s) / 100;
+            const y = t.pts[q + 1]! + ((t.pts[q + 3]! - t.pts[q + 1]!) * s) / 100;
+            const gap = Math.hypot(Math.max(Math.abs(x - w.x) - w.w / 2, 0), Math.max(Math.abs(y - w.y) - w.h / 2, 0)) - t.width / 2;
+            expect(gap).toBeGreaterThanOrEqual(clearance - 1e-6);
+          }
+        }
+      }
+    }
+  });
+
+  it('keeps a track as wide as a via off the dedicated plane layers', async () => {
+    const { route } = await import('../src/router.ts');
+    type Pad = import('@tracewise/schema').BoardPad;
+    type Part = import('@tracewise/schema').BoardPart;
+    const pad = (x: number, y: number, w: number, h: number, netId: string, layer: 'F.Cu' | 'B.Cu'): Pad => ({ number: '1', x, y, w, h, shape: 'rect', netId, layers: [layer] });
+    const part = (refdes: string, p: Pad) => ({ componentId: refdes, refdes, x: p.x, y: p.y, rot: 0, pads: [p], courtyard: { x: p.x - p.w / 2, y: p.y - p.h / 2, w: p.w, h: p.h } }) as unknown as Part;
+    // walls across both outer layers: the only way across would be on the inner (plane) layers
+    const r = route({
+      outline: { w: 40, h: 20 },
+      layers: ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'],
+      rules: { clearance: 0.15, track: 0.15, powerTrack: 0.4, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 },
+      parts: [part('WF', pad(20, 10, 0.4, 22, 'WF', 'F.Cu')), part('WB', pad(20, 10, 0.4, 22, 'WB', 'B.Cu')), part('S', pad(10, 10, 1.2, 1.2, 'P', 'F.Cu')), part('T', pad(30, 10, 1.2, 1.2, 'P', 'F.Cu'))],
+      powerNets: new Set(),
+      netWidths: { P: 0.6 },
+      planes: [
+        { netId: 'WF', layer: 'In1.Cu' },
+        { netId: 'WB', layer: 'In2.Cu' },
+      ],
+    });
+    expect(r.tracks.filter((t) => t.layer === 'In1.Cu' || t.layer === 'In2.Cu')).toEqual([]);
+  });
+});
+
 describe('router: between IC pins', () => {
   it('takes the middle of the gap between two pins', async () => {
     const { route } = await import('../src/router.ts');
