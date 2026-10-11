@@ -7,9 +7,11 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { MCP_INSTRUCTIONS, agentTools, ingestTools } from '@tracewise/schema';
+import pkg from '../../../package.json' with { type: 'json' };
 import type { LocalServer, HttpHandler } from './server.ts';
 
-export const VERSION = '0.1.0';
+/** The package's version: read from the root package.json in a checkout, inlined in the bundle. */
+export const VERSION: string = pkg.version;
 
 /** Server instructions for the runs the server starts itself; their real prompt is in the system prompt. */
 const RUN_INSTRUCTIONS = 'Tracewise tools. How to use them is in your system prompt.';
