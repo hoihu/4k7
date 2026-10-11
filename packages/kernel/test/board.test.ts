@@ -818,6 +818,28 @@ describe('router: tracks wider than a via', () => {
       }
     }
   });
+
+  it('keeps a track as wide as a via off the dedicated plane layers', async () => {
+    const { route } = await import('../src/router.ts');
+    type Pad = import('@tracewise/schema').BoardPad;
+    type Part = import('@tracewise/schema').BoardPart;
+    const pad = (x: number, y: number, w: number, h: number, netId: string, layer: 'F.Cu' | 'B.Cu'): Pad => ({ number: '1', x, y, w, h, shape: 'rect', netId, layers: [layer] });
+    const part = (refdes: string, p: Pad) => ({ componentId: refdes, refdes, x: p.x, y: p.y, rot: 0, pads: [p], courtyard: { x: p.x - p.w / 2, y: p.y - p.h / 2, w: p.w, h: p.h } }) as unknown as Part;
+    // walls across both outer layers: the only way across would be on the inner (plane) layers
+    const r = route({
+      outline: { w: 40, h: 20 },
+      layers: ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'],
+      rules: { clearance: 0.15, track: 0.15, powerTrack: 0.4, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 },
+      parts: [part('WF', pad(20, 10, 0.4, 22, 'WF', 'F.Cu')), part('WB', pad(20, 10, 0.4, 22, 'WB', 'B.Cu')), part('S', pad(10, 10, 1.2, 1.2, 'P', 'F.Cu')), part('T', pad(30, 10, 1.2, 1.2, 'P', 'F.Cu'))],
+      powerNets: new Set(),
+      netWidths: { P: 0.6 },
+      planes: [
+        { netId: 'WF', layer: 'In1.Cu' },
+        { netId: 'WB', layer: 'In2.Cu' },
+      ],
+    });
+    expect(r.tracks.filter((t) => t.layer === 'In1.Cu' || t.layer === 'In2.Cu')).toEqual([]);
+  });
 });
 
 describe('router: between IC pins', () => {
