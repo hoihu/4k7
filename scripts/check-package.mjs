@@ -16,7 +16,9 @@ const fail = (msg) => {
 };
 
 run('npm', ['run', 'package']);
-const [packed] = JSON.parse(run('npm', ['pack', '--json', '--ignore-scripts']));
+// some npm versions run `prepare` (the build) despite --ignore-scripts and print its output first: parse from the JSON
+const packOut = run('npm', ['pack', '--json', '--ignore-scripts']);
+const [packed] = JSON.parse(packOut.slice(packOut.lastIndexOf('\n[\n') + 1));
 const tarball = `${root}${packed.filename}`;
 
 // only the build, the readme and the license; no sourcemaps, no local paths
