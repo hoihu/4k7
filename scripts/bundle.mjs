@@ -33,12 +33,17 @@ mkdirSync(cache, { recursive: true });
 
 // 1. the package, built for the downloaded app: its Settings say to open the app, not to run npx
 log('building the package');
-run('npm', ['run', 'package'], root, {
+const packageEnv = {
   FOURK7_RUN: `the ${NAME} app`,
   FOURK7_MCP: process.platform === 'darwin' ? `/Applications/${NAME}.app/Contents/MacOS/${NAME} mcp` : `/path/to/${NAME}/${NAME} mcp`,
-});
-const [packed] = JSON.parse(run('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', build]));
-const tarball = join(build, packed.filename);
+};
+run('npm', ['run', 'package'], root, packageEnv);
+// Some npm versions run `prepare` on pack despite --ignore-scripts, which rebuilds the package and
+// prints to stdout: the same env keeps that rebuild identical, and the tarball name is derived rather
+// than read from `--json` output.
+run('npm', ['pack', '--ignore-scripts', '--pack-destination', build], root, packageEnv);
+const tarball = join(build, `${pkg.name.replace(/^@/, '').replace('/', '-')}-${pkg.version}.tgz`);
+if (!existsSync(tarball)) throw new Error(`${tarball} is missing after npm pack`);
 
 // 2. the package with its runtime dependencies only, installed into lib/ (what npm would do on the user's computer)
 const lib = join(build, 'lib');
