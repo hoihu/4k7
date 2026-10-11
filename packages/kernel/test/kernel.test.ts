@@ -118,6 +118,43 @@ describe('semantic checks', () => {
     expect(codes(k)).not.toContain('ERC.PIN_UNCONNECTED U1.BOOT');
     expect(k.state().counts.waived).toBe(1);
   });
+
+  it('waivers follow a renamed part', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction({ withBootCap: false }));
+    k.transact({ summary: 'w', ops: [{ op: 'add_waiver', code: 'ERC.PIN_UNCONNECTED', entities: ['U1.BOOT'], reason: 'test waiver reason' }] });
+    k.accept();
+    k.transact({ summary: 'r', ops: [{ op: 'rename', ref: 'U1', refdes: 'U7' }] });
+    expect(codes(k)).not.toContain('ERC.PIN_UNCONNECTED U7.BOOT');
+    expect(k.state().counts.waived).toBe(1);
+    expect(k.proposal()!.hunks.map((h) => h.title)).toEqual(['U1 → U7', 'waive ERC.PIN_UNCONNECTED']);
+  });
+});
+
+describe('rename', () => {
+  it('swaps two names through a free one in one transaction', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    const net = (ref: string) => k.query({ op: 'get_component', ref }) as { pins: unknown };
+    const r1 = net('R1').pins;
+    const r2 = net('R2').pins;
+    const r = k.transact({ summary: 'swap', ops: [
+      { op: 'rename', ref: 'R1', refdes: 'R99' },
+      { op: 'rename', ref: 'R2', refdes: 'R1' },
+      { op: 'rename', ref: 'R99', refdes: 'R2' },
+    ] });
+    expect(r.status).toBe('ok');
+    expect(net('R1').pins).toEqual(r2);
+    expect(net('R2').pins).toEqual(r1);
+  });
+
+  it('refuses a taken name and says how to swap', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    const r = k.transact({ summary: 'clash', ops: [{ op: 'rename', ref: 'R1', refdes: 'R2' }] });
+    expect(r.rejection?.code).toBe('REFDES_TAKEN');
+    expect(r.rejection?.message).toMatch(/swap R1 and R2/);
+  });
 });
 
 describe('ledger', () => {
