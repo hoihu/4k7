@@ -398,6 +398,7 @@ function setPanel(d: Design, op: Extract<EditOp, { op: 'set_panel' }>): OpResult
   if (op.tab_width_mm !== undefined) p.tab.width = op.tab_width_mm;
   if (op.hole_mm !== undefined) p.tab.hole = op.hole_mm;
   if (op.hole_pitch_mm !== undefined) p.tab.pitch = op.hole_pitch_mm;
+  if (op.frame_holes !== undefined) p.tab.frameSide = op.frame_holes;
   if (p.tab.pitch <= p.tab.hole + 0.1) reject({ code: 'BOARD_INVALID', message: `Mouse-bite holes Ø${p.tab.hole} mm at ${p.tab.pitch} mm pitch leave less than 0.1 mm between them; the pitch must be larger.` });
   if (op.fiducials !== undefined) p.fiducials = op.fiducials;
   if (op.tooling_holes !== undefined) p.toolingHoles = op.tooling_holes;

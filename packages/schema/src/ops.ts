@@ -301,6 +301,7 @@ export const SetPanelOp = z.object({
   tab_width_mm: z.number().min(2).max(20).optional().describe('Tab width along the edge (default 5; JLCPCB asks for at least 5 with mouse bites)'),
   hole_mm: z.number().min(0.3).max(1.2).optional().describe('Mouse-bite hole diameter (default 0.5)'),
   hole_pitch_mm: z.number().min(0.5).max(2).optional().describe('Mouse-bite hole centre spacing, at most (default 0.75)'),
+  frame_holes: z.boolean().optional().describe('A row of mouse bites on the frame\'s end of each tab too, so the whole tab breaks out (default true); false: only at the board edge. Tabs between two boards always get a row at each board'),
   fiducials: z.boolean().optional().describe('Three fiducials on the rails (default true; needs 5 mm rails)'),
   tooling_holes: z.boolean().optional().describe('Four Ø2 mm tooling holes on the rails (default true; needs 5 mm rails)'),
 }).describe('Make the board in a fabrication panel: copies in a grid inside a frame, milled apart except at tabs with mouse bites (rows of small holes at each board edge, so the boards snap out). Only the given fields change; the first call starts from the defaults (2 × 2, 2 mm gap, 5 mm rails, tabs on every side, fiducials and tooling holes).');

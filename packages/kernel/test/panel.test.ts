@@ -36,8 +36,8 @@ describe('fabrication panel', () => {
     expect(p.settings.tabs).toEqual(autoTabs(['top', 'right', 'bottom', 'left'], 40, 30));
     expect(p.tabs).toHaveLength(18);
     expect(p.tabs.filter((t) => t.joins)).toHaveLength(6);
-    // 8 holes across a 5 mm tab (pitch ≤ 0.75), one row per board edge the tab touches
-    expect(p.bites).toHaveLength(12 * 8 + 6 * 16);
+    // 8 holes across a 5 mm tab (pitch ≤ 0.75), a row at each end: the board edges, or a board and the frame
+    expect(p.bites).toHaveLength(18 * 16);
     expect(codes(b)).toEqual([]);
     // material: the boards and the frame; milled: the channel, except at a tab
     expect(material(b, 27, 22)).toBe(true);
@@ -46,11 +46,11 @@ describe('fabrication panel', () => {
     expect(material(b, 48, 12)).toBe(false); // between the first two boards, beside the shared tab
     const shared = p.tabs.find((t) => t.joins && t.side === 'right')!;
     expect(material(b, shared.x + shared.w / 2, shared.y + shared.h / 2)).toBe(true);
-    // the holes of a frame tab sit 0.25 mm inside the board edge
+    // a frame tab: holes 0.25 mm inside the board edge (y 7) and inside the frame (the rail ends at y 5)
     const top = p.tabs.find((t) => t.copy === 0 && t.side === 'top')!;
     const row = p.bites.filter((m) => m.x >= top.x - 1e-6 && m.x <= top.x + top.w + 1e-6 && m.y < 10);
-    expect(row).toHaveLength(8);
-    for (const m of row) expect(m.y).toBeCloseTo(7.25, 3);
+    expect(row).toHaveLength(16);
+    expect([...new Set(row.map((m) => m.y))].sort()).toEqual([4.75, 7.25]);
     // fiducials (three, asymmetric) and tooling holes on the rails, 3.85 mm from the edge
     expect(p.fiducials).toHaveLength(3);
     expect(p.tooling.map((t) => [t.x, t.y])).toEqual([[3.85, 3.85], [92.15, 3.85], [3.85, 72.15], [92.15, 72.15]]);
@@ -64,9 +64,10 @@ describe('fabrication panel', () => {
     const p = b.panel!;
     expect(codes(b)).toEqual([]);
     expect(p.tabs.filter((t) => t.joins)).toHaveLength(2);
+    // each hole just inside a board, or (frame side) just inside the material past the 2 mm channel
     for (const m of p.bites) {
-      const c = p.copies.map((o) => Math.hypot(m.x - (o.dx + 15), m.y - (o.dy + 15)));
-      expect(Math.min(...c)).toBeLessThan(15);
+      const r = Math.min(...p.copies.map((o) => Math.hypot(m.x - (o.dx + 15), m.y - (o.dy + 15))));
+      expect(r < 15 || r > 17, `hole at ${r} mm from the centre`).toBe(true);
     }
   });
 
@@ -82,6 +83,17 @@ describe('fabrication panel', () => {
     expect(codes(b)).toContain('PANEL.TAB');
     const two = panel({ op: 'set_board', width_mm: 40, height_mm: 30 }, { op: 'set_panel', tabs: [{ side: 'top', at: 0.5 }, { side: 'top', at: 0.55 }, { side: 'bottom', at: 0.5 }] });
     expect(two.b.diagnostics.find((d) => d.code === 'PANEL.TAB')?.message).toContain('overlap');
+  });
+
+  it('drills only at the board edge when the frame side is off', () => {
+    const { b } = panel({ op: 'set_board', width_mm: 40, height_mm: 30 }, { op: 'set_panel', frame_holes: false });
+    expect(b.panel!.bites).toHaveLength(12 * 8 + 6 * 16);
+  });
+
+  it('warns when mouse bites run into a mark on the rail', () => {
+    // a tab on a 30 mm board near the left end of the top side: its frame-side row lands on the fiducial at x 10
+    const { b } = panel({ op: 'set_board', width_mm: 30, height_mm: 30 }, { op: 'set_panel', tabs: [{ side: 'top', at: 0.1 }, { side: 'bottom', at: 0.5 }, { side: 'left', at: 0.5 }, { side: 'right', at: 0.5 }] });
+    expect(codes(b)).toContain('PANEL.MARKS');
   });
 
   it('changes only what is given, and goes away with none', () => {

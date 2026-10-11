@@ -30,7 +30,8 @@ The board stays what you design. The panel is how it is made, stored next to it
 | `tabs` | on every side | `{ side, at }`: a side of the board's bounding box, and a fraction along it |
 | `tab.width` | 5 mm | along the edge |
 | `tab.hole`, `tab.pitch` | Ø0.5 mm, ≤ 0.75 mm | mouse-bite holes; the pitch is a maximum, so a row ends exactly at the tab's edges |
-| `tab.inset` | 0.25 mm | hole centres inside the board edge, so the break stays within the outline |
+| `tab.inset` | 0.25 mm | hole centres inside the edge, so the break stays within the outline |
+| `tab.frameSide` | on | a row on the frame's end of a tab too, so the whole tab breaks out |
 | `fiducials`, `toolingHoles` | on | three 1 mm fiducials (2 mm mask opening), placed asymmetrically, and four Ø2 mm tooling holes, centred 3.85 mm from the panel edge on the top and bottom rails (else on the left and right) |
 
 A tab sits where its side of the bounding box first meets the real outline, so the same
@@ -54,8 +55,10 @@ that come loose are scrap).
 
 A tab runs from the board edge outward until it reaches material, either the frame or a
 neighbouring board. A tab that joins two copies is shared: the neighbour's facing tab is the same
-tab, and it gets a row of holes at both board edges. A row of holes follows the outline, one
-hole per line across the tab.
+tab, and it gets a row of holes at both board edges. A tab to the frame gets a row at the board
+edge and, unless `frameSide` is off, one just inside the frame, so the whole tab breaks out and
+nothing stays stuck to the frame (the common pattern; the board's edge is clean either way). A row
+of holes follows the outline, one hole per line across the tab.
 
 ## Checks
 
@@ -64,6 +67,7 @@ hole per line across the tab.
 | `PANEL.TAB` | a tab runs off the board (its side is shorter or curved away there), reaches no material, or overlaps another tab on its side |
 | `PANEL.TABS` | a board held by fewer than two tabs |
 | `PANEL.LOOSE` | the panel falls apart: the boards and the frame are not all joined by tabs |
+| `PANEL.MARKS` | mouse bites run into a fiducial or tooling hole on the rail (warning) |
 | `PANEL.RAILS` | fiducials or tooling holes asked for, but no 5 mm rails on two opposite sides (warning) |
 | `PANEL.SIZE` | the panel is larger than the fab profile's largest board |
 | `PANEL.HOLE` | mouse-bite holes smaller than the profile's smallest non-plated hole |

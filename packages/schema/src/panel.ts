@@ -30,8 +30,12 @@ export interface PanelSettings {
   /** Frame (rail) width per side; 0 = no rail, the boards reach the panel edge there. */
   rails: Record<PanelSide, number>;
   tabs: PanelTab[];
-  /** Tab width along the edge; mouse-bite hole diameter, centre pitch, and how far the hole centres sit inside the board edge. */
-  tab: { width: number; hole: number; pitch: number; inset: number };
+  /**
+   * Tab width along the edge; mouse-bite hole diameter, centre pitch, and how far the hole centres
+   * sit inside the edge. `frameSide`: a row on the frame's end of a tab too, so the whole tab breaks
+   * out (absent = true; a tab between two boards always has a row at each board).
+   */
+  tab: { width: number; hole: number; pitch: number; inset: number; frameSide?: boolean };
   /** Three fiducials (1 mm copper, 2 mm mask opening) and four Ø2 mm tooling holes on the rails. */
   fiducials: boolean;
   toolingHoles: boolean;
@@ -42,7 +46,7 @@ export const DEFAULT_PANEL: Omit<PanelSettings, 'tabs'> = {
   rows: 2,
   gap: 2,
   rails: { top: 5, right: 5, bottom: 5, left: 5 },
-  tab: { width: 5, hole: 0.5, pitch: 0.75, inset: 0.25 },
+  tab: { width: 5, hole: 0.5, pitch: 0.75, inset: 0.25, frameSide: true },
   fiducials: true,
   toolingHoles: true,
 };

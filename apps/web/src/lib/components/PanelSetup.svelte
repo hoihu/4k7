@@ -101,6 +101,7 @@
       <label for="pn-pitch">Pitch ≤</label>
       <input id="pn-pitch" class="text num mono" type="number" min="0.5" max="2" step="0.05" value={s.tab.pitch} onchange={(e) => void num(e, s.tab.pitch, (v) => `Mouse-bite pitch ${v} mm`, (v) => ({ hole_pitch_mm: v }))} />
     </div>
+    <label class="chk" title="A row of holes where a tab meets the frame too, so the whole tab breaks out; between two boards there is always a row at each board"><input type="checkbox" checked={s.tab.frameSide !== false} disabled={app.running} onchange={(e) => void edit(e.currentTarget.checked ? 'Mouse bites on the frame side too' : 'Mouse bites at the board edge only', { frame_holes: e.currentTarget.checked })} />Holes on the frame side too</label>
     <label class="chk"><input type="checkbox" checked={s.fiducials} disabled={app.running} onchange={(e) => void edit(e.currentTarget.checked ? 'Panel fiducials' : 'No panel fiducials', { fiducials: e.currentTarget.checked })} />Fiducials (3 on the rails)</label>
     <label class="chk"><input type="checkbox" checked={s.toolingHoles} disabled={app.running} onchange={(e) => void edit(e.currentTarget.checked ? 'Panel tooling holes' : 'No panel tooling holes', { tooling_holes: e.currentTarget.checked })} />Tooling holes (4 × Ø2 mm)</label>
   {/if}

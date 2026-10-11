@@ -136,11 +136,12 @@ export function panelView(board: Outline, s: PanelSettings): { view: PanelView; 
         continue;
       }
       tabs.push({ x: r3(box.x), y: r3(box.y), w: r3(box.w), h: r3(box.h), copy: k, side: t.side, joins, src: [ti] });
-      // the holes sit just inside each board edge the tab touches, so the break stays within the outline
+      // the holes sit just inside each board edge the tab touches, so the break stays within the
+      // outline; and (unless turned off) just inside the frame, so the tab breaks out whole
       for (const r of ok) {
         const at = (v: number) => (vertical ? { x: r3(r.u), y: r3(v), d: s.tab.hole } : { x: r3(v), y: r3(r.u), d: s.tab.hole });
         bites.push(at(r.edge - sign * s.tab.inset));
-        if (joins) bites.push(at(r.reach! + sign * s.tab.inset));
+        if (joins || s.tab.frameSide !== false) bites.push(at(r.reach! + sign * s.tab.inset));
       }
     }
   });
@@ -188,6 +189,11 @@ export function panelView(board: Outline, s: PanelSettings): { view: PanelView; 
       if (s.fiducials) for (const [a, b] of [[fid, o], [L - fid, o], [fid, D - o]] as const) fiducials.push({ ...along(r3(a), r3(b)), d: FIDUCIAL.copper, mask: FIDUCIAL.mask });
     } else diagnostics.push({ code: 'PANEL.RAILS', severity: 'warning', message: `Panel: fiducials and tooling holes need ${MARK_RAIL} mm rails on two opposite sides (top and bottom, or left and right); there are none, so the panel has no marks for assembly.`, entities: ['panel'] });
   }
+
+  // mouse bites drilled into a fiducial or a tooling hole on the rail
+  const marks = [...tooling.map((t) => ({ ...t, r: t.d / 2, what: 'tooling hole' })), ...fiducials.map((f) => ({ ...f, r: f.mask / 2, what: 'fiducial' }))];
+  const hit = marks.filter((m) => bites.some((b) => Math.hypot(b.x - m.x, b.y - m.y) < m.r + b.d / 2 + 0.5));
+  if (hit.length) diagnostics.push({ code: 'PANEL.MARKS', severity: 'warning', message: `Panel: mouse bites run into ${hit.length === 1 ? `a ${hit[0]!.what}` : `${hit.length} fiducials or tooling holes`} on the rail; move the tab, or make the rails wider.`, entities: ['panel'] });
 
   return { view: { settings: s, w: W, h: H, copies, edges, tabs, bites, tooling, fiducials }, diagnostics };
 }
