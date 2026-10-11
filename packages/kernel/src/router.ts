@@ -97,7 +97,7 @@ export function route(input: RouteInput, passes = 8): RouteResult {
     connected: (netId, a, b) => {
       const ia = pads.indexOf(a);
       const ib = pads.indexOf(b);
-      return ia >= 0 && ib >= 0 && r.find(ia) === r.find(ib) && pads[ia]!.netId === netId;
+      return ia >= 0 && ib >= 0 && r.roots[ia] === r.roots[ib] && pads[ia]!.netId === netId;
     },
     failed: r.failed.map((c) => ({ netId: c.netId, a: pads[c.a]!, b: pads[c.b]! })),
     netsTotal: nets.size,
@@ -1554,7 +1554,10 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   // plane nets were not routed as tracks: their connections are open unless the plane joined them
   const planeNets = new Set(planes.filter((pl) => !OUTER.has(pl.layer)).map((pl) => pl.netId));
   for (const c of planeOnly) if (planeNets.has(c.netId) && find(c.a) !== find(c.b)) failed.push(c);
-  return { tracks, vias, failed, find, zones, timedOut };
+  // plain data only: a closure from here would keep this pass's grid buffers (hundreds of MB on
+  // a big board) alive while the next pass allocates its own
+  const roots = Int32Array.from(pads, (_, i) => find(i));
+  return { tracks, vias, failed, roots, zones, timedOut };
 }
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
