@@ -9,7 +9,7 @@ You describe what you want, give hints ("put V1 on the left", "make C1 100 µF")
 choose does the design through a typed operation API. A deterministic kernel turns that intent into
 geometry and checks every change.
 
-- **Bring your own AI**: the coding agent you already have (Claude Code, GitHub Copilot, OpenCode or any other MCP client) drives 4k7 through its MCP server, on your existing plan. Or add an Anthropic API key and chat in the app.
+- **Bring your own AI**: chat in the app through the coding agent you already have (Claude Code, GitHub Copilot CLI or OpenCode, on your existing plan or company login), or with an API key (Anthropic, OpenAI, OpenRouter, Gemini, a local model, any OpenAI- or Anthropic-compatible gateway). Or let your agent drive 4k7 from its own chat through the MCP server.
 - **Bring your own tools**: attach any MCP server (distributor stock, company part DB, simulation…).
 - **Parts from datasheets**: drop a manufacturer PDF (Parts → Import from datasheet); your agent extracts the pin table and package, the app checks it, and deterministic generators build the symbol and footprint.
 - **Sourcing from JLCPCB**: parts are fetched on demand from JLCPCB's assembly catalogue (LCSC numbers, stock, price, Basic/Extended), by you in the Inspector or by the agent ("a cheap buzzer from JLC"). The BOM carries the LCSC column JLCPCB reads.
@@ -49,20 +49,37 @@ node scripts/bundle.mjs  # the downloads (DMGs and Linux archives) in build/
 
 ## Bring your own AI
 
-4k7 ships no model. Pick one of two setups.
+4k7 ships no model. Chat in the app through a coding agent or an API key (A, B), or drive the app from your agent's own chat (C).
 
-### A. API key (chat in the app)
+### A. Coding agent (chat in the app, on your plan)
 
-1. Create a key in the [Anthropic Console](https://console.anthropic.com/) (`sk-ant-…`).
-2. In 4k7: **Settings → Chat provider**, select **Anthropic API**.
-3. Paste the key into **API key**, press **Save**.
-4. Pick **Model** and **Effort**, then use the chat.
+The local server runs your agent's CLI headlessly for every chat message, with only the 4k7 tools (no shell, no files):
 
-- Key is encrypted and stored in your browser only; sent only to `api.anthropic.com`.
-- Billed per token; **Session spend** shows the cost.
-- Empty field + **Save** removes the key.
+| Agent | Runs | Notes |
+|---|---|---|
+| Claude Code | `claude -p` | Model: default/opus/sonnet/fable/haiku. Also imports datasheets. |
+| GitHub Copilot CLI | `copilot -p` | Your Copilot plan (personal or company). Model: default, `auto` or any Copilot model. |
+| OpenCode | `opencode run` | Whatever providers OpenCode is logged in to (`opencode models`), e.g. `github-copilot/…`, a company gateway, local models. |
 
-### B. Existing harness (Claude Code, Copilot, OpenCode, any MCP client)
+1. Install the agent and sign in once in a terminal.
+2. Start the app (`npx -y github:hoihu/4k7`, or the download) and open the link it prints.
+3. **Settings → Chat provider → Coding agent**, pick the agent (and a model if you like).
+
+- Tick **Web** to allow read-only web lookups (datasheets).
+- The server finds the CLIs on your PATH; `FOURK7_CLAUDE_BIN`, `FOURK7_COPILOT_BIN`, `FOURK7_OPENCODE_BIN` point it elsewhere.
+
+### B. API key (chat in the app, billed per token)
+
+1. **Settings → Chat provider → API key**, pick the **Service**: Anthropic, OpenAI, OpenRouter, Google Gemini,
+   a local model (Ollama, LM Studio), or *Other* for any OpenAI- or Anthropic-compatible API (Azure OpenAI, LiteLLM, a company gateway).
+2. Check the **Address**, paste the key, press **Save**.
+3. Pick the **Model** (**List models** asks the API), then use the chat.
+
+- Keys are encrypted and stored in your browser only, one per service; sent only to that service's address.
+- The app calls the API from the browser: the service must allow that (CORS). Ollama needs `OLLAMA_ORIGINS` set to the app's address.
+- **Session spend** shows the cost where the model's price is known (Anthropic). Empty field + **Save** removes the key.
+
+### C. Your agent drives the app (Claude Code, Copilot, OpenCode, any MCP client)
 
 The agent drives 4k7 over MCP, on your existing plan. Server command (needs Node 22.18+):
 
@@ -86,7 +103,7 @@ claude mcp list   # 4k7: ✓ Connected
 
 - From a checkout: start `claude` at the repo root and approve the `4k7` server from `.mcp.json` (run `npm run build` first).
 - *failed* / *connection closed*: check `node --version` and `~/.4k7/server.log`.
-- Optional in-app chat: **Settings → Chat provider → Claude Code**. Runs `claude -p` with only the 4k7 tools; tick **Web** to allow read-only web lookups.
+- In-app chat instead: see A.
 - Bedrock/Vertex or another login: set `claude.configDir` / `claude.unsetEnv` in `~/.4k7/server.json`.
 
 #### GitHub Copilot
@@ -135,6 +152,6 @@ The server binds to `127.0.0.1` and requires the access key in `~/.4k7/server.js
 | `packages/parts` | Seed part library, deterministic symbol, footprint and 3D-body generators, standard packages, datasheet import checks |
 | `packages/kernel` | Transactions, ERC + datasheet checks, constraint ledger, schematic auto-layout, board placement, autorouter + ground pour, copper DRC, changesets, canonical JSON |
 | `packages/fab` | Gerber X2, Excellon drill, BOM, pick-and-place, zip |
-| `packages/agent` | Agent loop with kernel verification, calculators, Anthropic + offline providers |
+| `packages/agent` | Agent loop with kernel verification, calculators, Anthropic and OpenAI-compatible providers |
 | `apps/web` | Svelte 5 app: schematic workspace (chat + canvas + inspector), parts, settings. The kernel runs in a Web Worker |
-| `tools/server` | Local server: serves the built app, MCP over stdio for your agent, headless `claude -p` for the app chat, WebSocket to the tab, access key and origin checks. Bundled with the app into the `4k7pcb` package |
+| `tools/server` | Local server: serves the built app, MCP over stdio for your agent, headless Claude Code / Copilot CLI / OpenCode for the app chat, WebSocket to the tab, access key and origin checks. Bundled with the app into the `4k7pcb` package |

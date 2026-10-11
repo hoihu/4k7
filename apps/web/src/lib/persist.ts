@@ -2,7 +2,8 @@
  * Local-first persistence in IndexedDB. The API key is encrypted with a non-extractable
  * AES-GCM key that never leaves this browser profile.
  */
-import type { Artwork, PartCard } from '@4k7/schema';
+import type { ApiServiceId } from '@4k7/agent';
+import type { Artwork, HarnessId, PartCard } from '@4k7/schema';
 
 const DB = '4k7';
 /** The app's name before 4k7. A browser that ran it keeps its data under this name; it is copied over once. */
@@ -296,12 +297,22 @@ export async function loadDatasheet(hash: string): Promise<StoredDatasheet | und
 
 /* -------------------------------- settings -------------------------------- */
 
-export type ProviderKind = 'anthropic' | 'claude-code';
+/** The chat: a coding agent on this computer (through the local server), or a model API with the user's key. */
+export type ProviderKind = 'agent' | 'api';
 export type Mode = 'auto' | 'review';
 
 export interface Settings {
   provider: ProviderKind;
-  model: string;
+  /** Which coding agent answers the chat. */
+  harness: HarnessId;
+  /** Model per agent ('' or missing = the agent's default). */
+  harnessModels: Partial<Record<HarnessId, string>>;
+  /** Let the agent read the web (datasheets) in the app chat. */
+  agentWeb: boolean;
+  /** Which API, its address where it differs from the service's default, and the model, per service. */
+  api: ApiServiceId;
+  apiUrls: Partial<Record<ApiServiceId, string>>;
+  apiModels: Partial<Record<ApiServiceId, string>>;
   effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   mode: Mode;
   fixBudget: number;
@@ -309,38 +320,54 @@ export interface Settings {
   /** The local server's access key and port, remembered so the tab reconnects by itself. */
   serverAccessKey: string;
   serverPort: number | null;
-  /** Model alias for Claude Code in the app chat ('' = Claude Code's default). */
-  claudeModel: string;
-  /** Let Claude Code read the web (datasheets) in the app chat. */
-  claudeWeb: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  provider: 'claude-code',
-  model: 'claude-opus-5',
+  provider: 'agent',
+  harness: 'claude-code',
+  harnessModels: {},
+  agentWeb: false,
+  api: 'anthropic',
+  apiUrls: {},
+  apiModels: { anthropic: 'claude-opus-5' },
   effort: 'high',
   mode: 'review',
   fixBudget: 5,
   theme: 'dark',
   serverAccessKey: '',
   serverPort: null,
-  claudeModel: '',
-  claudeWeb: false,
 };
 
 /** Bumped when a default changes in a way existing users should get (v2: dark blue theme). */
 const SETTINGS_VERSION = 2;
 
+/** Settings as versions before the coding-agent choice saved them. */
+interface OldSettings {
+  provider?: string;
+  model?: string;
+  claudeModel?: string;
+  claudeWeb?: boolean;
+  bridgeCode?: string;
+  bridgePort?: number | null;
+  version?: number;
+}
+
 export async function loadSettings(): Promise<Settings> {
   try {
-    const saved = (await get<Partial<Settings> & { version?: number }>('settings', 'settings')) ?? {};
-    // older versions: the 6-digit pairing code and the port of the "bridge" (now the local server)
-    const { bridgeCode: _code, bridgePort: _port, ...rest } = saved as typeof saved & { bridgeCode?: string; bridgePort?: number | null };
-    const merged = { ...DEFAULT_SETTINGS, ...rest };
+    const saved = (await get<Partial<Settings> & OldSettings>('settings', 'settings')) ?? {};
+    // older versions: the 6-digit pairing code and the port of the "bridge" (now the local server);
+    // one provider each ("anthropic", "claude-code") before APIs and agents became choices
+    const { bridgeCode: _code, bridgePort: _port, model, claudeModel, claudeWeb, provider, ...rest } = saved;
+    const merged: Settings = { ...DEFAULT_SETTINGS, ...rest };
     // v1 stored theme "system" without the user ever choosing it
     if ((saved.version ?? 1) < 2 && saved.theme === 'system') merged.theme = DEFAULT_SETTINGS.theme;
-    // the offline demo is gone
-    if ((merged.provider as string) === 'demo') merged.provider = DEFAULT_SETTINGS.provider;
+    if (provider === 'api' || provider === 'agent') merged.provider = provider;
+    else if (provider === 'anthropic') Object.assign(merged, { provider: 'api', api: 'anthropic' });
+    else if (provider === 'claude-code') Object.assign(merged, { provider: 'agent', harness: 'claude-code' });
+    // (and the offline demo is gone: the default)
+    if (model && !rest.apiModels) merged.apiModels = { ...merged.apiModels, anthropic: model };
+    if (claudeModel && !rest.harnessModels) merged.harnessModels = { 'claude-code': claudeModel };
+    if (claudeWeb !== undefined && rest.agentWeb === undefined) merged.agentWeb = claudeWeb;
     return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };

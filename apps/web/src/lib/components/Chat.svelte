@@ -53,12 +53,12 @@
           <p class="muted">Click a part to reference it, or say “make C2 100µF” or “put C1 left of U1”. Your hints stick, even after a re-layout.</p>
           {#if app.noModel}
             <p class="demo">
-              No API key set. <button class="linkbtn" onclick={() => (app.view = 'set')}>Add one</button>, or {#if __APP_RUN__}open {__SERVER_RUN__}{:else}run <code>{__SERVER_RUN__}</code> and open the link it prints{/if} to chat with your
-              <b>Claude Code</b>.
+              The API is not set up ({app.apiProblem}). <button class="linkbtn" onclick={() => (app.view = 'set')}>Finish it</button>, or {#if __APP_RUN__}open {__SERVER_RUN__}{:else}run <code>{__SERVER_RUN__}</code> and open the link it prints{/if} to chat with a coding agent on this computer
+              (<b>Claude Code</b>, <b>GitHub Copilot</b>, <b>OpenCode</b>).
             </p>
-          {:else if app.settings.provider === 'claude-code' && server.status !== 'connected'}
+          {:else if app.settings.provider === 'agent' && server.status !== 'connected'}
             <p class="demo">
-              The chat uses your Claude Code, but the server is {server.status === 'elsewhere' ? 'connected in another tab' : 'not connected'}.
+              The chat uses your {app.harness.name}, but the server is {server.status === 'elsewhere' ? 'connected in another tab' : 'not connected'}.
               {#if server.status === 'elsewhere'}<button class="linkbtn" onclick={() => server.useThisTab()}>Use this tab</button>{:else if __APP_RUN__}Open {__SERVER_RUN__} again.{:else}Run <code>{__SERVER_RUN__}</code> and open the link it prints.{/if}
             </p>
           {/if}

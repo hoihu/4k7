@@ -4,6 +4,8 @@ export { runKernelTool, unknownTool, type ToolExecutor, type ToolImage, type Too
 export { runCalc, nearestE, CalcError } from './calc.ts';
 export { SYSTEM_PROMPT, formatDesignContext } from './prompt.ts';
 export { AnthropicProvider, ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL, costUsd, type Effort, type AnthropicOptions } from './providers/anthropic.ts';
+export { OpenAICompatProvider, listOpenAIModels, type OpenAICompatOptions } from './providers/openai.ts';
+export { API_SERVICES, apiProblem, apiProvider, apiService, type ApiChoice, type ApiService, type ApiServiceId } from './providers/services.ts';
 export { ScriptedProvider, type Script, type ScriptStep } from './providers/scripted.ts';
 export { compactTx, describeTx } from './format.ts';
 export { formatScope, optimizePrompt } from './optimize.ts';

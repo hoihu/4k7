@@ -13,8 +13,8 @@ import type { LocalServer, HttpHandler } from './server.ts';
 /** The package's version: read from the root package.json in a checkout, inlined in the bundle. */
 export const VERSION: string = pkg.version;
 
-/** Server instructions for the runs the server starts itself; their real prompt is in the system prompt. */
-const RUN_INSTRUCTIONS = '4k7 tools. How to use them is in your system prompt.';
+/** Server instructions for the runs the server starts itself; their real prompt comes with the run (system prompt or first message). */
+const RUN_INSTRUCTIONS = '4k7 tools. How to use them is in your instructions.';
 
 /** 'cli': Claude Code CLI drives the app; 'chat': it answers the app's chat; 'ingest': it imports a datasheet. */
 export type McpMode = 'cli' | 'chat' | 'ingest';
