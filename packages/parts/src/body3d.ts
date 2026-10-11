@@ -3,7 +3,7 @@
  * viewed from the top with y down; z up, board surface at z = 0). Boxes, balls and cylinders: enough
  * for a 3D preview and collision/height checks, and the basis for a STEP/GLB export later.
  */
-import type { PackageInfo } from '@tracewise/schema';
+import type { PackageInfo } from '@4k7/schema';
 import { bgaRowName, footprintFor, isModule, moduleSpan, type Pad } from './footprint.ts';
 
 export interface Box3 {

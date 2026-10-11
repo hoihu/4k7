@@ -1,6 +1,6 @@
 # Publishes the package to npm when a version tag (v0.1.0) is pushed. Inert until the release:
 # "private": true in package.json makes npm refuse to publish, and npm must trust this workflow
-# (npmjs.com → package settings → Trusted publishing: hoihu/tracewise, release.yml). See docs/distribution.md.
+# (npmjs.com → package settings → Trusted publishing: hoihu/4k7, release.yml). See docs/distribution.md.
 name: Release
 on:
   push:
@@ -29,5 +29,5 @@ jobs:
           v="$(node -p 'require("./package.json").version')"
           [ "$GITHUB_REF_NAME" = "v$v" ] || { echo "tag $GITHUB_REF_NAME, package.json $v"; exit 1; }
       # prepublishOnly runs typecheck, tests and the package check; prepare builds dist/.
-      # Pre-releases (0.2.0-beta.1) go to the `next` dist-tag, so `npx tracewise` keeps the last release.
+      # Pre-releases (0.2.0-beta.1) go to the `next` dist-tag, so `npx 4k7pcb` keeps the last release.
       - run: npm publish --provenance --access public --tag "$(case "$GITHUB_REF_NAME" in *-*) echo next;; *) echo latest;; esac)"

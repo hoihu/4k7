@@ -2,7 +2,7 @@
  * Optimize: the user zoomed into an area of the schematic and asked the agent to improve how it is
  * drawn (docs/design/zoom-optimize.md). The kernel enforces the area; this tells the agent about it.
  */
-import type { ScopeInfo, ScopeMeasures } from '@tracewise/schema';
+import type { ScopeInfo, ScopeMeasures } from '@4k7/schema';
 
 const measures = (m: ScopeMeasures) => `crossings ${m.crossings}, wire ${m.wireIn} in, net labels ${m.labels}`;
 

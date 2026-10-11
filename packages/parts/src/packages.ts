@@ -3,7 +3,7 @@
  * footprint and 3D generators treat library parts and datasheet imports the same way.
  * Dimensions are nominal (mm) from the usual JEDEC/EIA outlines.
  */
-import { parseAs, type PackageDefaults, type PackageInfo, type PartCard } from '@tracewise/schema';
+import { parseAs, type PackageDefaults, type PackageInfo, type PartCard } from '@4k7/schema';
 
 /** EIA chip sizes: length × width, terminal length, height. */
 const CHIPS: Record<string, [number, number, number, number]> = {

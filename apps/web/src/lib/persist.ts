@@ -2,11 +2,14 @@
  * Local-first persistence in IndexedDB. The API key is encrypted with a non-extractable
  * AES-GCM key that never leaves this browser profile.
  */
-import type { Artwork, PartCard } from '@tracewise/schema';
+import type { Artwork, PartCard } from '@4k7/schema';
 
-const DB = 'tracewise';
+const DB = '4k7';
+/** The app's name before 4k7. A browser that ran it keeps its data under this name; it is copied over once. */
+const OLD_DB = 'tracewise';
 /** v2: 'library' store for imported parts; v3: 'datasheets' (PDFs by SHA-256); v4: 'artwork' (silkscreen graphics). */
 const VERSION = 4;
+const STORES = ['projects', 'settings', 'keys', 'library', 'datasheets', 'artwork'];
 
 /** Last storage problem in this browser, for diagnostics ('ok' when saving works). */
 export let storageHealth = 'ok';
@@ -24,18 +27,23 @@ function open(): Promise<IDBDatabase> {
       reject(new Error(storageHealth));
     }, 3000);
     const req = indexedDB.open(DB, VERSION);
+    let created = false;
     req.onblocked = () => {
       clearTimeout(timer);
       storageHealth = 'IndexedDB blocked by another tab';
       reject(new Error(storageHealth));
     };
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (e) => {
       const db = req.result;
-      for (const s of ['projects', 'settings', 'keys', 'library', 'datasheets', 'artwork']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+      created = e.oldVersion === 0;
+      for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
     };
     req.onsuccess = () => {
       clearTimeout(timer);
-      resolve(req.result);
+      // the first open of a new database: bring over what the old name held, before anyone reads
+      if (created) migration = copyDatabase(OLD_DB, req.result).catch(() => undefined);
+      if (migration) migration.then(() => resolve(req.result));
+      else resolve(req.result);
     };
     req.onerror = () => {
       clearTimeout(timer);
@@ -43,6 +51,50 @@ function open(): Promise<IDBDatabase> {
       reject(req.error);
     };
   });
+}
+
+/** The copy from the old database name, so every open waits for it. */
+let migration: Promise<void> | null = null;
+
+const request = <T>(r: IDBRequest<T>) =>
+  new Promise<T>((resolve, reject) => {
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+
+/** An existing database by name, or null; never creates one. */
+function openExisting(name: string): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    const req = indexedDB.open(name);
+    req.onupgradeneeded = () => req.transaction?.abort(); // version 0: there was none
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+    req.onblocked = () => resolve(null);
+  });
+}
+
+/** Copy every record of the stores both databases have. The old database is left as it was. */
+async function copyDatabase(fromName: string, to: IDBDatabase): Promise<void> {
+  const from = await openExisting(fromName);
+  if (!from) return;
+  try {
+    for (const store of Array.from(from.objectStoreNames)) {
+      if (!to.objectStoreNames.contains(store)) continue;
+      const src = from.transaction(store, 'readonly').objectStore(store);
+      const [keys, values] = await Promise.all([request(src.getAllKeys()), request(src.getAll())]);
+      if (keys.length === 0) continue;
+      const t = to.transaction(store, 'readwrite');
+      const dst = t.objectStore(store);
+      keys.forEach((k, i) => dst.put(values[i], k));
+      await new Promise<void>((resolve, reject) => {
+        t.oncomplete = () => resolve();
+        t.onerror = () => reject(t.error);
+        t.onabort = () => reject(t.error);
+      });
+    }
+  } finally {
+    from.close();
+  }
 }
 
 /** Whether the browser keeps this site's storage (false in private windows or under some policies). */

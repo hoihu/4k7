@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { ParamSpec } from '@tracewise/schema';
-  import { describeJlcPart, sourcingMismatch, type JlcPart } from '@tracewise/parts';
+  import type { ParamSpec } from '@4k7/schema';
+  import { describeJlcPart, sourcingMismatch, type JlcPart } from '@4k7/parts';
   import { app, type InspectorTab } from '../app.svelte.ts';
   import { jlc } from '../jlc.ts';
 

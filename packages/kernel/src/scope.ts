@@ -2,7 +2,7 @@
  * Optimize scope (docs/design/zoom-optimize.md): which parts of the zoomed area the agent may move,
  * the guard that keeps its edits inside it, and the numbers that say whether a change helped.
  */
-import type { Component, Design, EditOp, OptimizeScope, Rect, SchematicView, ScopeInfo, ScopeMeasures, SheetView, SymbolView } from '@tracewise/schema';
+import type { Component, Design, EditOp, OptimizeScope, Rect, SchematicView, ScopeInfo, ScopeMeasures, SheetView, SymbolView } from '@4k7/schema';
 import { resolveUnitRef } from './apply.ts';
 import { RejectError, componentsSorted, natCmp, netMembers, reject } from './doc.ts';
 

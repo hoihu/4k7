@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { OptimizeScope, ScopeInfo } from '@tracewise/schema';
+import type { OptimizeScope, ScopeInfo } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { circuitSignature } from '../src/scope.ts';
 import { buckTransaction } from './fixtures.ts';

@@ -15,10 +15,10 @@ import {
   type AgentEvent,
   type Provider,
   type ToolOutcome,
-} from '@tracewise/agent';
-import type { KernelState } from '@tracewise/kernel';
+} from '@4k7/agent';
+import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, SERVER_ACCESS_KEY, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@tracewise/schema';
+import { ArtworkInput, SERVER_ACCESS_KEY, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@4k7/schema';
 import { server } from './server.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -925,7 +925,7 @@ class AppState {
   }
 
   /** Tabs of the app tell each other about settings changes and who holds the server. */
-  private settingsChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('tracewise-settings') : null;
+  private settingsChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('4k7-settings') : null;
 
   private async reloadSettings() {
     this.settings = await loadSettings();

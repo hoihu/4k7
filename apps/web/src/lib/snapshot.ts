@@ -1,4 +1,4 @@
-import type { Rect } from '@tracewise/schema';
+import type { Rect } from '@4k7/schema';
 
 /**
  * Render the live schematic SVG to a PNG (base64), framed on the whole sheet or on `frame`

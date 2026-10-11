@@ -9,7 +9,7 @@
  * routes (equal hashes: identical copper).
  */
 import { createHash } from 'node:crypto';
-import type { BoardPad, BoardPart, CopperLayer } from '@tracewise/schema';
+import type { BoardPad, BoardPart, CopperLayer } from '@4k7/schema';
 import { route } from '../src/router.ts';
 
 let seed = Number(process.env.SEED ?? 7);

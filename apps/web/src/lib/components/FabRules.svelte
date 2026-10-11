@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fabPresets, ruleLimit, RULE_LABELS, type BoardRules, type FabProfile, type RuleKey } from '@tracewise/schema';
+  import { fabPresets, ruleLimit, RULE_LABELS, type BoardRules, type FabProfile, type RuleKey } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
 
   /** The manufacturer the board is made by (its limits are checked) and the design rules, kept above those limits. */

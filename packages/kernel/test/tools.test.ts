@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentTools } from '@tracewise/schema';
+import { agentTools } from '@4k7/schema';
 
 describe('tool schemas', () => {
   const all = [...agentTools('app'), ...agentTools('cli')];

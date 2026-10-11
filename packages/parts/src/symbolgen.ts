@@ -7,7 +7,7 @@
  *  - box symbols (ICs, connectors, transistors): body rectangle from (0, 0) to (w, h),
  *    pins sticking out 200 mils on each side.
  */
-import type { PartCard, PartPin, PinSide, Prim, SymbolLayout, SymbolUnit } from '@tracewise/schema';
+import type { PartCard, PartPin, PinSide, Prim, SymbolLayout, SymbolUnit } from '@4k7/schema';
 
 export const GRID = 100;
 export const PIN_LEN = 200;

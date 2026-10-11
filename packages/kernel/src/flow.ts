@@ -12,8 +12,8 @@
  * Columns are ordered so that no wires cross. Detection is generic: an IC with a power input,
  * a power output and a ground pin (buck converters with an inductor, LDOs without).
  */
-import type { Component, Design, Net, PartCard, PinView } from '@tracewise/schema';
-import { isTwoPin, pinSide, symbolFor } from '@tracewise/parts';
+import type { Component, Design, Net, PartCard, PinView } from '@4k7/schema';
+import { isTwoPin, pinSide, symbolFor } from '@4k7/parts';
 import { cardOf, isGroundNet, isPowerNet, natCmp, type NetPin } from './doc.ts';
 import { deco, decoWidth, emptyScene, grid, isNegativeRail, makeSymbol, satWidth, supplyDir, supplyStubs, tw, type Scene } from './scene.ts';
 

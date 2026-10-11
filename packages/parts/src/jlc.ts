@@ -7,7 +7,7 @@
  * default is the tscircuit jlcsearch mirror (CORS-enabled, so the browser calls it directly).
  * Stock and prices are a snapshot at the time of the call.
  */
-import { normalizeLcsc, parseQuantity, type PartCard } from '@tracewise/schema';
+import { normalizeLcsc, parseQuantity, type PartCard } from '@4k7/schema';
 
 /** Basic and Preferred parts have no loading fee at JLCPCB assembly; Extended parts cost one per unique part. */
 export type JlcTier = 'basic' | 'preferred' | 'extended';

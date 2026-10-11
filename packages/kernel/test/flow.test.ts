@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SheetView } from '@tracewise/schema';
+import type { SheetView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 

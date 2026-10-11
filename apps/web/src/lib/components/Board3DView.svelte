@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { body3dFor, type Body3D } from '@tracewise/parts';
-  import type { BoardView } from '@tracewise/schema';
+  import { body3dFor, type Body3D } from '@4k7/parts';
+  import type { BoardView } from '@4k7/schema';
   import type { BoardViewer, TopView, ViewPreset } from '../three-body.ts';
 
   /**

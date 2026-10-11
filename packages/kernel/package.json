@@ -1,5 +1,5 @@
 {
-  "name": "@tracewise/kernel",
+  "name": "@4k7/kernel",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,8 +7,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@tracewise/parts": "0.1.0",
-    "@tracewise/schema": "0.1.0",
+    "@4k7/parts": "0.1.0",
+    "@4k7/schema": "0.1.0",
     "clipper2-ts": "^2.0.1"
   }
 }

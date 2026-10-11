@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { draftToCard, planUnits, registerUserParts, unregisterUserPart } from '@tracewise/parts';
-import type { PartCard, PartDraft } from '@tracewise/schema';
+import { draftToCard, planUnits, registerUserParts, unregisterUserPart } from '@4k7/parts';
+import type { PartCard, PartDraft } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 
 /** A 48-pin MCU: 3 ports of ~12 plus supplies, as imported from a datasheet. */

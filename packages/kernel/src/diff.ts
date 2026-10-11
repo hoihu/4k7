@@ -2,7 +2,7 @@
  * Changesets: entity-level diff between the committed design and the agent's working
  * copy, and merging of a user-selected subset of hunks.
  */
-import type { Component, Design, Hunk } from '@tracewise/schema';
+import type { Component, Design, Hunk } from '@4k7/schema';
 import { describeConstraint } from './apply.ts';
 import { clone, gcNets, gcParts, natCmp, valueOf } from './doc.ts';
 

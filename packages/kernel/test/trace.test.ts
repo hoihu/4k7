@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { figureDepths } from '@tracewise/schema';
+import { figureDepths } from '@4k7/schema';
 import { traceBitmap } from '../src/trace.ts';
 
 const grid = (rows: string[]) => ({ ink: rows.join('').split('').map((c) => (c === '#' ? 1 : 0)), w: rows[0]!.length, h: rows.length });

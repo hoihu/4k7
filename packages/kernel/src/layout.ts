@@ -14,8 +14,8 @@
  *  - Connections that are not drawn as wires are shown by net labels, so the drawing is
  *    always electrically complete and correct.
  */
-import { DEFAULT_PAPER, PAGE, paperOf, parseAs, type Component, type Constraint, type Design, type Net, type PageView, type PartCard, type Point, type Rect, type SchematicView, type SheetView, type SymbolView } from '@tracewise/schema';
-import { GRID, isTwoPin, symbolFor, unitCount, uprightSymbol } from '@tracewise/parts';
+import { DEFAULT_PAPER, PAGE, paperOf, parseAs, type Component, type Constraint, type Design, type Net, type PageView, type PartCard, type Point, type Rect, type SchematicView, type SheetView, type SymbolView } from '@4k7/schema';
+import { GRID, isTwoPin, symbolFor, unitCount, uprightSymbol } from '@4k7/parts';
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, valueOf, type NetPin } from './doc.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
 import { tidyWires } from './tidy.ts';
