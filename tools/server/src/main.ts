@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
- * 4k7-server: connects the 4k7 app in the browser to Claude Code.
+ * 4k7-server: connects the 4k7 app in the browser to a coding agent (Claude Code, Copilot, OpenCode…).
  *
  * Either way it serves the built app on its port, at http://localhost:7777/<access-key>: the key (kept
  * in ~/.4k7/server.json) is what lets the tab connect to the server.
  *
  * Two ways to use it:
- *   1. You type in the app's chat and your local Claude Code answers:
+ *   1. You type in the app's chat and a coding agent on this computer answers:
  *        node tools/server/src/main.ts --serve [--open]   (npm run server; `npx 4k7pcb` runs this with --open)
- *      The server runs `claude -p` headlessly per message, with only the 4k7 tools.
+ *      The server runs the agent's CLI headlessly per message (`claude -p`, `copilot -p`, `opencode run`),
+ *      with only the 4k7 tools.
  *      With --idle-exit (the downloaded app) it stops by itself once no tab has been connected for a while.
  *   2. Claude Code drives the app (you type in the Claude Code CLI):
  *        claude mcp add --scope user 4k7 -- node /path/to/repo/tools/server/src/main.ts
@@ -19,10 +20,13 @@
 import { appendFileSync, existsSync, renameSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { SERVER_PORTS } from '@4k7/schema';
+import { SERVER_PORTS, type HarnessCapability } from '@4k7/schema';
 import { appHandler, reachable, serves4k7 } from './app.ts';
 import { LocalServer } from './server.ts';
 import { ChatRunner, detectClaude } from './chat.ts';
+import { CopilotHarness } from './harness/copilot.ts';
+import { OpenCodeHarness } from './harness/opencode.ts';
+import type { Harness } from './harness/types.ts';
 import { extendPathFor } from './claude-bin.ts';
 import { appDir, configDir, configPath, DEV_APP, inCheckout, loadConfig } from './config.ts';
 import { openBrowser } from './launch.ts';
@@ -76,26 +80,42 @@ async function main() {
   const port = await server.start();
   const dir = appDir();
 
-  // chat in the app, answered by the local Claude Code
+  // chat in the app, answered by a coding agent on this computer (Claude Code, Copilot CLI, OpenCode)
   const claudeBin = process.env.FOURK7_CLAUDE_BIN ?? 'claude';
-  let capability = detectClaude(claudeBin, cfg.claude);
-  if (!capability.available && !claudeBin.includes(sep)) {
-    // started from the Finder or a launcher: look where installers put it, then where the user's shell does
-    const added = extendPathFor(() => detectClaude(claudeBin, cfg.claude).available);
+  const workDir = join(configDir(), 'claude-workspace');
+  const others: Harness[] = [new CopilotHarness(process.env.FOURK7_COPILOT_BIN ?? 'copilot'), new OpenCodeHarness(process.env.FOURK7_OPENCODE_BIN ?? 'opencode', workDir)];
+  const detectAll = (): HarnessCapability[] => [{ id: 'claude-code', name: 'Claude Code', ...detectClaude(claudeBin, cfg.claude) }, ...others.map((h) => h.detect())];
+  let harnesses = detectAll();
+  const bins = [claudeBin, ...others.map((h) => h.bin)];
+  const missing = harnesses.filter((h, i) => !h.available && !bins[i]!.includes(sep)).map((h) => h.id);
+  if (missing.length) {
+    // started from the Finder or a launcher: look where installers put them, then where the user's shell does
+    const added = extendPathFor(() => detectAll().some((h) => h.available && missing.includes(h.id)));
     if (added) {
-      capability = detectClaude(claudeBin, cfg.claude);
-      log(`claude found after adding to PATH: ${added.join(', ')}`);
+      harnesses = detectAll();
+      log(`agent CLIs found after adding to PATH: ${added.join(', ')}`);
     }
   }
-  const chat = new ChatRunner({ server, claudeBin, workDir: join(configDir(), 'claude-workspace'), ingestDir: join(configDir(), 'ingest'), profile: cfg.claude, log });
-  server.setChatHandler(chat.handle, capability);
+  const capability = harnesses[0]!;
+  const chat = new ChatRunner({ server, claudeBin, workDir, ingestDir: join(configDir(), 'ingest'), profile: cfg.claude, harnesses: others, log });
+  server.setChatHandler(chat.handle, capability, harnesses);
+  // model lists can take a while (OpenCode asks its providers): the tab gets them when they are in
+  for (const h of others) {
+    const i = harnesses.findIndex((c) => c.id === h.id);
+    if (!harnesses[i]?.available || !h.models) continue;
+    void h.models().then((models) => {
+      if (!models.length) return;
+      harnesses = harnesses.map((c, j) => (j === i ? { ...c, models } : c));
+      server.setHarnesses(harnesses);
+    });
+  }
   const mcpHttp = mcpHttpHandler(server, (t) => chat.modeFor(t));
   const app = appHandler(dir, VERSION, cfg.accessKey);
   server.setHttpHandler((req, res) => ((req.url ?? '').split('?')[0] === '/mcp' ? mcpHttp(req, res) : app(req, res)));
   server.setAppUrl(await appUrl(cfg.appUrl, port, dir));
 
   log(`v${VERSION} on 127.0.0.1:${port} · access key in ${configPath()}`);
-  log(`app chat via Claude Code: ${capability.available ? `yes (${capability.version})` : `no, ${capability.reason}`}`);
+  for (const h of harnesses) log(`app chat via ${h.name}: ${h.available ? `yes (${h.version})` : `no, ${h.reason}`}`);
   const p = cfg.claude;
   if (p.configDir || p.unsetEnv.length) {
     log(`claude profile: ${p.configDir ? `CLAUDE_CONFIG_DIR=${p.configDir}` : 'default config'}${p.unsetEnv.length ? `, without ${p.unsetEnv.join(', ')}` : ''}`);

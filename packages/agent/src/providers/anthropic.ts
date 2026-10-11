@@ -129,10 +129,13 @@ function mapStop(s: string | null): StopReason {
   }
 }
 
-/** Assistant turns are replayed from `raw` unchanged; user turns are built from blocks. */
+/**
+ * Assistant turns are replayed from `raw` unchanged; user turns, and assistant turns of another
+ * provider (the user switched mid-conversation), are built from blocks.
+ */
 function toApi(messages: Message[]): Anthropic.Beta.BetaMessageParam[] {
   return messages.map((m) => {
-    if (m.role === 'assistant' && m.raw) {
+    if (m.role === 'assistant' && Array.isArray(m.raw)) {
       return { role: 'assistant', content: m.raw as Anthropic.Beta.BetaContentBlockParam[] };
     }
     const content: Anthropic.Beta.BetaContentBlockParam[] = [];

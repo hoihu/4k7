@@ -18,6 +18,7 @@ import {
   type ToolContent,
   type ServerToTab,
   type ChatCapability,
+  type HarnessCapability,
   type TabToServer,
   type UpdateInfo,
 } from '@4k7/schema';
@@ -60,6 +61,7 @@ export class LocalServer {
   #httpHandler: HttpHandler | null = null;
   #chatHandler: ((msg: ChatMessage) => void) | null = null;
   #chat: ChatCapability = { available: false, reason: 'chat not enabled' };
+  #harnesses: HarnessCapability[] = [];
   #update: UpdateInfo | null = null;
   #pending = new Map<number, Pending>();
   #seq = 0;
@@ -102,10 +104,17 @@ export class LocalServer {
     this.#httpHandler = h;
   }
 
-  /** Receive chat messages from the connected tab. */
-  setChatHandler(h: (msg: ChatMessage) => void, capability: ChatCapability) {
+  /** Receive chat messages from the connected tab. `capability`: Claude Code's; `harnesses`: every agent's. */
+  setChatHandler(h: (msg: ChatMessage) => void, capability: ChatCapability, harnesses: HarnessCapability[] = []) {
     this.#chatHandler = h;
     this.#chat = capability;
+    this.#harnesses = harnesses;
+  }
+
+  /** The agents' details changed (e.g. a model list arrived): told to the connected tab. */
+  setHarnesses(harnesses: HarnessCapability[]) {
+    this.#harnesses = harnesses;
+    this.#send({ type: 'harnesses', harnesses });
   }
 
   get chatCapability(): ChatCapability {
@@ -241,7 +250,14 @@ export class LocalServer {
         if (this.#tab && this.#tab !== ws) this.#tab.close(4000, 'replaced by another tab');
         this.#tab = ws;
         ws.send(
-          JSON.stringify({ type: 'welcome', protocol: SERVER_PROTOCOL, agent: this.#agent ?? 'Claude Code', chat: this.#chat, ...(this.#update ? { update: this.#update } : {}) } satisfies ServerToTab),
+          JSON.stringify({
+            type: 'welcome',
+            protocol: SERVER_PROTOCOL,
+            agent: this.#agent ?? 'Claude Code',
+            chat: this.#chat,
+            harnesses: this.#harnesses,
+            ...(this.#update ? { update: this.#update } : {}),
+          } satisfies ServerToTab),
         );
         if (first) this.#opts.onTab?.(true);
         const i = msg.info;

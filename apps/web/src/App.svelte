@@ -131,8 +131,8 @@
         <button class="chipbtn" onclick={() => (app.view = 'set')} title="Waiting for the local server">⇄ <span class="muted">offline</span></button>
       {:else if server.status === 'elsewhere'}
         <button class="chipbtn" onclick={() => server.useThisTab()} title="Claude Code is connected in another tab of this app. Click to use this tab instead.">⇄ <span class="muted">other tab · use here</span></button>
-      {:else if app.settings.provider === 'anthropic' && !app.noModel}
-        <button class="chipbtn" onclick={() => (app.view = 'set')} title="Session spend with the Anthropic API ({app.settings.model})"><span class="muted">${app.spend.toFixed(2)}</span></button>
+      {:else if app.settings.provider === 'api' && !app.noModel}
+        <button class="chipbtn" onclick={() => (app.view = 'set')} title="Session spend with the API ({app.apiChoice.model})"><span class="muted">${app.spend.toFixed(2)}</span></button>
       {/if}
       <button class="undo" title={undoTitle} aria-label={undoTitle} disabled={!app.k?.canUndo || !!app.k?.proposal} onclick={() => app.undo()}>
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 3 2.5 6l3 3"/><path d="M3 6h6.5a3.5 3.5 0 0 1 0 7H6"/></svg>

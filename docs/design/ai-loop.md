@@ -72,12 +72,15 @@ Parameter hints ("make C1 100 µF") become `set_param` + a `param` constraint, s
 
 | Provider | Browser-direct? | Notes |
 |---|---|---|
-| Anthropic | yes (`anthropic-dangerous-direct-browser-access` header) | Tool use, vision, prompt caching |
-| OpenAI / Azure OpenAI | yes | Tool use, vision |
-| Google Gemini | yes | Tool use, vision, long PDFs |
+| Anthropic (and Anthropic-compatible gateways) | yes (`anthropic-dangerous-direct-browser-access` header) | Tool use, vision, prompt caching. `AnthropicProvider` |
+| OpenAI / Azure OpenAI v1 | yes | `OpenAICompatProvider` (Chat Completions + SSE, plain fetch) |
+| Google Gemini | yes | Through its OpenAI-compatible endpoint |
 | OpenRouter | yes | Access to many models with one key |
-| Ollama / LM Studio / vLLM | yes if CORS is enabled on the local server, else through the relay | Local/offline |
-| Anything else | through the relay | Relay forwards the requests |
+| Ollama / LM Studio / vLLM | yes if CORS is enabled on the local server | Local/offline |
+| Anything else OpenAI-compatible | yes if it allows browser requests (CORS) | Company gateways (LiteLLM…). Not yet: through the relay |
+| A coding agent's plan (Claude, Copilot, OpenCode's providers) | through the local server | See §6: the server runs the agent's CLI |
+
+The services and their defaults are in `packages/agent/src/providers/services.ts`.
 
 **Model roles** (configured per project, with defaults per provider):
 `planner` · `vision_extractor` · `checker` · `summarizer`. The UI shows expected token cost per
@@ -132,10 +135,19 @@ claude mcp add --scope user 4k7 -- node <repo>/tools/server/src/main.ts
 - **Prompt**: the design guidance is one text (`DESIGN_GUIDE`, `packages/schema/src/guide.ts`); the in-app system prompt
   and the server `instructions` (the external agent's equivalent of the system prompt) only add their engine's framing.
 - The in-app agent and an external agent never edit at the same time: server calls are refused while the in-app agent runs.
-- **App chat via Claude Code** (`npm run server`): the tab sends chat messages over the WebSocket; the server runs
+- **App chat via a coding agent** (`npm run server`): the tab sends chat messages over the WebSocket with the agent it
+  chose (`harness`: `claude-code`, `copilot`, `opencode`; `tools/server/src/harness/`); the server runs that CLI headlessly
+  with the 4k7 `/mcp` endpoint as its only tool source. Claude Code:
   `claude -p --output-format stream-json --include-partial-messages --tools "" --strict-mcp-config --mcp-config <http>
   --allowedTools mcp__4k7 --permission-mode dontAsk --append-system-prompt <chat rules> [--resume <session>]` in a
   neutral working directory and streams text back. The headless Claude reaches the 4k7 tools through the server's
   `/mcp` (Streamable HTTP) endpoint, which only accepts the bearer token issued to that run and refuses browser origins.
   No `wait_for_review` in chat mode: the user reviews after the turn.
+  - **GitHub Copilot CLI**: `copilot -p --output-format json --additional-mcp-config <http> --disable-builtin-mcps
+    --available-tools 4k7 --allow-tool 4k7 --no-custom-instructions --session-id=<id>`. It has no system-prompt option, so
+    the chat rules open the first message of a conversation. Token totals are per session; a run's are the difference.
+  - **OpenCode**: `opencode run --format json --agent 4k7-chat`, the agent (prompt, `tools: {"*": false, "4k7_*": true}`,
+    permissions) and the remote MCP server given in `OPENCODE_CONFIG_CONTENT`, the message on stdin. `opencode run` can
+    exit before printing its last step, so the session is read back with `opencode export` afterwards.
+  - The welcome message lists every agent and whether it is installed (`harnesses`); OpenCode's model list follows later.
 - Not yet: proxying the user's stdio MCP servers and CORS-blocked providers through the relay.

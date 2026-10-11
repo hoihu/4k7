@@ -3,8 +3,9 @@
  */
 import {
   Agent,
-  AnthropicProvider,
   ScriptedProvider,
+  apiProblem,
+  apiProvider,
   costUsd,
   formatDesignContext,
   optimizePrompt,
@@ -16,7 +17,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, SERVER_ACCESS_KEY, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@4k7/schema';
+import { ArtworkInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@4k7/schema';
 import { server } from './server.svelte.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
@@ -71,11 +72,11 @@ export interface ChatItem {
   refs?: string[];
   segments: Segment[];
   status: 'streaming' | 'done';
-  /** External agent driving the app through the server (e.g. "Claude Code"). */
+  /** Coding agent answering through the server (e.g. "Claude Code", "OpenCode"). */
   source?: string;
   /** This turn produced the proposal that is currently pending (or was decided). */
   changeset?: { state: 'pending' | 'accepted' | 'rejected' | 'superseded'; note?: string };
-  /** Tokens this turn used (live while it runs), with the cost: estimated, or as Claude Code reported it. */
+  /** Tokens this turn used (live while it runs), with the cost: estimated, or as the coding agent reported it. */
   usage?: TokenCount & { costUsd: number; exact: boolean };
 }
 
@@ -131,13 +132,13 @@ class AppState {
   private inAppBusy = false;
   /** The saved project could not be read nor kept aside: do not save over it until the user replaces it. */
   private saveBlocked = false;
-  /** Claude Code answering the app chat through the server: session and current run. */
-  private claudeSession: string | null = null;
-  private claudeRun: { id: string; item: ChatItem } | null = null;
+  /** A coding agent answering the app chat through the server: its session and the current run. */
+  private agentSession: { harness: string; id: string } | null = null;
+  private agentRun: { id: string; item: ChatItem } | null = null;
 
   async init() {
     this.settings = await loadSettings();
-    this.apiKey = await loadApiKey('anthropic');
+    this.apiKey = await loadApiKey(this.settings.api);
     const saved = await loadProject();
     if (saved) {
       try {
@@ -165,13 +166,14 @@ class AppState {
     server.init(
       (tool, input) => this.handleServerCall(tool, input),
       (accessKey, port) => {
-        // connecting to a server that can run Claude Code makes it the chat provider, unless the user has an API key set up
-        const useClaude = server.chat?.available && this.noModel;
-        if (accessKey !== this.settings.serverAccessKey || port !== this.settings.serverPort || useClaude) {
-          void this.updateSettings({ serverAccessKey: accessKey, serverPort: port, ...(useClaude ? { provider: 'claude-code' as const } : {}) });
+        // connecting to a server that can run a coding agent makes it the chat provider, unless an API is set up
+        const usable = server.harnesses.filter((h) => h.available);
+        const agent = this.noModel ? (usable.find((h) => h.id === this.settings.harness) ?? usable[0]) : undefined;
+        if (accessKey !== this.settings.serverAccessKey || port !== this.settings.serverPort || agent) {
+          void this.updateSettings({ serverAccessKey: accessKey, serverPort: port, ...(agent ? { provider: 'agent' as const, harness: agent.id } : {}) });
         }
         this.settingsChannel?.postMessage({ type: 'server-held', accessKey });
-        if (useClaude) this.flash('Connected: the chat now runs on your Claude Code');
+        if (agent) this.flash(`Connected: the chat now runs on your ${agent.name}`);
       },
       () => {
         // the external agent went away: close its open activity block
@@ -419,7 +421,7 @@ class AppState {
       origin: location.origin,
       build: __BUILD_ID__,
       userAgent: navigator.userAgent,
-      provider: this.settings.provider + (this.settings.provider === 'anthropic' && !this.apiKey ? ' (no key)' : ''),
+      provider: this.settings.provider === 'agent' ? this.settings.harness : `${this.settings.api}${this.apiProblem ? ` (${this.apiProblem})` : ''}`,
       storage: storageHealth,
       persistent: this.persistent,
     };
@@ -429,7 +431,7 @@ class AppState {
 
   /** The chat item that collects an external agent's activity; one per burst of work. */
   private externalItem(): ChatItem {
-    if (this.claudeRun) return this.claudeRun.item; // tool calls of the chat turn in progress
+    if (this.agentRun) return this.agentRun.item; // tool calls of the chat turn in progress
     const agent = server.agent ?? 'External agent';
     const last = this.chat[this.chat.length - 1];
     if (last?.role === 'agent' && last.source === agent && last.status === 'streaming') return last;
@@ -438,7 +440,7 @@ class AppState {
   }
 
   /**
-   * Run one agent tool. The in-app agent and Claude Code through the server share this executor;
+   * Run one agent tool. The in-app agent and the coding agents through the server share this executor;
    * how a turn starts and ends (get_context, propose, wait_for_review, ask_user) is up to each.
    */
   async runTool(tool: string, input: unknown): Promise<ToolOutcome> {
@@ -593,7 +595,7 @@ class AppState {
         }
         const it = item();
         it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') });
-        if (this.claudeRun?.item !== it) it.status = 'done';
+        if (this.agentRun?.item !== it) it.status = 'done';
         it.changeset = { state: 'pending' };
         if (this.settings.mode === 'auto') {
           await this.accept();
@@ -715,21 +717,36 @@ class AppState {
 
   /* -------------------------------- agent --------------------------------- */
 
+  /** The API the chat uses when the provider is 'api': the service, its address, key and model. */
+  get apiChoice() {
+    const s = this.settings;
+    return { service: s.api, baseURL: s.apiUrls[s.api] ?? '', apiKey: this.apiKey, model: s.apiModels[s.api] ?? '', effort: s.effort };
+  }
+
+  /** What the API setup still lacks ('no key', 'no model', 'no address'), or null. */
+  get apiProblem() {
+    return apiProblem(this.apiChoice);
+  }
+
   private makeProvider(): Provider {
-    if (this.settings.provider === 'anthropic' && this.apiKey) {
-      return new AnthropicProvider({ apiKey: this.apiKey, model: this.settings.model, effort: this.settings.effort });
-    }
-    return new ScriptedProvider([], { fallback: 'No chat provider is set up. Connect Claude Code or add an API key in Settings.', label: 'No model' });
+    if (this.settings.provider === 'api' && !this.apiProblem) return apiProvider(this.apiChoice);
+    return new ScriptedProvider([], { fallback: 'No chat provider is set up. Connect a coding agent or set up an API in Settings.', label: 'No model' });
+  }
+
+  /** The coding agent chosen for the chat. */
+  get harness() {
+    const id = this.settings.harness;
+    return server.harnesses.find((h) => h.id === id) ?? { id, name: HARNESSES.find((h) => h.id === id)?.name ?? id, available: false };
   }
 
   get providerLabel() {
-    if (this.settings.provider === 'claude-code') return 'Claude Code';
+    if (this.settings.provider === 'agent') return this.harness.name;
     return this.agent?.provider.label ?? '';
   }
 
-  /** Anthropic chosen without an API key: there is nothing to chat with. */
+  /** An API chosen but not set up: there is nothing to chat with. */
   get noModel() {
-    return this.settings.provider === 'anthropic' && !this.apiKey;
+    return this.settings.provider === 'api' && !!this.apiProblem;
   }
 
   /**
@@ -766,14 +783,14 @@ class AppState {
     const refs = opts.scope ? [] : [...this.selection];
     this.chat.push({ id: this.seq++, role: 'user', text: opts.shown ?? trimmed, refs, segments: [], status: 'done' });
     for (const q of this.chat) for (const s of q.segments) if (s.type === 'question' && !s.answered) s.answered = opts.shown ?? trimmed;
-    const viaClaude = this.settings.provider === 'claude-code';
-    this.chat.push({ id: this.seq++, role: 'agent', segments: [], status: 'streaming', ...(viaClaude ? { source: 'Claude Code' } : {}) });
+    const viaAgent = this.settings.provider === 'agent';
+    this.chat.push({ id: this.seq++, role: 'agent', segments: [], status: 'streaming', ...(viaAgent ? { source: this.harness.name } : {}) });
     const item = this.chat[this.chat.length - 1]!;
 
     this.running = true;
     try {
-      if (viaClaude) {
-        await this.runClaudeCode(trimmed, item);
+      if (viaAgent) {
+        await this.runCodingAgent(trimmed, item);
       } else {
         this.inAppBusy = true;
         this.abort = new AbortController();
@@ -785,7 +802,7 @@ class AppState {
       item.status = 'done';
       this.running = false;
       this.inAppBusy = false;
-      this.claudeRun = null;
+      this.agentRun = null;
       this.abort = null;
       await this.refresh();
       if (this.k?.proposal) {
@@ -796,38 +813,44 @@ class AppState {
   }
 
   stop() {
-    if (this.claudeRun) server.cancelChat(this.claudeRun.id);
+    if (this.agentRun) server.cancelChat(this.agentRun.id);
     this.abort?.abort();
   }
 
-  /** One chat turn answered by the local Claude Code through the server. */
-  private async runClaudeCode(text: string, item: ChatItem): Promise<void> {
+  /** One chat turn answered by a coding agent on this computer (Claude Code, Copilot, OpenCode) through the server. */
+  private async runCodingAgent(text: string, item: ChatItem): Promise<void> {
     const fail = (t: string) => item.segments.push({ type: 'error', text: t });
+    const h = this.harness;
     if (server.status !== 'connected') {
-      fail(__APP_RUN__ ? `Claude Code is not connected. Open ${__SERVER_RUN__} again.` : `Claude Code is not connected. Start the server (${__SERVER_RUN__}) and open the app with the link it prints.`);
+      fail(__APP_RUN__ ? `${h.name} is not connected. Open ${__SERVER_RUN__} again.` : `${h.name} is not connected. Start the server (${__SERVER_RUN__}) and open the app with the link it prints.`);
       return;
     }
-    if (!server.chat?.available) {
-      fail(server.chat?.reason ?? 'This server cannot run Claude Code for the chat. Update the server (restart it).');
+    if (!h.available) {
+      fail(server.harnesses.length ? (h.reason ?? `This server cannot run ${h.name}.`) : `This server cannot run ${h.name} for the chat. Update the server (restart it).`);
       return;
     }
     const id = crypto.randomUUID();
-    this.claudeRun = { id, item };
+    const model = this.settings.harnessModels[h.id] ?? '';
+    // a conversation belongs to one agent: switching starts a new one
+    if (this.agentSession?.harness !== h.id) this.agentSession = null;
+    this.agentRun = { id, item };
     await new Promise<void>((resolve) => {
       const sent = server.sendChat(
         {
           id,
           text,
-          session: this.claudeSession,
-          ...(this.settings.claudeModel ? { model: this.settings.claudeModel } : {}),
+          session: this.agentSession?.id ?? null,
+          // older servers know only Claude Code and take a missing harness for it
+          ...(h.id !== 'claude-code' ? { harness: h.id } : {}),
+          ...(model ? { model } : {}),
           autonomy: this.settings.mode,
-          web: this.settings.claudeWeb,
+          web: this.settings.agentWeb,
         },
         (e) => {
           const last = item.segments[item.segments.length - 1];
           switch (e.kind) {
             case 'session':
-              this.claudeSession = e.session;
+              this.agentSession = { harness: h.id, id: e.session };
               break;
             case 'text':
               if (last?.type === 'text') last.text += e.text;
@@ -838,20 +861,20 @@ class AppState {
               else item.segments.push({ type: 'thinking', text: e.text });
               break;
             case 'tokens':
-              item.usage = { ...e.tokens, costUsd: tokenCost(e.tokens, this.settings.claudeModel ?? ''), exact: false };
+              item.usage = { ...e.tokens, costUsd: tokenCost(e.tokens, model), exact: false };
               if (e.tokens.model) this.lastModel = e.tokens.model;
               break;
             case 'done': {
-              if (e.session) this.claudeSession = e.session;
+              if (e.session) this.agentSession = { harness: h.id, id: e.session };
               if (e.tokens || e.costUsd !== undefined) {
                 const t = e.tokens ?? item.usage ?? { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
-                const cost = e.costUsd ?? tokenCost(t, this.settings.claudeModel ?? '');
+                const cost = e.costUsd ?? tokenCost(t, model);
                 item.usage = { ...t, costUsd: cost, exact: e.costUsd !== undefined };
                 if (t.model) this.lastModel = t.model;
                 this.spend += cost;
               }
               if (!e.ok && e.error) {
-                // Claude Code prints API errors as its reply too: show them once, as an error
+                // agents print API errors as their reply too: show them once, as an error
                 const dup = item.segments.findLastIndex((x) => x.type === 'text' && x.text.trim() === e.error!.trim());
                 if (dup >= 0) item.segments.splice(dup, 1);
                 fail(e.error);
@@ -891,7 +914,7 @@ class AppState {
         item.segments.push({ type: 'question', question: e.question, options: e.options });
         break;
       case 'usage':
-        this.spend += costUsd(e.model ?? this.settings.model, e.usage);
+        this.spend += costUsd(e.model ?? this.apiChoice.model, e.usage);
         if (e.model) this.lastModel = e.model;
         break;
       case 'done':
@@ -908,12 +931,16 @@ class AppState {
 
   /* ------------------------------- settings ------------------------------- */
 
+  /** Change settings; `apiKey` is the key of the API service chosen after the change. */
   async updateSettings(patch: Partial<Settings>, apiKey?: string) {
+    const service = this.settings.api;
     this.settings = { ...this.settings, ...patch };
     await saveSettings(this.settings);
     if (apiKey !== undefined) {
       this.apiKey = apiKey.trim();
-      await saveApiKey('anthropic', this.apiKey);
+      await saveApiKey(this.settings.api, this.apiKey);
+    } else if (this.settings.api !== service) {
+      this.apiKey = await loadApiKey(this.settings.api); // each service has its own key
     }
     this.agent?.setProvider(this.makeProvider());
     this.applyTheme();
@@ -925,13 +952,13 @@ class AppState {
 
   private async reloadSettings() {
     this.settings = await loadSettings();
-    this.apiKey = await loadApiKey('anthropic');
+    this.apiKey = await loadApiKey(this.settings.api);
     this.agent?.setProvider(this.makeProvider());
     this.applyTheme();
   }
 
   clearChat() {
-    this.claudeSession = null;
+    this.agentSession = null;
     this.agent.reset();
     this.chat = [];
   }

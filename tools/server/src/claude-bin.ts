@@ -1,9 +1,9 @@
 /**
- * Finding the Claude Code CLI when the server was started from the Finder or a desktop launcher
+ * Finding the agent CLIs (Claude Code, Copilot, OpenCode) when the server was started from the Finder or a desktop launcher
  * rather than a terminal: such a process gets a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so
  * `claude` installed by npm, Homebrew or the native installer is not on it. The directories those
  * put it in are tried first, then the user's login shell is asked for its PATH (what a terminal
- * would have). Whatever is found is added to this process's PATH, so the headless Claude and the
+ * would have). Whatever is found is added to this process's PATH, so the headless agents and the
  * programs it starts find it too.
  */
 import { spawnSync } from 'node:child_process';
@@ -11,7 +11,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join, sep } from 'node:path';
 
-/** Where installers put `claude` (and the node it may need), by convention. */
+/** Where installers put `claude`, `copilot`, `opencode` (and the node they may need), by convention. */
 export function candidateDirs(home = homedir()): string[] {
   const dirs = [
     join(home, '.claude', 'local'), // the native installer and `claude install`
@@ -21,6 +21,7 @@ export function candidateDirs(home = homedir()): string[] {
     join(home, '.npm-global', 'bin'),
     join(home, '.volta', 'bin'),
     join(home, '.bun', 'bin'),
+    join(home, '.opencode', 'bin'), // OpenCode's installer
     join(home, '.fnm', 'aliases', 'default', 'bin'),
   ];
   // nvm: every installed node has its own bin; newest first

@@ -9,6 +9,7 @@ import {
   type ServerToTab,
   type ChatCapability,
   type ChatEvent,
+  type HarnessCapability,
   type TabInfo,
   type TabToServer,
   type UpdateInfo,
@@ -32,8 +33,10 @@ class ServerClient {
   agent = $state<string | null>(null);
   error = $state<string | null>(null);
   calls = $state(0);
-  /** Whether the server can answer the app's chat with the local Claude Code. */
+  /** Whether the server can run the local Claude Code (the app chat and datasheet imports). */
   chat = $state<ChatCapability | null>(null);
+  /** The coding agents the server can run for the app chat (Claude Code included). */
+  harnesses = $state<HarnessCapability[]>([]);
   /** A newer release of the app than the server runs (the downloaded app does not update itself). */
   update = $state<UpdateInfo | null>(null);
   #chatListeners = new Map<string, (e: ChatEvent) => void>();
@@ -126,6 +129,8 @@ class ServerClient {
           this.port = port;
           this.agent = msg.agent;
           this.chat = msg.chat ?? null;
+          // servers before the other agents: Claude Code only
+          this.harnesses = msg.harnesses ?? (msg.chat ? [{ id: 'claude-code', name: 'Claude Code', ...msg.chat }] : []);
           if (msg.update) this.update = msg.update;
           this.status = 'connected';
           this.error = null;
@@ -135,6 +140,7 @@ class ServerClient {
         }
         if (msg.type === 'agent') this.agent = msg.name;
         if (msg.type === 'update') this.update = msg.update;
+        if (msg.type === 'harnesses') this.harnesses = msg.harnesses;
         if (msg.type === 'call') void this.#call(ws, msg.id, msg.tool, msg.input);
         if (msg.type === 'chat_event') {
           this.#chatListeners.get(msg.id)?.(msg.event);
@@ -144,7 +150,7 @@ class ServerClient {
     });
   }
 
-  /** Send a chat message to the local Claude Code; events stream to `onEvent` until 'done'. */
+  /** Send a chat message to a coding agent on this computer; events stream to `onEvent` until 'done'. */
   sendChat(msg: Omit<Extract<TabToServer, { type: 'chat' }>, 'type'>, onEvent: (e: ChatEvent) => void): boolean {
     if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) return false;
     this.#chatListeners.set(msg.id, onEvent);
