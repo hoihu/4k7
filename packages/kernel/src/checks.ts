@@ -32,7 +32,7 @@ interface Ctx {
   out: Diagnostic[];
 }
 
-export function runChecks(d: Design, placement?: SchematicView['constraintStatus']): Diagnostic[] {
+export function runChecks(d: Design, placement?: SchematicView['constraintStatus'], why?: SchematicView['constraintWhy']): Diagnostic[] {
   const ctx: Ctx = { d, members: netMembers(d), out: [] };
   pinChecks(ctx);
   netChecks(ctx);
@@ -40,7 +40,7 @@ export function runChecks(d: Design, placement?: SchematicView['constraintStatus
   requirementChecks(ctx);
   ratingChecks(ctx);
   seriesChecks(ctx);
-  ledgerChecks(ctx, placement);
+  ledgerChecks(ctx, placement, why);
   applyWaivers(d, ctx.out);
   return sortDiagnostics(ctx.out);
 }
@@ -360,7 +360,7 @@ function seriesChecks(ctx: Ctx) {
 
 /* ---------------------------------- ledger -------------------------------- */
 
-function ledgerChecks(ctx: Ctx, placement?: SchematicView['constraintStatus']) {
+function ledgerChecks(ctx: Ctx, placement?: SchematicView['constraintStatus'], why?: SchematicView['constraintWhy']) {
   const { d } = ctx;
   for (const k of Object.values(d.ledger).sort((a, b) => natCmp(a.id, b.id))) {
     if (k.kind === 'param' && k.a && k.key) {
@@ -375,7 +375,7 @@ function ledgerChecks(ctx: Ctx, placement?: SchematicView['constraintStatus']) {
       }
     } else if (placement?.[k.id] === 'violated') {
       push(ctx, k.strength === 'hard' ? 'error' : 'warning', 'LEDGER.PLACEMENT', [k.id],
-        `Schematic placement does not satisfy ${describeConstraint(d, k)}.`);
+        `Schematic placement does not satisfy ${describeConstraint(d, k)}${why?.[k.id] ? `: ${why[k.id]}` : ''}.${k.kind === 'sch_position' ? '' : ' To put a part exactly where it belongs, use place_symbol (design_query get_schematic shows the pages and where everything is).'}`);
     }
   }
 }

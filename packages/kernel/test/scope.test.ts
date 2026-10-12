@@ -104,6 +104,13 @@ describe('optimize scope', () => {
     }
   });
 
+  it('lets place_symbol put a movable part exactly, and refuses it for a part outside the area', () => {
+    const { k } = setup();
+    expect(k.transact({ summary: 'place', dry_run: true, ops: [{ op: 'place_symbol', ref: 'D1', x: 7000, y: 3500 }] }).status).toBe('ok');
+    const r = k.transact({ summary: 'place', dry_run: true, ops: [{ op: 'place_symbol', ref: 'J1', x: 7000, y: 3500 }] });
+    expect(r.rejection).toMatchObject({ code: 'OUT_OF_SCOPE' });
+  });
+
   it('adds soft constraints only', () => {
     const { k } = setup();
     const r = k.transact({ summary: 'x', ops: [{ op: 'constrain', kind: 'above', a: 'D1', b: 'L1', strength: 'hard' }] });

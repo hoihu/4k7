@@ -262,6 +262,8 @@ export interface SchematicView {
   sheets: SheetView[];
   /** Placement constraints evaluated against this layout. */
   constraintStatus: Record<string, 'ok' | 'violated' | 'not_applicable'>;
+  /** Why a violated placement constraint could not be kept, where the layout can tell (a wrapped row, another page). */
+  constraintWhy?: Record<string, string>;
 }
 
 /* ------------------------------- description ------------------------------ */

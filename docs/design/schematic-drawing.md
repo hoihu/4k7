@@ -1,6 +1,6 @@
 # Drawing the schematic: a ruleset, and the agent in charge of the arrangement
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-12; steps 1 and 2 of §6 built.
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-12; steps 1–3 of §6 built (3: the agent places parts, `place_symbol`).
 > The default ruleset is in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
@@ -23,26 +23,33 @@ everyone. The agent knows the circuit (it often built it) and can be told the us
 
 ## 2. The split
 
-The agent decides **how the sheet is arranged**. The kernel decides **where every line goes**.
+The agent decides **where parts go**. The kernel decides **where every line goes**.
 
 | | Agent | Kernel |
 |---|---|---|
-| Owns | Arrangement: blocks, their order, orientation of parts, which side a symbol goes, wire or label | Geometry: coordinates on the grid, wire paths, junction dots, text positions, pages |
-| Says it as | Soft drawing hints in the ledger (like `left_of` today) | Deterministic layout from netlist + ledger + ruleset |
-| Checked by | Diagnostics from the ruleset's checks, the measures, a picture | Tests |
+| Owns | Placement: where a part stands on a page (`place_symbol`), or lighter, the order of parts (`left_of` …), orientation, which side a symbol goes, wire or label | Geometry of everything else: the parts nobody placed, wire paths, junction dots, text positions, pages |
+| Says it as | Ledger entries: `sch_position` (page, centre in mils) and soft drawing hints | Deterministic layout from netlist + ledger + ruleset |
+| Checked by | Diagnostics from the ruleset's checks, the measures, a picture, `get_schematic` | Tests |
 
-Why the agent does not give coordinates or draw wire segments itself:
+First drafted as "the agent never gives coordinates". A session on 2026-10-12 showed why that was
+too little: asked to make a drawing look like the original, the agent tried four relative
+constraints on a connector and the layout ignored every one (a connector column overrode the
+order, a constraint was read backwards, the row wrapped). The user's decision: the agent has the
+authority to say where components go; the editor wires them up. So, as for the board (`place`):
 
-- **Re-layout.** Adding a part redraws the sheet instantly. If the agent owned coordinates, every
-  edit (the user's too) would need a model call to redraw, or the drawing goes stale.
-- **Precision.** Models are weak at exact 2D geometry: a wire 50 mils short of its pin, two labels on
-  one spot. The kernel cannot produce a "slightly off" wire.
-- **Repeatability.** The same circuit and hints give the same drawing, so diffs and reviews stay
-  readable and tests stay meaningful.
-- **Offline and free.** A sheet is drawn well without an API key; the agent makes it better.
+- **`place_symbol`** pins a part's symbol centre on a page (mils from the paper's top-left, snapped
+  to the 100-mil grid). An IC or connector takes the small parts at its pins with it, still wired;
+  a two-pin part placed on its own stands apart, connected by labels until the router (§5) wires
+  it. The layout flows every part nobody placed around the placed ones.
+- **`get_schematic`** tells the agent each page's paper and where every symbol stands, so it can
+  place by reading, not by guessing from a picture.
+- **Relative constraints stay** the lighter lever, and now do what they say: the subject moves, a
+  connector they order keeps its place in its row, and a violated one says why (the row wrapped,
+  another page) and points to `place_symbol`.
 
-This keeps the architecture's rule (intent in, geometry out, [ARCHITECTURE §2](../ARCHITECTURE.md))
-and widens what "intent" covers.
+What the kernel keeps, and why: wires (the agent places, the editor connects), and the layout of
+everything not placed, so a new part still lands somewhere sensible without a model call, the same
+circuit draws the same way, and a sheet is drawn without an API key.
 
 ## 3. The ruleset
 
@@ -192,11 +199,16 @@ Each step is useful alone.
    *Built 2026-10-12:* `packages/schema/src/rules.ts` (`SCHEMATIC_RULES`, `parseSchematicRules`),
    the `SCH.*` checks in `packages/kernel/src/schcheck.ts` (`Kernel.setRules`), the
    `<drawing_rules>` block in the agent's design context, the editor in Settings → Schematic rules.
-3. **Orientation and supply hints** (`orient`, `supply_side`, `net_style`): small changes in the
-   layout, big effect on readability. Optimize can use them at once.
-4. **Blocks drive placement** (`block`, `block_order`, from `describe`). The agent's arrangement
+3. **Placement by the agent** (pulled forward, 2026-10-12): `place_symbol` and `get_schematic`
+   (§2), relative constraints that do what they say, violated placements that say why.
+   *Built 2026-10-12:* `sch_position` ledger entries honoured by `layoutSheet` / `paginate`
+   (placed cells fixed on their page, the rest flowing past them), `orient` lying and `mirror` on
+   placed parts, Optimize may use `place_symbol` on movable parts.
+4. **Orientation and supply hints** (`orient` for parts the layout places, `supply_side`,
+   `net_style`): small changes in the layout, big effect on readability.
+5. **Blocks drive placement** (`block`, `block_order`, from `describe`). The agent's arrangement
    step after it builds a circuit.
-5. **Schematic router** and the `route` / `bus` hints. The three-step run as one agent workflow.
+6. **Schematic router** and the `route` / `bus` hints. The three-step run as one agent workflow.
 
 ## 7. Open questions
 
@@ -206,6 +218,9 @@ Each step is useful alone.
   Probably: the arrangement step runs on new parts and on request, and leaves the rest alone.
 - **Ruleset in the design file.** A project's own rules make it render the same everywhere, but a
   project then disagrees with the user's rules without them noticing. Show which ruleset applies?
+- **Wires to placed parts.** A two-pin part placed on its own is connected by labels; the router
+  (step 6) should wire it to its neighbours instead. Until then, placing ICs and connectors (which
+  keep their small parts wired) gives the cleanest drawings.
 - **Pictures.** Steps need images to judge; images are the most expensive input. One per step, area
   only where possible.
 - **Claude Code.** Through the local server it gets the same hints and the same ruleset

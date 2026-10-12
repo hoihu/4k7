@@ -148,18 +148,21 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
       const k = d.ledger[op.id];
       if (!k) return; // the op itself reports the unknown id
       if (k.strength === 'hard') out(`${op.id} is a hard constraint; only the user removes those.`);
-      if (!PLACEMENT_KINDS.has(k.kind) && k.kind !== 'arrangement') out(`${op.id} is not a placement constraint.`);
+      if (!PLACEMENT_KINDS.has(k.kind) && k.kind !== 'arrangement' && k.kind !== 'sch_position') out(`${op.id} is not a placement constraint.`);
       const a = k.a ? d.components[k.a] : undefined;
       if (a) mustBeFree(a, `remove ${op.id}`);
       return;
     }
+    case 'place_symbol':
+      mustBeFree(resolveUnitRef(d, op.ref).comp, 'place_symbol');
+      return;
     case 'set_symbol': {
       const c = resolveUnitRef(d, op.ref).comp;
       for (const u of componentsSorted(d).filter((x) => x.part === c.part)) mustBeFree(u, 'set_symbol (it redraws every component of the part)');
       return;
     }
     default:
-      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint and set_symbol on parts inside the area.`);
+      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol and set_symbol on parts inside the area.`);
   }
 }
 

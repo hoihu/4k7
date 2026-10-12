@@ -229,7 +229,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
     {
       name: TOOL_NAMES.edit,
       description:
-        'Change the design with one atomic transaction of semantic ops (never coordinates). All ops apply or none; ' +
+        'Change the design with one atomic transaction of semantic ops (coordinates only to place a part: place on the board, place_symbol on the schematic). All ops apply or none; ' +
         'a rejection explains why and often suggests fix ops. The result lists diagnostics introduced/resolved. ' +
         'Changes go to a working copy the user reviews; set dry_run to preview.',
       input_schema: schemaOf(Transaction),

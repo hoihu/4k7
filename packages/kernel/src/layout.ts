@@ -94,7 +94,8 @@ export function layoutSchematic(d: Design): SchematicView {
   // pages are numbered through the whole design, as on a printout
   let n = 0;
   for (const v of views) for (const p of v.pages) p.number = ++n;
-  return { paper: d.paper ?? DEFAULT_PAPER, sheets: views, constraintStatus: evaluateConstraints(d, views) };
+  const { status, why } = evaluateConstraints(d, views);
+  return { paper: d.paper ?? DEFAULT_PAPER, sheets: views, constraintStatus: status, ...(Object.keys(why).length ? { constraintWhy: why } : {}) };
 }
 
 function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
@@ -102,13 +103,16 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   const comps = componentsSorted(d).filter((c) => c.sheet === sheetId && cardOf(d, c.part));
   const cardFor = (c: Component) => cardOf(d, c.part)!;
   let anchors = comps.filter((c) => !isTwoPin(cardFor(c)));
-  const bridges = findBridges(ctx, comps.filter((c) => isTwoPin(cardFor(c))));
+  // where the agent put parts (place_symbol): they stand exactly there, the rest flows around them
+  const pinned = placementsOf(d, comps);
+  const placedTwoPins = comps.filter((c) => isTwoPin(cardFor(c)) && pinned.has(c.id));
+  const bridges = findBridges(ctx, comps.filter((c) => isTwoPin(cardFor(c)) && !pinned.has(c.id)));
   const inBridge = new Set(bridges.flatMap((b) => b.diodes.map((x) => x.comp.id)));
   // supply caps belong to the IC they serve, decided before the regulators claim parts
   const owners = supplyOwners(d, anchors, comps.filter((c) => isTwoPin(cardFor(c))));
   // regulators are drawn like datasheet reference designs (power flow); they claim their parts
   const flows = new Map<string, FlowPlan>();
-  let unclaimed = comps.filter((c) => isTwoPin(cardFor(c)) && !inBridge.has(c.id));
+  let unclaimed = comps.filter((c) => isTwoPin(cardFor(c)) && !inBridge.has(c.id) && !pinned.has(c.id));
   for (const a of anchors) {
     const plan = planFlow(ctx, a, unclaimed.filter((c) => (owners.get(c.id) ?? a.id) === a.id));
     if (!plan) continue;
@@ -143,7 +147,12 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     anchors.map((c) => {
       const card = cardFor(c);
       const n = unitCount(card);
-      const make = (unit?: number): AnchorPlan => ({ comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror: outputConn.has(c.id), ...(unit !== undefined ? { unit } : {}), ...(stacks.has(c.id) ? { stack: stacks.get(c.id)! } : {}) });
+      const make = (unit?: number): AnchorPlan => {
+        // placed: as the agent said, else a connector in the right half of its page faces left, like an output
+        const at = pinned.get(nodeKey(c.id, n > 1 ? unit ?? 0 : undefined));
+        const mirror = at ? at.mirror ?? (card.category === 'connector' && at.x > paperOf(d.paper).w / 2) : outputConn.has(c.id);
+        return { comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror, ...(unit !== undefined ? { unit } : {}), ...(stacks.has(c.id) ? { stack: stacks.get(c.id)! } : {}) };
+      };
       return [c.id, n > 1 ? Array.from({ length: n }, (_, u) => make(u)) : [make()]];
     }),
   );
@@ -173,6 +182,13 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
         }
       }
       if (!done) (side.side === 'left' ? candidates[0]!.extraLeft : candidates[0]!.extraRight).push(c);
+      continue;
+    }
+    // above/below an anchor: drawn with that anchor, at the pin they share, if they share one
+    const level = directional.find((k) => k.a === c.id && (k.kind === 'above' || k.kind === 'below') && unitPlans.has(k.b!));
+    const at = level && plansOf(level.b!).map((plan) => ({ plan, sat: findAttach(ctx, plan, c, nets) })).find((x) => x.sat);
+    if (at) {
+      (pinSideOf(at.plan, at.sat!.anchorPin) === 'left' ? at.plan.left : at.plan.right).push(at.sat!);
       continue;
     }
     if (nets.every((n) => n && isPowerNet(n))) {
@@ -258,9 +274,29 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   /* ---- rows and order of anchors ---- */
   // one layout node per symbol: split ICs contribute one node per unit
   const nodes: LayoutNode[] = anchors.flatMap((c) =>
-    plansOf(c.id).map((p) => ({ key: p.unit === undefined ? c.id : `${c.id}#${p.unit}`, comp: c, plan: p })),
+    plansOf(c.id).map((p) => ({ key: nodeKey(c.id, p.unit), comp: c, plan: p })),
   );
-  const rows = arrangeAnchors(d, nodes, directional);
+  // a constraint moves its subject (a): with an anchor as subject and a small part as reference
+  // ("J2 right of R4"), the anchor goes next to the anchor that part is drawn with; with a small
+  // part as subject it was a request to draw it at an anchor (pass 1), not an order of anchors
+  const drawnWith = new Map<string, { id: string; unit?: string }>();
+  for (const plan of allPlans()) {
+    const unit = plan.unit !== undefined ? plan.card.units?.[plan.unit]?.name : undefined;
+    const parts = [...plan.left, ...plan.right].flatMap((x) => [x.comp, ...x.chain]).concat(plan.decaps, plan.extraLeft, plan.extraRight);
+    for (const x of parts) drawnWith.set(x.id, { id: plan.comp.id, ...(unit ? { unit } : {}) });
+  }
+  const isAnchor = (id?: string) => !!id && unitPlans.has(id);
+  const ordering = directional.flatMap((k): Constraint[] => {
+    if (!isAnchor(k.a)) return [];
+    if (isAnchor(k.b)) return [k];
+    const owner = drawnWith.get(k.b!);
+    if (!owner || owner.id === k.a) return [];
+    const { bUnit: _, ...rest } = k;
+    return [{ ...rest, b: owner.id, ...(owner.unit ? { bUnit: owner.unit } : {}) }];
+  });
+  // connectors ordered by a constraint keep their place in the row instead of joining a column
+  const ordered = new Set(ordering.filter((k) => k.kind === 'left_of' || k.kind === 'right_of').flatMap((k) => [k.a!, k.b!]));
+  const rows = arrangeAnchors(d, nodes.filter((n) => !pinned.has(n.key)), ordering);
   if (bridges.length && !rows.length) rows.push([]);
 
   /* ---- cells in rows; the pager flows them onto pages ---- */
@@ -268,12 +304,12 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   for (let [ri, row] of rows.entries()) {
     const cells: Cell[] = row.map((n) => ({ scene: flows.has(n.comp.id) ? flowCell(ctx, flows.get(n.comp.id)!) : buildCell(ctx, n.plan), heads: [n.comp] }));
     // output connectors: one column at the right end of the row
-    const outIdx = row.flatMap((n, i) => (outputConn.has(n.comp.id) ? [i] : []));
+    const outIdx = row.flatMap((n, i) => (outputConn.has(n.comp.id) && !ordered.has(n.comp.id) ? [i] : []));
     const outColumn = outIdx.length ? stackCells(outIdx.map((i) => cells[i]!)) : null;
     for (const i of [...outIdx].reverse()) cells.splice(i, 1);
-    row = row.filter((n) => !outputConn.has(n.comp.id));
+    row = row.filter((_, i) => !outIdx.includes(i));
     // input (and other) connectors: one column where the first of them is
-    const connectorIdx = row.flatMap((n, i) => (cardFor(n.comp).category === 'connector' ? [i] : []));
+    const connectorIdx = row.flatMap((n, i) => (cardFor(n.comp).category === 'connector' && !ordered.has(n.comp.id) ? [i] : []));
     if (connectorIdx.length > 1) {
       cells.splice(connectorIdx[0]!, 1, stackCells(connectorIdx.map((i) => cells[i]!)));
       for (const i of connectorIdx.slice(1).reverse()) cells.splice(i, 1);
@@ -290,7 +326,18 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   // parts attached to nothing: a row of their own, close together
   if (free.length) cellRows.push({ cells: free.map((c) => ({ scene: freePart(ctx, c), heads: isTwoPin(cardFor(c)) ? [] : [c] })), gap: 200 });
 
-  const { scene, pages } = paginate(d, cellRows);
+  // placed parts: an anchor with everything drawn at its pins, or a two-pin part on its own
+  const placed: Placed[] = [];
+  for (const n of nodes) {
+    const at = pinned.get(n.key);
+    if (!at) continue;
+    const scene = flows.has(n.comp.id) ? flowCell(ctx, flows.get(n.comp.id)!) : buildCell(ctx, n.plan);
+    const unit = n.plan.unit !== undefined ? n.plan.card.units?.[n.plan.unit]?.name : undefined;
+    placed.push({ cell: { scene, heads: [n.comp] }, at, comp: n.comp.id, ...(unit ? { unit } : {}) });
+  }
+  for (const c of placedTwoPins) placed.push({ cell: { scene: verticalPart(ctx, c, 0, 0, pinned.get(c.id)!.orient === 'lying'), heads: [] }, at: pinned.get(c.id)!, comp: c.id });
+
+  const { scene, pages } = paginate(d, cellRows, placed);
   tidyWires(scene);
   addJunctions(scene);
   const bb = pagesBBox(pages);
@@ -315,6 +362,14 @@ interface CellRow {
 /** Space between pages on the canvas. */
 const PAGE_GAP = 600;
 
+/** A cell whose part the agent placed: its symbol's centre goes to `at` on that page. */
+interface Placed {
+  cell: Cell;
+  at: Pin;
+  comp: string;
+  unit?: string;
+}
+
 /**
  * Flow the cells onto pages: each row is broken into lines that fit the page width (order
  * kept), lines are stacked until the page is full, then the next page starts. A cell wider or
@@ -322,8 +377,11 @@ const PAGE_GAP = 600;
  * in a near-square grid on the canvas (rows of ⌈√n⌉), so the sheet still reads as one drawing
  * and fits the window without a long scroll. There is always at least one page, so an empty
  * sheet shows its paper.
+ *
+ * Placed cells stand where the agent put them; on their page the lines start at the top-left of
+ * the drawing area and go down past them instead of being centred.
  */
-function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[] } {
+function paginate(d: Design, rows: CellRow[], placed: Placed[] = []): { scene: Scene; pages: PageView[] } {
   const paper = paperOf(d.paper);
   // the drawing area of a page
   const DRAW_W = paper.w - 2 * PAGE.margin;
@@ -362,29 +420,67 @@ function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[]
     flush();
   }
 
+  // placed cells: how far each moves so its part's symbol is centred where it was put, and the box
+  // it then takes on its page (paper coordinates)
+  const fixed = placed.map((p) => {
+    const sym = p.cell.scene.symbols.find((s) => s.componentId === p.comp && (p.unit === undefined || s.unit === p.unit)) ?? p.cell.scene.symbols[0];
+    const cx = sym ? sym.bbox.x + sym.bbox.w / 2 : 0;
+    const cy = sym ? sym.bbox.y + sym.bbox.h / 2 : 0;
+    const dx = Math.round((p.at.x - cx) / GRID) * GRID;
+    const dy = Math.round((p.at.y - cy) / GRID) * GRID;
+    const bb = sceneBBox(p.cell.scene);
+    return { cell: p.cell, page: p.at.page - 1, dx, dy, box: { x: bb.x + dx, y: bb.y + dy, w: bb.w, h: bb.h } };
+  });
+  const boxesOn = (page: number) => fixed.filter((f) => f.page === page).map((f) => f.box);
+
   // lines → pages
-  const sets: { lines: Line[]; used: number }[] = [];
-  let onPage: Line[] = [];
-  let used = 0;
-  const flushPage = () => {
-    sets.push({ lines: onPage, used });
-    onPage = [];
-    used = 0;
-  };
+  const sets: { lines: Line[]; ys: number[]; used: number }[] = [];
+  const setAt = (i: number) => (sets[i] ??= { lines: [], ys: [], used: 0 });
+  let page = 0;
   for (const line of lines) {
-    const h = grid(line.bbox.h + CELL_GAP);
-    if (onPage.length && used + h - CELL_GAP > DRAW_H) flushPage();
-    used += h;
-    onPage.push(line);
+    for (;;) {
+      const set = setAt(page);
+      const boxes = boxesOn(page);
+      const h = line.bbox.h;
+      if (!boxes.length) {
+        const step = grid(h + CELL_GAP);
+        if (set.lines.length && set.used + step - CELL_GAP > DRAW_H) {
+          page++;
+          continue;
+        }
+        set.ys.push(set.used);
+        set.used += step;
+        set.lines.push(line);
+        break;
+      }
+      // the line at the left of the drawing area, lowered until it clears the placed cells
+      const clash = (y: number) => boxes.some((b) => hits({ x: PAGE.margin - CELL_GAP / 2, y: PAGE.margin + y - CELL_GAP / 2, w: line.bbox.w + CELL_GAP, h: h + CELL_GAP }, b));
+      let y = set.used;
+      while (y + h <= DRAW_H && clash(y)) y += GRID;
+      if (y + h > DRAW_H) {
+        page++;
+        continue;
+      }
+      set.ys.push(y);
+      set.used = grid(y + h + CELL_GAP);
+      set.lines.push(line);
+      break;
+    }
   }
-  if (onPage.length) used -= CELL_GAP;
-  flushPage();
+  const nPages = Math.max(sets.length, ...fixed.map((f) => f.page + 1), 1);
+  for (let i = 0; i < nPages; i++) setAt(i);
+  for (const [i, p] of sets.entries()) if (!boxesOn(i).length && p.lines.length) p.used -= CELL_GAP;
 
   // pages → grid on the canvas, read left to right and top to bottom; an oversized page widens
   // its column and deepens its row, so the others stay aligned
-  const sizes = sets.map((p) => {
+  const sizes = sets.map((p, i) => {
     const wide = Math.max(0, ...p.lines.map((l) => l.bbox.w));
-    return { w: Math.max(paper.w, wide + 2 * PAGE.margin), h: Math.max(paper.h, p.used + 2 * PAGE.margin + PAGE.title), oversized: wide > DRAW_W || p.used > DRAW_H };
+    const boxes = boxesOn(i);
+    const right = Math.max(0, ...boxes.map((b) => b.x + b.w + PAGE.margin));
+    const bottom = Math.max(0, ...boxes.map((b) => b.y + b.h + PAGE.margin + PAGE.title));
+    const w = Math.max(paper.w, wide + 2 * PAGE.margin, right);
+    const h = Math.max(paper.h, p.used + 2 * PAGE.margin + PAGE.title, bottom);
+    return { w, h, oversized: w > paper.w || h > paper.h };
   });
   const cols = Math.ceil(Math.sqrt(sets.length));
   const colW = Array.from({ length: cols }, (_, c) => Math.max(0, ...sizes.filter((_, i) => i % cols === c).map((z) => z.w)));
@@ -397,16 +493,29 @@ function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[]
   sets.forEach((p, i) => {
     const { w, h, oversized } = sizes[i]!;
     const rect: Rect = { x: colX[i % cols]!, y: rowY[Math.floor(i / cols)]!, w, h };
-    // the block of lines sits centred in the drawing area, on the grid (lines stay left-aligned)
-    const blockW = Math.max(0, ...p.lines.map((l) => l.bbox.w));
-    const x0 = rect.x + PAGE.margin + centred(rect.w - 2 * PAGE.margin, blockW);
-    let y = rect.y + PAGE.margin + centred(rect.h - 2 * PAGE.margin - PAGE.title, p.used);
-    for (const line of p.lines) {
-      translateScene(line.scene, x0 - line.bbox.x, y - line.bbox.y);
-      mergeScene(scene, line.scene);
-      y = grid(y + line.bbox.h + CELL_GAP);
+    const mine = fixed.filter((f) => f.page === i);
+    if (mine.length) {
+      for (const [j, line] of p.lines.entries()) {
+        translateScene(line.scene, rect.x + PAGE.margin - line.bbox.x, rect.y + PAGE.margin + p.ys[j]! - line.bbox.y);
+        mergeScene(scene, line.scene);
+      }
+      for (const f of mine) {
+        translateScene(f.cell.scene, rect.x + f.dx, rect.y + f.dy);
+        mergeScene(scene, f.cell.scene);
+      }
+    } else {
+      // the block of lines sits centred in the drawing area, on the grid (lines stay left-aligned)
+      const blockW = Math.max(0, ...p.lines.map((l) => l.bbox.w));
+      const x0 = rect.x + PAGE.margin + centred(rect.w - 2 * PAGE.margin, blockW);
+      let y = rect.y + PAGE.margin + centred(rect.h - 2 * PAGE.margin - PAGE.title, p.used);
+      for (const line of p.lines) {
+        translateScene(line.scene, x0 - line.bbox.x, y - line.bbox.y);
+        mergeScene(scene, line.scene);
+        y = grid(y + line.bbox.h + CELL_GAP);
+      }
     }
-    pages.push({ number: i + 1, name: pageName(d, p.lines.flatMap((l) => l.heads)), rect, ...(oversized ? { oversized: true } : {}) });
+    const heads = [...p.lines.flatMap((l) => l.heads), ...mine.flatMap((f) => f.cell.heads)];
+    pages.push({ number: i + 1, name: pageName(d, heads), rect, ...(oversized ? { oversized: true } : {}) });
   });
   return { scene, pages };
 }
@@ -480,17 +589,45 @@ const STACK_GAP = 200;
 
 /* ------------------------------ assignment -------------------------------- */
 
+/**
+ * "R4 left of U2": the two-pin part, the constraint's subject, is drawn at that side of the anchor.
+ * With the part as the reference instead ("J2 right of R4") it is the anchor that moves (see the
+ * ordering in layoutSheet), so the part stays where it belongs.
+ */
 function sideHint(ks: Constraint[], compId: string, anchors: Component[]): { anchor: string; unit?: string; side: 'left' | 'right' } | undefined {
   const anchorIds = new Set(anchors.map((a) => a.id));
   for (const k of ks) {
     if (k.a === compId && anchorIds.has(k.b!) && (k.kind === 'left_of' || k.kind === 'right_of')) {
       return { anchor: k.b!, ...(k.bUnit ? { unit: k.bUnit } : {}), side: k.kind === 'left_of' ? 'left' : 'right' };
     }
-    if (k.b === compId && anchorIds.has(k.a!) && (k.kind === 'left_of' || k.kind === 'right_of')) {
-      return { anchor: k.a!, ...(k.aUnit ? { unit: k.aUnit } : {}), side: k.kind === 'left_of' ? 'right' : 'left' };
-    }
   }
   return undefined;
+}
+
+/** A layout node's key: the component, or one unit of a split symbol (by index). */
+const nodeKey = (compId: string, unit?: number) => (unit === undefined ? compId : `${compId}#${unit}`);
+
+/** Where the agent placed a symbol (a sch_position ledger entry), the page counted within its sheet. */
+interface Pin {
+  page: number;
+  x: number;
+  y: number;
+  orient?: 'upright' | 'lying';
+  mirror?: boolean;
+}
+
+/** The placements on these components, by node key (a placement of a split symbol without a unit is its first unit's). */
+function placementsOf(d: Design, comps: Component[]): Map<string, Pin> {
+  const out = new Map<string, Pin>();
+  const ids = new Set(comps.map((c) => c.id));
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind !== 'sch_position' || !k.a || !ids.has(k.a) || k.x === undefined || k.y === undefined) continue;
+    const card = cardOf(d, d.components[k.a]!.part)!;
+    const n = unitCount(card);
+    const unit = n > 1 ? Math.max(0, card.units?.findIndex((u) => u.name === k.aUnit) ?? 0) : undefined;
+    out.set(nodeKey(k.a, unit), { page: k.page ?? 1, x: k.x, y: k.y, ...(k.orient ? { orient: k.orient } : {}), ...(k.mirror !== undefined ? { mirror: k.mirror } : {}) });
+  }
+  return out;
 }
 
 /*
@@ -1207,14 +1344,14 @@ function chainBottomNet(ctx: Ctx, c: Component, s: Sat): Net | undefined {
   return pin ? ctx.d.nets[c.pins[pin.number]!] : undefined;
 }
 
-/** A vertical two-pin part centred at (cx, cy) with decorations on both ends. */
-function verticalPart(ctx: Ctx, c: Component, cx: number, cy: number): Scene {
+/** A vertical two-pin part centred at (cx, cy) with decorations on both ends (`lying`: horizontal, as asked by a placement). */
+function verticalPart(ctx: Ctx, c: Component, cx: number, cy: number, lying = false): Scene {
   const { d } = ctx;
   const card = cardOf(d, c.part)!;
   const nets = card.pins.map((p) => (c.pins[p.number] ? d.nets[c.pins[p.number]!] : undefined));
   const rank = potential;
   const scene = emptyScene();
-  if (betweenSupplies(nets)) {
+  if (lying || betweenSupplies(nets)) {
     // between two rails (a filter resistor VIN → AVIN) or two grounds: lying flat, both symbols
     // pointing their own way from its ends, the rail the power comes from on the left
     const sym = horizontalPart(d, c, cx, cy, sourceRank(ctx, nets[0]) >= sourceRank(ctx, nets[1]));
@@ -1403,7 +1540,7 @@ function bridgeCell(ctx: Ctx, b: BridgeRect): Scene {
  * compared by page: the pages read left to right and top to bottom, so an earlier page counts
  * as both "left of" and "above" a later one.
  */
-function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['constraintStatus'] {
+function evaluateConstraints(d: Design, sheets: SheetView[]): { status: SchematicView['constraintStatus']; why: Record<string, string> } {
   const where = new Map<string, { sheet: string; page: number; bbox: Rect }>();
   for (const s of sheets) {
     const pageOf = (b: Rect) => {
@@ -1428,7 +1565,29 @@ function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['con
     }
   }
   const status: SchematicView['constraintStatus'] = {};
+  const why: Record<string, string> = {};
+  const ref = (id?: string, unit?: string) => `${d.components[id ?? '']?.refdes ?? id}${unit ?? ''}`;
   for (const k of Object.values(d.ledger)) {
+    if (k.kind === 'sch_position') {
+      // the symbol's centre within half a grid step of where it was put, on that page of its sheet
+      const s = sheets.find((v) => v.id === d.components[k.a ?? '']?.sheet);
+      const sym = s?.symbols.find((x) => x.componentId === k.a && (!k.aUnit || x.unit === k.aUnit));
+      const pg = s?.pages[(k.page ?? 1) - 1];
+      if (!s || !sym || !pg) {
+        status[k.id] = s && sym ? 'violated' : 'not_applicable';
+        continue;
+      }
+      const dx = sym.bbox.x + sym.bbox.w / 2 - (pg.rect.x + (k.x ?? 0));
+      const dy = sym.bbox.y + sym.bbox.h / 2 - (pg.rect.y + (k.y ?? 0));
+      status[k.id] = Math.abs(dx) <= GRID / 2 && Math.abs(dy) <= GRID / 2 ? 'ok' : 'violated';
+      // there, but on top of another part (two placements in one spot, or a part placed over one the layout put first)
+      const under = s.symbols.find((o) => o !== sym && hits(o.bbox, sym.bbox));
+      if (under) {
+        status[k.id] = 'violated';
+        why[k.id] = `${ref(k.a, k.aUnit)} lies on ${under.refdes}${under.unit ?? ''}; move one of them`;
+      }
+      continue;
+    }
     if (!['left_of', 'right_of', 'above', 'below'].includes(k.kind)) {
       if (k.kind === 'near' || k.kind === 'layer') status[k.id] = 'not_applicable';
       continue;
@@ -1442,6 +1601,7 @@ function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['con
     if (a.page !== b.page) {
       const before = k.kind === 'left_of' || k.kind === 'above';
       status[k.id] = (a.page < b.page) === before ? 'ok' : 'violated';
+      if (status[k.id] === 'violated') why[k.id] = `${ref(k.a, k.aUnit)} is on page ${a.page + 1} and ${ref(k.b, k.bUnit)} on page ${b.page + 1}`;
       continue;
     }
     const A = a.bbox;
@@ -1452,6 +1612,11 @@ function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['con
       k.kind === 'above' ? A.y + A.h <= B.y :
       A.y >= B.y + B.h;
     status[k.id] = ok ? 'ok' : 'violated';
+    // side by side asked, but the two are on different lines: the row did not fit the page's width
+    const lines = A.y >= B.y + B.h || B.y >= A.y + A.h;
+    if (!ok && (k.kind === 'left_of' || k.kind === 'right_of') && lines) {
+      why[k.id] = `the row is wider than the page, so the layout wrapped it and ${ref(k.a, k.aUnit)} ended up on another line than ${ref(k.b, k.bUnit)}`;
+    }
   }
-  return status;
+  return { status, why };
 }

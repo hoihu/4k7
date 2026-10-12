@@ -46,7 +46,7 @@ Deterministic solvers in the kernel (schematic auto-layout, placement solver, ro
 geometry. The same inputs give the same output, which makes results testable and diffs stable.
 
 The AI *can* give geometric intent when it matters (`place U1 at board center, rotate 90°`), but
-always as a **constraint** that the solvers respect, never as raw primitives.
+always as a **constraint** that the solvers respect, never as raw primitives. On the schematic the same holds since 2026-10-12: `place_symbol` puts a part where the agent says (a `sch_position` ledger entry), the auto-layout places the rest around it and draws the wires ([schematic-drawing](design/schematic-drawing.md) §2).
 
 ## 3. Principles
 
@@ -281,7 +281,7 @@ Deviations (deliberate, to revisit):
 
 Pulled forward from M4: the **local server** (`tools/server`), an MCP server that relays to the open tab, so an external agent on the user's own plan can drive the design through the same op catalogue and review flow.
 
-Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models, and layout quality on 30+ part designs. Layout quality is planned as an editable drawing ruleset plus agent-set drawing hints in three steps (placement, supplies, connections): [schematic-drawing](design/schematic-drawing.md) (steps 1–2 built 2026-10-12).
+Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models, and layout quality on 30+ part designs. Layout quality is planned as an editable drawing ruleset plus agent-set drawing hints in three steps (placement, supplies, connections): [schematic-drawing](design/schematic-drawing.md) (steps 1–3 built 2026-10-12).
 
 ### M2/M3 first slice: board, routing, fab (2026-09-26)
 

@@ -25,6 +25,7 @@ import {
   type SheetView,
   type SchematicRule,
   SCHEMATIC_RULES,
+  PAGE,
   boardSummary,
   parseSchematicRules,
   DEFAULT_BOARD,
@@ -94,7 +95,7 @@ export class Kernel {
       const view = layoutSchematic(d);
       const sch = schematicChecks(d, view, this.rules);
       applyWaivers(d, sch);
-      a = { view, diagnostics: sortDiagnostics([...runChecks(d, view.constraintStatus), ...sch]) };
+      a = { view, diagnostics: sortDiagnostics([...runChecks(d, view.constraintStatus, view.constraintWhy), ...sch]) };
       this.cache.set(d, a);
     }
     return a;
@@ -385,6 +386,28 @@ export class Kernel {
           current: cur ? { id: cur.id, summary: fabSummary(cur), origin: cur.origin, source: cur.source, limits: cur.limits, ...(cur.notes?.length ? { notes: cur.notes } : {}) } : 'none',
           presets: fabPresets().map((p) => ({ id: p.id, house: p.house, tier: p.tier, layers: p.layers, summary: fabSummary(p), source: p.source.url, checked: p.source.checked })),
           how: `set_fab_profile preset: "jlcpcb" (or a tier id above); a bare house takes the tier for this board's ${layers} layers (Eurocircuits: 6C; any pattern class 3–9 with drill class A–E works, e.g. "eurocircuits/5C"). For another manufacturer, or newer numbers, read its capabilities page and import: house, tier, source_url, checked and limits in mm; never guess a number.`,
+        };
+      }
+      case 'get_schematic': {
+        // what the agent needs to place parts: each page's paper and where every symbol stands on it
+        const view = this.analyse(d).view;
+        const placedBy = new Map(Object.values(d.ledger).filter((k) => k.kind === 'sch_position').map((k) => [`${k.a}${k.aUnit ?? ''}`, k.id]));
+        const r = (v: number) => Math.round(v);
+        return {
+          coordinates: 'mils from the top-left corner of the page\'s paper, x to the right, y down; a symbol\'s x/y is its centre',
+          drawing_area: { margin: PAGE.margin, title_block: `${PAGE.title} high, at the bottom` },
+          pages: view.sheets.flatMap((s) =>
+            s.pages.map((p) => ({ page: p.number, sheet: s.name, name: p.name, w: p.rect.w, h: p.rect.h, ...(p.oversized ? { oversized: true } : {}) })),
+          ),
+          symbols: view.sheets.flatMap((s) =>
+            s.symbols.map((sym) => {
+              const cx = sym.bbox.x + sym.bbox.w / 2;
+              const cy = sym.bbox.y + sym.bbox.h / 2;
+              const p = s.pages.find((pg) => cx >= pg.rect.x && cx <= pg.rect.x + pg.rect.w && cy >= pg.rect.y && cy <= pg.rect.y + pg.rect.h) ?? s.pages[0]!;
+              const k = placedBy.get(`${sym.componentId}${sym.unit ?? ''}`);
+              return { ref: `${sym.refdes}${sym.unit ?? ''}`, page: p.number, x: r(cx - p.rect.x), y: r(cy - p.rect.y), w: sym.bbox.w, h: sym.bbox.h, placed: k ? `by you (${k}, ${view.constraintStatus[k] ?? 'ok'})` : 'by the layout' };
+            }),
+          ),
         };
       }
       case 'get_board': {

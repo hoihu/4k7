@@ -315,6 +315,17 @@ export const PlaceOp = z.object({
   lock: z.boolean().optional().describe('true: lock the part exactly there (a hard pin, e.g. connectors at the edge). Default: the user\'s choice for this part, kept relative to its parent part (a cap next to its IC follows the IC) and nudged only if it must'),
 });
 
+export const PlaceSymbolOp = z.object({
+  op: z.literal('place_symbol'),
+  ref: componentRef.describe('Component, or one unit of a split symbol ("U3B")'),
+  page: z.number().int().min(1).optional().describe('Page number as get_schematic and get_schematic_image count them, on the part\'s own sheet; omit it to keep the page the part is on now'),
+  x: z.number().optional().describe('Centre of the symbol, mils from the left edge of the paper (get_schematic gives the paper size and where everything is now)'),
+  y: z.number().optional().describe('Centre of the symbol, mils from the top edge of the paper'),
+  orient: z.enum(['upright', 'lying']).optional().describe('Two-pin parts: standing (default) or lying, e.g. a resistor in series in a signal path'),
+  mirror: z.boolean().optional().describe('ICs and connectors: pins of the left side on the right (a connector at the right edge facing the circuit). Default: connectors in the right half of the page are mirrored'),
+  auto: z.boolean().optional().describe('true: forget the position; the layout places the part again'),
+}).describe('Put a part where it belongs on the schematic: the layout places it there exactly (snapped to the 100-mil grid) and the unplaced parts around it. An IC or connector takes the small parts drawn at its pins with it, wired as before; a two-pin part placed on its own stands apart, its connections shown by net labels. Replaces the part\'s earlier position. Use it to make a drawing look like a reference or the user\'s sketch; left_of/right_of/above/below stay the lighter way to order things.');
+
 export const ProposeLayoutOp = z.object({
   op: z.literal('propose_layout'),
   keep_choices: z.boolean().optional().describe('Keep the user\'s placement choices (default true); false forgets them (locked parts stay)'),
@@ -387,6 +398,7 @@ export const EditOp = z.discriminatedUnion('op', [
   SetBoardOp,
   SetFabProfileOp,
   PlaceOp,
+  PlaceSymbolOp,
   ProposeLayoutOp,
   RouteOp,
   SetPlaneOp,
@@ -426,6 +438,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_ledger') }),
   z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
   z.object({ op: z.literal('get_fab_profiles') }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses'),
+  z.object({ op: z.literal('get_schematic') }).describe('Schematic layout: each page (number, name, paper size in mils) and where each symbol stands on it (centre and size in mils from the paper\'s top-left; placed by you with place_symbol, and whether that holds, or by the layout)'),
   z.object({ op: z.literal('get_board') }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
   z.object({
     op: z.literal('search_parts'),
