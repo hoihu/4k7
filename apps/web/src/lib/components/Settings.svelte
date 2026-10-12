@@ -6,6 +6,7 @@
   import ServerSection from './settings/ServerSection.svelte';
   import ProjectSection from './settings/ProjectSection.svelte';
   import ApiKeysSection from './settings/ApiKeysSection.svelte';
+  import RulesSection from './settings/RulesSection.svelte';
 
   const nav = [
     { id: 'project', label: 'General', section: ProjectSection },
@@ -14,6 +15,7 @@
     { id: 'apis', label: 'API keys', section: ApiKeysSection },
     { id: 'server', label: 'Local server', section: ServerSection },
     { id: 'agent', label: 'Layout and Schematic', section: AgentSection },
+    { id: 'rules', label: 'Schematic rules', section: RulesSection },
     { id: 'about', label: 'About', section: AboutSection },
   ];
 

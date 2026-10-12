@@ -17,7 +17,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@4k7/schema';
+import { ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, SCHEMATIC_RULES, DatasheetInput, checkedRulesNote, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, parseSchematicRules, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@4k7/schema';
 import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
@@ -208,6 +208,7 @@ class AppState {
       else void this.reloadSettings();
     });
     this.applyTheme();
+    await this.kernel.setRules(this.settings.schematicRules || null);
     await this.refresh();
     server.init(
       (tool, input) => this.handleServerCall(tool, input),
@@ -806,7 +807,7 @@ class AppState {
         const p = this.k?.proposal;
         const pending = p ? `\n<pending_changeset hunks="${p.hunks.length}">${p.hunks.map((h) => `${h.change} ${h.title}`).join('; ')}</pending_changeset>` : '';
         log('context', true, `${snap.summary.components.length} parts · ${snap.counts.errors}E ${snap.counts.warnings}W`);
-        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope }) + pending + `\nautonomy: ${this.settings.mode}`);
+        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope, rules: this.drawingRules }) + pending + `\nautonomy: ${this.settings.mode}`);
       }
       case 'propose': {
         const args = ProposeInput.safeParse(input);
@@ -814,7 +815,7 @@ class AppState {
         await this.refresh();
         const p = this.k?.proposal;
         if (!p) return text('Nothing to propose: the working copy has no changes.', true);
-        const errors = this.k!.diagnostics.filter((d) => d.severity === 'error' && !d.waivedBy);
+        const errors = this.k!.diagnostics.filter(mustFix);
         if (errors.length) {
           log('propose', false, `refused: ${errors.length} open error(s)`);
           return text(
@@ -1073,7 +1074,7 @@ class AppState {
       } else {
         this.inAppBusy = true;
         this.abort = new AbortController();
-        await this.agent.run(trimmed, { selection: refs, scope: opts.scope ?? null }, (e) => this.onEvent(item, e), this.abort.signal);
+        await this.agent.run(trimmed, { selection: refs, scope: opts.scope ?? null, rules: this.drawingRules }, (e) => this.onEvent(item, e), this.abort.signal);
       }
     } catch (e) {
       item.segments.push({ type: 'error', text: (e as Error).message });
@@ -1086,7 +1087,7 @@ class AppState {
       await this.refresh();
       if (this.k?.proposal) {
         item.changeset = { state: 'pending' };
-        if (this.settings.mode === 'auto' && this.k.counts.errors === 0) await this.accept();
+        if (this.settings.mode === 'auto' && !this.k.diagnostics.some(mustFix)) await this.accept();
       }
     }
   }
@@ -1218,6 +1219,7 @@ class AppState {
   /** Change settings; `apiKey` is the key of the API service chosen after the change. */
   async updateSettings(patch: Partial<Settings>, apiKey?: string) {
     const service = this.settings.api;
+    const rules = this.settings.schematicRules;
     this.settings = { ...this.settings, ...patch };
     await saveSettings(this.settings);
     if (apiKey !== undefined) {
@@ -1228,7 +1230,25 @@ class AppState {
     }
     this.agent?.setProvider(this.makeProvider());
     this.applyTheme();
+    if (this.settings.schematicRules !== rules) await this.applyRules();
     this.settingsChannel?.postMessage({ type: 'settings' });
+  }
+
+  /** The schematic ruleset in force: the user's text, or the shipped default while it is empty. */
+  get rulesText(): string {
+    return this.settings.schematicRules || SCHEMATIC_RULES;
+  }
+
+  /** What the agent reads of the ruleset: the guidance without the level lines, and which rules the kernel checks. */
+  private get drawingRules(): string {
+    const { guidance, rules } = parseSchematicRules(this.rulesText);
+    return `${guidance.trim()}\n\n${checkedRulesNote(rules)}`;
+  }
+
+  /** Hands the ruleset to the kernel, which re-runs the SCH checks on the open design. */
+  private async applyRules() {
+    await this.kernel.setRules(this.settings.schematicRules || null);
+    await this.refresh();
   }
 
   /** Save (or with '' remove) the key of an API service, whether or not the chat uses it now. */
@@ -1245,10 +1265,12 @@ class AppState {
   private settingsChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('4k7-settings') : null;
 
   private async reloadSettings() {
+    const rules = this.settings.schematicRules;
     this.settings = await loadSettings();
     this.apiKey = await loadApiKey(this.settings.api);
     this.agent?.setProvider(this.makeProvider());
     this.applyTheme();
+    if (this.settings.schematicRules !== rules) await this.applyRules();
   }
 
   clearChat() {

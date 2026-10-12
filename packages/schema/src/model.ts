@@ -134,6 +134,7 @@ export type ConstraintKind =
   | 'layer'
   | 'arrangement'
   | 'position'
+  | 'sch_position'
   | 'note';
 
 export type ConstraintDomain = 'schematic' | 'placement' | 'routing' | 'electrical' | 'param';
@@ -162,6 +163,18 @@ export interface Constraint {
   yMm?: number;
   rot?: number;
   rel?: string;
+  /**
+   * For `sch_position`: where `a` (or its unit `aUnit`) stands on the schematic: the page of its
+   * sheet (1 = the sheet's first page) and the centre of its symbol, in mils from the paper's
+   * top-left corner. The layout puts it there and places the rest around it.
+   */
+  page?: number;
+  x?: number;
+  y?: number;
+  /** For `sch_position` of a two-pin part: standing (the layout's default) or lying. */
+  orient?: 'upright' | 'lying';
+  /** For `sch_position` of an IC or connector: drawn mirrored, the left side's pins on the right. */
+  mirror?: boolean;
   domain: ConstraintDomain;
   strength: 'hard' | 'soft';
   source: ConstraintSource;

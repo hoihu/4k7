@@ -118,6 +118,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return setFabProfile(d, op);
     case 'place':
       return place(d, op);
+    case 'place_symbol':
+      return placeSymbol(d, op);
     case 'propose_layout':
       return proposeLayout(d, op.keep_choices ?? true);
     case 'route':
@@ -626,6 +628,58 @@ function keepPlacement(d: Design) {
  * it follows when that moves), or with `lock` exactly there (hard). One per part; placing again
  * replaces it, keeping a rotation chosen before unless a new one is given.
  */
+/**
+ * A part's place on the schematic, as the agent decides it: a `sch_position` ledger entry the
+ * layout honours (layout.ts). The page is given as the design counts pages and kept as the page
+ * of the part's own sheet, so pages added to an earlier sheet do not move it.
+ */
+function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>): OpResult {
+  const { comp, unit } = resolveUnitRef(d, op.ref);
+  const label = `${comp.refdes}${unit ?? ''}`;
+  const old = Object.values(d.ledger).filter((k) => k.kind === 'sch_position' && k.a === comp.id && (k.aUnit ?? '') === (unit ?? ''));
+  for (const k of old) delete d.ledger[k.id];
+  if (op.auto) return { op: op.op, effect: old.length ? `${label} handed back to the layout` : `${label} is placed by the layout already`, ids: old.map((k) => k.id) };
+  if (op.x === undefined || op.y === undefined) reject({ code: 'INVALID_OP', message: `place_symbol needs x and y (the centre of ${label}'s symbol, mils from the paper's top-left corner), or auto: true. design_query get_schematic shows where everything is now.` });
+  const card = cardOf(d, comp.part);
+  const twoPin = !!card && isTwoPin(card);
+  if (op.orient && !twoPin) reject({ code: 'INVALID_OP', message: `orient is for two-pin parts; ${label} is drawn by its symbol. Use mirror to put its left pins on the right.` });
+  if (op.mirror !== undefined && twoPin) reject({ code: 'INVALID_OP', message: `mirror is for ICs and connectors; give ${label} orient "upright" or "lying".` });
+  const view = layoutSchematic(d);
+  const sheet = view.sheets.find((s) => s.id === comp.sheet)!;
+  const first = sheet.pages[0]!.number;
+  const last = sheet.pages.at(-1)!.number;
+  let page: number;
+  if (op.page === undefined) {
+    const sym = sheet.symbols.find((s) => s.componentId === comp.id && (unit === undefined || s.unit === unit));
+    const cx = sym ? sym.bbox.x + sym.bbox.w / 2 : 0;
+    const cy = sym ? sym.bbox.y + sym.bbox.h / 2 : 0;
+    page = Math.max(1, sheet.pages.findIndex((p) => cx >= p.rect.x && cx <= p.rect.x + p.rect.w && cy >= p.rect.y && cy <= p.rect.y + p.rect.h) + 1);
+  } else {
+    const lastSheet = view.sheets.at(-1)!.id === sheet.id;
+    if (op.page < first || (op.page > last && !lastSheet)) {
+      reject({ code: 'INVALID_OP', message: `${label} is on sheet ${sheet.name}, pages ${first}–${last}; move it to the other sheet first (move_to_sheet) to put it on page ${op.page}.` });
+    }
+    page = op.page - first + 1;
+  }
+  const snap = (v: number) => Math.round(v / 100) * 100;
+  const id = nextId(d, 'k');
+  d.ledger[id] = {
+    id,
+    kind: 'sch_position',
+    a: comp.id,
+    ...(unit ? { aUnit: unit } : {}),
+    page,
+    x: snap(op.x),
+    y: snap(op.y),
+    ...(op.orient ? { orient: op.orient } : {}),
+    ...(op.mirror !== undefined ? { mirror: op.mirror } : {}),
+    domain: 'schematic',
+    strength: 'soft',
+    source: { type: 'agent' },
+  };
+  return { op: op.op, effect: `${label} placed on page ${first + page - 1} at (${snap(op.x)}, ${snap(op.y)}) mils`, ids: [id] };
+}
+
 function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
   const comp = resolveComponent(d, op.ref);
   if (!d.board?.placement) keepPlacement(d); // start from what the user sees
@@ -1341,6 +1395,8 @@ export function describeConstraint(d: Design, k: Constraint): string {
       return `arrangement(${n(k.a)}) = ${k.value}`;
     case 'position':
       return `position(${n(k.a)}) = (${k.xMm}, ${k.yMm}) mm${k.rel ? ` from ${n(k.rel)}` : ''}${k.rot !== undefined ? ` ${k.rot}°` : ''}${k.strength === 'hard' ? ', locked' : ''}`;
+    case 'sch_position':
+      return `${n(k.a)}${k.aUnit ?? ''} placed on page ${k.page} at (${k.x}, ${k.y}) mils${k.orient ? `, ${k.orient}` : ''}${k.mirror !== undefined ? (k.mirror ? ', mirrored' : ', not mirrored') : ''}`;
     case 'note':
       return `note${k.a ? `(${n(k.a)})` : ''}: ${k.value}`;
     default:

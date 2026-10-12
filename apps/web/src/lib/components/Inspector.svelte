@@ -266,7 +266,7 @@
         <div class="empty">{app.k?.summary.components.length ? 'No open issues.' : 'Nothing to check yet.'}</div>
       {/if}
       <ul class="rows">
-        {#each open as d (d.code + d.entities.join())}
+        {#each open as d (d.code + d.entities.join() + d.message)}
           <li>
             <details class="row">
               <summary class="r">
@@ -285,7 +285,7 @@
             </details>
           </li>
         {/each}
-        {#each waived as d (d.code + d.entities.join())}
+        {#each waived as d (d.code + d.entities.join() + d.message)}
           <li class="r" title="waived by {d.waivedBy}"><span class="sev info">w</span><span class="grow trunc muted">{d.code} · {d.entities.join(', ')}</span></li>
         {/each}
       </ul>

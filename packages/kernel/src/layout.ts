@@ -27,10 +27,13 @@ import {
   supplyStubs,
   emptyScene,
   grid,
+  labelRect,
+  leadEnd,
   makeSymbol,
   mergeScene,
   satWidth,
   sceneBBox,
+  textRect,
   translateScene,
   tw,
   type Dir,
@@ -91,7 +94,8 @@ export function layoutSchematic(d: Design): SchematicView {
   // pages are numbered through the whole design, as on a printout
   let n = 0;
   for (const v of views) for (const p of v.pages) p.number = ++n;
-  return { paper: d.paper ?? DEFAULT_PAPER, sheets: views, constraintStatus: evaluateConstraints(d, views) };
+  const { status, why } = evaluateConstraints(d, views);
+  return { paper: d.paper ?? DEFAULT_PAPER, sheets: views, constraintStatus: status, ...(Object.keys(why).length ? { constraintWhy: why } : {}) };
 }
 
 function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
@@ -99,13 +103,16 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   const comps = componentsSorted(d).filter((c) => c.sheet === sheetId && cardOf(d, c.part));
   const cardFor = (c: Component) => cardOf(d, c.part)!;
   let anchors = comps.filter((c) => !isTwoPin(cardFor(c)));
-  const bridges = findBridges(ctx, comps.filter((c) => isTwoPin(cardFor(c))));
+  // where the agent put parts (place_symbol): they stand exactly there, the rest flows around them
+  const pinned = placementsOf(d, comps);
+  const placedTwoPins = comps.filter((c) => isTwoPin(cardFor(c)) && pinned.has(c.id));
+  const bridges = findBridges(ctx, comps.filter((c) => isTwoPin(cardFor(c)) && !pinned.has(c.id)));
   const inBridge = new Set(bridges.flatMap((b) => b.diodes.map((x) => x.comp.id)));
   // supply caps belong to the IC they serve, decided before the regulators claim parts
   const owners = supplyOwners(d, anchors, comps.filter((c) => isTwoPin(cardFor(c))));
   // regulators are drawn like datasheet reference designs (power flow); they claim their parts
   const flows = new Map<string, FlowPlan>();
-  let unclaimed = comps.filter((c) => isTwoPin(cardFor(c)) && !inBridge.has(c.id));
+  let unclaimed = comps.filter((c) => isTwoPin(cardFor(c)) && !inBridge.has(c.id) && !pinned.has(c.id));
   for (const a of anchors) {
     const plan = planFlow(ctx, a, unclaimed.filter((c) => (owners.get(c.id) ?? a.id) === a.id));
     if (!plan) continue;
@@ -140,7 +147,12 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     anchors.map((c) => {
       const card = cardFor(c);
       const n = unitCount(card);
-      const make = (unit?: number): AnchorPlan => ({ comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror: outputConn.has(c.id), ...(unit !== undefined ? { unit } : {}), ...(stacks.has(c.id) ? { stack: stacks.get(c.id)! } : {}) });
+      const make = (unit?: number): AnchorPlan => {
+        // placed: as the agent said, else a connector in the right half of its page faces left, like an output
+        const at = pinned.get(nodeKey(c.id, n > 1 ? unit ?? 0 : undefined));
+        const mirror = at ? at.mirror ?? (card.category === 'connector' && at.x > paperOf(d.paper).w / 2) : outputConn.has(c.id);
+        return { comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror, ...(unit !== undefined ? { unit } : {}), ...(stacks.has(c.id) ? { stack: stacks.get(c.id)! } : {}) };
+      };
       return [c.id, n > 1 ? Array.from({ length: n }, (_, u) => make(u)) : [make()]];
     }),
   );
@@ -170,6 +182,13 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
         }
       }
       if (!done) (side.side === 'left' ? candidates[0]!.extraLeft : candidates[0]!.extraRight).push(c);
+      continue;
+    }
+    // above/below an anchor: drawn with that anchor, at the pin they share, if they share one
+    const level = directional.find((k) => k.a === c.id && (k.kind === 'above' || k.kind === 'below') && unitPlans.has(k.b!));
+    const at = level && plansOf(level.b!).map((plan) => ({ plan, sat: findAttach(ctx, plan, c, nets) })).find((x) => x.sat);
+    if (at) {
+      (pinSideOf(at.plan, at.sat!.anchorPin) === 'left' ? at.plan.left : at.plan.right).push(at.sat!);
       continue;
     }
     if (nets.every((n) => n && isPowerNet(n))) {
@@ -231,6 +250,10 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
       free.push(c);
       continue;
     }
+    if (betweenSupplies(nets)) {
+      free.push(c); // drawn lying flat on its own (verticalPart)
+      continue;
+    }
     const rail = nets.find((n) => n && !isGroundNet(n)) ?? nets[0];
     const decided = attachable.find((a) => a.id === owners.get(c.id));
     let owner = decided ?? (rail && decapOwner(d, attachable, rail.id));
@@ -251,9 +274,29 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   /* ---- rows and order of anchors ---- */
   // one layout node per symbol: split ICs contribute one node per unit
   const nodes: LayoutNode[] = anchors.flatMap((c) =>
-    plansOf(c.id).map((p) => ({ key: p.unit === undefined ? c.id : `${c.id}#${p.unit}`, comp: c, plan: p })),
+    plansOf(c.id).map((p) => ({ key: nodeKey(c.id, p.unit), comp: c, plan: p })),
   );
-  const rows = arrangeAnchors(d, nodes, directional);
+  // a constraint moves its subject (a): with an anchor as subject and a small part as reference
+  // ("J2 right of R4"), the anchor goes next to the anchor that part is drawn with; with a small
+  // part as subject it was a request to draw it at an anchor (pass 1), not an order of anchors
+  const drawnWith = new Map<string, { id: string; unit?: string }>();
+  for (const plan of allPlans()) {
+    const unit = plan.unit !== undefined ? plan.card.units?.[plan.unit]?.name : undefined;
+    const parts = [...plan.left, ...plan.right].flatMap((x) => [x.comp, ...x.chain]).concat(plan.decaps, plan.extraLeft, plan.extraRight);
+    for (const x of parts) drawnWith.set(x.id, { id: plan.comp.id, ...(unit ? { unit } : {}) });
+  }
+  const isAnchor = (id?: string) => !!id && unitPlans.has(id);
+  const ordering = directional.flatMap((k): Constraint[] => {
+    if (!isAnchor(k.a)) return [];
+    if (isAnchor(k.b)) return [k];
+    const owner = drawnWith.get(k.b!);
+    if (!owner || owner.id === k.a) return [];
+    const { bUnit: _, ...rest } = k;
+    return [{ ...rest, b: owner.id, ...(owner.unit ? { bUnit: owner.unit } : {}) }];
+  });
+  // connectors ordered by a constraint keep their place in the row instead of joining a column
+  const ordered = new Set(ordering.filter((k) => k.kind === 'left_of' || k.kind === 'right_of').flatMap((k) => [k.a!, k.b!]));
+  const rows = arrangeAnchors(d, nodes.filter((n) => !pinned.has(n.key)), ordering);
   if (bridges.length && !rows.length) rows.push([]);
 
   /* ---- cells in rows; the pager flows them onto pages ---- */
@@ -261,12 +304,12 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   for (let [ri, row] of rows.entries()) {
     const cells: Cell[] = row.map((n) => ({ scene: flows.has(n.comp.id) ? flowCell(ctx, flows.get(n.comp.id)!) : buildCell(ctx, n.plan), heads: [n.comp] }));
     // output connectors: one column at the right end of the row
-    const outIdx = row.flatMap((n, i) => (outputConn.has(n.comp.id) ? [i] : []));
+    const outIdx = row.flatMap((n, i) => (outputConn.has(n.comp.id) && !ordered.has(n.comp.id) ? [i] : []));
     const outColumn = outIdx.length ? stackCells(outIdx.map((i) => cells[i]!)) : null;
     for (const i of [...outIdx].reverse()) cells.splice(i, 1);
-    row = row.filter((n) => !outputConn.has(n.comp.id));
+    row = row.filter((_, i) => !outIdx.includes(i));
     // input (and other) connectors: one column where the first of them is
-    const connectorIdx = row.flatMap((n, i) => (cardFor(n.comp).category === 'connector' ? [i] : []));
+    const connectorIdx = row.flatMap((n, i) => (cardFor(n.comp).category === 'connector' && !ordered.has(n.comp.id) ? [i] : []));
     if (connectorIdx.length > 1) {
       cells.splice(connectorIdx[0]!, 1, stackCells(connectorIdx.map((i) => cells[i]!)));
       for (const i of connectorIdx.slice(1).reverse()) cells.splice(i, 1);
@@ -283,7 +326,18 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   // parts attached to nothing: a row of their own, close together
   if (free.length) cellRows.push({ cells: free.map((c) => ({ scene: freePart(ctx, c), heads: isTwoPin(cardFor(c)) ? [] : [c] })), gap: 200 });
 
-  const { scene, pages } = paginate(d, cellRows);
+  // placed parts: an anchor with everything drawn at its pins, or a two-pin part on its own
+  const placed: Placed[] = [];
+  for (const n of nodes) {
+    const at = pinned.get(n.key);
+    if (!at) continue;
+    const scene = flows.has(n.comp.id) ? flowCell(ctx, flows.get(n.comp.id)!) : buildCell(ctx, n.plan);
+    const unit = n.plan.unit !== undefined ? n.plan.card.units?.[n.plan.unit]?.name : undefined;
+    placed.push({ cell: { scene, heads: [n.comp] }, at, comp: n.comp.id, ...(unit ? { unit } : {}) });
+  }
+  for (const c of placedTwoPins) placed.push({ cell: { scene: verticalPart(ctx, c, 0, 0, pinned.get(c.id)!.orient === 'lying'), heads: [] }, at: pinned.get(c.id)!, comp: c.id });
+
+  const { scene, pages } = paginate(d, cellRows, placed);
   tidyWires(scene);
   addJunctions(scene);
   const bb = pagesBBox(pages);
@@ -308,6 +362,14 @@ interface CellRow {
 /** Space between pages on the canvas. */
 const PAGE_GAP = 600;
 
+/** A cell whose part the agent placed: its symbol's centre goes to `at` on that page. */
+interface Placed {
+  cell: Cell;
+  at: Pin;
+  comp: string;
+  unit?: string;
+}
+
 /**
  * Flow the cells onto pages: each row is broken into lines that fit the page width (order
  * kept), lines are stacked until the page is full, then the next page starts. A cell wider or
@@ -315,8 +377,11 @@ const PAGE_GAP = 600;
  * in a near-square grid on the canvas (rows of ⌈√n⌉), so the sheet still reads as one drawing
  * and fits the window without a long scroll. There is always at least one page, so an empty
  * sheet shows its paper.
+ *
+ * Placed cells stand where the agent put them; on their page the lines start at the top-left of
+ * the drawing area and go down past them instead of being centred.
  */
-function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[] } {
+function paginate(d: Design, rows: CellRow[], placed: Placed[] = []): { scene: Scene; pages: PageView[] } {
   const paper = paperOf(d.paper);
   // the drawing area of a page
   const DRAW_W = paper.w - 2 * PAGE.margin;
@@ -355,29 +420,67 @@ function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[]
     flush();
   }
 
+  // placed cells: how far each moves so its part's symbol is centred where it was put, and the box
+  // it then takes on its page (paper coordinates)
+  const fixed = placed.map((p) => {
+    const sym = p.cell.scene.symbols.find((s) => s.componentId === p.comp && (p.unit === undefined || s.unit === p.unit)) ?? p.cell.scene.symbols[0];
+    const cx = sym ? sym.bbox.x + sym.bbox.w / 2 : 0;
+    const cy = sym ? sym.bbox.y + sym.bbox.h / 2 : 0;
+    const dx = Math.round((p.at.x - cx) / GRID) * GRID;
+    const dy = Math.round((p.at.y - cy) / GRID) * GRID;
+    const bb = sceneBBox(p.cell.scene);
+    return { cell: p.cell, page: p.at.page - 1, dx, dy, box: { x: bb.x + dx, y: bb.y + dy, w: bb.w, h: bb.h } };
+  });
+  const boxesOn = (page: number) => fixed.filter((f) => f.page === page).map((f) => f.box);
+
   // lines → pages
-  const sets: { lines: Line[]; used: number }[] = [];
-  let onPage: Line[] = [];
-  let used = 0;
-  const flushPage = () => {
-    sets.push({ lines: onPage, used });
-    onPage = [];
-    used = 0;
-  };
+  const sets: { lines: Line[]; ys: number[]; used: number }[] = [];
+  const setAt = (i: number) => (sets[i] ??= { lines: [], ys: [], used: 0 });
+  let page = 0;
   for (const line of lines) {
-    const h = grid(line.bbox.h + CELL_GAP);
-    if (onPage.length && used + h - CELL_GAP > DRAW_H) flushPage();
-    used += h;
-    onPage.push(line);
+    for (;;) {
+      const set = setAt(page);
+      const boxes = boxesOn(page);
+      const h = line.bbox.h;
+      if (!boxes.length) {
+        const step = grid(h + CELL_GAP);
+        if (set.lines.length && set.used + step - CELL_GAP > DRAW_H) {
+          page++;
+          continue;
+        }
+        set.ys.push(set.used);
+        set.used += step;
+        set.lines.push(line);
+        break;
+      }
+      // the line at the left of the drawing area, lowered until it clears the placed cells
+      const clash = (y: number) => boxes.some((b) => hits({ x: PAGE.margin - CELL_GAP / 2, y: PAGE.margin + y - CELL_GAP / 2, w: line.bbox.w + CELL_GAP, h: h + CELL_GAP }, b));
+      let y = set.used;
+      while (y + h <= DRAW_H && clash(y)) y += GRID;
+      if (y + h > DRAW_H) {
+        page++;
+        continue;
+      }
+      set.ys.push(y);
+      set.used = grid(y + h + CELL_GAP);
+      set.lines.push(line);
+      break;
+    }
   }
-  if (onPage.length) used -= CELL_GAP;
-  flushPage();
+  const nPages = Math.max(sets.length, ...fixed.map((f) => f.page + 1), 1);
+  for (let i = 0; i < nPages; i++) setAt(i);
+  for (const [i, p] of sets.entries()) if (!boxesOn(i).length && p.lines.length) p.used -= CELL_GAP;
 
   // pages → grid on the canvas, read left to right and top to bottom; an oversized page widens
   // its column and deepens its row, so the others stay aligned
-  const sizes = sets.map((p) => {
+  const sizes = sets.map((p, i) => {
     const wide = Math.max(0, ...p.lines.map((l) => l.bbox.w));
-    return { w: Math.max(paper.w, wide + 2 * PAGE.margin), h: Math.max(paper.h, p.used + 2 * PAGE.margin + PAGE.title), oversized: wide > DRAW_W || p.used > DRAW_H };
+    const boxes = boxesOn(i);
+    const right = Math.max(0, ...boxes.map((b) => b.x + b.w + PAGE.margin));
+    const bottom = Math.max(0, ...boxes.map((b) => b.y + b.h + PAGE.margin + PAGE.title));
+    const w = Math.max(paper.w, wide + 2 * PAGE.margin, right);
+    const h = Math.max(paper.h, p.used + 2 * PAGE.margin + PAGE.title, bottom);
+    return { w, h, oversized: w > paper.w || h > paper.h };
   });
   const cols = Math.ceil(Math.sqrt(sets.length));
   const colW = Array.from({ length: cols }, (_, c) => Math.max(0, ...sizes.filter((_, i) => i % cols === c).map((z) => z.w)));
@@ -390,16 +493,29 @@ function paginate(d: Design, rows: CellRow[]): { scene: Scene; pages: PageView[]
   sets.forEach((p, i) => {
     const { w, h, oversized } = sizes[i]!;
     const rect: Rect = { x: colX[i % cols]!, y: rowY[Math.floor(i / cols)]!, w, h };
-    // the block of lines sits centred in the drawing area, on the grid (lines stay left-aligned)
-    const blockW = Math.max(0, ...p.lines.map((l) => l.bbox.w));
-    const x0 = rect.x + PAGE.margin + centred(rect.w - 2 * PAGE.margin, blockW);
-    let y = rect.y + PAGE.margin + centred(rect.h - 2 * PAGE.margin - PAGE.title, p.used);
-    for (const line of p.lines) {
-      translateScene(line.scene, x0 - line.bbox.x, y - line.bbox.y);
-      mergeScene(scene, line.scene);
-      y = grid(y + line.bbox.h + CELL_GAP);
+    const mine = fixed.filter((f) => f.page === i);
+    if (mine.length) {
+      for (const [j, line] of p.lines.entries()) {
+        translateScene(line.scene, rect.x + PAGE.margin - line.bbox.x, rect.y + PAGE.margin + p.ys[j]! - line.bbox.y);
+        mergeScene(scene, line.scene);
+      }
+      for (const f of mine) {
+        translateScene(f.cell.scene, rect.x + f.dx, rect.y + f.dy);
+        mergeScene(scene, f.cell.scene);
+      }
+    } else {
+      // the block of lines sits centred in the drawing area, on the grid (lines stay left-aligned)
+      const blockW = Math.max(0, ...p.lines.map((l) => l.bbox.w));
+      const x0 = rect.x + PAGE.margin + centred(rect.w - 2 * PAGE.margin, blockW);
+      let y = rect.y + PAGE.margin + centred(rect.h - 2 * PAGE.margin - PAGE.title, p.used);
+      for (const line of p.lines) {
+        translateScene(line.scene, x0 - line.bbox.x, y - line.bbox.y);
+        mergeScene(scene, line.scene);
+        y = grid(y + line.bbox.h + CELL_GAP);
+      }
     }
-    pages.push({ number: i + 1, name: pageName(d, p.lines.flatMap((l) => l.heads)), rect, ...(oversized ? { oversized: true } : {}) });
+    const heads = [...p.lines.flatMap((l) => l.heads), ...mine.flatMap((f) => f.cell.heads)];
+    pages.push({ number: i + 1, name: pageName(d, heads), rect, ...(oversized ? { oversized: true } : {}) });
   });
   return { scene, pages };
 }
@@ -473,17 +589,45 @@ const STACK_GAP = 200;
 
 /* ------------------------------ assignment -------------------------------- */
 
+/**
+ * "R4 left of U2": the two-pin part, the constraint's subject, is drawn at that side of the anchor.
+ * With the part as the reference instead ("J2 right of R4") it is the anchor that moves (see the
+ * ordering in layoutSheet), so the part stays where it belongs.
+ */
 function sideHint(ks: Constraint[], compId: string, anchors: Component[]): { anchor: string; unit?: string; side: 'left' | 'right' } | undefined {
   const anchorIds = new Set(anchors.map((a) => a.id));
   for (const k of ks) {
     if (k.a === compId && anchorIds.has(k.b!) && (k.kind === 'left_of' || k.kind === 'right_of')) {
       return { anchor: k.b!, ...(k.bUnit ? { unit: k.bUnit } : {}), side: k.kind === 'left_of' ? 'left' : 'right' };
     }
-    if (k.b === compId && anchorIds.has(k.a!) && (k.kind === 'left_of' || k.kind === 'right_of')) {
-      return { anchor: k.a!, ...(k.aUnit ? { unit: k.aUnit } : {}), side: k.kind === 'left_of' ? 'right' : 'left' };
-    }
   }
   return undefined;
+}
+
+/** A layout node's key: the component, or one unit of a split symbol (by index). */
+const nodeKey = (compId: string, unit?: number) => (unit === undefined ? compId : `${compId}#${unit}`);
+
+/** Where the agent placed a symbol (a sch_position ledger entry), the page counted within its sheet. */
+interface Pin {
+  page: number;
+  x: number;
+  y: number;
+  orient?: 'upright' | 'lying';
+  mirror?: boolean;
+}
+
+/** The placements on these components, by node key (a placement of a split symbol without a unit is its first unit's). */
+function placementsOf(d: Design, comps: Component[]): Map<string, Pin> {
+  const out = new Map<string, Pin>();
+  const ids = new Set(comps.map((c) => c.id));
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind !== 'sch_position' || !k.a || !ids.has(k.a) || k.x === undefined || k.y === undefined) continue;
+    const card = cardOf(d, d.components[k.a]!.part)!;
+    const n = unitCount(card);
+    const unit = n > 1 ? Math.max(0, card.units?.findIndex((u) => u.name === k.aUnit) ?? 0) : undefined;
+    out.set(nodeKey(k.a, unit), { page: k.page ?? 1, x: k.x, y: k.y, ...(k.orient ? { orient: k.orient } : {}), ...(k.mirror !== undefined ? { mirror: k.mirror } : {}) });
+  }
+  return out;
 }
 
 /*
@@ -729,7 +873,7 @@ function drawStack(ctx: Ctx, scene: Scene, plan: StackPlan, x: number, y: number
     net = upper;
   }
   // the rail (or the net the chain goes on to) on top
-  scene.labels.push(deco(d.nets[net]!, x, y, 'up'));
+  endLead(scene, d.nets[net]!, x, y, 'up');
 }
 
 /** A two-pin part lying horizontally centred on (cx, cy); `pin1Left` puts pin 1 on the left. */
@@ -778,7 +922,7 @@ function drawControl(ctx: Ctx, scene: Scene, pin: { x: number; y: number }, seri
       below = Object.values(c.pins).find((n) => n !== upper);
       bottom = cs.pins.find((p) => p.side === 'bottom')!;
     }
-    if (below) scene.labels.push(deco(d.nets[below]!, bottom.x, bottom.y, 'down'));
+    if (below) endLead(scene, d.nets[below]!, bottom.x, bottom.y, 'down');
   }
   // the series resistor: its input end to the left, the flag of the input net there
   const card = cardOf(d, series.comp.part)!;
@@ -840,6 +984,7 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
 
   /* neighbouring side pins on the same supply share one bus and one supply symbol */
   const bused = new Set<string>();
+  const busEnds: (typeof sym.pins)[number][] = []; // the bus pin nearest the pins beyond it, so they step out past the bus
   for (const side of ['left', 'right'] as const) {
     const byPos = new Map<number, (typeof sym.pins)[number]>();
     for (const p of sym.pins.filter((x) => x.side === side).sort((a, b) => a.y - b.y)) {
@@ -871,17 +1016,57 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
       }
       scene.wires.push({ netId: net.id, pts: [busX, top, busX, bottom] });
       scene.labels.push(deco(net, busX, dir === 'up' ? top : bottom, dir));
+      busEnds.push(run.find((p) => p.y === (dir === 'up' ? bottom : top))!);
       const w = 100 + Math.max(80, tw(net.name) / 2 + 20) + 100;
       if (side === 'right') gapRight = Math.max(gapRight, w);
       else gapLeft = Math.max(gapLeft, w);
     }
   }
   const rises = new Map<string, number>();
-  const stubs = supplyStubs(
-    sym.pins.filter((p) => !bused.has(`${p.x},${p.y}`)),
-    supplyOf,
-    rises,
-  );
+  const unbused = sym.pins.filter((p) => !bused.has(`${p.x},${p.y}`));
+  const stubs = supplyStubs([...unbused, ...busEnds], supplyOf, rises);
+  // A supply symbol on a side pin stands upright (rails up, ground down: never sideways) beside the
+  // pins above it (rails) or below it (grounds). Where one of those pins has a lead going further
+  // out (wires to its satellites, a net label), the symbol's stem crosses that lead, and its arrow
+  // or bars go past the farthest such lead, so they never sit on a wire.
+  const reach = (q: (typeof sym.pins)[number]): number => {
+    const netId = plan.comp.pins[q.number];
+    if (!netId || plan.comp.noConnect.includes(q.number) || decorated.has(`${q.x},${q.y}`)) return 0;
+    if (bused.has(`${q.x},${q.y}`)) return 100;
+    if (satsByPin.has(q.number)) return Infinity;
+    return supplyDir(d.nets[netId]!) ? 0 : decoWidth(d.nets[netId]);
+  };
+  const sidePins = unbused.filter((p) => (p.side === 'left' || p.side === 'right') && !decorated.has(`${p.x},${p.y}`) && supplyOf(p.number));
+  for (const p of sidePins) {
+    const dir = supplyOf(p.number)!;
+    const stub = stubs.get(p.number) ?? 100;
+    for (let grew = true; grew; ) {
+      grew = false;
+      const rise = rises.get(p.number) ?? 0;
+      const h = (dir === 'up' ? 400 : 260) + rise;
+      const crossed = sym.pins.filter((q) => q.side === p.side && (dir === 'up' ? q.y > p.y - h && q.y < p.y : q.y < p.y + h && q.y > p.y) && reach(q) > stub - 60).map((q) => q.y);
+      if (!crossed.length) break;
+      // rail: the arrow's base 100 above the highest crossed lead (stem 200 + rise); ground: the bars 100 below the lowest
+      const need = dir === 'up' ? p.y - Math.min(...crossed) - 100 : Math.max(...crossed) - p.y + 20;
+      if (need > rise) {
+        rises.set(p.number, need);
+        grew = true;
+      }
+    }
+  }
+  // two rails whose arrows end at about one height would put their names side by side (or on
+  // top of each other): the outer one goes up a step, and out a step if it stood in the same column
+  const rails = sidePins.filter((p) => supplyOf(p.number) === 'up').sort((a, b) => (stubs.get(a.number) ?? 100) - (stubs.get(b.number) ?? 100));
+  const arrowBase = (q: (typeof sym.pins)[number]) => q.y - 200 - (rises.get(q.number) ?? 0);
+  const stemX = (q: (typeof sym.pins)[number]) => q.x + (q.side === 'left' ? -1 : 1) * (stubs.get(q.number) ?? 100);
+  const nameHalf = (q: (typeof sym.pins)[number]) => tw(d.nets[plan.comp.pins[q.number]!]!.name) / 2 + 50;
+  for (const [i, p] of rails.entries()) {
+    for (const o of rails.slice(0, i)) {
+      if (o.side !== p.side || Math.abs(arrowBase(o) - arrowBase(p)) >= 200 || Math.abs(stemX(o) - stemX(p)) >= nameHalf(o) + nameHalf(p)) continue;
+      if (stemX(o) === stemX(p)) stubs.set(p.number, (stubs.get(p.number) ?? 100) + 200);
+      rises.set(p.number, Math.max(rises.get(p.number) ?? 0, p.y - arrowBase(o)));
+    }
+  }
   for (const p of sym.pins) {
     const netId = plan.comp.pins[p.number];
     const net = netId ? d.nets[netId] : undefined;
@@ -924,29 +1109,48 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
       const sats = satsByPin.get(p.number)!;
       const net = d.nets[plan.comp.pins[p.number]!]!;
       const xs: number[] = [];
-      for (const s of sats) {
+      const otherNetOf = (s: Sat) => {
         const otherPin = s.card.pins.find((pp) => s.comp.pins[pp.number] !== s.net) ?? s.card.pins[1]!;
-        const otherNet = s.comp.pins[otherPin.number] ? d.nets[s.comp.pins[otherPin.number]!] : undefined;
-        const width = Math.max(satWidth(d, s.comp, otherNet?.name), ...s.chain.map((c) => satWidth(d, c, chainBottomNet(ctx, c, s)?.name)));
+        return s.comp.pins[otherPin.number] ? d.nets[s.comp.pins[otherPin.number]!] : undefined;
+      };
+      const widthOf = (s: Sat) => Math.max(satWidth(d, s.comp, otherNetOf(s)), ...s.chain.map((c) => satWidth(d, c, chainBottomNet(ctx, c, s))));
+      // a pull-up (the far end a positive rail) stands above the wire with its rail on top,
+      // where no pin above has parts whose wires would run through it
+      const isUp = (s: Sat) => {
+        const ends = [s.comp, ...s.chain];
+        let far: string | undefined = s.net;
+        for (const c of ends) far = Object.values(c.pins).find((n) => n !== far) ?? far;
+        const height = ends.length * (400 + CHAIN_GAP) + 400;
+        return (
+          !!far &&
+          far !== s.net &&
+          supplyDir(d.nets[far]!) === 'up' &&
+          !sym.pins.some((q) => q.side === side && q.number !== p.number && satsByPin.has(q.number) && q.y < p.y && q.y >= p.y - height)
+        );
+      };
+      // a part going up and one going down share a column, so a divider is one straight line
+      // (rail, R, node, R, ground) instead of two columns joined by a jog
+      const cols: { up?: Sat; down?: Sat }[] = [];
+      for (const s of sats) {
+        const dir = isUp(s) ? 'up' : 'down';
+        const col = cols.find((c) => !c[dir]);
+        if (col) col[dir] = s;
+        else cols.push({ [dir]: s });
+      }
+      for (const col of cols) {
+        const width = Math.max(...[col.up, col.down].filter((s) => !!s).map(widthOf));
         if (side === 'left') {
           if (first) x = grid(pinEndX - gapLeft - width + 100);
           else x -= width;
         }
         first = false;
-        // a pull-up (the far end a positive rail) stands above the wire with its rail on top,
-        // where no pin above has parts whose wires would run through it
-        const ends = [s.comp, ...s.chain];
-        let far: string | undefined = s.net;
-        for (const c of ends) far = Object.values(c.pins).find((n) => n !== far) ?? far;
-        const height = ends.length * (400 + CHAIN_GAP) + 400;
-        const up =
-          !!far &&
-          far !== s.net &&
-          supplyDir(d.nets[far]!) === 'up' &&
-          !sym.pins.some((q) => q.side === side && q.number !== p.number && satsByPin.has(q.number) && q.y < p.y && q.y >= p.y - height);
-        if (up) {
+        const cx = x;
+        xs.push(cx);
+        if (side === 'right') x += width;
+        if (col.up) {
+          const s = col.up;
           const attached = s.card.pins.find((pp) => s.comp.pins[pp.number] === s.net)!;
-          const satSym = makeSymbol(d, s.comp, symbolFor(s.card, attached.number === s.card.pins[0]!.number), x, p.y - 200);
+          const satSym = makeSymbol(d, s.comp, symbolFor(s.card, attached.number === s.card.pins[0]!.number), cx, p.y - 200);
           scene.symbols.push(satSym);
           let top = satSym.pins.find((pp) => pp.side === 'top')!;
           let lower = s.net;
@@ -954,45 +1158,43 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
           for (const c of s.chain) {
             const card = cardOf(d, c.part)!;
             const bp = card.pins.find((pp) => c.pins[pp.number] === upper) ?? card.pins[0]!;
-            if (upper) scene.wires.push({ netId: upper, pts: [x, top.y, x, top.y - CHAIN_GAP] });
-            const cs = makeSymbol(d, c, symbolFor(card, bp.number === card.pins[0]!.number), x, top.y - CHAIN_GAP - 200);
+            if (upper) scene.wires.push({ netId: upper, pts: [cx, top.y, cx, top.y - CHAIN_GAP] });
+            const cs = makeSymbol(d, c, symbolFor(card, bp.number === card.pins[0]!.number), cx, top.y - CHAIN_GAP - 200);
             scene.symbols.push(cs);
             lower = upper ?? lower;
             upper = Object.values(c.pins).find((n) => n !== lower);
             top = cs.pins.find((pp) => pp.side === 'top')!;
           }
-          if (upper) scene.labels.push(deco(d.nets[upper]!, top.x, top.y, 'up'));
-          xs.push(x);
-          if (side === 'right') x += width;
-          continue;
+          if (upper) endLead(scene, d.nets[upper]!, top.x, top.y, 'up');
         }
+        if (!col.down) continue;
+        const s = col.down;
+        const otherNet = otherNetOf(s);
         // pin attached to the anchor net goes on top
         const flip = s.card.pins[0]!.number !== s.card.pins.find((pp) => s.comp.pins[pp.number] === s.net)!.number;
         const satDef = symbolFor(s.card, flip);
-        const satSym = makeSymbol(d, s.comp, satDef, x, p.y + 200);
+        const satSym = makeSymbol(d, s.comp, satDef, cx, p.y + 200);
         scene.symbols.push(satSym);
         const bottom = satSym.pins.find((pp) => pp.side === 'bottom')!;
         if (s.comp.noConnect.includes(bottom.number)) scene.noConnects.push({ x: bottom.x, y: bottom.y });
-        else if (otherNet && !s.chain.length) scene.labels.push(deco(otherNet, bottom.x, bottom.y, 'down'));
+        else if (otherNet && !s.chain.length) endLead(scene, otherNet, bottom.x, bottom.y, 'down');
         // series parts continue straight down the same column
         let upperNet = otherNet?.id;
         let y = bottom.y;
         s.chain.forEach((c, i) => {
           const card = cardOf(d, c.part)!;
           const topPin = card.pins.find((pp) => c.pins[pp.number] === upperNet) ?? card.pins[0]!;
-          if (upperNet) scene.wires.push({ netId: upperNet, pts: [x, y, x, y + CHAIN_GAP] });
+          if (upperNet) scene.wires.push({ netId: upperNet, pts: [cx, y, cx, y + CHAIN_GAP] });
           y += CHAIN_GAP;
-          const sym = makeSymbol(d, c, symbolFor(card, topPin.number !== card.pins[0]!.number), x, y + 200);
+          const sym = makeSymbol(d, c, symbolFor(card, topPin.number !== card.pins[0]!.number), cx, y + 200);
           scene.symbols.push(sym);
           const b = sym.pins.find((pp) => pp.side === 'bottom')!;
           const bNet = c.pins[b.number] ? d.nets[c.pins[b.number]!] : undefined;
           if (c.noConnect.includes(b.number)) scene.noConnects.push({ x: b.x, y: b.y });
-          else if (bNet && i === s.chain.length - 1) scene.labels.push(deco(bNet, b.x, b.y, 'down'));
+          else if (bNet && i === s.chain.length - 1) endLead(scene, bNet, b.x, b.y, 'down');
           upperNet = bNet?.id;
           y = b.y;
         });
-        xs.push(x);
-        if (side === 'right') x += width;
       }
       const far = side === 'right' ? Math.max(...xs) : Math.min(...xs);
       scene.wires.push({ netId: net.id, pts: [p.x, p.y, far, p.y] });
@@ -1014,7 +1216,7 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
     const bb = sceneBBox(scene);
     const rowW = Math.max(bb.x + bb.w, 2500);
     // higher potential on top, as verticalPart draws it
-    const rank = (n?: Net) => (!n ? 1 : isGroundNet(n) ? 3 : isPowerNet(n) ? 0 : 2);
+    const rank = potential;
     const netsOf = (c: Component) => cardOf(d, c.part)!.pins.map((p) => (c.pins[p.number] ? d.nets[c.pins[p.number]!] : undefined));
     const flipped = (c: Component) => {
       const nets = netsOf(c);
@@ -1097,7 +1299,39 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
       l.y = lowest;
     }
   }
+  clearName(scene, sym);
   return scene;
+}
+
+const hits = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/**
+ * A part's name and value stand outside a top corner, over that side's pin leads. A rising
+ * supply symbol or a neighbouring part there would run through them: then they move to the other
+ * corner, above the middle (when no pin is on top), or failing that up until they are clear.
+ */
+function clearName(scene: Scene, sym: SymbolView): void {
+  const texts = () => [textRect(sym.refPos, [sym.refdes]), textRect(sym.valuePos, sym.valueLines ?? [sym.value])];
+  const clash = () => texts().some((t) => scene.labels.some((l) => hits(t, labelRect(l))) || scene.symbols.some((o) => o !== sym && hits(t, o.bbox)));
+  if (!clash()) return;
+  const body = { x: sym.bbox.x + 200, w: sym.bbox.w - 400 };
+  const at = sym.refPos.anchor === 'end' ? 'left' : sym.refPos.anchor === 'start' ? 'right' : 'middle';
+  const spots: Pick<SymbolView['refPos'], 'x' | 'anchor'>[] = [];
+  if (at !== 'right') spots.push({ x: body.x + body.w + 30, anchor: 'start' });
+  if (at !== 'left') spots.push({ x: body.x - 30, anchor: 'end' });
+  if (at !== 'middle' && !sym.pins.some((p) => p.side === 'top')) spots.push({ x: body.x + body.w / 2, anchor: 'middle' });
+  const [ref, val] = [sym.refPos, sym.valuePos];
+  for (const spot of spots) {
+    sym.refPos = { ...ref, ...spot };
+    sym.valuePos = { ...val, ...spot };
+    if (!clash()) return;
+  }
+  sym.refPos = ref;
+  sym.valuePos = val;
+  for (let n = 0; clash() && n < 20; n++) {
+    sym.refPos = { ...sym.refPos, y: sym.refPos.y - 100 };
+    sym.valuePos = { ...sym.valuePos, y: sym.valuePos.y - 100 };
+  }
 }
 
 /** Net at the bottom of a chained part (the one not shared with the part above). */
@@ -1110,24 +1344,58 @@ function chainBottomNet(ctx: Ctx, c: Component, s: Sat): Net | undefined {
   return pin ? ctx.d.nets[c.pins[pin.number]!] : undefined;
 }
 
-/** A vertical two-pin part centred at (cx, cy) with decorations on both ends. */
-function verticalPart(ctx: Ctx, c: Component, cx: number, cy: number): Scene {
+/** A vertical two-pin part centred at (cx, cy) with decorations on both ends (`lying`: horizontal, as asked by a placement). */
+function verticalPart(ctx: Ctx, c: Component, cx: number, cy: number, lying = false): Scene {
   const { d } = ctx;
   const card = cardOf(d, c.part)!;
   const nets = card.pins.map((p) => (c.pins[p.number] ? d.nets[c.pins[p.number]!] : undefined));
-  // higher potential on top: rail above signal above ground
-  const rank = (n?: Net) => (!n ? 1 : isGroundNet(n) ? 3 : isPowerNet(n) ? 0 : 2);
-  const flip = rank(nets[1]) < rank(nets[0]);
+  const rank = potential;
   const scene = emptyScene();
+  if (lying || betweenSupplies(nets)) {
+    // between two rails (a filter resistor VIN → AVIN) or two grounds: lying flat, both symbols
+    // pointing their own way from its ends, the rail the power comes from on the left
+    const sym = horizontalPart(d, c, cx, cy, sourceRank(ctx, nets[0]) >= sourceRank(ctx, nets[1]));
+    scene.symbols.push(sym);
+    for (const p of sym.pins) {
+      const net = nets[card.pins.findIndex((pp) => pp.number === p.number)];
+      const left = p.x < cx;
+      if (c.noConnect.includes(p.number)) scene.noConnects.push({ x: p.x, y: p.y });
+      else if (net) scene.labels.push(deco(net, p.x, p.y, left ? 'left' : 'right'));
+    }
+    return scene;
+  }
+  const flip = rank(nets[1]) < rank(nets[0]);
   const sym = makeSymbol(d, c, symbolFor(card, flip), cx, cy);
   scene.symbols.push(sym);
   for (const p of sym.pins) {
     const idx = card.pins.findIndex((pp) => pp.number === p.number);
     const net = nets[idx];
     if (c.noConnect.includes(p.number)) scene.noConnects.push({ x: p.x, y: p.y });
-    else if (net) scene.labels.push(deco(net, p.x, p.y, p.side === 'top' ? 'up' : 'down'));
+    else if (net) endLead(scene, net, p.x, p.y, p.side === 'top' ? 'up' : 'down');
   }
   return scene;
+}
+
+/** Higher potential on top: a rail pointing up above a signal above ground and rails pointing down. */
+const potential = (n?: Net) => (!n ? 1 : supplyDir(n) === 'up' ? 0 : supplyDir(n) === 'down' ? 3 : 2);
+
+/** How much a rail looks like where the power comes from: an external supply, then the higher voltage, then the one more parts use. */
+function sourceRank(ctx: Ctx, n?: Net): number {
+  if (!n) return 0;
+  return (n.attrs.external ? 1e6 : 0) + (n.attrs.voltage ?? 0) * 1000 + (ctx.members.get(n.id)?.length ?? 0);
+}
+
+/** Both ends on supplies whose symbols point the same way: such a part cannot stand between them. */
+function betweenSupplies(nets: (Net | undefined)[]): boolean {
+  const dirs = nets.map((n) => (n ? supplyDir(n) : null));
+  return dirs.length === 2 && !!dirs[0] && dirs[0] === dirs[1];
+}
+
+/** The supply symbol or label at the end of a vertical lead; a supply pointing against the lead turns aside first (leadEnd). */
+function endLead(scene: Scene, net: Net, x: number, y: number, dir: 'up' | 'down'): void {
+  const r = leadEnd(net, x, y, dir);
+  scene.wires.push(...r.wires);
+  scene.labels.push(r.label);
 }
 
 function freePart(ctx: Ctx, c: Component): Scene {
@@ -1272,7 +1540,7 @@ function bridgeCell(ctx: Ctx, b: BridgeRect): Scene {
  * compared by page: the pages read left to right and top to bottom, so an earlier page counts
  * as both "left of" and "above" a later one.
  */
-function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['constraintStatus'] {
+function evaluateConstraints(d: Design, sheets: SheetView[]): { status: SchematicView['constraintStatus']; why: Record<string, string> } {
   const where = new Map<string, { sheet: string; page: number; bbox: Rect }>();
   for (const s of sheets) {
     const pageOf = (b: Rect) => {
@@ -1297,7 +1565,29 @@ function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['con
     }
   }
   const status: SchematicView['constraintStatus'] = {};
+  const why: Record<string, string> = {};
+  const ref = (id?: string, unit?: string) => `${d.components[id ?? '']?.refdes ?? id}${unit ?? ''}`;
   for (const k of Object.values(d.ledger)) {
+    if (k.kind === 'sch_position') {
+      // the symbol's centre within half a grid step of where it was put, on that page of its sheet
+      const s = sheets.find((v) => v.id === d.components[k.a ?? '']?.sheet);
+      const sym = s?.symbols.find((x) => x.componentId === k.a && (!k.aUnit || x.unit === k.aUnit));
+      const pg = s?.pages[(k.page ?? 1) - 1];
+      if (!s || !sym || !pg) {
+        status[k.id] = s && sym ? 'violated' : 'not_applicable';
+        continue;
+      }
+      const dx = sym.bbox.x + sym.bbox.w / 2 - (pg.rect.x + (k.x ?? 0));
+      const dy = sym.bbox.y + sym.bbox.h / 2 - (pg.rect.y + (k.y ?? 0));
+      status[k.id] = Math.abs(dx) <= GRID / 2 && Math.abs(dy) <= GRID / 2 ? 'ok' : 'violated';
+      // there, but on top of another part (two placements in one spot, or a part placed over one the layout put first)
+      const under = s.symbols.find((o) => o !== sym && hits(o.bbox, sym.bbox));
+      if (under) {
+        status[k.id] = 'violated';
+        why[k.id] = `${ref(k.a, k.aUnit)} lies on ${under.refdes}${under.unit ?? ''}; move one of them`;
+      }
+      continue;
+    }
     if (!['left_of', 'right_of', 'above', 'below'].includes(k.kind)) {
       if (k.kind === 'near' || k.kind === 'layer') status[k.id] = 'not_applicable';
       continue;
@@ -1311,6 +1601,7 @@ function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['con
     if (a.page !== b.page) {
       const before = k.kind === 'left_of' || k.kind === 'above';
       status[k.id] = (a.page < b.page) === before ? 'ok' : 'violated';
+      if (status[k.id] === 'violated') why[k.id] = `${ref(k.a, k.aUnit)} is on page ${a.page + 1} and ${ref(k.b, k.bUnit)} on page ${b.page + 1}`;
       continue;
     }
     const A = a.bbox;
@@ -1321,6 +1612,11 @@ function evaluateConstraints(d: Design, sheets: SheetView[]): SchematicView['con
       k.kind === 'above' ? A.y + A.h <= B.y :
       A.y >= B.y + B.h;
     status[k.id] = ok ? 'ok' : 'violated';
+    // side by side asked, but the two are on different lines: the row did not fit the page's width
+    const lines = A.y >= B.y + B.h || B.y >= A.y + A.h;
+    if (!ok && (k.kind === 'left_of' || k.kind === 'right_of') && lines) {
+      why[k.id] = `the row is wider than the page, so the layout wrapped it and ${ref(k.a, k.aUnit)} ended up on another line than ${ref(k.b, k.bUnit)}`;
+    }
   }
-  return status;
+  return { status, why };
 }

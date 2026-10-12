@@ -1,0 +1,682 @@
+{
+  "components": {
+    "c_2": {
+      "id": "c_2",
+      "noConnect": [],
+      "params": {},
+      "part": "texas:TPS40222DRPR",
+      "pins": {
+        "1": "n_q",
+        "2": "n_r",
+        "3": "n_n",
+        "4": "n_k",
+        "5": "n_l",
+        "6": "n_m"
+      },
+      "refdes": "U1",
+      "sheet": "s_1"
+    },
+    "c_3": {
+      "id": "c_3",
+      "noConnect": [],
+      "params": {},
+      "part": "generic:CONN_1x2",
+      "pins": {
+        "1": "n_k",
+        "2": "n_r"
+      },
+      "refdes": "J1",
+      "sheet": "s_1"
+    },
+    "c_4": {
+      "id": "c_4",
+      "noConnect": [],
+      "params": {},
+      "part": "generic:CONN_1x2",
+      "pins": {
+        "1": "n_p",
+        "2": "n_r"
+      },
+      "refdes": "J2",
+      "sheet": "s_1"
+    },
+    "c_5": {
+      "id": "c_5",
+      "noConnect": [],
+      "params": {
+        "capacitance": "22uF",
+        "voltage": "16V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_k",
+        "2": "n_r"
+      },
+      "refdes": "C1",
+      "sheet": "s_1"
+    },
+    "c_6": {
+      "id": "c_6",
+      "noConnect": [],
+      "params": {
+        "capacitance": "22uF",
+        "voltage": "16V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_k",
+        "2": "n_r"
+      },
+      "refdes": "C6",
+      "sheet": "s_1"
+    },
+    "c_7": {
+      "id": "c_7",
+      "noConnect": [],
+      "params": {
+        "capacitance": "100nF",
+        "voltage": "16V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_k",
+        "2": "n_r"
+      },
+      "refdes": "C7",
+      "sheet": "s_1"
+    },
+    "c_8": {
+      "id": "c_8",
+      "noConnect": [],
+      "params": {
+        "resistance": "10"
+      },
+      "part": "generic:R",
+      "pins": {
+        "1": "n_k",
+        "2": "n_l"
+      },
+      "refdes": "R4",
+      "sheet": "s_1"
+    },
+    "c_9": {
+      "id": "c_9",
+      "noConnect": [],
+      "params": {
+        "capacitance": "1uF",
+        "voltage": "16V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_l",
+        "2": "n_r"
+      },
+      "refdes": "C5",
+      "sheet": "s_1"
+    },
+    "c_a": {
+      "id": "c_a",
+      "noConnect": [],
+      "params": {
+        "capacitance": "33nF",
+        "voltage": "25V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_m",
+        "2": "n_n"
+      },
+      "refdes": "C2",
+      "sheet": "s_1"
+    },
+    "c_b": {
+      "id": "c_b",
+      "noConnect": [],
+      "params": {
+        "resistance": "4.7"
+      },
+      "part": "generic:R",
+      "pins": {
+        "1": "n_n",
+        "2": "n_o"
+      },
+      "refdes": "R3",
+      "sheet": "s_1"
+    },
+    "c_c": {
+      "id": "c_c",
+      "noConnect": [],
+      "params": {
+        "capacitance": "1nF",
+        "voltage": "25V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_o",
+        "2": "n_r"
+      },
+      "refdes": "C4",
+      "sheet": "s_1"
+    },
+    "c_d": {
+      "id": "c_d",
+      "noConnect": [],
+      "params": {
+        "current": "2A",
+        "mpn": "B220A",
+        "package": "SMA",
+        "vr": "20V"
+      },
+      "part": "generic:D",
+      "pins": {
+        "1": "n_n",
+        "2": "n_r"
+      },
+      "refdes": "D1",
+      "sheet": "s_1"
+    },
+    "c_e": {
+      "id": "c_e",
+      "noConnect": [],
+      "params": {
+        "current": "2.5A",
+        "inductance": "3.3uH"
+      },
+      "part": "generic:L",
+      "pins": {
+        "1": "n_n",
+        "2": "n_p"
+      },
+      "refdes": "L1",
+      "sheet": "s_1"
+    },
+    "c_f": {
+      "id": "c_f",
+      "noConnect": [],
+      "params": {
+        "capacitance": "22uF",
+        "voltage": "6.3V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_p",
+        "2": "n_r"
+      },
+      "refdes": "C3",
+      "sheet": "s_1"
+    },
+    "c_g": {
+      "id": "c_g",
+      "noConnect": [],
+      "params": {
+        "capacitance": "22uF",
+        "voltage": "6.3V"
+      },
+      "part": "generic:C",
+      "pins": {
+        "1": "n_p",
+        "2": "n_r"
+      },
+      "refdes": "C8",
+      "sheet": "s_1"
+    },
+    "c_h": {
+      "id": "c_h",
+      "noConnect": [],
+      "params": {
+        "resistance": "5.6k"
+      },
+      "part": "generic:R",
+      "pins": {
+        "1": "n_p",
+        "2": "n_q"
+      },
+      "refdes": "R1",
+      "sheet": "s_1"
+    },
+    "c_i": {
+      "id": "c_i",
+      "noConnect": [],
+      "params": {
+        "resistance": "10k"
+      },
+      "part": "generic:R",
+      "pins": {
+        "1": "n_q",
+        "2": "n_r"
+      },
+      "refdes": "R2",
+      "sheet": "s_1"
+    },
+    "c_j": {
+      "id": "c_j",
+      "noConnect": [],
+      "params": {
+        "resistance": "1k"
+      },
+      "part": "generic:R",
+      "pins": {
+        "1": "n_p",
+        "2": "n_r"
+      },
+      "refdes": "R5",
+      "sheet": "s_1"
+    }
+  },
+  "format": 2,
+  "ledger": {
+    "k_t": {
+      "a": "c_5",
+      "b": "c_2",
+      "domain": "placement",
+      "id": "k_t",
+      "kind": "left_of",
+      "source": {
+        "type": "user"
+      },
+      "strength": "soft"
+    },
+    "k_u": {
+      "a": "c_f",
+      "b": "c_2",
+      "domain": "placement",
+      "id": "k_u",
+      "kind": "right_of",
+      "source": {
+        "type": "user"
+      },
+      "strength": "soft"
+    }
+  },
+  "name": "test",
+  "nets": {
+    "n_k": {
+      "attrs": {
+        "external": true,
+        "maxCurrent": 1,
+        "power": true,
+        "trackWidth": 0.5,
+        "voltage": 5.5
+      },
+      "id": "n_k",
+      "name": "VIN"
+    },
+    "n_l": {
+      "attrs": {
+        "voltage": 5.5
+      },
+      "id": "n_l",
+      "name": "AVIN"
+    },
+    "n_m": {
+      "attrs": {},
+      "id": "n_m",
+      "name": "BOOST"
+    },
+    "n_n": {
+      "attrs": {
+        "maxCurrent": 1.6,
+        "trackWidth": 0.6
+      },
+      "id": "n_n",
+      "name": "SW"
+    },
+    "n_o": {
+      "attrs": {},
+      "id": "n_o",
+      "name": "SNUB"
+    },
+    "n_p": {
+      "attrs": {
+        "maxCurrent": 1.6,
+        "power": true,
+        "trackWidth": 0.6,
+        "voltage": 1.2
+      },
+      "id": "n_p",
+      "name": "VOUT"
+    },
+    "n_q": {
+      "attrs": {},
+      "id": "n_q",
+      "name": "FB"
+    },
+    "n_r": {
+      "attrs": {
+        "power": true,
+        "voltage": 0
+      },
+      "id": "n_r",
+      "name": "GND"
+    }
+  },
+  "parts": {
+    "generic:C": {
+      "category": "capacitor",
+      "description": "Capacitor, non-polarized (ceramic)",
+      "id": "generic:C",
+      "notes": [
+        "Ceramic X5R/X7R lose capacitance with DC bias; rate voltage ≥ 1.5× (better 2×) the net voltage."
+      ],
+      "params": {
+        "capacitance": {
+          "required": true,
+          "unit": "F"
+        },
+        "dielectric": {
+          "description": "C0G, X5R, X7R"
+        },
+        "package": {},
+        "voltage": {
+          "description": "Rated voltage",
+          "unit": "V"
+        }
+      },
+      "pins": [
+        {
+          "name": "1",
+          "number": "1",
+          "type": "passive"
+        },
+        {
+          "name": "2",
+          "number": "2",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "C",
+      "title": "Capacitor"
+    },
+    "generic:CONN_1x2": {
+      "category": "connector",
+      "description": "Connector, 1 row, 2 pins (header, terminal block)",
+      "id": "generic:CONN_1x2",
+      "notes": [
+        "Mark supply inputs with set_net(external: true, voltage)."
+      ],
+      "params": {
+        "mpn": {},
+        "package": {},
+        "pitch": {}
+      },
+      "pins": [
+        {
+          "name": "1",
+          "number": "1",
+          "side": "right",
+          "type": "passive"
+        },
+        {
+          "name": "2",
+          "number": "2",
+          "side": "right",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "J",
+      "title": "Connector 1×2"
+    },
+    "generic:D": {
+      "category": "diode",
+      "description": "Diode (rectifier, Schottky, TVS). Pin 1 = cathode K, pin 2 = anode A",
+      "id": "generic:D",
+      "notes": [
+        "Four diodes wired as a full bridge are drawn automatically as the classic 45° diamond (AC left/right, + top, − bottom). Just connect them; constrain arrangement \"inline\" to draw them flat."
+      ],
+      "params": {
+        "current": {
+          "unit": "A"
+        },
+        "mpn": {
+          "description": "e.g. B340A, 1N4148W, SMBJ5.0A"
+        },
+        "package": {},
+        "vr": {
+          "description": "Reverse voltage rating",
+          "unit": "V"
+        }
+      },
+      "pins": [
+        {
+          "name": "K",
+          "number": "1",
+          "type": "passive"
+        },
+        {
+          "name": "A",
+          "number": "2",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "D",
+      "title": "Diode"
+    },
+    "generic:L": {
+      "category": "inductor",
+      "description": "Inductor",
+      "id": "generic:L",
+      "params": {
+        "current": {
+          "description": "Saturation current",
+          "unit": "A"
+        },
+        "inductance": {
+          "required": true,
+          "unit": "H"
+        },
+        "mpn": {},
+        "package": {}
+      },
+      "pins": [
+        {
+          "name": "1",
+          "number": "1",
+          "type": "passive"
+        },
+        {
+          "name": "2",
+          "number": "2",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "L",
+      "title": "Inductor"
+    },
+    "generic:R": {
+      "category": "resistor",
+      "description": "Resistor",
+      "id": "generic:R",
+      "params": {
+        "package": {
+          "description": "e.g. 0402, 0603, 0805"
+        },
+        "power": {
+          "unit": "W"
+        },
+        "resistance": {
+          "required": true,
+          "unit": "Ω"
+        },
+        "tolerance": {
+          "description": "e.g. 1%"
+        }
+      },
+      "pins": [
+        {
+          "name": "1",
+          "number": "1",
+          "type": "passive"
+        },
+        {
+          "name": "2",
+          "number": "2",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "R",
+      "title": "Resistor"
+    },
+    "texas:TPS40222DRPR": {
+      "category": "ic",
+      "datasheet": "https://www.ti.com/lit/ds/symlink/tps40222.pdf",
+      "description": "4.5-8V input, 1.6A synchronous-less buck converter with integrated high-side MOSFET, adjustable output (0.8V ref), up to 1.25MHz",
+      "id": "texas:TPS40222DRPR",
+      "manufacturer": "Texas Instruments",
+      "mpn": "TPS40222DRPR",
+      "notes": [
+        "Exposed thermal pad must be connected to GND",
+        "Absolute max: AVIN/PVIN 10V, BOOST 19V, SW -2 to 16V",
+        "Recommended VIN 4.5V to 8V, output current up to 1.6A",
+        "FB reference 800mV; switching frequency ~140kHz at FB=0V rising to ~1.25MHz at FB>=0.6V"
+      ],
+      "package": "VSON-6 (DRP)",
+      "packageInfo": {
+        "body_mm": [
+          3,
+          3
+        ],
+        "exposed_pad_mm": [
+          2.4,
+          1.65
+        ],
+        "family": "DFN",
+        "height_mm": 0.9,
+        "lead_length_mm": 0.4,
+        "lead_width_mm": 0.3,
+        "name": "VSON-6 (DRP)",
+        "page": 25,
+        "pins": 6,
+        "pitch_mm": 0.95,
+        "span_mm": [
+          3,
+          3
+        ]
+      },
+      "params": {},
+      "pins": [
+        {
+          "description": "Error amplifier inverting input (0.8V reference); also sets startup frequency",
+          "name": "FB",
+          "number": "1",
+          "page": 4,
+          "type": "in"
+        },
+        {
+          "description": "Ground; connect exposed pad to GND",
+          "name": "GND",
+          "number": "2",
+          "page": 4,
+          "type": "pwr_in"
+        },
+        {
+          "description": "Switch node: connect to inductor and catch diode",
+          "name": "SW",
+          "number": "3",
+          "page": 4,
+          "type": "bidir"
+        },
+        {
+          "description": "Power stage input",
+          "maxVoltage": 10,
+          "name": "PVIN",
+          "number": "4",
+          "page": 4,
+          "type": "pwr_in"
+        },
+        {
+          "description": "Control section input supply",
+          "maxVoltage": 10,
+          "name": "AVIN",
+          "number": "5",
+          "page": 4,
+          "type": "pwr_in"
+        },
+        {
+          "description": "Bootstrap supply for high-side driver; 33nF to SW",
+          "name": "BOOST",
+          "number": "6",
+          "page": 4,
+          "type": "bidir"
+        }
+      ],
+      "provenance": {
+        "document": "sha256:68e67ed18b3580c787af6663127ff324f400c96dbd927f98397e85949da8d779",
+        "page": 4,
+        "source": "datasheet"
+      },
+      "refPrefix": "U",
+      "requirements": [
+        {
+          "kind": "decouple",
+          "min": "1uF",
+          "note": "low ESR ceramic close to GND",
+          "pin": "AVIN",
+          "src": {
+            "document": "https://www.ti.com/lit/ds/symlink/tps40222.pdf",
+            "source": "datasheet"
+          }
+        },
+        {
+          "kind": "decouple",
+          "min": "10uF",
+          "note": "low ESR",
+          "pin": "PVIN",
+          "src": {
+            "document": "https://www.ti.com/lit/ds/symlink/tps40222.pdf",
+            "source": "datasheet"
+          }
+        },
+        {
+          "kind": "decouple",
+          "min": "33nF",
+          "note": "from BOOST to SW; optional Schottky from BOOST to PVIN",
+          "pin": "BOOST",
+          "src": {
+            "document": "https://www.ti.com/lit/ds/symlink/tps40222.pdf",
+            "source": "datasheet"
+          }
+        }
+      ],
+      "title": "TPS40222"
+    }
+  },
+  "seq": 31,
+  "sheets": {
+    "s_1": {
+      "id": "s_1",
+      "name": "Main",
+      "order": 0
+    }
+  },
+  "waivers": {
+    "w_s": {
+      "by": "agent",
+      "code": "SEM.DECOUPLING",
+      "entities": [
+        "U1.BOOST"
+      ],
+      "id": "w_s",
+      "reason": "Bootstrap cap C2 (33 nF) goes from BOOST to SW as the datasheet requires, not to ground."
+    }
+  }
+}
