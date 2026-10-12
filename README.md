@@ -63,7 +63,7 @@ The local server runs your agent's CLI headlessly for every chat message, with o
 
 1. Install the agent and sign in once in a terminal.
 2. Start the app (`npx -y github:hoihu/4k7`, or the download) and open the link it prints.
-3. Pick the agent and model with the model button under the chat box (or in **Settings → Chat provider → Coding agent**).
+3. Pick the agent and model with the model button under the chat box.
 
 - Switch agents or models at any time; the design stays, a new agent starts its own session. Star models to keep them under ★.
 - **Effort** (next to the model button): Claude Code and Copilot take an effort level; *Default* leaves it to the agent. Copilot models without the setting answer without it. OpenCode has no effort level, but a model variant can be typed as `provider/model#variant`.
@@ -72,10 +72,10 @@ The local server runs your agent's CLI headlessly for every chat message, with o
 
 ### B. API key (chat in the app, billed per token)
 
-1. **Settings → Chat provider → API key**, pick the **Service**: Anthropic, OpenAI, OpenRouter, Google Gemini,
+1. **Settings → API keys**, pick the **Service**: Anthropic, OpenAI, OpenRouter, Google Gemini,
    a local model (Ollama, LM Studio), or *Other* for any OpenAI- or Anthropic-compatible API (Azure OpenAI, LiteLLM, a company gateway).
 2. Check the **Address**, paste the key, press **Save**.
-3. Pick the **Model** (**List models** asks the API), then use the chat. Services with a key also show up in the model button under the chat box.
+3. Press **Chat with …**, or pick the service and a model with the model button under the chat box (it lists the API's models; any model id can be typed).
 
 - Keys are encrypted and stored in your browser only, one per service; sent only to that service's address.
 - The app calls the API from the browser: the service must allow that (CORS). Ollama needs `OLLAMA_ORIGINS` set to the app's address.

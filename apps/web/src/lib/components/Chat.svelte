@@ -56,7 +56,8 @@
           <p class="muted">Click a part to reference it, or say “make C2 100µF” or “put C1 left of U1”. Your hints stick, even after a re-layout.</p>
           {#if app.noModel}
             <p class="demo">
-              The API is not set up ({app.apiProblem}). <button class="linkbtn" onclick={() => (app.view = 'set')}>Finish it</button>, or {#if __APP_RUN__}open {__SERVER_RUN__}{:else}run <code>{__SERVER_RUN__}</code> and open the link it prints{/if} to chat with a coding agent on this computer
+              {#if app.apiProblem === 'no model'}The chat has no model yet: pick one with the model button below, or
+              {:else}The API is not set up ({app.apiProblem}). <button class="linkbtn" onclick={() => (app.view = 'set')}>Finish it</button>, or{/if} {#if __APP_RUN__}open {__SERVER_RUN__}{:else}run <code>{__SERVER_RUN__}</code> and open the link it prints{/if} to chat with a coding agent on this computer
               (<b>Claude Code</b>, <b>GitHub Copilot</b>, <b>OpenCode</b>).
             </p>
           {:else if app.settings.provider === 'agent' && server.status !== 'connected'}
