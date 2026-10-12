@@ -7,6 +7,8 @@
  * are separate (add_cutout).
  */
 
+import { pointBounds } from '@4k7/schema';
+
 export type OutlineResult = { ok: true; pts: number[] } | { ok: false; reason: string };
 export type FiguresResult = { ok: true; figs: number[][] } | { ok: false; reason: string };
 
@@ -191,9 +193,7 @@ export function pathFigures(d: string): FiguresResult {
 export function boardOutline(raw: number[], width?: number, height?: number): OutlineResult {
   const pts = [...raw];
   if (pts.length < 6) return { ok: false, reason: 'an outline needs at least 3 points' };
-  const xs = pts.filter((_, i) => i % 2 === 0);
-  const ys = pts.filter((_, i) => i % 2 === 1);
-  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const [x0, y0, x1, y1] = pointBounds([pts]);
   const bw = x1 - x0;
   const bh = y1 - y0;
   if (bw <= 0 || bh <= 0) return { ok: false, reason: 'the outline has no area' };

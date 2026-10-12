@@ -38,6 +38,7 @@ import {
   DEFAULT_PANEL,
   PANEL_SIDES,
   autoTabs,
+  pointBounds,
 } from '@4k7/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
 import { layoutSchematic } from './layout.ts';
@@ -194,8 +195,7 @@ function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): OpResult
     const r = boardOutline(b.shape, op.width_mm ?? undefined, op.height_mm ?? undefined);
     if (r.ok) {
       b.shape = r.pts;
-      b.width = Math.max(...r.pts.filter((_, i) => i % 2 === 0));
-      b.height = Math.max(...r.pts.filter((_, i) => i % 2 === 1));
+      [, , b.width, b.height] = pointBounds([r.pts]);
       out.push(`outline scaled to ${b.width} × ${b.height} mm`);
     }
   } else {
@@ -368,8 +368,7 @@ function setOutline(d: Design, op: Extract<EditOp, { op: 'set_outline' }>): OpRe
   const r = boardOutline(raw!, op.width_mm, op.height_mm);
   if (!r.ok) reject({ code: 'BOARD_INVALID', message: `The outline: ${r.reason}.` });
   const pts = (r as { pts: number[] }).pts;
-  const w = Math.max(...pts.filter((_, i) => i % 2 === 0));
-  const h = Math.max(...pts.filter((_, i) => i % 2 === 1));
+  const [, , w, h] = pointBounds([pts]);
   if (w < 5 || h < 5 || w > 500 || h > 500) reject({ code: 'BOARD_INVALID', message: `The outline would be ${w} × ${h} mm; boards are 5–500 mm.` });
   b.shape = pts;
   b.width = w;
@@ -470,9 +469,7 @@ function addGraphic(d: Design, op: Extract<EditOp, { op: 'add_graphic' }>): OpRe
     if (!parsed.ok) reject({ code: 'BOARD_INVALID', message: `The graphic's path: ${parsed.reason}.` });
     figs = parsed.figs;
   }
-  const xs = figs.flatMap((p) => p.filter((_, i) => i % 2 === 0));
-  const ys = figs.flatMap((p) => p.filter((_, i) => i % 2 === 1));
-  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const [x0, y0, x1, y1] = pointBounds(figs);
   const [bw, bh] = [x1 - x0, y1 - y0];
   if (!(bw > 0) || !(bh > 0)) reject({ code: 'BOARD_INVALID', message: 'The graphic has no area.' });
   const sx = op.width_mm ? op.width_mm / bw : op.height_mm ? op.height_mm / bh : 1;

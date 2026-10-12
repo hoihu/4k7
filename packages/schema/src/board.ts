@@ -154,6 +154,24 @@ export interface BoardGraphic {
   over?: string[];
 }
 
+/**
+ * The bounding box (x0, y0, x1, y1) of flat x, y point lists. A loop, not Math.min(...xs): a
+ * picture or a detailed outline has more points than a call can take arguments.
+ */
+export function pointBounds(lists: number[][]): [number, number, number, number] {
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const p of lists) {
+    for (let i = 0; i + 1 < p.length; i += 2) {
+      const [x, y] = [p[i]!, p[i + 1]!];
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  return [x0, y0, x1, y1];
+}
+
 /** The absolute graphic for a board of w × h. */
 export function placeGraphic(g: SilkGraphic, w: number, h: number): BoardGraphic {
   const a = g.anchor ?? 'top_left';
@@ -163,8 +181,6 @@ export function placeGraphic(g: SilkGraphic, w: number, h: number): BoardGraphic
   const [c, s] = [Math.cos(t), Math.sin(t)];
   const r3 = (v: number) => Math.round(v * 1000) / 1000;
   const polys = g.polys.map((p) => p.map((v, i) => (i % 2 === 0 ? r3(cx + v * c - p[i + 1]! * s) : r3(cy + p[i - 1]! * s + v * c))));
-  const xs = polys.flatMap((p) => p.filter((_, i) => i % 2 === 0));
-  const ys = polys.flatMap((p) => p.filter((_, i) => i % 2 === 1));
   return {
     id: g.id,
     ...(g.name ? { name: g.name } : {}),
@@ -172,7 +188,7 @@ export function placeGraphic(g: SilkGraphic, w: number, h: number): BoardGraphic
     mode: g.mode,
     line: g.line ?? 0.2,
     polys,
-    bounds: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+    bounds: pointBounds(polys),
   };
 }
 
