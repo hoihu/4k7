@@ -425,12 +425,9 @@
   .substrate { fill: #0f2a22; }
   .edge { fill: none; stroke: #e0c341; stroke-width: 0.15; }
   .layer > path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-  /* planes and pours are never highlighted (they cover the board; hovering them would light it all up) */
-  .layer .zone { stroke: none; opacity: 0.16; pointer-events: none; }
-  .fcu .zone { fill: #c9463d; }
-  .bcu .zone { fill: #3f7fd6; }
-  .in1 .zone { fill: #c9a13d; }
-  .in2 .zone { fill: #8e5cd6; }
+  /* planes and pours are never highlighted (they cover the board; hovering them would light it all up).
+     Drawn as copper under the solder mask: a lighter green, whatever the layer (its tracks carry its colour). */
+  .layer .zone { stroke: none; fill: #3f8a5c; opacity: 0.22; pointer-events: none; }
   .fcu > path { stroke: #c9463d; }
   .bcu > path { stroke: #3f7fd6; }
   .in1 > path { stroke: #c9a13d; }
