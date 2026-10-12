@@ -34,6 +34,7 @@ const flags = {
   allowed: arg('--allowedTools'),
   permission: arg('--permission-mode'),
   model: args.includes('--model') ? arg('--model') : null,
+  effort: arg('--effort') ?? null,
   prompt: arg('-p'),
   appended: (arg('--append-system-prompt') ?? '').slice(0, 40),
   instructionsLength: instructions.length,

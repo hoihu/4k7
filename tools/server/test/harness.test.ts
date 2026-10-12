@@ -45,7 +45,7 @@ async function setup() {
       if (m.type === 'chat_event') events.set(m.id, [...(events.get(m.id) ?? []), m.event]);
     });
   });
-  const send = (msg: { id: string; text: string; harness: string; session?: string | null; model?: string; web?: boolean }) =>
+  const send = (msg: { id: string; text: string; harness: string; session?: string | null; model?: string; effort?: string; web?: boolean }) =>
     new Promise<ChatEvent[]>((resolve) => {
       ws.send(JSON.stringify({ type: 'chat', session: null, autonomy: 'review', ...msg }));
       const t = setInterval(() => {
@@ -127,6 +127,15 @@ describe('app chat via other coding agents', () => {
       const { send } = await setup();
       const es = await send({ id: 'w1', text: 'look it up', harness: 'copilot', web: true });
       expect(flagsOf(es)).toMatchObject({ available: ['4k7', 'web_fetch'], allowed: ['4k7'], urls: true });
+    });
+
+    it('passes the effort level, and asks again without it when the model has none', async () => {
+      const { send } = await setup();
+      expect(flagsOf(await send({ id: 'e1', text: 'think', harness: 'copilot', model: 'gpt-5.2', effort: 'high' }))).toMatchObject({ model: 'gpt-5.2', effort: 'high' });
+      const es = await send({ id: 'e2', text: 'think', harness: 'copilot', effort: 'low' }); // the default model ("auto") has no effort setting
+      expect(es).toContainEqual({ kind: 'status', text: expect.stringContaining('no effort setting') });
+      expect(flagsOf(es)).toMatchObject({ model: null, effort: null, rules: true });
+      expect(es.at(-1)).toMatchObject({ kind: 'done', ok: true });
     });
 
     it('reports why the CLI failed', async () => {

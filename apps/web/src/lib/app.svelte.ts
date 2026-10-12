@@ -19,6 +19,7 @@ import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
 import { ArtworkInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@4k7/schema';
 import { server } from './server.svelte.ts';
+import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
@@ -63,7 +64,9 @@ export type Segment =
   | { type: 'tool'; label: string; ok: boolean; detail: string }
   | { type: 'verify'; round: number; errors: number; message: string }
   | { type: 'question'; question: string; options: string[]; answered?: string }
-  | { type: 'error'; text: string };
+  | { type: 'error'; text: string }
+  /** Something the server says about the run (e.g. a setting the model does not take). */
+  | { type: 'note'; text: string };
 
 export interface ChatItem {
   id: number;
@@ -831,6 +834,7 @@ class AppState {
     }
     const id = crypto.randomUUID();
     const model = this.settings.harnessModels[h.id] ?? '';
+    const effort = effortLevels(currentChoice(this.settings)) ? this.settings.harnessEfforts[h.id] : undefined;
     // a conversation belongs to one agent: switching starts a new one
     if (this.agentSession?.harness !== h.id) this.agentSession = null;
     this.agentRun = { id, item };
@@ -843,6 +847,7 @@ class AppState {
           // older servers know only Claude Code and take a missing harness for it
           ...(h.id !== 'claude-code' ? { harness: h.id } : {}),
           ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
           autonomy: this.settings.mode,
           web: this.settings.agentWeb,
         },
@@ -851,6 +856,9 @@ class AppState {
           switch (e.kind) {
             case 'session':
               this.agentSession = { harness: h.id, id: e.session };
+              break;
+            case 'status':
+              item.segments.push({ type: 'note', text: e.text });
               break;
             case 'text':
               if (last?.type === 'text') last.text += e.text;

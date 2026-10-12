@@ -28,6 +28,11 @@ if (prompt.includes('please fail')) {
   process.stderr.write('Error: Model "nope" from --model flag is not available.\n');
   process.exit(1);
 }
+if (args.includes('--reasoning-effort') && !arg('--model')) {
+  // like the CLI for its default model ("auto") and others without the setting
+  process.stderr.write(`Error: Model "auto" does not support reasoning effort configuration (requested: "${arg('--reasoning-effort')}").\n`);
+  process.exit(1);
+}
 const tw = JSON.parse(arg('--additional-mcp-config')).mcpServers['4k7'];
 const client = new Client({ name: 'github-copilot-developer', version: 'fake' });
 await client.connect(new StreamableHTTPClientTransport(new URL(tw.url), { requestInit: { headers: tw.headers } }));
@@ -42,6 +47,7 @@ const flags = {
   builtinMcps: !args.includes('--disable-builtin-mcps'),
   customInstructions: !args.includes('--no-custom-instructions'),
   model: arg('--model') ?? null,
+  effort: arg('--reasoning-effort') ?? null,
   rules: prompt.startsWith('You are answering messages typed into'),
   message: prompt.slice(prompt.lastIndexOf('\n') + 1),
   allowAllEnv: 'COPILOT_ALLOW_ALL' in process.env,

@@ -4,7 +4,7 @@
  * login and plan (Claude Code, GitHub Copilot CLI, OpenCode).
  */
 import { spawn, spawnSync } from 'node:child_process';
-import type { ChatCapability, ChatEvent, HarnessCapability, HarnessId, TokenCount } from '@4k7/schema';
+import type { AgentEffort, ChatCapability, ChatEvent, HarnessCapability, HarnessId, TokenCount } from '@4k7/schema';
 
 export type DoneEvent = Extract<ChatEvent, { kind: 'done' }>;
 
@@ -14,6 +14,8 @@ export interface ChatJob {
   /** The harness's session to continue, null for a new conversation. */
   session: string | null;
   model?: string;
+  /** Left out: the CLI's own default. */
+  effort?: AgentEffort;
   web: boolean;
   /** The server's MCP endpoint and the bearer token of this run (it decides which tools it sees). */
   mcpUrl: string;
