@@ -43,8 +43,7 @@
     <div class="msgs">
       {#if app.chat.length === 0}
         <div class="intro">
-          <p><b>Describe it. The agent designs it.</b> Every change comes back here to review.</p>
-          <p class="muted">Click a part to reference it, or say “make C2 100µF” or “put C1 left of U1”. Your hints stick, even after a re-layout.</p>
+          <p><b>What do you want to build today?</b></p>
           {#if app.noModel}
             <p class="demo">
               {#if app.apiProblem === 'no model'}The chat has no model yet: pick one with the model button below, or
