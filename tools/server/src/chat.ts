@@ -12,13 +12,13 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { ChatEvent, HarnessId, TabToServer, TokenCount } from '@4k7/schema';
+import { AGENT_EFFORTS, type ChatEvent, type HarnessId, type TabToServer, type TokenCount } from '@4k7/schema';
 import type { LocalServer, ChatMessage } from './server.ts';
 import type { ClaudeProfile } from './config.ts';
 import { secretsMatch, type McpMode } from './mcp.ts';
 import { prepareDatasheet } from './pdf.ts';
 import { ClaudeHarness } from './harness/claude.ts';
-import type { DoneEvent, Harness, Invocation, RunSink } from './harness/types.ts';
+import type { ChatJob, DoneEvent, Harness, Invocation, RunSink } from './harness/types.ts';
 
 export { childEnv, detectClaude } from './harness/claude.ts';
 
@@ -106,9 +106,18 @@ export class ChatRunner {
     const run: Run = { child: null, token, mode: 'chat', done: false, cancelled: false };
     this.#runs.set(msg.id, run);
     this.#opts.log?.(`chat ${msg.id}: started ${harness.id} (${msg.session ? `resume ${msg.session.slice(0, 8)}` : 'new session'})`);
-    void this.#spawn(msg.id, run, harness, this.#opts.workDir, (sink) =>
-      harness.chat({ text: msg.text, session: msg.session, ...(msg.model ? { model: msg.model } : {}), web: !!msg.web, mcpUrl: this.#mcpUrl(), token }, sink),
-    ).then((done) => this.#end(msg.id, run, done));
+    const effort = AGENT_EFFORTS.find((e) => e === msg.effort);
+    const job: ChatJob = { text: msg.text, session: msg.session, ...(msg.model ? { model: msg.model } : {}), ...(effort ? { effort } : {}), web: !!msg.web, mcpUrl: this.#mcpUrl(), token };
+    void (async () => {
+      let done = await this.#spawn(msg.id, run, harness, this.#opts.workDir, (sink) => harness.chat(job, sink));
+      // Copilot refuses an effort level for models without one (its default "auto" among them) before it starts: ask again without
+      if (!done.ok && effort && !run.cancelled && /does not support reasoning effort/i.test(done.error ?? '')) {
+        this.#emit(msg.id, { kind: 'status', text: `This model has no effort setting; ${harness.name} answers without it.` });
+        const { effort: _effort, ...plain } = job;
+        done = await this.#spawn(msg.id, run, harness, this.#opts.workDir, (sink) => harness.chat(plain, sink));
+      }
+      this.#end(msg.id, run, done);
+    })();
   }
 
   #end(id: string, run: Run, done: DoneEvent) {

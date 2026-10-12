@@ -66,6 +66,7 @@ The local server runs your agent's CLI headlessly for every chat message, with o
 3. Pick the agent and model with the model button under the chat box (or in **Settings → Chat provider → Coding agent**).
 
 - Switch agents or models at any time; the design stays, a new agent starts its own session. Star models to keep them under ★.
+- **Effort** (next to the model button): Claude Code and Copilot take an effort level; *Default effort* leaves it to the agent. Copilot models without the setting answer without it. OpenCode has no effort level, but a model variant can be typed as `provider/model#variant`.
 - Turn on **Web** (next to the model button) to allow read-only web lookups (datasheets).
 - The server finds the CLIs on your PATH; `FOURK7_CLAUDE_BIN`, `FOURK7_COPILOT_BIN`, `FOURK7_OPENCODE_BIN` point it elsewhere.
 

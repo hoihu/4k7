@@ -28,6 +28,8 @@ export type TabToServer =
       /** Which agent answers (Claude Code when left out, as with older tabs). */
       harness?: HarnessId;
       model?: string;
+      /** How hard the agent thinks (its own default when left out); only for agents with `effort` in HARNESSES. */
+      effort?: AgentEffort;
       autonomy: 'auto' | 'review';
       /** Let the agent read the web (fetch/search), e.g. to look up datasheets. Off by default. */
       web?: boolean;
@@ -70,11 +72,16 @@ export interface ChatCapability {
  */
 export type HarnessId = 'claude-code' | 'opencode' | 'copilot';
 
-export const HARNESSES: { id: HarnessId; name: string; install: string }[] = [
-  { id: 'claude-code', name: 'Claude Code', install: 'https://docs.claude.com/en/docs/claude-code' },
-  { id: 'copilot', name: 'GitHub Copilot CLI', install: 'https://docs.github.com/copilot/how-tos/copilot-cli' },
-  { id: 'opencode', name: 'OpenCode', install: 'https://opencode.ai' },
+/** `effort`: the CLI takes an effort level (Claude Code --effort, Copilot --reasoning-effort; OpenCode only has per-model variants, `provider/model#variant`). */
+export const HARNESSES: { id: HarnessId; name: string; install: string; effort: boolean }[] = [
+  { id: 'claude-code', name: 'Claude Code', install: 'https://docs.claude.com/en/docs/claude-code', effort: true },
+  { id: 'copilot', name: 'GitHub Copilot CLI', install: 'https://docs.github.com/copilot/how-tos/copilot-cli', effort: true },
+  { id: 'opencode', name: 'OpenCode', install: 'https://opencode.ai', effort: false },
 ];
+
+/** Effort levels both Claude Code and the Copilot CLI take. */
+export const AGENT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type AgentEffort = (typeof AGENT_EFFORTS)[number];
 
 export interface HarnessCapability extends ChatCapability {
   id: HarnessId;

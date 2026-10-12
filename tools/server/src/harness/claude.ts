@@ -71,6 +71,7 @@ export class ClaudeHarness implements Harness {
         '--append-system-prompt',
         job.web ? `${chatModePrompt()}\n\n${CHAT_WEB_PROMPT}` : chatModePrompt(),
         ...(job.model ? ['--model', job.model] : []),
+        ...(job.effort ? ['--effort', job.effort] : []),
         ...(job.session ? ['--resume', job.session] : []),
       ],
       env: childEnv(this.#profile),

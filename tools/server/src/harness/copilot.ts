@@ -57,6 +57,7 @@ export class CopilotHarness implements Harness {
         '--no-auto-update',
         `--session-id=${session}`,
         ...(job.model ? ['--model', job.model] : []),
+        ...(job.effort ? ['--reasoning-effort', job.effort] : []),
       ],
       env: this.#env(),
       ...this.#reader(session, job.session !== null, sink),
