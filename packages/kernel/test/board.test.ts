@@ -1081,6 +1081,18 @@ describe('silkscreen graphics', () => {
     expect(boardSummary(k.board()).drc.some((x) => x.includes('lies over'))).toBe(false);
   });
 
+  it('takes a picture of thousands of dots (more points than a call takes arguments)', () => {
+    const k = buck();
+    // 2500 round dots, sampled into some 200 000 coordinates
+    let dots = '';
+    for (let y = 0; y < 50; y++) for (let x = 0; x < 50; x++) dots += `M ${x * 2 + 0.8} ${y * 2} A 0.8 0.8 0 1 0 ${x * 2 - 0.8} ${y * 2} A 0.8 0.8 0 1 0 ${x * 2 + 0.8} ${y * 2} Z `;
+    const r = k.transact({ summary: 'picture', ops: [{ op: 'add_graphic', svg_path: dots, width_mm: 20, x_mm: 0, y_mm: 0, anchor: 'center' }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const g = k.board().graphics[0]!;
+    expect(g.polys).toHaveLength(2500);
+    expect(g.bounds[2] - g.bounds[0]).toBeCloseTo(20, 1);
+  });
+
   it('places saved artwork by name, at its saved size unless told otherwise', async () => {
     const { registerArtwork, unregisterArtwork } = await import('../src/index.ts');
     registerArtwork([{ id: 'dot', name: 'Dot', mode: 'fill', polys: [[-2, -2, 2, -2, 2, 2, -2, 2]], w: 4, h: 4 }]);
