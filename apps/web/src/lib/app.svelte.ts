@@ -17,7 +17,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@4k7/schema';
+import { ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@4k7/schema';
 import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
@@ -49,6 +49,36 @@ type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
  * The local server's access key, from the app's address (http://localhost:7777/<access-key>, as the server
  * opens it). `?port=7778` names the server to try first when the app is served by another one.
  */
+/** base64 of some bytes (in chunks: spreading a large array into String.fromCharCode overflows the stack). */
+function base64(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+/** pdf.js keeps an open PDF by key: a chat attachment's, from what it is. */
+const chatPdfKey = (name: string, data: string) => `chat:${name}:${data.length}:${data.slice(-64)}`;
+
+/** A region of a picture (fractions x0, y0, x1, y1) as a JPEG data URL, its long side `px` at most (and at most 2× the source). */
+async function cropImage(url: string, box: [number, number, number, number], px: number): Promise<string> {
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  const [x0, y0, x1, y1] = box;
+  const sw = (x1 - x0) * img.naturalWidth;
+  const sh = (y1 - y0) * img.naturalHeight;
+  const scale = Math.min(px / Math.max(sw, sh, 1), 2);
+  const out = document.createElement('canvas');
+  out.width = Math.max(1, Math.round(sw * scale));
+  out.height = Math.max(1, Math.round(sh * scale));
+  const ctx = out.getContext('2d')!;
+  ctx.fillStyle = '#fff'; // transparent screenshots read as white paper
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, x0 * img.naturalWidth, y0 * img.naturalHeight, sw, sh, 0, 0, out.width, out.height);
+  return out.toDataURL('image/jpeg', 0.9);
+}
+
 const addressPath = /^\/([^/]+)\/?$/.exec(location.pathname)?.[1] ?? '';
 const keyFromAddress = SERVER_ACCESS_KEY.test(addressPath) ? addressPath : null;
 const portFromAddress = Number(new URLSearchParams(location.search).get('port')) || null;
@@ -69,11 +99,28 @@ export type Segment =
   /** Something the server says about the run (e.g. a setting the model does not take). */
   | { type: 'note'; text: string };
 
+/** A picture or PDF the user attached to a chat message (a schematic to recreate, a sketch, a screenshot). */
+export interface ChatFile {
+  /** Numbered through the conversation (#1, #2…), as the agent's view_attachment knows them. */
+  n: number;
+  name: string;
+  mime: string;
+  /** base64, without a data: prefix */
+  data: string;
+  /** A PDF's page count. */
+  pages?: number;
+}
+
+/** What the chat takes: pictures and PDFs, up to this size. */
+export const CHAT_FILE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
+const MAX_CHAT_FILE_BYTES = 20 * 1024 * 1024;
+
 export interface ChatItem {
   id: number;
   role: 'user' | 'agent';
   text?: string;
   refs?: string[];
+  files?: ChatFile[];
   segments: Segment[];
   status: 'streaming' | 'done';
   /** Coding agent answering through the server (e.g. "Claude Code", "OpenCode"). */
@@ -98,6 +145,8 @@ class AppState {
   chat = $state<ChatItem[]>([]);
   running = $state(false);
   selection = $state<string[]>([]);
+  /** Files waiting in the composer, sent with the next message. */
+  attachments = $state<Omit<ChatFile, 'n'>[]>([]);
   /** Optimize: the area the agent is restricted to while it works on it. */
   scope = $state.raw<ScopeInfo | null>(null);
   sheet = $state(0);
@@ -477,6 +526,63 @@ class AppState {
     );
   }
 
+  /** Every file attached in this conversation, #1 first. */
+  private chatFiles(): ChatFile[] {
+    return this.chat.flatMap((c) => c.files ?? []);
+  }
+
+  /** Add dropped, pasted or picked files to the composer (pictures and PDFs; anything else is refused with a note). */
+  async attach(files: Iterable<File>) {
+    for (const f of files) {
+      if (!CHAT_FILE_TYPES.includes(f.type)) {
+        this.flash(`${f.name}: the chat takes pictures (PNG, JPEG, WebP, GIF) and PDFs.`);
+        continue;
+      }
+      if (f.size > MAX_CHAT_FILE_BYTES) {
+        this.flash(`${f.name} is larger than ${MAX_CHAT_FILE_BYTES >> 20} MB.`);
+        continue;
+      }
+      const name = f.name || `pasted.${f.type === 'application/pdf' ? 'pdf' : f.type.split('/')[1]}`;
+      const buf = await f.arrayBuffer();
+      const data = base64(new Uint8Array(buf));
+      let pages: number | undefined;
+      if (f.type === 'application/pdf') {
+        try {
+          const { openPdf, pageCount } = await import('./pdf.ts');
+          pages = pageCount(await openPdf(chatPdfKey(name, data), buf));
+        } catch (e) {
+          this.flash(`Could not read ${name}: ${(e as Error).message}`);
+          continue;
+        }
+      }
+      this.attachments.push({ name, mime: f.type, data, ...(pages ? { pages } : {}) });
+    }
+  }
+
+  /** The view_attachment tool: a file from the chat as a picture, whole or a region zoomed in. */
+  private async viewAttachment(args: { n: number; page?: number; region?: [number, number, number, number] }): Promise<ToolResult> {
+    const all = this.chatFiles();
+    const f = all.find((x) => x.n === args.n);
+    if (!f) return { content: all.length ? `There is no attachment #${args.n}; the conversation has #1 to #${all.length}.` : 'Nothing is attached in this conversation.', isError: true };
+    const box = args.region ?? [0, 0, 1, 1];
+    if (box[2] <= box[0] || box[3] <= box[1]) return { content: 'The region needs x1 > x0 and y1 > y0.', isError: true };
+    const px = args.region ? 1600 : 1400;
+    let src: string;
+    let what = `#${f.n} ${f.name}`;
+    if (f.pages) {
+      const page = args.page ?? 1;
+      if (page > f.pages) return { content: `${f.name} has ${f.pages} page${f.pages === 1 ? '' : 's'}.`, isError: true };
+      const { openPdf, cropPage } = await import('./pdf.ts');
+      const bytes = Uint8Array.from(atob(f.data), (c) => c.charCodeAt(0));
+      src = await cropPage(await openPdf(chatPdfKey(f.name, f.data), bytes.buffer), page, box, px);
+      what += `, page ${page} of ${f.pages}`;
+    } else {
+      src = await cropImage(`data:${f.mime};base64,${f.data}`, box, px);
+    }
+    if (args.region) what += ` (region ${args.region.join(', ')})`;
+    return { content: `${what}.`, images: [{ data: src.slice(src.indexOf(',') + 1), mimeType: 'image/jpeg' }], isError: false };
+  }
+
   /** The read_datasheet tool: page index, text search, or one page (text and picture). */
   private async readDatasheet(args: { part: string; page?: number; find?: string; region?: [number, number, number, number] }): Promise<ToolResult> {
     const text = (content: string, isError = false): ToolResult => ({ content, isError });
@@ -601,6 +707,12 @@ class AppState {
         if (!args.success) return fail('datasheet', args.error.message);
         const out = await this.readDatasheet(args.data);
         return { ...out, label: `datasheet · ${args.data.part}${args.data.page ? ` p.${args.data.page}` : args.data.find ? ` "${args.data.find}"` : ''}`, detail: out.isError ? first(out.content) : 'ok' };
+      }
+      case 'view_attachment': {
+        const args = AttachmentInput.safeParse(input ?? {});
+        if (!args.success) return fail('attachment', args.error.message);
+        const out = await this.viewAttachment(args.data);
+        return { ...out, label: `attachment · #${args.data.n}${args.data.page ? ` p.${args.data.page}` : ''}${args.data.region ? ' (zoom)' : ''}`, detail: out.isError ? first(out.content) : 'ok' };
       }
       case 'get_schematic_image': {
         const parsed = ImageInput.safeParse(input ?? {});
@@ -932,8 +1044,15 @@ class AppState {
   }
 
   async send(text: string, opts: { shown?: string; scope?: ScopeInfo } = {}) {
-    const trimmed = text.trim();
+    let trimmed = text.trim();
     if (!trimmed || this.running) return;
+    const files = opts.scope ? [] : this.attachments.map((f, i) => ({ ...f, n: this.chatFiles().length + i + 1 }));
+    if (files.length) {
+      this.attachments = [];
+      const list = files.map((f) => `#${f.n} ${f.name} (${f.pages ? `a PDF, ${f.pages} page${f.pages === 1 ? '' : 's'}` : 'a picture'})`).join(', ');
+      opts = { ...opts, shown: opts.shown ?? trimmed };
+      trimmed += `\n\n[Attached: ${list}. Look at ${files.length === 1 ? 'it' : 'them'} with view_attachment.]`;
+    }
     if (this.k?.proposal) {
       // New instructions while a proposal is pending: the agent keeps building on the same
       // working copy and the next turn shows the combined changeset.
@@ -941,7 +1060,7 @@ class AppState {
       if (pending) pending.changeset = { state: 'superseded', note: 'Continued below; review the combined changeset there.' };
     }
     const refs = opts.scope ? [] : [...this.selection];
-    this.chat.push({ id: this.seq++, role: 'user', text: opts.shown ?? trimmed, refs, segments: [], status: 'done' });
+    this.chat.push({ id: this.seq++, role: 'user', text: opts.shown ?? trimmed, refs, ...(files.length ? { files } : {}), segments: [], status: 'done' });
     for (const q of this.chat) for (const s of q.segments) if (s.type === 'question' && !s.answered) s.answered = opts.shown ?? trimmed;
     const viaAgent = this.settings.provider === 'agent';
     this.chat.push({ id: this.seq++, role: 'agent', segments: [], status: 'streaming', ...(viaAgent ? { source: this.harness.name } : {}) });
