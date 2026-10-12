@@ -42,9 +42,12 @@ export function runChecks(d: Design, placement?: SchematicView['constraintStatus
   seriesChecks(ctx);
   ledgerChecks(ctx, placement);
   applyWaivers(d, ctx.out);
-  return ctx.out.sort(
-    (a, b) => sevRank(a.severity) - sevRank(b.severity) || a.code.localeCompare(b.code) || natCmp(a.entities.join(','), b.entities.join(',')),
-  );
+  return sortDiagnostics(ctx.out);
+}
+
+/** Errors first, then by code and entities: the order every list of diagnostics has. */
+export function sortDiagnostics(ds: Diagnostic[]): Diagnostic[] {
+  return ds.sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.code.localeCompare(b.code) || natCmp(a.entities.join(','), b.entities.join(',')));
 }
 
 export function countDiagnostics(ds: Diagnostic[]): DiagnosticCounts {

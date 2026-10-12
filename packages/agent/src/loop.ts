@@ -3,7 +3,7 @@
  * finish a turn while the design has open errors (within a fix budget).
  * See docs/design/ai-loop.md.
  */
-import { AskUser, TOOL_NAMES, agentTools, type ScopeInfo } from '@4k7/schema';
+import { AskUser, TOOL_NAMES, agentTools, mustFix, type ScopeInfo } from '@4k7/schema';
 import { SYSTEM_PROMPT, formatDesignContext, formatVerification } from './prompt.ts';
 import { runKernelTool, unknownTool, type ToolExecutor, type ToolOutcome } from './tools.ts';
 import type { AgentEvent, Block, KernelPort, Message, Provider } from './types.ts';
@@ -47,13 +47,13 @@ export class Agent {
     this.pending = null;
   }
 
-  async run(userText: string, ctx: { selection: string[]; scope?: ScopeInfo | null }, emit: (e: AgentEvent) => void, signal?: AbortSignal): Promise<void> {
+  async run(userText: string, ctx: { selection: string[]; scope?: ScopeInfo | null; rules?: string }, emit: (e: AgentEvent) => void, signal?: AbortSignal): Promise<void> {
     const { kernel } = this.opts;
     const maxSteps = this.opts.maxSteps ?? 40;
     const fixBudget = this.opts.fixBudget ?? 5;
 
     const snap = await kernel.snapshot();
-    const context = formatDesignContext({ ...snap, selection: ctx.selection, scope: ctx.scope ?? null });
+    const context = formatDesignContext({ ...snap, selection: ctx.selection, scope: ctx.scope ?? null, rules: ctx.rules });
     const content: Block[] = [];
     if (this.pending) {
       content.push(...this.pending.otherResults, { type: 'tool_result', tool_use_id: this.pending.askId, content: `The user answered: ${userText}` });
@@ -135,9 +135,10 @@ export class Agent {
         continue;
       }
 
-      // The model considers itself done: verify.
+      // The model considers itself done: verify. A drawing rule the layout itself breaks is not held
+      // against it: there is no edit that fixes a layout bug.
       const after = await kernel.snapshot();
-      const errors = after.diagnostics.filter((d) => d.severity === 'error' && !d.waivedBy);
+      const errors = after.diagnostics.filter(mustFix);
       if (errors.length && fixRounds < fixBudget) {
         fixRounds++;
         const message = formatVerification(errors);

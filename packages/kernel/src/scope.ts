@@ -5,7 +5,7 @@
 import type { Component, Design, EditOp, LabelView, OptimizeScope, Rect, SchematicView, ScopeInfo, ScopeMeasures, SheetView, SymbolView } from '@4k7/schema';
 import { resolveUnitRef } from './apply.ts';
 import { RejectError, componentsSorted, natCmp, netMembers, reject } from './doc.ts';
-import { labelRect, textRect, tw } from './scene.ts';
+import { textRect, tw } from './scene.ts';
 
 export interface ResolvedScope {
   scope: OptimizeScope;
@@ -219,10 +219,10 @@ export function measure(sheet: SheetView, nets: Set<string>): ScopeMeasures {
   for (const net of nets) {
     const s = wireShape(sheet, net);
     shape.bends += s.bends;
-    shape.jogs += s.jogs;
-    shape.detours += s.detours;
+    shape.jogs += s.jogs.length;
+    shape.detours += s.detours.length;
   }
-  return { crossings: wireCrossings(sheet, nets).length, ...shape, overlaps: countOverlaps(sheet, nets), wireIn: Math.round(mils / 100) / 10, labels };
+  return { crossings: wireCrossings(sheet, nets).length, ...shape, overlaps: labelOverlaps(sheet, nets).length, wireIn: Math.round(mils / 100) / 10, labels };
 }
 
 /* -------------------------------- overlaps -------------------------------- */
@@ -244,7 +244,12 @@ const line = (x1: number, y1: number, x2: number, y2: number): Rect => ({ x: Mat
 function labelParts(l: LabelView): { r: Rect; head: boolean }[] {
   // a name on its wire: the letters (72 high, baseline 30 above the wire), not the room kept for it
   if (l.kind === 'net' && l.dir === 'on') return [{ r: { x: l.x - tw(l.text) / 2, y: l.y - 85, w: tw(l.text), h: 60 }, head: true }];
-  if (l.kind === 'net') return [{ r: labelRect(l), head: true }];
+  // a flag, as the canvas draws it: tw(text) + 110 along the lead, 45 to each side (labelRect is the room kept for it)
+  if (l.kind === 'net') {
+    const len = tw(l.text) + 110;
+    const r: Rect = l.dir === 'right' ? { x: l.x, y: l.y - 45, w: len, h: 90 } : l.dir === 'left' ? { x: l.x - len, y: l.y - 45, w: len, h: 90 } : l.dir === 'down' ? { x: l.x - 45, y: l.y, w: 90, h: len } : { x: l.x - 45, y: l.y - len, w: 90, h: len };
+    return [{ r, head: true }];
+  }
   const sx = l.x + (l.stub === 'left' ? -1 : l.stub === 'right' ? 1 : 0) * (l.stubLen ?? 100);
   const s = l.dir === 'up' ? -1 : 1;
   const r = l.rise ?? 0;
@@ -261,29 +266,50 @@ const alongLine = (a: Rect, b: Rect) => ((a.w === 0 && b.w === 0 && a.x === b.x)
 /** Wider by `by` on each side: the air a rail name keeps from a name beside it (names on different rows are fine). */
 const wider = (r: Rect, by: number): Rect => ({ ...r, x: r.x - by, w: r.w + 2 * by });
 
+/** What a label ran into: a wire of another net (its head on it, or its stem along it), a symbol, a part's text, another label. */
+export type OverlapHit = { on: 'wire'; net: string } | { on: 'symbol'; sym: SymbolView } | { on: 'text'; sym: SymbolView; which: 'name' | 'value' } | { on: 'label'; label: LabelView };
+export interface Overlap {
+  label: LabelView;
+  /** The head (arrow and name, ground bars, a flag) hit it, else the stem or stub. */
+  head: boolean;
+  hit: OverlapHit;
+}
+
 /**
  * Labels and supply symbols of the given nets that run into something: the head (arrow and name,
  * ground bars, a flag) on a wire of another net, a stem along such a wire (it reads as connected),
  * and any part of them through another label (rail names keep 50 mils of air beside them), a
  * symbol, a part's body or its text. A supply's stem merely crossing a wire of another net is not
  * counted: the symbol stands upright whatever is in the way (SCH.RAIL_UP), the crossing is the
- * price. Each label is counted once, however much it hits.
+ * price. Each label is reported once, with the first thing it hits, however much it hits.
  */
-function countOverlaps(sheet: SheetView, nets: Set<string>): number {
+export function labelOverlaps(sheet: SheetView, nets: Set<string>): Overlap[] {
   const wires = sheet.wires.flatMap((w) => segments(w.pts).map(([x1, y1, x2, y2]) => ({ net: w.netId, r: line(x1, y1, x2, y2) })));
-  const texts = sheet.symbols.flatMap((s) => [textRect(s.refPos, [s.refdes]), textRect(s.valuePos, s.valueLines ?? [s.value])]);
+  const texts = sheet.symbols.flatMap((s) => [{ sym: s, which: 'name' as const, r: textRect(s.refPos, [s.refdes]) }, { sym: s, which: 'value' as const, r: textRect(s.valuePos, s.valueLines ?? [s.value]) }]);
   const parts = sheet.labels.map((l) => ({ l, parts: labelParts(l) }));
-  let n = 0;
+  const out: Overlap[] = [];
   for (const a of parts) {
     if (!nets.has(a.l.netId)) continue;
-    const hits = ({ r, head }: { r: Rect; head: boolean }) =>
-      wires.some((w) => w.net !== a.l.netId && (head ? meets(r, w.r) : alongLine(r, w.r))) ||
-      sheet.symbols.some((s) => meets(r, s.bbox)) ||
-      texts.some((t) => meets(r, t)) ||
-      parts.some((b) => b !== a && !(b.l.netId === a.l.netId && b.l.x === a.l.x && b.l.y === a.l.y) && b.parts.some((q) => meets(wider(r, head && a.l.kind === 'rail' && q.head && b.l.kind === 'rail' ? 50 : 0), q.r)));
-    if (a.parts.some(hits)) n++;
+    const hit = ({ r, head }: { r: Rect; head: boolean }): OverlapHit | undefined => {
+      const w = wires.find((w) => w.net !== a.l.netId && (head ? meets(r, w.r) : alongLine(r, w.r)));
+      if (w) return { on: 'wire', net: w.net };
+      const s = sheet.symbols.find((s) => meets(r, s.bbox));
+      if (s) return { on: 'symbol', sym: s };
+      const t = texts.find((t) => meets(r, t.r));
+      if (t) return { on: 'text', sym: t.sym, which: t.which };
+      const b = parts.find((b) => b !== a && !(b.l.netId === a.l.netId && b.l.x === a.l.x && b.l.y === a.l.y) && b.parts.some((q) => meets(wider(r, head && a.l.kind === 'rail' && q.head && b.l.kind === 'rail' ? 50 : 0), q.r)));
+      if (b) return { on: 'label', label: b.l };
+      return undefined;
+    };
+    for (const p of a.parts) {
+      const h = hit(p);
+      if (h) {
+        out.push({ label: a.l, head: p.head, hit: h });
+        break;
+      }
+    }
   }
-  return n;
+  return out;
 }
 
 type Way = 'l' | 'r' | 'u' | 'd';
@@ -307,25 +333,40 @@ function pinWay(s: SymbolView, x: number, y: number): Way | undefined {
   return undefined;
 }
 
+/** (x, y) lies strictly inside an orthogonal segment. */
+const within = (seg: Seg, x: number, y: number) => {
+  const [x1, y1, x2, y2] = seg;
+  return (x1 === x2 && x === x1 && y > Math.min(y1, y2) && y < Math.max(y1, y2)) || (y1 === y2 && y === y1 && x > Math.min(x1, x2) && x < Math.max(x1, x2));
+};
+/** (x, y) is an end of the segment or lies inside it. */
+export const touches = (seg: Seg, x: number, y: number) => (seg[0] === x && seg[1] === y) || (seg[2] === x && seg[3] === y) || within(seg, x, y);
+
+/** A pin as the measures see it: its symbol and connection point. */
+export interface PinOn {
+  sym: SymbolView;
+  x: number;
+  y: number;
+}
+/** A pin and the pins facing it on one wire, none of them in line with it. */
+export interface Jog {
+  pin: PinOn;
+  facing: PinOn[];
+}
+
 /**
  * How one net's wires are drawn, apart from where they go:
  * - bends: corners, where exactly two wires meet at a right angle (no pin, no T);
  * - detours: a wire that turns, steps sideways and turns back the way it came (a U), with nothing
- *   attached to the sideways step;
+ *   attached to the sideways step; each is that sideways segment;
  * - jogs: a pin facing down (or right) at pins facing it on the same wire, none of them in line,
  *   so the wire has to step across (two resistors of a divider side by side instead of stacked).
  */
-function wireShape(sheet: SheetView, net: string): { bends: number; jogs: number; detours: number } {
+export function wireShape(sheet: SheetView, net: string): { bends: number; jogs: Jog[]; detours: Seg[] } {
   const segs = sheet.wires.filter((w) => w.netId === net).flatMap((w) => segments(w.pts)).filter(([x1, y1, x2, y2]) => x1 !== x2 || y1 !== y2);
-  if (!segs.length) return { bends: 0, jogs: 0, detours: 0 };
+  if (!segs.length) return { bends: 0, jogs: [], detours: [] };
   // what a wire can be attached to: a pin, or a supply symbol / net flag standing at its end
   const pinAt = new Set(sheet.symbols.flatMap((s) => s.pins.map((p) => key(p.x, p.y))));
   for (const l of sheet.labels) if (l.netId === net && (l.kind !== 'net' || l.dir !== 'on')) pinAt.add(key(l.x, l.y));
-  const within = (seg: Seg, x: number, y: number) => {
-    const [x1, y1, x2, y2] = seg;
-    return (x1 === x2 && x === x1 && y > Math.min(y1, y2) && y < Math.max(y1, y2)) || (y1 === y2 && y === y1 && x > Math.min(x1, x2) && x < Math.max(x1, x2));
-  };
-  const touches = (seg: Seg, x: number, y: number) => (seg[0] === x && seg[1] === y) || (seg[2] === x && seg[3] === y) || within(seg, x, y);
   // a net may be drawn in several places (its parts joined through supply symbols or labels):
   // each connected drawing is judged on its own
   const comp = segs.map((_, i) => i);
@@ -360,22 +401,22 @@ function wireShape(sheet: SheetView, net: string): { bends: number; jogs: number
   }
   // a run with nothing attached along it (a bus with taps that turns up at both ends is no detour)
   const bare = (g: Seg) => ![...pinAt].some((k) => within(g, ...(k.split(',').map(Number) as [number, number]))) && !segs.some(([x1, y1, x2, y2]) => within(g, x1, y1) || within(g, x2, y2));
-  let detours = 0;
+  const detours: Seg[] = [];
   for (const g of segs) {
     const [x1, y1, x2, y2] = g;
     if (!bend(x1, y1) || !bend(x2, y2) || !bare(g)) continue;
     const out1 = ends.get(key(x1, y1))!.find((w) => w !== wayFrom(x1, y1, x2, y2));
     const out2 = ends.get(key(x2, y2))!.find((w) => w !== wayFrom(x2, y2, x1, y1));
-    if (out1 && out1 === out2) detours++;
+    if (out1 && out1 === out2) detours.push(g);
   }
 
   // pins on these wires, with the way each faces and the drawing it is on
   const pins = sheet.symbols.flatMap((s) => s.pins.map((p) => ({ sym: s, x: p.x, y: p.y, way: pinWay(s, p.x, p.y), on: drawingOf(p.x, p.y) })).filter((p) => p.on >= 0));
-  let jogs = 0;
+  const jogs: Jog[] = [];
   for (const a of pins) {
     if (a.way !== 'd' && a.way !== 'r') continue;
     const facing = pins.filter((b) => b.sym !== a.sym && b.on === a.on && b.way === OPPOSITE[a.way!] && (a.way === 'd' ? b.y >= a.y : b.x >= a.x));
-    if (facing.length && !facing.some((b) => (a.way === 'd' ? b.x === a.x : b.y === a.y))) jogs++;
+    if (facing.length && !facing.some((b) => (a.way === 'd' ? b.x === a.x : b.y === a.y))) jogs.push({ pin: a, facing });
   }
   return { bends, jogs, detours };
 }

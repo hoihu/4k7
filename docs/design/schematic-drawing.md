@@ -1,7 +1,7 @@
 # Drawing the schematic: a ruleset, and the agent in charge of the arrangement
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-12. Nothing built yet.
-> The default ruleset is drafted in [schematic-rules.md](schematic-rules.md).
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-12; steps 1 and 2 of §6 built.
+> The default ruleset is in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
 
@@ -73,8 +73,10 @@ not know stays guidance for the agent (and the settings page says so). Guidance 
 - **Layout invariants.** Some rules the layout follows by itself, whatever the hints say
   (`SCH.RAIL_UP`, `SCH.GND_DOWN`, `SCH.ORTHOGONAL`). A hint that would break one is refused with the
   rule's id, the same way the kernel refuses an op today. The check still runs, as a guard against
-  layout bugs. Setting such a rule to `off` lets the layout break it (someone who wants sideways
-  rails can have them).
+  layout bugs; a finding there is not held against the agent (it does not block finishing or
+  propose: no edit of the design fixes a layout bug). Setting such a rule to `off` lets the layout
+  break it (someone who wants sideways rails can have them): planned with step 3, the layout does
+  not read the ruleset yet, so today `off` only silences the check.
 - **Checks.** The rest are measured, not enforced (`SCH.TEXT_OVERLAP`, `SCH.JOG`, `SCH.CROSSING`):
   the layout tries, the diagnostic reports where it did not manage, the agent improves it with hints.
 - **Guidance.** Read by the agent, checked by nobody. Judgement.
@@ -84,12 +86,13 @@ ruleset beats a soft hint, a soft hint beats the layout's defaults.
 
 ### 3.3 Where it lives
 
-- The default: `packages/schema/rules/schematic-rules.md`, versioned with the app (today's draft is
-  in `docs/design/` until the code reads it).
-- The user's copy: `<projects folder>/schematic-rules.md`, created from the default on first edit
-  in Settings → Schematic. It applies to every project.
-- A project may carry its own copy in the design file (a client's drawing standard). Project beats
-  user beats default.
+- The default: `SCHEMATIC_RULES` in `packages/schema/src/rules.ts`, versioned with the app. It is
+  code, not an `.md` file, because the local server runs from TS directly.
+- The user's copy: kept with the browser's settings (`Settings.schematicRules`), created from the
+  default on first edit in Settings → Schematic rules. It applies to every project opened in that
+  browser; it is not a file in the projects folder.
+- Future: a project may carry its own copy in the design file (a client's drawing standard).
+  Project beats user beats default.
 - The agent can propose a change to it: "always draw ferrite beads lying flat" becomes an edit to
   the ruleset, shown and accepted like a changeset, instead of a hint on one part. The agent must
   not change it unasked.
@@ -181,9 +184,14 @@ Each step is useful alone.
 1. **Supply direction as an invariant.** Rails up, ground down, everywhere, including the cases the
    layout gets wrong today (a rail at the bottom of a hanging part, a part between two rails). Take
    out the sideways supply symbols (§1). Small, and it settles the rule the rest builds on.
+   *Built 2026-10-12:* rails up and ground down everywhere, rising stems (`LabelView.rise`),
+   staggered names, `clearName`, `leadEnd` turns, flat parts between two rails.
 2. **The ruleset file and `SCH.*` checks.** Parse the default, run the checks the measures already
    compute (overlaps, jogs, crossings, detours) and the supply-direction rules as diagnostics. Send
-   the guidance to the agent. Settings → Schematic shows and edits it.
+   the guidance to the agent. Settings → Schematic rules shows and edits it.
+   *Built 2026-10-12:* `packages/schema/src/rules.ts` (`SCHEMATIC_RULES`, `parseSchematicRules`),
+   the `SCH.*` checks in `packages/kernel/src/schcheck.ts` (`Kernel.setRules`), the
+   `<drawing_rules>` block in the agent's design context, the editor in Settings → Schematic rules.
 3. **Orientation and supply hints** (`orient`, `supply_side`, `net_style`): small changes in the
    layout, big effect on readability. Optimize can use them at once.
 4. **Blocks drive placement** (`block`, `block_order`, from `describe`). The agent's arrangement

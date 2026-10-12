@@ -276,6 +276,8 @@ export interface Settings {
   serverPort: number | null;
   /** The project open last (its file's name in the projects folder); '' = the newest. */
   project: string;
+  /** The schematic ruleset the kernel checks and the agent reads (markdown, see @4k7/schema rules.ts); '' = the default. */
+  schematicRules: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -295,6 +297,7 @@ export const DEFAULT_SETTINGS: Settings = {
   serverAccessKey: '',
   serverPort: null,
   project: '',
+  schematicRules: '',
 };
 
 /** Bumped when a default changes in a way existing users should get (v2: dark blue theme). */
