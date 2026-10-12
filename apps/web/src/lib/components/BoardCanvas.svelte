@@ -242,6 +242,7 @@
   const LAYER_CLASS: Record<CopperLayer, string> = { 'F.Cu': 'fcu', 'In1.Cu': 'in1', 'In2.Cu': 'in2', 'B.Cu': 'bcu' };
   /** Draw bottom first so the top layer is on top. */
   const order: CopperLayer[] = ['B.Cu', 'In2.Cu', 'In1.Cu', 'F.Cu'];
+  const anyCopper = $derived(order.some((l) => show[l]));
   const tracksOn = (l: CopperLayer) => board?.tracks.filter((t) => t.layer === l) ?? [];
   const zonePath = (r: number[]) => {
     let d = '';
@@ -345,7 +346,8 @@
       {/each}
     {/if}
 
-    <!-- pads (the part's side + through-hole); bottom-side parts first, in the bottom copper's colour -->
+    <!-- pads (the part's side + through-hole); bottom-side parts first. An SMD pad is on its side's copper layer
+         (shown with it, in its colour); a through-hole pad or via is on every layer (shown with any of them) -->
     {#each partsInOrder as p (p.componentId)}
       <g
         class="part"
@@ -360,7 +362,9 @@
         <rect class="hit" x={p.courtyard.x} y={p.courtyard.y} width={p.courtyard.w} height={p.courtyard.h} />
         {#each p.pads as pad, i (i)}
           {@const r = pad.shape === 'round' ? Math.min(pad.w, pad.h) / 2 : Math.min(pad.w, pad.h) * 0.15}
-          {#if pad.npth}
+          {#if !pad.npth && !(pad.drill ? anyCopper : show[p.side === 'bottom' ? 'B.Cu' : 'F.Cu'])}
+            <!-- its copper layer is hidden -->
+          {:else if pad.npth}
             <circle class="keepout" cx={pad.x} cy={pad.y} r={pad.w / 2} />
             <circle class="drill npth" cx={pad.x} cy={pad.y} r={pad.drill! / 2} />
           {:else}
@@ -400,7 +404,7 @@
       </g>
     {/each}
 
-    {#each board.vias as v, i (i)}
+    {#each anyCopper ? board.vias : [] as v, i (i)}
       <g class="via" data-net={v.netId} class:hot={hotNet === v.netId}>
         <circle cx={v.x} cy={v.y} r={v.pad / 2} />
         <circle class="drill" cx={v.x} cy={v.y} r={v.drill / 2} />
@@ -426,15 +430,21 @@
   .edge { fill: none; stroke: #e0c341; stroke-width: 0.15; }
   .layer > path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
   /* planes and pours are never highlighted (they cover the board; hovering them would light it all up).
-     Drawn as copper under the solder mask: a lighter green, whatever the layer (its tracks carry its colour). */
-  .layer .zone { stroke: none; fill: #3f8a5c; opacity: 0.22; pointer-events: none; }
+     In their layer's colour; faint under the top copper, so with every layer on the board stays green */
+  .layer .zone { stroke: none; opacity: 0.3; pointer-events: none; }
+  .layer.dim .zone { opacity: 0.1; }
+  .fcu .zone { fill: #c9463d; }
+  .bcu .zone { fill: #3f7fd6; }
+  .in1 .zone { fill: #c9a13d; }
+  .in2 .zone { fill: #8e5cd6; }
   .fcu > path { stroke: #c9463d; }
   .bcu > path { stroke: #3f7fd6; }
   .in1 > path { stroke: #c9a13d; }
   .in2 > path { stroke: #8e5cd6; }
   .layer.dim > path:not(.zone) { opacity: 0.7; }
   .layer > path.hot { stroke: #fff27a; }
-  .pad { fill: #c98a3c; }
+  /* parts on the top side: pads in the top copper's colour */
+  .pad { fill: #d0564c; }
   .pad.tht { fill: #d8a24a; }
   /* parts on the bottom side: pads in the bottom copper's colour, the outline dashed */
   .part.bottom .pad:not(.tht) { fill: #4f86d2; }
