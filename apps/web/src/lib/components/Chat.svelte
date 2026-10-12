@@ -10,15 +10,6 @@
   let scroller: HTMLDivElement | undefined = $state();
   const efforts = $derived(effortLevels(currentChoice(app.settings)));
 
-  const suggestions = $derived.by(() => {
-    if (!app.k || app.k.summary.components.length === 0) {
-      return ['12 V to 3.3 V buck converter, 2 A', '555 LED blinker at 1 Hz from 9 V', 'ATtiny85 with ISP header and power LED'];
-    }
-    const sel = app.selection[0];
-    if (sel?.startsWith('C')) return [`make ${sel} 100uF`, `put ${sel} left of U1`];
-    return ['Review the design for problems', 'Add a power LED on +3V3'];
-  });
-
   $effect(() => {
     // keep scrolled to the bottom while streaming
     void app.chat.length;
@@ -139,9 +130,6 @@
         {/if}
       </div>
     </div>
-    <div class="sugg">
-      {#each suggestions as s (s)}<button type="button" onclick={() => { app.input = s; }}>{s}</button>{/each}
-    </div>
   </form>
 </div>
 
@@ -203,7 +191,4 @@
   .web { border: 0; background: none; color: var(--txt-3); font-size: 12px; padding: 2px 6px; border-radius: 5px; }
   .web:hover { background: var(--hover); }
   .web[aria-pressed="true"] { color: var(--accent-txt); background: var(--accent-soft); }
-  .sugg { display: flex; gap: 4px; flex-wrap: wrap; }
-  .sugg button { border: 1px solid var(--line); background: var(--panel-2); border-radius: 99px; padding: 0 8px; font-size: 11.5px; line-height: 20px; color: var(--txt-2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sugg button:hover { border-color: var(--accent); color: var(--accent-txt); }
 </style>
