@@ -63,9 +63,10 @@ The local server runs your agent's CLI headlessly for every chat message, with o
 
 1. Install the agent and sign in once in a terminal.
 2. Start the app (`npx -y github:hoihu/4k7`, or the download) and open the link it prints.
-3. **Settings → Chat provider → Coding agent**, pick the agent (and a model if you like).
+3. Pick the agent and model with the model button under the chat box (or in **Settings → Chat provider → Coding agent**).
 
-- Tick **Web** to allow read-only web lookups (datasheets).
+- Switch agents or models at any time; the design stays, a new agent starts its own session. Star models to keep them under ★.
+- Turn on **Web** (next to the model button) to allow read-only web lookups (datasheets).
 - The server finds the CLIs on your PATH; `FOURK7_CLAUDE_BIN`, `FOURK7_COPILOT_BIN`, `FOURK7_OPENCODE_BIN` point it elsewhere.
 
 ### B. API key (chat in the app, billed per token)
@@ -73,7 +74,7 @@ The local server runs your agent's CLI headlessly for every chat message, with o
 1. **Settings → Chat provider → API key**, pick the **Service**: Anthropic, OpenAI, OpenRouter, Google Gemini,
    a local model (Ollama, LM Studio), or *Other* for any OpenAI- or Anthropic-compatible API (Azure OpenAI, LiteLLM, a company gateway).
 2. Check the **Address**, paste the key, press **Save**.
-3. Pick the **Model** (**List models** asks the API), then use the chat.
+3. Pick the **Model** (**List models** asks the API), then use the chat. Services with a key also show up in the model button under the chat box.
 
 - Keys are encrypted and stored in your browser only, one per service; sent only to that service's address.
 - The app calls the API from the browser: the service must allow that (CORS). Ollama needs `OLLAMA_ORIGINS` set to the app's address.

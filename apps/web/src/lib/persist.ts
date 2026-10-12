@@ -314,6 +314,8 @@ export interface Settings {
   apiUrls: Partial<Record<ApiServiceId, string>>;
   apiModels: Partial<Record<ApiServiceId, string>>;
   effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  /** Models starred in the chat's model picker (see models.ts, choiceKey). */
+  favoriteModels: string[];
   mode: Mode;
   fixBudget: number;
   theme: 'system' | 'light' | 'dark';
@@ -331,6 +333,7 @@ export const DEFAULT_SETTINGS: Settings = {
   apiUrls: {},
   apiModels: { anthropic: 'claude-opus-5' },
   effort: 'high',
+  favoriteModels: [],
   mode: 'review',
   fixBudget: 5,
   theme: 'dark',
