@@ -46,7 +46,8 @@ export interface Invocation {
 export interface Harness {
   readonly id: HarnessId;
   readonly name: string;
-  readonly bin: string;
+  /** The CLI: a path, or a name looked up on the PATH. Can change while the server runs (set in the app). */
+  bin: string;
   detect(): HarnessCapability;
   /** The models the CLI offers, if it can list them. */
   models?(): Promise<string[]>;
@@ -57,7 +58,7 @@ export interface Harness {
 export function detectCli(bin: string, name: string, env: NodeJS.ProcessEnv, envVar: string): ChatCapability {
   const r = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 10_000, env });
   if (r.error || r.status !== 0) {
-    return { available: false, reason: `${name} CLI not found ("${bin}"). Install it or set ${envVar}.` };
+    return { available: false, reason: `${name} CLI not found ("${bin}"). Install it, or give its full path in Settings → Coding agents (or ${envVar}).` };
   }
   return { available: true, version: r.stdout.trim().split('\n')[0] ?? '' };
 }

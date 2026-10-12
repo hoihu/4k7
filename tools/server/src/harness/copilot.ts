@@ -14,7 +14,7 @@ export class CopilotHarness implements Harness {
   /** Token totals per session: the CLI reports them for the whole session, a run's are the difference. */
   #totals = new Map<string, TokenCount>();
 
-  readonly bin: string;
+  bin: string;
 
   constructor(bin: string) {
     this.bin = bin;

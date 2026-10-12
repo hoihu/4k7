@@ -46,7 +46,11 @@ export type TabToServer =
       /** 2 = run a second, independent extraction to cross-check the first. */
       passes?: number;
     }
-  | { type: 'chat_cancel'; id: string };
+  | { type: 'chat_cancel'; id: string }
+  /** Run this program for an agent (an absolute path; null = find it on the PATH again). Answered with agent_bin_result. */
+  | { type: 'agent_bin'; harness: HarnessId; bin: string | null }
+  /** Look for the agents' CLIs again (after installing one); answered with `harnesses`. */
+  | { type: 'agents_detect' };
 
 /** What a tab reports about itself when it connects (logged by the server for diagnosis). */
 export interface TabInfo {
@@ -88,6 +92,14 @@ export interface HarnessCapability extends ChatCapability {
   name: string;
   /** Models the CLI offers, when it can list them (OpenCode: provider/model). */
   models?: string[];
+  /** What the server runs: the path set in the app or by an environment variable, or the name looked up on the PATH. */
+  bin?: string;
+  /** Where that program is, when it was found. */
+  path?: string;
+  /** Who chose `bin`: an environment variable (FOURK7_…_BIN, wins), the app's settings, or nobody (the name on the PATH). */
+  binFrom?: 'env' | 'settings' | 'auto';
+  /** The environment variable that overrides the program. */
+  binEnv?: string;
 }
 
 /** A newer release of the app than the one the server runs, and where to get it. */
@@ -123,6 +135,8 @@ export type ServerToTab =
   | { type: 'welcome'; protocol: number; agent: string; chat: ChatCapability; harnesses?: HarnessCapability[]; update?: UpdateInfo }
   /** The agents' details changed (a model list arrived after the tab connected). */
   | { type: 'harnesses'; harnesses: HarnessCapability[] }
+  /** The answer to agent_bin: saved and the agent detected again, or why not. */
+  | { type: 'agent_bin_result'; harness: HarnessId; ok: boolean; error?: string }
   | { type: 'denied'; reason: string }
   /** A newer release was found after the tab connected. */
   | { type: 'update'; update: UpdateInfo }

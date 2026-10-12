@@ -41,7 +41,7 @@ export class ClaudeHarness implements Harness {
   readonly id = 'claude-code' as const;
   readonly name = 'Claude Code';
 
-  readonly bin: string;
+  bin: string;
   #profile: ClaudeProfile | undefined;
 
   constructor(bin: string, profile?: ClaudeProfile) {

@@ -10,6 +10,7 @@ import {
   type ChatCapability,
   type ChatEvent,
   type HarnessCapability,
+  type HarnessId,
   type TabInfo,
   type TabToServer,
   type UpdateInfo,
@@ -141,6 +142,10 @@ class ServerClient {
         if (msg.type === 'agent') this.agent = msg.name;
         if (msg.type === 'update') this.update = msg.update;
         if (msg.type === 'harnesses') this.harnesses = msg.harnesses;
+        if (msg.type === 'agent_bin_result') {
+          this.#binWaiters.get(msg.harness)?.(msg.ok ? null : (msg.error ?? 'failed'));
+          this.#binWaiters.delete(msg.harness);
+        }
         if (msg.type === 'call') void this.#call(ws, msg.id, msg.tool, msg.input);
         if (msg.type === 'chat_event') {
           this.#chatListeners.get(msg.id)?.(msg.event);
@@ -155,6 +160,25 @@ class ServerClient {
     if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) return false;
     this.#chatListeners.set(msg.id, onEvent);
     this.#ws.send(JSON.stringify({ type: 'chat', ...msg } satisfies TabToServer));
+    return true;
+  }
+
+  #binWaiters = new Map<HarnessId, (error: string | null) => void>();
+
+  /** Run `bin` (a full path) for an agent, or its name on the PATH again (null). Resolves with why not, or null when done. */
+  setAgentBin(harness: HarnessId, bin: string | null): Promise<string | null> {
+    if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) return Promise.resolve('The server is not connected.');
+    return new Promise((resolve) => {
+      this.#binWaiters.get(harness)?.('Replaced by a newer change.');
+      this.#binWaiters.set(harness, resolve);
+      this.#ws!.send(JSON.stringify({ type: 'agent_bin', harness, bin } satisfies TabToServer));
+    });
+  }
+
+  /** Ask the server to look for the agents' CLIs again (the answer updates `harnesses`). */
+  detectAgents(): boolean {
+    if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) return false;
+    this.#ws.send(JSON.stringify({ type: 'agents_detect' } satisfies TabToServer));
     return true;
   }
 

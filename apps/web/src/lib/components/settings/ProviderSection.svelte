@@ -123,7 +123,7 @@
       {:else if server.status === 'connected'}
         <span class="tag warn">server connected, {harness.name} unavailable</span>
         <div class="hint">
-          {#if server.harnesses.length}{harness.reason ?? 'Not found on this computer.'} Install it from <a href={HARNESSES.find((h) => h.id === harness.id)?.install} target="_blank" rel="noreferrer">its site</a>, sign in once in a terminal, then restart the server.
+          {#if server.harnesses.length}{harness.reason ?? 'Not found on this computer.'} Install it from <a href={HARNESSES.find((h) => h.id === harness.id)?.install} target="_blank" rel="noreferrer">its site</a>, sign in once in a terminal, then press <b>Look again</b> under <a href="#agents">Coding agents</a> (or give its path there).
           {:else}This server only knows Claude Code. Update it (restart it).{/if}
         </div>
       {:else}

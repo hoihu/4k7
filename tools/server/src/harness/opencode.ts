@@ -16,7 +16,7 @@ export class OpenCodeHarness implements Harness {
   readonly id = 'opencode' as const;
   readonly name = 'OpenCode';
 
-  readonly bin: string;
+  bin: string;
   #cwd: string;
 
   constructor(bin: string, cwd: string) {

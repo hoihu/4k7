@@ -1,6 +1,7 @@
 <script lang="ts">
   import AboutSection from './settings/AboutSection.svelte';
   import AgentSection from './settings/AgentSection.svelte';
+  import AgentsSection from './settings/AgentsSection.svelte';
   import AppearanceSection from './settings/AppearanceSection.svelte';
   import ServerSection from './settings/ServerSection.svelte';
   import ProjectSection from './settings/ProjectSection.svelte';
@@ -28,6 +29,7 @@
   </nav>
   <div class="col" bind:this={scroller}>
     <ProviderSection />
+    <AgentsSection />
     <ServerSection />
     <AgentSection />
     <AppearanceSection />

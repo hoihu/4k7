@@ -44,6 +44,7 @@ export interface LocalServerOptions {
 
 export type HttpHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 export type ChatMessage = Extract<TabToServer, { type: 'chat' | 'ingest' | 'chat_cancel' }>;
+export type AgentsMessage = Extract<TabToServer, { type: 'agent_bin' | 'agents_detect' }>;
 
 interface Pending {
   resolve: (r: CallResult) => void;
@@ -60,6 +61,7 @@ export class LocalServer {
   #tab: WebSocket | null = null;
   #httpHandler: HttpHandler | null = null;
   #chatHandler: ((msg: ChatMessage) => void) | null = null;
+  #agentsHandler: ((msg: AgentsMessage) => void) | null = null;
   #chat: ChatCapability = { available: false, reason: 'chat not enabled' };
   #harnesses: HarnessCapability[] = [];
   #update: UpdateInfo | null = null;
@@ -109,6 +111,11 @@ export class LocalServer {
     this.#chatHandler = h;
     this.#chat = capability;
     this.#harnesses = harnesses;
+  }
+
+  /** Receive the app's changes to the agents' programs (paths, looking for them again). */
+  setAgentsHandler(h: (msg: AgentsMessage) => void) {
+    this.#agentsHandler = h;
   }
 
   /** The agents' details changed (e.g. a model list arrived): told to the connected tab. */
@@ -270,6 +277,11 @@ export class LocalServer {
       if (msg.type === 'chat' || msg.type === 'ingest' || msg.type === 'chat_cancel') {
         if (this.#chatHandler) this.#chatHandler(msg);
         else if (msg.type !== 'chat_cancel') this.#send({ type: 'chat_event', id: msg.id, event: { kind: 'done', ok: false, error: this.#chat.reason ?? 'Chat is not available on this server.' } });
+        return;
+      }
+      if (msg.type === 'agent_bin' || msg.type === 'agents_detect') {
+        if (this.#agentsHandler) this.#agentsHandler(msg);
+        else if (msg.type === 'agent_bin') this.#send({ type: 'agent_bin_result', harness: msg.harness, ok: false, error: 'This server cannot change the agents.' });
         return;
       }
       if (msg.type === 'result') {

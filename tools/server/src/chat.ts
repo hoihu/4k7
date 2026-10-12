@@ -37,6 +37,8 @@ export interface ChatRunnerOptions {
   profile?: ClaudeProfile;
   /** The other agents that can answer the chat (Claude Code is always there). */
   harnesses?: Harness[];
+  /** Claude Code as the server set it up (else one running `claudeBin` with `profile`). */
+  claude?: ClaudeHarness;
   log?: (msg: string) => void;
 }
 
@@ -59,7 +61,7 @@ export class ChatRunner {
 
   constructor(opts: ChatRunnerOptions) {
     this.#opts = opts;
-    this.#claude = new ClaudeHarness(opts.claudeBin, opts.profile);
+    this.#claude = opts.claude ?? new ClaudeHarness(opts.claudeBin, opts.profile);
     for (const h of [this.#claude, ...(opts.harnesses ?? [])]) this.#harnesses.set(h.id, h);
     mkdirSync(opts.workDir, { recursive: true, mode: 0o700 });
   }

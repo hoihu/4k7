@@ -7,9 +7,30 @@
  * programs it starts find it too.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { accessSync, constants, existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join, sep } from 'node:path';
+
+/** Whether `file` is a program this user can run. */
+export function isExecutable(file: string): boolean {
+  try {
+    if (!statSync(file).isFile()) return false;
+    if (process.platform !== 'win32') accessSync(file, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Where `bin` is: itself when it is a path, else the first match on the PATH (like `which`); null when not found. */
+export function findBin(bin: string, path = process.env.PATH ?? ''): string | null {
+  if (bin.includes(sep) || (process.platform === 'win32' && bin.includes('/'))) return isExecutable(bin) ? bin : null;
+  const exts = process.platform === 'win32' ? (process.env.PATHEXT ?? '.EXE;.CMD;.BAT').split(';').concat('') : [''];
+  for (const dir of path.split(delimiter).filter(Boolean)) {
+    for (const ext of exts) if (isExecutable(join(dir, bin + ext))) return join(dir, bin + ext);
+  }
+  return null;
+}
 
 /** Where installers put `claude`, `copilot`, `opencode` (and the node they may need), by convention. */
 export function candidateDirs(home = homedir()): string[] {

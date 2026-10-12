@@ -123,7 +123,7 @@
         {#if efforts}
           <span class="div"></span>
           <select class="effort" value={currentEffort(app.settings)} title="Effort: higher is more thorough and uses more tokens" aria-label="Effort" onchange={(e) => void app.updateSettings(effortPatch(app.settings, (e.currentTarget as HTMLSelectElement).value as (typeof efforts)[number]))}>
-            {#each efforts as e (e)}<option value={e}>{e ? e[0]!.toUpperCase() + e.slice(1) : 'Default effort'}</option>{/each}
+            {#each efforts as e (e)}<option value={e}>{e ? e[0]!.toUpperCase() + e.slice(1) : 'Default'}</option>{/each}
           </select>
         {/if}
         {#if app.settings.provider === 'agent'}
