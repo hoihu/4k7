@@ -33,7 +33,6 @@
 
 <div class="pane chat">
   <div class="ph">
-    <b>Agent</b>
     <span class="grow"></span>
     {#if app.chat.length}<button class="ib" onclick={() => app.clearChat()} title="New conversation (the design is kept)">clear</button>{/if}
     <button class="ib" onclick={() => (app.chatOpen = false)} title="Collapse chat">⟨</button>
