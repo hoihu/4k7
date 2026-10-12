@@ -19,6 +19,14 @@ export interface OptimizeScope {
 export interface ScopeMeasures {
   /** Crossings between wires of different nets, among the nets that touch the area's parts. */
   crossings: number;
+  /** Wire corners. A wire that runs straight is easier to follow. */
+  bends: number;
+  /** Pins that face each other on one wire but are not in line, so the wire steps across (a divider drawn side by side). */
+  jogs: number;
+  /** Wires that turn, step sideways and turn back the way they came. */
+  detours: number;
+  /** Supply symbols and labels that run into a wire of another net, another label or a part. */
+  overlaps: number;
   /** Length of those nets' wires, in inches. */
   wireIn: number;
   /** Net labels standing in for wires (a connection not drawn is a connection harder to follow). */

@@ -279,7 +279,7 @@ Deviations (deliberate, to revisit):
 
 Pulled forward from M4: the **local server** (`tools/server`), an MCP server that relays to the open tab, so an external agent on the user's own plan can drive the design through the same op catalogue and review flow.
 
-Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models, and layout quality on 30+ part designs.
+Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models, and layout quality on 30+ part designs. Layout quality is planned as an editable drawing ruleset plus agent-set drawing hints in three steps (placement, supplies, connections): [schematic-drawing](design/schematic-drawing.md).
 
 ### M2/M3 first slice: board, routing, fab (2026-09-26)
 

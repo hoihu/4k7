@@ -27,10 +27,13 @@ import {
   supplyStubs,
   emptyScene,
   grid,
+  labelRect,
+  leadEnd,
   makeSymbol,
   mergeScene,
   satWidth,
   sceneBBox,
+  textRect,
   translateScene,
   tw,
   type Dir,
@@ -229,6 +232,10 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     const nets = netsOf(c);
     if (!nets.every((n) => n && isPowerNet(n))) {
       free.push(c);
+      continue;
+    }
+    if (betweenSupplies(nets)) {
+      free.push(c); // drawn lying flat on its own (verticalPart)
       continue;
     }
     const rail = nets.find((n) => n && !isGroundNet(n)) ?? nets[0];
@@ -729,7 +736,7 @@ function drawStack(ctx: Ctx, scene: Scene, plan: StackPlan, x: number, y: number
     net = upper;
   }
   // the rail (or the net the chain goes on to) on top
-  scene.labels.push(deco(d.nets[net]!, x, y, 'up'));
+  endLead(scene, d.nets[net]!, x, y, 'up');
 }
 
 /** A two-pin part lying horizontally centred on (cx, cy); `pin1Left` puts pin 1 on the left. */
@@ -778,7 +785,7 @@ function drawControl(ctx: Ctx, scene: Scene, pin: { x: number; y: number }, seri
       below = Object.values(c.pins).find((n) => n !== upper);
       bottom = cs.pins.find((p) => p.side === 'bottom')!;
     }
-    if (below) scene.labels.push(deco(d.nets[below]!, bottom.x, bottom.y, 'down'));
+    if (below) endLead(scene, d.nets[below]!, bottom.x, bottom.y, 'down');
   }
   // the series resistor: its input end to the left, the flag of the input net there
   const card = cardOf(d, series.comp.part)!;
@@ -840,6 +847,7 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
 
   /* neighbouring side pins on the same supply share one bus and one supply symbol */
   const bused = new Set<string>();
+  const busEnds: (typeof sym.pins)[number][] = []; // the bus pin nearest the pins beyond it, so they step out past the bus
   for (const side of ['left', 'right'] as const) {
     const byPos = new Map<number, (typeof sym.pins)[number]>();
     for (const p of sym.pins.filter((x) => x.side === side).sort((a, b) => a.y - b.y)) {
@@ -871,17 +879,57 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
       }
       scene.wires.push({ netId: net.id, pts: [busX, top, busX, bottom] });
       scene.labels.push(deco(net, busX, dir === 'up' ? top : bottom, dir));
+      busEnds.push(run.find((p) => p.y === (dir === 'up' ? bottom : top))!);
       const w = 100 + Math.max(80, tw(net.name) / 2 + 20) + 100;
       if (side === 'right') gapRight = Math.max(gapRight, w);
       else gapLeft = Math.max(gapLeft, w);
     }
   }
   const rises = new Map<string, number>();
-  const stubs = supplyStubs(
-    sym.pins.filter((p) => !bused.has(`${p.x},${p.y}`)),
-    supplyOf,
-    rises,
-  );
+  const unbused = sym.pins.filter((p) => !bused.has(`${p.x},${p.y}`));
+  const stubs = supplyStubs([...unbused, ...busEnds], supplyOf, rises);
+  // A supply symbol on a side pin stands upright (rails up, ground down: never sideways) beside the
+  // pins above it (rails) or below it (grounds). Where one of those pins has a lead going further
+  // out (wires to its satellites, a net label), the symbol's stem crosses that lead, and its arrow
+  // or bars go past the farthest such lead, so they never sit on a wire.
+  const reach = (q: (typeof sym.pins)[number]): number => {
+    const netId = plan.comp.pins[q.number];
+    if (!netId || plan.comp.noConnect.includes(q.number) || decorated.has(`${q.x},${q.y}`)) return 0;
+    if (bused.has(`${q.x},${q.y}`)) return 100;
+    if (satsByPin.has(q.number)) return Infinity;
+    return supplyDir(d.nets[netId]!) ? 0 : decoWidth(d.nets[netId]);
+  };
+  const sidePins = unbused.filter((p) => (p.side === 'left' || p.side === 'right') && !decorated.has(`${p.x},${p.y}`) && supplyOf(p.number));
+  for (const p of sidePins) {
+    const dir = supplyOf(p.number)!;
+    const stub = stubs.get(p.number) ?? 100;
+    for (let grew = true; grew; ) {
+      grew = false;
+      const rise = rises.get(p.number) ?? 0;
+      const h = (dir === 'up' ? 400 : 260) + rise;
+      const crossed = sym.pins.filter((q) => q.side === p.side && (dir === 'up' ? q.y > p.y - h && q.y < p.y : q.y < p.y + h && q.y > p.y) && reach(q) > stub - 60).map((q) => q.y);
+      if (!crossed.length) break;
+      // rail: the arrow's base 100 above the highest crossed lead (stem 200 + rise); ground: the bars 100 below the lowest
+      const need = dir === 'up' ? p.y - Math.min(...crossed) - 100 : Math.max(...crossed) - p.y + 20;
+      if (need > rise) {
+        rises.set(p.number, need);
+        grew = true;
+      }
+    }
+  }
+  // two rails whose arrows end at about one height would put their names side by side (or on
+  // top of each other): the outer one goes up a step, and out a step if it stood in the same column
+  const rails = sidePins.filter((p) => supplyOf(p.number) === 'up').sort((a, b) => (stubs.get(a.number) ?? 100) - (stubs.get(b.number) ?? 100));
+  const arrowBase = (q: (typeof sym.pins)[number]) => q.y - 200 - (rises.get(q.number) ?? 0);
+  const stemX = (q: (typeof sym.pins)[number]) => q.x + (q.side === 'left' ? -1 : 1) * (stubs.get(q.number) ?? 100);
+  const nameHalf = (q: (typeof sym.pins)[number]) => tw(d.nets[plan.comp.pins[q.number]!]!.name) / 2 + 50;
+  for (const [i, p] of rails.entries()) {
+    for (const o of rails.slice(0, i)) {
+      if (o.side !== p.side || Math.abs(arrowBase(o) - arrowBase(p)) >= 200 || Math.abs(stemX(o) - stemX(p)) >= nameHalf(o) + nameHalf(p)) continue;
+      if (stemX(o) === stemX(p)) stubs.set(p.number, (stubs.get(p.number) ?? 100) + 200);
+      rises.set(p.number, Math.max(rises.get(p.number) ?? 0, p.y - arrowBase(o)));
+    }
+  }
   for (const p of sym.pins) {
     const netId = plan.comp.pins[p.number];
     const net = netId ? d.nets[netId] : undefined;
@@ -924,29 +972,48 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
       const sats = satsByPin.get(p.number)!;
       const net = d.nets[plan.comp.pins[p.number]!]!;
       const xs: number[] = [];
-      for (const s of sats) {
+      const otherNetOf = (s: Sat) => {
         const otherPin = s.card.pins.find((pp) => s.comp.pins[pp.number] !== s.net) ?? s.card.pins[1]!;
-        const otherNet = s.comp.pins[otherPin.number] ? d.nets[s.comp.pins[otherPin.number]!] : undefined;
-        const width = Math.max(satWidth(d, s.comp, otherNet?.name), ...s.chain.map((c) => satWidth(d, c, chainBottomNet(ctx, c, s)?.name)));
+        return s.comp.pins[otherPin.number] ? d.nets[s.comp.pins[otherPin.number]!] : undefined;
+      };
+      const widthOf = (s: Sat) => Math.max(satWidth(d, s.comp, otherNetOf(s)), ...s.chain.map((c) => satWidth(d, c, chainBottomNet(ctx, c, s))));
+      // a pull-up (the far end a positive rail) stands above the wire with its rail on top,
+      // where no pin above has parts whose wires would run through it
+      const isUp = (s: Sat) => {
+        const ends = [s.comp, ...s.chain];
+        let far: string | undefined = s.net;
+        for (const c of ends) far = Object.values(c.pins).find((n) => n !== far) ?? far;
+        const height = ends.length * (400 + CHAIN_GAP) + 400;
+        return (
+          !!far &&
+          far !== s.net &&
+          supplyDir(d.nets[far]!) === 'up' &&
+          !sym.pins.some((q) => q.side === side && q.number !== p.number && satsByPin.has(q.number) && q.y < p.y && q.y >= p.y - height)
+        );
+      };
+      // a part going up and one going down share a column, so a divider is one straight line
+      // (rail, R, node, R, ground) instead of two columns joined by a jog
+      const cols: { up?: Sat; down?: Sat }[] = [];
+      for (const s of sats) {
+        const dir = isUp(s) ? 'up' : 'down';
+        const col = cols.find((c) => !c[dir]);
+        if (col) col[dir] = s;
+        else cols.push({ [dir]: s });
+      }
+      for (const col of cols) {
+        const width = Math.max(...[col.up, col.down].filter((s) => !!s).map(widthOf));
         if (side === 'left') {
           if (first) x = grid(pinEndX - gapLeft - width + 100);
           else x -= width;
         }
         first = false;
-        // a pull-up (the far end a positive rail) stands above the wire with its rail on top,
-        // where no pin above has parts whose wires would run through it
-        const ends = [s.comp, ...s.chain];
-        let far: string | undefined = s.net;
-        for (const c of ends) far = Object.values(c.pins).find((n) => n !== far) ?? far;
-        const height = ends.length * (400 + CHAIN_GAP) + 400;
-        const up =
-          !!far &&
-          far !== s.net &&
-          supplyDir(d.nets[far]!) === 'up' &&
-          !sym.pins.some((q) => q.side === side && q.number !== p.number && satsByPin.has(q.number) && q.y < p.y && q.y >= p.y - height);
-        if (up) {
+        const cx = x;
+        xs.push(cx);
+        if (side === 'right') x += width;
+        if (col.up) {
+          const s = col.up;
           const attached = s.card.pins.find((pp) => s.comp.pins[pp.number] === s.net)!;
-          const satSym = makeSymbol(d, s.comp, symbolFor(s.card, attached.number === s.card.pins[0]!.number), x, p.y - 200);
+          const satSym = makeSymbol(d, s.comp, symbolFor(s.card, attached.number === s.card.pins[0]!.number), cx, p.y - 200);
           scene.symbols.push(satSym);
           let top = satSym.pins.find((pp) => pp.side === 'top')!;
           let lower = s.net;
@@ -954,45 +1021,43 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
           for (const c of s.chain) {
             const card = cardOf(d, c.part)!;
             const bp = card.pins.find((pp) => c.pins[pp.number] === upper) ?? card.pins[0]!;
-            if (upper) scene.wires.push({ netId: upper, pts: [x, top.y, x, top.y - CHAIN_GAP] });
-            const cs = makeSymbol(d, c, symbolFor(card, bp.number === card.pins[0]!.number), x, top.y - CHAIN_GAP - 200);
+            if (upper) scene.wires.push({ netId: upper, pts: [cx, top.y, cx, top.y - CHAIN_GAP] });
+            const cs = makeSymbol(d, c, symbolFor(card, bp.number === card.pins[0]!.number), cx, top.y - CHAIN_GAP - 200);
             scene.symbols.push(cs);
             lower = upper ?? lower;
             upper = Object.values(c.pins).find((n) => n !== lower);
             top = cs.pins.find((pp) => pp.side === 'top')!;
           }
-          if (upper) scene.labels.push(deco(d.nets[upper]!, top.x, top.y, 'up'));
-          xs.push(x);
-          if (side === 'right') x += width;
-          continue;
+          if (upper) endLead(scene, d.nets[upper]!, top.x, top.y, 'up');
         }
+        if (!col.down) continue;
+        const s = col.down;
+        const otherNet = otherNetOf(s);
         // pin attached to the anchor net goes on top
         const flip = s.card.pins[0]!.number !== s.card.pins.find((pp) => s.comp.pins[pp.number] === s.net)!.number;
         const satDef = symbolFor(s.card, flip);
-        const satSym = makeSymbol(d, s.comp, satDef, x, p.y + 200);
+        const satSym = makeSymbol(d, s.comp, satDef, cx, p.y + 200);
         scene.symbols.push(satSym);
         const bottom = satSym.pins.find((pp) => pp.side === 'bottom')!;
         if (s.comp.noConnect.includes(bottom.number)) scene.noConnects.push({ x: bottom.x, y: bottom.y });
-        else if (otherNet && !s.chain.length) scene.labels.push(deco(otherNet, bottom.x, bottom.y, 'down'));
+        else if (otherNet && !s.chain.length) endLead(scene, otherNet, bottom.x, bottom.y, 'down');
         // series parts continue straight down the same column
         let upperNet = otherNet?.id;
         let y = bottom.y;
         s.chain.forEach((c, i) => {
           const card = cardOf(d, c.part)!;
           const topPin = card.pins.find((pp) => c.pins[pp.number] === upperNet) ?? card.pins[0]!;
-          if (upperNet) scene.wires.push({ netId: upperNet, pts: [x, y, x, y + CHAIN_GAP] });
+          if (upperNet) scene.wires.push({ netId: upperNet, pts: [cx, y, cx, y + CHAIN_GAP] });
           y += CHAIN_GAP;
-          const sym = makeSymbol(d, c, symbolFor(card, topPin.number !== card.pins[0]!.number), x, y + 200);
+          const sym = makeSymbol(d, c, symbolFor(card, topPin.number !== card.pins[0]!.number), cx, y + 200);
           scene.symbols.push(sym);
           const b = sym.pins.find((pp) => pp.side === 'bottom')!;
           const bNet = c.pins[b.number] ? d.nets[c.pins[b.number]!] : undefined;
           if (c.noConnect.includes(b.number)) scene.noConnects.push({ x: b.x, y: b.y });
-          else if (bNet && i === s.chain.length - 1) scene.labels.push(deco(bNet, b.x, b.y, 'down'));
+          else if (bNet && i === s.chain.length - 1) endLead(scene, bNet, b.x, b.y, 'down');
           upperNet = bNet?.id;
           y = b.y;
         });
-        xs.push(x);
-        if (side === 'right') x += width;
       }
       const far = side === 'right' ? Math.max(...xs) : Math.min(...xs);
       scene.wires.push({ netId: net.id, pts: [p.x, p.y, far, p.y] });
@@ -1014,7 +1079,7 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
     const bb = sceneBBox(scene);
     const rowW = Math.max(bb.x + bb.w, 2500);
     // higher potential on top, as verticalPart draws it
-    const rank = (n?: Net) => (!n ? 1 : isGroundNet(n) ? 3 : isPowerNet(n) ? 0 : 2);
+    const rank = potential;
     const netsOf = (c: Component) => cardOf(d, c.part)!.pins.map((p) => (c.pins[p.number] ? d.nets[c.pins[p.number]!] : undefined));
     const flipped = (c: Component) => {
       const nets = netsOf(c);
@@ -1097,7 +1162,39 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
       l.y = lowest;
     }
   }
+  clearName(scene, sym);
   return scene;
+}
+
+const hits = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/**
+ * A part's name and value stand outside a top corner, over that side's pin leads. A rising
+ * supply symbol or a neighbouring part there would run through them: then they move to the other
+ * corner, above the middle (when no pin is on top), or failing that up until they are clear.
+ */
+function clearName(scene: Scene, sym: SymbolView): void {
+  const texts = () => [textRect(sym.refPos, [sym.refdes]), textRect(sym.valuePos, sym.valueLines ?? [sym.value])];
+  const clash = () => texts().some((t) => scene.labels.some((l) => hits(t, labelRect(l))) || scene.symbols.some((o) => o !== sym && hits(t, o.bbox)));
+  if (!clash()) return;
+  const body = { x: sym.bbox.x + 200, w: sym.bbox.w - 400 };
+  const at = sym.refPos.anchor === 'end' ? 'left' : sym.refPos.anchor === 'start' ? 'right' : 'middle';
+  const spots: Pick<SymbolView['refPos'], 'x' | 'anchor'>[] = [];
+  if (at !== 'right') spots.push({ x: body.x + body.w + 30, anchor: 'start' });
+  if (at !== 'left') spots.push({ x: body.x - 30, anchor: 'end' });
+  if (at !== 'middle' && !sym.pins.some((p) => p.side === 'top')) spots.push({ x: body.x + body.w / 2, anchor: 'middle' });
+  const [ref, val] = [sym.refPos, sym.valuePos];
+  for (const spot of spots) {
+    sym.refPos = { ...ref, ...spot };
+    sym.valuePos = { ...val, ...spot };
+    if (!clash()) return;
+  }
+  sym.refPos = ref;
+  sym.valuePos = val;
+  for (let n = 0; clash() && n < 20; n++) {
+    sym.refPos = { ...sym.refPos, y: sym.refPos.y - 100 };
+    sym.valuePos = { ...sym.valuePos, y: sym.valuePos.y - 100 };
+  }
 }
 
 /** Net at the bottom of a chained part (the one not shared with the part above). */
@@ -1115,19 +1212,53 @@ function verticalPart(ctx: Ctx, c: Component, cx: number, cy: number): Scene {
   const { d } = ctx;
   const card = cardOf(d, c.part)!;
   const nets = card.pins.map((p) => (c.pins[p.number] ? d.nets[c.pins[p.number]!] : undefined));
-  // higher potential on top: rail above signal above ground
-  const rank = (n?: Net) => (!n ? 1 : isGroundNet(n) ? 3 : isPowerNet(n) ? 0 : 2);
-  const flip = rank(nets[1]) < rank(nets[0]);
+  const rank = potential;
   const scene = emptyScene();
+  if (betweenSupplies(nets)) {
+    // between two rails (a filter resistor VIN → AVIN) or two grounds: lying flat, both symbols
+    // pointing their own way from its ends, the rail the power comes from on the left
+    const sym = horizontalPart(d, c, cx, cy, sourceRank(ctx, nets[0]) >= sourceRank(ctx, nets[1]));
+    scene.symbols.push(sym);
+    for (const p of sym.pins) {
+      const net = nets[card.pins.findIndex((pp) => pp.number === p.number)];
+      const left = p.x < cx;
+      if (c.noConnect.includes(p.number)) scene.noConnects.push({ x: p.x, y: p.y });
+      else if (net) scene.labels.push(deco(net, p.x, p.y, left ? 'left' : 'right'));
+    }
+    return scene;
+  }
+  const flip = rank(nets[1]) < rank(nets[0]);
   const sym = makeSymbol(d, c, symbolFor(card, flip), cx, cy);
   scene.symbols.push(sym);
   for (const p of sym.pins) {
     const idx = card.pins.findIndex((pp) => pp.number === p.number);
     const net = nets[idx];
     if (c.noConnect.includes(p.number)) scene.noConnects.push({ x: p.x, y: p.y });
-    else if (net) scene.labels.push(deco(net, p.x, p.y, p.side === 'top' ? 'up' : 'down'));
+    else if (net) endLead(scene, net, p.x, p.y, p.side === 'top' ? 'up' : 'down');
   }
   return scene;
+}
+
+/** Higher potential on top: a rail pointing up above a signal above ground and rails pointing down. */
+const potential = (n?: Net) => (!n ? 1 : supplyDir(n) === 'up' ? 0 : supplyDir(n) === 'down' ? 3 : 2);
+
+/** How much a rail looks like where the power comes from: an external supply, then the higher voltage, then the one more parts use. */
+function sourceRank(ctx: Ctx, n?: Net): number {
+  if (!n) return 0;
+  return (n.attrs.external ? 1e6 : 0) + (n.attrs.voltage ?? 0) * 1000 + (ctx.members.get(n.id)?.length ?? 0);
+}
+
+/** Both ends on supplies whose symbols point the same way: such a part cannot stand between them. */
+function betweenSupplies(nets: (Net | undefined)[]): boolean {
+  const dirs = nets.map((n) => (n ? supplyDir(n) : null));
+  return dirs.length === 2 && !!dirs[0] && dirs[0] === dirs[1];
+}
+
+/** The supply symbol or label at the end of a vertical lead; a supply pointing against the lead turns aside first (leadEnd). */
+function endLead(scene: Scene, net: Net, x: number, y: number, dir: 'up' | 'down'): void {
+  const r = leadEnd(net, x, y, dir);
+  scene.wires.push(...r.wires);
+  scene.labels.push(r.label);
 }
 
 function freePart(ctx: Ctx, c: Component): Scene {

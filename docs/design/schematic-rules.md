@@ -1,0 +1,143 @@
+# Schematic rules
+
+> Draft of the default ruleset (see [schematic-drawing.md](schematic-drawing.md) §3). It will ship as
+> `packages/schema/rules/schematic-rules.md`, and users edit their copy in Settings → Schematic.
+>
+> Plain text is guidance for the agent. A `### SCH.…` heading with a `level:` line is a rule the
+> kernel checks; set the level to `error`, `warning`, `info` or `off`. A `param:` line changes the
+> rule's threshold. Rules marked *(layout)* are followed by the auto-layout itself; turning one off
+> lets the layout break it. Rule ids the kernel does not know are read by the agent only.
+
+## Reading direction
+
+A schematic is read like text: left to right, top to bottom.
+
+- Signal flows left to right: inputs and connectors that bring signals in on the left, outputs and
+  loads on the right.
+- Power flows the same way: input connector and protection, then regulation, then what is supplied.
+  Supply generation sits left of or above the circuits it feeds.
+- Higher potential higher on the page: rails at the top, ground at the bottom. A part between a rail
+  and ground stands upright, rail end on top.
+- Feedback runs against the flow, so draw it visibly: a feedback path goes back above or below the
+  forward path, not through it.
+
+## Blocks
+
+- Group parts by function (input protection, buck converter, MCU, USB, sensor interface). A block is
+  drawn together and never split across pages.
+- Build each block around its main part (the IC, the transistor, the connector), its small parts
+  at the pins they belong to.
+- Leave clear space between blocks, more than inside them, so the eye sees the blocks.
+- Draw a recognised circuit the way its datasheet does (a regulator's reference design, a bridge
+  rectifier as a diamond), so it is recognised at a glance.
+
+## Supplies
+
+### SCH.RAIL_UP: positive rails point up
+level: error
+
+*(layout)* A positive supply symbol points up, its name above the arrow. Never down, never sideways.
+Negative rails (VEE, -12V) point down.
+
+### SCH.GND_DOWN: ground points down
+level: error
+
+*(layout)* A ground symbol points down. Never up, never sideways.
+
+- A supply symbol stands on a short lead from its pin. When it has to cross a wire of another net to
+  stand upright, that is acceptable; standing upright matters more than the crossing.
+- One rail symbol per group of pins on the same rail: neighbouring supply pins share a short bus
+  with one symbol at its end.
+- A decoupling capacitor sits next to the supply pin it decouples, rail on top, ground below, and is
+  drawn as part of that IC's block. Caps on the same rail form one bank with a shared rail and ground
+  line.
+- Draw a supply as a symbol, not as a net label. A local rail that only links two parts may be a
+  wire.
+
+## Parts
+
+- Use the conventional symbol for each part (resistor, capacitor, polarised capacitor, inductor,
+  diode, LED, transistor), the same style throughout.
+- A two-pin part between a signal and a supply or ground stands upright. A part in series in a
+  signal path lies along the path.
+- A part between two rails (a filter resistor from VIN to AVIN) lies flat, both rail symbols
+  pointing up.
+- A voltage divider is one column: rail, upper resistor, the tap, lower resistor, ground. The tap
+  goes sideways to the pin it feeds.
+- An IC's inputs on the left, outputs on the right, supplies at the top, ground at the bottom, as far
+  as its symbol allows.
+
+### SCH.TEXT_OVERLAP: text is readable
+level: warning
+
+Reference designators, values, pin names, net labels and supply names do not overlap each other,
+a part, or a wire of another net.
+
+## Wires
+
+### SCH.ORTHOGONAL: wires run horizontally and vertically
+level: error
+
+*(layout)* On the grid, no diagonals.
+
+### SCH.DANGLING: every wire ends on a pin, a junction or another wire
+level: error
+
+*(layout)*
+
+### SCH.JUNCTION_DOT: a T has a dot, a crossing has none
+level: error
+
+*(layout)* Three or more connections at a point get a junction dot. Wires that cross without a dot
+are not connected.
+
+### SCH.FOUR_WAY: no four-way junctions
+level: warning
+
+Two T-junctions offset by a grid step, never a cross with a dot: a dot can be missed in a copy, and
+then the reader cannot tell a junction from a crossing.
+
+### SCH.JOG: parts facing each other are in line
+level: warning
+
+Two pins that face each other on one wire (the resistors of a divider, a part in series) sit on one
+line, so the wire is straight.
+
+### SCH.DETOUR: no wire turns back the way it came
+level: warning
+
+### SCH.CROSSING: few crossings
+level: info
+param: max 0 per block
+
+Rearrange before crossing. A crossing between blocks is fine; a crossing inside a block usually
+means a part is on the wrong side.
+
+### SCH.WIRE_THROUGH: no wire runs through a part or its text
+level: error
+
+- Few bends. A wire that bends where it could run straight is a sign of a part out of line.
+- Wires do not run along each other closer than 100 mils, and not along a part's outline.
+
+## Net labels
+
+- Within a block, connect with wires. Between blocks, or across pages, use net labels, so long
+  wires do not cross the sheet.
+- A path the reader must follow to understand the circuit (feedback, a switch node, an analog
+  signal) is a wire wherever practical, even if it is longer.
+- Labels show direction: an input flag points into the part, an output flag away from it.
+- Name nets for what they carry (`I2C_SDA`, `VBAT_SENSE`, `MOTOR_PWM`), not `NET12`.
+
+### SCH.LABEL_ALONE: a net label has a partner
+level: warning
+
+A net label that appears only once on the whole design connects nothing: either a wire is missing
+or the label is not needed.
+
+## Text
+
+- Every part shows its reference designator and value, beside the part, on the same side for parts
+  of one kind.
+- Values in engineering notation with units where it helps (`10k`, `100nF 50V`, `4.7uH`), and a
+  rating when it matters for the build.
+- Notes on the sheet (test points, assembly hints) only where they help the reader of the drawing.

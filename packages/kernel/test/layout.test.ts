@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseQuantity, formatQuantity, type Rect, type SheetView } from '@4k7/schema';
+import { parseQuantity, formatQuantity, type LabelView, type Rect, type SheetView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 
@@ -286,5 +286,171 @@ describe('a transistor switching a load', () => {
     const plus = s.labels.find((l) => l.text === '+3V3')!;
     expect(plus.dir).toBe('up');
     expect(plus.y).toBeLessThan(mid(s, 'R14').y);
+  });
+});
+
+describe('a divider on an IC pin', () => {
+  it('stands both resistors in one column: rail, R1, the node on the pin wire, R2, ground', () => {
+    const k = new Kernel();
+    const d = k.committedDesign();
+    d.parts['acme:ADC'] = { id: 'acme:ADC', mpn: 'ADC', description: 'ADC', category: 'ic', refPrefix: 'U', pins: [{ number: '1', name: 'AIN', type: 'in' }, { number: '2', name: 'VDD', type: 'pwr_in' }, { number: '3', name: 'GND', type: 'pwr_in' }], params: {}, provenance: { source: 'datasheet' } };
+    k.load(d);
+    k.transact({ summary: 'divider', ops: [
+      { op: 'add_part', part: 'acme:ADC', refdes: 'U1' },
+      { op: 'add_part', part: 'generic:R', refdes: 'R1', params: { resistance: '5.6k' } },
+      { op: 'add_part', part: 'generic:R', refdes: 'R2', params: { resistance: '10k' } },
+      { op: 'connect', pins: ['R1.1'], net: 'VOUT' },
+      { op: 'set_net', net: 'VOUT', voltage: 5 },
+      { op: 'connect', pins: ['R1.2', 'R2.1', 'U1.1'], net: 'SENSE' },
+      { op: 'connect', pins: ['R2.2', 'U1.3'], net: 'GND' },
+      { op: 'connect', pins: ['U1.2'], net: '+3V3' },
+      { op: 'set_net', net: '+3V3', voltage: 3.3 },
+    ] });
+    const s = sheetOf(k);
+    const pins = (ref: string) => s.symbols.find((x) => x.refdes === ref)!.pins;
+    const r1 = pins('R1');
+    const r2 = pins('R2');
+    expect(new Set([...r1, ...r2].map((p) => p.x)).size).toBe(1);
+    const node = r1.find((p) => p.side === 'bottom')!;
+    expect(r2.find((p) => p.side === 'top')).toMatchObject({ x: node.x, y: node.y });
+    expect(s.junctions).toContainEqual({ x: node.x, y: node.y });
+    // one straight wire from the pin to the node, no jog
+    const sense = s.wires.filter((w) => w.pts.includes(node.x) && w.pts.includes(node.y));
+    expect(sense).toHaveLength(1);
+    expect(sense[0]!.pts).toHaveLength(4);
+  });
+});
+
+describe('supply symbols among signal pins', () => {
+  /** A small buck (TPS40222 pinout): FB and SW above the supply pins on the left, with parts on their wires. */
+  function buck() {
+    const k = new Kernel();
+    const d = k.committedDesign();
+    const pin = (number: string, name: string, type: 'in' | 'bidir' | 'pwr_in') => ({ number, name, type });
+    d.parts['texas:TPS40222'] = { id: 'texas:TPS40222', mpn: 'TPS40222', description: 'buck', category: 'ic', refPrefix: 'U', pins: [pin('1', 'FB', 'in'), pin('2', 'GND', 'pwr_in'), pin('3', 'SW', 'bidir'), pin('4', 'PVIN', 'pwr_in'), pin('5', 'AVIN', 'pwr_in'), pin('6', 'BOOST', 'bidir')], params: {}, provenance: { source: 'datasheet' } };
+    k.load(d);
+    k.transact({ summary: 'buck', ops: [
+      { op: 'add_part', part: 'texas:TPS40222', refdes: 'U1' },
+      { op: 'add_part', part: 'generic:L', refdes: 'L1', params: { inductance: '10uH' } },
+      { op: 'add_part', part: 'generic:D', refdes: 'D1' },
+      { op: 'add_part', part: 'generic:C', refdes: 'C3', params: { capacitance: '33nF' } },
+      { op: 'add_part', part: 'generic:R', refdes: 'R2', params: { resistance: '31.6k' } },
+      { op: 'add_part', part: 'generic:R', refdes: 'R3', params: { resistance: '10k' } },
+      { op: 'connect', pins: ['U1.4'], net: 'VIN' },
+      { op: 'set_net', net: 'VIN', voltage: 5 },
+      { op: 'connect', pins: ['U1.5'], net: 'AVIN' },
+      { op: 'set_net', net: 'AVIN', voltage: 5 },
+      { op: 'connect', pins: ['U1.3', 'L1.1', 'D1.K', 'C3.2'], net: 'SW' },
+      { op: 'connect', pins: ['U1.6', 'C3.1'], net: 'BOOST' },
+      { op: 'connect', pins: ['L1.2', 'R2.1'], net: 'VOUT' },
+      { op: 'set_net', net: 'VOUT', voltage: 3.3 },
+      { op: 'connect', pins: ['R2.2', 'R3.1', 'U1.1'], net: 'FB' },
+      { op: 'connect', pins: ['U1.2', 'D1.A', 'R3.2'], net: 'GND' },
+    ] });
+    return sheetOf(k);
+  }
+
+  it('raises a rail on a side pin above the leads it would cross, staggered from its neighbour, and moves the name clear', () => {
+    const s = buck();
+    const u1 = s.symbols.find((x) => x.refdes === 'U1')!;
+    const fb = u1.pins.find((p) => p.name === 'FB')!;
+    const base = (l: LabelView) => l.y - 200 - (l.rise ?? 0);
+    const labels = ['VIN', 'AVIN'].map((name) => {
+      const l = s.labels.find((x) => x.text === name)!;
+      expect(u1.pins.find((q) => q.x === l.x && q.y === l.y), name).toBeDefined();
+      expect(l.dir, name).toBe('up'); // never sideways, whatever is in the way
+      expect(l.stub, name).toBe('left');
+      expect(base(l), name).toBeLessThanOrEqual(fb.y - 100); // the arrow clears the FB wire it crosses
+      return l;
+    });
+    expect(Math.abs(base(labels[0]!) - base(labels[1]!))).toBeGreaterThanOrEqual(200); // names not side by side
+    // the name left its corner, where the rails now stand, for the free one on the right
+    expect(u1.refPos.anchor).toBe('start');
+    expect(u1.refPos.x).toBeGreaterThan(u1.bbox.x + u1.bbox.w - 250);
+    expect(u1.valuePos.x).toBe(u1.refPos.x);
+  });
+
+  it('keeps an upright rail symbol where nothing is in its way', () => {
+    const s = buck();
+    // the divider's rail on top of R2
+    expect(s.labels.find((x) => x.text === 'VOUT' && x.dir === 'up')).toBeDefined();
+  });
+});
+
+describe('supply symbols always point their own way', () => {
+  function sheetWith(parts: { part: string; refdes: string; params?: Record<string, string> }[], ops: object[], card?: object) {
+    const k = new Kernel();
+    const d = k.committedDesign();
+    if (card) d.parts[(card as { id: string }).id] = card as never;
+    k.load(d);
+    const r = k.transact({ summary: 'x', ops: [...parts.map((p) => ({ op: 'add_part' as const, ...p })), ...ops] } as never);
+    expect(r.rejection).toBeUndefined();
+    return sheetOf(k);
+  }
+  const labelsOf = (s: SheetView, text: string) => s.labels.filter((l) => l.text === text);
+
+  it('stands a part between a positive and a negative rail upright: the rail on top pointing up, the negative one below pointing down', () => {
+    const s = sheetWith([{ part: 'generic:R', refdes: 'R1', params: { resistance: '10k' } }], [
+      { op: 'connect', pins: ['R1.1'], net: 'VEE' },
+      { op: 'set_net', net: 'VEE', voltage: -5 },
+      { op: 'connect', pins: ['R1.2'], net: 'VCC' },
+      { op: 'set_net', net: 'VCC', voltage: 5 },
+    ]);
+    const [vcc] = labelsOf(s, 'VCC');
+    const [vee] = labelsOf(s, 'VEE');
+    expect(vcc!.dir).toBe('up');
+    expect(vee!.dir).toBe('down');
+    expect(vcc!.y).toBeLessThan(vee!.y);
+    expect(s.wires).toHaveLength(0); // no turns: both symbols stand on their pins
+  });
+
+  it('lays a part between two rails flat, the rail the power comes from on the left, both arrows up', () => {
+    const s = sheetWith([{ part: 'generic:R', refdes: 'R4', params: { resistance: '10' } }], [
+      { op: 'connect', pins: ['R4.1'], net: 'AVIN' },
+      { op: 'set_net', net: 'AVIN', voltage: 5 },
+      { op: 'connect', pins: ['R4.2'], net: 'VIN' },
+      { op: 'set_net', net: 'VIN', voltage: 5, external: true },
+    ]);
+    const [vin] = labelsOf(s, 'VIN');
+    const [avin] = labelsOf(s, 'AVIN');
+    expect(vin!.dir).toBe('up');
+    expect(avin!.dir).toBe('up');
+    expect(vin!.y).toBe(avin!.y);
+    expect(vin!.x).toBeLessThan(avin!.x); // pin 2 is on VIN, and VIN still goes left: the source
+  });
+
+  it('turns a rail at the bottom of a hanging part aside, far enough for its name to clear the lead', () => {
+    const ic = { id: 'acme:IC', mpn: 'IC', description: 'ic', category: 'ic', refPrefix: 'U', pins: [{ number: '1', name: 'A', type: 'in' }, { number: '2', name: 'B', type: 'in' }, { number: '3', name: 'GND', type: 'pwr_in' }], params: {}, provenance: { source: 'datasheet' } };
+    const s = sheetWith([{ part: 'acme:IC', refdes: 'U1' }, { part: 'generic:R', refdes: 'R1', params: { resistance: '1k' } }, { part: 'generic:C', refdes: 'C1', params: { capacitance: '100nF', voltage: '16V' } }, { part: 'generic:R', refdes: 'R2', params: { resistance: '10k' } }], [
+      { op: 'connect', pins: ['U1.1', 'R1.1'], net: 'A' },
+      { op: 'connect', pins: ['R1.2', 'C1.1'], net: 'A_RC' },
+      { op: 'connect', pins: ['C1.2', 'U1.3'], net: 'GND' },
+      { op: 'connect', pins: ['U1.2', 'R2.1'], net: 'B' },
+      { op: 'connect', pins: ['R2.2'], net: 'VBAT_3V3_X' },
+      { op: 'set_net', net: 'VBAT_3V3_X', voltage: 3.3 },
+    ], ic);
+    const [rail] = labelsOf(s, 'VBAT_3V3_X');
+    expect(rail!.dir).toBe('up');
+    const r2 = s.symbols.find((x) => x.refdes === 'R2')!;
+    const bottom = r2.pins.find((p) => p.side === 'bottom')!;
+    expect(rail!.y).toBeGreaterThan(bottom.y); // below the part, on a lead that went on down
+    expect(rail!.stub).toBe('right');
+    expect(rail!.stubLen!).toBeGreaterThanOrEqual(250 + 50); // half the name clears the lead
+  });
+
+  it('steps a rail pin beyond a supply bus out past the bus', () => {
+    const ic = { id: 'acme:IC2', mpn: 'IC2', description: 'ic', category: 'ic', refPrefix: 'U', pins: [{ number: '1', name: 'PVDD', type: 'pwr_in' }, { number: '2', name: 'PVDD', type: 'pwr_in' }, { number: '3', name: 'PVIO', type: 'pwr_in' }, { number: '4', name: 'GND', type: 'pwr_in' }], params: {}, provenance: { source: 'datasheet' } };
+    const s = sheetWith([{ part: 'acme:IC2', refdes: 'U1' }], [
+      { op: 'connect', pins: ['U1.1', 'U1.2'], net: 'VDDA' },
+      { op: 'set_net', net: 'VDDA', voltage: 3.3 },
+      { op: 'connect', pins: ['U1.3'], net: 'VDDIO' },
+      { op: 'set_net', net: 'VDDIO', voltage: 3.3 },
+      { op: 'connect', pins: ['U1.4'], net: 'GND' },
+    ], ic);
+    const [vdda] = labelsOf(s, 'VDDA');
+    const [vddio] = labelsOf(s, 'VDDIO');
+    expect(s.labels.filter((l) => l.text === 'VDDA')).toHaveLength(1); // one symbol on the bus
+    expect(vddio!.stubLen ?? 100).toBeGreaterThanOrEqual(300);
+    expect(Math.abs(vddio!.x - (vddio!.stubLen ?? 100) - vdda!.x)).toBeGreaterThanOrEqual(200); // its stem is not on the bus
   });
 });

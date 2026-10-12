@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { OptimizeScope, ScopeInfo } from '@4k7/schema';
+import type { LabelView, OptimizeScope, ScopeInfo, SheetView, SymbolView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
-import { circuitSignature } from '../src/scope.ts';
+import { circuitSignature, measure } from '../src/scope.ts';
 import { buckTransaction } from './fixtures.ts';
 
 /** The buck's output side: inductor, diode, output cap, feedback divider, compensation and boot parts. */
@@ -127,5 +127,79 @@ describe('optimize scope', () => {
     expect(circuitSignature(k.draftDesign())).toBe(sig);
     k.transact({ summary: 'value', ops: [{ op: 'set_param', ref: 'R1', params: { resistance: '33k' } }] });
     expect(circuitSignature(k.draftDesign())).not.toBe(sig);
+  });
+});
+
+describe('optimize measures: how the wires are drawn', () => {
+  /** A vertical two-pin part with its pins at (x, top) and (x, top + 400). */
+  const vertical = (ref: string, x: number, top: number) =>
+    ({ componentId: ref, refdes: ref, value: '', bbox: { x: x - 100, y: top, w: 200, h: 400 }, prims: [], pins: [{ number: '1', name: '1', x, y: top, side: 'top', showName: false, showNumber: false }, { number: '2', name: '2', x, y: top + 400, side: 'bottom', showName: false, showNumber: false }], refPos: { x, y: top, anchor: 'start' }, valuePos: { x, y: top, anchor: 'start' } }) as SymbolView;
+  const sheet = (wires: number[][], symbols: SymbolView[] = []) => ({ id: 's', name: 'Main', symbols, wires: wires.map((pts) => ({ netId: 'n', pts })), labels: [], junctions: [], noConnects: [], pages: [] }) as unknown as SheetView;
+  const m = (s: SheetView) => measure(s, new Set(['n']));
+
+  it('counts a corner as a bend, not a straight run or a T', () => {
+    expect(m(sheet([[0, 0, 1000, 0]])).bends).toBe(0);
+    expect(m(sheet([[0, 0, 1000, 0, 1000, 500]])).bends).toBe(1);
+    expect(m(sheet([[0, 0, 1000, 0], [1000, 0, 1000, 500]])).bends).toBe(1); // two wires meeting at a corner
+    expect(m(sheet([[0, 0, 1000, 0], [500, 0, 500, 500]])).bends).toBe(0); // a T
+  });
+
+  it('tells a wire that doubles back (a U) from one that steps across (a Z)', () => {
+    const u = m(sheet([[0, 0, 0, -300, 500, -300, 500, 0]]));
+    expect(u).toMatchObject({ bends: 2, detours: 1 });
+    const z = m(sheet([[0, 0, 0, -300, 500, -300, 500, -600]]));
+    expect(z).toMatchObject({ bends: 2, detours: 0 });
+    // a U with a tap on its sideways run is a bus
+    expect(m(sheet([[0, 0, 0, -300, 500, -300, 500, 0], [250, -300, 250, -600]])).detours).toBe(0);
+  });
+
+  it('overlaps: a supply head on a wire, a stem along one, names touching, text; not a stem merely crossing', () => {
+    // a rail on a left pin at (1000, 300), standing up after a 100 stub: stem 900 x 100..300, arrow and name above 100
+    const rail = (l: Partial<LabelView> = {}): LabelView => ({ x: 1000, y: 300, text: 'VIN', netId: 'n', kind: 'rail', dir: 'up', stub: 'left', stubLen: 100, ...l });
+    const withWire = (pts: number[], labels: LabelView[] = [rail()]): SheetView => ({ ...sheet([]), wires: [{ netId: 'sig', pts }], labels });
+    expect(m(withWire([1000, 200, 0, 200])).overlaps).toBe(0); // crosses the stem: acceptable, the symbol stands upright
+    expect(m(withWire([1000, 50, 0, 50])).overlaps).toBe(1); // under the arrow
+    expect(m(withWire([900, 400, 900, 0])).overlaps).toBe(1); // along the stem: reads as connected
+    const gnd = rail({ y: 500, text: 'GND', kind: 'ground', dir: 'down' });
+    expect(m(withWire([1000, 620, 0, 620], [gnd])).overlaps).toBe(1); // through the ground bars
+    // two rails whose names stand side by side without air
+    const neighbour = rail({ x: 1000, y: 400, text: 'AVIN', stubLen: 300, rise: 100 });
+    expect(m(withWire([5000, 5000, 5000, 5001], [rail(), neighbour])).overlaps).toBe(2);
+    expect(m(withWire([5000, 5000, 5000, 5001], [rail(), { ...neighbour, rise: 300 }])).overlaps).toBe(0); // staggered
+    // the name running into a part's text
+    const part = { ...vertical('U1', 3000, 3000), refPos: { x: 900, y: 0, anchor: 'start' as const } };
+    expect(m({ ...withWire([5000, 5000, 5000, 5001]), symbols: [part] }).overlaps).toBe(1);
+  });
+
+  it('judges each drawing of a net on its own: no jog between pins on wires that do not meet', () => {
+    // C8 and R5 on one VOUT wire at the bottom of the sheet; L1 hanging on its own VOUT lead far away
+    const apart = sheet([[0, 0, 500, 0], [3000, -1000, 3000, -600]], [vertical('C8', 0, 0), vertical('R5', 500, 0), vertical('L1', 3000, -1400)]);
+    expect(m(apart).jogs).toBe(0);
+    const joined = sheet([[0, 0, 500, 0], [3000, -1000, 3000, 0, 500, 0]], [vertical('C8', 0, 0), vertical('R5', 500, 0), vertical('L1', 3000, -1400)]);
+    expect(m(joined).jogs).toBe(1);
+  });
+
+  it('takes a supply symbol at a wire end as an attachment: a two-pin bus with its symbol at the corner is no detour', () => {
+    const s: SheetView = { ...sheet([[100, 0, 0, 0], [100, 100, 0, 100], [0, 0, 0, 100]]), labels: [{ x: 0, y: 0, text: 'VDDA', netId: 'n', kind: 'rail', dir: 'up' }] };
+    expect(m(s)).toMatchObject({ bends: 1, detours: 0 });
+  });
+
+  it('counts a divider drawn side by side as a jog, and none when it is stacked', () => {
+    // R1 from 3500 to 3900 at x 5300, R2 hanging from the same node wire at x 4900
+    expect(m(sheet([[5800, 3900, 4900, 3900]], [vertical('R1', 5300, 3500), vertical('R2', 4900, 3900)])).jogs).toBe(1);
+    expect(m(sheet([[5800, 3900, 5300, 3900]], [vertical('R1', 5300, 3500), vertical('R2', 5300, 3900)])).jogs).toBe(0);
+  });
+
+  it('scores the buck the layout draws: no detour or overlap, and the switch node step as a jog', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    k.accept();
+    const sheet = k.state().view.sheets[0]!;
+    const info = k.setScope({ view: 'schematic', sheet: sheet.id, rect: OUTPUT_SIDE }) as ScopeInfo;
+    // the ground bus under the parts turns up at both ends, but its taps make it a bus, not a detour
+    expect(info.measures.detours).toBe(0);
+    // the one jog is real: U1's SW pin is lower than L1, so the switch node steps up to it
+    expect(info.measures.jogs).toBe(1);
+    expect(info.measures.overlaps).toBe(0);
   });
 });

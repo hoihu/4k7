@@ -100,6 +100,12 @@ export function labelRect(l: LabelView): Rect {
   }
 }
 
+/** The box a symbol's reference or value text takes, from its anchor point. */
+export function textRect(p: SymbolView['refPos'], lines: string[]): Rect {
+  const w = Math.max(...lines.map(tw)) + 20;
+  return { x: p.anchor === 'end' ? p.x - w : p.anchor === 'middle' ? p.x - w / 2 : p.x, y: p.y - 80, w, h: 100 + LINE * (lines.length - 1) };
+}
+
 export function sceneBBox(s: Scene): Rect {
   let minX = Infinity,
     minY = Infinity,
@@ -110,10 +116,6 @@ export function sceneBBox(s: Scene): Rect {
     minY = Math.min(minY, r.y);
     maxX = Math.max(maxX, r.x + r.w);
     maxY = Math.max(maxY, r.y + r.h);
-  };
-  const textRect = (p: SymbolView['refPos'], lines: string[]): Rect => {
-    const w = Math.max(...lines.map(tw)) + 20;
-    return { x: p.anchor === 'end' ? p.x - w : p.anchor === 'middle' ? p.x - w / 2 : p.x, y: p.y - 80, w, h: 100 + LINE * (lines.length - 1) };
   };
   for (const sym of s.symbols) {
     add(sym.bbox);
@@ -163,11 +165,12 @@ const NEXT_BODY = 140;
 
 /**
  * Width a vertical two-pin part needs: its text on the right and room for the next part's
- * body. Rounded to a 50-mil grid (the usual schematic grid) to keep columns tight.
+ * body, and for the decoration under it (a rail at the bottom turns aside, see leadEnd).
+ * Rounded to a 50-mil grid (the usual schematic grid) to keep columns tight.
  */
-export function satWidth(d: Design, c: Component, bottomLabel?: string): number {
+export function satWidth(d: Design, c: Component, bottom?: Net): number {
   const text = Math.max(tw(c.refdes), ...valueLinesOf(d, c).map(tw));
-  const below = bottomLabel ? tw(bottomLabel) / 2 + 80 : 0;
+  const below = !bottom ? 0 : supplyDir(bottom) === 'up' ? turnStub(bottom) + tw(bottom.name) / 2 + 80 : tw(bottom.name) / 2 + 80;
   return Math.max(300, halfGrid(Math.max(TEXT_GAP + text + NEXT_BODY, below + 100)));
 }
 
@@ -192,7 +195,8 @@ export function supplyDir(net: Net): 'up' | 'down' | null {
 /**
  * The decoration that shows which net a connection point belongs to. Signal nets get a
  * label pointing `dir`; supplies always get a vertical symbol (up for positive rails, down for
- * ground and negative rails), after a horizontal stub when the lead is horizontal.
+ * ground and negative rails), after a horizontal stub when the lead is horizontal. A supply on a
+ * vertical lead must point the lead's way: see `leadEnd` for one that does not.
  */
 export function deco(net: Net, x: number, y: number, dir: Dir, stubLen = 100, rise = 0, pin?: PinType): LabelView {
   const kind: LabelView['kind'] = isGroundNet(net) ? 'ground' : isPowerNet(net) ? 'rail' : 'net';
@@ -207,6 +211,25 @@ function flowOf(pin?: PinType): LabelView['flow'] {
   if (pin === 'out' || pin === 'pwr_out') return 'out';
   if (pin === 'bidir' || pin === 'tri') return 'io';
   return undefined;
+}
+
+/** How far a vertical lead goes on before it turns to a supply symbol that points the other way (see leadEnd). */
+export const TURN_DROP = 400;
+/** The sideways run after that, to where the symbol stands (longer when the name needs it: it must clear the lead). */
+export const TURN_STUB = 150;
+export const turnStub = (net: Net) => Math.max(TURN_STUB, tw(net.name) / 2 + 50);
+
+/**
+ * The decoration at the end of a vertical lead that leaves its part going `dir`. A supply symbol
+ * always points its own way (rails up, ground down), so where that is against the lead (a rail at
+ * the bottom of a part hanging down, a ground at the top of one standing up) the lead goes on past
+ * the part's text, turns sideways and the symbol stands there, clear of the part.
+ */
+export function leadEnd(net: Net, x: number, y: number, dir: 'up' | 'down', side: 'left' | 'right' = 'right'): { wires: WireView[]; label: LabelView } {
+  const want = supplyDir(net);
+  if (!want || want === dir) return { wires: [], label: deco(net, x, y, dir) };
+  const ey = y + (dir === 'down' ? TURN_DROP : -TURN_DROP);
+  return { wires: [{ netId: net.id, pts: [x, y, x, ey] }], label: deco(net, x, ey, side, turnStub(net)) };
 }
 
 /** Horizontal room a decoration at a left/right pin end needs. */

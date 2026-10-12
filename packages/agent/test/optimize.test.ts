@@ -9,7 +9,7 @@ const info: ScopeInfo = {
   anchored: [{ ref: 'U1', why: 'cut by the edge of the area' }],
   context: 5,
   boundaryNets: ['FB', 'GND'],
-  measures: { crossings: 2, wireIn: 14.5, labels: 1 },
+  measures: { crossings: 2, bends: 5, jogs: 1, detours: 0, overlaps: 2, wireIn: 14.5, labels: 1 },
 };
 
 describe('optimize', () => {
@@ -18,7 +18,7 @@ describe('optimize', () => {
     expect(t).toContain('movable (inside the area): R1 R2 C2');
     expect(t).toContain('U1 (cut by the edge of the area)');
     expect(t).toContain('nets that leave the area: FB GND');
-    expect(t).toContain('crossings 2, wire 14.5 in, net labels 1');
+    expect(t).toContain('crossings 2, bends 5, jogs 1, detours 0, overlaps 2, wire 14.5 in, net labels 1');
     expect(t).toContain("the user's goal: the divider is far from U1");
   });
 
@@ -49,9 +49,10 @@ describe('optimize', () => {
       counts: { errors: 0, warnings: 0, infos: 0, waived: 0 },
       introduced: [],
       resolved: [],
-      scope: { ripple: ['J1'], measures: { crossings: 0, wireIn: 12, labels: 1 }, baseline: info.measures },
+      scope: { ripple: ['J1'], measures: { crossings: 0, bends: 3, jogs: 1, detours: 0, overlaps: 0, wireIn: 12, labels: 1 }, baseline: info.measures },
     } as TransactionResult;
     expect(compactTx(r)).toMatchObject({ scope: { ripple: ['J1'], baseline: { crossings: 2 } } });
-    expect(describeTx(r)).toContain('ripple 1 · crossings 2→0');
+    expect(describeTx(r)).toContain('ripple 1 · crossings 2→0, bends 5→3, overlaps 2→0, wire 14.5→12 in');
+    expect(describeTx({ ...r, scope: { ...r.scope!, measures: info.measures } })).toContain('measures unchanged');
   });
 });
