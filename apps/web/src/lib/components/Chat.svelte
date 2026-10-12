@@ -193,7 +193,7 @@
   .composer { border-top: 1px solid var(--line); padding: 6px 8px 8px; display: flex; flex-direction: column; gap: 5px; flex: none; }
   .inp { display: flex; flex-direction: column; border: 1px solid var(--line-2); border-radius: 8px; background: var(--canvas); padding: 2px 3px 3px 8px; }
   .inp:focus-within { border-color: var(--accent); }
-  .inp textarea { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; padding: 5px 0; resize: none; field-sizing: content; line-height: 1.4; min-height: calc(1.4em + 10px); max-height: 140px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+  .inp textarea { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; padding: 5px 0; resize: none; field-sizing: content; line-height: 1.4; min-height: calc(3 * 1.4em + 10px); max-height: 220px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
   .bar { display: flex; align-items: center; gap: 2px; margin-left: -5px; min-width: 0; }
   .bar .grow { flex: 1; }
   .bar .div { width: 1px; height: 14px; background: var(--line-2); margin: 0 3px; flex: none; }
