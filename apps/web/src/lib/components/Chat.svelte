@@ -2,10 +2,14 @@
   import { app } from '../app.svelte.ts';
   import { server } from '../server.svelte.ts';
   import ChangesetCard from './ChangesetCard.svelte';
+  import ModelPicker from './ModelPicker.svelte';
+  import { currentChoice, hasEffort } from '../models.ts';
+  import type { Settings } from '../persist.ts';
   import { markdown } from '../markdown.ts';
   import { USAGE_TITLE, usageLine } from '../usage.ts';
 
   let scroller: HTMLDivElement | undefined = $state();
+  const efforts: Settings['effort'][] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
   const suggestions = $derived.by(() => {
     if (!app.k || app.k.summary.components.length === 0) {
@@ -113,11 +117,25 @@
     {/if}
     <div class="inp">
       <textarea rows="1" bind:value={app.input} {onkeydown} placeholder="Ask, or give a hint…" aria-label="Message"></textarea>
-      {#if app.running}
-        <button type="button" class="btn" onclick={() => app.stop()}>Stop</button>
-      {:else}
-        <button type="submit" class="btn pri" disabled={!app.input.trim()}>↵</button>
-      {/if}
+      <div class="bar">
+        <ModelPicker />
+        {#if hasEffort(currentChoice(app.settings))}
+          <span class="div"></span>
+          <select class="effort" value={app.settings.effort} title="Effort: higher is more thorough and uses more tokens" aria-label="Effort" onchange={(e) => void app.updateSettings({ effort: (e.currentTarget as HTMLSelectElement).value as Settings['effort'] })}>
+            {#each efforts as e (e)}<option value={e}>{e[0]!.toUpperCase() + e.slice(1)}</option>{/each}
+          </select>
+        {/if}
+        {#if app.settings.provider === 'agent'}
+          <span class="div"></span>
+          <button type="button" class="web" aria-pressed={app.settings.agentWeb} title={`Let ${app.harness.name} read the web (datasheets, application notes)`} onclick={() => void app.updateSettings({ agentWeb: !app.settings.agentWeb })}>Web</button>
+        {/if}
+        <span class="grow"></span>
+        {#if app.running}
+          <button type="button" class="btn" onclick={() => app.stop()}>Stop</button>
+        {:else}
+          <button type="submit" class="btn pri" disabled={!app.input.trim()}>↵</button>
+        {/if}
+      </div>
     </div>
     <div class="sugg">
       {#each suggestions as s (s)}<button type="button" onclick={() => { app.input = s; }}>{s}</button>{/each}
@@ -171,9 +189,17 @@
   .refs { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-bottom: 3px; }
   .rchip { font-family: var(--mono); font-size: 11px; background: var(--info-soft); color: var(--info); border-radius: 4px; padding: 0 5px; line-height: 18px; }
   .composer { border-top: 1px solid var(--line); padding: 6px 8px 8px; display: flex; flex-direction: column; gap: 5px; flex: none; }
-  .inp { display: flex; gap: 4px; align-items: flex-end; border: 1px solid var(--line-2); border-radius: 7px; background: var(--canvas); padding: 2px 2px 2px 8px; }
+  .inp { display: flex; flex-direction: column; border: 1px solid var(--line-2); border-radius: 8px; background: var(--canvas); padding: 2px 3px 3px 8px; }
   .inp:focus-within { border-color: var(--accent); }
   .inp textarea { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; padding: 5px 0; resize: none; field-sizing: content; line-height: 1.4; min-height: calc(1.4em + 10px); max-height: 140px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+  .bar { display: flex; align-items: center; gap: 2px; margin-left: -5px; min-width: 0; }
+  .bar .grow { flex: 1; }
+  .bar .div { width: 1px; height: 14px; background: var(--line-2); margin: 0 3px; flex: none; }
+  .effort { border: 0; background: none; color: var(--txt-2); font-size: 12px; padding: 2px 3px; border-radius: 5px; }
+  .effort:hover { background: var(--hover); color: var(--txt); }
+  .web { border: 0; background: none; color: var(--txt-3); font-size: 12px; padding: 2px 6px; border-radius: 5px; }
+  .web:hover { background: var(--hover); }
+  .web[aria-pressed="true"] { color: var(--accent-txt); background: var(--accent-soft); }
   .sugg { display: flex; gap: 4px; flex-wrap: wrap; }
   .sugg button { border: 1px solid var(--line); background: var(--panel-2); border-radius: 99px; padding: 0 8px; font-size: 11.5px; line-height: 20px; color: var(--txt-2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sugg button:hover { border-color: var(--accent); color: var(--accent-txt); }
