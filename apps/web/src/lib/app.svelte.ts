@@ -955,6 +955,16 @@ class AppState {
     this.settingsChannel?.postMessage({ type: 'settings' });
   }
 
+  /** Save (or with '' remove) the key of an API service, whether or not the chat uses it now. */
+  async saveApiKeyFor(service: Settings['api'], key: string) {
+    await saveApiKey(service, key.trim());
+    if (service === this.settings.api) {
+      this.apiKey = key.trim();
+      this.agent?.setProvider(this.makeProvider());
+    }
+    this.settingsChannel?.postMessage({ type: 'settings' });
+  }
+
   /** Tabs of the app tell each other about settings changes and who holds the server. */
   private settingsChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('4k7-settings') : null;
 

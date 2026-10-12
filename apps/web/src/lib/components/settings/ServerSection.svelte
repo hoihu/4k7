@@ -63,9 +63,9 @@
       <div class="way">
         <b>Chat in this app</b>
         {#if __APP_RUN__}
-          <p>Open {serverRun}: it starts the server and opens this page connected to it. Then choose a <a href="#provider">coding agent</a> as chat provider.</p>
+          <p>Open {serverRun}: it starts the server and opens this page connected to it. Then choose a coding agent with the model button under the chat box.</p>
         {:else}
-          <p>Start the server in a terminal and open the link it prints. Then choose a <a href="#provider">coding agent</a> as chat provider.</p>
+          <p>Start the server in a terminal and open the link it prints. Then choose a coding agent with the model button under the chat box.</p>
           <div class="cmd"><code>{serverRun}</code></div>
           {#if where}<p class="muted">Run it in this repository.</p>{/if}
         {/if}

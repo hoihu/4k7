@@ -5,10 +5,11 @@
   import AppearanceSection from './settings/AppearanceSection.svelte';
   import ServerSection from './settings/ServerSection.svelte';
   import ProjectSection from './settings/ProjectSection.svelte';
-  import ProviderSection from './settings/ProviderSection.svelte';
+  import ApiKeysSection from './settings/ApiKeysSection.svelte';
 
   const nav = [
-    { id: 'provider', label: 'Chat provider' },
+    { id: 'apis', label: 'API keys' },
+    { id: 'agents', label: 'Coding agents' },
     { id: 'server', label: 'Local server' },
     { id: 'agent', label: 'Agent' },
     { id: 'appearance', label: 'Appearance' },
@@ -28,8 +29,8 @@
     {#each nav as n (n.id)}<button class="ib" onclick={() => jump(n.id)}>{n.label}</button>{/each}
   </nav>
   <div class="col" bind:this={scroller}>
-    <ProviderSection />
     <AgentsSection />
+    <ApiKeysSection />
     <ServerSection />
     <AgentSection />
     <AppearanceSection />
