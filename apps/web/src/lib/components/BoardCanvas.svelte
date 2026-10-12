@@ -73,6 +73,17 @@
   const centreOf = (ref: string) => board?.parts.find((x) => x.refdes === ref);
   let fittedFor = '';
   let userMoved = false;
+  /**
+   * Zooming or panning: pours are drawn from their cells instead of their exact (masked) shape
+   * until the view rests. A mask is drawn again on every frame, which WebKit (Safari) makes slow.
+   */
+  let moving = $state(false);
+  let movingTimer: ReturnType<typeof setTimeout> | undefined;
+  function viewMoved() {
+    moving = true;
+    clearTimeout(movingTimer);
+    movingTimer = setTimeout(() => (moving = false), 150);
+  }
 
   $effect(() => {
     if (!board) return;
@@ -113,6 +124,7 @@
     const k = w / vb.w;
     vb = { x: p.x - (p.x - vb.x) * k, y: p.y - (p.y - vb.y) * k, w, h: vb.h * k };
     userMoved = true;
+    viewMoved();
   }
   /** Bottom-side parts are drawn first, so the top side lies over them. */
   const partsInOrder = $derived(board ? [...board.parts.filter((p) => p.side === 'bottom'), ...board.parts.filter((p) => p.side !== 'bottom')] : []);
@@ -176,6 +188,7 @@
     const r = svg.getBoundingClientRect();
     const s = Math.max(vb.w / r.width, vb.h / r.height);
     vb = { ...vb, x: drag.vx - dx * s, y: drag.vy - dy * s };
+    viewMoved();
   }
   function onpointerup(e: PointerEvent) {
     if (gfxDrag) {
@@ -235,6 +248,8 @@
     for (let i = 0; i + 3 < r.length; i += 4) d += `M${r[i]},${r[i + 1]}h${r[i + 2]}v${r[i + 3]}h${-r[i + 2]!}z`;
     return d;
   };
+  /** Each pour's cells as one path (thousands of them: built once per board, not on every frame). */
+  const zonePaths = $derived(new Map(board?.zones.map((z) => [z, zonePath(z.rects)])));
   const path = (pts: number[]) => pts.reduce((s, v, i) => s + (i % 2 ? `,${v}` : `${i ? ' L' : 'M'}${v}`), '');
 </script>
 
@@ -265,7 +280,7 @@
       {#if show[layer]}
         <g class="layer {LAYER_CLASS[layer]}" class:dim={layer !== 'F.Cu' && show['F.Cu']}>
           {#each board.zones.filter((z) => z.layer === layer) as z, zi (zi)}
-            {#if z.shape}
+            {#if z.shape && !moving}
               {@const id = `zm-${layer}-${zi}`}
               {@const o = z.shape.outline}
               <mask {id} maskUnits="userSpaceOnUse" x={o[0] - 1} y={o[1] - 1} width={o[2] - o[0] + 2} height={o[3] - o[1] + 2}>
@@ -279,7 +294,7 @@
               </mask>
               <rect class="zone" x={o[0]} y={o[1]} width={o[2] - o[0]} height={o[3] - o[1]} mask="url(#{id})" />
             {:else}
-              <path class="zone" d={zonePath(z.rects)} />
+              <path class="zone" d={zonePaths.get(z)} />
             {/if}
           {/each}
           {#each tracksOn(layer) as t, i (i)}
@@ -409,19 +424,19 @@
   /* the board itself (substrate under the solder mask): not a copper layer */
   .substrate { fill: #0f2a22; }
   .edge { fill: none; stroke: #e0c341; stroke-width: 0.15; }
-  .layer path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .layer > path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
   /* planes and pours are never highlighted (they cover the board; hovering them would light it all up) */
   .layer .zone { stroke: none; opacity: 0.16; pointer-events: none; }
   .fcu .zone { fill: #c9463d; }
   .bcu .zone { fill: #3f7fd6; }
   .in1 .zone { fill: #c9a13d; }
   .in2 .zone { fill: #8e5cd6; }
-  .fcu path { stroke: #c9463d; }
-  .bcu path { stroke: #3f7fd6; }
-  .in1 path { stroke: #c9a13d; }
-  .in2 path { stroke: #8e5cd6; }
-  .layer.dim path { opacity: 0.7; }
-  .layer path.hot { stroke: #fff27a; }
+  .fcu > path { stroke: #c9463d; }
+  .bcu > path { stroke: #3f7fd6; }
+  .in1 > path { stroke: #c9a13d; }
+  .in2 > path { stroke: #8e5cd6; }
+  .layer.dim > path:not(.zone) { opacity: 0.7; }
+  .layer > path.hot { stroke: #fff27a; }
   .pad { fill: #c98a3c; }
   .pad.tht { fill: #d8a24a; }
   /* parts on the bottom side: pads in the bottom copper's colour, the outline dashed */
