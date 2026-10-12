@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { SERVER_PROTOCOL, type ChatEvent, type HarnessCapability, type ServerToTab } from '@4k7/schema';
 import { ChatRunner, CopilotHarness, LocalServer, OpenCodeHarness, mcpHttpHandler } from '../src/index.ts';
+import { tinyPdf } from './pdf-fixture.ts';
 
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 const fake = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.url));
@@ -23,7 +24,8 @@ async function setup() {
   const copilot = new CopilotHarness(fake('fake-copilot.mjs'));
   const opencode = new OpenCodeHarness(fake('fake-opencode.mjs'), workDir);
   const harnesses: HarnessCapability[] = [copilot.detect(), opencode.detect()];
-  const chat = new ChatRunner({ server, claudeBin: fake('fake-claude.mjs'), workDir, harnesses: [copilot, opencode] });
+  const ingestDir = mkdtempSync(join(tmpdir(), 'tw-ingest-'));
+  const chat = new ChatRunner({ server, claudeBin: fake('fake-claude.mjs'), workDir, ingestDir, harnesses: [copilot, opencode] });
   server.setChatHandler(chat.handle, { available: true }, harnesses);
   server.setHttpHandler(mcpHttpHandler(server, (t) => chat.modeFor(t)));
 
@@ -40,7 +42,8 @@ async function setup() {
       if (m.type === 'harnesses') pushed.push(m);
       if (m.type === 'call') {
         calls.push(m.tool);
-        ws.send(JSON.stringify({ type: 'result', id: m.id, isError: false, content: [{ type: 'text', text: '<design_state>empty</design_state>' }] }));
+        const answer = m.tool === 'submit_part' ? `checked ${(m.input as { mpn: string }).mpn}` : '<design_state>empty</design_state>';
+        ws.send(JSON.stringify({ type: 'result', id: m.id, isError: false, content: [{ type: 'text', text: answer }] }));
       }
       if (m.type === 'chat_event') events.set(m.id, [...(events.get(m.id) ?? []), m.event]);
     });
@@ -55,7 +58,19 @@ async function setup() {
         }
       }, 20);
     });
-  return { server, welcome, pushed, calls, send, opencode };
+  const run = (msg: Record<string, unknown>) =>
+    new Promise<ChatEvent[]>((resolve) => {
+      ws.send(JSON.stringify(msg));
+      const t = setInterval(() => {
+        if (events.get(msg.id as string)?.some((e) => e.kind === 'done')) {
+          clearInterval(t);
+          resolve(events.get(msg.id as string)!);
+        }
+      }, 20);
+    });
+  const ingest = (id: string, harness: string, extra: Record<string, unknown> = {}) =>
+    run({ type: 'ingest', id, harness, mpn: 'STM32F777VIT6', pdf: { name: 'ds.pdf', base64: tinyPdf('Table 11. Pin definitions') }, ...extra });
+  return { server, welcome, pushed, calls, send, ingest, opencode, ingestDir };
 }
 
 const text = (es: ChatEvent[]) => es.filter((e) => e.kind === 'text').map((e) => (e as { text: string }).text).join('');
@@ -70,8 +85,8 @@ describe('app chat via other coding agents', () => {
     expect(welcome).toMatchObject({
       type: 'welcome',
       harnesses: [
-        { id: 'copilot', name: 'GitHub Copilot CLI', available: true, version: 'GitHub Copilot CLI 1.0.95 (fake).' },
-        { id: 'opencode', name: 'OpenCode', available: true, version: '1.15.10' },
+        { id: 'copilot', name: 'GitHub Copilot CLI', available: true, ingest: true, version: 'GitHub Copilot CLI 1.0.95 (fake).' },
+        { id: 'opencode', name: 'OpenCode', available: true, ingest: true, version: '1.15.10' },
       ],
     });
   });
@@ -86,6 +101,10 @@ describe('app chat via other coding agents', () => {
   });
 
   describe('GitHub Copilot CLI', () => {
+    it('lists the models of its catalogue', async () => {
+      expect(await new CopilotHarness(fake('fake-copilot.mjs')).models()).toEqual(['auto', 'claude-sonnet-5', 'gpt-6-luna']);
+    });
+
     it('runs copilot with only the 4k7 tools, the chat rules in the first message, and a session id up front', async () => {
       const saved = process.env.COPILOT_ALLOW_ALL;
       process.env.COPILOT_ALLOW_ALL = '1';
@@ -178,6 +197,66 @@ describe('app chat via other coding agents', () => {
       const { send } = await setup();
       const es = await send({ id: 'o3', text: 'please fail', harness: 'opencode' });
       expect(es.at(-1)).toMatchObject({ kind: 'done', ok: false, error: 'Model not found: nope/nope' });
+    });
+  });
+
+  describe('datasheet import', () => {
+    it('runs Copilot with only its read-only file tools in the datasheet folder, and submit_part', async () => {
+      const { ingest, calls, ingestDir } = await setup();
+      const es = await ingest('i1', 'copilot', { model: 'claude-sonnet-5' });
+      expect(es.at(-1)).toMatchObject({ kind: 'done', ok: true });
+      expect(calls).toEqual(['submit_part']);
+      const flags = flagsOf(es);
+      expect(flags).toMatchObject({
+        available: ['view', 'grep', 'glob', '4k7'],
+        allowed: ['4k7'],
+        tempDir: false,
+        builtinMcps: false,
+        customInstructions: false,
+        rules: true,
+        verify: false,
+        model: 'claude-sonnet-5',
+        files: ['datasheet.pdf', 'index.txt', 'pages'],
+      });
+      expect(flags.message).toBe('Create the part for STM32F777VIT6 (datasheet: ds.pdf).');
+      expect(flags.tools).toEqual(['submit_part']);
+      // progress like Claude Code's: pages read, pins written
+      const status = es.filter((e) => e.kind === 'status').map((e) => (e as { text: string }).text);
+      expect(status).toEqual(['Datasheet: 1 pages, 0.0 MB', 'Reading page 1', 'Searching for “Pinout”', 'Writing the part…', 'Writing the part: 20 pins…', 'Writing the part: 40 pins…']);
+      expect(readdirSync(ingestDir)).toEqual([]); // the folder is gone
+    });
+
+    it('runs a second, independent Copilot session to verify', async () => {
+      const { ingest } = await setup();
+      const es = await ingest('i2', 'copilot', { passes: 2 });
+      expect(es.filter((e) => e.kind === 'pass')).toEqual([{ kind: 'pass', n: 1, of: 2 }, { kind: 'pass', n: 2, of: 2 }]);
+      expect([...text(es).matchAll(/"verify":(true|false)/g)].map((m) => m[1])).toEqual(['false', 'true']);
+      expect(es.at(-1)).toMatchObject({ kind: 'done', ok: true });
+    });
+
+    it('runs OpenCode as an import agent with read, grep, glob and submit_part, kept inside the folder', async () => {
+      const { ingest, calls } = await setup();
+      const es = await ingest('i3', 'opencode', { model: 'github-copilot/claude-sonnet-5', passes: 2 });
+      expect(es.at(-1)).toMatchObject({ kind: 'done', ok: true, costUsd: 0.012 });
+      expect(calls).toEqual(['submit_part', 'submit_part']);
+      expect(flagsOf(es.filter((e) => e.kind === 'text').slice(0, 1))).toMatchObject({
+        agent: '4k7-ingest',
+        agentTools: { '*': false, read: true, grep: true, glob: true, '4k7_*': true },
+        permission: { edit: 'deny', bash: 'deny', webfetch: 'deny', external_directory: 'deny' },
+        rules: true,
+        message: 'Create the part for STM32F777VIT6 (datasheet: ds.pdf).',
+        files: ['datasheet.pdf', 'index.txt', 'pages'],
+        tools: ['submit_part'],
+      });
+      expect(es).toContainEqual({ kind: 'status', text: 'Reading page 1' });
+      // the closing words of each pass came from the export, run in the job folder
+      expect([...text(es).matchAll(/"verify":(true|false)/g)].map((m) => m[1])).toEqual(['false', 'true']);
+    });
+
+    it('explains when the agent cannot import', async () => {
+      const { ingest } = await setup();
+      const es = await ingest('i4', 'gemini-cli');
+      expect(es.at(-1)).toMatchObject({ kind: 'done', ok: false, error: expect.stringContaining('cannot import datasheets') });
     });
   });
 

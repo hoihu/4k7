@@ -328,7 +328,8 @@ class AppState {
     if (ing.phase === 'running' && !same) return text(`Another import (${ing.request?.mpn}) is running; try again when it has finished.`, true);
     if (ing.phase === 'review' && !same) return text(`The import of ${ing.request?.mpn} is waiting for the user's review in Parts; ask them to save or discard it first.`, true);
     if (ing.phase !== 'running' && !(same && ing.phase === 'review')) {
-      await ing.start({ mpn: args.mpn, url: args.datasheet_url, ...(args.notes ? { notes: args.notes } : {}), model: 'sonnet', verify: true });
+      const agent = ing.agentFor(this.settings.provider === 'agent' ? this.settings.harness : undefined);
+      await ing.start({ mpn: args.mpn, url: args.datasheet_url, ...(args.notes ? { notes: args.notes } : {}), ...(agent ? { harness: agent.id, model: this.importModel(agent.id) } : {}), verify: true });
       this.flash(`Importing ${args.mpn} from its datasheet`);
     }
     const until = Date.now() + args.timeout_s * 1000;
@@ -731,6 +732,11 @@ class AppState {
   private makeProvider(): Provider {
     if (this.settings.provider === 'api' && !this.apiProblem) return apiProvider(this.apiChoice);
     return new ScriptedProvider([], { fallback: 'No chat provider is set up. Connect a coding agent or set up an API in Settings.', label: 'No model' });
+  }
+
+  /** The model a datasheet import uses with this agent: Sonnet for Claude Code, else the agent's chat model (or its default). */
+  importModel(id: string): string {
+    return id === 'claude-code' ? 'sonnet' : (this.settings.harnessModels[id as keyof Settings['harnessModels']] ?? '');
   }
 
   /** The coding agent chosen for the chat. */

@@ -2,15 +2,19 @@
  * OpenCode: `opencode run --format json` with an agent of its own, defined for the run through
  * OPENCODE_CONFIG_CONTENT (merged into the user's config, so their providers and logins apply):
  * the chat rules as its prompt, the 4k7 endpoint as a remote MCP server, and every tool but the
- * 4k7 ones switched off. The message goes in on stdin (an argument would be quoted).
+ * 4k7 ones switched off. The message goes in on stdin (an argument would be quoted). Datasheet
+ * imports get an agent with the read-only file tools (read, grep, glob) as well, kept inside the
+ * job folder (its working directory) by denying external_directory.
  *
  * `opencode run` can exit before it prints the last step of its answer, so once it has exited the
  * session is read back with `opencode export` and whatever the stream left out is sent then.
  */
-import { CHAT_WEB_PROMPT, chatModePrompt, type HarnessCapability } from '@4k7/schema';
-import { capture, detectCli, parseLine, type ChatJob, type Harness, type Invocation, type RunSink } from './types.ts';
+import { CHAT_WEB_PROMPT, INGEST_VERIFY_PROMPT, chatModePrompt, ingestPrompt, type HarnessCapability } from '@4k7/schema';
+import { describeTool } from './ingest.ts';
+import { capture, detectCli, parseLine, type ChatJob, type Harness, type IngestJob, type Invocation, type RunSink } from './types.ts';
 
-const AGENT = '4k7-chat';
+/** The CLI's read-only file tools. */
+const FILE_TOOLS = ['read', 'grep', 'glob'];
 
 export class OpenCodeHarness implements Harness {
   readonly id = 'opencode' as const;
@@ -25,7 +29,7 @@ export class OpenCodeHarness implements Harness {
   }
 
   detect(): HarnessCapability {
-    return { id: this.id, name: this.name, ...detectCli(this.bin, this.name, process.env, 'FOURK7_OPENCODE_BIN') };
+    return { id: this.id, name: this.name, ingest: true, ...detectCli(this.bin, this.name, process.env, 'FOURK7_OPENCODE_BIN') };
   }
 
   /** `opencode models`: provider/model, one per line. */
@@ -35,29 +39,59 @@ export class OpenCodeHarness implements Harness {
   }
 
   chat(job: ChatJob, sink: RunSink): Invocation {
+    return this.#run(job, sink, {
+      name: '4k7-chat',
+      description: 'Answers the chat of the 4k7 app through its tools',
+      prompt: job.web ? `${chatModePrompt()}\n\n${CHAT_WEB_PROMPT}` : chatModePrompt(),
+      tools: { '4k7_*': true, ...(job.web ? { webfetch: true, websearch: true } : {}) },
+      webfetch: job.web,
+      text: job.text,
+      session: job.session,
+    });
+  }
+
+  /** Datasheet import: the file tools in the job folder and submit_part; a fresh session per pass. */
+  ingest(job: IngestJob, sink: RunSink): Invocation {
+    return this.#run(job, sink, {
+      name: '4k7-ingest',
+      description: 'Extracts a part from a datasheet for the 4k7 app',
+      prompt: job.pass === 1 ? ingestPrompt() : `${ingestPrompt()}\n\n${INGEST_VERIFY_PROMPT}`,
+      tools: { ...Object.fromEntries(FILE_TOOLS.map((t) => [t, true])), '4k7_*': true },
+      webfetch: false,
+      text: job.prompt,
+      session: null,
+      progress: true,
+    });
+  }
+
+  #run(
+    job: { mcpUrl: string; token: string; model?: string; cwd: string },
+    sink: RunSink,
+    a: { name: string; description: string; prompt: string; tools: Record<string, boolean>; webfetch: boolean; text: string; session: string | null; progress?: boolean },
+  ): Invocation {
     const config = {
       mcp: { '4k7': { type: 'remote', url: job.mcpUrl, headers: { Authorization: `Bearer ${job.token}` }, enabled: true } },
       agent: {
-        [AGENT]: {
+        [a.name]: {
           mode: 'primary',
-          description: 'Answers the chat of the 4k7 app through its tools',
-          prompt: job.web ? `${chatModePrompt()}\n\n${CHAT_WEB_PROMPT}` : chatModePrompt(),
-          tools: { '*': false, '4k7_*': true, ...(job.web ? { webfetch: true, websearch: true } : {}) },
-          permission: { edit: 'deny', bash: 'deny', webfetch: job.web ? 'allow' : 'deny', external_directory: 'deny' },
+          description: a.description,
+          prompt: a.prompt,
+          tools: { '*': false, ...a.tools },
+          permission: { edit: 'deny', bash: 'deny', webfetch: a.webfetch ? 'allow' : 'deny', external_directory: 'deny' },
         },
       },
     };
     const env = { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify(config) };
     return {
-      args: ['run', '--format', 'json', '--thinking', '--agent', AGENT, ...(job.model ? ['--model', job.model] : []), ...(job.session ? ['--session', job.session] : [])],
+      args: ['run', '--format', 'json', '--thinking', '--agent', a.name, ...(job.model ? ['--model', job.model] : []), ...(a.session ? ['--session', a.session] : [])],
       env,
-      stdin: job.text,
-      ...this.#reader(job, env, sink),
+      stdin: a.text,
+      ...this.#reader(a.session, job, env, sink, !!a.progress),
     };
   }
 
-  #reader(job: ChatJob, env: NodeJS.ProcessEnv, sink: RunSink): Pick<Invocation, 'line' | 'close'> {
-    let session = job.session;
+  #reader(resumed: string | null, job: { model?: string; cwd: string }, env: NodeJS.ProcessEnv, sink: RunSink, progress: boolean): Pick<Invocation, 'line' | 'close'> {
+    let session = resumed;
     let wrote = false;
     let cost = 0;
     let error: string | undefined;
@@ -73,6 +107,7 @@ export class OpenCodeHarness implements Harness {
         seen.add(p.id);
       }
       if (p.type === 'text' && p.text && !p.synthetic) text(p.text);
+      else if (p.type === 'tool' && progress && p.tool && FILE_TOOLS.includes(p.tool)) sink.emit({ kind: 'status', text: describeTool(p.tool, p.state?.input) });
       else if (p.type === 'reasoning' && p.text) sink.emit({ kind: 'thinking', text: p.text });
       else if (p.type === 'step-finish') {
         const t = p.tokens;
@@ -93,7 +128,8 @@ export class OpenCodeHarness implements Harness {
       },
       close: async (code) => {
         if (session) {
-          const out = await capture(this.bin, ['export', session], { env, cwd: this.#cwd });
+          // sessions belong to the folder they ran in
+          const out = await capture(this.bin, ['export', session], { env, cwd: job.cwd });
           const start = out?.indexOf('{') ?? -1;
           try {
             const exported = start >= 0 ? (JSON.parse(out!.slice(start)) as { messages?: { info?: { role?: string; error?: unknown }; parts?: OpenCodePart[] }[] }) : null;
@@ -127,6 +163,8 @@ interface OpenCodePart {
   type: string;
   text?: string;
   synthetic?: boolean;
+  tool?: string;
+  state?: { input?: unknown };
   tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
   cost?: number;
 }

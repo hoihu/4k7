@@ -4,7 +4,8 @@
  */
 import { CHAT_WEB_PROMPT, INGEST_VERIFY_PROMPT, chatModePrompt, ingestPrompt, type ChatCapability, type HarnessCapability } from '@4k7/schema';
 import type { ClaudeProfile } from '../config.ts';
-import { detectCli, parseLine, type ChatJob, type Harness, type Invocation, type RunSink } from './types.ts';
+import { describeTool, pinCounter } from './ingest.ts';
+import { detectCli, parseLine, type ChatJob, type Harness, type IngestJob, type Invocation, type RunSink } from './types.ts';
 
 /** Probe the Claude Code CLI. */
 export function detectClaude(bin: string, profile?: ClaudeProfile): ChatCapability {
@@ -25,16 +26,6 @@ export function childEnv(profile?: ClaudeProfile): NodeJS.ProcessEnv {
   return env;
 }
 
-/** A datasheet import pass: the prompt, and the importer's own rules. */
-export interface IngestJob {
-  prompt: string;
-  model?: string;
-  mcpUrl: string;
-  token: string;
-  /** 2 = the independent verification pass. */
-  pass: number;
-}
-
 const STREAM_ARGS = ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
 
 export class ClaudeHarness implements Harness {
@@ -50,7 +41,7 @@ export class ClaudeHarness implements Harness {
   }
 
   detect(): HarnessCapability {
-    return { id: this.id, name: this.name, ...detectClaude(this.bin, this.#profile) };
+    return { id: this.id, name: this.name, ingest: true, ...detectClaude(this.bin, this.#profile) };
   }
 
   chat(job: ChatJob, sink: RunSink): Invocation {
@@ -112,7 +103,8 @@ function mcpConfig(job: { mcpUrl: string; token: string }): string {
 function streamReader(sink: RunSink, mode: 'chat' | 'ingest'): Pick<Invocation, 'line'> {
   let streamedText = false;
   let messageOut = 0; // output tokens of the model call in progress (message_delta counts cumulatively)
-  let writing: { json: string; reported: number } | null = null;
+  const pins = pinCounter(sink);
+  let writing = false;
   return {
     line(line) {
       const m = parseLine<StreamJson>(line);
@@ -135,16 +127,11 @@ function streamReader(sink: RunSink, mode: 'chat' | 'ingest'): Pick<Invocation, 
               sink.emit({ kind: 'thinking', text: e.delta.thinking });
             } else if (e.delta?.type === 'input_json_delta' && writing) {
               // the part is written as one long tool call; report pins as they stream in
-              writing.json += e.delta.partial_json ?? '';
-              const pins = (writing.json.match(/"number"\s*:/g) ?? []).length;
-              if (pins >= writing.reported + 20) {
-                writing.reported = pins - (pins % 20);
-                sink.emit({ kind: 'status', text: `Writing the part: ${writing.reported} pins…` });
-              }
+              pins.add(e.delta.partial_json ?? '');
             }
           } else if (e?.type === 'content_block_start' && mode === 'ingest' && e.content_block?.type === 'tool_use') {
-            writing = e.content_block.name?.endsWith('submit_part') ? { json: '', reported: 0 } : null;
-            if (writing) sink.emit({ kind: 'status', text: 'Writing the part…' });
+            writing = !!e.content_block.name?.endsWith('submit_part');
+            if (writing) pins.start();
           } else if (e?.type === 'message_start') {
             if (streamedText) sink.emit({ kind: 'text', text: '\n\n' });
             // a new model call: its prompt (fresh, from the cache, into the cache)
@@ -175,19 +162,6 @@ function streamReader(sink: RunSink, mode: 'chat' | 'ingest'): Pick<Invocation, 
       }
     },
   };
-}
-
-/** Progress line for a tool call of the importer ("Reading page 69"). */
-function describeTool(name = '', input: unknown): string {
-  const i = (input ?? {}) as { file_path?: string; pattern?: string; offset?: number };
-  if (name === 'Read') {
-    const page = /page-0*(\d+)\.txt$/.exec(i.file_path ?? '');
-    if (page) return `Reading page ${page[1]}`;
-    return `Reading ${(i.file_path ?? '').split('/').pop()}`;
-  }
-  if (name === 'Grep') return `Searching for “${i.pattern ?? ''}”`;
-  if (name === 'Glob') return 'Listing pages';
-  return name;
 }
 
 /** Token usage as the Anthropic API reports it (message_start: the prompt; message_delta: output so far). */

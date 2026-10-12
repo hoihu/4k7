@@ -12,6 +12,10 @@ if (args[0] === '--version') {
   console.log('GitHub Copilot CLI 1.0.95 (fake).');
   process.exit(0);
 }
+if (args[0] === 'help' && args[1] === 'config') {
+  console.log('Configuration Settings:\n\n  `model`: AI model to use for Copilot CLI; can be changed with /model command or --model flag option.\n    - "claude-sonnet-5"\n    - "gpt-6-luna"\n\n  `theme`: the theme\n    - "dark"');
+  process.exit(0);
+}
 const arg = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 /** A variadic option: its values up to the next option. */
 const list = (name) => {
@@ -32,7 +36,8 @@ const tw = JSON.parse(arg('--additional-mcp-config')).mcpServers['4k7'];
 const client = new Client({ name: 'github-copilot-developer', version: 'fake' });
 await client.connect(new StreamableHTTPClientTransport(new URL(tw.url), { requestInit: { headers: tw.headers } }));
 const tools = (await client.listTools()).tools.map((t) => t.name);
-await client.callTool({ name: 'get_context', arguments: {} });
+const ingest = !tools.includes('get_context');
+await (ingest ? client.callTool({ name: 'submit_part', arguments: { mpn: 'FAKE1' } }) : client.callTool({ name: 'get_context', arguments: {} }));
 await client.close();
 
 const flags = {
@@ -42,7 +47,10 @@ const flags = {
   builtinMcps: !args.includes('--disable-builtin-mcps'),
   customInstructions: !args.includes('--no-custom-instructions'),
   model: arg('--model') ?? null,
-  rules: prompt.startsWith('You are answering messages typed into'),
+  rules: prompt.startsWith(ingest ? 'You extract a part definition' : 'You are answering messages typed into'),
+  verify: prompt.includes('independent verification pass'),
+  tempDir: !args.includes('--disallow-temp-dir'),
+  files: (await import('node:fs')).readdirSync('.').filter((f) => !f.startsWith('copilot-')).sort(),
   message: prompt.slice(prompt.lastIndexOf('\n') + 1),
   allowAllEnv: 'COPILOT_ALLOW_ALL' in process.env,
   tools,
@@ -54,6 +62,12 @@ writeFileSync(file, JSON.stringify({ runs }));
 
 out({ type: 'session.mcp_servers_loaded', data: { servers: [{ name: '4k7', status: 'connected' }] }, ephemeral: true });
 out({ type: 'session.auto_mode_resolved', data: { chosenModel: 'gpt-fake' } });
+if (ingest) {
+  // reads a page, then writes the part as one long tool call
+  out({ type: 'tool.execution_start', data: { toolCallId: 't1', toolName: 'view', arguments: { path: `${process.cwd()}/pages/page-001.txt` } } });
+  out({ type: 'tool.execution_start', data: { toolCallId: 't2', toolName: 'grep', arguments: { pattern: 'Pinout' } } });
+  for (let i = 1; i <= 45; i++) out({ type: 'assistant.tool_call_delta', data: { toolCallId: 't3', toolName: '4k7-submit_part', inputDelta: `{"number":"${i}",` }, ephemeral: true });
+}
 out({ type: 'assistant.message', data: { messageId: 'm1', content: '', toolRequests: [{ name: '4k7-get_context' }], model: 'gpt-fake' } });
 out({ type: 'assistant.message_start', data: { messageId: 'm2' }, ephemeral: true });
 for (const chunk of ['Got it. ', `flags=${JSON.stringify(flags)}`]) out({ type: 'assistant.message_delta', data: { messageId: 'm2', deltaContent: chunk }, ephemeral: true });
