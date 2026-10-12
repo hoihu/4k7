@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SERVER_ACCESS_KEY, type HarnessId } from '@4k7/schema';
+import { defaultProjectsDir } from './storage.ts';
 
 /**
  * How to run the headless Claude Code for the app chat. Mirrors a shell alias such as
@@ -49,6 +50,8 @@ export interface ServerConfig {
   claude: ClaudeProfile;
   /** The agents' CLIs chosen in the app (absolute paths); the FOURK7_…_BIN variables win over them. */
   bins: Partial<Record<HarnessId, string>>;
+  /** Where the projects are kept (FOURK7_PROJECTS or "projectsDir"); else ~/Documents/4k7. */
+  projectsDir: string;
 }
 
 /** The folder's name before 4k7; moved to the new name on the first start (key, profile, logs, workspaces). */
@@ -97,7 +100,14 @@ export function loadConfig(): ServerConfig {
     unsetEnv: [...(c.unsetEnv ?? []), ...(process.env.FOURK7_CLAUDE_UNSET?.split(',').filter(Boolean) ?? [])],
     env: c.env ?? {},
   };
-  return { accessKey, ...(appUrl ? { appUrl } : {}), claude, bins: typeof cfg.bins === 'object' && cfg.bins ? cfg.bins : {} };
+  const projects = process.env.FOURK7_PROJECTS ?? cfg.projectsDir;
+  return {
+    accessKey,
+    ...(appUrl ? { appUrl } : {}),
+    claude,
+    bins: typeof cfg.bins === 'object' && cfg.bins ? cfg.bins : {},
+    projectsDir: typeof projects === 'string' && projects ? expandHome(projects) : defaultProjectsDir(),
+  };
 }
 
 /** Change entries of server.json, keeping the rest of the file as it is. */

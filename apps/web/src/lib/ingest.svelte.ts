@@ -8,7 +8,8 @@
 import { compareDrafts, draftToCard, listUserParts, mergeDrafts, planUnits, registerUserParts, unregisterUserPart, type Disagreement } from '@4k7/parts';
 import { PartDraft, type ToolContent, type DraftPin, type PackageInfo, type Design, type IngestIssue, type PartCard, type TokenCount } from '@4k7/schema';
 import { server } from './server.svelte.ts';
-import { deleteDatasheet, deleteLibraryPart, loadDatasheet, loadLibrary, loadPendingImport, saveDatasheet, saveLibraryPart, savePendingImport, type StoredDatasheet } from './persist.ts';
+import { deleteDatasheet, deleteLibraryPart, loadDatasheet, loadLibrary, saveDatasheet, saveLibraryPart } from './files.ts';
+import { loadPendingImport, savePendingImport, type StoredDatasheet } from './persist.ts';
 
 export interface IngestRequest {
   mpn: string;
@@ -137,8 +138,12 @@ export class IngestState {
 
   async #keep(pending: PendingRecord | null) {
     if (pending?.datasheet && this.datasheet && this.#storedSheet !== this.datasheet.hash) {
-      this.#storedSheet = this.datasheet.hash;
-      await saveDatasheet(this.datasheet.hash, { name: this.datasheet.name, data: this.datasheet.data });
+      try {
+        await saveDatasheet(this.datasheet.hash, { name: this.datasheet.name, data: this.datasheet.data });
+        this.#storedSheet = this.datasheet.hash;
+      } catch {
+        // without the server it is kept on saving the part (or the review is restored without it)
+      }
     }
     await savePendingImport(pending);
   }

@@ -87,11 +87,12 @@ is cached afterwards. `prepare` also runs on `npm install` in a checkout (about 
 
 ## The address matters
 
-The browser keeps designs per origin (host *and* port), so the app always opens at
+Projects are files the server writes (`~/Documents/4k7`), but the browser keeps settings and API
+keys per origin (host *and* port), so the app always opens at
 `http://localhost:7777`. When 7777 is taken by another 4k7 server (say the CLI's MCP
 server), a second one takes the next port of 7777–7781 but still points its link at
 7777, adding its own port (`?port=7778`) so the tab connects to it. When 7777 belongs to another
-program, the app opens on the server's own port and the server says that designs saved at
+program, the app opens on the server's own port and the server says that settings saved at
 7777 do not show there.
 
 A checkout's dev server (`http://localhost:5173`) takes precedence: `npm run dev` points the
@@ -105,7 +106,8 @@ So, in a checkout: `npm run dev` while working on the code (hot reload, the serv
 ## Security
 
 Loopback only. The app's files are served only to `localhost` / `127.0.0.1` host names (a
-DNS-rebinding page gets 421).
+DNS-rebinding page gets 421). The project files are read and written under `/api/`, which needs the
+access key in an `authorization` header and refuses pages of other origins.
 
 The app's address carries an access key: `http://localhost:7777/<access-key>`, a random UUID created
 once and kept in `~/.4k7/server.json` (`"accessKey"`), so the address stays the same across

@@ -5,7 +5,7 @@
  */
 import { pathFigures, traceBitmap } from '@4k7/kernel';
 import type { Artwork, SilkGraphic } from '@4k7/schema';
-import { deleteArtwork, loadArtwork, saveArtwork } from './persist.ts';
+import { deleteArtwork, loadArtwork, saveArtwork } from './files.ts';
 
 interface KernelArtwork {
   registerArtwork(list: Artwork[]): Promise<void>;

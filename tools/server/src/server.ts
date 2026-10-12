@@ -183,7 +183,7 @@ export class LocalServer {
   }
 
   /** Pages of the app: localhost on the server ports, on the app's address or on the dev server. */
-  #allowedOrigin(origin: string): boolean {
+  allowedOrigin(origin: string): boolean {
     const m = LOCAL_ORIGIN.exec(origin);
     if (!m) return false;
     const port = Number(m[2] ?? (origin.startsWith('https:') ? 443 : 80));
@@ -223,7 +223,7 @@ export class LocalServer {
 
   #onConnection(ws: WebSocket, req: IncomingMessage) {
     const origin = req.headers.origin ?? '';
-    if (!this.#allowedOrigin(origin)) {
+    if (!this.allowedOrigin(origin)) {
       this.#log(`rejected connection from origin "${origin}"`);
       ws.close(1008, 'origin not allowed');
       return;

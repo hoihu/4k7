@@ -33,6 +33,7 @@ import { appDir, configDir, configPath, DEV_APP, inCheckout, loadConfig } from '
 import { openBrowser } from './launch.ts';
 import { createMcpServer, mcpHttpHandler, VERSION } from './mcp.ts';
 import { checkForUpdate } from './update.ts';
+import { storageHandler } from './storage.ts';
 
 const serve = process.argv.includes('--serve');
 /** Open the app link in the browser (what `npx 4k7pcb` does). */
@@ -96,10 +97,21 @@ async function main() {
   });
   const mcpHttp = mcpHttpHandler(server, (t) => chat.modeFor(t));
   const app = appHandler(dir, VERSION, cfg.accessKey);
-  server.setHttpHandler((req, res) => ((req.url ?? '').split('?')[0] === '/mcp' ? mcpHttp(req, res) : app(req, res)));
+  const storage = storageHandler({
+    accessKey: cfg.accessKey,
+    projectsDir: cfg.projectsDir,
+    dataDir: configDir(),
+    allowedOrigin: (o) => server.allowedOrigin(o),
+    reveal: (d) => openBrowser(d, log),
+    log,
+  });
+  server.setHttpHandler((req, res) => {
+    const path = (req.url ?? '').split('?')[0]!;
+    return path === '/mcp' ? mcpHttp(req, res) : path.startsWith('/api/') ? storage(req, res) : app(req, res);
+  });
   server.setAppUrl(await appUrl(cfg.appUrl, port, dir));
 
-  log(`v${VERSION} on 127.0.0.1:${port} · access key in ${configPath()}`);
+  log(`v${VERSION} on 127.0.0.1:${port} · access key in ${configPath()} · projects in ${cfg.projectsDir}`);
   for (const h of harnesses) log(`app chat via ${h.name}: ${h.available ? `yes (${h.version})` : `no, ${h.reason}`}`);
   const p = cfg.claude;
   if (p.configDir || p.unsetEnv.length) {
@@ -143,8 +155,8 @@ async function main() {
 }
 
 /**
- * Where app links point. Projects live in the browser's storage per origin (host and port), so
- * the app should always open at the same address: http://localhost:7777, served by this server or
+ * Where app links point. Settings (and the API keys) live in the browser's storage per origin (host
+ * and port), so the app should always open at the same address: http://localhost:7777, served by this server or
  * by another one that started first. A checkout's dev server (npm run dev) takes precedence there.
  */
 async function appUrl(configured: string | undefined, port: number, dir: string | null): Promise<string | undefined> {
@@ -153,7 +165,7 @@ async function appUrl(configured: string | undefined, port: number, dir: string 
   const home = SERVER_PORTS[0];
   if (port !== home) {
     if (await serves4k7(home)) return `http://localhost:${home}`;
-    log(`note: port ${home} is used by another program, so the app opens at http://localhost:${port}; designs saved at another address do not show there`);
+    log(`note: port ${home} is used by another program, so the app opens at http://localhost:${port}; settings saved at another address do not show there`);
   }
   if (!dir) log('note: the app is not built (run npm run build); the app link will not load until it is');
   return undefined;
