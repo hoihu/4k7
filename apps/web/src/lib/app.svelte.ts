@@ -839,10 +839,10 @@ class AppState {
     await this.refresh();
   }
 
-  async newProject() {
+  async newProject(name = 'untitled') {
     await this.importDesign({
       format: DESIGN_FORMAT_VERSION,
-      name: 'untitled',
+      name,
       seq: 2,
       parts: {},
       components: {},

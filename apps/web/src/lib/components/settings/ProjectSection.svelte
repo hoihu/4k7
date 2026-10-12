@@ -20,77 +20,87 @@
     URL.revokeObjectURL(a.href);
   }
 
-  async function exportFile() {
-    download(await app.exportJson(), app.k?.summary.name ?? 'design');
+  /** The save dialog where the browser has one (Chrome, Edge); a download elsewhere. */
+  type SavePicker = (o: { suggestedName: string; types: { description: string; accept: Record<string, string[]> }[] }) => Promise<FileSystemFileHandle>;
+
+  async function saveCopy() {
+    const json = await app.exportJson();
+    const name = app.k?.summary.name ?? 'design';
+    const pick = (window as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
+    if (!pick) return download(json, name);
+    try {
+      const handle = await pick({ suggestedName: `${name}.twd.json`, types: [{ description: '4k7 project', accept: { 'application/json': ['.json'] } }] });
+      const w = await handle.createWritable();
+      await w.write(json);
+      await w.close();
+      app.flash(`Saved a copy as ${handle.name}`);
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') app.flash(`Could not save the copy: ${(e as Error).message}`);
+    }
   }
 
   /** Changes that could not be written are lost when another project replaces this one. */
   const leave = () => !app.unsaved || window.confirm('The open project has changes that are not saved (the 4k7 server is not reachable). Leave them?');
 
-  async function importFile(e: Event) {
+  /** A file from the projects folder opens in place; any other is copied in as a new project. */
+  async function openFile(e: Event) {
     const input = e.target as HTMLInputElement;
     const f = input.files?.[0];
     input.value = '';
     if (!f || !leave()) return;
     try {
-      await app.importDesign(JSON.parse(await f.text()) as Design);
-      app.flash(`Imported ${f.name} as a new project`);
+      const text = await f.text();
+      const id = f.name.replace(/\.twd\.json$|\.json$/, '');
+      // the open project's own file may lag behind a save in flight, so its name is enough
+      const inFolder = id === app.projectId || (app.projects.some((p) => p.id === id) && (await disk.loadProject(id).catch(() => undefined)) === text);
+      if (inFolder) {
+        if (id !== app.projectId && !(await app.openProject(id))) return;
+      } else {
+        await app.importDesign(JSON.parse(text) as Design);
+        app.flash(`Copied ${f.name} into the projects folder`);
+      }
       app.view = 'sch';
     } catch (err) {
-      app.flash(`Import failed: ${(err as Error).message}`);
+      app.flash(`Could not open ${f.name}: ${(err as Error).message}`);
     }
   }
 
-  async function open(e: Event) {
-    const select = e.currentTarget as HTMLSelectElement;
-    const id = select.value;
-    if (id === app.projectId) return;
-    if (!leave() || !(await app.openProject(id))) {
-      select.value = app.projectId ?? '';
-      return;
-    }
-    app.view = 'sch';
-  }
+  let newName = $state('');
 
-  function newProject() {
-    if (leave()) void app.newProject().then(() => (app.view = 'sch'));
+  function newProject(e: SubmitEvent) {
+    e.preventDefault();
+    if (leave()) void app.newProject(newName.trim() || 'untitled').then(() => ((newName = ''), (app.view = 'sch')));
   }
-
-  const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 </script>
 
-<Section id="project" title="Project">
-  {#snippet status()}
-    {#if disk.status !== 'ok'}<span class="bad">not saved: server not reachable</span>
-    {:else if app.unsaved}<span class="bad">not saved</span>
-    {:else if app.projectId}<span class="muted">saved to {app.projectId}.twd.json</span>{/if}
-  {/snippet}
-  <Field label="Open" hint={disk.projectsDir ? `Every project is a file in ${disk.projectsDir}, saved as you work.` : 'Projects are files on this computer, kept by the 4k7 server.'}>
+<Section id="project" title="General">
+  <Field label="Project">
     <div class="row">
-      <select class="text sel" aria-label="Project" value={app.projectId ?? ''} onchange={open} disabled={disk.status !== 'ok'}>
-        {#if !app.projectId}<option value="">{app.k?.summary.name ?? 'untitled'} (not saved yet)</option>{/if}
-        {#each app.projects as p (p.id)}
-          <option value={p.id}>{p.id} · {when(p.modified)}</option>
-        {/each}
-      </select>
-      <button class="btn" onclick={newProject}>New</button>
+      <input class="text grow" aria-label="Project name" value={app.k?.summary.name ?? ''} onchange={(e) => app.renameProject((e.currentTarget as HTMLInputElement).value)} />
       <button class="btn" onclick={() => app.revealProjects()} disabled={disk.status !== 'ok'}>Show folder</button>
+      <button class="btn" onclick={saveCopy} title="Save a copy elsewhere; you keep working on this project">Save copy as…</button>
     </div>
+    {#snippet hint()}
+      {#if disk.status !== 'ok'}<span class="bad">Not saved: the 4k7 server is not reachable.</span>
+      {:else if app.unsaved}<span class="bad">Not saved yet.</span>
+      {:else if app.projectId}<code>{disk.projectsDir}/{app.projectId}.twd.json</code> · saved as you work{/if}
+    {/snippet}
   </Field>
-  <Field label="Name" hint="Renames the project's file too.">
-    <input class="text" value={app.k?.summary.name ?? ''} onchange={(e) => app.renameProject((e.currentTarget as HTMLInputElement).value)} />
+  <Field label="Open" hint="Files from elsewhere are copied into the projects folder.">
+    <button class="btn" onclick={() => fileInput?.click()}>Open file…</button>
+    <input type="file" accept=".json,application/json" hidden bind:this={fileInput} onchange={openFile} />
   </Field>
-  <Field label="File" hint="A copy of the project to send or keep elsewhere (.twd.json keeps the whole design, history included). Import opens one as a new project.">
-    <div class="row">
-      <button class="btn" onclick={exportFile}>Download .twd.json</button>
-      <button class="btn" onclick={() => fileInput?.click()}>Import…</button>
-      <input type="file" accept=".json,application/json" hidden bind:this={fileInput} onchange={importFile} />
-    </div>
+  <Field label="New">
+    <form class="row" onsubmit={newProject}>
+      <input class="text grow" aria-label="New project name" placeholder="untitled" bind:value={newName} />
+      <button class="btn">Create</button>
+    </form>
   </Field>
 </Section>
 
 <style>
   .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .sel { flex: 1; min-width: 12em; }
+  .grow { flex: 1; min-width: 10em; }
+  code { overflow-wrap: anywhere; }
   .bad { color: var(--err); }
 </style>

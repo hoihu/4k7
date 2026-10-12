@@ -9,7 +9,7 @@
   }
 </script>
 
-<Section id="agent" title="Agent">
+<Section id="agent" title="Changesets">
   <Field label="Autonomy" hint="Auto-commit applies a changeset as soon as the checks pass.">
     <div class="seg">
       <button aria-pressed={app.settings.mode === 'review'} onclick={() => set('mode', 'review')}>Review each changeset</button>

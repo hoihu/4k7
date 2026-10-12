@@ -6,6 +6,7 @@
   import Inspector from './lib/components/Inspector.svelte';
   import SchematicCanvas from './lib/components/SchematicCanvas.svelte';
   import Settings from './lib/components/Settings.svelte';
+  import Logo from './lib/components/Logo.svelte';
   import Parts from './lib/components/Parts.svelte';
   import LayoutView from './lib/components/LayoutView.svelte';
   import { printSchematic } from './lib/print.ts';
@@ -106,7 +107,7 @@
 <div class="app">
   <header class="bar">
     <div class="logo" aria-hidden="true">
-      <svg width="22" height="22" viewBox="0 0 64 64"><rect x="0" y="29" width="64" height="6" rx="3" fill="#b8b0a4"/><rect x="8" y="16" width="48" height="32" rx="12" fill="#e8d9bd"/><rect x="16" y="16" width="6" height="32" fill="#f2c230"/><rect x="25" y="16" width="6" height="32" fill="#7a3fb0"/><rect x="34" y="16" width="6" height="32" fill="#d6382f"/><rect x="45" y="16" width="6" height="32" fill="#d7a63a"/></svg>
+      <Logo />
     </div>
     <span class="proj trunc" title="Project">{app.k?.summary.name ?? '4k7'}</span>
     <nav class="nav" aria-label="Workspace">
