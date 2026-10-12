@@ -1,7 +1,7 @@
 /**
  * Serves the built web app from the server's port, so `npx 4k7pcb` is the whole app: the page
  * and the server share an origin on 127.0.0.1 (no website reaching into the computer, which
- * browsers restrict). Static files only; designs stay in the browser's storage.
+ * browsers restrict). Static files only; designs are kept on this computer by storage.ts.
  *
  * The page itself is served only at /<access-key>, the key the tab then hands to the server: another
  * page or program on this computer that does not know it gets neither the app nor the server. The
@@ -13,6 +13,7 @@ import { extname, join, normalize, sep } from 'node:path';
 import { SERVER_ACCESS_KEY } from '@4k7/schema';
 import type { HttpHandler } from './server.ts';
 import { secretsMatch } from './mcp.ts';
+import { LOCAL_HOST } from './storage.ts';
 
 /** Answers on every server, so a second one can tell that a port already serves 4k7. */
 export const PROBE_PATH = '/4k7-server.json';
@@ -34,8 +35,6 @@ const TYPES: Record<string, string> = {
   '.ttf': 'font/ttf',
 };
 
-/** Host headers the app answers to (a page at another name that resolves here is a DNS-rebinding attempt). */
-const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
 export function appHandler(dir: string | null, version: string, accessKey: string): HttpHandler {
   return (req: IncomingMessage, res: ServerResponse) => {

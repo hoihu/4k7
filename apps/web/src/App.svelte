@@ -127,6 +127,9 @@
         <button class="btn pri" disabled={app.running || app.acceptedCount === 0} onclick={() => app.accept()}>Accept</button>
         <button class="btn" disabled={app.running} onclick={() => app.reject()}>Reject</button>
       {/if}
+      {#if app.unsaved}
+        <button class="chipbtn unsaved" onclick={() => (app.view = 'set')} title="Changes are not saved: the 4k7 server that writes the project file is not reachable. They are saved once it is back.">not saved</button>
+      {/if}
       {#if server.status === 'waiting'}
         <button class="chipbtn" onclick={() => (app.view = 'set')} title="Waiting for the local server">⇄ <span class="muted">offline</span></button>
       {:else if server.status === 'elsewhere'}
@@ -273,6 +276,7 @@
   .status .sp { margin-left: auto; }
   .update { position: fixed; top: 48px; right: 12px; display: flex; align-items: center; gap: 8px; background: var(--panel); color: var(--txt); border: 1px solid var(--line); padding: 5px 6px 5px 10px; border-radius: 8px; font-size: 12px; z-index: 50; box-shadow: var(--shadow); }
   .update a { color: var(--accent); font-weight: 600; }
+  .chipbtn.unsaved { color: var(--err); }
   .toast { position: fixed; bottom: 34px; left: 50%; transform: translateX(-50%); background: var(--txt); color: var(--bg); padding: 6px 12px; border-radius: 8px; font-size: 12px; z-index: 50; box-shadow: var(--shadow); max-width: calc(100vw - 32px); }
   .mobnav { display: none; }
 

@@ -134,9 +134,10 @@ box) and a confidence score, and is cross-checked. See [part-ingest.md](design/p
 Details: [ai-loop.md](design/ai-loop.md).
 
 ### 3.8 Local-first
-The document is a **CRDT** (Automerge 3 recommended; Yjs as fallback) persisted in **OPFS**. Part
-libraries and API keys live in IndexedDB. Keys are encrypted with a non-extractable WebCrypto key.
-No server is needed for core use. Export writes a **canonical, deterministic JSON text** form
+The document is a **CRDT** (Automerge 3 recommended; Yjs as fallback). Projects are files on the
+user's computer, one per project, written by the local server (`tools/server/src/storage.ts`), as are
+part libraries, artwork and datasheets (`~/.4k7`). Settings and API keys live in IndexedDB; keys are
+encrypted with a non-extractable WebCrypto key. Export writes a **canonical, deterministic JSON text** form
 (`*.twd` bundle) that diffs well in git. The same CRDT later gives us real-time collaboration.
 
 ### 3.9 Quality is measured
@@ -161,7 +162,7 @@ flowchart LR
       L["crates/layout (WASM)<br/>sch auto-layout · placer · router"]
       PG["crates/partgen (WASM)<br/>symbol · footprint · 3D"]
     end
-    DB[("OPFS / IndexedDB<br/>CRDT docs · parts · keys")]
+    DB[("IndexedDB<br/>settings · keys")]
   end
   LLM["User's AI provider<br/>(cloud or local)"]
   MCP["User MCP servers<br/>(HTTP)"]
@@ -268,11 +269,11 @@ Done:
 - Conventional sub-circuit drawings: four-diode full bridges are recognised and drawn as the classic 45° diamond (rotated symbols, diagonal wires); `constrain arrangement inline` opts out; single-package bridge part with a diamond symbol
 - Changesets: entity-level hunks, partial accept by merge, undo, canonical JSON export/import
 - Agent loop with verification, `calc` tool, `ask_user`, Anthropic provider (browser BYO key)
-- Svelte 5 schematic workspace (A + C), parts browser, settings, IndexedDB persistence with an encrypted key
+- Svelte 5 schematic workspace (A + C), parts browser, settings; projects and libraries as files through the local server, settings and an encrypted key in IndexedDB
 
 Deviations (deliberate, to revisit):
 - **Kernel in TypeScript** (no Rust toolchain on the dev machine yet). It sits behind the same RPC/API in a Web Worker, so the Rust/WASM kernel can replace it without touching the agent or UI.
-- **Plain JSON persistence** in IndexedDB instead of a CRDT in OPFS. The CRDT comes with branching/collaboration.
+- **Plain JSON project files** (`.twd.json`, written by the local server) instead of a CRDT. The CRDT comes with branching/collaboration.
 - **Counter-based ids** (`c_1a`) instead of ULIDs, for deterministic tests and diffs.
 - **Autonomy modes**: Auto and Review. Step mode (plan approval) is not built yet.
 

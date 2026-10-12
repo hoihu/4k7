@@ -29,20 +29,18 @@ import { jlcTool } from './jlc.ts';
 import { fabRefreshPrompt } from './fabRefresh.ts';
 import {
   DEFAULT_SETTINGS,
-  deleteKeptProject,
-  keepProject,
+  browserData,
   loadApiKey,
-  loadKeptProjects,
-  loadProject,
   loadSettings,
+  markMovedToDisk,
+  movedToDisk,
   saveApiKey,
-  saveProject,
   saveSettings,
   storageHealth,
   storagePersistent,
-  type KeptProject,
   type Settings,
 } from './persist.ts';
+import { disk, type ProjectEntry } from './disk.svelte.ts';
 
 /** A tool's answer before the chat's label is put on it. */
 type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
@@ -54,6 +52,9 @@ type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
 const addressPath = /^\/([^/]+)\/?$/.exec(location.pathname)?.[1] ?? '';
 const keyFromAddress = SERVER_ACCESS_KEY.test(addressPath) ? addressPath : null;
 const portFromAddress = Number(new URLSearchParams(location.search).get('port')) || null;
+
+/** How often to look for the server that keeps the files while it is not reachable. */
+const DISK_RETRY_MS = 4000;
 
 export type View = 'sch' | 'lay' | 'parts' | 'set';
 export type InspectorTab = 'issues' | 'ledger' | 'history' | 'sel';
@@ -112,8 +113,12 @@ class AppState {
   toast = $state<string | null>(null);
   input = $state('');
   persistent = $state<boolean | null>(null);
-  /** Saved projects this version could not read, kept instead of being saved over. */
-  keptProjects = $state.raw<KeptProject[]>([]);
+  /** The open project's file in the projects folder (its name without .twd.json); null until it is first saved. */
+  projectId = $state<string | null>(null);
+  /** The project files, newest first. */
+  projects = $state.raw<ProjectEntry[]>([]);
+  /** Changes not written to the project file (the server is not reachable). */
+  unsaved = $state(false);
   /** Board view of the working copy, computed when the Layout view is open. */
   board = $state.raw<BoardView | null>(null);
   boardBusy = $state(false);
@@ -133,8 +138,14 @@ class AppState {
   private reviewWaiters: ((result: string) => void)[] = [];
   /** The in-app agent is running (external agents must wait). */
   private inAppBusy = false;
-  /** The saved project could not be read nor kept aside: do not save over it until the user replaces it. */
-  private saveBlocked = false;
+  /** The files were read once the server was found (the project, libraries). */
+  private diskLoaded = false;
+  private diskTimer: ReturnType<typeof setTimeout> | null = null;
+  private diskConnecting: Promise<void> | null = null;
+  /** The design was renamed and its file not yet (the server was not reachable). */
+  private renameFile = false;
+  /** Writes to the project files, one after the other (a new project's file is created once). */
+  private writes: Promise<unknown> = Promise.resolve();
   /** A coding agent answering the app chat through the server: its session and the current run. */
   private agentSession: { harness: string; id: string } | null = null;
   private agentRun: { id: string; item: ChatItem } | null = null;
@@ -142,23 +153,6 @@ class AppState {
   async init() {
     this.settings = await loadSettings();
     this.apiKey = await loadApiKey(this.settings.api);
-    const saved = await loadProject();
-    if (saved) {
-      try {
-        await this.kernel.load(JSON.parse(saved) as Design);
-      } catch (e) {
-        // the next save would replace it: keep it aside first
-        const reason = (e as Error).message;
-        this.saveBlocked = !(await keepProject(saved, reason));
-        this.flash(`Could not load the saved project: ${reason}. ${this.saveBlocked ? 'Nothing is saved until you start or import a project.' : 'It is kept under Settings → Project.'}`);
-      }
-    }
-    this.keptProjects = await loadKeptProjects();
-    await this.ingest.init().catch((e: Error) => this.flash(`Could not load imported parts: ${e.message}`));
-    await this.artwork.init().catch((e: Error) => this.flash(`Could not load the artwork library: ${e.message}`));
-    const newer = this.ingest.newer + this.artwork.newer;
-    if (newer) this.flash(`${newer} saved ${newer === 1 ? 'library item was' : 'library items were'} written by a newer version of the app and not loaded`);
-    await this.ingest.adoptFootprints(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
     this.agent = new Agent({ provider: this.makeProvider(), kernel: this.kernel.port, fixBudget: this.settings.fixBudget, exec: (tool, input) => this.runTool(tool, input) });
     this.settingsChannel?.addEventListener('message', (e: MessageEvent<{ type: string; accessKey?: string }>) => {
       if (e.data?.type === 'server-held' && e.data.accessKey) server.heldElsewhere(e.data.accessKey);
@@ -177,6 +171,7 @@ class AppState {
         }
         this.settingsChannel?.postMessage({ type: 'server-held', accessKey });
         if (agent) this.flash(`Connected: the chat now runs on your ${agent.name}`);
+        if (disk.status !== 'ok') void this.connectDisk(accessKey, port);
       },
       () => {
         // the external agent went away: close its open activity block
@@ -193,7 +188,127 @@ class AppState {
         if (!ok && !silent && server.error) this.flash(server.error);
       });
     }
+    addEventListener('beforeunload', (e) => {
+      if (this.unsaved) e.preventDefault();
+    });
+    await this.connectDisk();
+    if (disk.status !== 'ok') this.flash(accessKey ? 'The 4k7 server is not running: nothing is saved until it is back.' : 'Open the app with the link the 4k7 server printed: nothing is saved without it.');
     this.ready = true;
+  }
+
+  /* ------------------------------ project files ----------------------------- */
+
+  /**
+   * Find the server that keeps the files (and keep looking while it is away). The first time, read
+   * the project and the libraries; after an outage, write what could not be saved.
+   */
+  private connectDisk(accessKey?: string, port?: number): Promise<void> {
+    this.diskConnecting ??= (async () => {
+      if (this.diskTimer) clearTimeout(this.diskTimer);
+      this.diskTimer = null;
+      const ok = await disk.find(accessKey ?? keyFromAddress ?? this.settings.serverAccessKey, { sameOrigin: !!keyFromAddress, preferPort: port ?? portFromAddress ?? this.settings.serverPort });
+      if (!ok) this.diskTimer = setTimeout(() => void this.connectDisk(), DISK_RETRY_MS);
+      else if (!this.diskLoaded) await this.loadDisk();
+      else if (this.unsaved) await this.persist();
+    })().finally(() => (this.diskConnecting = null));
+    return this.diskConnecting;
+  }
+
+  private async loadDisk() {
+    try {
+      await this.moveBrowserData();
+      this.projects = await disk.listProjects();
+      // changes made before the server answered get a project of their own: no file is replaced
+      if (!this.unsaved) {
+        const id = this.projects.some((p) => p.id === this.settings.project) ? this.settings.project : this.projects[0]?.id;
+        if (id) await this.openProject(id);
+      }
+      await this.ingest.init().catch((e: Error) => this.flash(`Could not load imported parts: ${e.message}`));
+      await this.artwork.init().catch((e: Error) => this.flash(`Could not load the artwork library: ${e.message}`));
+      const newer = this.ingest.newer + this.artwork.newer;
+      if (newer) this.flash(`${newer} saved ${newer === 1 ? 'library item was' : 'library items were'} written by a newer version of the app and not loaded`);
+      await this.ingest.adoptFootprints(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
+      this.diskLoaded = true;
+    } catch (e) {
+      this.flash(`Could not read the project files: ${(e as Error).message}`);
+      this.diskTimer = setTimeout(() => void this.connectDisk(), DISK_RETRY_MS);
+      return;
+    }
+    if (this.unsaved) await this.persist();
+  }
+
+  /**
+   * Versions before the files kept the project and the libraries in this browser: write them to
+   * files once (a library item already on disk is left as it is). The browser's copy stays.
+   */
+  private async moveBrowserData() {
+    if (await movedToDisk()) return;
+    const data = await browserData().catch(() => null);
+    if (!data) return;
+    let project: string | null = null;
+    if (data.project) project = await disk.createProject(data.project);
+    for (const k of data.kept) await disk.createProject(k.json, `unreadable ${new Date(k.at).toISOString().slice(0, 10)}`);
+    for (const r of data.library) if ((r as { id?: string }).id) await disk.putRecord('library', (r as { id: string }).id, r, true);
+    for (const r of data.artwork) if ((r as { id?: string }).id) await disk.putRecord('artwork', (r as { id: string }).id, r, true);
+    for (const d of data.datasheets) if (d.sheet?.data) await disk.putDatasheet(d.hash, d.sheet, true);
+    await markMovedToDisk();
+    if (project) {
+      await this.updateSettings({ project });
+      this.flash(`Your project is now a file: ${disk.projectsDir}/${project}.twd.json`);
+    }
+  }
+
+  /** Open a project file. False (and the open project stays) when it cannot be read. */
+  async openProject(id: string): Promise<boolean> {
+    if (this.running) {
+      this.flash('Wait for the agent to finish first.');
+      return false;
+    }
+    // in the write queue: a save running now writes the design it exported to the file it belongs to
+    const design = await this.queueWrite(async () => {
+      try {
+        const text = await disk.loadProject(id);
+        if (text === undefined) {
+          this.flash(`${id} is no longer in the projects folder.`);
+          await this.refreshProjects();
+          return null;
+        }
+        const d = JSON.parse(text) as Design;
+        await this.kernel.load(d);
+        this.projectId = id;
+        this.unsaved = false;
+        this.renameFile = false;
+        return d;
+      } catch (e) {
+        // a newer version's file, or a broken one: it is left as it is
+        this.flash(`Could not open ${id}: ${(e as Error).message}. The file is left as it is.`);
+        return null;
+      }
+    });
+    if (!design) return false;
+    this.agent.reset();
+    this.chat = [];
+    this.hunkOff = {};
+    if (this.settings.project !== id) void this.updateSettings({ project: id });
+    await this.ingest.adoptFootprints(design).catch(() => {});
+    await this.refresh();
+    return true;
+  }
+
+  async refreshProjects() {
+    this.projects = await disk.listProjects().catch(() => this.projects);
+  }
+
+  /** Show the projects folder in the file manager. */
+  revealProjects() {
+    disk.reveal().catch((e: Error) => this.flash(`Could not open the folder: ${e.message}`));
+  }
+
+  /** Run a write to the project files (or a switch to another project) after the ones before it. */
+  private queueWrite<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.writes.then(fn);
+    this.writes = run.catch(() => {});
+    return run;
   }
 
   /* -------------------------------- kernel -------------------------------- */
@@ -425,7 +540,7 @@ class AppState {
       build: __BUILD_ID__,
       userAgent: navigator.userAgent,
       provider: this.settings.provider === 'agent' ? this.settings.harness : `${this.settings.api}${this.apiProblem ? ` (${this.apiProblem})` : ''}`,
-      storage: storageHealth,
+      storage: disk.status === 'ok' ? storageHealth : `project files: server ${disk.status}`,
       persistent: this.persistent,
     };
   }
@@ -634,10 +749,32 @@ class AppState {
     };
   }
 
-  private async persist() {
-    const json = await this.kernel.exportDesign();
-    if (!this.saveBlocked) await saveProject(json);
-    await this.ingest.adoptFootprints(JSON.parse(json) as Design).catch(() => {});
+  /** Write the design to its project file (a new file the first time); without the server, mark it unsaved. */
+  private persist(): Promise<void> {
+    return this.queueWrite(async () => {
+      const json = await this.kernel.exportDesign();
+      await this.ingest.adoptFootprints(JSON.parse(json) as Design).catch(() => {});
+      if (disk.status !== 'ok' || !this.diskLoaded) {
+        this.unsaved = true;
+        if (disk.status !== 'connecting') void this.connectDisk();
+        return;
+      }
+      try {
+        if (this.projectId) await disk.saveProject(this.projectId, json);
+        else {
+          this.projectId = await disk.createProject(json);
+          this.renameFile = false; // named after the design already
+          void this.updateSettings({ project: this.projectId });
+          await this.refreshProjects();
+        }
+        this.unsaved = false;
+        if (this.renameFile) await this.renameProjectFile((JSON.parse(json) as Design).name);
+      } catch (e) {
+        this.unsaved = true;
+        if (disk.status === 'ok') this.flash(`Saving failed: ${(e as Error).message}`);
+        else void this.connectDisk();
+      }
+    });
   }
 
   /** The design document is being put together (the board may have to be routed first). */
@@ -684,11 +821,20 @@ class AppState {
     return this.kernel.exportDesign();
   }
 
+  /** Open a design as a new project (its own file, named after the design). */
   async importDesign(d: Design) {
-    await this.kernel.load(d);
+    if (this.running) {
+      this.flash('Wait for the agent to finish first.');
+      return;
+    }
+    await this.queueWrite(async () => {
+      await this.kernel.load(d);
+      this.projectId = null;
+      this.renameFile = false;
+    });
     this.agent.reset();
     this.chat = [];
-    this.saveBlocked = false; // the user chose to replace the project
+    this.hunkOff = {};
     await this.persist();
     await this.refresh();
   }
@@ -707,15 +853,26 @@ class AppState {
     });
   }
 
-  async deleteKeptProject(key: string) {
-    await deleteKeptProject(key);
-    this.keptProjects = await loadKeptProjects();
-  }
-
+  /** Rename the design, and its file after it (on the next save that reaches the server). */
   async renameProject(name: string) {
     await this.kernel.rename(name);
+    this.renameFile = true;
     await this.persist();
     await this.refresh();
+  }
+
+  /** Name the open project's file after the design (in the write queue, after a save). */
+  private async renameProjectFile(name: string) {
+    const id = this.projectId;
+    if (!id) return;
+    try {
+      this.projectId = await disk.renameProject(id, name);
+      this.renameFile = false;
+      if (this.projectId !== id) void this.updateSettings({ project: this.projectId });
+      await this.refreshProjects();
+    } catch (e) {
+      this.flash(`The file keeps its name: ${(e as Error).message}`);
+    }
   }
 
   /* -------------------------------- agent --------------------------------- */

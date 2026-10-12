@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
-import { loadProject, loadSettings, saveProject } from '../src/lib/persist.ts';
+import { browserData, loadBrowserProject, loadSettings, markMovedToDisk, movedToDisk, saveSettings } from '../src/lib/persist.ts';
 
 function seedOld(): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -27,12 +27,23 @@ function seedOld(): Promise<void> {
 describe('the database of the old name', () => {
   it('is copied into the new one on its first open and left in place', async () => {
     await seedOld();
-    expect(await loadProject()).toBe('{"name":"old board"}');
+    expect(await loadBrowserProject()).toBe('{"name":"old board"}');
     expect((await loadSettings()).theme).toBe('light');
     // writes go to the new database only
-    await saveProject('{"name":"new board"}');
-    expect(await loadProject()).toBe('{"name":"new board"}');
+    await saveSettings({ ...(await loadSettings()), theme: 'dark' });
+    expect((await loadSettings()).theme).toBe('dark');
     const names = (await indexedDB.databases()).map((d) => d.name).sort();
     expect(names).toEqual(['4k7', 'tracewise']);
+  });
+});
+
+describe('what the browser kept before the files', () => {
+  it('is read once, to move it to the server', async () => {
+    const data = await browserData();
+    expect(data.project).toBe('{"name":"old board"}');
+    expect(data).toMatchObject({ kept: [], library: [], artwork: [], datasheets: [] });
+    expect(await movedToDisk()).toBe(false);
+    await markMovedToDisk();
+    expect(await movedToDisk()).toBe(true);
   });
 });

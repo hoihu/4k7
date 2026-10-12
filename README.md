@@ -17,7 +17,7 @@ geometry and checks every change.
 - **Manufacturer limits**: pick JLCPCB, PCBWay or Eurocircuits (Layout → Manufacturer) and the design rules are kept above what they can make. For another manufacturer the agent reads its capabilities page and imports the limits for you to review.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
 - **Printable by construction**: the schematic flows onto pages by itself (A4, A3 or A2), never splitting a functional block. **Document** writes a design document with the functional blocks, layout, assembly drawing, BOM and schematic pages.
-- **Local-first**: runs on your computer, in your browser (download from [4k7.dev](https://4k7.dev), or `npx github:hoihu/4k7`). Your designs and API keys stay on your machine.
+- **Local-first**: runs on your computer, in your browser (download from [4k7.dev](https://4k7.dev), or `npx github:hoihu/4k7`). Every project is a file on your computer (`~/Documents/4k7/<name>.twd.json`), saved as you work; your API keys stay in your browser.
 
 ## Running it
 
@@ -32,8 +32,11 @@ npx -y github:hoihu/4k7          # builds once, then serves the app at http://lo
 npm install -g github:hoihu/4k7  # or install it: `4k7pcb` (add --no-open to skip the browser)
 ```
 
-Either way it runs the app and the local server in one process. Designs are kept by the browser for `http://localhost:7777`, so the app
-always opens at that address, with an access key in the path. Nothing is published to the npm registry; see [docs/distribution.md](docs/distribution.md).
+Either way it runs the app and the local server in one process. The server keeps the projects as files in `~/Documents/4k7`
+(change it with `"projectsDir"` in `~/.4k7/server.json` or `FOURK7_PROJECTS`) and imported parts, artwork and datasheets in
+`~/.4k7`; nothing is saved while it is not running. Settings and API keys are kept by the browser for `http://localhost:7777`, so
+the app always opens at that address, with an access key in the path. Projects saved in the browser by earlier versions are
+moved to files the first time the app opens. Nothing is published to the npm registry; see [docs/distribution.md](docs/distribution.md).
 
 From a checkout:
 

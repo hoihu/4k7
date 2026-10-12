@@ -1,6 +1,10 @@
 /**
- * Local-first persistence in IndexedDB. The API key is encrypted with a non-extractable
- * AES-GCM key that never leaves this browser profile.
+ * Persistence in this browser's IndexedDB: settings and the API keys. Projects, imported parts,
+ * artwork and datasheets are files on this computer (files.ts, disk.svelte.ts). The
+ * API key is encrypted with a non-extractable AES-GCM key that never leaves this browser profile.
+ *
+ * Versions before the files kept everything in IndexedDB; `browserData` reads it once to move it
+ * to the server (the browser's copy is left as it was).
  */
 import type { ApiServiceId } from '@4k7/agent';
 import type { AgentEffort, Artwork, HarnessId, PartCard } from '@4k7/schema';
@@ -120,26 +124,9 @@ async function tx<T>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectS
 const get = <T>(store: string, key: string) => tx<T | undefined>(store, 'readonly', (s) => s.get(key) as IDBRequest<T | undefined>);
 const put = (store: string, key: string, value: unknown) => tx(store, 'readwrite', (s) => s.put(value, key));
 
-/* --------------------------------- project -------------------------------- */
+/* ------------------------- what the browser kept before ------------------------- */
 
-/** The saved project as stored (JSON text); the caller parses it, so an unreadable one can be kept. */
-export async function loadProject(): Promise<string | undefined> {
-  try {
-    return (await get<string>('projects', 'current')) || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export async function saveProject(json: string): Promise<void> {
-  try {
-    await put('projects', 'current', json);
-  } catch (e) {
-    storageHealth = `saving the project failed: ${(e as Error).message}`;
-  }
-}
-
-/** A saved project this version could not read, kept so the next save does not replace it. */
+/** A saved project this version could not read, set aside by versions before the files. */
 export interface KeptProject {
   key: string;
   json: string;
@@ -148,31 +135,55 @@ export interface KeptProject {
   at: number;
 }
 
-/** Move an unreadable saved project to its own key. False when even that failed. */
-export async function keepProject(json: string, reason: string): Promise<boolean> {
-  try {
-    const at = Date.now();
-    const kept: KeptProject = { key: `unreadable:${at}`, json, reason, at };
-    await put('projects', kept.key, kept);
-    await tx('projects', 'readwrite', (s) => s.delete('current')); // moved, so a reload does not keep it twice
-    return true;
-  } catch (e) {
-    storageHealth = `keeping the unreadable project failed: ${(e as Error).message}`;
-    return false;
-  }
+/** Everything versions before the files kept in this browser, to move to the server. */
+export interface BrowserData {
+  /** The project (JSON text). */
+  project?: string;
+  kept: KeptProject[];
+  /** Records as stored, format stamp included. */
+  library: unknown[];
+  artwork: unknown[];
+  datasheets: { hash: string; sheet: StoredDatasheet }[];
 }
 
-export async function loadKeptProjects(): Promise<KeptProject[]> {
+/** The project the browser kept (JSON text). */
+export async function loadBrowserProject(): Promise<string | undefined> {
   try {
-    const all = await tx<unknown[]>('projects', 'readonly', (s) => s.getAll() as IDBRequest<unknown[]>);
-    return (all ?? []).filter((v): v is KeptProject => typeof v === 'object' && v !== null && 'json' in v).sort((a, b) => a.at - b.at);
+    return (await get<string>('projects', 'current')) || undefined;
   } catch {
-    return [];
+    return undefined;
   }
 }
 
-export async function deleteKeptProject(key: string): Promise<void> {
-  await tx('projects', 'readwrite', (s) => s.delete(key));
+async function all<T>(store: string): Promise<{ key: string; value: T }[]> {
+  const db = await open();
+  const s = db.transaction(store, 'readonly').objectStore(store);
+  const [keys, values] = await Promise.all([request(s.getAllKeys()), request(s.getAll() as IDBRequest<T[]>)]);
+  return keys.map((k, i) => ({ key: String(k), value: values[i]! }));
+}
+
+export async function browserData(): Promise<BrowserData> {
+  const projects = await all<unknown>('projects');
+  return {
+    project: await loadBrowserProject(),
+    kept: projects.map((p) => p.value).filter((v): v is KeptProject => typeof v === 'object' && v !== null && 'json' in v).sort((a, b) => a.at - b.at),
+    library: (await all<unknown>('library')).map((r) => r.value),
+    artwork: (await all<unknown>('artwork')).map((r) => r.value),
+    datasheets: (await all<StoredDatasheet>('datasheets')).map((r) => ({ hash: r.key, sheet: r.value })),
+  };
+}
+
+/** Whether this browser's data was moved to the server already. */
+export async function movedToDisk(): Promise<boolean> {
+  try {
+    return (await get<boolean>('settings', 'movedToDisk')) === true;
+  } catch {
+    return true; // nothing readable to move
+  }
+}
+
+export async function markMovedToDisk(): Promise<void> {
+  await put('settings', 'movedToDisk', true);
 }
 
 /* ----------------------------- stored records ----------------------------- */
@@ -191,9 +202,9 @@ export interface Stored<T> {
   newer: number;
 }
 
-type Stamped<T> = T & { format?: number };
+export type Stamped<T> = T & { format?: number };
 
-const stamp = <T>(record: T, format: number): Stamped<T> => ({ ...(JSON.parse(JSON.stringify(record)) as T), format }); // plain data, never a Svelte proxy
+export const stamp = <T>(record: T, format: number): Stamped<T> => ({ ...(JSON.parse(JSON.stringify(record)) as T), format }); // plain data, never a Svelte proxy
 
 /**
  * Sort stored records by format: current ones as they are, older ones through `upgrade`,
@@ -209,64 +220,10 @@ export function readStored<T>(records: Stamped<T>[], current: number, upgrade?: 
   return out;
 }
 
-/** Whether the record stored under this key was written by a newer version (saving would destroy it). */
-async function newerStored(store: string, key: string, current: number): Promise<boolean> {
-  const existing = await get<{ format?: number }>(store, key);
-  return (existing?.format ?? 1) > current;
-}
-
-/* ------------------------------ part library ------------------------------ */
-
-/** Parts imported from datasheets, kept in this browser. */
-export async function loadLibrary(): Promise<Stored<PartCard>> {
-  try {
-    return readStored((await tx<Stamped<PartCard>[]>('library', 'readonly', (s) => s.getAll() as IDBRequest<Stamped<PartCard>[]>)) ?? [], LIBRARY_FORMAT_VERSION);
-  } catch {
-    return { items: [], newer: 0 };
-  }
-}
-
-export async function saveLibraryPart(card: PartCard): Promise<void> {
-  if (await newerStored('library', card.id, LIBRARY_FORMAT_VERSION)) throw new Error(`${card.id} was saved by a newer version of the app; update the app to change it`);
-  await put('library', card.id, stamp(card, LIBRARY_FORMAT_VERSION));
-}
-
-export async function deleteLibraryPart(id: string): Promise<void> {
-  await tx('library', 'readwrite', (s) => s.delete(id));
-}
-
-/* -------------------------------- artwork -------------------------------- */
-
-/** Saved silkscreen artwork (logos, clipart), kept in this browser for every project. */
-export async function loadArtwork(): Promise<Stored<Artwork>> {
-  try {
-    return readStored((await tx<Stamped<Artwork>[]>('artwork', 'readonly', (s) => s.getAll() as IDBRequest<Stamped<Artwork>[]>)) ?? [], ARTWORK_FORMAT_VERSION);
-  } catch {
-    return { items: [], newer: 0 };
-  }
-}
-
-export async function saveArtwork(a: Artwork): Promise<void> {
-  if (await newerStored('artwork', a.id, ARTWORK_FORMAT_VERSION)) throw new Error(`"${a.name}" was saved by a newer version of the app; update the app to change it`);
-  await put('artwork', a.id, stamp(a, ARTWORK_FORMAT_VERSION));
-}
-
-export async function deleteArtwork(id: string): Promise<void> {
-  await tx('artwork', 'readwrite', (s) => s.delete(id));
-}
-
 /** Datasheets of imported parts, so every value can be shown on its page. */
 export interface StoredDatasheet {
   name: string;
   data: ArrayBuffer;
-}
-
-export async function saveDatasheet(hash: string, sheet: StoredDatasheet): Promise<void> {
-  await put('datasheets', hash, sheet);
-}
-
-export async function deleteDatasheet(hash: string): Promise<void> {
-  await tx('datasheets', 'readwrite', (s) => s.delete(hash));
 }
 
 /** A datasheet import waiting for review, kept so a reload does not lose it (the PDF is in "datasheets"). */
@@ -287,13 +244,6 @@ export async function loadPendingImport<T>(): Promise<T | undefined> {
   }
 }
 
-export async function loadDatasheet(hash: string): Promise<StoredDatasheet | undefined> {
-  try {
-    return await get<StoredDatasheet>('datasheets', hash);
-  } catch {
-    return undefined;
-  }
-}
 
 /* -------------------------------- settings -------------------------------- */
 
@@ -324,6 +274,8 @@ export interface Settings {
   /** The local server's access key and port, remembered so the tab reconnects by itself. */
   serverAccessKey: string;
   serverPort: number | null;
+  /** The project open last (its file's name in the projects folder); '' = the newest. */
+  project: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -342,6 +294,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
   serverAccessKey: '',
   serverPort: null,
+  project: '',
 };
 
 /** Bumped when a default changes in a way existing users should get (v2: dark blue theme). */
@@ -382,7 +335,8 @@ export async function loadSettings(): Promise<Settings> {
 
 export async function saveSettings(s: Settings): Promise<void> {
   try {
-    await put('settings', 'settings', { ...s, version: SETTINGS_VERSION });
+    // plain data: the app's settings are a Svelte proxy, which IndexedDB cannot store
+    await put('settings', 'settings', { ...(JSON.parse(JSON.stringify(s)) as Settings), version: SETTINGS_VERSION });
   } catch (e) {
     storageHealth = `saving settings failed: ${(e as Error).message}`;
   }

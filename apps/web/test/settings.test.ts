@@ -30,4 +30,10 @@ describe('settings of versions before the agent and API choices', () => {
     await saveOld({ provider: 'demo' });
     expect((await loadSettings()).provider).toBe('agent');
   });
+
+  it('saves settings held in proxies (the app keeps them in Svelte state)', async () => {
+    const s = await loadSettings();
+    await saveSettings({ ...s, harnessModels: new Proxy({ 'claude-code': 'opus' }, {}), project: 'blinker' });
+    expect(await loadSettings()).toMatchObject({ harnessModels: { 'claude-code': 'opus' }, project: 'blinker' });
+  });
 });

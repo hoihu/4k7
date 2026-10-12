@@ -10,3 +10,4 @@ export { loadConfig, configPath, configDir, type ClaudeProfile } from './config.
 export { checkForUpdate, compareVersions, DOWNLOAD_URL } from './update.ts';
 export { candidateDirs, extendPathFor, findBin, isExecutable, loginShellPath } from './claude-bin.ts';
 export { Agents, AGENT_BINS, binFor } from './agents.ts';
+export { storageHandler, defaultProjectsDir, projectFileName, PROJECT_EXT, type ProjectEntry, type StorageOptions } from './storage.ts';
