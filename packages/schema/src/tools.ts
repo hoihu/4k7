@@ -95,6 +95,15 @@ export const ImageInput = z.object({
   width: z.number().int().min(400).max(2400).default(1400),
 });
 
+export const AttachmentInput = z.object({
+  n: z.number().int().min(1).default(1).describe('Which attachment: they are numbered through the conversation (#1, #2…)'),
+  page: z.number().int().min(1).optional().describe('A PDF: the page to look at (default 1)'),
+  region: z
+    .tuple([z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1)])
+    .optional()
+    .describe('Zoom into x0, y0, x1, y1 (fractions of the picture or page, top left 0, 0) to read small print: values, pin numbers, net labels'),
+});
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -172,6 +181,7 @@ export const TOOL_NAMES = {
   artwork: 'artwork',
   datasheet: 'read_datasheet',
   image: 'get_schematic_image',
+  attachment: 'view_attachment',
   ask: 'ask_user',
   propose: 'propose',
   waitForReview: 'wait_for_review',
@@ -266,6 +276,18 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
       description: 'PNG rendering of the current schematic (working copy, with pending changes highlighted).',
       input_schema: schemaOf(ImageInput),
     },
+    ...(engine !== 'cli'
+      ? [{
+          name: TOOL_NAMES.attachment,
+          description:
+            'Look at a file the user attached to the chat (a picture or PDF of a schematic, a sketch, a screenshot): all of it, or a region ' +
+            'zoomed in. To recreate a schematic from one: first read it region by region and list every part (reference, value, ' +
+            'what it is), every net and what connects to it, and the blocks it is made of; then build it with design_edit ' +
+            '(parts from the library, jlc_search or import_part), and say what you could not read or did differently. ' +
+            'Copy the circuit, not the drawing: the app lays it out.',
+          input_schema: schemaOf(AttachmentInput),
+        }]
+      : []),
     ...(viaClaudeCode
       ? [{
           name: TOOL_NAMES.propose,
