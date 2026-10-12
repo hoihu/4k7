@@ -96,7 +96,8 @@ program, the app opens on the server's own port and the server says that designs
 
 A checkout's dev server (`http://localhost:5173`) takes precedence: `npm run dev` points the
 server's links there, and a server run on its own from the checkout does so while the
-dev server answers.
+dev server answers. In a checkout, 7777 is the backend and 5173 is the dev UI: 7777 still
+serves the last `npm run build`, so open the link `npm run dev` prints.
 
 So, in a checkout: `npm run dev` while working on the code (hot reload, the server from source),
 `npm start` to check the package as users get it.
