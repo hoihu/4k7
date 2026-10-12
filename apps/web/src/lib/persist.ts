@@ -3,7 +3,7 @@
  * AES-GCM key that never leaves this browser profile.
  */
 import type { ApiServiceId } from '@4k7/agent';
-import type { Artwork, HarnessId, PartCard } from '@4k7/schema';
+import type { AgentEffort, Artwork, HarnessId, PartCard } from '@4k7/schema';
 
 const DB = '4k7';
 /** The app's name before 4k7. A browser that ran it keeps its data under this name; it is copied over once. */
@@ -307,6 +307,8 @@ export interface Settings {
   harness: HarnessId;
   /** Model per agent ('' or missing = the agent's default). */
   harnessModels: Partial<Record<HarnessId, string>>;
+  /** Effort per agent (missing = the agent's default). */
+  harnessEfforts: Partial<Record<HarnessId, AgentEffort>>;
   /** Let the agent read the web (datasheets) in the app chat. */
   agentWeb: boolean;
   /** Which API, its address where it differs from the service's default, and the model, per service. */
@@ -328,6 +330,7 @@ export const DEFAULT_SETTINGS: Settings = {
   provider: 'agent',
   harness: 'claude-code',
   harnessModels: {},
+  harnessEfforts: {},
   agentWeb: false,
   api: 'anthropic',
   apiUrls: {},

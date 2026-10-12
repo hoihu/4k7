@@ -43,9 +43,9 @@ async function setup(bin = FAKE, profile?: ClaudeProfile) {
       if (m.type === 'chat_event') events.set(m.id, [...(events.get(m.id) ?? []), m.event]);
     });
   });
-  const send = (id: string, text: string, session: string | null = null, model?: string, web = false) =>
+  const send = (id: string, text: string, session: string | null = null, model?: string, web = false, effort?: string) =>
     new Promise<ChatEvent[]>((resolve) => {
-      ws.send(JSON.stringify({ type: 'chat', id, text, session, autonomy: 'review', web, ...(model ? { model } : {}) }));
+      ws.send(JSON.stringify({ type: 'chat', id, text, session, autonomy: 'review', web, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }));
       const t = setInterval(() => {
         if (events.get(id)?.some((e) => e.kind === 'done')) {
           clearInterval(t);
@@ -69,6 +69,16 @@ async function setup(bin = FAKE, profile?: ClaudeProfile) {
 const text = (es: ChatEvent[]) => es.filter((e) => e.kind === 'text').map((e) => (e as { text: string }).text).join('');
 
 describe('app chat via Claude Code', () => {
+  it('passes the effort level, and only a known one', async () => {
+    const { send } = await setup();
+    const flagsOf = (es: ChatEvent[]) => {
+      const t = text(es);
+      return JSON.parse(t.slice(t.indexOf('flags=') + 6));
+    };
+    expect(flagsOf(await send('e1', 'think hard', null, 'opus', false, 'xhigh')).effort).toBe('xhigh');
+    expect(flagsOf(await send('e2', 'think', null, 'opus', false, '--dangerously-skip-permissions')).effort).toBeNull();
+  });
+
   it('announces the capability to the tab', async () => {
     const { welcome } = await setup();
     expect(welcome).toMatchObject({ type: 'welcome', chat: { available: true, version: '2.1.282 (Claude Code, fake)' } });
@@ -87,7 +97,7 @@ describe('app chat via Claude Code', () => {
     expect(calls).toEqual(['get_context']);
     expect(reply).toContain('tools=get_context,design_query,design_edit,calc,import_part,jlc_search,pending_import,artwork,read_datasheet,get_schematic_image,propose ');
     const flags = JSON.parse(reply.slice(reply.indexOf('flags=') + 6));
-    expect(flags).toMatchObject({ tools: '', strict: true, allowed: 'mcp__4k7', permission: 'dontAsk', model: 'sonnet', prompt: 'build a buck' });
+    expect(flags).toMatchObject({ tools: '', strict: true, allowed: 'mcp__4k7', permission: 'dontAsk', model: 'sonnet', effort: null, prompt: 'build a buck' });
     expect(flags.appended).toMatch(/^You are answering messages typed into/);
     // the chat prompt travels once, in the system prompt; the server instructions only point there
     expect(flags.instructionsLength).toBeGreaterThan(0);

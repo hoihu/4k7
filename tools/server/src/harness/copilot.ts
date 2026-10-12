@@ -14,7 +14,7 @@ export class CopilotHarness implements Harness {
   /** Token totals per session: the CLI reports them for the whole session, a run's are the difference. */
   #totals = new Map<string, TokenCount>();
 
-  readonly bin: string;
+  bin: string;
 
   constructor(bin: string) {
     this.bin = bin;
@@ -57,6 +57,7 @@ export class CopilotHarness implements Harness {
         '--no-auto-update',
         `--session-id=${session}`,
         ...(job.model ? ['--model', job.model] : []),
+        ...(job.effort ? ['--reasoning-effort', job.effort] : []),
       ],
       env: this.#env(),
       ...this.#reader(session, job.session !== null, sink),

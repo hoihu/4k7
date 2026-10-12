@@ -3,7 +3,7 @@
  * with the user's key) and the models of each, and how a choice maps onto the settings.
  */
 import { ANTHROPIC_MODELS, apiService, type ApiServiceId } from '@4k7/agent';
-import { HARNESSES, type HarnessCapability, type HarnessId } from '@4k7/schema';
+import { AGENT_EFFORTS, HARNESSES, type AgentEffort, type HarnessCapability, type HarnessId } from '@4k7/schema';
 import type { Settings } from './persist.ts';
 
 export type Source = { kind: 'agent'; id: HarnessId } | { kind: 'api'; id: ApiServiceId };
@@ -90,9 +90,27 @@ export function modelsOf(src: Source, opts: { harnesses: HarnessCapability[]; li
   return [...new Set(ids)];
 }
 
-/** Whether a model has an effort setting (only the Anthropic Messages API takes one for now). */
-export function hasEffort(c: ModelChoice): boolean {
-  if (c.source.kind !== 'api' || apiService(c.source.id).format !== 'anthropic') return false;
+/**
+ * The effort levels the chosen model takes ('' = the agent's own default), or null when it has none:
+ * Claude Code and Copilot take one (Copilot drops it for models without), the Anthropic API for
+ * models with the setting. OpenCode has per-model variants instead (`provider/model#variant`).
+ */
+export function effortLevels(c: ModelChoice): ('' | AgentEffort)[] | null {
+  const claude = c.source.id === 'claude-code' || (c.source.kind === 'api' && apiService(c.source.id).format === 'anthropic');
+  if (!claude && !(c.source.kind === 'agent' && HARNESSES.find((h) => h.id === c.source.id)?.effort)) return null;
   const info = ANTHROPIC_MODELS.find((m) => c.model.startsWith(m.id));
-  return !info || info.effort;
+  if (claude && ((info && !info.effort) || c.model === 'haiku')) return null;
+  return c.source.kind === 'agent' ? ['', ...AGENT_EFFORTS] : [...AGENT_EFFORTS];
+}
+
+export function currentEffort(s: Settings): '' | AgentEffort {
+  return s.provider === 'agent' ? (s.harnessEfforts[s.harness] ?? '') : s.effort;
+}
+
+export function effortPatch(s: Settings, e: '' | AgentEffort): Partial<Settings> {
+  if (s.provider === 'api') return e ? { effort: e } : {};
+  const efforts = { ...s.harnessEfforts };
+  if (e) efforts[s.harness] = e;
+  else delete efforts[s.harness];
+  return { harnessEfforts: efforts };
 }

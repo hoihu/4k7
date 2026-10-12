@@ -18,16 +18,17 @@
  * In stdio mode stdout is reserved for the MCP protocol; all logging goes to stderr.
  */
 import { appendFileSync, existsSync, renameSync, statSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { SERVER_PORTS, type HarnessCapability } from '@4k7/schema';
+import { SERVER_PORTS } from '@4k7/schema';
 import { appHandler, reachable, serves4k7 } from './app.ts';
 import { LocalServer } from './server.ts';
-import { ChatRunner, detectClaude } from './chat.ts';
+import { ChatRunner } from './chat.ts';
+import { Agents, binFor } from './agents.ts';
+import { ClaudeHarness } from './harness/claude.ts';
 import { CopilotHarness } from './harness/copilot.ts';
 import { OpenCodeHarness } from './harness/opencode.ts';
 import type { Harness } from './harness/types.ts';
-import { extendPathFor } from './claude-bin.ts';
 import { appDir, configDir, configPath, DEV_APP, inCheckout, loadConfig } from './config.ts';
 import { openBrowser } from './launch.ts';
 import { createMcpServer, mcpHttpHandler, VERSION } from './mcp.ts';
@@ -81,34 +82,18 @@ async function main() {
   const dir = appDir();
 
   // chat in the app, answered by a coding agent on this computer (Claude Code, Copilot CLI, OpenCode)
-  const claudeBin = process.env.FOURK7_CLAUDE_BIN ?? 'claude';
   const workDir = join(configDir(), 'claude-workspace');
-  const others: Harness[] = [new CopilotHarness(process.env.FOURK7_COPILOT_BIN ?? 'copilot'), new OpenCodeHarness(process.env.FOURK7_OPENCODE_BIN ?? 'opencode', workDir)];
-  const detectAll = (): HarnessCapability[] => [{ id: 'claude-code', name: 'Claude Code', ...detectClaude(claudeBin, cfg.claude) }, ...others.map((h) => h.detect())];
-  let harnesses = detectAll();
-  const bins = [claudeBin, ...others.map((h) => h.bin)];
-  const missing = harnesses.filter((h, i) => !h.available && !bins[i]!.includes(sep)).map((h) => h.id);
-  if (missing.length) {
-    // started from the Finder or a launcher: look where installers put them, then where the user's shell does
-    const added = extendPathFor(() => detectAll().some((h) => h.available && missing.includes(h.id)));
-    if (added) {
-      harnesses = detectAll();
-      log(`agent CLIs found after adding to PATH: ${added.join(', ')}`);
-    }
-  }
-  const capability = harnesses[0]!;
-  const chat = new ChatRunner({ server, claudeBin, workDir, ingestDir: join(configDir(), 'ingest'), profile: cfg.claude, harnesses: others, log });
-  server.setChatHandler(chat.handle, capability, harnesses);
-  // model lists can take a while (OpenCode asks its providers): the tab gets them when they are in
-  for (const h of others) {
-    const i = harnesses.findIndex((c) => c.id === h.id);
-    if (!harnesses[i]?.available || !h.models) continue;
-    void h.models().then((models) => {
-      if (!models.length) return;
-      harnesses = harnesses.map((c, j) => (j === i ? { ...c, models } : c));
-      server.setHarnesses(harnesses);
-    });
-  }
+  const claude = new ClaudeHarness(binFor('claude-code', cfg.bins), cfg.claude);
+  const others: Harness[] = [new CopilotHarness(binFor('copilot', cfg.bins)), new OpenCodeHarness(binFor('opencode', cfg.bins), workDir)];
+  const agents = new Agents({ harnesses: [claude, ...others], bins: cfg.bins, log, onChange: (caps) => server.setHarnesses(caps) });
+  const harnesses = agents.detect();
+  const chat = new ChatRunner({ server, claudeBin: claude.bin, claude, workDir, ingestDir: join(configDir(), 'ingest'), profile: cfg.claude, harnesses: others, log });
+  server.setChatHandler(chat.handle, harnesses[0]!, harnesses);
+  server.setAgentsHandler((msg) => {
+    if (msg.type === 'agents_detect') return server.setHarnesses(agents.detect());
+    const r = agents.setBin(msg.harness, msg.bin);
+    server.sendToTab({ type: 'agent_bin_result', harness: msg.harness, ...r });
+  });
   const mcpHttp = mcpHttpHandler(server, (t) => chat.modeFor(t));
   const app = appHandler(dir, VERSION, cfg.accessKey);
   server.setHttpHandler((req, res) => ((req.url ?? '').split('?')[0] === '/mcp' ? mcpHttp(req, res) : app(req, res)));

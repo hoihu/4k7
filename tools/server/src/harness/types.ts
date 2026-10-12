@@ -4,7 +4,7 @@
  * login and plan (Claude Code, GitHub Copilot CLI, OpenCode).
  */
 import { spawn, spawnSync } from 'node:child_process';
-import type { ChatCapability, ChatEvent, HarnessCapability, HarnessId, TokenCount } from '@4k7/schema';
+import type { AgentEffort, ChatCapability, ChatEvent, HarnessCapability, HarnessId, TokenCount } from '@4k7/schema';
 
 export type DoneEvent = Extract<ChatEvent, { kind: 'done' }>;
 
@@ -14,6 +14,8 @@ export interface ChatJob {
   /** The harness's session to continue, null for a new conversation. */
   session: string | null;
   model?: string;
+  /** Left out: the CLI's own default. */
+  effort?: AgentEffort;
   web: boolean;
   /** The server's MCP endpoint and the bearer token of this run (it decides which tools it sees). */
   mcpUrl: string;
@@ -44,7 +46,8 @@ export interface Invocation {
 export interface Harness {
   readonly id: HarnessId;
   readonly name: string;
-  readonly bin: string;
+  /** The CLI: a path, or a name looked up on the PATH. Can change while the server runs (set in the app). */
+  bin: string;
   detect(): HarnessCapability;
   /** The models the CLI offers, if it can list them. */
   models?(): Promise<string[]>;
@@ -55,7 +58,7 @@ export interface Harness {
 export function detectCli(bin: string, name: string, env: NodeJS.ProcessEnv, envVar: string): ChatCapability {
   const r = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 10_000, env });
   if (r.error || r.status !== 0) {
-    return { available: false, reason: `${name} CLI not found ("${bin}"). Install it or set ${envVar}.` };
+    return { available: false, reason: `${name} CLI not found ("${bin}"). Install it, or give its full path in Settings → Coding agents (or ${envVar}).` };
   }
   return { available: true, version: r.stdout.trim().split('\n')[0] ?? '' };
 }

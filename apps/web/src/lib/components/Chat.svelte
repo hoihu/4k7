@@ -3,13 +3,12 @@
   import { server } from '../server.svelte.ts';
   import ChangesetCard from './ChangesetCard.svelte';
   import ModelPicker from './ModelPicker.svelte';
-  import { currentChoice, hasEffort } from '../models.ts';
-  import type { Settings } from '../persist.ts';
+  import { currentChoice, currentEffort, effortLevels, effortPatch } from '../models.ts';
   import { markdown } from '../markdown.ts';
   import { USAGE_TITLE, usageLine } from '../usage.ts';
 
   let scroller: HTMLDivElement | undefined = $state();
-  const efforts: Settings['effort'][] = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const efforts = $derived(effortLevels(currentChoice(app.settings)));
 
   const suggestions = $derived.by(() => {
     if (!app.k || app.k.summary.components.length === 0) {
@@ -98,6 +97,8 @@
                 </div>
               {:else if s.type === 'error'}
                 <div class="err">{s.text}</div>
+              {:else if s.type === 'note'}
+                <div class="note">{s.text}</div>
               {/if}
             {/each}
             {#if m.status === 'streaming'}<div class="working"><span class="dot"></span>{m.source ? `${m.source} is editing the working copy…` : 'working…'}</div>{/if}
@@ -119,10 +120,10 @@
       <textarea rows="1" bind:value={app.input} {onkeydown} placeholder="Ask, or give a hint…" aria-label="Message"></textarea>
       <div class="bar">
         <ModelPicker />
-        {#if hasEffort(currentChoice(app.settings))}
+        {#if efforts}
           <span class="div"></span>
-          <select class="effort" value={app.settings.effort} title="Effort: higher is more thorough and uses more tokens" aria-label="Effort" onchange={(e) => void app.updateSettings({ effort: (e.currentTarget as HTMLSelectElement).value as Settings['effort'] })}>
-            {#each efforts as e (e)}<option value={e}>{e[0]!.toUpperCase() + e.slice(1)}</option>{/each}
+          <select class="effort" value={currentEffort(app.settings)} title="Effort: higher is more thorough and uses more tokens" aria-label="Effort" onchange={(e) => void app.updateSettings(effortPatch(app.settings, (e.currentTarget as HTMLSelectElement).value as (typeof efforts)[number]))}>
+            {#each efforts as e (e)}<option value={e}>{e ? e[0]!.toUpperCase() + e.slice(1) : 'Default'}</option>{/each}
           </select>
         {/if}
         {#if app.settings.provider === 'agent'}
@@ -181,6 +182,7 @@
   .opt { border: 1px solid var(--line-2); background: var(--panel); border-radius: 6px; padding: 2px 8px; font-size: 12px; text-align: left; }
   .opt.chosen { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-txt); opacity: 1; }
   .err { color: var(--err); font-size: 12px; }
+  .note { color: var(--txt-3); font-size: 11.5px; }
   .src { font-size: 11px; color: var(--info); font-weight: 600; }
   .ext { font-family: var(--mono); }
   .working { color: var(--txt-3); font-size: 11.5px; display: flex; align-items: center; gap: 6px; }

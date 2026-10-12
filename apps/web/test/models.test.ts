@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, type Settings } from '../src/lib/persist.ts';
-import { choiceKey, choicePatch, currentChoice, hasEffort, modelLabel, modelsOf, parseChoiceKey, type ModelChoice } from '../src/lib/models.ts';
+import { choiceKey, choicePatch, currentChoice, currentEffort, effortLevels, effortPatch, modelLabel, modelsOf, parseChoiceKey, type ModelChoice } from '../src/lib/models.ts';
 
 const settings = (s: Partial<Settings>): Settings => ({ ...DEFAULT_SETTINGS, ...s });
 
@@ -36,10 +36,23 @@ describe('the chat model picker', () => {
     expect(modelLabel({ source: { kind: 'api', id: 'openai' }, model: 'gpt-5' })).toBe('gpt-5');
   });
 
-  it('offers effort only where the API takes it', () => {
-    expect(hasEffort({ source: { kind: 'api', id: 'anthropic' }, model: 'claude-opus-5' })).toBe(true);
-    expect(hasEffort({ source: { kind: 'api', id: 'anthropic' }, model: 'claude-haiku-4-5' })).toBe(false);
-    expect(hasEffort({ source: { kind: 'api', id: 'openai' }, model: 'gpt-5' })).toBe(false);
-    expect(hasEffort({ source: { kind: 'agent', id: 'claude-code' }, model: 'opus' })).toBe(false);
+  it('offers effort where the agent or API takes it', () => {
+    expect(effortLevels({ source: { kind: 'api', id: 'anthropic' }, model: 'claude-opus-5' })).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(effortLevels({ source: { kind: 'api', id: 'anthropic' }, model: 'claude-haiku-4-5' })).toBeNull();
+    expect(effortLevels({ source: { kind: 'api', id: 'openai' }, model: 'gpt-5' })).toBeNull();
+    expect(effortLevels({ source: { kind: 'agent', id: 'claude-code' }, model: 'opus' })?.[0]).toBe(''); // the agent's own default first
+    expect(effortLevels({ source: { kind: 'agent', id: 'claude-code' }, model: 'haiku' })).toBeNull();
+    expect(effortLevels({ source: { kind: 'agent', id: 'copilot' }, model: '' })).not.toBeNull();
+    expect(effortLevels({ source: { kind: 'agent', id: 'opencode' }, model: 'a/b' })).toBeNull();
+  });
+
+  it('keeps an effort per agent, apart from the API one', () => {
+    const s = settings({ provider: 'agent', harness: 'copilot', effort: 'high' });
+    expect(currentEffort(s)).toBe('');
+    const set = settings({ ...s, ...effortPatch(s, 'max') });
+    expect(set.harnessEfforts).toEqual({ copilot: 'max' });
+    expect(set.effort).toBe('high');
+    expect(settings({ ...set, ...effortPatch(set, '') }).harnessEfforts).toEqual({});
+    expect(currentEffort(settings({ provider: 'api', effort: 'low' }))).toBe('low');
   });
 });

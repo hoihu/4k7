@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SERVER_ACCESS_KEY } from '@4k7/schema';
+import { SERVER_ACCESS_KEY, type HarnessId } from '@4k7/schema';
 
 /**
  * How to run the headless Claude Code for the app chat. Mirrors a shell alias such as
@@ -47,6 +47,8 @@ export interface ServerConfig {
   /** Where app links point when set (FOURK7_APP_URL or "appUrl"); else the app this server serves. */
   appUrl?: string;
   claude: ClaudeProfile;
+  /** The agents' CLIs chosen in the app (absolute paths); the FOURK7_…_BIN variables win over them. */
+  bins: Partial<Record<HarnessId, string>>;
 }
 
 /** The folder's name before 4k7; moved to the new name on the first start (key, profile, logs, workspaces). */
@@ -95,9 +97,22 @@ export function loadConfig(): ServerConfig {
     unsetEnv: [...(c.unsetEnv ?? []), ...(process.env.FOURK7_CLAUDE_UNSET?.split(',').filter(Boolean) ?? [])],
     env: c.env ?? {},
   };
-  return { accessKey, ...(appUrl ? { appUrl } : {}), claude };
+  return { accessKey, ...(appUrl ? { appUrl } : {}), claude, bins: typeof cfg.bins === 'object' && cfg.bins ? cfg.bins : {} };
 }
 
-function expandHome(p: string): string {
+/** Change entries of server.json, keeping the rest of the file as it is. */
+export function saveConfig(patch: Record<string, unknown>): void {
+  const path = configPath();
+  let cfg: Record<string, unknown> = {};
+  try {
+    cfg = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  } catch {
+    // no file yet
+  }
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, JSON.stringify({ ...cfg, ...patch }, null, 2) + '\n', { mode: 0o600 });
+}
+
+export function expandHome(p: string): string {
   return p.replace(/^~(?=$|\/)/, homedir()).replace(/^\$HOME(?=$|\/)/, homedir());
 }

@@ -28,6 +28,8 @@ export type TabToServer =
       /** Which agent answers (Claude Code when left out, as with older tabs). */
       harness?: HarnessId;
       model?: string;
+      /** How hard the agent thinks (its own default when left out); only for agents with `effort` in HARNESSES. */
+      effort?: AgentEffort;
       autonomy: 'auto' | 'review';
       /** Let the agent read the web (fetch/search), e.g. to look up datasheets. Off by default. */
       web?: boolean;
@@ -44,7 +46,11 @@ export type TabToServer =
       /** 2 = run a second, independent extraction to cross-check the first. */
       passes?: number;
     }
-  | { type: 'chat_cancel'; id: string };
+  | { type: 'chat_cancel'; id: string }
+  /** Run this program for an agent (an absolute path; null = find it on the PATH again). Answered with agent_bin_result. */
+  | { type: 'agent_bin'; harness: HarnessId; bin: string | null }
+  /** Look for the agents' CLIs again (after installing one); answered with `harnesses`. */
+  | { type: 'agents_detect' };
 
 /** What a tab reports about itself when it connects (logged by the server for diagnosis). */
 export interface TabInfo {
@@ -70,17 +76,30 @@ export interface ChatCapability {
  */
 export type HarnessId = 'claude-code' | 'opencode' | 'copilot';
 
-export const HARNESSES: { id: HarnessId; name: string; install: string }[] = [
-  { id: 'claude-code', name: 'Claude Code', install: 'https://docs.claude.com/en/docs/claude-code' },
-  { id: 'copilot', name: 'GitHub Copilot CLI', install: 'https://docs.github.com/copilot/how-tos/copilot-cli' },
-  { id: 'opencode', name: 'OpenCode', install: 'https://opencode.ai' },
+/** `effort`: the CLI takes an effort level (Claude Code --effort, Copilot --reasoning-effort; OpenCode only has per-model variants, `provider/model#variant`). */
+export const HARNESSES: { id: HarnessId; name: string; install: string; effort: boolean }[] = [
+  { id: 'claude-code', name: 'Claude Code', install: 'https://docs.claude.com/en/docs/claude-code', effort: true },
+  { id: 'copilot', name: 'GitHub Copilot CLI', install: 'https://docs.github.com/copilot/how-tos/copilot-cli', effort: true },
+  { id: 'opencode', name: 'OpenCode', install: 'https://opencode.ai', effort: false },
 ];
+
+/** Effort levels both Claude Code and the Copilot CLI take. */
+export const AGENT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type AgentEffort = (typeof AGENT_EFFORTS)[number];
 
 export interface HarnessCapability extends ChatCapability {
   id: HarnessId;
   name: string;
   /** Models the CLI offers, when it can list them (OpenCode: provider/model). */
   models?: string[];
+  /** What the server runs: the path set in the app or by an environment variable, or the name looked up on the PATH. */
+  bin?: string;
+  /** Where that program is, when it was found. */
+  path?: string;
+  /** Who chose `bin`: an environment variable (FOURK7_…_BIN, wins), the app's settings, or nobody (the name on the PATH). */
+  binFrom?: 'env' | 'settings' | 'auto';
+  /** The environment variable that overrides the program. */
+  binEnv?: string;
 }
 
 /** A newer release of the app than the one the server runs, and where to get it. */
@@ -116,6 +135,8 @@ export type ServerToTab =
   | { type: 'welcome'; protocol: number; agent: string; chat: ChatCapability; harnesses?: HarnessCapability[]; update?: UpdateInfo }
   /** The agents' details changed (a model list arrived after the tab connected). */
   | { type: 'harnesses'; harnesses: HarnessCapability[] }
+  /** The answer to agent_bin: saved and the agent detected again, or why not. */
+  | { type: 'agent_bin_result'; harness: HarnessId; ok: boolean; error?: string }
   | { type: 'denied'; reason: string }
   /** A newer release was found after the tab connected. */
   | { type: 'update'; update: UpdateInfo }

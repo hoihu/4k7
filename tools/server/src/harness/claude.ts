@@ -41,7 +41,7 @@ export class ClaudeHarness implements Harness {
   readonly id = 'claude-code' as const;
   readonly name = 'Claude Code';
 
-  readonly bin: string;
+  bin: string;
   #profile: ClaudeProfile | undefined;
 
   constructor(bin: string, profile?: ClaudeProfile) {
@@ -71,6 +71,7 @@ export class ClaudeHarness implements Harness {
         '--append-system-prompt',
         job.web ? `${chatModePrompt()}\n\n${CHAT_WEB_PROMPT}` : chatModePrompt(),
         ...(job.model ? ['--model', job.model] : []),
+        ...(job.effort ? ['--effort', job.effort] : []),
         ...(job.session ? ['--resume', job.session] : []),
       ],
       env: childEnv(this.#profile),
