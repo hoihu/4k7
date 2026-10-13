@@ -82,7 +82,7 @@ After every changeset the kernel runs **incremental checks** and returns machine
 | Part integrity | symbol pin ↔ footprint pad mapping, pin count, package mismatch |
 | DRC (physical) | clearance, width, annular ring, drill, courtyard overlap, silkscreen over pads, board-edge clearance |
 | Signal rules | diff-pair skew, length matching, impedance per stack-up, return-path discontinuities |
-| Drawing (SCH.*) | rails up / ground down, orthogonal wires, dangling ends, text overlap, jogs, detours, crossings; levels from the editable ruleset (Settings → Schematic rules) |
+| Drawing (SCH.*) | rails up / ground down, orthogonal wires, dangling ends, text overlap, jogs, detours, crossings; levels set in Settings → Schematic drawing |
 | Fab profile | the chosen manufacturer's capabilities (e.g. JLCPCB 4-layer standard) |
 
 The agent loop is **not allowed to finish** a task with open errors. It must fix them or create an
@@ -140,7 +140,7 @@ user's computer, one per project, written by the local server (`tools/server/src
 part libraries, artwork and datasheets (`~/.4k7`). Settings and API keys live in IndexedDB; keys are
 encrypted with a non-extractable WebCrypto key. Export writes a **canonical, deterministic JSON text** form
 (`*.twd` bundle) that diffs well in git. The same CRDT later gives us real-time collaboration.
-The user's copy of the schematic ruleset lives with the settings in IndexedDB, not in the project.
+The user's schematic notes and check levels live with the settings in IndexedDB, not in the project.
 
 ### 3.9 Quality is measured
 An **agent eval harness** (`evals/`) runs task scripts against golden designs, for example
@@ -281,7 +281,7 @@ Deviations (deliberate, to revisit):
 
 Pulled forward from M4: the **local server** (`tools/server`), an MCP server that relays to the open tab, so an external agent on the user's own plan can drive the design through the same op catalogue and review flow.
 
-Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models, and layout quality on 30+ part designs. Layout quality is planned as an editable drawing ruleset plus agent-set drawing hints in three steps (placement, supplies, connections): [schematic-drawing](design/schematic-drawing.md) (steps 1–3 built 2026-10-12).
+Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models, and layout quality on 30+ part designs. Layout quality is planned as a drawing the agent owns, stored in the design and checked against the netlist, with the user's notes and drawing checks: [schematic-drawing](design/schematic-drawing.md) (decided 2026-10-13; earlier steps built 2026-10-12).
 
 ### M2/M3 first slice: board, routing, fab (2026-09-26)
 

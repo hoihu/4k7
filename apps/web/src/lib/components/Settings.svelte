@@ -15,7 +15,7 @@
     { id: 'apis', label: 'API keys', section: ApiKeysSection },
     { id: 'server', label: 'Local server', section: ServerSection },
     { id: 'agent', label: 'Layout and Schematic', section: AgentSection },
-    { id: 'rules', label: 'Schematic rules', section: RulesSection },
+    { id: 'rules', label: 'Schematic drawing', section: RulesSection },
     { id: 'about', label: 'About', section: AboutSection },
   ];
 
