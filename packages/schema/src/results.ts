@@ -35,6 +35,7 @@ export type RejectionCode =
   | 'REF_UNKNOWN'
   | 'PART_UNKNOWN'
   | 'SYMBOL_STYLE'
+  | 'SYMBOL_LAYOUT'
   | 'FOOTPRINT_INVALID'
   | 'BOARD_INVALID'
   | 'FAB_INVALID'

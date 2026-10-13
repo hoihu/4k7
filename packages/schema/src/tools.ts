@@ -284,7 +284,8 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
             'zoomed in. To recreate a schematic from one: first read it region by region and list every part (reference, value, ' +
             'what it is), every net and what connects to it, and the blocks it is made of; then build it with design_edit ' +
             '(parts from the library, jlc_search or import_part), and say what you could not read or did differently. ' +
-            'Copy the circuit, not the drawing: the app lays it out.',
+            'Copy the circuit first; to make it look like the original, then give its IC symbols the pin sides and order it shows ' +
+            '(design_edit set_symbol layout) and arrange the parts (place_symbol, wire, label).',
           input_schema: schemaOf(AttachmentInput),
         }]
       : []),

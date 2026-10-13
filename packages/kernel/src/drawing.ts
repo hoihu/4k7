@@ -721,6 +721,30 @@ function restyle(d: Design, comp: Component, s: DrawnSymbol, two: boolean, look:
   return undefined;
 }
 
+/**
+ * A part whose card now draws its symbol differently (set_symbol layout) is made again on every
+ * stored drawing, centred where it stood; the next sync cuts back the wires to pins that moved.
+ * Split units are left to the sync (it draws them afresh). The names of the sheets touched.
+ */
+export function remakeSymbols(d: Design, partId: string): string[] {
+  const card = cardOf(d, partId);
+  const touched: string[] = [];
+  if (!card) return touched;
+  for (const [sheetId, sd] of Object.entries(d.drawing ?? {})) {
+    let hit = false;
+    sd.symbols = sd.symbols.map((s) => {
+      const comp = d.components[s.comp];
+      if (s.part !== partId || !comp || s.unit || s.spec.unit !== undefined) return s;
+      hit = true;
+      const c = centre(s.bbox);
+      const base = { comp: s.comp, part: s.part, ...(s.with ? { with: s.with } : {}) };
+      return made(d, comp, base, symbolFromSpec(card, s.spec), Math.round(c.x / GRID) * GRID, Math.round(c.y / GRID) * GRID);
+    });
+    if (hit) touched.push(d.sheets[sheetId]?.name ?? sheetId);
+  }
+  return touched;
+}
+
 function made(d: Design, comp: Component, base: Omit<DrawnSymbol, 'spec' | 'x' | 'y' | 'bbox' | 'ref' | 'value'>, def: ReturnType<typeof symbolFor>, cx: number, cy: number): DrawnSymbol {
   // centre the new symbol's box where the old one was
   const ox = cx - Math.round((def.bbox.x + def.bbox.w / 2) / GRID) * GRID;

@@ -403,13 +403,21 @@ export class IngestState {
 
   /**
    * A footprint given to a library part in the design (set_footprint, from its datasheet drawing)
-   * goes back to the library part once committed, so the Parts view and later designs have it.
+   * and a pin arrangement given to its symbol (set_symbol layout, e.g. like a reference drawing) go
+   * back to the library part once committed, so the Parts view and later designs have them.
    */
-  async adoptFootprints(design: Design): Promise<void> {
+  async adoptParts(design: Design): Promise<void> {
     for (const lib of this.library) {
-      const pkg = design.parts[lib.id]?.packageInfo;
-      if (!pkg?.pads?.length || JSON.stringify(pkg) === JSON.stringify(lib.packageInfo)) continue;
-      await this.update({ ...lib, packageInfo: pkg, package: pkg.name });
+      const own = design.parts[lib.id];
+      if (!own) continue;
+      let next = lib;
+      const pkg = own.packageInfo;
+      if (pkg?.pads?.length && JSON.stringify(pkg) !== JSON.stringify(lib.packageInfo)) next = { ...next, packageInfo: pkg, package: pkg.name };
+      if (own.customSymbol && own.symbolLayout && JSON.stringify(own.symbolLayout) !== JSON.stringify(lib.symbolLayout)) {
+        next = { ...next, symbolLayout: own.symbolLayout, customSymbol: true };
+        delete next.units;
+      }
+      if (next !== lib) await this.update(next);
     }
   }
 

@@ -277,7 +277,7 @@ class AppState {
       await this.artwork.init().catch((e: Error) => this.flash(`Could not load the artwork library: ${e.message}`));
       const newer = this.ingest.newer + this.artwork.newer;
       if (newer) this.flash(`${newer} saved ${newer === 1 ? 'library item was' : 'library items were'} written by a newer version of the app and not loaded`);
-      await this.ingest.adoptFootprints(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
+      await this.ingest.adoptParts(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
       this.diskLoaded = true;
     } catch (e) {
       this.flash(`Could not read the project files: ${(e as Error).message}`);
@@ -340,7 +340,7 @@ class AppState {
     this.chat = [];
     this.hunkOff = {};
     if (this.settings.project !== id) void this.updateSettings({ project: id });
-    await this.ingest.adoptFootprints(design).catch(() => {});
+    await this.ingest.adoptParts(design).catch(() => {});
     await this.refresh();
     return true;
   }
@@ -866,7 +866,7 @@ class AppState {
   private persist(): Promise<void> {
     return this.queueWrite(async () => {
       const json = await this.kernel.exportDesign();
-      await this.ingest.adoptFootprints(JSON.parse(json) as Design).catch(() => {});
+      await this.ingest.adoptParts(JSON.parse(json) as Design).catch(() => {});
       if (disk.status !== 'ok' || !this.diskLoaded) {
         this.unsaved = true;
         if (disk.status !== 'connecting') void this.connectDisk();

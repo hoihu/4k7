@@ -68,6 +68,11 @@ export function symbolFor(card: PartCard, flip = false, opts: SymbolOptions = {}
   return { ...symbolDef(card, flip, opts), spec: specOf({ flip, ...opts }) };
 }
 
+/** Whether the part is drawn as a box (ICs, connectors, modules): the only symbols whose pins can be arranged (set_symbol layout). */
+export function isBoxSymbol(card: PartCard): boolean {
+  return !isTwoPin(card) && !(card.category === 'diode' && card.pins.length === 4) && !transistorSymbol(card);
+}
+
 function symbolDef(card: PartCard, flip: boolean, opts: SymbolOptions): SymbolDef {
   if (isTwoPin(card)) return twoPin(card, flip);
   if (card.category === 'diode' && card.pins.length === 4) return bridgeDiamond(card);
@@ -454,6 +459,24 @@ export function planSymbolLayout(pins: PartPin[]): SymbolLayout {
   }
   if (g.nc.length) pushGroup(right, [g.nc.map((p) => p.number)]);
   return { left, right, top: [], bottom: g.ground };
+}
+
+/** The arrangement the import gives a part (large ICs: planSymbolLayout); undefined when its pins go by their type. */
+export function generatedLayout(card: Pick<PartCard, 'pins' | 'provenance'>): SymbolLayout | undefined {
+  return card.provenance.source === 'datasheet' && card.pins.length >= 12 ? planSymbolLayout(card.pins) : undefined;
+}
+
+/** A layout in words, side by side: "left: VIN, UVLO, EN; right: SW ×2, BST; bottom: GND ×3". */
+export function layoutText(card: Pick<PartCard, 'pins'>, layout: SymbolLayout): string {
+  const byNumber = new Map(card.pins.map((p) => [p.number, p]));
+  const entry = (e: string[]) => {
+    const names = [...new Set(e.map((n) => byNumber.get(n)?.name ?? n))];
+    return names.length === 1 && e.length > 1 ? `${names[0]} ×${e.length}` : names.join('/');
+  };
+  return (['left', 'right', 'top', 'bottom'] as const)
+    .filter((side) => layout[side].some((e) => e))
+    .map((side) => `${side}: ${layout[side].filter((e): e is string[] => !!e).map(entry).join(', ')}`)
+    .join('; ');
 }
 
 /**

@@ -116,13 +116,29 @@ export const RemoveWaiverOp = z.object({
   id: z.string(),
 });
 
+const layoutEntry = z
+  .union([z.string().min(1), z.array(z.string().min(1)).min(1), z.null()])
+  .describe('A pin name or number; a name several pins share (GND, SW) stacks them at one position, as does an array of numbers; null leaves a gap');
+const layoutSide = z.array(layoutEntry).optional();
+
 export const SetSymbolOp = z.object({
   op: z.literal('set_symbol'),
   ref: componentRef.describe('A component using the part, e.g. "U3"'),
   style: z
     .enum(['single', 'units'])
+    .optional()
     .describe('units: draw a big IC as several symbols (U1A power/system, U1B… two GPIO ports each); single: one symbol. Pins, nets and refdes stay the same; applies to every component of that part.'),
-});
+  layout: z
+    .object({
+      left: layoutSide.describe('Pins on the left side, top to bottom'),
+      right: layoutSide.describe('Pins on the right side, top to bottom'),
+      top: layoutSide.describe('Pins along the top, left to right'),
+      bottom: layoutSide.describe('Pins along the bottom, left to right'),
+    })
+    .nullable()
+    .optional()
+    .describe('Your own pin arrangement for an IC or connector symbol (one symbol), e.g. to match a reference drawing: every pin exactly once, on its side in drawing order. null: back to the generated arrangement. Applies to every component of that part, and goes back to the library part once accepted. Pins, nets and refdes stay the same.'),
+}).describe('How a part\'s symbol is drawn: one symbol or units (style), or which pin goes where (layout). Give style or layout.');
 
 export const SetFootprintOp = z.object({
   op: z.literal('set_footprint'),
