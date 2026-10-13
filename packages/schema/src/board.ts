@@ -59,6 +59,44 @@ export interface BoardSettings {
   placement?: StoredPlacement;
   /** The route step: the placement key the board was routed for; routing shows while it matches. */
   routed?: string;
+  /**
+   * The router's result for the placement it was routed for, kept so a board is routed once, not
+   * every time it is shown (routing a big board to completion takes a while). A cache, not a
+   * change of its own: it is written when routing finishes and ignored once the key differs.
+   */
+  copper?: StoredCopper;
+}
+
+/** Why a connection stayed open (the router's probe: what its way would have to cross). */
+export interface RouteBlockage {
+  /** Nets (ids) whose copper lies across its way. */
+  blockedBy?: string[];
+  /** Where it first runs into that copper (mm), and on which layer. */
+  at?: { x: number; y: number; layer: CopperLayer };
+  /** No way even with every track and via taken away: pads, keep-outs or the board edge close it off. */
+  enclosed?: boolean;
+  /** The net is joined through a plane on this layer, and a pad found no room for its via down to it. */
+  plane?: CopperLayer;
+}
+
+/** A routed board as stored (see BoardSettings.copper). Pads are counted through all parts' pads in board order. */
+export interface StoredCopper {
+  /** The placement, rules and net widths it was routed for. */
+  key: string;
+  tracks: Track[];
+  vias: Via[];
+  zones: Zone[];
+  /** Per pad: the group of pads its copper joins (equal numbers: connected). */
+  groups: number[];
+  /** Connections left open (pad indices), with what blocks them. */
+  open: ({ netId: string; a: number; b: number } & RouteBlockage)[];
+  nets: number;
+  netsDone: number;
+  timedOut: boolean;
+  /** Routing passes it took. */
+  passes: number;
+  /** The user stopped the routing: this is the best pass it had finished (or nothing routed). */
+  stopped?: boolean;
 }
 
 export interface StoredPlacement {
@@ -494,6 +532,14 @@ export interface RatsLine {
   y2: number;
 }
 
+export interface UnroutedConnection extends RouteBlockage {
+  netId: string;
+  from: string;
+  to: string;
+  /** Parts within a few millimetres of where it is blocked (candidates to move or turn). */
+  near: string[];
+}
+
 export interface BoardDiagnostic {
   code: string;
   severity: 'error' | 'warning' | 'info';
@@ -521,6 +567,17 @@ export interface BoardView {
   ratsnest: RatsLine[];
   diagnostics: BoardDiagnostic[];
   stats: { nets: number; routed: number; unrouted: number; trackLength: number; vias: number };
+  /** Connections the router left open, pad to pad (e.g. "U1.3" → "C2.1"), with what is in the way. */
+  unrouted: UnroutedConnection[];
+  /**
+   * How well the placement lends itself to routing (lower is better): the ratsnest of the nets
+   * routed as tracks (not those on a dedicated plane), its length and where its lines cross.
+   */
+  measures: { ratsnestMm: number; crossings: number };
+  /** Copper just routed, for the app to keep in the design (absent when it came from the design). */
+  newCopper?: StoredCopper;
+  /** The user stopped the routing; the copper is the best pass it had finished. */
+  stopped?: boolean;
   /** Components without a footprint (no package data). */
   missing: string[];
   /** Net id → name. */
@@ -543,6 +600,24 @@ export interface BoardView {
   panel?: PanelView;
 }
 
+/** What to do about open connections: the agent is expected to get the board to 100 %. */
+const OPEN_NEXT =
+  'A board with an open connection does not work: get it to 100 %. Look at each spot (get_board_image region round at_mm), then make room and route again: move or turn the parts near it (place with rot), so pads face the parts they connect to and the ratsnest lines stop crossing; give a crowded area more space (set_board size); route the blocking nets differently by moving their parts; on a 2-layer board, 4 layers (set_board layers) as the last resort, it costs more. Enclosed: pads or the edge close the pad off, move the part. Plane: no room for the via down to the plane next to the pad, move the part or what crowds it.';
+
+function openSummary(b: BoardView, u: UnroutedConnection) {
+  const name = (id: string) => b.netNames[id] ?? id;
+  return {
+    net: name(u.netId),
+    from: u.from,
+    to: u.to,
+    ...(u.at ? { at_mm: [u.at.x, u.at.y], layer: u.at.layer } : {}),
+    ...(u.blockedBy?.length ? { blocked_by: u.blockedBy.map(name) } : {}),
+    ...(u.enclosed ? { enclosed: true } : {}),
+    ...(u.plane ? { plane: u.plane } : {}),
+    ...(u.near.length ? { near: u.near } : {}),
+  };
+}
+
 /** Compact board description for agents (design_query get_board). */
 export function boardSummary(b: BoardView, routed = true) {
   return {
@@ -557,10 +632,19 @@ export function boardSummary(b: BoardView, routed = true) {
     routing: !routed
       ? 'not computed here (see the Layout view)'
       : b.routing === 'done'
-        ? { nets: b.stats.nets, routed: b.stats.routed, unrouted_connections: b.stats.unrouted, vias: b.stats.vias, track_mm: b.stats.trackLength }
+        ? {
+            nets: b.stats.nets,
+            routed: b.stats.routed,
+            unrouted_connections: b.stats.unrouted,
+            vias: b.stats.vias,
+            track_mm: b.stats.trackLength,
+            ...(b.stopped ? { stopped: 'The user stopped the routing: this is the best pass it had finished. route runs it again from the start.' } : {}),
+            ...(b.unrouted.length ? { open: b.unrouted.slice(0, 20).map((u) => openSummary(b, u)), next: OPEN_NEXT } : {}),
+          }
         : b.routing === 'stale'
           ? 'out of date: the placement changed since the route step (route again when the placement is final)'
           : 'not routed yet (the route op, once the placement is final)',
+    placement_measures: { ratsnest_mm: b.measures.ratsnestMm, ratsnest_crossings: b.measures.crossings },
     planes: b.planes.map((p) => ({ net: b.netNames[p.netId] ?? p.netId, layer: p.layer, dedicated: p.layer !== 'F.Cu' && p.layer !== 'B.Cu', automatic: p.auto })),
     mounting_holes: b.parts.filter((p) => p.componentId.startsWith('hole:')).map((p) => ({ id: p.refdes, x: p.x, y: p.y, diameter: p.pads[0]?.drill, plated: !p.pads[0]?.npth })),
     corner_radius_mm: b.cornerRadius,
@@ -594,6 +678,6 @@ export function boardSummary(b: BoardView, routed = true) {
       : {}),
     drc: b.diagnostics.filter((x) => !x.waivedBy).map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
-    note: 'Workflow: propose_layout (board size and placement), then adjustments (place = the user\'s choice for a part, kept relative to its parent part; lock: true pins it exactly; set_board for the size), then route as the last step. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
+    note: 'Workflow: propose_layout (board size and placement), then arrange (place = the user\'s choice for a part, kept relative to its parent part, rot turns it; lock: true pins it exactly; set_board for the size; placement_measures say how the arrangement routes: shorter, fewer crossing ratsnest lines are better), then route as the last step, to 100 %. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
   };
 }

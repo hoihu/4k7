@@ -376,7 +376,7 @@ export const ProposeLayoutOp = z.object({
 
 export const RouteOp = z.object({
   op: z.literal('route'),
-}).describe('Route the board as it is placed now (the last step). A later placement change shows the routing as out of date until route runs again.');
+}).describe('Route the board as it is placed now (the last step), aiming at every connection: passes are repeated, pushing the nets in the way of open connections aside, which can take a minute on a big board (the user watches it fill in). get_board then lists any open connection with what blocks it and the parts near it. A later placement change shows the routing as out of date until route runs again.');
 
 export const SetPlaneOp = z.object({
   op: z.literal('set_plane'),

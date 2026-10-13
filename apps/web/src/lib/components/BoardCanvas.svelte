@@ -107,6 +107,15 @@
     const visH = aspect > vb.w / vb.h ? vb.h : vb.w / aspect;
     return { cx: vb.x + vb.w / 2, cy: vb.y + vb.h / 2, visH };
   }
+  /** The area on screen, in board coordinates (mm). */
+  export function getVisibleRect(): { x: number; y: number; w: number; h: number } | null {
+    const r = svg?.getBoundingClientRect();
+    if (!r || r.width <= 0 || r.height <= 0) return null;
+    const aspect = r.width / r.height;
+    const w = aspect > vb.w / vb.h ? vb.h * aspect : vb.w;
+    const h = aspect > vb.w / vb.h ? vb.h : vb.w / aspect;
+    return { x: vb.x + vb.w / 2 - w / 2, y: vb.y + vb.h / 2 - h / 2, w, h };
+  }
   /** Show this area (coming back from the 3D view). */
   export function setView(v: TopView) {
     const r = svg?.getBoundingClientRect();

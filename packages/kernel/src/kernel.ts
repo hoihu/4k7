@@ -23,6 +23,7 @@ import {
   type BoardView,
   type DescriptionView,
   type SheetView,
+  type StoredCopper,
   type SchematicRule,
   PAGE,
   boardSummary,
@@ -39,7 +40,8 @@ import { countDiagnostics, diagKey, runChecks, sortDiagnostics } from './checks.
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, valueOf } from './doc.ts';
 import { schematicView, syncDrawing } from './drawing.ts';
-import { layoutBoard, placeBoard } from './board.ts';
+import { copperKey, layoutBoard, placeBoard } from './board.ts';
+import type { RouteProgress } from './router.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 import { MIN_FREE, circuitSignature, guardOp, measure, positions, resolveScope, ripple, widenScope, type ResolvedScope } from './scope.ts';
 import { schematicChecks } from './schcheck.ts';
@@ -123,15 +125,31 @@ export class Kernel {
     return placeBoard(this.draft, this.analyse(this.draft).view);
   }
 
-  /** The board of the working copy: placement, routing and DRC (computed on demand, cached). */
-  board(): BoardView {
+  /** The board of the working copy: placement, routing and DRC (computed on demand, cached). `follow` follows the routing, if it routes (see layoutBoard). */
+  board(follow: { onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
     const d = this.draft;
     let b = this.boards.get(d);
     if (!b) {
-      b = layoutBoard(d, this.analyse(d).view);
+      b = layoutBoard(d, this.analyse(d).view, follow);
       this.boards.set(d, b);
     }
     return b;
+  }
+
+  /**
+   * Keep copper routed elsewhere (the board worker) with the designs it was routed for: the
+   * working copy, and the committed design if its board is the same. A cache, not a change.
+   * Returns whether the committed design took it (then it should be saved).
+   */
+  keepCopper(copper: StoredCopper): boolean {
+    let committed = false;
+    for (const d of this.draft === this.committed ? [this.draft] : [this.draft, this.committed]) {
+      if (!d.board || copperKey(d, this.analyse(d).view) !== copper.key) continue;
+      d.board.copper = copper;
+      this.boards.delete(d);
+      if (d === this.committed) committed = true;
+    }
+    return committed;
   }
 
   /* ---------------------------- transactions ------------------------------ */

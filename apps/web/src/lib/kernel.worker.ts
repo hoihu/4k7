@@ -5,7 +5,7 @@
  */
 import { Kernel, registerArtwork, unregisterArtwork } from '@4k7/kernel';
 import { registerUserParts, unregisterUserPart } from '@4k7/parts';
-import type { Artwork, CheckSettings, Design, OptimizeScope, PartCard } from '@4k7/schema';
+import type { Artwork, CheckSettings, Design, OptimizeScope, PartCard, StoredCopper } from '@4k7/schema';
 
 const kernel = new Kernel();
 
@@ -26,6 +26,8 @@ const methods = {
   hasPending: () => kernel.hasPending(),
   /** The working copy, for the board worker. */
   draftDesign: () => kernel.draftDesign(),
+  /** Copper the board worker routed, kept with the design (true: the committed design took it, save it). */
+  keepCopper: (copper: StoredCopper) => kernel.keepCopper(copper),
   /** The working copy's part cards (the design's own copies, e.g. with a footprint the agent gave). */
   designParts: () => kernel.draftDesign().parts,
   /** Imported parts, so the agent can find and place them. */

@@ -134,7 +134,7 @@ describe('MCP server', () => {
 
     expect(client.getInstructions()).toMatch(/4k7/);
     const tools = (await client.listTools()).tools.map((t) => t.name);
-    expect(tools).toEqual(['get_context', 'design_query', 'design_edit', 'calc', 'import_part', 'jlc_search', 'pending_import', 'artwork', 'read_datasheet', 'get_schematic_image', 'propose', 'wait_for_review']);
+    expect(tools).toEqual(['get_context', 'design_query', 'design_edit', 'calc', 'import_part', 'jlc_search', 'pending_import', 'artwork', 'read_datasheet', 'get_schematic_image', 'get_board_image', 'propose', 'wait_for_review']);
 
     const res = await client.callTool({
       name: 'design_edit',

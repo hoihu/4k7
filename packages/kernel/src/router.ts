@@ -4,9 +4,13 @@
  * per cell and layer, which net may put a track centre there (computed from exact distances
  * to pads, tracks, vias and the board edge). Connections follow each net's minimum spanning
  * tree, shortest first; a connection may end on any copper already joined to its net.
- * Failed connections are routed first in the next pass (simple rip-up and retry).
+ * Routing aims at every connection: a pass that leaves some open is followed by another
+ * (negotiated congestion, as in PathFinder). Each open connection is probed with the other nets'
+ * tracks passable at a price; where its way would run, the copper of other nets gets dearer for
+ * every later pass (a history cost that only grows), so the nets in its way learn to go round,
+ * and it is routed first. The probe also says what blocks it. The best pass wins.
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape } from '@4k7/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
 
 const G = 0.1; // grid pitch, mm
 const MULTI = -1; // near copper of two nets: nobody may route here
@@ -19,6 +23,10 @@ const CLIP_COST = 3; // a step whose copper runs half over one of the net's own 
 const COARSE = 5; // coarse routing grid, in grid steps (0.5 mm)
 const CORRIDOR = 4; // coarse cells either side of the coarse way (2 mm)
 const MAX_STUB = 30; // longest drop stub reserved for a pour, in grid steps (3 mm)
+const PROBE_PENALTY = 12; // probe: entering another net's copper, in grid steps
+const HISTORY_STEP = 2; // history cost added where an open connection's probe runs, per pass
+const STALE_PASSES = 8; // passes in a row without an improvement before the router gives up
+const PROBE_BUDGET_MS = 1500; // probes of one pass, in total
 
 export interface RouteInput {
   outline: { w: number; h: number };
@@ -34,8 +42,15 @@ export interface RouteInput {
    * filling what the tracks leave. Pads of the net drop onto their plane with a via.
    */
   planes?: { netId: string; layer: CopperLayer }[];
-  /** Stop routing after this many milliseconds; what is left is reported unrouted. */
+  /** Stop routing after this many milliseconds; what is left is reported unrouted. Default 90 s. */
   budgetMs?: number;
+  /** Called while routing: the copper laid so far in the current pass, a few times a second. */
+  onProgress?: (p: RouteProgress) => void;
+  /**
+   * Called with the best result so far: nothing routed before the first pass, then after every
+   * pass that improves on it. What a user who stops the routing keeps.
+   */
+  onBest?: (r: RouteResult) => void;
   /** Rounded board corners (radius) and milled cutouts: no copper within the edge clearance. */
   cornerRadius?: number;
   cutouts?: BoardCutout[];
@@ -49,11 +64,32 @@ export interface RouteResult {
   zones: Zone[];
   /** Pairs of pads (by index into the flat pad list) that ended up connected. */
   connected: (netId: string, a: BoardPad, b: BoardPad) => boolean;
-  failed: { netId: string; a: BoardPad; b: BoardPad }[];
+  failed: ({ netId: string; a: BoardPad; b: BoardPad } & Blockage)[];
   netsTotal: number;
   netsDone: number;
   /** Routing stopped at the time budget. */
   timedOut: boolean;
+  /** Passes run (each routes the whole board again). */
+  passes: number;
+  /** Per pad (all parts' pads in order): the group of pads its copper joins (equal: connected). */
+  groups: number[];
+}
+
+/** Why a connection stayed open: what its way would have to cross (see probe in routeOnce). */
+type Blockage = RouteBlockage;
+
+export interface RouteProgress {
+  /** 1-based. */
+  pass: number;
+  /** Copper of the pass so far. */
+  tracks: Track[];
+  vias: Via[];
+  /** Connections to route (minimum spanning tree edges of all nets) and how many this pass has done. */
+  connections: number;
+  done: number;
+  /** Fewest connections left open by a finished pass so far (null in the first pass). */
+  bestOpen: number | null;
+  elapsedMs: number;
 }
 
 interface Conn {
@@ -63,7 +99,8 @@ interface Conn {
   len: number;
 }
 
-export function route(input: RouteInput, passes = 8): RouteResult {
+
+export function route(input: RouteInput, passes = 40): RouteResult {
   const pads: BoardPad[] = input.parts.flatMap((p) => p.pads);
   const owner = input.parts.flatMap((p) => p.pads.map(() => p));
   const conns = connections(pads);
@@ -73,47 +110,67 @@ export function route(input: RouteInput, passes = 8): RouteResult {
   const planeOnly = conns.filter((c) => dedicated.has(c.netId));
   let order = conns.filter((c) => !dedicated.has(c.netId)).sort((x, y) => x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
   const t0 = now();
-  const deadline = t0 + (input.budgetMs ?? 15_000);
+  const deadline = t0 + (input.budgetMs ?? 90_000);
+  // the history cost (see routeOnce), kept from pass to pass
+  const history = new Float32Array(input.layers.length * (Math.ceil(input.outline.w / G) + 1) * (Math.ceil(input.outline.h / G) + 1));
+  let stale = 0;
+  let ran = 0;
   // nets poured on an outer layer and without an inner plane (see routeOnce): on a tie, the pass
   // that leaves fewer of their connections open wins (one open pad of a pour is the worse defect)
   const pourNets = new Set((input.planes ?? []).filter((pl) => OUTER.has(pl.layer) && !dedicated.has(pl.netId)).map((pl) => pl.netId));
   const pourOpen = (x: { failed: Conn[] }) => x.failed.filter((c) => pourNets.has(c.netId)).length;
   // the connections that failed in the pass before (a pour's net routes them with the signals)
   let early = new Set<Conn>();
+  // before the first pass the best there is: nothing routed
+  input.onBest?.(result({ tracks: [], vias: [], zones: [], failed: [...order, ...planeOnly], roots: Int32Array.from(pads, (_, i) => i), timedOut: false, blockage: new Map() }, 0));
   for (let pass = 0; pass < passes; pass++) {
-    const r = routeOnce(input, pads, owner, order, deadline, planeOnly, early);
+    const bestOpen = best ? best.failed.length : null;
+    const progress = input.onProgress ? (tracks: Track[], vias: Via[], done: number) => input.onProgress!({ pass: pass + 1, tracks, vias, connections: conns.length, done, bestOpen, elapsedMs: now() - t0 }) : undefined;
+    const r = routeOnce(input, pads, owner, order, deadline, planeOnly, early, history, progress);
+    ran++;
+    // each pass's copper, so even a quick pass shows (the next one starts from nothing)
+    progress?.(r.tracks, r.vias, conns.length - r.failed.length);
     const improved = !best || r.failed.length < best.failed.length || (r.failed.length === best.failed.length && pourOpen(r) < pourOpen(best));
-    if (improved) best = r;
+    if (improved) {
+      best = r;
+      if (r.failed.length) input.onBest?.(result(r, ran));
+    }
     if (!r.failed.length || r.timedOut) break;
-    // a pass without an improvement: more orders will not help (the same connections are
-    // blocked), and each pass costs as much as the first (seconds on a big board)
-    if (!improved) break;
-    // another pass only if one fits comfortably in the budget
+    // passes without an improvement: the history costs grow with each, so the nets in the way
+    // are pushed harder every time; after a few, more will not help
+    stale = improved ? 0 : stale + 1;
+    if (stale >= STALE_PASSES) break;
+    // another pass only if one fits in the budget
     if (now() + (now() - t0) / (pass + 1) > deadline) break;
-    // failures first; the rest alternately in the old order and longest first (a different
-    // order gives the router different room; the best pass wins)
+    // failures first, the rest in the order they had (the history costs, not a shuffled order,
+    // make the room: a new order every pass undoes what the costs taught)
     const failed = new Set(r.failed);
     early = failed;
-    const rest = order.filter((c) => !failed.has(c));
-    order = [...order.filter((c) => failed.has(c)), ...(pass % 2 ? [...rest].sort((x, y) => y.len - x.len || x.netId.localeCompare(y.netId)) : rest)];
+    order = [...order.filter((c) => failed.has(c)), ...order.filter((c) => !failed.has(c))];
   }
-  const r = best ?? routeOnce(input, pads, owner, order, deadline, planeOnly);
-  const nets = new Set(conns.map((c) => c.netId));
-  const failedNets = new Set(r.failed.map((c) => c.netId));
-  return {
-    tracks: r.tracks,
-    vias: r.vias,
-    zones: r.zones,
-    connected: (netId, a, b) => {
-      const ia = pads.indexOf(a);
-      const ib = pads.indexOf(b);
-      return ia >= 0 && ib >= 0 && r.roots[ia] === r.roots[ib] && pads[ia]!.netId === netId;
-    },
-    failed: r.failed.map((c) => ({ netId: c.netId, a: pads[c.a]!, b: pads[c.b]! })),
-    netsTotal: nets.size,
-    netsDone: [...nets].filter((n) => !failedNets.has(n)).length,
-    timedOut: r.timedOut,
-  };
+  return result(best ?? routeOnce(input, pads, owner, order, deadline, planeOnly, new Set(), history), ran);
+
+  /** A pass's result as the caller sees it. */
+  function result(r: ReturnType<typeof routeOnce>, ran: number): RouteResult {
+    const nets = new Set(conns.map((c) => c.netId));
+    const failedNets = new Set(r.failed.map((c) => c.netId));
+    return {
+      tracks: r.tracks,
+      vias: r.vias,
+      zones: r.zones,
+      connected: (netId, a, b) => {
+        const ia = pads.indexOf(a);
+        const ib = pads.indexOf(b);
+        return ia >= 0 && ib >= 0 && r.roots[ia] === r.roots[ib] && pads[ia]!.netId === netId;
+      },
+      failed: r.failed.map((c) => ({ netId: c.netId, a: pads[c.a]!, b: pads[c.b]!, ...r.blockage.get(c) })),
+      netsTotal: nets.size,
+      netsDone: [...nets].filter((n) => !failedNets.has(n)).length,
+      timedOut: r.timedOut,
+      passes: ran,
+      groups: Array.from(r.roots),
+    };
+  }
 }
 
 /** Minimum spanning tree edges per net (by pad centre distance). */
@@ -144,7 +201,18 @@ function connections(pads: BoardPad[]): Conn[] {
   return out;
 }
 
-function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], order: Conn[], deadline: number, planeOnly: Conn[] = [], early = new Set<Conn>()) {
+function routeOnce(
+  input: RouteInput,
+  pads: BoardPad[],
+  owner: BoardPart[],
+  order: Conn[],
+  deadline: number,
+  planeOnly: Conn[],
+  early: Set<Conn>,
+  /** Cost of entering each state (layer × grid point), grown where open connections wanted to go. */
+  history: Float32Array,
+  progress?: (tracks: Track[], vias: Via[], done: number) => void,
+) {
   const { rules, layers } = input;
   const W = Math.ceil(input.outline.w / G) + 1;
   const H = Math.ceil(input.outline.h / G) + 1;
@@ -274,6 +342,8 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     if (l === undefined || OUTER.has(pl.layer)) continue;
     for (let k = 0; k < widths.length; k++) if (k !== 2) maps[k]![l]!.fill(EDGE);
   }
+  // the signal map with pads, keep-outs and the edge only: what no rip-up can clear (for the probe)
+  const fixedMap = maps[0]!.map((m) => m.slice());
 
   // copper cells per pad (inside the pad), for starts and goals
   const padCells = pads.map((p) => {
@@ -717,7 +787,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
         // diagonal steps: both orthogonal neighbours must be clear too (no corner cutting)
         if (dx !== 0 && dy !== 0 && (!ok(y * W + nx) || !ok(ny * W + x))) continue;
         const off = kind === 1 ? dy !== 0 : kind === 2 ? dx !== 0 : false;
-        const nc = base + STEP[d]! + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? OFF_AXIS_COST : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]!;
+        const nc = base + STEP[d]! + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? OFF_AXIS_COST : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + history[ns]!;
         if (nc < costOf(ns)) {
           seenAt[ns] = run;
           cost[ns] = nc;
@@ -732,7 +802,7 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
           const ns = l2 * N + i;
           // the track goes on from the via: it must fit there too (see wide)
           if (wide && !free(l2, i) && !isGoal(ns)) continue;
-          const nc = base + VIA_COST;
+          const nc = base + VIA_COST + history[ns]!;
           if (nc < costOf(ns)) {
             seenAt[ns] = run;
             cost[ns] = nc;
@@ -1796,61 +1866,76 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
     const wide = input.powerNets.has(c.netId) && takes(rules.powerTrack);
     // too wide for a pad: the widest class that still fits (never below the signal width)
     const fitting = (w: number) => widths.reduce((best, x, i) => (i !== 2 && x <= w && takes(x) && x > widths[best]! ? i : best), 0);
-    const k = own ? (own <= rules.track || takes(own) ? trackClass(own) : fitting(own)) : wide ? 1 : 0;
-    // an escape stub is reserved at the signal width: a wider track may run along it only where
-    // it keeps its clearance at that width
-    const escapeOk = (st: number) => {
-      const idx = escapeOf.get(st);
-      if (idx === undefined || widths[k]! <= rules.track) return true;
-      const e = escapes[idx]!;
-      const p = pads[idx]!;
-      return clearOf(net, e.l, widths[k]!, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
-    };
-    epoch++;
-    const goalStamp = epoch;
-    const goalCells = groupCells.get(find(c.a))!.filter(escapeOk);
-    for (const st of goalCells) goal[st] = goalStamp;
-    // end where the track fits, on its pad's centre line; failing that where it fits; failing
-    // that deepest inside the pad
-    const fits = (st: number) => freeFor(net, k)(Math.floor(st / N), st % N);
-    const centred = (st: number) => fits(st) && !offCentre(net, k, st);
-    const deepest = new Set(deepestCells(goalCells));
-    const accept = goalCells.some(centred) ? centred : goalCells.some(fits) ? fits : (st: number) => deepest.has(st);
-    // (the estimate: the box round the whole goal group, not just pad a)
-    let [gx0, gy0, gx1, gy1] = [Infinity, Infinity, -Infinity, -Infinity];
-    for (const st of goalCells) {
-      const i = st % N;
-      const x = i % W;
-      const y = (i - x) / W;
-      if (x < gx0) gx0 = x;
-      if (x > gx1) gx1 = x;
-      if (y < gy0) gy0 = y;
-      if (y > gy1) gy1 = y;
-    }
-    const starts = groupCells.get(find(c.b))!.filter(escapeOk);
-    const isGoal = (st: number) => goal[st] === goalStamp;
-    const target = { x0: gx0, y0: gy0, x1: gx1, y1: gy1 };
-    // within the corridor of the coarse way first, then a wider one; failing that, anywhere (a
-    // connection that hard is likely impossible: check that first). No coarse way: no way at all.
-    // (No new attempt once the time is up.)
-    const way = corridor(net, k, starts, goalCells, goalStamp);
-    let path: number[] | null = null;
-    if (way) {
-      for (const r of [CORRIDOR, 3 * CORRIDOR]) {
-        if (path || now() > deadline) break;
-        path = search(net, k, starts, isGoal, target, accept, widen(way, r));
-      }
-      if (!path && now() <= deadline) path = search(net, k, starts, isGoal, target, accept, 0, true);
-    }
+    const chosen = own ? (own <= rules.track || takes(own) ? trackClass(own) : fitting(own)) : wide ? 1 : 0;
+    // a power track that finds no way is necked down to the signal width (a width the user set
+    // for the net is not: that one is a requirement)
+    let k = chosen;
+    let path = attempt(chosen);
+    if (!path && chosen === 1 && !own && now() <= deadline) path = attempt((k = 0));
     if (!path) {
       failed.push(c);
       return;
+    }
+    function attempt(k: number): number[] | null {
+      // an escape stub is reserved at the signal width: a wider track may run along it only where
+      // it keeps its clearance at that width
+      const escapeOk = (st: number) => {
+        const idx = escapeOf.get(st);
+        if (idx === undefined || widths[k]! <= rules.track) return true;
+        const e = escapes[idx]!;
+        const p = pads[idx]!;
+        return clearOf(net, e.l, widths[k]!, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
+      };
+      epoch++;
+      const goalStamp = epoch;
+      const goalCells = groupCells.get(find(c.a))!.filter(escapeOk);
+      for (const st of goalCells) goal[st] = goalStamp;
+      // end where the track fits, on its pad's centre line; failing that where it fits; failing
+      // that deepest inside the pad
+      const fits = (st: number) => freeFor(net, k)(Math.floor(st / N), st % N);
+      const centred = (st: number) => fits(st) && !offCentre(net, k, st);
+      const deepest = new Set(deepestCells(goalCells));
+      const accept = goalCells.some(centred) ? centred : goalCells.some(fits) ? fits : (st: number) => deepest.has(st);
+      // (the estimate: the box round the whole goal group, not just pad a)
+      let [gx0, gy0, gx1, gy1] = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const st of goalCells) {
+        const i = st % N;
+        const x = i % W;
+        const y = (i - x) / W;
+        if (x < gx0) gx0 = x;
+        if (x > gx1) gx1 = x;
+        if (y < gy0) gy0 = y;
+        if (y > gy1) gy1 = y;
+      }
+      const starts = groupCells.get(find(c.b))!.filter(escapeOk);
+      const isGoal = (st: number) => goal[st] === goalStamp;
+      const target = { x0: gx0, y0: gy0, x1: gx1, y1: gy1 };
+      // within the corridor of the coarse way first, then a wider one; failing that, anywhere (a
+      // connection that hard is likely impossible: check that first). No coarse way: no way at all.
+      // (No new attempt once the time is up.)
+      const way = corridor(net, k, starts, goalCells, goalStamp);
+      let path: number[] | null = null;
+      if (way) {
+        for (const r of [CORRIDOR, 3 * CORRIDOR]) {
+          if (path || now() > deadline) break;
+          path = search(net, k, starts, isGoal, target, accept, widen(way, r));
+        }
+        if (!path && now() <= deadline) path = search(net, k, starts, isGoal, target, accept, 0, true);
+      }
+      return path;
     }
     // (a route may also start on copper laid earlier for this net: then it starts right there)
     const copper = commit(c.netId, net, k, path, padAt(find(c.b), path[0]!), padAt(find(c.a), path.at(-1)!));
     union(c.a, c.b);
     groupCells.get(find(c.a))!.push(...copper);
+    routedNow++;
+    if (progress && now() - shown > PROGRESS_MS) {
+      shown = now();
+      progress(tracks.slice(), vias.slice(), routedNow);
+    }
   };
+  let routedNow = 0;
+  let shown = now();
   // with a pour, the signals leave a tenth of the time left to its drops and tracks (they take
   // far less than the signals, and without them the pour's pads stay apart)
   if (pours.length) until = deadline - (deadline - now()) / 10;
@@ -1916,10 +2001,161 @@ function routeOnce(input: RouteInput, pads: BoardPad[], owner: BoardPart[], orde
   // plain data only: a closure from here would keep this pass's grid buffers (hundreds of MB on
   // a big board) alive while the next pass allocates its own
   const roots = Int32Array.from(pads, (_, i) => find(i));
-  return { tracks, vias, failed, roots, zones, timedOut };
+  const blockage = probeFailed();
+  return { tracks, vias, failed, roots, zones, timedOut, blockage };
+
+  /**
+   * Each open connection, again with the other nets' tracks and vias passable at a price (pads,
+   * keep-outs and the edge still close the way): the cheapest way says what blocks it, and the
+   * history cost grows along it, on the cells whose copper would block it, for every later pass.
+   */
+  function probeFailed(): Map<Conn, Blockage> {
+    const out = new Map<Conn, Blockage>();
+    if (!failed.length) return out;
+    const idOf = new Map([...netNum].map(([id, n]) => [n, id]));
+    const stop = now() + PROBE_BUDGET_MS;
+    const reach = Math.ceil((rules.track + rules.clearance) / G);
+    // a cell on the way gets about HISTORY_STEP in all (the disks of the path cells near it overlap)
+    const inc = HISTORY_STEP / (2 * reach + 1);
+    const disk: number[] = [];
+    for (let dj = -reach; dj <= reach; dj++) for (let di = -reach; di <= reach; di++) if (di * di + dj * dj <= reach * reach) disk.push(di, dj);
+    const seen = new Set<string>();
+    for (const c of failed) {
+      if (now() > stop) break;
+      // one probe per pair of copper groups (a net's connections often share their blockage)
+      const key = `${find(c.a)}:${find(c.b)}`;
+      if (seen.has(key) || find(c.a) === find(c.b)) continue;
+      seen.add(key);
+      // a net on a dedicated plane has no tracks: its pads found no room for their vias
+      const plane = planes.find((pl) => pl.netId === c.netId && !OUTER.has(pl.layer));
+      if (plane) {
+        out.set(c, { plane: plane.layer });
+        continue;
+      }
+      const net = numOf(c.netId);
+      const path = probe(net, groupCells.get(find(c.b))!, groupCells.get(find(c.a))!, stop);
+      if (path === undefined) continue; // out of time
+      if (!path) {
+        out.set(c, { enclosed: true });
+        continue;
+      }
+      const b: Blockage = {};
+      const by = new Set<string>();
+      for (const st of path) {
+        const l = Math.floor(st / N);
+        const i = st % N;
+        const v = maps[0]![l]![i]!;
+        if (v === 0 || v === net || ownCopper[st] === net) continue;
+        if (v > 0 && idOf.has(v)) by.add(idOf.get(v)!);
+        b.at ??= { x: r3((i % W) * G), y: r3(Math.floor(i / W) * G), layer: layers[l]! };
+        const x = i % W;
+        const y = (i - x) / W;
+        for (let q = 0; q < disk.length; q += 2) {
+          const xx = x + disk[q]!;
+          const yy = y + disk[q + 1]!;
+          if (xx >= 0 && yy >= 0 && xx < W && yy < H) history[l * N + yy * W + xx]! += inc;
+        }
+      }
+      if (by.size) b.blockedBy = [...by].sort();
+      out.set(c, b);
+    }
+    return out;
+  }
+
+  /** The probe's search (see probeFailed): the path, null if there is none at all, undefined when out of time. */
+  function probe(net: number, starts: number[], goals: number[], stop: number): number[] | null | undefined {
+    epoch++;
+    const gs = epoch;
+    for (const st of goals) goal[st] = gs;
+    let [gx0, gy0, gx1, gy1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const st of goals) {
+      const i = st % N;
+      gx0 = Math.min(gx0, i % W);
+      gx1 = Math.max(gx1, i % W);
+      gy0 = Math.min(gy0, Math.floor(i / W));
+      gy1 = Math.max(gy1, Math.floor(i / W));
+    }
+    const h = (st: number) => {
+      const i = st % N;
+      const dx = Math.max(gx0 - (i % W), 0, (i % W) - gx1);
+      const dy = Math.max(gy0 - Math.floor(i / W), 0, Math.floor(i / W) - gy1);
+      return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
+    };
+    const passable = (l: number, i: number) => {
+      const v = fixedMap[l]![i]!;
+      const st = l * N + i;
+      return v === 0 || v === net || goal[st] === gs || ownCopper[st] === net;
+    };
+    const blocked = (l: number, i: number) => {
+      const v = maps[0]![l]![i]!;
+      const st = l * N + i;
+      return v !== 0 && v !== net && goal[st] !== gs && ownCopper[st] !== net;
+    };
+    const run = ++searchNo;
+    const heap = new Heap();
+    for (const st of starts) {
+      seenAt[st] = run;
+      cost[st] = 0;
+      from[st] = -1;
+      heap.push(st, h(st));
+    }
+    let n = 0;
+    while (heap.size) {
+      const s = heap.pop();
+      if (heap.lastPrio - h(s) > cost[s]! + 0.01) continue;
+      if (goal[s] === gs) {
+        const path: number[] = [];
+        for (let q = s; q >= 0; q = from[q]!) path.push(q);
+        return path.reverse();
+      }
+      if ((++n & 4095) === 0 && now() > stop) return undefined;
+      const l = Math.floor(s / N);
+      const i = s % N;
+      const x = i % W;
+      const y = (i - x) / W;
+      for (let d = 0; d < 8; d++) {
+        const nx = x + DX[d]!;
+        const ny = y + DY[d]!;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const ni = ny * W + nx;
+        if (!passable(l, ni)) continue;
+        const ns = l * N + ni;
+        const nc = cost[s]! + STEP[d]! + (blocked(l, ni) ? PROBE_PENALTY : 0);
+        if (seenAt[ns] !== run || nc < cost[ns]!) {
+          seenAt[ns] = run;
+          cost[ns] = nc;
+          from[ns] = s;
+          heap.push(ns, nc + h(ns));
+        }
+      }
+      if (L > 1 && !viaBlocked[i]) {
+        let fits = true;
+        for (let l2 = 0; l2 < L && fits; l2++) {
+          const v = fixedMap[l2]![i]!;
+          if (v !== 0 && v !== net && v !== EDGE) fits = false;
+          if (v === EDGE && OUTER.has(layers[l2]!)) fits = false;
+        }
+        if (!fits) continue;
+        const dear = viaNear[i] && viaAt[i] !== net ? PROBE_PENALTY : 0;
+        for (let l2 = 0; l2 < L; l2++) {
+          if (l2 === l || !passable(l2, i)) continue;
+          const ns = l2 * N + i;
+          const nc = cost[s]! + VIA_COST + dear;
+          if (seenAt[ns] !== run || nc < cost[ns]!) {
+            seenAt[ns] = run;
+            cost[ns] = nc;
+            from[ns] = s;
+            heap.push(ns, nc + h(ns));
+          }
+        }
+      }
+    }
+    return null;
+  }
 }
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
+const PROGRESS_MS = 200;
 const OUTER = new Set<CopperLayer>(['F.Cu', 'B.Cu']);
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
