@@ -16,7 +16,7 @@
   });
 
   const b = $derived(app.board);
-  let show = $state<Record<string, boolean>>({ board: true, 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true, placement: false });
+  let show = $state<Record<string, boolean>>({ board: true, 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true, placement: false, dims: true });
   let hotNet = $state<string | null>(null);
   let mode = $state<'2d' | '3d' | 'panel'>('2d');
   // switching views: the 3D view starts from the 2D view's area and flies into 3D; back, it flies
@@ -69,6 +69,7 @@
     ['courtyard', 'Courtyards'],
     ['ratsnest', 'Ratsnest'],
     ['placement', 'Placement · yours / locked'],
+    ['dims', 'Dimensions · size, holes (mm)'],
   ]);
 
   const selectedPart = $derived(app.selection.length === 1 ? (b?.parts.find((p) => p.refdes === app.selection[0]) ?? null) : null);
@@ -306,6 +307,7 @@
   .sw.silk { background: #e9ecef; }
   .sw.courtyard { background: #d65db1; }
   .sw.ratsnest { background: #9aa3ad; }
+  .sw.dims { background: #7fdcb4; }
   .sw.placement { background: linear-gradient(90deg, #6fb5ff 50%, #f0a03c 50%); }
   @media (max-width: 900px) {
     .lay, .lay.nochat { grid-template-columns: minmax(0, 1fr); grid-template-rows: 60% 40%; }
