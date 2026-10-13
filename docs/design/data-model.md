@@ -5,7 +5,9 @@
 ## 1. Principles
 
 - **Logical before physical.** The netlist (parts, pins, nets) is the source of truth. Schematic
-  graphics and board geometry are *views* derived from it plus constraints.
+  graphics and board geometry are *views* derived from it plus constraints. Since 2026-10-13 a
+  schematic sheet the agent has arranged keeps its drawing in the design (`Design.drawing`), kept in
+  step with the netlist by the kernel ([schematic-drawing](schematic-drawing.md) §2a).
 - **Stable IDs everywhere.** Every entity has a ULID. Reference designators (`U1`) are
   attributes, so re-annotation never breaks references in the ledger, chat history or changesets.
 - **Integer units.** All geometry is in `i64` nanometres. Angles are in millidegrees. No floats in stored geometry.

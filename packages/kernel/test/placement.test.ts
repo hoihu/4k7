@@ -52,23 +52,26 @@ const centre = (x: SymbolView) => ({ x: x.bbox.x + x.bbox.w / 2, y: x.bbox.y + x
 const overlap = (a: SymbolView['bbox'], b: SymbolView['bbox']) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 describe('the agent places parts on the schematic (place_symbol)', () => {
-  it('puts an IC where it says, its small parts with it, and the rest around it', () => {
+  it('puts an IC where it says with its small parts, and leaves the rest where it was', () => {
     const k = kernelWith(chain);
-    const r = k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'U1', page: 1, x: 6000, y: 4000 }] });
+    const before = sheetOf(k);
+    const r = k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'U1', page: 1, x: 6000, y: 6000 }] });
     expect(r.status).toBe('ok');
+    expect(r.results[0]!.effect).toMatch(/sheet Main is drawn as you arrange it from now on/);
     const s = sheetOf(k);
     const page = s.pages[0]!.rect;
     const u1 = centre(sym(s, 'U1'));
     expect(Math.abs(u1.x - page.x - 6000)).toBeLessThanOrEqual(50);
-    expect(Math.abs(u1.y - page.y - 4000)).toBeLessThanOrEqual(50);
+    expect(Math.abs(u1.y - page.y - 6000)).toBeLessThanOrEqual(50);
     // R2 on IN2 is still drawn at U1's pin, wired to it
     const in2 = sym(s, 'U1').pins.find((p) => p.name === 'IN2')!;
     expect(sym(s, 'R2').pins.some((p) => p.y === in2.y)).toBe(true);
     expect(s.wires.some((w) => w.pts.includes(in2.x) && w.pts.includes(in2.y))).toBe(true);
-    // nothing else sits on the placed part
-    for (const o of s.symbols) if (o.refdes !== 'U1') expect(overlap(o.bbox, sym(s, 'U1').bbox), o.refdes).toBe(false);
-    const k1 = Object.values(k.draftDesign().ledger).find((c) => c.kind === 'sch_position')!;
-    expect(k.state().view.constraintStatus[k1.id]).toBe('ok');
+    // the connectors did not move
+    for (const ref of ['J1', 'J2']) expect(sym(s, ref).bbox, ref).toEqual(sym(before, ref).bbox);
+    // the drawing is stored; no ledger entry says where U1 is
+    expect(Object.keys(k.draftDesign().drawing ?? {})).toEqual(['s_1']);
+    expect(Object.values(k.draftDesign().ledger).some((c) => c.kind === 'sch_position')).toBe(false);
   });
 
   it('stands a placed two-pin part on its own, lying when asked, connected by labels', () => {
@@ -79,27 +82,30 @@ describe('the agent places parts on the schematic (place_symbol)', () => {
     expect(r1.rotation).toBeDefined(); // lying
     expect(Math.abs(centre(r1).x - s.pages[0]!.rect.x - 2000)).toBeLessThanOrEqual(50);
     for (const p of r1.pins) expect(s.labels.some((l) => l.x === p.x && l.y === p.y), `label at R1.${p.number}`).toBe(true);
+    // and stands up again when told
+    k.transact({ summary: 'stand', ops: [{ op: 'place_symbol', ref: 'R1', x: 2000, y: 6000, orient: 'upright' }] });
+    expect(sym(sheetOf(k), 'R1').rotation).toBeUndefined();
   });
 
-  it('mirrors a connector placed in the right half of the page, unless told otherwise', () => {
+  it('mirrors a connector when told, and keeps how it is drawn otherwise', () => {
     const k = kernelWith(chain);
-    k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'J2', page: 1, x: 10000, y: 3000 }] });
+    k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'J2', page: 1, x: 10000, y: 3000, mirror: true }] });
     const j2 = sym(sheetOf(k), 'J2');
-    const right = centre(j2).x;
-    expect(j2.pins.every((p) => p.x < right)).toBe(true); // pins face left, towards the circuit
-    k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'J2', page: 1, x: 10000, y: 3000, mirror: false }] });
+    expect(j2.pins.every((p) => p.x < centre(j2).x)).toBe(true); // pins face left, towards the circuit
+    k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'J2', page: 1, x: 9000, y: 3000 }] });
     const j2b = sym(sheetOf(k), 'J2');
-    expect(j2b.pins.every((p) => p.x > centre(j2b).x)).toBe(true);
-    // one entry per part: placing again replaced it
-    expect(Object.values(k.draftDesign().ledger).filter((c) => c.kind === 'sch_position')).toHaveLength(1);
+    expect(j2b.pins.every((p) => p.x < centre(j2b).x)).toBe(true);
+    k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'J2', page: 1, x: 9000, y: 3000, mirror: false }] });
+    const j2c = sym(sheetOf(k), 'J2');
+    expect(j2c.pins.every((p) => p.x > centre(j2c).x)).toBe(true);
   });
 
-  it('keeps the page when none is given, hands the part back with auto, and refuses orient on an IC', () => {
+  it('keeps the page when none is given, redraws the part in free space with auto, and refuses orient on an IC', () => {
     const k = kernelWith(chain);
-    const r = k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'U1', x: 6000, y: 4000 }] });
+    expect(k.transact({ summary: 'back', ops: [{ op: 'place_symbol', ref: 'U1', auto: true }] }).results[0]!.effect).toMatch(/drawn by the layout already/);
+    const r = k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'U1', x: 6000, y: 6000 }] });
     expect(r.results[0]!.effect).toMatch(/page 1/);
-    expect(k.transact({ summary: 'back', ops: [{ op: 'place_symbol', ref: 'U1', auto: true }] }).results[0]!.effect).toMatch(/handed back/);
-    expect(Object.values(k.draftDesign().ledger).some((c) => c.kind === 'sch_position')).toBe(false);
+    expect(k.transact({ summary: 'back', ops: [{ op: 'place_symbol', ref: 'U1', auto: true }] }).results[0]!.effect).toMatch(/U1 drawn afresh in free space/);
     const bad = k.transact({ summary: 'x', ops: [{ op: 'place_symbol', ref: 'U1', x: 1, y: 1, orient: 'lying' }] });
     expect(bad.rejection?.code).toBe('INVALID_OP');
     const none = k.transact({ summary: 'x', ops: [{ op: 'place_symbol', ref: 'U1' }] });
@@ -108,9 +114,8 @@ describe('the agent places parts on the schematic (place_symbol)', () => {
 
   it('says so when a placed part lies on another one', () => {
     const k = kernelWith(chain);
-    k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'U1', page: 1, x: 6000, y: 4000 }, { op: 'place_symbol', ref: 'J2', page: 1, x: 6000, y: 4000 }] });
-    const d = k.state().diagnostics.filter((x) => x.code === 'LEDGER.PLACEMENT');
-    expect(d.some((x) => /lies on/.test(x.message))).toBe(true);
+    const r = k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'U1', page: 1, x: 6000, y: 4000 }, { op: 'place_symbol', ref: 'J2', page: 1, x: 6000, y: 4000 }] });
+    expect(r.results[1]!.effect).toMatch(/it lies on U1: move one of them/);
   });
 
   it('puts a part on a page the sheet does not have yet: the page is added', () => {
@@ -123,17 +128,17 @@ describe('the agent places parts on the schematic (place_symbol)', () => {
     expect(c.x > p2.x && c.x < p2.x + p2.w && c.y > p2.y && c.y < p2.y + p2.h).toBe(true);
   });
 
-  it('reports pages and where every symbol stands in get_schematic', () => {
+  it('reports pages, who draws them and where every symbol stands in get_schematic', () => {
     const k = kernelWith(chain);
-    k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'U1', page: 1, x: 6000, y: 4000 }] });
-    const q = k.query({ op: 'get_schematic' }) as { pages: { page: number; w: number }[]; symbols: { ref: string; page: number; x: number; y: number; placed: string }[] };
-    expect(q.pages[0]!.page).toBe(1);
+    type Q = { pages: { page: number; drawn: string }[]; symbols: { ref: string; page: number; x: number; y: number }[] };
+    expect((k.query({ op: 'get_schematic' }) as Q).pages[0]!.drawn).toMatch(/auto-layout/);
+    k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'U1', page: 1, x: 6000, y: 6000 }] });
+    const q = k.query({ op: 'get_schematic' }) as Q;
+    expect(q.pages[0]).toMatchObject({ page: 1, drawn: 'as you arranged it' });
     const u1 = q.symbols.find((x) => x.ref === 'U1')!;
     expect(u1.page).toBe(1);
     expect(Math.abs(u1.x - 6000)).toBeLessThanOrEqual(50); // snapped to the grid
-    expect(Math.abs(u1.y - 4000)).toBeLessThanOrEqual(50);
-    expect(u1.placed).toMatch(/by you \(k_\w+, ok\)/);
-    expect(q.symbols.find((x) => x.ref === 'J1')!.placed).toBe('by the layout');
+    expect(Math.abs(u1.y - 6000)).toBeLessThanOrEqual(50);
   });
 });
 

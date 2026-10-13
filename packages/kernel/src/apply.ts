@@ -41,10 +41,10 @@ import {
   pointBounds,
 } from '@4k7/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
-import { layoutSchematic } from './layout.ts';
+import { isDrawn, moveSymbol, redrawParts, releaseSheet, schematicView, syncDrawing } from './drawing.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
-import { footprintFor, isTwoPin, packageOptions, planUnits, searchParts, standardPackage } from '@4k7/parts';
+import { footprintFor, isTwoPin, packageOptions, planUnits, searchParts, standardPackage, unitCount } from '@4k7/parts';
 import {
   allocRefdes,
   cardOf,
@@ -120,6 +120,8 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return place(d, op);
     case 'place_symbol':
       return placeSymbol(d, op);
+    case 'auto_draw':
+      return autoDraw(d, op);
     case 'propose_layout':
       return proposeLayout(d, op.keep_choices ?? true);
     case 'route':
@@ -613,7 +615,7 @@ function addHole(d: Design, op: Extract<EditOp, { op: 'add_hole' }>): OpResult {
 
 /** The board as placed now (for ops that record where parts are). */
 function placedNow(d: Design) {
-  return placeBoard(d, layoutSchematic(d));
+  return placeBoard(d, schematicView(d));
 }
 
 /** Store the current placement, so later layouts start from it. */
@@ -629,22 +631,26 @@ function keepPlacement(d: Design) {
  * replaces it, keeping a rotation chosen before unless a new one is given.
  */
 /**
- * A part's place on the schematic, as the agent decides it: a `sch_position` ledger entry the
- * layout honours (layout.ts). The page is given as the design counts pages and kept as the page
- * of the part's own sheet, so pages added to an earlier sheet do not move it.
+ * Move a part on the schematic (drawing.ts moveSymbol): the first move on a sheet stores its
+ * drawing, which is kept from then on. The page is given as the design counts pages. A
+ * `sch_position` ledger entry of earlier versions on the part goes: the drawing says it now.
  */
 function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>): OpResult {
   const { comp, unit } = resolveUnitRef(d, op.ref);
   const label = `${comp.refdes}${unit ?? ''}`;
   const old = Object.values(d.ledger).filter((k) => k.kind === 'sch_position' && k.a === comp.id && (k.aUnit ?? '') === (unit ?? ''));
   for (const k of old) delete d.ledger[k.id];
-  if (op.auto) return { op: op.op, effect: old.length ? `${label} handed back to the layout` : `${label} is placed by the layout already`, ids: old.map((k) => k.id) };
+  if (op.auto) {
+    const again = redrawParts(d, comp.sheet, new Set([comp.id]));
+    return { op: op.op, effect: again ? `${label} drawn afresh in free space` : old.length ? `${label} handed back to the layout` : `${label} is drawn by the layout already`, ids: old.map((k) => k.id) };
+  }
   if (op.x === undefined || op.y === undefined) reject({ code: 'INVALID_OP', message: `place_symbol needs x and y (the centre of ${label}'s symbol, mils from the paper's top-left corner), or auto: true. design_query get_schematic shows where everything is now.` });
   const card = cardOf(d, comp.part);
   const twoPin = !!card && isTwoPin(card);
   if (op.orient && !twoPin) reject({ code: 'INVALID_OP', message: `orient is for two-pin parts; ${label} is drawn by its symbol. Use mirror to put its left pins on the right.` });
   if (op.mirror !== undefined && twoPin) reject({ code: 'INVALID_OP', message: `mirror is for ICs and connectors; give ${label} orient "upright" or "lying".` });
-  const view = layoutSchematic(d);
+  syncDrawing(d); // parts added earlier in this transaction are drawn first
+  const view = schematicView(d);
   const sheet = view.sheets.find((s) => s.id === comp.sheet)!;
   const first = sheet.pages[0]!.number;
   const last = sheet.pages.at(-1)!.number;
@@ -661,23 +667,31 @@ function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>): Op
     }
     page = op.page - first + 1;
   }
-  const snap = (v: number) => Math.round(v / 100) * 100;
-  const id = nextId(d, 'k');
-  d.ledger[id] = {
-    id,
-    kind: 'sch_position',
-    a: comp.id,
-    ...(unit ? { aUnit: unit } : {}),
-    page,
-    x: snap(op.x),
-    y: snap(op.y),
-    ...(op.orient ? { orient: op.orient } : {}),
-    ...(op.mirror !== undefined ? { mirror: op.mirror } : {}),
-    domain: 'schematic',
-    strength: 'soft',
-    source: { type: 'agent' },
-  };
-  return { op: op.op, effect: `${label} placed on page ${first + page - 1} at (${snap(op.x)}, ${snap(op.y)}) mils`, ids: [id] };
+  const taken = !isDrawn(d, comp.sheet);
+  const unitOf = unit ?? (card && unitCount(card) > 1 ? card.units![0]!.name : undefined);
+  const at = moveSymbol(d, comp.sheet, comp, unitOf, page, op.x, op.y, { ...(op.orient ? { orient: op.orient } : {}), ...(op.mirror !== undefined ? { mirror: op.mirror } : {}) });
+  const notes = [taken ? `sheet ${sheet.name} is drawn as you arrange it from now on` : '', at.under ? `it lies on ${at.under}: move one of them` : ''].filter(Boolean);
+  return { op: op.op, effect: `${label} placed on page ${first + page - 1} at (${at.x}, ${at.y}) mils${notes.length ? `; ${notes.join('; ')}` : ''}`, ids: [comp.id] };
+}
+
+/** Let the auto-layout draw a sheet again, or some parts afresh in free space (drawing.ts). */
+function autoDraw(d: Design, op: Extract<EditOp, { op: 'auto_draw' }>): OpResult {
+  const comps = (op.refs ?? []).map((r) => resolveComponent(d, r));
+  const byName = op.sheet !== undefined ? Object.values(d.sheets).find((s) => s.name.toLowerCase() === op.sheet!.toLowerCase()) : undefined;
+  if (op.sheet !== undefined && !byName) reject({ code: 'REF_UNKNOWN', message: `No sheet "${op.sheet}".`, candidates: Object.values(d.sheets).map((s) => s.name) });
+  if (comps.length) {
+    const sheets = new Set(comps.map((c) => c.sheet));
+    const done: string[] = [];
+    for (const sid of sheets) {
+      const mine = comps.filter((c) => c.sheet === sid);
+      if (redrawParts(d, sid, new Set(mine.map((c) => c.id)))) done.push(...mine.map((c) => c.refdes));
+    }
+    const rest = comps.map((c) => c.refdes).filter((r) => !done.includes(r));
+    return { op: op.op, effect: [done.length ? `${done.join(', ')} drawn afresh in free space` : '', rest.length ? `${rest.join(', ')}: drawn by the layout already` : ''].filter(Boolean).join('; '), ids: comps.map((c) => c.id) };
+  }
+  const targets = byName ? [byName] : Object.values(d.sheets);
+  const released = targets.filter((s) => releaseSheet(d, s.id)).map((s) => s.name);
+  return { op: op.op, effect: released.length ? `${released.join(', ')}: drawn by the auto-layout again, afresh after every change` : `${targets.map((s) => s.name).join(', ')}: drawn by the auto-layout already`, ids: targets.map((s) => s.id) };
 }
 
 function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
@@ -868,7 +882,8 @@ function setValueSeries(d: Design, op: Extract<EditOp, { op: 'set_value_series' 
 function setPaper(d: Design, op: Extract<EditOp, { op: 'set_paper' }>): OpResult {
   if (op.size === DEFAULT_PAPER) delete d.paper;
   else d.paper = op.size;
-  const pages = layoutSchematic(d).sheets.reduce((n, s) => n + s.pages.length, 0);
+  syncDrawing(d); // stored drawings: the pages take the new size
+  const pages = schematicView(d).sheets.reduce((n, s) => n + s.pages.length, 0);
   return { op: 'set_paper', effect: `schematic paper: ${op.size} landscape (${PAPERS[op.size].mm.w} × ${PAPERS[op.size].mm.h} mm), ${pages} page${pages === 1 ? '' : 's'}`, ids: ['paper'] };
 }
 
@@ -1355,9 +1370,11 @@ function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResul
 
   const id = nextId(d, 'k');
   d.ledger[id] = { id, ...k };
+  // an order only guides the auto-layout: on a sheet the agent arranged it waits for auto_draw
+  const drawn = k.domain === 'schematic' && k.a && d.components[k.a] && isDrawn(d, d.components[k.a]!.sheet) ? d.sheets[d.components[k.a]!.sheet]!.name : undefined;
   return {
     op: 'constrain',
-    effect: `${describeConstraint(d, d.ledger[id]!)}` + (replaced.length ? ` (replaces ${replaced.join(', ')})` : ''),
+    effect: `${describeConstraint(d, d.ledger[id]!)}` + (replaced.length ? ` (replaces ${replaced.join(', ')})` : '') + (drawn ? `; sheet ${drawn} is drawn as you arranged it, so this guides the layout only after auto_draw (place_symbol moves the part now)` : ''),
     ids: [id],
   };
 }

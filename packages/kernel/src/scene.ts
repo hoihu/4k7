@@ -2,7 +2,7 @@
  * Scene building blocks shared by the schematic layouts: geometry containers, symbol
  * placement, net decorations and extent estimates.
  */
-import type { Component, Design, LabelView, Net, PinType, PinView, Point, Prim, Rect, SymbolView, WireView } from '@4k7/schema';
+import type { Component, Design, LabelView, Net, PinType, PinView, Point, Prim, Rect, SymbolSpec, SymbolView, WireView } from '@4k7/schema';
 import { CHAR_W, GRID, type SymbolDef } from '@4k7/parts';
 import { isGroundNet, isPowerNet, valueLinesOf, valueOf } from './doc.ts';
 
@@ -48,6 +48,8 @@ export function translateScene(s: Scene, dx: number, dy: number): void {
     sym.refPos = { ...sym.refPos, x: sym.refPos.x + dx, y: sym.refPos.y + dy };
     sym.valuePos = { ...sym.valuePos, x: sym.valuePos.x + dx, y: sym.valuePos.y + dy };
     if (sym.origin) sym.origin = { x: sym.origin.x + dx, y: sym.origin.y + dy };
+    const m = made.get(sym);
+    if (m) made.set(sym, { ...m, x: m.x + dx, y: m.y + dy });
   }
   for (const w of s.wires) w.pts = w.pts.map((v, i) => v + (i % 2 ? dy : dx));
   for (const j of s.junctions) {
@@ -129,6 +131,26 @@ export function sceneBBox(s: Scene): Rect {
 
 /* -------------------------------- symbols --------------------------------- */
 
+/** How each symbol was made and where its origin is, so a drawing of it can be stored (drawing.ts). */
+const made = new WeakMap<SymbolView, { spec: SymbolSpec; x: number; y: number }>();
+
+/** The spec and origin of a symbol makeSymbol made; the origin moves with translateScene. */
+export function symbolMaking(s: SymbolView): { spec: SymbolSpec; x: number; y: number } | undefined {
+  return made.get(s);
+}
+
+/**
+ * Turn a symbol made at (cx, cy) by `rot` degrees clockwise (±90: a two-pin part lying down): its
+ * pins and box turn with it; the canvas turns the prims around `origin`.
+ */
+export function rotateSymbol(s: SymbolView, def: SymbolDef, cx: number, cy: number, rot: number): void {
+  const rad = (rot * Math.PI) / 180;
+  const [c, sn] = [Math.round(Math.cos(rad)), Math.round(Math.sin(rad))];
+  s.rotation = rot;
+  s.origin = { x: cx, y: cy };
+  s.pins = def.pins.map((p) => ({ ...p, x: cx + p.x * c - p.y * sn, y: cy + p.x * sn + p.y * c }));
+}
+
 export function makeSymbol(d: Design, c: Component, def: SymbolDef, ox: number, oy: number): SymbolView {
   const sym: SymbolView = {
     componentId: c.id,
@@ -152,6 +174,7 @@ export function makeSymbol(d: Design, c: Component, def: SymbolDef, ox: number, 
   const s = emptyScene();
   s.symbols.push(sym);
   translateScene(s, ox, oy);
+  made.set(sym, { spec: def.spec ?? {}, x: ox, y: oy });
   return sym;
 }
 

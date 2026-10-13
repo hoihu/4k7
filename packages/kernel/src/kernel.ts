@@ -38,7 +38,7 @@ import { applyOp, describeConstraint, descriptionView } from './apply.ts';
 import { countDiagnostics, diagKey, runChecks, sortDiagnostics } from './checks.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, valueOf } from './doc.ts';
-import { layoutSchematic } from './layout.ts';
+import { schematicView, syncDrawing } from './drawing.ts';
 import { layoutBoard, placeBoard } from './board.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 import { MIN_FREE, circuitSignature, guardOp, measure, positions, resolveScope, ripple, widenScope, type ResolvedScope } from './scope.ts';
@@ -84,6 +84,7 @@ export class Kernel {
 
   constructor(design?: Design) {
     this.committed = design ? migrate(clone(design)) : emptyDesign();
+    syncDrawing(this.committed);
     this.draft = clone(this.committed);
   }
 
@@ -92,7 +93,7 @@ export class Kernel {
   private analyse(d: Design): Analysis {
     let a = this.cache.get(d);
     if (!a) {
-      const view = layoutSchematic(d);
+      const view = schematicView(d);
       const sch = schematicChecks(d, view, this.rules);
       applyWaivers(d, sch);
       a = { view, diagnostics: sortDiagnostics([...runChecks(d, view.constraintStatus, view.constraintWhy), ...sch]) };
@@ -156,6 +157,7 @@ export class Kernel {
     }
     gcNets(work);
     gcParts(work);
+    syncDrawing(work);
     if (this.scoped && circuitSignature(work) !== this.scoped.circuit) {
       return this.rejected({ opIndex: tx.ops.length - 1, code: 'OUT_OF_SCOPE', message: 'This would change the circuit (parts, values or connections). Optimize only changes how an area is drawn.' }, !!tx.dry_run);
     }
@@ -266,6 +268,7 @@ export class Kernel {
       next = clone(this.draft);
     } else {
       ({ design: next, notes } = mergeHunks(this.committed, this.draft, ids));
+      syncDrawing(next);
     }
     const entry: HistoryEntry = {
       id: this.historySeq++,
@@ -391,23 +394,22 @@ export class Kernel {
       case 'get_schematic': {
         // what the agent needs to place parts: each page's paper and where every symbol stands on it
         const view = this.analyse(d).view;
-        const placedBy = new Map(Object.values(d.ledger).filter((k) => k.kind === 'sch_position').map((k) => [`${k.a}${k.aUnit ?? ''}`, k.id]));
         const r = (v: number) => Math.round(v);
         return {
           coordinates: 'mils from the top-left corner of the page\'s paper, x to the right, y down; a symbol\'s x/y is its centre',
           drawing_area: { margin: PAGE.margin, title_block: `${PAGE.title} high, at the bottom` },
           pages: view.sheets.flatMap((s) =>
-            s.pages.map((p) => ({ page: p.number, sheet: s.name, name: p.name, w: p.rect.w, h: p.rect.h, ...(p.oversized ? { oversized: true } : {}) })),
+            s.pages.map((p) => ({ page: p.number, sheet: s.name, name: p.name, w: p.rect.w, h: p.rect.h, ...(p.oversized ? { oversized: true } : {}), drawn: d.drawing?.[s.id] ? 'as you arranged it' : 'by the auto-layout, afresh after every change' })),
           ),
           symbols: view.sheets.flatMap((s) =>
             s.symbols.map((sym) => {
               const cx = sym.bbox.x + sym.bbox.w / 2;
               const cy = sym.bbox.y + sym.bbox.h / 2;
               const p = s.pages.find((pg) => cx >= pg.rect.x && cx <= pg.rect.x + pg.rect.w && cy >= pg.rect.y && cy <= pg.rect.y + pg.rect.h) ?? s.pages[0]!;
-              const k = placedBy.get(`${sym.componentId}${sym.unit ?? ''}`);
-              return { ref: `${sym.refdes}${sym.unit ?? ''}`, page: p.number, x: r(cx - p.rect.x), y: r(cy - p.rect.y), w: sym.bbox.w, h: sym.bbox.h, placed: k ? `by you (${k}, ${view.constraintStatus[k] ?? 'ok'})` : 'by the layout' };
+              return { ref: `${sym.refdes}${sym.unit ?? ''}`, page: p.number, x: r(cx - p.rect.x), y: r(cy - p.rect.y), w: sym.bbox.w, h: sym.bbox.h, ...(sym.rotation ? { lying: true } : {}) };
             }),
           ),
+          ...(view.sheets.some((s) => s.labels.some((l) => l.auto)) ? { auto_labels: view.sheets.flatMap((s) => s.labels.filter((l) => l.auto).map((l) => l.text)).filter((t, i, a) => a.indexOf(t) === i), auto_labels_note: 'connections your drawing does not show yet; the kernel draws a net label at a pin for each' } : {}),
         };
       }
       case 'get_board': {
@@ -495,6 +497,7 @@ export class Kernel {
 
   load(design: Design): void {
     this.committed = migrate(clone(design));
+    syncDrawing(this.committed);
     this.draft = clone(this.committed);
     this.undoStack = [];
     this.redoStack = [];

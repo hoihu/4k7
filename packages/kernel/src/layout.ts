@@ -31,6 +31,7 @@ import {
   leadEnd,
   makeSymbol,
   mergeScene,
+  rotateSymbol,
   satWidth,
   sceneBBox,
   textRect,
@@ -85,6 +86,20 @@ const anchorSymbol = (plan: AnchorPlan) => symbolFor(plan.card, false, { mirror:
 interface Ctx {
   d: Design;
   members: Map<string, NetPin[]>;
+}
+
+/**
+ * The auto-layout's drawing of one sheet. With `only`, of those components alone (the parts a
+ * stored drawing does not have yet): their connections to the others are not drawn.
+ */
+export function layoutSheetOf(d: Design, sheetId: string, only?: ReadonlySet<string>): SheetView {
+  let dd = d;
+  if (only) {
+    const components = Object.fromEntries(Object.entries(d.components).filter(([id]) => only.has(id)));
+    const ledger = Object.fromEntries(Object.entries(d.ledger).filter(([, k]) => (!k.a || only.has(k.a)) && (!k.b || only.has(k.b))));
+    dd = { ...d, components, ledger };
+  }
+  return layoutSheet({ d: dd, members: netMembers(dd) }, sheetId, d.sheets[sheetId]?.name ?? '');
 }
 
 export function layoutSchematic(d: Design): SchematicView {
@@ -302,7 +317,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   /* ---- cells in rows; the pager flows them onto pages ---- */
   const cellRows: CellRow[] = [];
   for (let [ri, row] of rows.entries()) {
-    const cells: Cell[] = row.map((n) => ({ scene: flows.has(n.comp.id) ? flowCell(ctx, flows.get(n.comp.id)!) : buildCell(ctx, n.plan), heads: [n.comp] }));
+    const cells: Cell[] = row.map((n) => ({ scene: stamp(flows.has(n.comp.id) ? flowCell(ctx, flows.get(n.comp.id)!) : buildCell(ctx, n.plan), n.plan), heads: [n.comp] }));
     // output connectors: one column at the right end of the row
     const outIdx = row.flatMap((n, i) => (outputConn.has(n.comp.id) && !ordered.has(n.comp.id) ? [i] : []));
     const outColumn = outIdx.length ? stackCells(outIdx.map((i) => cells[i]!)) : null;
@@ -331,7 +346,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   for (const n of nodes) {
     const at = pinned.get(n.key);
     if (!at) continue;
-    const scene = flows.has(n.comp.id) ? flowCell(ctx, flows.get(n.comp.id)!) : buildCell(ctx, n.plan);
+    const scene = stamp(flows.has(n.comp.id) ? flowCell(ctx, flows.get(n.comp.id)!) : buildCell(ctx, n.plan), n.plan);
     const unit = n.plan.unit !== undefined ? n.plan.card.units?.[n.plan.unit]?.name : undefined;
     placed.push({ cell: { scene, heads: [n.comp] }, at, comp: n.comp.id, ...(unit ? { unit } : {}) });
   }
@@ -342,6 +357,21 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   addJunctions(scene);
   const bb = pagesBBox(pages);
   return { id: sheetId, name: sheetName, bbox: bb, pages, ...scene };
+}
+
+/** The symbol each small part was drawn with: its cell's IC or connector (drawnWith). */
+const withHead = new WeakMap<SymbolView, string>();
+
+/** The symbol a part was drawn with by the layout, as a key: the component id, with "#" and the unit letter for one unit of a split symbol. */
+export const drawnWith = (s: SymbolView): string | undefined => withHead.get(s);
+
+/** The symbol key of a component or one of its units (drawnWith). */
+export const symbolKey = (comp: string, unit?: string) => (unit ? `${comp}#${unit}` : comp);
+
+function stamp(scene: Scene, plan: AnchorPlan): Scene {
+  const key = symbolKey(plan.comp.id, plan.unit !== undefined ? plan.card.units?.[plan.unit]?.name : undefined);
+  for (const s of scene.symbols) if (s.componentId !== plan.comp.id) withHead.set(s, key);
+  return scene;
 }
 
 /* --------------------------------- pages ---------------------------------- */
@@ -360,7 +390,7 @@ interface CellRow {
 }
 
 /** Space between pages on the canvas. */
-const PAGE_GAP = 600;
+export const PAGE_GAP = 600;
 
 /** A cell whose part the agent placed: its symbol's centre goes to `at` on that page. */
 interface Placed {
@@ -528,7 +558,7 @@ const centred = (room: number, size: number) => Math.max(0, Math.floor((room - s
  * block a main part belongs to, else the part's own title, else the first words of its
  * description. ICs first, then connectors, each function once.
  */
-function pageName(d: Design, heads: Component[]): string {
+export function pageName(d: Design, heads: Component[]): string {
   const seen = new Set<string>();
   const conn = (c: Component) => Number(cardOf(d, c.part)!.category === 'connector');
   const blockOf = (c: Component) => d.description?.blocks.find((b) => b.components.includes(c.id))?.title;
@@ -547,7 +577,7 @@ function pageName(d: Design, heads: Component[]): string {
   return names.length > 2 ? `${names[0]} +${names.length - 1}` : names.join(', ');
 }
 
-function pagesBBox(pages: PageView[]): Rect {
+export function pagesBBox(pages: PageView[]): Rect {
   const x0 = Math.min(...pages.map((p) => p.rect.x));
   const y0 = Math.min(...pages.map((p) => p.rect.y));
   const x1 = Math.max(...pages.map((p) => p.rect.x + p.rect.w));
@@ -881,11 +911,7 @@ function horizontalPart(d: Design, comp: Component, cx: number, cy: number, pin1
   const card = cardOf(d, comp.part)!;
   const def = uprightSymbol(card);
   const s = makeSymbol(d, comp, def, cx, cy);
-  const rot = pin1Left ? -90 : 90;
-  const rad = (rot * Math.PI) / 180;
-  s.rotation = rot;
-  s.origin = { x: cx, y: cy };
-  s.pins = def.pins.map((p) => ({ ...p, x: Math.round(cx + p.x * Math.cos(rad) - p.y * Math.sin(rad)), y: Math.round(cy + p.x * Math.sin(rad) + p.y * Math.cos(rad)) }));
+  rotateSymbol(s, def, cx, cy, pin1Left ? -90 : 90);
   s.bbox = { x: cx - 200, y: cy - 100, w: 400, h: 200 };
   s.refPos = { x: cx, y: cy - 175, anchor: 'middle' };
   s.valuePos = { x: cx, y: cy - 90, anchor: 'middle' };
@@ -1540,7 +1566,7 @@ function bridgeCell(ctx: Ctx, b: BridgeRect): Scene {
  * compared by page: the pages read left to right and top to bottom, so an earlier page counts
  * as both "left of" and "above" a later one.
  */
-function evaluateConstraints(d: Design, sheets: SheetView[]): { status: SchematicView['constraintStatus']; why: Record<string, string> } {
+export function evaluateConstraints(d: Design, sheets: SheetView[]): { status: SchematicView['constraintStatus']; why: Record<string, string> } {
   const where = new Map<string, { sheet: string; page: number; bbox: Rect }>();
   for (const s of sheets) {
     const pageOf = (b: Rect) => {

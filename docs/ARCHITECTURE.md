@@ -46,7 +46,7 @@ Deterministic solvers in the kernel (schematic auto-layout, placement solver, ro
 geometry. The same inputs give the same output, which makes results testable and diffs stable.
 
 The AI *can* give geometric intent when it matters (`place U1 at board center, rotate 90°`), but
-always as a **constraint** that the solvers respect, never as raw primitives. On the schematic the same holds since 2026-10-12: `place_symbol` puts a part where the agent says (a `sch_position` ledger entry), the auto-layout places the rest around it and draws the wires ([schematic-drawing](design/schematic-drawing.md) §2).
+always as a **constraint** that the solvers respect, never as raw primitives. On the schematic the agent goes further since 2026-10-13: the drawing is its own. A sheet nobody arranged is drawn by the auto-layout afresh after every change; the first `place_symbol` stores the sheet's drawing in the design (`Design.drawing`), which is kept from then on and kept in step with the netlist by the kernel (`kernel/drawing.ts`), and `auto_draw` hands it back ([schematic-drawing](design/schematic-drawing.md) §2a).
 
 ## 3. Principles
 
