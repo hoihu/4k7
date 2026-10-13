@@ -1,70 +1,86 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { CHECKED_SCH_RULES, LAYOUT_SCH_RULES, SCHEMATIC_RULES, checkedRulesNote, emptyDesign, mustFix, paramNumber, parseSchematicRules, type Design, type LabelView, type SchematicView, type SheetView, type SymbolView, type Transaction } from '@4k7/schema';
+import { CHECKED_SCH_RULES, LAYOUT_SCH_RULES, changedChecks, emptyDesign, migrateRulesText, mustFix, resolveChecks, type Design, type LabelView, type RuleLevel, type SchematicView, type SheetView, type SymbolView, type Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { diagKey } from '../src/checks.ts';
 import { schematicChecks } from '../src/schcheck.ts';
 import { measure } from '../src/scope.ts';
 import { buckTransaction } from './fixtures.ts';
 
-describe('the ruleset', () => {
-  const { guidance, rules } = parseSchematicRules(SCHEMATIC_RULES);
+describe('the checks', () => {
+  const rules = resolveChecks();
 
-  it('reads ids, levels, params and the layout mark from the default', () => {
-    expect(rules['SCH.RAIL_UP']).toMatchObject({ id: 'SCH.RAIL_UP', title: 'positive rails point up', level: 'error', layout: true });
+  it('runs every check the kernel has at its shipped level', () => {
+    expect(rules['SCH.RAIL_UP']).toEqual({ id: 'SCH.RAIL_UP', title: 'Power symbols point up', level: 'error', layout: true });
     expect(rules['SCH.JOG']).toMatchObject({ level: 'warning', layout: false });
-    expect(rules['SCH.CROSSING']).toMatchObject({ level: 'info', param: 'max 0' });
-    expect(rules['SCH.RAIL_UP']!.param).toBeUndefined();
-    for (const id of CHECKED_SCH_RULES) expect(rules[id], id).toBeDefined();
-    // guidance-only headings are rules too, so the user can change their level; the kernel just has no check
-    expect(rules['SCH.JUNCTION_DOT']).toMatchObject({ level: 'error', layout: true });
+    expect(rules['SCH.CROSSING']).toMatchObject({ level: 'info', max: 0 });
+    expect(Object.keys(rules)).toEqual([...CHECKED_SCH_RULES]);
+    expect(resolveChecks(null)).toEqual(rules);
   });
 
-  it('keeps the headings and prose for the agent and drops the level and param lines', () => {
-    expect(guidance).toContain('### SCH.RAIL_UP: positive rails point up');
-    expect(guidance).toContain('Signal flows left to right');
-    expect(guidance).not.toMatch(/^level:/m);
-    expect(guidance).not.toMatch(/^param:/m);
-    expect(guidance).not.toMatch(/\n{3,}/);
-    // the editor's note above the first section is not for the agent
-    expect(guidance.startsWith('## Reading direction')).toBe(true);
-    expect(guidance).not.toContain('How this ruleset works');
-    expect(parseSchematicRules('Just prose.\n\n### SCH.JOG: in line\nlevel: off\n').guidance).toBe('Just prose.\n\n### SCH.JOG: in line\n');
+  it('takes the user\'s level and limit, and ignores what is not a level or a limit', () => {
+    const r = resolveChecks({ 'SCH.JOG': { level: 'off' }, 'SCH.CROSSING': { level: 'loud' as never, max: 2 }, 'SCH.DETOUR': { max: 3 }, 'SCH.MINE': { level: 'error' } });
+    expect(r['SCH.JOG']!.level).toBe('off');
+    expect(r['SCH.CROSSING']).toMatchObject({ level: 'info', max: 2 });
+    expect(r['SCH.DETOUR']!.max).toBeUndefined();
+    expect(r['SCH.MINE']).toBeUndefined();
+    expect(resolveChecks({ 'SCH.CROSSING': { max: -1 } })['SCH.CROSSING']!.max).toBe(0);
+    expect(resolveChecks({ 'SCH.CROSSING': { max: 1.5 } })['SCH.CROSSING']!.max).toBe(0);
   });
 
-  it('reads a CRLF copy of the default as the default', () => {
-    const crlf = parseSchematicRules(SCHEMATIC_RULES.replace(/\n/g, '\r\n'));
-    expect(crlf.guidance).toBe(guidance);
-    expect(crlf.rules).toEqual(rules);
-  });
-
-  it('reads the number in a param, however it is written', () => {
-    expect(paramNumber('max 0')).toBe(0);
-    expect(paramNumber('max: 2')).toBe(2);
-    expect(paramNumber('2')).toBe(2);
-    expect(paramNumber('max two')).toBeUndefined();
-    expect(paramNumber(undefined)).toBeUndefined();
-  });
-
-  it('tells the agent which headings the kernel checks, at what level', () => {
-    const note = checkedRulesNote(rules);
-    expect(note).toBe('Checked by the kernel (reported as SCH.* diagnostics): SCH.RAIL_UP error, SCH.GND_DOWN error, SCH.ORTHOGONAL error, SCH.DANGLING error, SCH.TEXT_OVERLAP warning, SCH.JOG warning, SCH.DETOUR warning, SCH.CROSSING info (max 0); the other SCH headings are guidance only.');
-    expect(checkedRulesNote({})).toContain('SCH.JOG off');
+  it('stores only what differs from the shipped checks', () => {
+    expect(changedChecks({ 'SCH.JOG': { level: 'warning' }, 'SCH.CROSSING': { max: 0 } })).toEqual({});
+    expect(changedChecks({ 'SCH.JOG': { level: 'error' }, 'SCH.CROSSING': { level: 'info', max: 2 } })).toEqual({ 'SCH.JOG': { level: 'error' }, 'SCH.CROSSING': { max: 2 } });
   });
 
   it('does not hold a layout rule\'s finding against the agent', () => {
-    expect([...LAYOUT_SCH_RULES].sort()).toEqual(['SCH.DANGLING', 'SCH.GND_DOWN', 'SCH.JUNCTION_DOT', 'SCH.ORTHOGONAL', 'SCH.RAIL_UP']);
+    expect([...LAYOUT_SCH_RULES].sort()).toEqual(['SCH.DANGLING', 'SCH.GND_DOWN', 'SCH.ORTHOGONAL', 'SCH.RAIL_UP']);
     expect(mustFix({ code: 'SCH.RAIL_UP', severity: 'error', entities: [], message: '' })).toBe(false);
     expect(mustFix({ code: 'SCH.JOG', severity: 'error', entities: [], message: '' })).toBe(true);
     expect(mustFix({ code: 'ERC.PIN_UNCONNECTED', severity: 'error', entities: [], message: '' })).toBe(true);
     expect(mustFix({ code: 'ERC.PIN_UNCONNECTED', severity: 'error', entities: [], message: '', waivedBy: 'w1' })).toBe(false);
   });
+});
 
-  it('takes a user edit: a changed level, an unknown level ignored, a heading without a level is guidance', () => {
-    const r = parseSchematicRules('### SCH.JOG: in line\nlevel: off\n\n### SCH.CROSSING: few\nlevel: loud\n\n### SCH.MINE: my rule\n\nSome prose.\n').rules;
-    expect(r['SCH.JOG']?.level).toBe('off');
-    expect(r['SCH.CROSSING']).toBeUndefined();
-    expect(r['SCH.MINE']).toBeUndefined();
+describe('the ruleset text of earlier versions', () => {
+  const old = `# Schematic rules
+
+How this ruleset works: an editor's note.
+
+## Wires
+
+Few bends.
+
+### SCH.JOG: parts facing each other are in line
+level: error
+
+Two pins that face each other sit on one line.
+
+### SCH.CROSSING: few crossings
+level: info
+param: max 2
+
+### SCH.ORTHOGONAL: wires run horizontally and vertically
+level: error
+
+*(layout)* On the grid, no diagonals.
+
+### SCH.LABEL_ALONE: a net label has a partner
+level: off
+`;
+
+  it('turns the levels into check settings and keeps the prose as notes, without ids and level lines', () => {
+    const { notes, checks } = migrateRulesText(old);
+    expect(checks).toEqual({ 'SCH.JOG': { level: 'error' }, 'SCH.CROSSING': { max: 2 } });
+    expect(notes).toBe('## Wires\n\nFew bends.\n\n### Parts facing each other are in line\n\nTwo pins that face each other sit on one line.\n\n### Few crossings\n\n### Wires run horizontally and vertically\n\nOn the grid, no diagonals.\n\n### A net label has a partner\n');
+    expect(migrateRulesText(old.replace(/\n/g, '\r\n'))).toEqual({ notes, checks });
+  });
+
+  it('leaves no notes from a copy of the old default with only its levels changed', () => {
+    const shipped = readFileSync(new URL('./old-schematic-rules.md', import.meta.url), 'utf8');
+    expect(migrateRulesText(shipped)).toEqual({ notes: '', checks: {} });
+    expect(migrateRulesText(shipped.replace('param: max 0', 'param: max 3'))).toEqual({ notes: '', checks: { 'SCH.CROSSING': { max: 3 } } });
+    expect(migrateRulesText(shipped + '\nLabels are horizontal.\n').notes).toContain('Labels are horizontal.');
   });
 });
 
@@ -81,11 +97,11 @@ function design(): Design {
   for (const [id, name] of [['fb', 'FB'], ['sw', 'SW'], ['vin', 'VIN'], ['gnd', 'GND']] as const) d.nets[id] = { id, name, attrs: {} };
   return d;
 }
-const DEFAULT = parseSchematicRules(SCHEMATIC_RULES).rules;
+const DEFAULT = resolveChecks();
 const check = (s: SheetView, rules = DEFAULT) => schematicChecks(design(), view(s), rules);
 /** The findings of one rule: hand-built sheets leave ends loose and parts askew that other rules would report. */
 const only = (code: string, s: SheetView, rules = DEFAULT) => check(s, rules).filter((x) => x.code === code);
-const withLevel = (id: string, level: string) => parseSchematicRules(SCHEMATIC_RULES.replace(new RegExp(`(### ${id.replace('.', '\\.')}:[^\\n]*\\nlevel:) \\w+`), `$1 ${level}`)).rules;
+const withLevel = (id: string, level: RuleLevel) => resolveChecks({ [id]: { level } });
 
 describe('schematic checks', () => {
   const rail = (l: Partial<LabelView> = {}): LabelView => ({ x: 1000, y: 300, text: 'VIN', netId: 'vin', kind: 'rail', dir: 'up', stub: 'left', stubLen: 100, ...l });
@@ -149,9 +165,7 @@ describe('schematic checks', () => {
       ['SCH.CROSSING', 'info', 'net:GND', 'GND crosses FB once: 1 crossing, max 0'],
       ['SCH.CROSSING', 'info', 'net:SW', 'SW crosses FB twice: 2 crossings, max 0'],
     ]);
-    const lenient = parseSchematicRules(SCHEMATIC_RULES.replace('param: max 0', 'param: max 2')).rules;
-    expect(check(s, lenient).map((x) => x.entities.join(','))).toEqual(['net:FB']);
-    expect(check(s, parseSchematicRules(SCHEMATIC_RULES.replace('param: max 0', 'param: 2')).rules).map((x) => x.entities.join(','))).toEqual(['net:FB']);
+    expect(check(s, resolveChecks({ 'SCH.CROSSING': { max: 2 } })).map((x) => x.entities.join(','))).toEqual(['net:FB']);
   });
 
   it('keeps two findings of one rule on one net apart by their pins', () => {
@@ -174,23 +188,20 @@ describe('schematic checks', () => {
   });
 });
 
-describe('Kernel.setRules', () => {
+describe('Kernel.setChecks', () => {
   const sch = (k: Kernel) => k.state().diagnostics.filter((x) => x.code.startsWith('SCH.')).map((x) => `${x.severity} ${x.code} ${x.entities.join(',')}`);
 
-  it('runs the checks on the layout at the levels given, and redoes them when the rules change', () => {
+  it('runs the checks on the layout at the levels given, and redoes them when the levels change', () => {
     const k = new Kernel();
     k.transact(buckTransaction());
     // the one real finding: U1's SW pin is lower than L1, so the switch node steps up to it
     expect(sch(k)).toEqual(['warning SCH.JOG net:SW,L1.1,U1.PH']);
-    // a copy of the default with the crossing budget written as a bare number says the same
-    k.setRules(SCHEMATIC_RULES.replace('param: max 0', 'param: 0'));
-    expect(sch(k)).toEqual(['warning SCH.JOG net:SW,L1.1,U1.PH']);
-    k.setRules(SCHEMATIC_RULES.replace('### SCH.JOG: parts facing each other are in line\nlevel: warning', '### SCH.JOG: parts facing each other are in line\nlevel: error'));
+    k.setChecks({ 'SCH.JOG': { level: 'error' } });
     expect(sch(k)).toEqual(['error SCH.JOG net:SW,L1.1,U1.PH']);
     expect(k.state().counts.errors).toBe(1);
-    k.setRules(SCHEMATIC_RULES.replace('### SCH.JOG: parts facing each other are in line\nlevel: warning', '### SCH.JOG: parts facing each other are in line\nlevel: off'));
+    k.setChecks({ 'SCH.JOG': { level: 'off' } });
     expect(sch(k)).toEqual([]);
-    k.setRules(null);
+    k.setChecks(null);
     expect(sch(k)).toEqual(['warning SCH.JOG net:SW,L1.1,U1.PH']);
   });
 

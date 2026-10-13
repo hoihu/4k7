@@ -1,10 +1,10 @@
 /**
  * The SCH.* checks (docs/design/schematic-drawing.md §3): the drawing rules the kernel can measure,
- * run on the layout's view at the level the ruleset gives each of them. The rules marked (layout)
+ * run on the layout's view at the level the user set for each of them (Settings → Schematic). The rules marked (layout)
  * the layout follows by itself, so a finding there is a layout bug; the others say where the
  * drawing fell short, for the agent to improve with placement constraints.
  */
-import { paramNumber, type Design, type Diagnostic, type LabelView, type PinView, type SchematicRule, type SchematicView, type SheetView, type SymbolView } from '@4k7/schema';
+import { type Design, type Diagnostic, type LabelView, type PinView, type SchematicRule, type SchematicView, type SheetView, type SymbolView } from '@4k7/schema';
 import { natCmp } from './doc.ts';
 import { supplyDir } from './scene.ts';
 import { labelOverlaps, segments, touches, wireCrossings, wireShape, type PinOn } from './scope.ts';
@@ -192,7 +192,7 @@ const times = (n: number) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times
 
 /** Per net, its crossings with other nets' wires, when there are more than the rule's "max N" (any number in the param). */
 function crossingChecks(ctx: Ctx, sheet: SheetView) {
-  const max = paramNumber(ctx.rules['SCH.CROSSING']?.param) ?? 0;
+  const max = ctx.rules['SCH.CROSSING']?.max ?? 0;
   const by = new Map<string, Map<string, number>>();
   const count = (net: string, other: string) => {
     const m = by.get(net) ?? new Map<string, number>();

@@ -24,10 +24,10 @@ import {
   type DescriptionView,
   type SheetView,
   type SchematicRule,
-  SCHEMATIC_RULES,
   PAGE,
   boardSummary,
-  parseSchematicRules,
+  resolveChecks,
+  type CheckSettings,
   DEFAULT_BOARD,
   fabPresets,
   fabSummary,
@@ -79,8 +79,8 @@ export class Kernel {
   private pendingSummaries: string[] = [];
   /** The Optimize area while the agent works on it, with the state it started from. */
   private scoped: { sc: ResolvedScope; sheet: SheetView; pos: Map<string, readonly number[]>; circuit: string } | null = null;
-  /** The schematic rules the SCH checks run with (setRules); the shipped default until the user edits them. */
-  private rules: Record<string, SchematicRule> = parseSchematicRules(SCHEMATIC_RULES).rules;
+  /** The SCH checks with the levels they run at (setChecks); the shipped levels until the user changes them. */
+  private rules: Record<string, SchematicRule> = resolveChecks();
 
   constructor(design?: Design) {
     this.committed = design ? migrate(clone(design)) : emptyDesign();
@@ -101,9 +101,9 @@ export class Kernel {
     return a;
   }
 
-  /** The schematic ruleset to check against (the markdown; null = the shipped default). Every analysis is redone. */
-  setRules(md: string | null): void {
-    this.rules = parseSchematicRules(md ?? SCHEMATIC_RULES).rules;
+  /** The user's levels and limits for the SCH checks (null = the shipped ones). Every analysis is redone. */
+  setChecks(checks: CheckSettings | null): void {
+    this.rules = resolveChecks(checks);
     this.cache = new WeakMap();
   }
 

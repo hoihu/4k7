@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { SCHEMATIC_RULES, parseSchematicRules } from '@4k7/schema';
 import { Agent, ScriptedProvider, formatDesignContext, optimizePrompt, type AgentEvent, type KernelPort } from '../src/index.ts';
 import type { Diagnostic, ScopeInfo } from '@4k7/schema';
 
@@ -10,23 +9,21 @@ const base = {
   selection: ['R1'],
 };
 
-describe('drawing rules in the design context', () => {
-  it('puts the guidance after the design state and leaves the level lines out', () => {
-    const { guidance } = parseSchematicRules(SCHEMATIC_RULES);
-    const t = formatDesignContext({ ...base, rules: guidance });
-    const block = /<drawing_rules>\n([\s\S]*)\n<\/drawing_rules>/.exec(t);
+describe('schematic notes in the design context', () => {
+  it('puts the user\'s notes after the design state', () => {
+    const notes = 'Labels are always horizontal.\nDraw the feedback divider as wires.\n';
+    const t = formatDesignContext({ ...base, rules: notes });
+    const block = /<schematic_notes>\n([\s\S]*)\n<\/schematic_notes>/.exec(t);
     expect(block).not.toBeNull();
-    expect(block![1]).toBe(guidance.trim());
-    expect(t.indexOf('</design_state>')).toBeLessThan(t.indexOf('<drawing_rules>'));
-    expect(t.indexOf('</drawing_rules>')).toBeLessThan(t.indexOf('<selection>'));
-    expect(block![1]).toContain('### SCH.JOG');
-    expect(block![1]).not.toMatch(/^level:/m);
+    expect(block![1]).toBe(notes.trim());
+    expect(t.indexOf('</design_state>')).toBeLessThan(t.indexOf('<schematic_notes>'));
+    expect(t.indexOf('</schematic_notes>')).toBeLessThan(t.indexOf('<selection>'));
   });
 
-  it('omits the block when there are no rules', () => {
-    expect(formatDesignContext(base)).not.toContain('<drawing_rules>');
-    expect(formatDesignContext({ ...base, rules: '' })).not.toContain('<drawing_rules>');
-    expect(formatDesignContext({ ...base, rules: '  \n' })).not.toContain('<drawing_rules>');
+  it('omits the block when there are no notes', () => {
+    expect(formatDesignContext(base)).not.toContain('<schematic_notes>');
+    expect(formatDesignContext({ ...base, rules: '' })).not.toContain('<schematic_notes>');
+    expect(formatDesignContext({ ...base, rules: '  \n' })).not.toContain('<schematic_notes>');
   });
 
   it('tells Optimize to fix the SCH diagnostics first', () => {

@@ -7,7 +7,7 @@
  * to the server (the browser's copy is left as it was).
  */
 import type { ApiServiceId } from '@4k7/agent';
-import type { AgentEffort, Artwork, HarnessId, PartCard } from '@4k7/schema';
+import { migrateRulesText, type AgentEffort, type Artwork, type CheckSettings, type HarnessId, type PartCard } from '@4k7/schema';
 
 const DB = '4k7';
 /** The app's name before 4k7. A browser that ran it keeps its data under this name; it is copied over once. */
@@ -276,8 +276,10 @@ export interface Settings {
   serverPort: number | null;
   /** The project open last (its file's name in the projects folder); '' = the newest. */
   project: string;
-  /** The schematic ruleset the kernel checks and the agent reads (markdown, see @4k7/schema rules.ts); '' = the default. */
-  schematicRules: string;
+  /** The user's notes on how they want schematics drawn, sent to the agent with every request; '' = none. */
+  schematicNotes: string;
+  /** The user's levels and limits for the drawing checks (SCH.*), only where they differ from the shipped ones. */
+  schematicChecks: CheckSettings;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -297,7 +299,8 @@ export const DEFAULT_SETTINGS: Settings = {
   serverAccessKey: '',
   serverPort: null,
   project: '',
-  schematicRules: '',
+  schematicNotes: '',
+  schematicChecks: {},
 };
 
 /** Bumped when a default changes in a way existing users should get (v2: dark blue theme). */
@@ -311,6 +314,8 @@ interface OldSettings {
   claudeWeb?: boolean;
   bridgeCode?: string;
   bridgePort?: number | null;
+  /** The ruleset text before notes and checks were split (2026-10-13): prose with "### SCH.ID" headings and level lines. */
+  schematicRules?: string;
   version?: number;
 }
 
@@ -319,8 +324,13 @@ export async function loadSettings(): Promise<Settings> {
     const saved = (await get<Partial<Settings> & OldSettings>('settings', 'settings')) ?? {};
     // older versions: the 6-digit pairing code and the port of the "bridge" (now the local server);
     // one provider each ("anthropic", "claude-code") before APIs and agents became choices
-    const { bridgeCode: _code, bridgePort: _port, model, claudeModel, claudeWeb, provider, ...rest } = saved;
+    const { bridgeCode: _code, bridgePort: _port, model, claudeModel, claudeWeb, provider, schematicRules, ...rest } = saved;
     const merged: Settings = { ...DEFAULT_SETTINGS, ...rest };
+    // the ruleset text: its levels become check settings, its prose the notes ('' was the shipped default, which is gone)
+    if (schematicRules && rest.schematicNotes === undefined) {
+      const { notes, checks } = migrateRulesText(schematicRules);
+      Object.assign(merged, { schematicNotes: notes, schematicChecks: checks });
+    }
     // v1 stored theme "system" without the user ever choosing it
     if ((saved.version ?? 1) < 2 && saved.theme === 'system') merged.theme = DEFAULT_SETTINGS.theme;
     if (provider === 'api' || provider === 'agent') merged.provider = provider;

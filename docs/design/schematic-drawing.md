@@ -1,7 +1,7 @@
-# Drawing the schematic: a ruleset, and the agent in charge of the arrangement
+# Drawing the schematic: the agent owns the drawing
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-12; steps 1–3 of §6 built (3: the agent places parts, `place_symbol`).
-> The default ruleset is in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3).
+> Notes and checks are in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
 
@@ -51,7 +51,51 @@ What the kernel keeps, and why: wires (the agent places, the editor connects), a
 everything not placed, so a new part still lands somewhere sensible without a model call, the same
 circuit draws the same way, and a sheet is drawn without an API key.
 
-## 3. The ruleset
+## 2a. Decision 2026-10-13: the netlist is the truth, the drawing is the agent's
+
+`place_symbol` was not enough. Asked to make the labels horizontal, or to draw the sense lines of a
+current-sense amplifier as wires, the agent could do neither: the layout decides where a connection
+becomes a net label and which way a label points, and it draws every connection between separately
+placed parts as labels. Moving U2 right under J2 changed nothing. Every wish had to be phrased as a
+hint the layout may ignore.
+
+The user's decision: **the netlist is the master; the agent controls the visual side completely.**
+It also controls the netlist (it builds circuits, it imports schematics). So, as for the board,
+which already stores its own geometry (`board.tracks`):
+
+- **The drawing is stored in the design** (`Design.drawing`): per sheet the pages; per symbol its
+  page, position, rotation and mirroring; wires as polylines with their net; net labels and supply
+  symbols with position and direction; no-connect marks. Nothing redraws it by itself.
+- **The kernel checks the drawing against the netlist** instead of drawing it. A wire that touches
+  two nets is an error. A connection the netlist has and the drawing does not show (R3.2 and U2.5
+  both on SENSE_P, no wire or label between them) is not an error: the kernel completes it with a
+  label marked automatic, and the agent may replace it with a wire. Open pins stay what they are.
+- **The auto-layout becomes a tool**, not the authority: `auto_draw` (a sheet, or some parts) writes
+  its result into the drawing as a starting point. Parts the netlist gains are drawn in free space
+  the same way, for the agent to arrange.
+- **Ops for the agent**: `place_symbol` as today; `wire { from: "R3.2", to: "U2.5", via? }`, the
+  kernel finding an orthogonal path unless the agent gives the corners; `label { pin, dir }`;
+  `supply_symbol { pin, side }`; removing wires and labels.
+- **Import** builds the netlist and redraws the original's arrangement, wires where it had wires.
+- **The checks** (§3) judge the agent's drawing, so every finding is one it can act on.
+- **Hand editing** (dragging symbols and wires in the editor) is not planned yet: later, depending on
+  how well the agent does.
+
+This supersedes "the kernel decides where every line goes" in §2 and the hint-based steps of §4–5;
+the router of §5 becomes the `wire` op's path finder.
+
+## 3. Notes and checks
+
+*2026-10-13:* the ruleset text below was replaced. It read like a config format (ids, `level:`
+lines, `(layout)` marks) and its long default told the model things it knows. Now (see
+[schematic-rules.md](schematic-rules.md)):
+
+- **Notes**: the user's own words, like a CLAUDE.md, empty by default, filled when the agent draws
+  something the user does not like. Sent as `<schematic_notes>`.
+- **Checks**: a fixed list in Settings → Schematic drawing, each with a plain title and a level
+  (Must fix, Warn, Note, Off), crossings with a limit.
+
+The rest of this section is the 2026-10-12 design, kept for the record.
 
 One markdown file says how a good schematic looks. The default ships with the app; the user edits it.
 
@@ -186,7 +230,16 @@ bends, crossings, running through parts or text. That is the largest piece of ne
 
 ## 6. Build order
 
-Each step is useful alone.
+*2026-10-13*, after §2a; each step is useful alone:
+
+1. **Notes and checks** (§3). *Built 2026-10-13.*
+2. **The stored drawing**: `Design.drawing`, `auto_draw`, rendering from the stored drawing, the
+   netlist check, automatic labels for connections not drawn, migration of existing designs (drawn
+   once by the layout).
+3. **Drawing ops**: `wire`, `label`, `supply_symbol` and the path finder.
+4. **Import redraws the original.**
+
+The first plan, steps 1–3 built 2026-10-12:
 
 1. **Supply direction as an invariant.** Rails up, ground down, everywhere, including the cases the
    layout gets wrong today (a rail at the bottom of a hanging part, a part between two rails). Take

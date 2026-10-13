@@ -20,7 +20,7 @@ export function formatDesignContext(opts: {
   selection: string[];
   /** An Optimize run: the area the agent is restricted to. */
   scope?: ScopeInfo | null;
-  /** The schematic ruleset's guidance (parseSchematicRules(md).guidance): how the user wants the schematic drawn. */
+  /** The user's schematic notes (Settings → Schematic): how they want the schematic drawn, in their words. */
   rules?: string;
 }): string {
   const { summary: s, diagnostics, ledger, selection, scope, rules } = opts;
@@ -52,7 +52,7 @@ export function formatDesignContext(opts: {
     for (const k of ledger) lines.push(`  ${k.id} ${k.text} (${k.strength})`);
   }
   lines.push('</design_state>');
-  if (rules?.trim()) lines.push(`<drawing_rules>\n${rules.trim()}\n</drawing_rules>`);
+  if (rules?.trim()) lines.push(`<schematic_notes>\n${rules.trim()}\n</schematic_notes>`);
   if (selection.length) lines.push(`<selection>${selection.join(', ')}</selection>`);
   if (scope) lines.push(formatScope(scope));
   return lines.join('\n');

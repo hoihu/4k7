@@ -1,235 +1,134 @@
 /**
- * The schematic ruleset (docs/design/schematic-drawing.md §3): one markdown text that says how a
- * good schematic looks. Prose is guidance for the agent; a "### SCH.ID: title" heading with a
- * "level:" line is a rule the kernel checks. The default ships here as code (the server runs
- * from TS, so no .md imports); the user edits a copy in Settings.
+ * How the user wants schematics drawn (docs/design/schematic-drawing.md §3), in two parts:
+ *
+ * - **Notes**: the user's own words to the agent, like a CLAUDE.md. Empty by default: the model
+ *   knows how a schematic is drawn; the user writes down what it gets wrong or what they like
+ *   differently ("labels always horizontal").
+ * - **Checks**: the drawing rules the kernel can measure, each with a level the user picks in
+ *   Settings. A finding is an `SCH.*` diagnostic at that level.
  */
 import type { Diagnostic } from './results.ts';
 
 export type RuleLevel = 'error' | 'warning' | 'info' | 'off';
 
+/** One check, as the kernel runs it: the shipped check with the user's level and limit. */
 export interface SchematicRule {
   id: string;
   title: string;
   level: RuleLevel;
-  /** The rule's threshold as written ("max 0"), when it has one; the checks read the number in it (paramNumber). */
-  param?: string;
-  /** Marked (layout): the auto-layout follows it by itself; the check guards against layout bugs. */
+  /** The most findings allowed before it is reported (crossings per net), for a check that counts. */
+  max?: number;
+  /** The auto-layout draws it this way by itself; a finding is a layout bug, not the agent's. */
   layout: boolean;
 }
 
-/** The rule ids the kernel has a check for; any other SCH heading is guidance for the agent only. */
-export const CHECKED_SCH_RULES = ['SCH.RAIL_UP', 'SCH.GND_DOWN', 'SCH.ORTHOGONAL', 'SCH.DANGLING', 'SCH.TEXT_OVERLAP', 'SCH.JOG', 'SCH.DETOUR', 'SCH.CROSSING'] as const;
-
-/** The number in a rule's param ("max 0", "max: 2", "2"); undefined when it has none. */
-export function paramNumber(param: string | undefined): number | undefined {
-  const m = /(\d+)/.exec(param ?? '');
-  return m ? Number(m[1]) : undefined;
+/** A check the kernel has, in the words the Settings page shows. */
+export interface SchematicCheck extends SchematicRule {
+  /** One sentence for the user on what it looks at. */
+  text: string;
 }
 
-const RULE_HEADING = /^###\s+(SCH\.[A-Z0-9_]+)\s*:\s*(.+?)\s*$/;
-const LEVEL_LINE = /^level:\s*(error|warning|info|off)\s*$/i;
-const PARAM_LINE = /^param:\s*(.+?)\s*$/i;
+export const SCHEMATIC_CHECKS: readonly SchematicCheck[] = [
+  { id: 'SCH.RAIL_UP', title: 'Power symbols point up', text: 'A supply arrow points up (a negative rail down), never sideways, even when that means crossing a wire.', level: 'error', layout: true },
+  { id: 'SCH.GND_DOWN', title: 'Ground symbols point down', text: 'Never up, never sideways.', level: 'error', layout: true },
+  { id: 'SCH.ORTHOGONAL', title: 'Wires run straight', text: 'Across or up and down, never slanted.', level: 'error', layout: true },
+  { id: 'SCH.DANGLING', title: 'No loose wire ends', text: 'Every wire ends at a pin, a junction or another wire.', level: 'error', layout: true },
+  { id: 'SCH.TEXT_OVERLAP', title: 'Text stays readable', text: 'Names, values and labels do not run into each other, a part or a wire.', level: 'warning', layout: false },
+  { id: 'SCH.JOG', title: 'Parts in line', text: 'Two parts joined by a wire (a divider, parts in series) sit on one line, so the wire runs straight.', level: 'warning', layout: false },
+  { id: 'SCH.DETOUR', title: 'No wire doubles back', text: 'A wire does not turn back the way it came.', level: 'warning', layout: false },
+  { id: 'SCH.CROSSING', title: 'Few wire crossings', text: 'Counted per net; more than the limit is reported.', level: 'info', max: 0, layout: false },
+];
+
+/** The check ids the kernel has. */
+export const CHECKED_SCH_RULES: readonly string[] = SCHEMATIC_CHECKS.map((c) => c.id);
+
+/** The user's changes to the checks, by id; what is not here keeps the shipped level and limit. */
+export type CheckSettings = Record<string, { level?: RuleLevel; max?: number }>;
+
+const LEVELS: readonly RuleLevel[] = ['error', 'warning', 'info', 'off'];
+
+/** The checks as the kernel runs them: the shipped ones with the user's levels and limits (an unknown level or a bad limit is ignored). */
+export function resolveChecks(user?: CheckSettings | null): Record<string, SchematicRule> {
+  const out: Record<string, SchematicRule> = {};
+  for (const { text: _, ...c } of SCHEMATIC_CHECKS) {
+    const u = user?.[c.id];
+    const level = u?.level && LEVELS.includes(u.level) ? u.level : c.level;
+    const max = c.max !== undefined && Number.isInteger(u?.max) && u!.max! >= 0 ? u!.max : c.max;
+    out[c.id] = { ...c, level, ...(max !== undefined ? { max } : {}) };
+  }
+  return out;
+}
+
+/** Only what differs from the shipped checks, so a reset is an empty object and a later default change still reaches the user. */
+export function changedChecks(user: CheckSettings): CheckSettings {
+  const shipped = resolveChecks();
+  const now = resolveChecks(user);
+  const out: CheckSettings = {};
+  for (const id of CHECKED_SCH_RULES) {
+    const s = shipped[id]!;
+    const n = now[id]!;
+    const c = { ...(n.level !== s.level ? { level: n.level } : {}), ...(n.max !== s.max ? { max: n.max } : {}) };
+    if (Object.keys(c).length) out[id] = c;
+  }
+  return out;
+}
+
+/** What the notes box shows while it is empty. */
+export const SCHEMATIC_NOTES_PLACEHOLDER = `Nothing here yet, and that is fine: the agent knows how a schematic is drawn.
+
+Write down what it gets wrong, or what you like differently, the way you would tell a colleague. For example:
+
+Labels are always horizontal.
+Draw the feedback divider as wires, not labels.
+Connectors go on the left edge of the page.`;
 
 /**
- * Splits the ruleset into the guidance the agent reads (the markdown from its first "## " heading
- * on, without the "level:" and "param:" lines; rule headings stay, so the agent knows the ids) and
- * the rules by id. The title and the note above the first "## " heading are for whoever edits the
- * text. A heading without a "level:" line is guidance only.
+ * The notes and check levels from the ruleset text of earlier versions ("### SCH.ID: title"
+ * headings with "level:" and "param:" lines). The levels become check settings; the text keeps
+ * its prose from the first "## " heading on (the editor's note above it was never sent), with
+ * the ids, level lines and "(layout)" marks taken out; nothing when that prose is the old default's.
  */
-export function parseSchematicRules(md: string): { guidance: string; rules: Record<string, SchematicRule> } {
-  const rules: Record<string, SchematicRule> = {};
-  const lines: string[] = [];
-  let cur: { id: string; title: string; level?: RuleLevel; param?: string; layout: boolean } | null = null;
-  const close = () => {
-    if (cur?.level) rules[cur.id] = { id: cur.id, title: cur.title, level: cur.level, ...(cur.param ? { param: cur.param } : {}), layout: cur.layout };
-    cur = null;
-  };
+export function migrateRulesText(md: string): { notes: string; checks: CheckSettings } {
+  const checks: CheckSettings = {};
   const all = md.replace(/\r\n?/g, '\n').split('\n');
   let keep = !all.some((l) => /^## /.test(l));
+  let cur: string | null = null;
+  const lines: string[] = [];
   for (const line of all) {
     if (/^## /.test(line)) keep = true;
-    const h = RULE_HEADING.exec(line);
+    const h = /^###\s+(SCH\.[A-Z0-9_]+)\s*:\s*(.+?)\s*$/.exec(line);
     if (h) {
-      close();
-      cur = { id: h[1]!, title: h[2]!, layout: false };
-      if (keep) lines.push(line);
+      cur = h[1]!;
+      if (keep) lines.push(`### ${h[2]![0]!.toUpperCase()}${h[2]!.slice(1)}`);
       continue;
     }
-    if (/^#/.test(line)) close();
-    const lv = cur && LEVEL_LINE.exec(line);
-    if (lv) {
-      cur!.level = lv[1]!.toLowerCase() as RuleLevel;
+    if (/^#/.test(line)) cur = null;
+    const lv = /^level:\s*(error|warning|info|off)\s*$/i.exec(line);
+    const pm = /^param:\s*(.+?)\s*$/i.exec(line);
+    if (cur && (lv || pm)) {
+      const n = pm && /(\d+)/.exec(pm[1]!);
+      if (CHECKED_SCH_RULES.includes(cur)) checks[cur] = { ...checks[cur], ...(lv ? { level: lv[1]!.toLowerCase() as RuleLevel } : {}), ...(n ? { max: Number(n[1]) } : {}) };
       continue;
     }
-    const pm = cur && PARAM_LINE.exec(line);
-    if (pm) {
-      cur!.param = pm[1]!;
-      continue;
-    }
-    if (cur && /\(layout\)/i.test(line)) cur.layout = true;
-    if (keep) lines.push(line);
+    if (keep) lines.push(line.replace(/\*\(layout\)\*\s*/gi, ''));
   }
-  close();
-  return { guidance: lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n', rules };
+  const prose = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const notes = prose ? `${prose}\n` : '';
+  // a copy whose prose is the old default's (only levels changed) leaves no notes: the agent knows all that
+  return { notes: fnv1a(notes) === OLD_DEFAULT_PROSE ? '' : notes, checks: changedChecks(checks) };
 }
 
-/** One line for the agent on which SCH headings the kernel checks, at what level; the other headings are guidance only. */
-export function checkedRulesNote(rules: Record<string, SchematicRule>): string {
-  const on = CHECKED_SCH_RULES.map((id) => {
-    const r = rules[id];
-    const n = paramNumber(r?.param);
-    return `${id} ${r?.level ?? 'off'}${n !== undefined ? ` (max ${n})` : ''}`;
-  });
-  return `Checked by the kernel (reported as SCH.* diagnostics): ${on.join(', ')}; the other SCH headings are guidance only.`;
+/** FNV-1a of the prose migrateRulesText makes of the ruleset shipped until 2026-10-13. */
+const OLD_DEFAULT_PROSE = 0x2e558644;
+
+function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
+  return h;
 }
 
-export const SCHEMATIC_RULES = `# Schematic rules
-
-How this ruleset works: plain text is guidance for the agent that arranges the schematic. A
-"### SCH.ID: title" heading with a "level:" line is a rule the kernel checks; set the level to
-"error", "warning", "info" or "off". A "param:" line sets the rule's threshold (the number in it
-is what counts). Rules marked *(layout)* the auto-layout follows by itself; turning one off only
-silences its check. Rule ids the kernel does not know are read by the agent only. This note and
-the title stay out of what the agent reads: its text starts at the first "##" heading.
-
-## Reading direction
-
-A schematic is read like text: left to right, top to bottom.
-
-- Signal flows left to right: inputs and connectors that bring signals in on the left, outputs and
-  loads on the right.
-- Power flows the same way: input connector and protection, then regulation, then what is supplied.
-  Supply generation sits left of or above the circuits it feeds.
-- Higher potential higher on the page: rails at the top, ground at the bottom. A part between a rail
-  and ground stands upright, rail end on top.
-- Feedback runs against the flow, so draw it visibly: a feedback path goes back above or below the
-  forward path, not through it.
-
-## Blocks
-
-- Group parts by function (input protection, buck converter, MCU, USB, sensor interface). A block is
-  drawn together and never split across pages.
-- Build each block around its main part (the IC, the transistor, the connector), its small parts
-  at the pins they belong to.
-- Leave clear space between blocks, more than inside them, so the eye sees the blocks.
-- Draw a recognised circuit the way its datasheet does (a regulator's reference design, a bridge
-  rectifier as a diamond), so it is recognised at a glance.
-
-## Supplies
-
-### SCH.RAIL_UP: positive rails point up
-level: error
-
-*(layout)* A positive supply symbol points up, its name above the arrow. Never down, never sideways.
-Negative rails (VEE, -12V) point down.
-
-### SCH.GND_DOWN: ground points down
-level: error
-
-*(layout)* A ground symbol points down. Never up, never sideways.
-
-- A supply symbol stands on a short lead from its pin. When it has to cross a wire of another net to
-  stand upright, that is acceptable; standing upright matters more than the crossing.
-- One rail symbol per group of pins on the same rail: neighbouring supply pins share a short bus
-  with one symbol at its end.
-- A decoupling capacitor sits next to the supply pin it decouples, rail on top, ground below, and is
-  drawn as part of that IC's block. Caps on the same rail form one bank with a shared rail and ground
-  line.
-- Draw a supply as a symbol, not as a net label. A local rail that only links two parts may be a
-  wire.
-
-## Parts
-
-- Use the conventional symbol for each part (resistor, capacitor, polarised capacitor, inductor,
-  diode, LED, transistor), the same style throughout.
-- A two-pin part between a signal and a supply or ground stands upright. A part in series in a
-  signal path lies along the path.
-- A part between two rails (a filter resistor from VIN to AVIN) lies flat, both rail symbols
-  pointing up.
-- A voltage divider is one column: rail, upper resistor, the tap, lower resistor, ground. The tap
-  goes sideways to the pin it feeds.
-- An IC's inputs on the left, outputs on the right, supplies at the top, ground at the bottom, as far
-  as its symbol allows.
-
-### SCH.TEXT_OVERLAP: text is readable
-level: warning
-
-Reference designators, values, pin names, net labels and supply names do not overlap each other,
-a part, or a wire of another net.
-
-## Wires
-
-### SCH.ORTHOGONAL: wires run horizontally and vertically
-level: error
-
-*(layout)* On the grid, no diagonals.
-
-### SCH.DANGLING: every wire ends on a pin, a junction or another wire
-level: error
-
-*(layout)*
-
-### SCH.JUNCTION_DOT: a T has a dot, a crossing has none
-level: error
-
-*(layout)* Three or more connections at a point get a junction dot. Wires that cross without a dot
-are not connected.
-
-### SCH.FOUR_WAY: no four-way junctions
-level: warning
-
-Two T-junctions offset by a grid step, never a cross with a dot: a dot can be missed in a copy, and
-then the reader cannot tell a junction from a crossing.
-
-### SCH.JOG: parts facing each other are in line
-level: warning
-
-Two pins that face each other on one wire (the resistors of a divider, a part in series) sit on one
-line, so the wire is straight.
-
-### SCH.DETOUR: no wire turns back the way it came
-level: warning
-
-### SCH.CROSSING: few crossings
-level: info
-param: max 0
-
-Rearrange before crossing; the count is per net on the sheet. A crossing between blocks is fine; a
-crossing inside a block usually means a part is on the wrong side.
-
-### SCH.WIRE_THROUGH: no wire runs through a part or its text
-level: error
-
-- Few bends. A wire that bends where it could run straight is a sign of a part out of line.
-- Wires do not run along each other closer than 100 mils, and not along a part's outline.
-
-## Net labels
-
-- Within a block, connect with wires. Between blocks, or across pages, use net labels, so long
-  wires do not cross the sheet.
-- A path the reader must follow to understand the circuit (feedback, a switch node, an analog
-  signal) is a wire wherever practical, even if it is longer.
-- Labels show direction: an input flag points into the part, an output flag away from it.
-- Name nets for what they carry ("I2C_SDA", "VBAT_SENSE", "MOTOR_PWM"), not "NET12".
-
-### SCH.LABEL_ALONE: a net label has a partner
-level: warning
-
-A net label that appears only once on the whole design connects nothing: either a wire is missing
-or the label is not needed.
-
-## Text
-
-- Every part shows its reference designator and value, beside the part, on the same side for parts
-  of one kind.
-- Values in engineering notation with units where it helps ("10k", "100nF 50V", "4.7uH"), and a
-  rating when it matters for the build.
-- Notes on the sheet (test points, assembly hints) only where they help the reader of the drawing.
-`;
-
-/** The ids marked (layout) in the shipped ruleset: the layout follows them by itself, so a finding is a layout bug, not something an edit of the design fixes. */
-export const LAYOUT_SCH_RULES: ReadonlySet<string> = new Set(Object.values(parseSchematicRules(SCHEMATIC_RULES).rules).filter((r) => r.layout).map((r) => r.id));
+/** The checks the auto-layout follows by itself: a finding there is a layout bug, not something an edit of the design fixes. */
+export const LAYOUT_SCH_RULES: ReadonlySet<string> = new Set(SCHEMATIC_CHECKS.filter((c) => c.layout).map((c) => c.id));
 
 /** An open error the agent has to fix or waive before it finishes: not a layout bug, which it has no lever on. */
 export const mustFix = (d: Diagnostic) => d.severity === 'error' && !d.waivedBy && !LAYOUT_SCH_RULES.has(d.code);

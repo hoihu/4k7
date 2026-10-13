@@ -5,7 +5,7 @@
  */
 import { Kernel, registerArtwork, unregisterArtwork } from '@4k7/kernel';
 import { registerUserParts, unregisterUserPart } from '@4k7/parts';
-import type { Artwork, Design, OptimizeScope, PartCard } from '@4k7/schema';
+import type { Artwork, CheckSettings, Design, OptimizeScope, PartCard } from '@4k7/schema';
 
 const kernel = new Kernel();
 
@@ -15,7 +15,7 @@ const methods = {
   state: () => kernel.state(),
   setScope: (s: OptimizeScope | null) => kernel.setScope(s),
   /** The schematic ruleset as markdown (null = the shipped default). */
-  setRules: (md: string | null) => kernel.setRules(md),
+  setChecks: (checks: CheckSettings | null) => kernel.setChecks(checks),
   accept: (ids?: string[], by?: 'user' | 'agent', summary?: string) => kernel.accept(ids, by, summary),
   reject: () => kernel.reject(),
   undo: () => kernel.undo(),
