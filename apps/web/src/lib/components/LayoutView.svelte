@@ -210,7 +210,7 @@
         {#if checksOpen}
         {#if !openChecks.length}<p class="muted small">No problems found.</p>{/if}
         <ul class="diags">
-          {#each allChecks ? openChecks : openChecks.slice(0, CHECKS_SHOWN) as d (d.code + d.entities.join() + d.message)}
+          {#each allChecks ? openChecks : openChecks.slice(0, CHECKS_SHOWN) as d, i (i)}
             <li>
               <button class="r" title={d.message} onclick={() => focus(d)}><span class="tag {d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info'}">{d.severity[0]!.toUpperCase()}</span><span class="grow clamp">{d.message}</span></button>
               {#if d.entities.length}<button class="x" title="Not a problem: intended, so this check goes away" aria-label="Mark as not a problem" disabled={app.running} onclick={() => void app.waiveCheck(d)}>✕</button>{/if}
@@ -222,7 +222,7 @@
           <button class="more" aria-expanded={waivedOpen} onclick={() => (waivedOpen = !waivedOpen)}>{waivedOpen ? 'Hide' : 'Show'} {waivedChecks.length} marked as not a problem</button>
           {#if waivedOpen}
             <ul class="diags">
-              {#each waivedChecks as d (d.code + d.entities.join() + d.message)}
+              {#each waivedChecks as d, i (i)}
                 <li>
                   <button class="r" title={d.message} onclick={() => focus(d)}><span class="tag info">{d.severity[0]!.toUpperCase()}</span><span class="grow clamp muted">{d.message}</span></button>
                   <button class="x" title="Check this again" aria-label="Check this again" disabled={app.running} onclick={() => void app.restoreCheck(d.waivedBy!)}>↺</button>

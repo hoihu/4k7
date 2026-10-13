@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { CHECKED_SCH_RULES, LAYOUT_SCH_RULES, changedChecks, emptyDesign, migrateRulesText, mustFix, resolveChecks, type Design, type LabelView, type RuleLevel, type SchematicView, type SheetView, type SymbolView, type Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
-import { diagKey } from '../src/checks.ts';
+import { diagKey, sortDiagnostics } from '../src/checks.ts';
 import { schematicChecks } from '../src/schcheck.ts';
 import { measure } from '../src/scope.ts';
 import { buckTransaction } from './fixtures.ts';
@@ -244,5 +244,13 @@ describe('Kernel.setChecks', () => {
     const d = k.state().diagnostics.find((x) => x.code === 'SCH.JOG');
     expect(d?.waivedBy).toBeDefined();
     expect(k.state().counts.warnings).toBe(0);
+  });
+});
+
+describe('the same finding twice', () => {
+  it('is reported once (two labels drawn alike made two identical SCH.TEXT_OVERLAP, and the Issues list could not show them)', () => {
+    const d = { code: 'SCH.TEXT_OVERLAP', severity: 'warning' as const, entities: ['net:IS', 'U1.IS', 'net:VOUT'], message: 'the IS label runs into the VOUT symbol' };
+    const other = { ...d, entities: ['net:FB', 'U1.FB'], message: 'the FB label runs into R1' };
+    expect(sortDiagnostics([d, { ...d, entities: [...d.entities] }, other])).toHaveLength(2);
   });
 });
