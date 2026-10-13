@@ -152,6 +152,20 @@ describe('two-pass reconciliation', () => {
     expect(merged.package.lead_width_mm).toBe(0.22);
     expect(compareDrafts(merged, b).map((d) => d.key)).toEqual(['package:lead_width_mm']);
   });
+
+  it('merges the app\'s reactive drafts, which cannot be structured-cloned', async () => {
+    // the app's drafts are Svelte $state proxies; structuredClone throws on them ("The object can
+    // not be cloned"), which broke saving a part once a pass-2 value was picked
+    const { mergeDrafts } = await import('../src/index.ts');
+    const a = mcuDraft();
+    const b = structuredClone(a);
+    b.pins[11] = { ...b.pins[11]!, type: 'in' };
+    const proxy = <T extends object>(o: T): T => new Proxy(o, {});
+    expect(() => structuredClone(proxy(a))).toThrow();
+    const merged = mergeDrafts(proxy(a), proxy(b), new Set(['pin:12']));
+    expect(merged.pins[11]!.type).toBe('in');
+    expect(() => structuredClone(merged)).not.toThrow();
+  });
 });
 
 describe('3D bodies', () => {
