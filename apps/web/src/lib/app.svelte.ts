@@ -6,10 +6,12 @@ import {
   ScriptedProvider,
   apiProblem,
   apiProvider,
+  boardViewInfo,
   costUsd,
   formatDesignContext,
   optimizePrompt,
   runKernelTool,
+  schematicViewInfo,
   unknownTool,
   type AgentEvent,
   type Provider,
@@ -17,14 +19,14 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount } from '@4k7/schema';
+import { ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount, type ViewInfo } from '@4k7/schema';
 import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
-import { BoardClient, type BoardStage } from './boardClient.ts';
+import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
-import { renderSchematicPng } from './snapshot.ts';
+import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
 import { jlcTool } from './jlc.ts';
 import { fabRefreshPrompt } from './fabRefresh.ts';
 import {
@@ -149,6 +151,10 @@ class AppState {
   attachments = $state<Omit<ChatFile, 'n'>[]>([]);
   /** Optimize: the area the agent is restricted to while it works on it. */
   scope = $state.raw<ScopeInfo | null>(null);
+  /** The canvases on screen say which area they show (schematic: sheet mils, board: mm); null when closed. */
+  visibleArea: { sch: (() => Rect | null) | null; board: (() => Rect | null) | null } = { sch: null, board: null };
+  /** What the user had on screen when they sent the message being answered (the agent may switch views meanwhile). */
+  private turnView: ViewInfo | null = null;
   sheet = $state(0);
   hunkOff = $state<Record<string, boolean>>({});
   hoverHunk = $state<string | null>(null);
@@ -172,6 +178,8 @@ class AppState {
   board = $state.raw<BoardView | null>(null);
   boardBusy = $state(false);
   boardStage = $state<BoardStage>('placed');
+  /** Routing under way (the copper laid so far is drawn over the placed board), else null. */
+  routeProgress = $state.raw<RouteProgress | null>(null);
   private boards = new BoardClient();
   /** Design revision (bumped on every refresh) and the revision the shown board was computed for. */
   private rev = 0;
@@ -379,21 +387,47 @@ class AppState {
     const design = await this.kernel.draftDesign();
     this.boardBusy = true;
     this.boardStage = 'placed';
+    this.routeProgress = null;
     this.boards.compute(
       design,
       (stage, board) => {
-        this.board = board;
+        this.routeProgress = null;
+        const { newCopper, ...shown } = board;
+        this.board = shown;
         this.boardStage = stage;
         if (stage === 'routed') {
           this.boardBusy = false;
           this.boardRev = rev;
+          // routed here, not taken from the design: keep it, so it is not routed again
+          if (newCopper) void this.keepCopper(newCopper);
         }
       },
       (msg) => {
         this.boardBusy = false;
+        this.routeProgress = null;
         this.flash(`Board layout failed: ${msg}`);
       },
+      (p) => (this.routeProgress = p),
     );
+  }
+
+  /**
+   * Stop the routing under way and keep its best pass: the board then shows it, with what is
+   * still open; Route runs it again from the start.
+   */
+  async stopRouting() {
+    const best = this.boards.stop();
+    this.routeProgress = null;
+    this.boardBusy = false;
+    if (!best) return;
+    this.flash(best.passes ? `Routing stopped: kept the best pass, ${best.open.length} connection${best.open.length === 1 ? '' : 's'} open` : 'Routing stopped before its first pass finished');
+    await this.keepCopper(best);
+    await this.refreshBoard();
+  }
+
+  /** Keep copper the board worker routed with the design; saved when the committed design took it. */
+  private async keepCopper(copper: NonNullable<BoardView['newCopper']>) {
+    if (await this.kernel.keepCopper(copper)) await this.persist();
   }
 
   /** The routed board of the current design, for agents (computed if needed). */
@@ -731,11 +765,19 @@ class AppState {
         }
         // one page: frame on its paper (pages are numbered through the whole design)
         let frame: Rect | undefined;
+        const seen = this.turnView ?? this.currentView();
         if (args.area && this.scope) {
           const i = sheets.findIndex((s) => s.id === this.scope!.scope.sheet);
           if (i >= 0) this.sheet = i;
           await tick();
           frame = this.scope.scope.rect;
+        } else if (args.area && seen?.view === 'schematic') {
+          const i = sheets.findIndex((s) => s.name === seen.sheetName);
+          if (i >= 0) this.sheet = i;
+          await tick();
+          frame = seen.rect;
+        } else if (args.area) {
+          return fail('schematic image', 'There is no area: the user was not looking at the schematic. Leave area out for the whole sheet, or pass page.');
         } else if (args.page !== undefined) {
           const i = sheets.findIndex((s) => s.pages.some((p) => p.number === args.page));
           if (i < 0) return fail('schematic image', `There is no page ${args.page}: the design has ${sheets.reduce((n, s) => n + s.pages.length, 0)} page(s).`);
@@ -753,6 +795,38 @@ class AppState {
           label: 'schematic image',
           detail: `${args.width}px${args.area && frame ? ' · the area' : frame ? ` · page ${args.page}` : ''}`,
         };
+      }
+      case 'get_board_image': {
+        const parsed = BoardImageInput.safeParse(input ?? {});
+        if (!parsed.success) return fail('board image', parsed.error.message);
+        const args = parsed.data;
+        const seen = this.turnView ?? this.currentView();
+        if (args.area && seen?.view !== 'board') return fail('board image', 'There is no area: the user was not looking at the board. Leave area out for the whole board, or pass region.');
+        if (this.view !== 'lay') {
+          this.view = 'lay';
+          await tick();
+        }
+        // the picture shows the routing, so it waits for it (a big board takes a while)
+        const b = await this.routedBoard();
+        if (!b) return fail('board image', 'The board could not be computed.');
+        await tick();
+        await new Promise((r) => requestAnimationFrame(() => r(null)));
+        const m = Math.max(b.outline.w, b.outline.h) * 0.04 + 1;
+        const region = args.region ? { x: Math.min(args.region[0], args.region[2]), y: Math.min(args.region[1], args.region[3]), w: Math.abs(args.region[2] - args.region[0]), h: Math.abs(args.region[3] - args.region[1]) } : null;
+        if (region && (region.w < 0.5 || region.h < 0.5)) return fail('board image', 'The region is too small: give x0, y0, x1, y1 in mm at least 0.5 mm apart.');
+        const frame = args.area && seen ? seen.rect : (region ?? { x: -m, y: -m, w: b.outline.w + 2 * m, h: b.outline.h + 2 * m });
+        try {
+          const img = await renderBoardPng(args.width, frame);
+          return {
+            content: `${b.outline.w} × ${b.outline.h} mm, ${b.routing === 'done' ? `${b.stats.routed}/${b.stats.nets} nets routed${b.ratsnest.length ? `, ${b.ratsnest.length} connection(s) open (thin straight lines)` : ''}` : 'not routed (thin straight lines: the connections to route)'}.`,
+            images: [img],
+            isError: false,
+            label: 'board image',
+            detail: `${args.width}px${args.area ? ' · the area' : region ? ' · region' : ''}`,
+          };
+        } catch (e) {
+          return fail('board image', (e as Error).message);
+        }
       }
     }
     return (await runKernelTool(this.kernel.port, tool, input)) ?? unknownTool(tool);
@@ -807,7 +881,7 @@ class AppState {
         const p = this.k?.proposal;
         const pending = p ? `\n<pending_changeset hunks="${p.hunks.length}">${p.hunks.map((h) => `${h.change} ${h.title}`).join('; ')}</pending_changeset>` : '';
         log('context', true, `${snap.summary.components.length} parts · ${snap.counts.errors}E ${snap.counts.warnings}W`);
-        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope, rules: this.settings.schematicNotes }) + pending + `\nautonomy: ${this.settings.mode}`);
+        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope, view: this.turnView ?? this.currentView(), rules: this.settings.schematicNotes }) + pending + `\nautonomy: ${this.settings.mode}`);
       }
       case 'propose': {
         const args = ProposeInput.safeParse(input);
@@ -824,8 +898,22 @@ class AppState {
             true,
           );
         }
+        // a routed board is routed completely, or the agent says why not
+        if (p.hunks.some((h) => h.id === 'board:board') && !args.data.open_connections?.trim() && (await this.kernel.draftDesign()).board?.routed) {
+          const b = await this.routedBoard();
+          if (b?.routing === 'done' && b.unrouted.length) {
+            log('propose', false, `refused: ${b.unrouted.length} open connection(s)`);
+            const name = (id: string) => b.netNames[id] ?? id;
+            return text(
+              `Refused: the board is routed but ${b.unrouted.length} connection(s) are open, and a board with an open connection does not work. Make room and route again (get_board lists them with what blocks them; get_board_image region shows the spot):\n` +
+                b.unrouted.slice(0, 12).map((u) => `- ${name(u.netId)} ${u.from} → ${u.to}${u.blockedBy?.length ? `, blocked by ${u.blockedBy.map(name).join(', ')}` : u.enclosed ? ', closed off' : u.plane ? `, no room for the via to ${u.plane}` : ''}${u.near.length ? `, near ${u.near.join(', ')}` : ''}`).join('\n') +
+                '\nIf you cannot close them, propose with open_connections saying why and what the user could decide.',
+              true,
+            );
+          }
+        }
         const it = item();
-        it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') });
+        it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') + (args.data.open_connections ? `\nOpen connections: ${args.data.open_connections}` : '') });
         if (this.agentRun?.item !== it) it.status = 'done';
         it.changeset = { state: 'pending' };
         if (this.settings.mode === 'auto') {
@@ -1022,6 +1110,20 @@ class AppState {
     return this.settings.provider === 'api' && !!this.apiProblem;
   }
 
+  /** What the user has on screen: the schematic sheet or the 2D board, and the area of it shown. */
+  currentView(): ViewInfo | null {
+    if (this.view === 'sch') {
+      const sheet = this.k?.view.sheets[this.sheet];
+      const rect = this.visibleArea.sch?.();
+      return sheet && rect ? schematicViewInfo(sheet, rect) : null;
+    }
+    if (this.view === 'lay') {
+      const rect = this.visibleArea.board?.();
+      return this.board && rect ? boardViewInfo(this.board, rect) : null;
+    }
+    return null;
+  }
+
   /**
    * Optimize the zoomed area (`rect`, sheet coordinates): the kernel restricts the agent to it for
    * the length of the run, and it works as in any chat turn (the changeset waits for review).
@@ -1061,6 +1163,7 @@ class AppState {
       if (pending) pending.changeset = { state: 'superseded', note: 'Continued below; review the combined changeset there.' };
     }
     const refs = opts.scope ? [] : [...this.selection];
+    this.turnView = opts.scope ? null : this.currentView();
     this.chat.push({ id: this.seq++, role: 'user', text: opts.shown ?? trimmed, refs, ...(files.length ? { files } : {}), segments: [], status: 'done' });
     for (const q of this.chat) for (const s of q.segments) if (s.type === 'question' && !s.answered) s.answered = opts.shown ?? trimmed;
     const viaAgent = this.settings.provider === 'agent';
@@ -1074,7 +1177,7 @@ class AppState {
       } else {
         this.inAppBusy = true;
         this.abort = new AbortController();
-        await this.agent.run(trimmed, { selection: refs, scope: opts.scope ?? null, rules: this.settings.schematicNotes }, (e) => this.onEvent(item, e), this.abort.signal);
+        await this.agent.run(trimmed, { selection: refs, scope: opts.scope ?? null, view: this.turnView, rules: this.settings.schematicNotes }, (e) => this.onEvent(item, e), this.abort.signal);
       }
     } catch (e) {
       item.segments.push({ type: 'error', text: (e as Error).message });
@@ -1082,6 +1185,7 @@ class AppState {
       item.status = 'done';
       this.running = false;
       this.inAppBusy = false;
+      this.turnView = null;
       this.agentRun = null;
       this.abort = null;
       await this.refresh();

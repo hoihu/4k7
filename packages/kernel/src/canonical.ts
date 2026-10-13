@@ -5,7 +5,20 @@
 import { DESIGN_FORMAT_VERSION, type Design } from '@4k7/schema';
 
 export function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortKeys(value), null, 2) + '\n';
+  const sorted = sortKeys(value) as { board?: { copper?: unknown } } | null;
+  // the routed copper (a cache of thousands of numbers) goes on one line: one number per line
+  // would make it most of the file, and a git diff of it is noise either way
+  const copper = sorted?.board?.copper;
+  if (!copper) return JSON.stringify(sorted, null, 2) + '\n';
+  const text = JSON.stringify({ ...sorted, board: { ...sorted!.board, copper: COPPER_MARK } }, null, 2);
+  return text.replace(JSON.stringify(COPPER_MARK), () => JSON.stringify(copper)) + '\n';
+}
+
+const COPPER_MARK = '\u0000copper';
+
+/** JSON with sorted keys on one line: equal values give equal text, whatever order their keys were set in (for keys and hashes). */
+export function stableJson(value: unknown): string {
+  return JSON.stringify(sortKeys(value));
 }
 
 function sortKeys(v: unknown): unknown {

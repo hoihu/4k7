@@ -1,9 +1,9 @@
 import type { Rect } from '@4k7/schema';
 
 /**
- * Render the live schematic SVG to a PNG (base64), framed on the whole sheet or on `frame`
- * (one page). Styles come from CSS (theme variables, scoped classes), so the computed paint
- * of every element is inlined into a clone before rasterising.
+ * Render a live canvas SVG (the schematic, the board) to a PNG (base64), framed on `frame`. Styles
+ * come from CSS (theme variables, scoped classes), so the computed paint of every element is
+ * inlined into a clone before rasterising.
  */
 const PROPS = [
   'fill',
@@ -19,14 +19,29 @@ const PROPS = [
   'font-weight',
   'visibility',
   'display',
+  'text-anchor',
+  'dominant-baseline',
 ] as const;
 
+/** The schematic, framed on the whole sheet or on `frame` (a page, an area). */
 export async function renderSchematicPng(width: number, frame?: Rect): Promise<{ data: string; mimeType: string }> {
   const live = document.querySelector<SVGSVGElement>('svg.sch');
   if (!live) throw new Error('The schematic view is not open.');
   const sheet = live.dataset.bbox?.split(',').map(Number);
   if (!sheet || sheet.length !== 4) throw new Error('No sheet to render.');
-  const [x, y, w, h] = frame ? [frame.x, frame.y, frame.w, frame.h] : (sheet as [number, number, number, number]);
+  const [x, y, w, h] = sheet as [number, number, number, number];
+  return renderSvgPng(live, width, frame ?? { x, y, w, h });
+}
+
+/** The 2D board view (as shown: the layers and overlays switched on), framed on `frame` (mm). */
+export async function renderBoardPng(width: number, frame: Rect): Promise<{ data: string; mimeType: string }> {
+  const live = document.querySelector<SVGSVGElement>('svg.board');
+  if (!live) throw new Error('The 2D board view is not open.');
+  return renderSvgPng(live, width, frame);
+}
+
+async function renderSvgPng(live: SVGSVGElement, width: number, frame: Rect): Promise<{ data: string; mimeType: string }> {
+  const { x, y, w, h } = frame;
   const height = Math.round((width * h) / w);
 
   const clone = live.cloneNode(true) as SVGSVGElement;

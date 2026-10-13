@@ -2,8 +2,9 @@
  * System prompt and per-turn design context. The system prompt is static (cacheable);
  * the design state travels with each user message.
  */
-import { DESIGN_GUIDE, type DesignSummary, type Diagnostic, type ScopeInfo } from '@4k7/schema';
+import { DESIGN_GUIDE, type DesignSummary, type Diagnostic, type ScopeInfo, type ViewInfo } from '@4k7/schema';
 import { formatScope } from './optimize.ts';
+import { formatView } from './view.ts';
 
 export const SYSTEM_PROMPT = `You are the design agent inside 4k7, a browser-based PCB schematic and layout tool with no manual drawing tools. You design circuits by calling tools; a deterministic kernel turns your semantic operations into schematic geometry, validates every change and runs electrical and datasheet checks. The user steers with requests and hints and reviews your changes as a changeset before they are committed. Each user message comes with the current design state.
 
@@ -20,10 +21,12 @@ export function formatDesignContext(opts: {
   selection: string[];
   /** An Optimize run: the area the agent is restricted to. */
   scope?: ScopeInfo | null;
+  /** What the user had on screen when they sent the message. */
+  view?: ViewInfo | null;
   /** The user's schematic notes (Settings → Schematic): how they want the schematic drawn, in their words. */
   rules?: string;
 }): string {
-  const { summary: s, diagnostics, ledger, selection, scope, rules } = opts;
+  const { summary: s, diagnostics, ledger, selection, scope, view, rules } = opts;
   const lines: string[] = ['<design_state>'];
   lines.push(`name: ${s.name}; sheets: ${s.sheets.join(', ')}; pages: ${s.pages}`);
   if (s.components.length) {
@@ -54,6 +57,7 @@ export function formatDesignContext(opts: {
   lines.push('</design_state>');
   if (rules?.trim()) lines.push(`<schematic_notes>\n${rules.trim()}\n</schematic_notes>`);
   if (selection.length) lines.push(`<selection>${selection.join(', ')}</selection>`);
+  if (view && !scope) lines.push(formatView(view));
   if (scope) lines.push(formatScope(scope));
   return lines.join('\n');
 }
