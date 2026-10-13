@@ -91,7 +91,16 @@ export const DatasheetInput = z.object({
 export const ImageInput = z.object({
   sheet: z.string().optional().describe('Sheet name; defaults to the one shown'),
   page: z.number().int().min(1).optional().describe('One page only (its number from the design summary); the layout flows each sheet onto pages of the design\'s paper (A4 unless set_paper). Default: the whole sheet'),
-  area: z.boolean().optional().describe('Optimize runs only: the area you are asked to work in, close up, instead of the whole sheet'),
+  area: z.boolean().optional().describe('The area in question, close up: in an Optimize run the area you work in, otherwise the area the user zoomed into (the <view> block)'),
+  width: z.number().int().min(400).max(2400).default(1400),
+});
+
+export const BoardImageInput = z.object({
+  area: z.boolean().optional().describe('The area the user zoomed into on the board (the <view> block) instead of the whole board'),
+  region: z
+    .tuple([z.number(), z.number(), z.number(), z.number()])
+    .optional()
+    .describe('Zoom into x0, y0, x1, y1 in mm (board coordinates, top left 0, 0), e.g. around an unrouted connection'),
   width: z.number().int().min(400).max(2400).default(1400),
 });
 
@@ -181,6 +190,7 @@ export const TOOL_NAMES = {
   artwork: 'artwork',
   datasheet: 'read_datasheet',
   image: 'get_schematic_image',
+  boardImage: 'get_board_image',
   attachment: 'view_attachment',
   ask: 'ask_user',
   propose: 'propose',
@@ -215,7 +225,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
           name: TOOL_NAMES.context,
           description:
             'Current design state as the user sees it: components, nets, open diagnostics, ledger, what the user has ' +
-            'selected on the canvas, and whether a changeset is waiting for review. Call this first.',
+            'selected on the canvas, the view and area they are looking at, and whether a changeset is waiting for review. Call this first.',
           input_schema: { type: 'object', properties: {} },
         }]
       : []),
@@ -275,6 +285,14 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
       name: TOOL_NAMES.image,
       description: 'PNG rendering of the current schematic (working copy, with pending changes highlighted).',
       input_schema: schemaOf(ImageInput),
+    },
+    {
+      name: TOOL_NAMES.boardImage,
+      description:
+        'PNG rendering of the board (2D top view of the working copy: copper of every layer, pads, silkscreen, and the ratsnest of ' +
+        'connections not routed yet). The whole board, the area the user zoomed into, or a region in mm. Routing a big board takes a while; ' +
+        'the picture waits for it.',
+      input_schema: schemaOf(BoardImageInput),
     },
     ...(engine !== 'cli'
       ? [{

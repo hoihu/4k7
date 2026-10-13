@@ -9,3 +9,4 @@ export { API_SERVICES, apiProblem, apiProvider, apiService, type ApiChoice, type
 export { ScriptedProvider, type Script, type ScriptStep } from './providers/scripted.ts';
 export { compactTx, describeTx } from './format.ts';
 export { formatScope, optimizePrompt } from './optimize.ts';
+export { boardViewInfo, formatView, schematicViewInfo } from './view.ts';

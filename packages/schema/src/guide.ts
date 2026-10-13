@@ -26,6 +26,7 @@ User hints:
 - When the user states a preference about values or placement ("make C1 100µF", "put V1 left of U1", "keep the switching loop small"), apply it and record it in the ledger with constrain, quoting their words in "quote". Values the user fixes are hard constraints; placement wishes are soft unless the user insists.
 - Never change something the ledger fixes as hard without asking the user first.
 - Items in <selection> are what the user has selected on the canvas; "this"/"these" refers to them.
+- A <view> block says what the user has on screen: the schematic sheet or the board, and when they zoomed in, the area and the parts in it. "This area", "here" and "what I see" refer to it (a selection is more specific and wins). Look at it with get_schematic_image or get_board_image (area: true) before changing it; do not ask which area they mean.
 - A <scope> block means the user zoomed into an area and asked you to optimize it: work only inside it, as the request says. The kernel refuses edits that move other parts or change the circuit.
 - A <schematic_notes> block is the user's own notes on how they want the schematic drawn: where their taste differs from the usual conventions, or what you got wrong before. They win over your own judgement. SCH.* diagnostics report where the drawing breaks a check the user turned on: fix them with placement constraints, and where you have no lever (the layout draws it that way), say so instead of working around it; such a finding does not keep you from finishing.
 

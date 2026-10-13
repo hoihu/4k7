@@ -13,6 +13,11 @@
   import { PAPER_IDS, type PaperId } from '@4k7/schema';
 
   let canvas: SchematicCanvas | undefined = $state();
+  // the agent is told which area of the sheet the user is looking at
+  $effect(() => {
+    app.visibleArea.sch = () => canvas?.getVisibleRect() ?? null;
+    return () => (app.visibleArea.sch = null);
+  });
 
   /** Optimize the area on screen; text typed in the chat box says what bothers the user. */
   function optimize() {

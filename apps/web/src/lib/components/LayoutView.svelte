@@ -24,6 +24,11 @@
   let canvas2d: BoardCanvas | undefined = $state();
   let view3d: Board3DView | undefined = $state();
   let from2d = $state<TopView | null>(null);
+  // the agent is told which area of the board the user is looking at (the 2D view; not the 3D one or the panel)
+  $effect(() => {
+    app.visibleArea.board = () => (mode === '2d' ? (canvas2d?.getVisibleRect() ?? null) : null);
+    return () => (app.visibleArea.board = null);
+  });
   let show2d = $state(true);
   let switching = false;
   function to3d() {

@@ -58,3 +58,24 @@ export interface ScopeOutcome {
   /** Measures when the run started. */
   baseline: ScopeMeasures;
 }
+
+/**
+ * What the user has on screen when they send a message (any message, not only Optimize): the view
+ * that is open and the area of it they zoomed into, so "this area", "here" and "what I see" can be
+ * resolved. Read-only: unlike a scope it restricts nothing.
+ */
+export interface ViewInfo {
+  view: 'schematic' | 'board';
+  /** Schematic: the sheet shown. */
+  sheetName?: string;
+  /** The area on screen: schematic in mils from the sheet's origin, board in mm. */
+  rect: Rect;
+  /** The whole sheet or board is in view (not zoomed in). */
+  whole: boolean;
+  /** Schematic: the pages the area shows (numbered through the design), each with the part of it in view in mils from the paper's top-left corner (as get_schematic and place_symbol count). */
+  pages?: { number: number; rect: Rect }[];
+  /** Parts wholly in view (units as "U3B"). */
+  parts: string[];
+  /** Parts cut by the edge of the view. */
+  partly: string[];
+}
