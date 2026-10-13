@@ -184,7 +184,26 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     if (!base.sheets[id]) hunks.push({ id: `sheet:${id}`, kind: 'sheet', change: 'add', entityId: id, title: `sheet ${draft.sheets[id]!.name}`, details: [] });
   }
 
-  const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6, description: 7 };
+  /* stored schematic drawings (drawing.ts), one hunk per sheet */
+  for (const id of new Set([...Object.keys(base.drawing ?? {}), ...Object.keys(draft.drawing ?? {})])) {
+    const a = base.drawing?.[id];
+    const b = draft.drawing?.[id];
+    if (JSON.stringify(a ?? null) === JSON.stringify(b ?? null)) continue;
+    const sheet = (draft.sheets[id] ?? base.sheets[id])?.name ?? id;
+    const where = (x: typeof a) => new Map((x?.symbols ?? []).map((s) => [`${s.comp}#${s.unit ?? ''}`, `${s.x},${s.y},${s.rot ?? 0},${JSON.stringify(s.spec)}`]));
+    const [wa, wb] = [where(a), where(b)];
+    const ref = (k: string) => {
+      const [comp, unit] = k.split('#') as [string, string];
+      return `${(draft.components[comp] ?? base.components[comp])?.refdes ?? comp}${unit}`;
+    };
+    const moved = [...wb].filter(([k, v]) => wa.has(k) && wa.get(k) !== v).map(([k]) => ref(k)).sort(natCmp);
+    const added = [...wb.keys()].filter((k) => !wa.has(k)).map(ref).sort(natCmp);
+    const details = [moved.length ? `moved: ${moved.join(', ')}` : '', a && added.length ? `drawn in free space: ${added.join(', ')}` : ''].filter(Boolean);
+    const title = !a ? `schematic ${sheet}: arranged by the agent from here on` : !b ? `schematic ${sheet}: drawn by the auto-layout again` : `schematic ${sheet}: drawing`;
+    hunks.push({ id: `drawing:${id}`, kind: 'drawing', change: 'change', entityId: id, title, details: details.length ? details : ['wires and labels'] });
+  }
+
+  const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6, description: 7, drawing: 8 };
   const changeOrder = { add: 0, change: 1, remove: 2 };
   return hunks.sort((x, y) => order[x.kind] - order[y.kind] || changeOrder[x.change] - changeOrder[y.change] || natCmp(x.title, y.title));
 }
@@ -278,6 +297,16 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
         if (draft.waivers[entity]) d.waivers[entity] = clone(draft.waivers[entity]!);
         else delete d.waivers[entity];
         break;
+      case 'drawing': {
+        // the caller brings it in step with what else was accepted (syncDrawing)
+        const sd = draft.drawing?.[entity];
+        if (sd) d.drawing = { ...d.drawing, [entity]: clone(sd) };
+        else if (d.drawing) {
+          delete d.drawing[entity];
+          if (!Object.keys(d.drawing).length) delete d.drawing;
+        }
+        break;
+      }
     }
   }
 

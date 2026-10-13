@@ -7,7 +7,7 @@
  *  - box symbols (ICs, connectors, transistors): body rectangle from (0, 0) to (w, h),
  *    pins sticking out 200 mils on each side.
  */
-import type { PartCard, PartPin, PinSide, Prim, SymbolLayout, SymbolUnit } from '@4k7/schema';
+import type { PartCard, PartPin, PinSide, Prim, SymbolLayout, SymbolSpec, SymbolUnit } from '@4k7/schema';
 
 export const GRID = 100;
 export const PIN_LEN = 200;
@@ -33,6 +33,8 @@ export interface SymbolDef {
   /** Local anchor points for refdes and value text. */
   refPos: { x: number; y: number; anchor: 'start' | 'middle' | 'end' };
   valuePos: { x: number; y: number; anchor: 'start' | 'middle' | 'end' };
+  /** How it was made, so a stored drawing can make it again (symbolFromSpec). */
+  spec?: SymbolSpec;
 }
 
 const TWO_PIN = new Set(['resistor', 'capacitor', 'inductor', 'diode', 'led']);
@@ -63,11 +65,32 @@ export function unitOfPin(card: PartCard, pinNumber: string): number {
 }
 
 export function symbolFor(card: PartCard, flip = false, opts: SymbolOptions = {}): SymbolDef {
+  return { ...symbolDef(card, flip, opts), spec: specOf({ flip, ...opts }) };
+}
+
+function symbolDef(card: PartCard, flip: boolean, opts: SymbolOptions): SymbolDef {
   if (isTwoPin(card)) return twoPin(card, flip);
   if (card.category === 'diode' && card.pins.length === 4) return bridgeDiamond(card);
   const tr = transistorSymbol(card);
   if (tr) return tr;
   return box(card, opts.first ?? [], opts.mirror ?? false, opts.unit);
+}
+
+/** The spec with only what is set, so stored drawings stay small and compare equal. */
+function specOf(s: SymbolSpec): SymbolSpec {
+  return {
+    ...(s.upright ? { upright: true } : {}),
+    ...(s.flip ? { flip: true } : {}),
+    ...(s.mirror ? { mirror: true } : {}),
+    ...(s.first?.length ? { first: [...s.first] } : {}),
+    ...(s.unit !== undefined ? { unit: s.unit } : {}),
+  };
+}
+
+/** The symbol a stored drawing names (DrawnSymbol.spec): the same def symbolFor or uprightSymbol made. */
+export function symbolFromSpec(card: PartCard, spec: SymbolSpec): SymbolDef {
+  if (spec.upright) return uprightSymbol(card, !!spec.flip);
+  return symbolFor(card, !!spec.flip, { ...(spec.first ? { first: spec.first } : {}), ...(spec.mirror ? { mirror: true } : {}), ...(spec.unit !== undefined ? { unit: spec.unit } : {}) });
 }
 
 /* ------------------------------- two-pin ---------------------------------- */
@@ -144,6 +167,10 @@ function twoPin(card: PartCard, flip: boolean): SymbolDef {
  * named "+". For stacking parts in a column (a transistor's load).
  */
 export function uprightSymbol(card: PartCard, flip = false): SymbolDef {
+  return { ...uprightDef(card, flip), spec: specOf({ upright: true, flip }) };
+}
+
+function uprightDef(card: PartCard, flip: boolean): SymbolDef {
   if (isTwoPin(card)) return twoPin(card, flip);
   const d = flip ? -1 : 1;
   const Y = (y: number) => y * d;

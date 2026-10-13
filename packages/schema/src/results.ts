@@ -96,7 +96,7 @@ export interface TransactionResult {
 
 /* ------------------------------- changesets ------------------------------- */
 
-export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'sheet' | 'board' | 'description';
+export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'sheet' | 'board' | 'description' | 'drawing';
 
 export interface Hunk {
   /** Stable id: "<kind>:<entity id>". */
@@ -199,11 +199,15 @@ export interface LabelView {
   stubLen?: number;
   /** Extra stem (mils) before a supply symbol, so it clears symbols of neighbouring pins pointing the other way. */
   rise?: number;
+  /** Added by the kernel: a connection the agent's drawing does not show (SheetDrawing). */
+  auto?: boolean;
 }
 
 export interface WireView {
   netId: string;
   pts: number[];
+  /** Added by the kernel with an automatic label (the lead to a supply symbol that must turn aside). */
+  auto?: boolean;
 }
 
 /**

@@ -156,13 +156,17 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
     case 'place_symbol':
       mustBeFree(resolveUnitRef(d, op.ref).comp, 'place_symbol');
       return;
+    case 'auto_draw':
+      if (!op.refs?.length) out('auto_draw of a whole sheet redraws more than this area; give refs (parts inside it) to redraw only those.');
+      for (const r of op.refs ?? []) mustBeFree(resolveUnitRef(d, r).comp, 'auto_draw');
+      return;
     case 'set_symbol': {
       const c = resolveUnitRef(d, op.ref).comp;
       for (const u of componentsSorted(d).filter((x) => x.part === c.part)) mustBeFree(u, 'set_symbol (it redraws every component of the part)');
       return;
     }
     default:
-      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol and set_symbol on parts inside the area.`);
+      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol, auto_draw with refs and set_symbol on parts inside the area.`);
   }
 }
 

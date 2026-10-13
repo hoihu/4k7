@@ -15,7 +15,7 @@
 import type { Component, Design, Net, PartCard, PinView } from '@4k7/schema';
 import { isTwoPin, pinSide, symbolFor } from '@4k7/parts';
 import { cardOf, isGroundNet, isPowerNet, natCmp, type NetPin } from './doc.ts';
-import { deco, decoWidth, emptyScene, grid, isNegativeRail, makeSymbol, satWidth, supplyDir, supplyStubs, tw, type Scene } from './scene.ts';
+import { deco, decoWidth, emptyScene, grid, isNegativeRail, makeSymbol, rotateSymbol, satWidth, supplyDir, supplyStubs, tw, type Scene } from './scene.ts';
 
 /** Wire between a tap on a column and its net label, so the label never sits on a part. */
 const TAP_STUB = 200;
@@ -337,11 +337,7 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
     const def = symbolFor(card);
     const cx = x + 100; // its leads run along the rail, above the previous part's text
     const s = makeSymbol(d, plan.inductor, def, cx, yR);
-    const rot = leftIsPin1 ? -90 : 90;
-    const rad = (rot * Math.PI) / 180;
-    s.rotation = rot;
-    s.origin = { x: cx, y: yR };
-    s.pins = def.pins.map((p) => ({ ...p, x: Math.round(cx + p.x * Math.cos(rad) - p.y * Math.sin(rad)), y: Math.round(yR + p.x * Math.sin(rad) + p.y * Math.cos(rad)) }));
+    rotateSymbol(s, def, cx, yR, leftIsPin1 ? -90 : 90);
     s.bbox = { x: cx - 200, y: yR - 100, w: 400, h: 200 };
     s.refPos = { x: cx, y: yR - 175, anchor: 'middle' };
     s.valuePos = { x: cx, y: yR - 90, anchor: 'middle' };

@@ -5,7 +5,7 @@
  */
 import type { BoardSettings } from './board.ts';
 import type { PartCard } from './part.ts';
-import type { PaperId } from './results.ts';
+import type { LabelView, PaperId, Point, Rect, WireView } from './results.ts';
 import type { ESeries } from './units.ts';
 
 export const DESIGN_FORMAT_VERSION = 2;
@@ -32,6 +32,61 @@ export interface Design {
   paper?: PaperId;
   /** What the design does, in words (describe): the text of the design document. */
   description?: Description;
+  /**
+   * The schematic drawing of the sheets the agent has taken over, by sheet id (see SheetDrawing).
+   * A sheet without one is drawn by the auto-layout, afresh after every change.
+   */
+  drawing?: Record<string, SheetDrawing>;
+}
+
+/**
+ * A sheet's schematic as the agent arranged it (docs/design/schematic-drawing.md §2a): the netlist
+ * stays the truth, this is how it is drawn. Created from the auto-layout's drawing the first time
+ * the agent changes the arrangement, then kept: nothing redraws it by itself. The kernel keeps it in
+ * step with the netlist (parts that are gone leave, new parts are drawn in free space, wires follow
+ * their pins' nets) and shows a connection the drawing does not by a net label of its own.
+ * Coordinates are sheet coordinates in mils, as in the SheetView.
+ */
+export interface SheetDrawing {
+  /** The pages, in sheet coordinates. */
+  pages: Rect[];
+  symbols: DrawnSymbol[];
+  wires: WireView[];
+  /** Net labels and supply symbols; their text is the net's name. */
+  labels: Omit<LabelView, 'text' | 'auto'>[];
+}
+
+/** How a symbol is generated from its part card (@4k7/parts symbolFromSpec). */
+export interface SymbolSpec {
+  /** uprightSymbol instead of symbolFor (a two-pin part stacked in a column). */
+  upright?: boolean;
+  /** Pin 2 on top (two-pin parts). */
+  flip?: boolean;
+  /** Left and right pins swapped (ICs and connectors). */
+  mirror?: boolean;
+  /** Pin numbers drawn first on their side (a regulator's power path). */
+  first?: string[];
+  /** Unit index of a split symbol. */
+  unit?: number;
+}
+
+export interface DrawnSymbol {
+  comp: string;
+  /** Unit letter of a split symbol. */
+  unit?: string;
+  /** The part card it was drawn from; a different card is drawn afresh. */
+  part: string;
+  /** A small part drawn at an IC's or connector's pins: that symbol (component id, "#unit" for a unit). It moves with it. */
+  with?: string;
+  spec: SymbolSpec;
+  /** Where the symbol's own origin is. */
+  x: number;
+  y: number;
+  /** Clockwise rotation in degrees (90 or -90 for a two-pin part lying down). */
+  rot?: number;
+  bbox: Rect;
+  ref: Point & { anchor: 'start' | 'middle' | 'end' };
+  value: Point & { anchor: 'start' | 'middle' | 'end' };
 }
 
 /**

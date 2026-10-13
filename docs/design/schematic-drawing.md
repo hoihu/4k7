@@ -1,6 +1,6 @@
 # Drawing the schematic: the agent owns the drawing
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3).
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing built (§6 step 2).
 > Notes and checks are in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
@@ -234,8 +234,32 @@ bends, crossings, running through parts or text. That is the largest piece of ne
 
 1. **Notes and checks** (§3). *Built 2026-10-13.*
 2. **The stored drawing**: `Design.drawing`, `auto_draw`, rendering from the stored drawing, the
-   netlist check, automatic labels for connections not drawn, migration of existing designs (drawn
-   once by the layout).
+   netlist check, automatic labels for connections not drawn. *Built 2026-10-13* (`kernel/drawing.ts`):
+   - A sheet nobody arranged stores nothing and is drawn by the auto-layout afresh after every
+     change, as before (so constraints keep working there, and existing designs need no migration).
+     The first `place_symbol` on a sheet stores the layout's drawing of it (`ownSheet`): symbols as
+     part, generator spec (`SymbolSpec`, recorded by `symbolFor`/`uprightSymbol`), origin, rotation,
+     box and text positions; wires; labels without their text (the net's name is used). `auto_draw`
+     without refs hands the sheet back; with refs it redraws those parts in free space.
+   - `syncDrawing` runs after every transaction, partial accept and load: symbols of parts that are
+     gone, moved to another sheet or drawn from another card or units leave; each group of touching
+     wires takes the net of the pins it joins (so renamed and joined nets follow), a wire to a pin of
+     another net goes, loose ends are cut back to the last point something joins them; labels take
+     the net of what they sit on or go, and change kind when a net becomes a supply. Parts the drawing
+     does not have are drawn by the layout on their own (`layoutSheetOf` with `only`), get labels for
+     their connections to what is drawn, and go into the first free spot (top-left first) or a new
+     page. Pages fit the paper and their content, empty trailing pages go.
+   - On the way to the canvas (`schematicView`), a net drawn in pieces that no label ties together
+     gets a label at a pin of each loose piece (`LabelView.auto`), at the pin where it runs into the
+     least. Not a diagnostic: the drawing is complete, just not as the agent would draw it.
+   - `place_symbol` moves the symbol in the stored drawing: an IC or connector takes the small parts
+     the layout drew with it (`DrawnSymbol.with`) and those wired only to it, with their wires and
+     labels; wires to what stays are cut back. `orient` and `mirror` make the symbol again. A part
+     that ends up on another is reported in the op's result. The old `sch_position` entries are still
+     honoured by the layout and removed when the part is placed again.
+   - Changesets: one `drawing` hunk per sheet; accepting a part without it draws the part in free space.
+   - Relative constraints only guide the layout: on an arranged sheet they wait for `auto_draw`, and a
+     violated one says so.
 3. **Drawing ops**: `wire`, `label`, `supply_symbol` and the path finder.
 4. **Import redraws the original.**
 

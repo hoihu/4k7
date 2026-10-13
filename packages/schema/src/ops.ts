@@ -321,10 +321,16 @@ export const PlaceSymbolOp = z.object({
   page: z.number().int().min(1).optional().describe('Page number as get_schematic and get_schematic_image count them, on the part\'s own sheet; omit it to keep the page the part is on now'),
   x: z.number().optional().describe('Centre of the symbol, mils from the left edge of the paper (get_schematic gives the paper size and where everything is now)'),
   y: z.number().optional().describe('Centre of the symbol, mils from the top edge of the paper'),
-  orient: z.enum(['upright', 'lying']).optional().describe('Two-pin parts: standing (default) or lying, e.g. a resistor in series in a signal path'),
-  mirror: z.boolean().optional().describe('ICs and connectors: pins of the left side on the right (a connector at the right edge facing the circuit). Default: connectors in the right half of the page are mirrored'),
-  auto: z.boolean().optional().describe('true: forget the position; the layout places the part again'),
-}).describe('Put a part where it belongs on the schematic: the layout places it there exactly (snapped to the 100-mil grid) and the unplaced parts around it. An IC or connector takes the small parts drawn at its pins with it, wired as before; a two-pin part placed on its own stands apart, its connections shown by net labels. Replaces the part\'s earlier position. Use it to make a drawing look like a reference or the user\'s sketch; left_of/right_of/above/below stay the lighter way to order things.');
+  orient: z.enum(['upright', 'lying']).optional().describe('Two-pin parts: standing or lying, e.g. a resistor in series in a signal path; omit it to keep how it is drawn'),
+  mirror: z.boolean().optional().describe('ICs and connectors: pins of the left side on the right (a connector at the right edge facing the circuit); omit it to keep how it is drawn'),
+  auto: z.boolean().optional().describe('true: take the part out of your drawing; it is drawn afresh in free space'),
+}).describe('Move a part on the schematic: its symbol\'s centre goes there (the move is rounded to the 100-mil grid; the result says where it ended up). The first move on a sheet makes its drawing yours: from then on it stays as you arrange it, and parts added later are drawn in free space. An IC or connector takes the small parts drawn at its pins with it, wired as before; a two-pin part goes on its own. Wires to parts that stay behind are cut back, and those connections show as net labels. Use it to make a drawing look like a reference or the user\'s sketch.');
+
+export const AutoDrawOp = z.object({
+  op: z.literal('auto_draw'),
+  sheet: z.string().optional().describe('Sheet name; omit it for every sheet (or the sheet of the parts in refs)'),
+  refs: z.array(componentRef).optional().describe('Only these parts: taken out of your drawing and drawn afresh together, in free space'),
+}).describe('Let the auto-layout draw: without refs it redraws the whole sheet from the netlist and the left_of/right_of/above/below hints, and keeps redrawing it after every change until you arrange it again (place_symbol); with refs it redraws just those parts in free space and the rest of your drawing stays.');
 
 export const ProposeLayoutOp = z.object({
   op: z.literal('propose_layout'),
@@ -399,6 +405,7 @@ export const EditOp = z.discriminatedUnion('op', [
   SetFabProfileOp,
   PlaceOp,
   PlaceSymbolOp,
+  AutoDrawOp,
   ProposeLayoutOp,
   RouteOp,
   SetPlaneOp,
