@@ -156,6 +156,14 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
     case 'place_symbol':
       mustBeFree(resolveUnitRef(d, op.ref).comp, 'place_symbol');
       return;
+    case 'wire':
+    case 'label':
+    case 'erase': {
+      if (op.op === 'erase' && op.net) out('erase of a whole net reaches beyond this area; erase at pins inside it.');
+      const refs = op.op === 'wire' ? [op.from, op.to] : op.op === 'label' ? [op.pin] : op.pins ?? [];
+      for (const r of refs) mayRefer(resolveUnitRef(d, r.slice(0, Math.max(0, r.indexOf('.')))).comp);
+      return;
+    }
     case 'auto_draw':
       if (!op.refs?.length) out('auto_draw of a whole sheet redraws more than this area; give refs (parts inside it) to redraw only those.');
       for (const r of op.refs ?? []) mustBeFree(resolveUnitRef(d, r).comp, 'auto_draw');
@@ -166,7 +174,7 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
       return;
     }
     default:
-      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol, auto_draw with refs and set_symbol on parts inside the area.`);
+      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol, wire, label, erase at pins, auto_draw with refs and set_symbol on parts inside the area.`);
   }
 }
 

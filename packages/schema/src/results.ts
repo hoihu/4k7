@@ -51,6 +51,9 @@ export type RejectionCode =
   | 'CONSTRAINT_CONFLICT'
   | 'CONSTRAINT_INVALID'
   | 'OUT_OF_SCOPE'
+  | 'PIN_UNCONNECTED'
+  | 'NET_MISMATCH'
+  | 'NO_PATH'
   | 'SHEET_UNKNOWN'
   | 'WAIVER_UNKNOWN';
 

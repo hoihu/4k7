@@ -41,6 +41,7 @@ import {
   pointBounds,
 } from '@4k7/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
+import { eraseOp, labelOp, wireOp } from './drawops.ts';
 import { isDrawn, moveSymbol, redrawParts, releaseSheet, schematicView, syncDrawing } from './drawing.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
@@ -122,6 +123,12 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return placeSymbol(d, op);
     case 'auto_draw':
       return autoDraw(d, op);
+    case 'wire':
+      return wireOp(d, op);
+    case 'label':
+      return labelOp(d, op);
+    case 'erase':
+      return eraseOp(d, op);
     case 'propose_layout':
       return proposeLayout(d, op.keep_choices ?? true);
     case 'route':
