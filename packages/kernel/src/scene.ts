@@ -148,8 +148,17 @@ export function rotateSymbol(s: SymbolView, def: SymbolDef, cx: number, cy: numb
   const [c, sn] = [Math.round(Math.cos(rad)), Math.round(Math.sin(rad))];
   s.rotation = rot;
   s.origin = { x: cx, y: cy };
-  s.pins = def.pins.map((p) => ({ ...p, x: cx + p.x * c - p.y * sn, y: cy + p.x * sn + p.y * c }));
+  // a quarter turn turns the way each pin leaves the part too (a lying part's pins face left and right)
+  const turn = (side: PinView['side']): PinView['side'] => {
+    if (rot % 90) return side;
+    const [vx, vy] = SIDE_VEC[side];
+    const [wx, wy] = [vx * c - vy * sn, vx * sn + vy * c];
+    return wx < 0 ? 'left' : wx > 0 ? 'right' : wy < 0 ? 'top' : 'bottom';
+  };
+  s.pins = def.pins.map((p) => ({ ...p, x: cx + p.x * c - p.y * sn, y: cy + p.x * sn + p.y * c, side: turn(p.side) }));
 }
+
+const SIDE_VEC: Record<PinView['side'], [number, number]> = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] };
 
 export function makeSymbol(d: Design, c: Component, def: SymbolDef, ox: number, oy: number): SymbolView {
   const sym: SymbolView = {

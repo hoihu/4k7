@@ -212,6 +212,8 @@ export interface WireView {
   pts: number[];
   /** Added by the kernel with an automatic label (the lead to a supply symbol that must turn aside). */
   auto?: boolean;
+  /** Drawn through corners the agent gave (wire via): the wire clean-up keeps its path. */
+  via?: boolean;
 }
 
 /**

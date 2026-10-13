@@ -349,7 +349,7 @@ export const WireOp = z.object({
   from: pinRef,
   to: pinRef.describe('Another pin on the same net, on the same page'),
   via: z.array(pagePoint).max(8).optional().describe('Corners the wire must pass, in order; omit them and the kernel finds a clear orthogonal path'),
-}).describe('Draw a wire between two pins that are on one net in the netlist (a wire never makes a connection, it shows one). The kernel finds an orthogonal path that leaves each pin outwards and keeps clear of parts and other nets\' wires; net labels at the two pins are taken away. Use it for paths the reader should follow (feedback, sense lines, a signal chain).');
+}).describe('Draw a wire between two pins that are on one net in the netlist (a wire never makes a connection, it shows one). The kernel finds an orthogonal path that leaves each pin outwards and keeps clear of parts and other wires; where either pin is already wired, the new wire may start or end with a T on that wire, and pins already joined by wires get nothing. Net labels at the two pins are taken away. After every change the kernel tidies the wires (no loops, runs drawn twice or U-turns; a wire given via corners keeps them), so wire pin by pin and let it straighten. Use it for paths the reader should follow (feedback, sense lines, a signal chain).');
 
 export const LabelOp = z.object({
   op: z.literal('label'),

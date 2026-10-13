@@ -276,6 +276,19 @@ bends, crossings, running through parts or text. That is the largest piece of ne
    - `erase` takes out wires and labels at pins, or everything of a net; the connections show as
      automatic labels until drawn again.
    - `get_schematic` lists the net labels with the pin they sit on, `auto` for the kernel's own.
+   - *Tidy wires, 2026-10-13.* Optimize runs left nets in knots: loops, runs drawn twice, little
+     humps beside lying parts. Three causes, three fixes. (1) A rotated symbol's pins kept the side
+     of the standing symbol (a lying C's right pin said `bottom`), so every wire from it first went
+     down and back up; `rotateSymbol` now turns the side with the pins. (2) `wire` routed pin to pin
+     and ignored the net's other wires; the router now runs from anywhere on the wires joined to the
+     one pin to anywhere on those joined to the other (a T onto a wire), never along any wire, and a
+     `wire` between pins already joined draws nothing. (3) After every sync each net is cleaned
+     (`kernel/wireclean.ts`): split at every joint (pins, labels, a wire end on a wire), put back as
+     a tree with the shortest pieces (Kruskal), dead ends pruned, U-turns and steps shifted out where
+     the new piece is clear and cheaper by the router's costs; a piece with a U-turn left (or loops)
+     is also drawn afresh pin by pin onto what is drawn, and the cheaper drawing kept. A plain
+     crossing is never a joint, a moved piece touches nothing new, so connections never change; a
+     wire given `via` corners (`WireView.via`) keeps its path; a net that needs nothing keeps its wires.
    - Optimize may use them at pins of parts in (or anchored to) its area, not `erase` of a net.
 4. **Import redraws the original.**
    - *Symbol pins, built 2026-10-13.* A drawing cannot look like a reference whose IC has its pins
