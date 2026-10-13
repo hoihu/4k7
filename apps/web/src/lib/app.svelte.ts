@@ -23,7 +23,7 @@ import { ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetI
 import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
-import { BoardClient, type BoardStage } from './boardClient.ts';
+import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
@@ -178,6 +178,8 @@ class AppState {
   board = $state.raw<BoardView | null>(null);
   boardBusy = $state(false);
   boardStage = $state<BoardStage>('placed');
+  /** Routing under way (the copper laid so far is drawn over the placed board), else null. */
+  routeProgress = $state.raw<RouteProgress | null>(null);
   private boards = new BoardClient();
   /** Design revision (bumped on every refresh) and the revision the shown board was computed for. */
   private rev = 0;
@@ -385,21 +387,47 @@ class AppState {
     const design = await this.kernel.draftDesign();
     this.boardBusy = true;
     this.boardStage = 'placed';
+    this.routeProgress = null;
     this.boards.compute(
       design,
       (stage, board) => {
-        this.board = board;
+        this.routeProgress = null;
+        const { newCopper, ...shown } = board;
+        this.board = shown;
         this.boardStage = stage;
         if (stage === 'routed') {
           this.boardBusy = false;
           this.boardRev = rev;
+          // routed here, not taken from the design: keep it, so it is not routed again
+          if (newCopper) void this.keepCopper(newCopper);
         }
       },
       (msg) => {
         this.boardBusy = false;
+        this.routeProgress = null;
         this.flash(`Board layout failed: ${msg}`);
       },
+      (p) => (this.routeProgress = p),
     );
+  }
+
+  /**
+   * Stop the routing under way and keep its best pass: the board then shows it, with what is
+   * still open; Route runs it again from the start.
+   */
+  async stopRouting() {
+    const best = this.boards.stop();
+    this.routeProgress = null;
+    this.boardBusy = false;
+    if (!best) return;
+    this.flash(best.passes ? `Routing stopped: kept the best pass, ${best.open.length} connection${best.open.length === 1 ? '' : 's'} open` : 'Routing stopped before its first pass finished');
+    await this.keepCopper(best);
+    await this.refreshBoard();
+  }
+
+  /** Keep copper the board worker routed with the design; saved when the committed design took it. */
+  private async keepCopper(copper: NonNullable<BoardView['newCopper']>) {
+    if (await this.kernel.keepCopper(copper)) await this.persist();
   }
 
   /** The routed board of the current design, for agents (computed if needed). */
@@ -870,8 +898,22 @@ class AppState {
             true,
           );
         }
+        // a routed board is routed completely, or the agent says why not
+        if (p.hunks.some((h) => h.id === 'board:board') && !args.data.open_connections?.trim() && (await this.kernel.draftDesign()).board?.routed) {
+          const b = await this.routedBoard();
+          if (b?.routing === 'done' && b.unrouted.length) {
+            log('propose', false, `refused: ${b.unrouted.length} open connection(s)`);
+            const name = (id: string) => b.netNames[id] ?? id;
+            return text(
+              `Refused: the board is routed but ${b.unrouted.length} connection(s) are open, and a board with an open connection does not work. Make room and route again (get_board lists them with what blocks them; get_board_image region shows the spot):\n` +
+                b.unrouted.slice(0, 12).map((u) => `- ${name(u.netId)} ${u.from} → ${u.to}${u.blockedBy?.length ? `, blocked by ${u.blockedBy.map(name).join(', ')}` : u.enclosed ? ', closed off' : u.plane ? `, no room for the via to ${u.plane}` : ''}${u.near.length ? `, near ${u.near.join(', ')}` : ''}`).join('\n') +
+                '\nIf you cannot close them, propose with open_connections saying why and what the user could decide.',
+              true,
+            );
+          }
+        }
         const it = item();
-        it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') });
+        it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') + (args.data.open_connections ? `\nOpen connections: ${args.data.open_connections}` : '') });
         if (this.agentRun?.item !== it) it.status = 'done';
         it.changeset = { state: 'pending' };
         if (this.settings.mode === 'auto') {

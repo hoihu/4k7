@@ -131,7 +131,9 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
   }
 
   /* board settings */
-  if (JSON.stringify(base.board ?? null) !== JSON.stringify(draft.board ?? null)) {
+  // (the routed copper is a cache kept with the board, not a change: see BoardSettings.copper)
+  const bare = (b: Design['board']) => (b ? { ...b, copper: undefined } : null);
+  if (JSON.stringify(bare(base.board)) !== JSON.stringify(bare(draft.board))) {
     const b = draft.board;
     hunks.push({
       id: 'board:board',

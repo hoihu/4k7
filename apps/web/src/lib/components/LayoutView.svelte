@@ -16,6 +16,10 @@
   });
 
   const b = $derived(app.board);
+  // while it routes: the placed board with the copper laid so far
+  const prog = $derived(app.routeProgress);
+  const shown = $derived(b && prog ? { ...b, tracks: prog.tracks, vias: prog.vias } : b);
+  const secs = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`);
   let show = $state<Record<string, boolean>>({ board: true, 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true, placement: false });
   let hotNet = $state<string | null>(null);
   let mode = $state<'2d' | '3d' | 'panel'>('2d');
@@ -110,7 +114,7 @@
   let allChecks = $state(false);
   let waivedOpen = $state(false);
   const CHECKS_SHOWN = 4;
-  const routeLabel = $derived(routing ? 'Routing…' : b?.routing === 'done' ? 'Routed' : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
+  const routeLabel = $derived(routing ? 'Routing…' : b?.routing === 'done' ? (b.stopped ? 'Routing stopped' : 'Routed') : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
 
   /** Gerbers, drill, BOM and pick-and-place as one zip: of the board, or of its panel. */
   function exportFab(panel = false) {
@@ -141,7 +145,7 @@
     <div class="stage2d" class:hidden={!show2d || mode === 'panel'}>
     <BoardCanvas
       bind:this={canvas2d}
-      board={b}
+      board={shown}
       {show}
       {hotNet}
       {marker}
@@ -163,12 +167,23 @@
       {#if b?.parts.length}
         <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose layout', [{ op: 'propose_layout' }])}>Propose layout</button>
         {#if choices.length}<button class="btn" disabled={app.running} title="Your {choices.length} placement choice{choices.length > 1 ? 's' : ''} go back to the placer; locked parts stay" onclick={releaseAll}>Release choices ({choices.length})</button>{/if}
-        <button class="btn" class:pri={b.routing !== 'done'} disabled={app.running || b.routing === 'done'} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' ? 'Route again' : 'Route'}</button>
+        <button class="btn" class:pri={b.routing !== 'done' || b.stopped} disabled={app.running || !!prog || (b.routing === 'done' && !b.stopped)} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' || b.stopped ? 'Route again' : 'Route'}</button>
         <button class="btn" disabled={!b.parts.length} title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
         {#if b.panel}<button class="btn" title="The {b.panel.settings.cols} × {b.panel.settings.rows} panel ({b.panel.w} × {b.panel.h} mm): Gerber, drill with the mouse bites and tooling holes, BOM and pick-and-place of every copy, as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}` : ''}" onclick={() => exportFab(true)}>Panel files ⤓</button>{/if}
       {/if}
-      {#if app.boardBusy}<span class="busy">updating…</span>{/if}
+      {#if app.boardBusy && !prog}<span class="busy">updating…</span>{/if}
     </div>
+    {#if prog && mode === '2d'}
+      <div class="routing" role="status" aria-live="polite">
+        <div class="rl">
+          <b>Routing</b>
+          <span>pass {prog.pass} · {prog.done}/{prog.connections} connections · {secs(prog.elapsedMs)}</span>
+          <button class="btn stop" onclick={() => void app.stopRouting()} title={prog.bestOpen === null ? 'Stop routing. The first pass has not finished: nothing will be routed.' : `Stop routing and keep the best pass so far (${prog.bestOpen} connection${prog.bestOpen === 1 ? '' : 's'} open)`}>Stop</button>
+        </div>
+        <div class="bar"><div style="width: {Math.round((100 * prog.done) / Math.max(1, prog.connections))}%"></div></div>
+        {#if prog.bestOpen !== null}<div class="rs">{prog.bestOpen === 0 ? 'done' : `best pass so far left ${prog.bestOpen} open; trying again, round what blocked them`}</div>{/if}
+      </div>
+    {/if}
     {#if app.k?.proposal}
       <div class="pend">
         <span class="pulse"></span>
@@ -186,7 +201,7 @@
         {#if b && mode === 'panel' && b.panel}Panel {b.panel.w} × {b.panel.h} mm · {b.panel.settings.cols} × {b.panel.settings.rows} boards of {b.outline.w} × {b.outline.h} mm<span class="dot">·</span>
         {:else if b}{b.outline.w} × {b.outline.h} mm · {b.layers.length} layers<span class="dot">·</span>{/if}
         {#if b?.parts.length}
-          <span class:stale={b.routing === 'stale'} class:ok={b.routing === 'done' && !routing}>{routeLabel}</span>
+          <span class:stale={b.routing === 'stale' || b.stopped} class:ok={b.routing === 'done' && !routing && !b.stopped}>{routeLabel}</span>
           {#if b.routing === 'done' && !routing}<span> {b.stats.routed}/{b.stats.nets} nets · {b.stats.vias} vias</span>{#if b.ratsnest.length}<span class="stale"> · {b.ratsnest.length} unrouted</span>{/if}{/if}
           <span class="dot">·</span>{nParts} parts<span class="dot">·</span>
         {/if}
@@ -278,6 +293,13 @@
   .seg button:first-child { border-radius: 6px 0 0 6px; }
   .seg button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
   .seg button[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent-txt); }
+  .routing { flex-basis: 100%; max-width: 420px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; box-shadow: var(--shadow); font-size: 12px; }
+  .routing .rl { display: flex; gap: 8px; align-items: baseline; }
+  .routing .rl span { color: var(--txt-2); font-variant-numeric: tabular-nums; }
+  .routing .stop { margin-left: auto; padding: 1px 10px; font-size: 12px; }
+  .routing .bar { height: 4px; margin-top: 5px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .routing .bar > div { height: 100%; background: var(--accent); transition: width 0.2s; }
+  .routing .rs { margin-top: 4px; font-size: 11px; color: var(--txt-3); }
   .busy { font-size: 11px; color: var(--txt-3); background: var(--panel); padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); }
   .pend { display: flex; gap: 6px; align-items: center; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px 4px 10px; box-shadow: var(--shadow); font-size: 12px; max-width: calc(100% - 24px); }
   .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex: none; }

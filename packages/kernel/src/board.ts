@@ -30,6 +30,8 @@ import {
   type RatsLine,
   type SchematicView,
   type StoredPlacement,
+  type StoredCopper,
+  type UnroutedConnection,
   type BoardCutout,
   cutoutBounds,
   cutoutDistance,
@@ -45,7 +47,8 @@ import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp
 import { copperDrc, edgeDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelView } from './panel.ts';
-import { route } from './router.ts';
+import { stableJson } from './canonical.ts';
+import { route, type RouteProgress } from './router.ts';
 
 const SPACING = 0.3; // between courtyards
 const GRID_MM = 0.1;
@@ -870,7 +873,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board. Give it one from its datasheet drawing with set_footprint.`, entities: [ref] });
   }
   const planes = settingsPlanes(d, layers.length as 2 | 4);
-  const placementKey = hash(JSON.stringify([w, h, cornerR, shape, boardCutouts, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
+  // (keys sorted: a design read back from its file has them in another order than one just edited)
+  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   const view: BoardView = {
     outline: { w, h },
     layers,
@@ -884,6 +888,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     ratsnest: ratsnest(parts),
     diagnostics,
     stats: { nets: 0, routed: 0, unrouted: 0, trackLength: 0, vias: 0 },
+    unrouted: [],
+    measures: placementMeasures(parts, new Set(planes.filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu').map((pl) => pl.netId))),
     missing,
     netNames: Object.fromEntries(Object.values(d.nets).map((n) => [n.id, n.name])),
     routing: settings.routed ? (settings.routed === placementKey ? 'done' : 'stale') : 'none',
@@ -932,53 +938,168 @@ function hash(s: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
-/** Place; route and check the copper when the route step was taken for this placement (or `route`). */
-export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean } = {}): BoardView {
+/** Bump when what StoredCopper holds changes meaning: copper kept by an older version is routed again. */
+const COPPER_FORMAT = 1;
+
+/**
+ * Place; route and check the copper when the route step was taken for this placement (or `route`).
+ * Copper the design keeps for this placement (`board.copper`) is used as it is; otherwise the
+ * board is routed (to completion if it can be: that may take a while) and the result comes back
+ * as `newCopper` for the app to keep.
+ */
+export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean; onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
   const b = placeBoard(d, sch);
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
-  const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
-  const planes = settingsPlanes(d, b.layers.length as 2 | 4);
-  const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
-  const r = route({ outline: b.outline, layers: b.layers, rules: b.rules, parts: b.parts, powerNets, netWidths, planes: planes.map(({ netId, layer }) => ({ netId, layer })), cornerRadius: b.cornerRadius, ...(b.shape ? { shape: b.shape } : {}), cutouts: b.cutouts, ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}) });
-  const routed: BoardView = {
-    ...b,
-    routing: 'done',
+  const { powerNets, planes, netWidths, key } = routeSetup(d, b);
+  const pads = b.parts.flatMap((p) => p.pads);
+  const kept = d.board?.copper?.key === key ? d.board.copper : null;
+  const index = new Map(pads.map((p, i) => [p, i]));
+  const toCopper = (r: ReturnType<typeof route>): StoredCopper => ({
+    key,
     tracks: r.tracks,
     vias: r.vias,
     zones: r.zones,
-    planes,
-    ratsnest: ratsnest(b.parts, r.connected),
-    stats: {
-      nets: r.netsTotal,
-      routed: r.netsDone,
-      unrouted: r.failed.length,
-      trackLength: Math.round(r.tracks.reduce((s, t) => s + polyLength(t.pts), 0) * 10) / 10,
-      vias: r.vias.length,
-    },
+    groups: r.groups,
+    open: r.failed.map(({ netId, a, b: pb, ...why }) => ({ netId, a: index.get(a)!, b: index.get(pb)!, ...why })),
+    nets: r.netsTotal,
+    netsDone: r.netsDone,
+    timedOut: r.timedOut,
+    passes: r.passes,
+  });
+  const copper =
+    kept ??
+    toCopper(
+      route({
+        outline: b.outline,
+        layers: b.layers,
+        rules: b.rules,
+        parts: b.parts,
+        powerNets,
+        netWidths,
+        planes: planes.map(({ netId, layer }) => ({ netId, layer })),
+        cornerRadius: b.cornerRadius,
+        ...(b.shape ? { shape: b.shape } : {}),
+        cutouts: b.cutouts,
+        ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}),
+        ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
+        // what a stop keeps: the best pass so far, marked as stopped
+        ...(opts.onBest ? { onBest: (r: ReturnType<typeof route>) => opts.onBest!({ ...toCopper(r), stopped: true }) } : {}),
+      }),
+    );
+  const connected = (netId: string, a: BoardPad, pb: BoardPad) => {
+    const ia = index.get(a);
+    const ib = index.get(pb);
+    return ia !== undefined && ib !== undefined && copper.groups[ia] === copper.groups[ib] && a.netId === netId;
   };
-  const unrouted = new Map<string, number>();
-  for (const f of r.failed) unrouted.set(f.netId, (unrouted.get(f.netId) ?? 0) + 1);
+  const midpoint = (o: { a: number; b: number }) => ({ x: (pads[o.a]!.x + pads[o.b]!.x) / 2, y: (pads[o.a]!.y + pads[o.b]!.y) / 2 });
+  const owner = b.parts.flatMap((p) => p.pads.map(() => p));
+  const label = (i: number) => `${owner[i]?.refdes ?? '?'}.${pads[i]?.number ?? '?'}`;
+  const unrouted: UnroutedConnection[] = copper.open.map(({ netId, a, b: pb, ...why }) => {
+    const spot = why.at ?? midpoint({ a, b: pb });
+    const near = b.parts
+      .filter((p) => !p.componentId.startsWith('hole:'))
+      .map((p) => ({ p, d: Math.hypot(Math.max(p.courtyard.x - spot.x, 0, spot.x - p.courtyard.x - p.courtyard.w), Math.max(p.courtyard.y - spot.y, 0, spot.y - p.courtyard.y - p.courtyard.h)) }))
+      .filter((x) => x.d <= NEAR_MM)
+      .sort((x, y) => x.d - y.d)
+      .slice(0, 6)
+      .map((x) => x.p.refdes);
+    return { netId, from: label(a), to: label(pb), ...why, near };
+  });
+  const routed: BoardView = {
+    ...b,
+    routing: 'done',
+    tracks: copper.tracks,
+    vias: copper.vias,
+    zones: copper.zones,
+    planes,
+    ratsnest: ratsnest(b.parts, connected),
+    stats: {
+      nets: copper.nets,
+      routed: copper.netsDone,
+      unrouted: copper.open.length,
+      trackLength: Math.round(copper.tracks.reduce((s, t) => s + polyLength(t.pts), 0) * 10) / 10,
+      vias: copper.vias.length,
+    },
+    unrouted,
+    ...(kept ? {} : { newCopper: copper }),
+    ...(copper.stopped ? { stopped: true } : {}),
+  };
+  const name = (id: string) => d.nets[id]?.name ?? id;
   const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed)];
-  for (const [netId, n] of unrouted) {
-    const f = r.failed.find((x) => x.netId === netId)!;
+  const byNet = new Map<string, UnroutedConnection[]>();
+  for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
+  for (const [netId, list] of byNet) {
+    const u = list[0]!;
+    const n = list.length;
+    const why = u.enclosed
+      ? `; ${u.from} is closed off by pads or the edge`
+      : u.plane
+        ? `; no room for a via down to the ${u.plane} plane`
+        : u.blockedBy?.length
+          ? `; ${u.blockedBy.map(name).join(', ')} ${u.blockedBy.length > 1 ? 'are' : 'is'} in the way${u.near.length ? ` near ${u.near.slice(0, 3).join(', ')}` : ''}`
+          : '';
     diags.push({
       code: 'DRC.UNROUTED',
       severity: 'error',
-      message: `${n} connection${n > 1 ? 's' : ''} of ${d.nets[netId]?.name ?? netId} could not be routed.`,
-      at: { x: (f.a.x + f.b.x) / 2, y: (f.a.y + f.b.y) / 2 },
-      entities: [],
+      message: `${n} connection${n > 1 ? 's' : ''} of ${name(netId)} could not be routed (${u.from} → ${u.to}${n > 1 ? ', …' : ''})${why}.`,
+      at: u.at ? { x: u.at.x, y: u.at.y } : midpoint(copper.open.find((o) => o.netId === netId)!),
+      entities: [...new Set([u.from.split('.')[0]!, u.to.split('.')[0]!])],
     });
   }
-  if (r.timedOut) {
+  if (copper.stopped) {
     diags.unshift({
       code: 'DRC.ROUTING_INCOMPLETE',
       severity: 'warning',
-      message: `Routing stopped at its time budget with ${r.failed.length} connection${r.failed.length === 1 ? '' : 's'} left. A bigger board, 4 layers or pinning the main parts usually helps.`,
+      message: copper.passes
+        ? `Routing was stopped after ${copper.passes} pass${copper.passes === 1 ? '' : 'es'}; the best is kept, with ${copper.open.length} connection${copper.open.length === 1 ? '' : 's'} left. Route runs it again from the start.`
+        : 'Routing was stopped before its first pass finished: nothing is routed. Route runs it again.',
+      entities: [],
+    });
+  } else if (copper.timedOut) {
+    diags.unshift({
+      code: 'DRC.ROUTING_INCOMPLETE',
+      severity: 'warning',
+      message: `Routing stopped at its time budget with ${copper.open.length} connection${copper.open.length === 1 ? '' : 's'} left. Moving or turning the parts round the open connections, a bigger board or 4 layers usually helps.`,
       entities: [],
     });
   }
   applyWaivers(d, diags);
   return { ...routed, diagnostics: diags };
+}
+
+/** What the router is given besides the placement, and the key copper routed with it is kept under. */
+function routeSetup(d: Design, b: BoardView) {
+  const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
+  const planes = settingsPlanes(d, b.layers.length as 2 | 4);
+  const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
+  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort()]));
+  return { powerNets, planes, netWidths, key };
+}
+
+/** The key copper routed for this design's board now would be kept under (see BoardSettings.copper). */
+export function copperKey(d: Design, sch: SchematicView): string {
+  return routeSetup(d, placeBoard(d, sch)).key;
+}
+
+/** Parts this close (mm) to where a connection is blocked are named with it. */
+const NEAR_MM = 3;
+
+/** The ratsnest of the nets routed as tracks: its length and where lines of different nets cross. */
+function placementMeasures(parts: BoardPart[], planeNets: Set<string>): { ratsnestMm: number; crossings: number } {
+  const lines = ratsnest(parts).filter((l) => !planeNets.has(l.netId));
+  const len = lines.reduce((s, l) => s + Math.hypot(l.x2 - l.x1, l.y2 - l.y1), 0);
+  const o = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number) => Math.sign((bx - ax) * (cy - ay) - (by - ay) * (cx - ax));
+  let crossings = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const a = lines[i]!;
+    for (let j = i + 1; j < lines.length; j++) {
+      const c = lines[j]!;
+      if (c.netId === a.netId) continue;
+      if (Math.max(a.x1, a.x2) < Math.min(c.x1, c.x2) || Math.max(c.x1, c.x2) < Math.min(a.x1, a.x2) || Math.max(a.y1, a.y2) < Math.min(c.y1, c.y2) || Math.max(c.y1, c.y2) < Math.min(a.y1, a.y2)) continue;
+      if (o(a.x1, a.y1, a.x2, a.y2, c.x1, c.y1) * o(a.x1, a.y1, a.x2, a.y2, c.x2, c.y2) < 0 && o(c.x1, c.y1, c.x2, c.y2, a.x1, a.y1) * o(c.x1, c.y1, c.x2, c.y2, a.x2, a.y2) < 0) crossings++;
+    }
+  }
+  return { ratsnestMm: Math.round(len * 10) / 10, crossings };
 }
 
 function polyLength(pts: number[]): number {

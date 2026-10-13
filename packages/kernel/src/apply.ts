@@ -786,6 +786,8 @@ function routeStep(d: Design): OpResult {
   const now = placedNow(d);
   if (!now.parts.length) reject({ code: 'BOARD_INVALID', message: 'Nothing to route: the board has no parts.' });
   d.board!.routed = now.placementKey;
+  // a routing the user stopped is routed again from the start
+  if (d.board!.copper?.stopped) delete d.board!.copper;
   return { op: 'route', effect: 'board routed as placed', ids: ['board'] };
 }
 

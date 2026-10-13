@@ -42,6 +42,10 @@ export type AskUser = z.infer<typeof AskUser>;
 export const ProposeInput = z.object({
   summary: z.string().min(3).describe('One line describing the whole changeset, shown to the user'),
   message: z.string().optional().describe('Short note to the user: assumptions, warnings left, questions'),
+  open_connections: z
+    .string()
+    .optional()
+    .describe('Only if the routed board still has open connections and you could not close them: why, and what the user could decide (e.g. 4 layers, a bigger board). Without it propose refuses a routed board that is not 100 % routed.'),
 });
 
 export const WaitForReviewInput = z.object({
