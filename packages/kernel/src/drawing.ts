@@ -38,7 +38,7 @@ export function schematicView(d: Design): SchematicView {
 export const isDrawn = (d: Design, sheetId: string) => !!d.drawing?.[sheetId];
 
 /** The symbol a stored drawing names, where it stands; undefined when its component or card is gone. */
-function symbolOf(d: Design, s: DrawnSymbol): SymbolView | undefined {
+export function symbolOf(d: Design, s: DrawnSymbol): SymbolView | undefined {
   const c = d.components[s.comp];
   const card = c && cardOf(d, s.part);
   if (!c || !card) return undefined;
@@ -111,7 +111,7 @@ function onSeg(x: number, y: number, x1: number, y1: number, x2: number, y2: num
   return (x2 - x1) * (y - y1) === (y2 - y1) * (x - x1);
 }
 
-function onWire(x: number, y: number, pts: number[]): boolean {
+export function onWire(x: number, y: number, pts: number[]): boolean {
   for (let i = 0; i + 3 < pts.length; i += 2) if (onSeg(x, y, pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!)) return true;
   return pts.length === 2 && pts[0] === x && pts[1] === y;
 }
@@ -304,7 +304,7 @@ export function syncDrawing(d: Design): void {
   if (!Object.keys(d.drawing).length) delete d.drawing;
 }
 
-function syncSheet(d: Design, sheetId: string): void {
+export function syncSheet(d: Design, sheetId: string): void {
   const sd = d.drawing![sheetId]!;
   const comps = componentsSorted(d).filter((c) => c.sheet === sheetId && cardOf(d, c.part));
   // symbols: a component that is gone, on another sheet, drawn from another card or with other units leaves
@@ -497,7 +497,7 @@ function freeSpot(d: Design, sd: SheetDrawing, bb: Rect): { dx: number; dy: numb
 }
 
 const grid = (v: number) => Math.ceil(v / GRID) * GRID;
-const drawingArea = (p: Rect): Rect => ({ x: p.x + PAGE.margin, y: p.y + PAGE.margin, w: p.w - 2 * PAGE.margin, h: p.h - 2 * PAGE.margin - PAGE.title });
+export const drawingArea = (p: Rect): Rect => ({ x: p.x + PAGE.margin, y: p.y + PAGE.margin, w: p.w - 2 * PAGE.margin, h: p.h - 2 * PAGE.margin - PAGE.title });
 const centre = (r: Rect) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
 const inside = (r: Rect, p: { x: number; y: number }) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 const hits = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
@@ -548,7 +548,7 @@ function moveSymbolBy(s: DrawnSymbol, dx: number, dy: number): void {
 /* ---------------------------------- pages ---------------------------------- */
 
 /** The page a point belongs to: the one it is on, else the nearest. */
-function pageAt(pages: Rect[], p: { x: number; y: number }): number {
+export function pageAt(pages: Rect[], p: { x: number; y: number }): number {
   const on = pages.findIndex((r) => inside(r, p));
   if (on >= 0) return on;
   let best = 0;

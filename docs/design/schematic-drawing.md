@@ -1,6 +1,6 @@
 # Drawing the schematic: the agent owns the drawing
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing built (§6 step 2).
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3).
 > Notes and checks are in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
@@ -74,8 +74,8 @@ which already stores its own geometry (`board.tracks`):
   its result into the drawing as a starting point. Parts the netlist gains are drawn in free space
   the same way, for the agent to arrange.
 - **Ops for the agent**: `place_symbol` as today; `wire { from: "R3.2", to: "U2.5", via? }`, the
-  kernel finding an orthogonal path unless the agent gives the corners; `label { pin, dir }`;
-  `supply_symbol { pin, side }`; removing wires and labels.
+  kernel finding an orthogonal path unless the agent gives the corners; `label { pin, dir }` (a net
+  label, or a supply symbol for a rail or ground: one op, the net decides); `erase { pins | net }`.
 - **Import** builds the netlist and redraws the original's arrangement, wires where it had wires.
 - **The checks** (§3) judge the agent's drawing, so every finding is one it can act on.
 - **Hand editing** (dragging symbols and wires in the editor) is not planned yet: later, depending on
@@ -260,7 +260,23 @@ bends, crossings, running through parts or text. That is the largest piece of ne
    - Changesets: one `drawing` hunk per sheet; accepting a part without it draws the part in free space.
    - Relative constraints only guide the layout: on an arranged sheet they wait for `auto_draw`, and a
      violated one says so.
-3. **Drawing ops**: `wire`, `label`, `supply_symbol` and the path finder.
+3. **Drawing ops**: `wire`, `label`, `erase` and the path finder. *Built 2026-10-13*
+   (`kernel/drawops.ts`, `kernel/schroute.ts`):
+   - `wire` joins two pins that are on one net in the netlist (`NET_MISMATCH` otherwise: a wire
+     shows a connection, it never makes one), on one page. The path finder (A* on the 100-mil grids
+     through both pins) leaves and enters each pin outwards, never runs through a part, along a wire
+     of another net or onto another net's pin or wire end, crosses other wires only straight across,
+     and pays for bends (300), crossings (400) and running through labels or names (600); it turns on
+     the target's grid so the wire does not end in a short jog. `via` forces corners. Net labels at
+     the two pins are taken away. `NO_PATH` asks for corners or a move.
+   - `label` replaces what labels a pin (its labels, and a lead that only ends in a label) by a net
+     label pointing `dir`, or by a supply symbol, which always points its own way. A net label across
+     the pin's direction stands on a 200-mil lead, so a label at a top or bottom pin can be horizontal.
+     One pointing back into the part is refused.
+   - `erase` takes out wires and labels at pins, or everything of a net; the connections show as
+     automatic labels until drawn again.
+   - `get_schematic` lists the net labels with the pin they sit on, `auto` for the kernel's own.
+   - Optimize may use them at pins of parts in (or anchored to) its area, not `erase` of a net.
 4. **Import redraws the original.**
 
 The first plan, steps 1–3 built 2026-10-12:

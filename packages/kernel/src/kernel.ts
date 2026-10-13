@@ -397,6 +397,7 @@ export class Kernel {
         const r = (v: number) => Math.round(v);
         return {
           coordinates: 'mils from the top-left corner of the page\'s paper, x to the right, y down; a symbol\'s x/y is its centre',
+          labels_note: 'net labels; auto: true is a connection your drawing does not show, labelled by the kernel until you wire it (wire) or label it (label)',
           drawing_area: { margin: PAGE.margin, title_block: `${PAGE.title} high, at the bottom` },
           pages: view.sheets.flatMap((s) =>
             s.pages.map((p) => ({ page: p.number, sheet: s.name, name: p.name, w: p.rect.w, h: p.rect.h, ...(p.oversized ? { oversized: true } : {}), drawn: d.drawing?.[s.id] ? 'as you arranged it' : 'by the auto-layout, afresh after every change' })),
@@ -409,7 +410,18 @@ export class Kernel {
               return { ref: `${sym.refdes}${sym.unit ?? ''}`, page: p.number, x: r(cx - p.rect.x), y: r(cy - p.rect.y), w: sym.bbox.w, h: sym.bbox.h, ...(sym.rotation ? { lying: true } : {}) };
             }),
           ),
-          ...(view.sheets.some((s) => s.labels.some((l) => l.auto)) ? { auto_labels: view.sheets.flatMap((s) => s.labels.filter((l) => l.auto).map((l) => l.text)).filter((t, i, a) => a.indexOf(t) === i), auto_labels_note: 'connections your drawing does not show yet; the kernel draws a net label at a pin for each' } : {}),
+          // net labels (supply symbols left out), at the pin they sit on; auto: a connection the drawing does not show yet
+          labels: view.sheets.flatMap((s) =>
+            s.labels
+              .filter((l) => l.kind === 'net')
+              .map((l) => {
+                const sym = s.symbols.find((x) => x.pins.some((p) => p.x === l.x && p.y === l.y));
+                const pin = sym?.pins.find((p) => p.x === l.x && p.y === l.y);
+                const pg = s.pages.find((p) => l.x >= p.rect.x && l.x <= p.rect.x + p.rect.w && l.y >= p.rect.y && l.y <= p.rect.y + p.rect.h) ?? s.pages[0]!;
+                const at = sym && pin ? `${sym.refdes}${sym.unit ?? ''}.${pin.name === pin.number ? pin.number : pin.name}` : `page ${pg.number} (${r(l.x - pg.rect.x)}, ${r(l.y - pg.rect.y)})`;
+                return { net: l.text, at, dir: l.dir, ...(l.auto ? { auto: true } : {}) };
+              }),
+          ),
         };
       }
       case 'get_board': {

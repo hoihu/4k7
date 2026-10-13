@@ -326,6 +326,27 @@ export const PlaceSymbolOp = z.object({
   auto: z.boolean().optional().describe('true: take the part out of your drawing; it is drawn afresh in free space'),
 }).describe('Move a part on the schematic: its symbol\'s centre goes there (the move is rounded to the 100-mil grid; the result says where it ended up). The first move on a sheet makes its drawing yours: from then on it stays as you arrange it, and parts added later are drawn in free space. An IC or connector takes the small parts drawn at its pins with it, wired as before; a two-pin part goes on its own. Wires to parts that stay behind are cut back, and those connections show as net labels. Use it to make a drawing look like a reference or the user\'s sketch.');
 
+const pagePoint = z.object({ x: z.number(), y: z.number() }).describe('Page coordinates in mils from the paper\'s top-left corner (as get_schematic gives them)');
+
+export const WireOp = z.object({
+  op: z.literal('wire'),
+  from: pinRef,
+  to: pinRef.describe('Another pin on the same net, on the same page'),
+  via: z.array(pagePoint).max(8).optional().describe('Corners the wire must pass, in order; omit them and the kernel finds a clear orthogonal path'),
+}).describe('Draw a wire between two pins that are on one net in the netlist (a wire never makes a connection, it shows one). The kernel finds an orthogonal path that leaves each pin outwards and keeps clear of parts and other nets\' wires; net labels at the two pins are taken away. Use it for paths the reader should follow (feedback, sense lines, a signal chain).');
+
+export const LabelOp = z.object({
+  op: z.literal('label'),
+  pin: pinRef,
+  dir: z.enum(['left', 'right', 'up', 'down']).optional().describe('Net labels: the way the label points. Default: the way the pin leaves the part. Across that (e.g. right on a top pin) a short lead runs out first, so a label at a top or bottom pin can still be horizontal. Supply symbols always point their own way (rails up, ground down)'),
+}).describe('Show a pin\'s net by a net label, or a supply symbol for a rail or ground, at that pin; it replaces the labels there. Labels of one net connect by name, so use them between blocks and across pages.');
+
+export const EraseOp = z.object({
+  op: z.literal('erase'),
+  pins: z.array(pinRef).optional().describe('Erase the wires and labels drawn at these pins'),
+  net: netName.optional().describe('Erase every wire and label of this net'),
+}).describe('Take wires and labels out of the drawing (the netlist does not change). Connections no longer drawn show as automatic labels until you draw them again (wire, label).');
+
 export const AutoDrawOp = z.object({
   op: z.literal('auto_draw'),
   sheet: z.string().optional().describe('Sheet name; omit it for every sheet (or the sheet of the parts in refs)'),
@@ -405,6 +426,9 @@ export const EditOp = z.discriminatedUnion('op', [
   SetFabProfileOp,
   PlaceOp,
   PlaceSymbolOp,
+  WireOp,
+  LabelOp,
+  EraseOp,
   AutoDrawOp,
   ProposeLayoutOp,
   RouteOp,
@@ -445,7 +469,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_ledger') }),
   z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
   z.object({ op: z.literal('get_fab_profiles') }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses'),
-  z.object({ op: z.literal('get_schematic') }).describe('Schematic layout: each page (number, name, paper size in mils) and where each symbol stands on it (centre and size in mils from the paper\'s top-left; placed by you with place_symbol, and whether that holds, or by the layout)'),
+  z.object({ op: z.literal('get_schematic') }).describe('Schematic drawing: each page (number, name, paper size in mils, drawn by the auto-layout or as you arranged it), where each symbol stands (centre and size in mils from the paper\'s top-left) and the net labels with the pins they sit on (auto: a connection your drawing does not show yet)'),
   z.object({ op: z.literal('get_board') }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
   z.object({
     op: z.literal('search_parts'),
