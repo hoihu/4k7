@@ -171,6 +171,8 @@
             onselectnet={(n) => app.selectNet(n)}
             onclear={() => app.clearSelection()}
           />
+          <!-- one row: the pending bar goes on a line of its own when the tabs leave no room, never under them -->
+          <div class="top">
           <div class="fl sheets">
             {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
             {#each app.k?.view.sheets ?? [] as s, i (s.id)}
@@ -192,6 +194,7 @@
               <button class="ib" aria-pressed={app.showDiff} onclick={() => (app.showDiff = !app.showDiff)} title="Toggle diff overlay">◧</button>
             </div>
           {/if}
+          </div>
           {#if sheet && sheet.symbols.length === 0}
             <div class="blank">
               <p><b>Empty sheet.</b> Describe the circuit in the chat. The agent adds parts through the kernel, and the layout happens automatically.</p>
@@ -263,12 +266,14 @@
   .col { min-height: 0; min-width: 0; background: var(--panel); }
   .canvas { position: relative; overflow: hidden; background: var(--canvas); background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 16px 16px; }
   .fl { position: absolute; z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
-  .sheets { top: 8px; left: 8px; display: flex; gap: 2px; padding: 2px; }
+  .top { position: absolute; top: 8px; left: 8px; right: 8px; z-index: 3; display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; pointer-events: none; }
+  .top > .fl { position: static; pointer-events: auto; }
+  .sheets { display: flex; flex-wrap: wrap; gap: 2px; padding: 2px; }
   .sheets .paper-sel { border: 0; background: transparent; border-radius: 5px; padding: 2px 2px; font-size: 12px; color: var(--txt-3); cursor: pointer; }
   .sheets .paper-sel:hover:not(:disabled) { background: var(--hover); color: var(--txt); }
   .sheets button[aria-pressed] { border: 0; background: transparent; border-radius: 5px; padding: 2px 8px; font-size: 12px; color: var(--txt-2); }
   .sheets button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-txt); }
-  .pend { top: 8px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 10px; font-size: 12px; white-space: nowrap; max-width: calc(100% - 16px); }
+  .pend { margin: 0 auto; display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 10px; font-size: 12px; white-space: nowrap; max-width: calc(100% - 16px); }
   .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); flex: none; }
   .pend .ib[aria-pressed="true"] { color: var(--accent-txt); }
   .blank { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
@@ -297,7 +302,6 @@
     .mobnav { display: flex; border-top: 1px solid var(--line); background: var(--panel); height: 40px; }
     .mobnav button { flex: 1; border: 0; background: transparent; color: var(--txt-3); font-size: 12px; }
     .mobnav button[aria-pressed="true"] { color: var(--accent-txt); font-weight: 600; box-shadow: inset 0 2px 0 var(--accent); }
-    .pend { top: 44px; }
     .status span:first-child { display: none; }
   }
 </style>

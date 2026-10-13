@@ -150,7 +150,9 @@
       ongraphic={(id, dx, dy) => void app.userEdit(`Move ${id}`, [{ op: 'edit_graphic', id, dx_mm: dx, dy_mm: dy }])}
     />
     </div>
-    <div class="fl tl">
+    <!-- one row: the pending bar goes on a line of its own when the tools leave no room, never under them -->
+    <div class="top">
+    <div class="tools">
       {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
       <div class="seg"><button aria-pressed={mode === '2d'} onclick={to2d}>2D</button><button aria-pressed={mode === '3d'} onclick={to3d}>3D</button><button aria-pressed={mode === 'panel'} title="The fabrication panel: copies in a frame, tabs with mouse bites" onclick={toPanel}>Panel</button></div>
       {#if b?.parts.length}
@@ -163,13 +165,14 @@
       {#if app.boardBusy}<span class="busy">updating…</span>{/if}
     </div>
     {#if app.k?.proposal}
-      <div class="fl pend">
+      <div class="pend">
         <span class="pulse"></span>
         <span class="trunc"><b>{app.acceptedCount}</b> of {app.pendingCount} changes pending</span>
         <button class="btn pri" disabled={app.running || app.acceptedCount === 0} onclick={() => app.accept()}>Accept</button>
         <button class="btn" disabled={app.running} onclick={() => app.reject()}>Reject</button>
       </div>
     {/if}
+    </div>
     {#if b && !b.parts.length}
       <div class="blank"><p><b>No parts yet.</b> Draw the circuit in the schematic (or ask the agent); the board is placed from it automatically.</p></div>
     {/if}
@@ -259,8 +262,9 @@
   .lay.nochat { grid-template-columns: 0 minmax(0, 1fr) 280px; }
   .col { background: var(--panel); min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   .canvas { position: relative; background: var(--canvas); }
-  .fl { position: absolute; display: flex; gap: 6px; align-items: center; }
-  .tl { top: 8px; left: 8px; z-index: 2; }
+  .top { position: absolute; top: 8px; left: 8px; right: 8px; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; pointer-events: none; }
+  .top > * { pointer-events: auto; }
+  .tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .stage2d { position: absolute; inset: 0; }
   .stage2d.hidden { visibility: hidden; }
   .stagep { position: absolute; inset: 0; }
@@ -270,7 +274,7 @@
   .seg button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
   .seg button[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent-txt); }
   .busy { font-size: 11px; color: var(--txt-3); background: var(--panel); padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); }
-  .pend { top: 8px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px 4px 10px; box-shadow: var(--shadow); font-size: 12px; max-width: calc(100% - 24px); }
+  .pend { display: flex; gap: 6px; align-items: center; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px 4px 10px; box-shadow: var(--shadow); font-size: 12px; max-width: calc(100% - 24px); }
   .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex: none; }
   .blank { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
   .blank p { max-width: 360px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; color: var(--txt-2); }
