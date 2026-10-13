@@ -3,6 +3,7 @@
  * copy, and merging of a user-selected subset of hunks.
  */
 import type { Component, Design, Hunk } from '@4k7/schema';
+import { layoutText } from '@4k7/parts';
 import { describeConstraint } from './apply.ts';
 import { clone, gcNets, gcParts, natCmp, valueOf } from './doc.ts';
 
@@ -54,6 +55,10 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     if (JSON.stringify(a.units ?? null) !== JSON.stringify(b.units ?? null)) {
       what.push(`symbol: ${ua ? `${ua} units` : 'single'} → ${ub ? `${ub} units` : 'single'}`);
       details.push(...(b.units?.map((u) => `${u.name}: ${u.title}`) ?? []));
+    }
+    if (JSON.stringify(a.symbolLayout ?? null) !== JSON.stringify(b.symbolLayout ?? null) && !b.units?.length) {
+      what.push(b.customSymbol ? 'symbol: pins arranged' : 'symbol: generated arrangement');
+      if (b.symbolLayout) details.push(layoutText(b, b.symbolLayout));
     }
     if (JSON.stringify(a.packageInfo ?? null) !== JSON.stringify(b.packageInfo ?? null)) {
       const pkg = b.packageInfo;

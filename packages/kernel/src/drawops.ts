@@ -6,7 +6,7 @@
  */
 import type { Design, EditOp, LabelView, OpResult, PinView, Rect, SheetDrawing, SymbolView } from '@4k7/schema';
 import { cardOf, pinLabel, reject, resolvePins, type PinHandle } from './doc.ts';
-import { drawingArea, onWire, ownSheet, pageAt, symbolOf, syncDrawing, syncSheet } from './drawing.ts';
+import { drawingArea, joinedWires, onWire, ownSheet, pageAt, symbolOf, syncDrawing, syncSheet } from './drawing.ts';
 import { deco, labelRect, leadEnd, textRect, type Dir } from './scene.ts';
 import { routeWire } from './schroute.ts';
 
@@ -76,11 +76,18 @@ export function wireOp(d: Design, op: Extract<EditOp, { op: 'wire' }>): OpResult
   const page = sd.pages[pageAt(sd.pages, a.pin)]!;
   const via = (op.via ?? []).map((v) => ({ x: Math.round((page.x + v.x) / 50) * 50, y: Math.round((page.y + v.y) / 50) * 50 }));
   const views = sd.symbols.map((s) => symbolOf(d, s)!);
+  // the wire runs from what is drawn at the one pin to what is drawn at the other (a T onto a wire there)
+  const fromWires = joinedWires(sd.wires, na, a.pin.x, a.pin.y);
+  const toWires = joinedWires(sd.wires, na, b.pin.x, b.pin.y);
+  if (fromWires.some((i) => toWires.includes(i))) {
+    return { op: 'wire', effect: `${pinLabel(a.h)} and ${pinLabel(b.h)} are already joined by wires of ${d.nets[na]!.name}; nothing drawn`, ids: [A.sheet] };
+  }
   const pts = routeWire({
-    from: { x: a.pin.x, y: a.pin.y, side: a.pin.side },
-    to: { x: b.pin.x, y: b.pin.y, side: b.pin.side },
+    from: [{ x: a.pin.x, y: a.pin.y }],
+    fromWires: fromWires.map((i) => sd.wires[i]!.pts),
+    to: [{ x: b.pin.x, y: b.pin.y }],
+    toWires: toWires.map((i) => sd.wires[i]!.pts),
     via,
-    net: na,
     symbols: views,
     wires: sd.wires,
     soft: softBoxes(d, sd, na),
@@ -89,7 +96,7 @@ export function wireOp(d: Design, op: Extract<EditOp, { op: 'wire' }>): OpResult
   if (!pts) {
     reject({ code: 'NO_PATH', message: `No clear path from ${la} to ${lb}: parts or wires of other nets are in the way. Give via points (corners the wire must pass, page coordinates in mils), or move parts first (place_symbol).` });
   }
-  sd.wires.push({ netId: na, pts: pts! });
+  sd.wires.push({ netId: na, pts: pts!, ...(via.length ? { via: true } : {}) });
   // the net labels at the two pins have done their job
   const at = (l: { x: number; y: number }, p: PinView) => l.x === p.x && l.y === p.y;
   const before = sd.labels.length;

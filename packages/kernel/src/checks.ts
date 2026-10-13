@@ -46,8 +46,14 @@ export function runChecks(d: Design, placement?: SchematicView['constraintStatus
 }
 
 /** Errors first, then by code and entities: the order every list of diagnostics has. */
+/** Sorted, each finding once: two labels drawn alike can make the same finding twice, and it says nothing more the second time. */
 export function sortDiagnostics(ds: Diagnostic[]): Diagnostic[] {
-  return ds.sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.code.localeCompare(b.code) || natCmp(a.entities.join(','), b.entities.join(',')));
+  const seen = new Set<string>();
+  const once = ds.filter((x) => {
+    const k = `${diagKey(x)}|${x.message}`;
+    return !seen.has(k) && !!seen.add(k);
+  });
+  return once.sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.code.localeCompare(b.code) || natCmp(a.entities.join(','), b.entities.join(',')));
 }
 
 export function countDiagnostics(ds: Diagnostic[]): DiagnosticCounts {

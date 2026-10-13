@@ -11,6 +11,7 @@ import { DEFAULT_PAPER, PAGE, paperOf, type Component, type Design, type DrawnSy
 import { GRID, isTwoPin, symbolFor, symbolFromSpec, unitCount, uprightSymbol } from '@4k7/parts';
 import { cardOf, componentsSorted, natCmp } from './doc.ts';
 import { PAGE_GAP, drawnWith, evaluateConstraints, layoutSheetOf, pageName, pagesBBox, symbolKey } from './layout.ts';
+import { cleanWires } from './wireclean.ts';
 import { addJunctions, deco, labelRect, leadEnd, makeSymbol, rotateSymbol, symbolMaking, textRect, type Dir, type Scene } from './scene.ts';
 
 /* ---------------------------------- view ----------------------------------- */
@@ -117,6 +118,21 @@ export function onWire(x: number, y: number, pts: number[]): boolean {
 }
 
 const ends = (w: WireView): [number, number][] => [[w.pts[0]!, w.pts[1]!], [w.pts.at(-2)!, w.pts.at(-1)!]];
+
+/** The wires of a net joined to a spot (a pin): those on it, and those whose end touches one of them, and so on. Indices into `wires`. */
+export function joinedWires(wires: WireView[], netId: string, x: number, y: number): number[] {
+  const mine = wires.map((w, i) => [w, i] as const).filter(([w]) => w.netId === netId);
+  const out = new Set(mine.filter(([w]) => onWire(x, y, w.pts)).map(([, i]) => i));
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [w, i] of mine) {
+      if (out.has(i)) continue;
+      const touches = [...out].some((o) => ends(w).some(([ex, ey]) => onWire(ex, ey, wires[o]!.pts)) || ends(wires[o]!).some(([ex, ey]) => onWire(ex, ey, w.pts)));
+      if (touches) (out.add(i), (grew = true));
+    }
+  }
+  return [...out];
+}
 
 /**
  * What hangs together on the sheet: wires of one net that touch (an end on the other wire), the
@@ -323,6 +339,10 @@ export function syncSheet(d: Design, sheetId: string): void {
   const drawn = new Set(sd.symbols.map((s) => s.comp));
   const fresh = comps.filter((c) => !drawn.has(c.id)).map((c) => c.id);
   if (fresh.length) placeFresh(d, sheetId, sd, fresh);
+  cleanWires(d, sd, sd.symbols.map((s) => symbolOf(d, s)!), (p) => {
+    const page = sd.pages.find((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
+    return page ? drawingArea(page) : null;
+  });
   tidyPages(d, sd);
 }
 
@@ -719,6 +739,30 @@ function restyle(d: Design, comp: Component, s: DrawnSymbol, two: boolean, look:
     return made(d, comp, base, symbolFor(card, false, { ...s.spec, mirror: look.mirror }), cx, cy);
   }
   return undefined;
+}
+
+/**
+ * A part whose card now draws its symbol differently (set_symbol layout) is made again on every
+ * stored drawing, centred where it stood; the next sync cuts back the wires to pins that moved.
+ * Split units are left to the sync (it draws them afresh). The names of the sheets touched.
+ */
+export function remakeSymbols(d: Design, partId: string): string[] {
+  const card = cardOf(d, partId);
+  const touched: string[] = [];
+  if (!card) return touched;
+  for (const [sheetId, sd] of Object.entries(d.drawing ?? {})) {
+    let hit = false;
+    sd.symbols = sd.symbols.map((s) => {
+      const comp = d.components[s.comp];
+      if (s.part !== partId || !comp || s.unit || s.spec.unit !== undefined) return s;
+      hit = true;
+      const c = centre(s.bbox);
+      const base = { comp: s.comp, part: s.part, ...(s.with ? { with: s.with } : {}) };
+      return made(d, comp, base, symbolFromSpec(card, s.spec), Math.round(c.x / GRID) * GRID, Math.round(c.y / GRID) * GRID);
+    });
+    if (hit) touched.push(d.sheets[sheetId]?.name ?? sheetId);
+  }
+  return touched;
 }
 
 function made(d: Design, comp: Component, base: Omit<DrawnSymbol, 'spec' | 'x' | 'y' | 'bbox' | 'ref' | 'value'>, def: ReturnType<typeof symbolFor>, cx: number, cy: number): DrawnSymbol {

@@ -128,8 +128,10 @@ export interface PartCard {
   notes?: string[];
   /** Mechanical package data (from the datasheet); footprints are generated from it. */
   packageInfo?: PackageInfo;
-  /** Explicit symbol arrangement (generated for large ICs such as MCUs). */
+  /** Explicit symbol arrangement (generated for large ICs such as MCUs, or given with set_symbol layout). */
   symbolLayout?: SymbolLayout;
+  /** `symbolLayout` was arranged on purpose (set_symbol layout, e.g. like a reference drawing), not generated; it goes back to the library part. */
+  customSymbol?: boolean;
   /**
    * Split symbol for big ICs: each unit is drawn as its own symbol (U1A, U1B …) with the
    * pins of its layout. Every pin belongs to exactly one unit. Overrides `symbolLayout`.

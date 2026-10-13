@@ -13,7 +13,9 @@ import {
   type EditOp,
   type OpResult,
   type PartCard,
+  type PartPin,
   type PackageInfo,
+  type SymbolLayout,
   type BoardSettings,
   type CopperLayer,
   type HoleCorner,
@@ -42,10 +44,10 @@ import {
 } from '@4k7/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
-import { isDrawn, moveSymbol, redrawParts, releaseSheet, schematicView, syncDrawing } from './drawing.ts';
+import { isDrawn, moveSymbol, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
-import { footprintFor, isTwoPin, packageOptions, planUnits, searchParts, standardPackage, unitCount } from '@4k7/parts';
+import { footprintFor, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOptions, planUnits, searchParts, standardPackage, unitCount } from '@4k7/parts';
 import {
   allocRefdes,
   cardOf,
@@ -100,7 +102,7 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return { op: op.op, effect: `waived ${op.code} for ${op.entities.join(', ')}`, ids: [id] };
     }
     case 'set_symbol':
-      return setSymbol(d, op.ref, op.style);
+      return setSymbol(d, op);
     case 'set_footprint':
       return setFootprint(d, op);
     case 'rename_part':
@@ -787,20 +789,94 @@ function routeStep(d: Design): OpResult {
   return { op: 'route', effect: 'board routed as placed', ids: ['board'] };
 }
 
-/** Draw a part as one symbol or as units. Changes the design's copy of the part card only. */
-function setSymbol(d: Design, ref: string, style: 'single' | 'units'): OpResult {
-  const comp = resolveComponent(d, ref);
+/**
+ * How a part's symbol is drawn: one symbol or units (style), or the pins where the agent wants them
+ * (layout, e.g. as in a reference drawing). Changes the design's copy of the part card only.
+ */
+function setSymbol(d: Design, op: Extract<EditOp, { op: 'set_symbol' }>): OpResult {
+  const comp = resolveComponent(d, op.ref);
   const card = cardOf(d, comp.part)!;
+  const users = Object.values(d.components).filter((c) => c.part === card.id).map((c) => c.refdes).sort(natCmp);
+  if (op.layout !== undefined) return setPinLayout(d, comp, card, users, op);
+  const style = op.style;
+  if (!style) reject({ code: 'INVALID_OP', message: 'set_symbol needs style ("single" or "units") or layout (the pins on each side).' });
   if (style === 'units' && (isTwoPin(card) || card.pins.length < 12)) {
     reject({ code: 'SYMBOL_STYLE', message: `${comp.refdes} (${card.id}) has ${card.pins.length} pins; only large ICs can be split into units.` });
   }
-  const users = Object.values(d.components).filter((c) => c.part === card.id).map((c) => c.refdes).sort(natCmp);
   const copy: PartCard = structuredClone(card);
   if (style === 'units') copy.units = planUnits(copy.pins);
   else delete copy.units;
   d.parts[card.id] = copy;
   const what = style === 'units' ? `${copy.units!.length} units (${copy.units!.map((u) => `${u.name}: ${u.title}`).join('; ')})` : 'one symbol';
   return { op: 'set_symbol', effect: `${users.join(', ')} drawn as ${what}`, ids: [card.id] };
+}
+
+function setPinLayout(d: Design, comp: Component, card: PartCard, users: string[], op: Extract<EditOp, { op: 'set_symbol' }>): OpResult {
+  if (op.style === 'units') reject({ code: 'SYMBOL_STYLE', message: 'A layout arranges one symbol: give style "units" or a layout, not both.' });
+  if (!isBoxSymbol(card)) {
+    reject({ code: 'SYMBOL_STYLE', message: `${comp.refdes} (${card.id}) has a symbol of its own kind (a two-pin part, transistor or bridge) whose pins cannot be moved; only ICs, connectors and modules drawn as a box take a layout.` });
+  }
+  const copy: PartCard = structuredClone(card);
+  delete copy.units;
+  if (op.layout) {
+    copy.symbolLayout = resolveLayout(comp.refdes, card, op.layout);
+    copy.customSymbol = true;
+  } else {
+    const generated = generatedLayout(copy);
+    if (generated) copy.symbolLayout = generated;
+    else delete copy.symbolLayout;
+    delete copy.customSymbol;
+  }
+  d.parts[card.id] = copy;
+  const sheets = remakeSymbols(d, card.id);
+  const how = copy.symbolLayout ? layoutText(copy, copy.symbolLayout) : 'by pin type';
+  return {
+    op: 'set_symbol',
+    effect:
+      `${users.join(', ')}: ${op.layout ? 'pins arranged' : 'generated arrangement'} (${how})` +
+      (card.units?.length ? `, one symbol instead of ${card.units.length} units` : '') +
+      (sheets.length ? `. Redrawn where it stood on your drawing of ${sheets.join(', ')}: wires to pins that moved were cut back and show as labels until you wire them again` : ''),
+    ids: [card.id],
+  };
+}
+
+/** The agent's layout (pin names or numbers per side) as pin numbers; every pin exactly once, only like pins stacked. */
+function resolveLayout(refdes: string, card: PartCard, given: NonNullable<Extract<EditOp, { op: 'set_symbol' }>['layout']>): SymbolLayout {
+  const label = (p: PartPin) => (p.name === p.number ? p.number : `${p.number} ${p.name}`);
+  const byNumber = new Map(card.pins.map((p) => [p.number, p]));
+  const byName = new Map<string, PartPin[]>();
+  for (const p of card.pins) byName.set(p.name.toUpperCase(), [...(byName.get(p.name.toUpperCase()) ?? []), p]);
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  const out: SymbolLayout = { left: [], right: [], top: [], bottom: [] };
+  for (const side of ['left', 'right', 'top', 'bottom'] as const) {
+    for (const entry of given[side] ?? []) {
+      if (entry === null) {
+        out[side].push(null);
+        continue;
+      }
+      const stack = (Array.isArray(entry) ? entry : [entry]).flatMap((key) => {
+        const pins = byNumber.has(key) ? [byNumber.get(key)!] : byName.get(key.toUpperCase());
+        if (!pins) problems.push(`no pin "${key}"`);
+        return pins ?? [];
+      });
+      if (!stack.length) continue;
+      for (const p of stack) {
+        if (seen.has(p.number)) problems.push(`pin ${label(p)} is given twice`);
+        seen.add(p.number);
+      }
+      if (new Set(stack.map((p) => p.name.toUpperCase())).size > 1 && !stack.every((p) => p.type === 'nc')) {
+        problems.push(`${stack.map(label).join(', ')} cannot share one position (only pins of one name, or NC pins, stack)`);
+      }
+      out[side].push(stack.map((p) => p.number));
+    }
+  }
+  const missing = card.pins.filter((p) => !seen.has(p.number));
+  if (missing.length) problems.push(`missing ${missing.map(label).join(', ')} (every pin is drawn)`);
+  if (problems.length) {
+    reject({ code: 'SYMBOL_LAYOUT', message: `Pin layout for ${refdes} (${card.id}): ${[...new Set(problems)].join('; ')}.`, candidates: card.pins.map(label) });
+  }
+  return out;
 }
 
 /**
