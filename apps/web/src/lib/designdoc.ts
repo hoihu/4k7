@@ -1,7 +1,7 @@
 /**
  * The design document: what the design does (the description the agent wrote: an overview, then
  * each functional block with its parts, its schematic and its place on the board), the layout,
- * an assembly drawing (only the parts, for populating a board), the BOM and the schematic pages.
+ * a dimensioned drawing of the outline and mounting holes, an assembly drawing (only the parts, for populating a board), the BOM and the schematic pages.
  * Printed like the schematic, through the browser's print dialog (which also saves a PDF);
  * schematic and board are drawn by the same canvas components as on screen.
  */
@@ -9,6 +9,7 @@ import { bomLines } from '@4k7/fab';
 import type { Body3D } from '@4k7/parts';
 import { PAPERS, type BoardView, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@4k7/schema';
 import BoardCanvas from './components/BoardCanvas.svelte';
+import { boardDimensions } from './dimensions.ts';
 import { markdown } from './markdown.ts';
 import { SCHEMATIC_STYLE, drawOffscreen, drawSheets, esc, printHtml, sheetSvg } from './print.ts';
 
@@ -66,6 +67,10 @@ const BOARD_STYLE = `
 .asm.side .part.bottom .pad:not(.tht) { fill: #d4d4d4; }
 .asm.side .part.bottom .silk { stroke: #000; stroke-dasharray: none; }
 .asm.side .part.bottom .silkdot, .asm.side .part.bottom .ref { fill: #000; }
+.brd .dims .dl { fill: none; stroke: #000; }
+.brd .dims .da { fill: #000; stroke: none; }
+.brd .dims text { fill: #000; text-anchor: middle; dominant-baseline: central; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.brd .dims text.note { dominant-baseline: auto; }
 .flip text { transform-box: fill-box; transform-origin: center; transform: scaleX(-1); }
 .loc .ref { display: none; }
 .loc .silk { stroke: #777; }
@@ -198,14 +203,14 @@ function drawingScale(w: number, h: number, maxW: number, maxH: number): number 
 }
 const scaleText = (s: number) => (s >= 1 ? `${+s.toFixed(1)}:1` : `1:${+(1 / s).toFixed(1)}`);
 
-/** A board drawing (BoardCanvas content) on paper, with a millimetre of air around the outline. */
-function boardSvg(inner: string, b: BoardView, cls: string, maxW: number, maxH: number, id?: string, flip = false): { svg: string; scale: number } {
-  const [w, h] = [b.outline.w + 2, b.outline.h + 2];
+/** A board drawing (BoardCanvas content) on paper, with `air` (mm) around the outline. */
+function boardSvg(inner: string, b: BoardView, cls: string, maxW: number, maxH: number, id?: string, flip = false, air = 1): { svg: string; scale: number } {
+  const [w, h] = [b.outline.w + 2 * air, b.outline.h + 2 * air];
   const scale = drawingScale(w, h, maxW, maxH);
   // seen from below: the board turned over left to right, its texts turned back so they read
   const content = flip ? `<g class="flip" transform="translate(${b.outline.w} 0) scale(-1 1)">${inner}</g>` : inner;
   return {
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" class="brd ${cls}"${id ? ` id="${id}"` : ''} viewBox="-1 -1 ${w} ${h}" style="width:${(w * scale).toFixed(1)}mm;height:${(h * scale).toFixed(1)}mm">${content}</svg>`,
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" class="brd ${cls}"${id ? ` id="${id}"` : ''} viewBox="${-air} ${-air} ${w} ${h}" style="width:${(w * scale).toFixed(1)}mm;height:${(h * scale).toFixed(1)}mm">${content}</svg>`,
     scale,
   };
 }
@@ -331,6 +336,9 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
   const sheets = await drawSheets(view, title);
   const on = (keys: string[]) => Object.fromEntries(keys.map((k) => [k, true]));
   const layoutInner = b ? await drawOffscreen(BoardCanvas, { board: b, show: on(['board', 'silk', ...b.layers]) }, 'svg.board') : '';
+  // the dimensioned drawing: the outline and the mounting holes, nothing else
+  const mechBoard = b ? { ...b, parts: b.parts.filter(isHole), tracks: [], vias: [], zones: [], graphics: [], ratsnest: [] } : null;
+  const mechInner = mechBoard ? await drawOffscreen(BoardCanvas, { board: mechBoard, show: on(['board', 'dims', ...mechBoard.layers]) }, 'svg.board') : '';
   const assemblyInner = b ? await drawOffscreen(BoardCanvas, { board: b, show: on(['board', 'silk']) }, 'svg.board') : '';
   // the assembly drawings: one per side that carries parts (holes on both)
   const sides: { side: 'top' | 'bottom'; board: BoardView; inner: string }[] = [];
@@ -444,6 +452,9 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
     });
     if (b.routing !== 'done') html.push(`<div class="note">The board is ${b.routing === 'stale' ? 'routed for an earlier placement (out of date)' : 'placed but not routed yet'}: the drawing shows the placement.</div>`);
     html.push(figure(main.svg, `Top view, all layers, scale ${scaleText(main.scale)}.${legend.join('')}${twoSided || sides[0]?.side === 'bottom' ? '. Parts on the bottom side are dashed.' : ''}`));
+    const nHoles = mechBoard!.parts.length;
+    const mech = boardSvg(mechInner, b, 'mech', TEXT_W, FIG_H, undefined, false, boardDimensions(b).extent + 1);
+    html.push(`<h3>Dimensions</h3>` + figure(mech.svg, `The outline${nHoles ? ` and the ${plural(nHoles, 'mounting hole')} (positions to their centres)` : ''}, in mm, scale ${scaleText(mech.scale)}.`));
     if (pictures) {
       const shot = (v: View3D, caption: string, cls = '') => figure(`<canvas data-pic="${v}"></canvas>`, caption, '', `card dark ${cls}`.trim());
       html.push(

@@ -1,8 +1,9 @@
 <script lang="ts">
   import { boardPolygon, cutoutPolygon, type BoardView, type CopperLayer } from '@4k7/schema';
+  import { boardDimensions, dimPaths } from '../dimensions.ts';
   import type { TopView } from '../three-body.ts';
 
-  /** 2D board view (mm, top view): outline, pads, tracks, vias, silkscreen, ratsnest. */
+  /** 2D board view (mm, top view): outline, pads, tracks, vias, silkscreen, ratsnest, dimensions. */
   interface Props {
     board: BoardView | null;
     show: Record<string, boolean>;
@@ -40,6 +41,8 @@
   /** The board outline (rounded corners) and its milled cutouts. */
   const outlinePath = $derived(board ? polyPath(boardPolygon(board.shape ? board : { ...board, cornerRadius: board.cornerRadius || 0.5 })) : '');
   const cutoutPaths = $derived(board ? board.cutouts.map((c) => polyPath(cutoutPolygon(c))) : []);
+  /** The Dimensions layer: the board's size and its mounting holes' positions and diameters. */
+  const dimensions = $derived(board ? boardDimensions(board) : null);
 
   /** Part being dragged: offset in mm, snapped to 0.1 mm. */
   let partDrag = $state<{ ref: string; sx: number; sy: number; dx: number; dy: number; moved: boolean } | null>(null);
@@ -90,7 +93,8 @@
     const key = `${board.outline.w}x${board.outline.h}`;
     if (key !== fittedFor && !userMoved) {
       fittedFor = key;
-      const m = Math.max(board.outline.w, board.outline.h) * 0.08 + 2;
+      // room around the board for the dimensions (shown or not, so turning them on does not move the view)
+      const m = Math.max(Math.max(board.outline.w, board.outline.h) * 0.08 + 2, (dimensions?.extent ?? 0) + 1);
       vb = { x: -m, y: -m, w: board.outline.w + 2 * m, h: board.outline.h + 2 * m };
     }
   });
@@ -428,6 +432,18 @@
 
     <path class="edge" d={outlinePath} />
     {#each cutoutPaths as d, i (i)}<path class="edge" {d} />{/each}
+    {#if show.dims && dimensions}
+      <!-- the Dimensions layer (mm): size above and left, the holes' positions below and right, their diameters by them -->
+      <g class="dims" font-size={dimensions.font} stroke-width={dimensions.font * 0.05}>
+        {#each dimensions.dims as d, i (i)}
+          {@const p = dimPaths(d, dimensions.arrow)}
+          <path class="dl" d={p.lines} />
+          <path class="da" d={p.arrows} />
+          <text x={d.tx} y={d.ty} transform={d.dir === 'v' ? `rotate(-90 ${d.tx} ${d.ty})` : undefined}>{d.text}</text>
+        {/each}
+        {#each dimensions.notes as t, i (i)}<text class="note" x={t.x} y={t.y} style:text-anchor={t.anchor}>{t.text}</text>{/each}
+      </g>
+    {/if}
     {#if marker}<circle class="marker" cx={marker.x} cy={marker.y} r="1.2" />{/if}
   {/if}
 </svg>
@@ -476,6 +492,11 @@
   .part:hover .silk { stroke: #9fd2ff; opacity: 1; }
   .part.sel .silk { stroke: #6fb5ff; stroke-width: 0.2; opacity: 1; }
   .part.sel .hit { fill: rgba(111, 181, 255, 0.12); }
+  .dims { pointer-events: none; }
+  .dims .dl { fill: none; stroke: #7fdcb4; }
+  .dims .da { fill: #7fdcb4; stroke: none; }
+  .dims text { fill: #7fdcb4; stroke: none; text-anchor: middle; dominant-baseline: central; font-family: var(--mono); }
+  .dims text.note { dominant-baseline: auto; }
   .marker { fill: none; stroke: #ff5a5a; stroke-width: 0.25; }
   .board:focus { outline: none; }
   .part { cursor: grab; }
