@@ -182,23 +182,29 @@ export function compareDrafts(a: PartDraft, b: PartDraft): Disagreement[] {
   return out;
 }
 
+/**
+ * A copy of draft data. Not structuredClone: the app hands in its reactive state (Svelte proxies),
+ * which the browser refuses to clone ("The object can not be cloned"); drafts are plain JSON.
+ */
+const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
 /** Pass A with the facts the user took from pass B. */
 export function mergeDrafts(a: PartDraft, b: PartDraft, takeB: Set<string>): PartDraft {
-  const out: PartDraft = structuredClone(a);
+  const out: PartDraft = copy(a);
   const pb = new Map(b.pins.map((p) => [p.number.toUpperCase(), p]));
   for (const key of takeB) {
     const [kind, field] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
     if (kind === 'pin') {
       const i = out.pins.findIndex((p) => p.number.toUpperCase() === field);
       const repl = pb.get(field);
-      if (repl && i >= 0) out.pins[i] = structuredClone(repl);
-      else if (repl) out.pins.push(structuredClone(repl));
+      if (repl && i >= 0) out.pins[i] = copy(repl);
+      else if (repl) out.pins.push(copy(repl));
       else if (i >= 0) out.pins.splice(i, 1);
     } else if (kind === 'package') {
       const f = field as (typeof PKG_FIELDS)[number];
       const v = b.package[f];
       if (v === undefined) delete (out.package as Record<string, unknown>)[f];
-      else (out.package as Record<string, unknown>)[f] = structuredClone(v);
+      else (out.package as Record<string, unknown>)[f] = copy(v);
     }
   }
   return out;
