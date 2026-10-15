@@ -19,7 +19,9 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount, type ViewInfo } from '@4k7/schema';
+import { RenderEnclosureInput, openQuestions, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount, type ViewInfo } from '@4k7/schema';
+import { boardScadSummary, enclosureJob, enclosureReport, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
+import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
@@ -181,6 +183,11 @@ class AppState {
   /** Routing under way (the copper laid so far is drawn over the placed board), else null. */
   routeProgress = $state.raw<RouteProgress | null>(null);
   private boards = new BoardClient();
+  /** The last enclosure render (the report, its pieces, the board facts it was measured against). */
+  enclosure = $state.raw<{ report: EnclosureReport; facts: EnclosureFacts } | null>(null);
+  enclosureBusy = $state(false);
+  /** OpenSCAD on this computer, as the server last said (null: not asked yet, or no server). */
+  scad = $state.raw<ScadStatus | null>(null);
   /** Design revision (bumped on every refresh) and the revision the shown board was computed for. */
   private rev = 0;
   private boardRev = -1;
@@ -451,6 +458,92 @@ class AppState {
     const next = this.boards.next();
     if (!this.boards.busy) void this.refreshBoard();
     return next;
+  }
+
+  /** OpenSCAD on this computer (asks the server; `again`: look for it again). Null without a server that knows it. */
+  async scadStatus(again = false): Promise<ScadStatus | null> {
+    if (disk.status !== 'ok') return null;
+    try {
+      this.scad = await disk.scadStatus(again);
+    } catch {
+      this.scad = null;
+    }
+    return this.scad;
+  }
+
+  /** Use this OpenSCAD (an absolute path), or look for it again (null). */
+  async setScadBin(bin: string | null): Promise<string | null> {
+    const r = await disk.scadSetBin(bin);
+    if (!r.ok) return r.error;
+    this.scad = r.status;
+    return null;
+  }
+
+  /**
+   * Render the working copy's enclosure script with the user's OpenSCAD and measure it
+   * (docs/design/enclosure.md §5). Keeps the result for the Enclosure view and the pictures.
+   */
+  async renderEnclosure(): Promise<{ report: EnclosureReport; facts: EnclosureFacts } | { error: string }> {
+    const design = await this.kernel.draftDesign();
+    const script = design.enclosure?.script;
+    if (!script) return { error: 'There is no enclosure script yet: write one with design_edit set_enclosure_script.' };
+    if (disk.status !== 'ok') return { error: 'Rendering needs the 4k7 server on this computer: it runs OpenSCAD.' };
+    const st = await this.scadStatus();
+    if (!st) return { error: 'This 4k7 server cannot render enclosures yet: it is older than the app. Restart it (or update the app).' };
+    if (!st.available) return { error: `OpenSCAD is not available: ${st.reason ?? 'not found'} Install OpenSCAD 2025 or later (https://openscad.org/downloads.html), then Enclosure → OpenSCAD → Look again; or set its path there.` };
+    const b = await this.routedBoard();
+    if (!b) return { error: 'The board could not be computed.' };
+    const job = enclosureJob(b, design.name, script, design.enclosure?.brief);
+    this.enclosureBusy = true;
+    try {
+      const results = await disk.scadRender(job);
+      const out = { report: enclosureReport(job, results, script), facts: job.facts };
+      this.enclosure = out;
+      return out;
+    } catch (e) {
+      return { error: `Rendering failed: ${(e as Error).message}` };
+    } finally {
+      this.enclosureBusy = false;
+    }
+  }
+
+  /** Pictures of the last render for the agent (render_enclosure). */
+  private async enclosurePictures(req: RenderEnclosureInput, r: { report: EnclosureReport; facts: EnclosureFacts }): Promise<{ data: string; mimeType: string; title: string }[]> {
+    const b = await this.routedBoard();
+    if (!b) return [];
+    const design = await this.kernel.draftDesign();
+    try {
+      const { enclosurePictures } = await import('./enclosure3d.ts');
+      return await enclosurePictures({ board: b, facts: r.facts, pieces: r.report.pieces, findings: r.report.findings, openings: design.enclosure?.brief?.openings ?? [] }, req);
+    } catch (e) {
+      this.flash(`Enclosure pictures failed: ${(e as Error).message}`);
+      return [];
+    }
+  }
+
+  /** board.scad for the working copy (download, get_enclosure). */
+  async boardScadFile(): Promise<{ name: string; content: string } | null> {
+    const design = await this.kernel.draftDesign();
+    const b = await this.routedBoard();
+    return b ? boardScad(b, design.name, design.enclosure?.brief) : null;
+  }
+
+  /** design_query get_enclosure: the brief, the script, the board as OpenSCAD sees it, OpenSCAD, the last render. */
+  private async enclosureQuery(): Promise<unknown> {
+    const design = await this.kernel.draftDesign();
+    const enc = design.enclosure;
+    const lib = await this.boardScadFile();
+    const st = await this.scadStatus();
+    const last = this.enclosure;
+    return {
+      brief: enc?.brief ?? null,
+      open_questions: openQuestions(enc?.brief).map((i) => `${i.topic}: ${i.question}`),
+      script: enc?.script ?? null,
+      board_scad: lib ? boardScadSummary(lib.content) : 'the board could not be computed',
+      openscad: !st ? 'unknown: the 4k7 server on this computer is not reachable or older than the enclosure' : st.available ? `OpenSCAD ${st.version}${st.manifold ? '' : ' (no Manifold engine: renders are slow)'}` : `not available: ${st.reason}`,
+      last_render: !enc?.script ? 'no script yet' : last && last.report.script === enc.script ? reportText(last.report, last.facts) : 'not rendered since the script last changed: render_enclosure',
+      how: 'Read design_query get_guide topic "mechanics" before the first brief. 1. The brief (set_enclosure_brief): decide what you can, ask what only the user knows, in one brief; the user answers in the app. 2. The script (set_enclosure_script) against board.scad: include <board.scad>, never copy its numbers. 3. render_enclosure after every change: fix the report first, then what the pictures show. 4. propose when the report is clean.',
+    };
   }
 
   get pendingCount() {
@@ -732,6 +825,16 @@ class AppState {
             return fail('query · try_placements', (e as Error).message);
           }
         }
+        if ((input as { op?: string })?.op === 'get_enclosure') {
+          const out = await this.enclosureQuery();
+          return { content: JSON.stringify(out), isError: false, label: 'query · get_enclosure', detail: (out as { open_questions: string[] }).open_questions.length ? 'questions open' : 'ok' };
+        }
+        if ((input as { op?: string })?.op === 'get_guide') {
+          const topic = (input as { topic?: string }).topic;
+          if (topic !== 'mechanics') return fail('query · get_guide', 'Guides: mechanics.');
+          // the guide is docs/design/mechanics.md as it is, without its header for people
+          return { content: mechanicsGuide.replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''), isError: false, label: 'query · get_guide', detail: 'mechanics' };
+        }
         if ((input as { op?: string })?.op !== 'get_board') break;
         // routed in the board worker, so the kernel stays responsive
         const b = await this.routedBoard();
@@ -819,6 +922,21 @@ class AppState {
           isError: false,
           label: 'schematic image',
           detail: `${args.width}px${args.area && frame ? ' · the area' : frame ? ` · page ${args.page}` : ''}`,
+        };
+      }
+      case 'render_enclosure': {
+        const parsed = RenderEnclosureInput.safeParse(input ?? {});
+        if (!parsed.success) return fail('enclosure', parsed.error.message);
+        const r = await this.renderEnclosure();
+        if ('error' in r) return fail('enclosure', r.error);
+        const errors = r.report.findings.filter((f) => f.severity === 'error').length;
+        const images = r.report.pieces.length ? await this.enclosurePictures(parsed.data, r) : [];
+        return {
+          content: reportText(r.report, r.facts) + (images.length ? `\nPictures: ${images.map((i) => i.title).join('; ')}.` : ''),
+          images: images.map(({ title: _t, ...img }) => img),
+          isError: false,
+          label: 'enclosure render',
+          detail: errors ? `${errors} finding(s)` : r.report.findings.length ? 'warnings' : 'clean',
         };
       }
       case 'get_board_image': {
@@ -937,8 +1055,22 @@ class AppState {
             );
           }
         }
+        // a changed enclosure script was rendered and its report is clean, or the agent says why not
+        if (p.hunks.some((h) => h.id === 'enclosure:script') && !args.data.enclosure_findings?.trim()) {
+          const script = (await this.kernel.draftDesign()).enclosure?.script;
+          const last = this.enclosure?.report;
+          if (script && (!last || last.script !== script)) {
+            log('propose', false, 'refused: enclosure not rendered');
+            return text('Refused: the enclosure script changed and has not been rendered since. Call render_enclosure and fix what its report says first.', true);
+          }
+          const errors = last?.findings.filter((f) => f.severity === 'error') ?? [];
+          if (script && errors.length) {
+            log('propose', false, `refused: ${errors.length} enclosure finding(s)`);
+            return text(`Refused: the enclosure's last render has ${errors.length} finding(s):\n${errors.map((f) => `- ${f.code} ${f.message}`).join('\n')}\nFix them and render again; if you cannot, propose with enclosure_findings saying why and what the user could decide.`, true);
+          }
+        }
         const it = item();
-        it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') + (args.data.open_connections ? `\nOpen connections: ${args.data.open_connections}` : '') });
+        it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') + (args.data.open_connections ? `\nOpen connections: ${args.data.open_connections}` : '') + (args.data.enclosure_findings ? `\nEnclosure: ${args.data.enclosure_findings}` : '') });
         if (this.agentRun?.item !== it) it.status = 'done';
         it.changeset = { state: 'pending' };
         if (this.settings.mode === 'auto') {

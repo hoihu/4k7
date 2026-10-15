@@ -46,6 +46,10 @@ export const ProposeInput = z.object({
     .string()
     .optional()
     .describe('Only if the routed board still has open connections and you could not close them: why, and what the user could decide (e.g. 4 layers, a bigger board). Without it propose refuses a routed board that is not 100 % routed.'),
+  enclosure_findings: z
+    .string()
+    .optional()
+    .describe('Only if the enclosure script changed and its last render still has findings you could not fix: why, and what the user could decide. Without it propose refuses an enclosure that was not rendered or whose report has errors.'),
 });
 
 export const WaitForReviewInput = z.object({
@@ -107,6 +111,20 @@ export const BoardImageInput = z.object({
     .describe('Zoom into x0, y0, x1, y1 in mm (board coordinates, top left 0, 0), e.g. around an unrouted connection'),
   width: z.number().int().min(400).max(2400).default(1400),
 });
+
+export const ENCLOSURE_VIEWS = ['front_left', 'back_right', 'open', 'sections', 'base_top', 'bottom'] as const;
+export const RenderEnclosureInput = z.object({
+  views: z
+    .array(z.enum(ENCLOSURE_VIEWS))
+    .optional()
+    .describe('Pictures to get back: front_left and back_right (the closed box from above, two corners), open (the lid lifted off), sections (a cut across the wall through every opening in the brief), base_top (the base from above without the lid: posts, ribs, the board on them), bottom (from below). Default: all but bottom on the first render; ask for fewer once only details change'),
+  section: z
+    .object({ axis: z.enum(['x', 'y', 'z']), at_mm: z.number() })
+    .optional()
+    .describe('One more cut anywhere: the plane x, y or z = at_mm (board.scad coordinates), seen from the side it faces'),
+  width: z.number().int().min(400).max(1600).default(900).describe('Width of each picture in pixels'),
+});
+export type RenderEnclosureInput = z.infer<typeof RenderEnclosureInput>;
 
 export const AttachmentInput = z.object({
   n: z.number().int().min(1).default(1).describe('Which attachment: they are numbered through the conversation (#1, #2…)'),
@@ -195,6 +213,7 @@ export const TOOL_NAMES = {
   datasheet: 'read_datasheet',
   image: 'get_schematic_image',
   boardImage: 'get_board_image',
+  renderEnclosure: 'render_enclosure',
   attachment: 'view_attachment',
   ask: 'ask_user',
   propose: 'propose',
@@ -297,6 +316,14 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
         'connections not routed yet). The whole board, the area the user zoomed into, or a region in mm. Routing a big board takes a while; ' +
         'the picture waits for it.',
       input_schema: schemaOf(BoardImageInput),
+    },
+    {
+      name: TOOL_NAMES.renderEnclosure,
+      description:
+        "Render the enclosure script (the working copy's, set with design_edit set_enclosure_script) with the user's OpenSCAD, in 3D with the board: " +
+        'the report (OpenSCAD\'s errors with line numbers, and what the checks measured: collisions with named parts, blocked openings, ' +
+        'room under the lid, the board held, pieces overlapping, the size) and pictures. Fix what the report says first, then what the pictures show; render again after every change.',
+      input_schema: schemaOf(RenderEnclosureInput),
     },
     ...(engine !== 'cli'
       ? [{
