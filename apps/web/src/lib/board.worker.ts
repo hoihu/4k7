@@ -16,7 +16,7 @@ self.onmessage = (e: MessageEvent<{ id: number; design: Design }>) => {
     const k = new Kernel(design);
     self.postMessage({ id, stage: 'placed', board: k.boardPlacement() });
     const board = k.board({
-      onProgress: (p) => self.postMessage({ id, progress: { pass: p.pass, connections: p.connections, done: p.done, bestOpen: p.bestOpen, elapsedMs: Math.round(p.elapsedMs), tracks: p.tracks, vias: p.vias } }),
+      onProgress: (p) => self.postMessage({ id, progress: { pass: p.pass, connections: p.connections, done: p.done, bestOpen: p.bestOpen, elapsedMs: Math.round(p.elapsedMs), grid: p.grid, tracks: p.tracks, vias: p.vias } }),
       onBest: (best) => self.postMessage({ id, best }),
     });
     self.postMessage({ id, stage: 'routed', board });

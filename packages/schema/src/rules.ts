@@ -82,6 +82,15 @@ Labels are always horizontal.
 Draw the feedback divider as wires, not labels.
 Connectors go on the left edge of the page.`;
 
+export const LAYOUT_NOTES_PLACEHOLDER = `Nothing here yet: the agent places, chooses planes and routes as it sees fit.
+
+Write down your rules and what it gets wrong, the way you would tell a colleague. For example:
+
+Under each IC, the plane on the layer next to it carries the IC's supply (+3V3 under the MCU), not the input rail.
+Connectors go on the board edge, facing out.
+Crystals right at the MCU, nothing routed under them.
+Keep the switching loop of a buck converter small: input cap, switch and diode close together.`;
+
 /**
  * The notes and check levels from the ruleset text of earlier versions ("### SCH.ID: title"
  * headings with "level:" and "param:" lines). The levels become check settings; the text keeps

@@ -369,10 +369,25 @@ export const AutoDrawOp = z.object({
   refs: z.array(componentRef).optional().describe('Only these parts: taken out of your drawing and drawn afresh together, in free space'),
 }).describe('Let the auto-layout draw: without refs it redraws the whole sheet from the netlist and the left_of/right_of/above/below hints, and keeps redrawing it after every change until you arrange it again (place_symbol); with refs it redraws just those parts in free space and the rest of your drawing stays.');
 
-export const ProposeLayoutOp = z.object({
-  op: z.literal('propose_layout'),
-  keep_choices: z.boolean().optional().describe('Keep the user\'s placement choices (default true); false forgets them (locked parts stay)'),
-}).describe('Propose the board afresh: a board size (unless set with set_board) and a placement from the netlist (supply caps at their IC\'s pins). Replaces the current placement.');
+/** A main part's place in an arrangement the agent decides (propose_placement, try_placements). */
+export const PartPlacement = z.object({
+  ref: componentRef,
+  x_mm: z.number().describe('Centre x on the board, from the left edge'),
+  y_mm: z.number().describe('Centre y on the board, from the top edge'),
+  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation (default 0): turn the part so its pins face what they connect to'),
+});
+export type PartPlacement = z.infer<typeof PartPlacement>;
+
+export const ProposePlacementOp = z.object({
+  op: z.literal('propose_placement'),
+  parts: z
+    .array(PartPlacement)
+    .optional()
+    .describe('Your arrangement of the main parts (ICs, connectors, big parts): where each goes and how it is turned. The placer puts the small parts round them (decoupling and support parts at the pins they serve) and fits the board. Leave out for a placement the placer proposes alone (a starting point)'),
+  width_mm: z.number().positive().optional().describe('With parts: the board size to arrange in (as set_board); omit to keep the size set, or let the board fit the parts'),
+  height_mm: z.number().positive().optional(),
+  keep_choices: z.boolean().optional().describe('Keep the placement choices made before for parts not in parts (default true); false forgets them (locked parts stay)'),
+}).describe('Propose the placement afresh: a board size (unless set) and a placement. With parts, the main parts go where you decide (soft: kept, nudged only where parts would overlap); the placer does the rest. Try arrangements with design_query try_placements first and apply the best one with this. Replaces the current placement.');
 
 export const RouteOp = z.object({
   op: z.literal('route'),
@@ -381,9 +396,27 @@ export const RouteOp = z.object({
 export const SetPlaneOp = z.object({
   op: z.literal('set_plane'),
   layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Copper layer; inner layers (4-layer boards) become dedicated planes, outer layers get a pour around the tracks'),
-  net: netName.nullable().optional().describe('Net to pour on that layer (e.g. "GND", "+3V3"); null removes the plane from the layer'),
+  net: netName.nullable().optional().describe('Net to pour on that layer (e.g. "GND", "+3V3"); null removes every plane from the layer'),
+  under: z.array(componentRef).min(1).optional().describe('Inner layers: the plane covers only the area under these parts (their box plus margin_mm; it follows them when they move), e.g. +3V3 under the MCU while +5V fills the rest of the layer. Pads inside the area drop onto it with vias; the net\'s other pads are joined with tracks'),
+  margin_mm: z.number().min(0).max(20).optional().describe('With under: how far the area reaches past the parts (default 1.5 mm)'),
+  rect: z
+    .object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() })
+    .optional()
+    .describe('Inner layers: the plane covers only this rectangle (top-left corner and size, mm) instead of the whole layer'),
   auto: z.boolean().optional().describe('true: back to the automatic planes (GND on B.Cu; on 4 layers GND on In1.Cu and the main supply on In2.Cu)'),
-});
+}).describe('A net\'s copper plane on a layer. Without under/rect it fills the layer (replacing the layer\'s full plane; area planes on it stay, and it goes round them). With under or rect it covers only that area of an inner layer (replacing that net\'s area there), a split plane: e.g. In2.Cu +5V everywhere and +3V3 under U1. net null clears the layer.');
+
+const planeMm = (what: string) => z.number().min(0).max(10).nullable().optional().describe(`${what} (mm); null: back to the default`);
+export const SetPlaneStyleOp = z.object({
+  op: z.literal('set_plane_style'),
+  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']),
+  net: netName.describe('The net of the plane on that layer (a full plane or an area plane)'),
+  gap_mm: planeMm('An area plane: the gap between it and the plane round it, e.g. 0.5 to separate +3V3 from +5V clearly (default: the board\'s clearance)'),
+  clearance_mm: planeMm('How far the plane keeps from other nets\' pads, tracks and vias (default: the board\'s clearance); only the plane, tracks keep theirs'),
+  edge_mm: planeMm('How far the plane is pulled back from the board edge and cutouts (default: the board\'s edge clearance)'),
+  thermal: z.boolean().nullable().optional().describe('Thermal reliefs (a ring with four spokes) where the plane meets its own pads and vias: true (default, easier to solder), false: joined solid (lower resistance, better for heat)'),
+  spoke_mm: z.number().min(0.15).max(2).nullable().optional().describe('Width of the relief spokes (mm); null: the default'),
+}).describe('Shape a plane or pour: its gap to the plane round it (area planes), its clearance to other copper, its pull-back from the edge, thermal reliefs or solid joints. Only the given fields change. Never below the board\'s own clearances (raise those with set_board).');
 
 export const AddHoleOp = z.object({
   op: z.literal('add_hole'),
@@ -446,9 +479,10 @@ export const EditOp = z.discriminatedUnion('op', [
   LabelOp,
   EraseOp,
   AutoDrawOp,
-  ProposeLayoutOp,
+  ProposePlacementOp,
   RouteOp,
   SetPlaneOp,
+  SetPlaneStyleOp,
   AddHoleOp,
   RemoveHoleOp,
   AddCutoutOp,
@@ -487,6 +521,21 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_fab_profiles') }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses'),
   z.object({ op: z.literal('get_schematic') }).describe('Schematic drawing: each page (number, name, paper size in mils, drawn by the auto-layout or as you arranged it), where each symbol stands (centre and size in mils from the paper\'s top-left) and the net labels with the pins they sit on (auto: a connection your drawing does not show yet)'),
   z.object({ op: z.literal('get_board') }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
+  z.object({
+    op: z.literal('try_placements'),
+    candidates: z
+      .array(
+        z.object({
+          name: z.string().optional().describe('What this option is, e.g. "U1 turned 90°, J1 left"'),
+          parts: z.array(PartPlacement).min(1).describe('The main parts\' places and rotations, as propose_placement takes them'),
+          width_mm: z.number().positive().optional(),
+          height_mm: z.number().positive().optional(),
+        }),
+      )
+      .min(1)
+      .max(8),
+    route: z.boolean().optional().describe('Also route each option for a few seconds (a trial: how many connections it closes). Slower; use it to choose between options whose ratsnest is close'),
+  }).describe('Compare arrangements of the main parts without changing the design: each is placed as propose_placement would place it (small parts round them) and measured (ratsnest length, crossing ratsnest lines, overlaps, board size; with route a trial routing). Lists the current placement too, then the options best first. Apply the winner with design_edit propose_placement'),
   z.object({
     op: z.literal('search_parts'),
     text: z.string().describe('Search text: function, MPN, category ("buck", "capacitor", "555")'),

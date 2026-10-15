@@ -113,7 +113,7 @@ describe('parts on the bottom side (constrain layer)', () => {
 
   it('an SMD part may sit under an SMD part on the other side; on the same side they are kept apart', () => {
     const k = buck();
-    k.transact({ summary: 'route', ops: [{ op: 'propose_layout' }] });
+    k.transact({ summary: 'route', ops: [{ op: 'propose_placement' }] });
     const u1 = k.board().parts.find((p) => p.refdes === 'U1')!;
     const cap = k.board().parts.find((p) => p.follows === 'U1' && p.pads.length === 2 && p.pads.every((q) => !q.drill))!;
     flip(k, cap.refdes);
@@ -230,7 +230,7 @@ describe('the user\'s placement choices', () => {
 
   it('parts pushed away from their parent close in again when the parent moves to free space', () => {
     const k = buck();
-    k.transact({ summary: 'room', ops: [{ op: 'set_board', width_mm: 60, height_mm: 40 }, { op: 'propose_layout' }] });
+    k.transact({ summary: 'room', ops: [{ op: 'set_board', width_mm: 60, height_mm: 40 }, { op: 'propose_placement' }] });
     const kids = k.board().parts.filter((p) => p.follows === 'U1').map((p) => p.refdes);
     const spread = () => {
       const u = at(k, 'U1');
@@ -250,7 +250,7 @@ describe('the user\'s placement choices', () => {
 
   it('a new part is placed next to what it connects to; the others stay put', () => {
     const k = buck();
-    k.transact({ summary: 'keep', ops: [{ op: 'propose_layout' }] });
+    k.transact({ summary: 'keep', ops: [{ op: 'propose_placement' }] });
     const before = k.board();
     k.transact({ summary: 'add', ops: [{ op: 'add_part', part: 'generic:C', refdes: 'C9', params: { capacitance: '100nF', voltage: '16V', package: '0402' } }, { op: 'connect', pins: ['C9.1'], net: '+3V3' }, { op: 'connect', pins: ['C9.2'], net: 'GND' }] });
     const after = k.board();
@@ -277,14 +277,14 @@ describe('the user\'s placement choices', () => {
     expect(routed(k).routing).toBe('done');
   });
 
-  it('propose_layout starts over; it keeps locked parts, and the choices unless told not to', () => {
+  it('propose_placement starts over; it keeps locked parts, and the choices unless told not to', () => {
     const k = buck();
     const c4 = at(k, 'C4');
     k.transact({ summary: 'c', ops: [{ op: 'place', ref: 'C4', x_mm: c4.x - 1, y_mm: c4.y }, { op: 'place', ref: 'J1', x_mm: 4, y_mm: 8, lock: true }] });
-    k.transact({ summary: 'again', ops: [{ op: 'propose_layout' }] });
+    k.transact({ summary: 'again', ops: [{ op: 'propose_placement' }] });
     expect(at(k, 'C4').intent).toEqual({ anchor: 'U1' });
     expect(at(k, 'J1').locked).toBe(true);
-    k.transact({ summary: 'fresh', ops: [{ op: 'propose_layout', keep_choices: false }] });
+    k.transact({ summary: 'fresh', ops: [{ op: 'propose_placement', keep_choices: false }] });
     expect(at(k, 'C4').intent).toBeUndefined();
     expect([at(k, 'J1').x, at(k, 'J1').y, at(k, 'J1').locked]).toEqual([4, 8, true]);
   });
@@ -314,6 +314,76 @@ describe('the user\'s placement choices', () => {
     const k2 = new Kernel(old);
     expect(k2.board().parts.find((p) => p.refdes === 'J1')!.locked).toBe(false);
     expect(k2.board().parts.find((p) => p.refdes === 'J1')!.intent).toEqual({});
+  });
+});
+
+describe('the agent decides the main parts (propose_placement parts, try_placements)', () => {
+  const at = (k: Kernel, ref: string) => k.board().parts.find((p) => p.refdes === ref)!;
+  const errors = (k: Kernel) => k.board().diagnostics.filter((x) => x.severity === 'error');
+
+  it('puts the main parts where the agent decides, turned as it says, and the small parts round them', () => {
+    const k = buck();
+    const r = k.transact({ summary: 'arrange', ops: [{ op: 'propose_placement', parts: [{ ref: 'U1', x_mm: 14, y_mm: 10, rot: 90 }, { ref: 'J1', x_mm: 4, y_mm: 10, rot: 90 }] }] });
+    expect(r.status).toBe('ok');
+    const u1 = at(k, 'U1');
+    expect(u1.rot).toBe(90);
+    expect(at(k, 'J1').rot).toBe(90);
+    // the arrangement kept as given (the board fitted round it may move it over as a whole)
+    expect(Math.abs(u1.x - at(k, 'J1').x - 10)).toBeLessThan(0.5);
+    expect(u1.intent).toBeDefined();
+    // U1's input and bootstrap caps at its pins, turned with it
+    for (const ref of ['C1', 'C4']) expect(Math.hypot(at(k, ref).x - u1.x, at(k, ref).y - u1.y)).toBeLessThan(7);
+    expect(errors(k)).toEqual([]);
+    // a compact board: the small parts at an IC's far side do not jam against the edge
+    expect(k.board().outline.w * k.board().outline.h).toBeLessThan(900);
+  });
+
+  it('the placement stays as proposed when laid out again', () => {
+    const k = buck();
+    k.transact({ summary: 'arrange', ops: [{ op: 'propose_placement', parts: [{ ref: 'U1', x_mm: 6, y_mm: 6, rot: 270 }] }] });
+    const before = k.board();
+    k.transact({ summary: 'size', ops: [{ op: 'set_net', net: '+3V3', voltage: 3.3 }] });
+    const after = k.board();
+    expect(after.parts.map((p) => [p.refdes, p.x, p.y, p.rot])).toEqual(before.parts.map((p) => [p.refdes, p.x, p.y, p.rot]));
+  });
+
+  it('given again, a part\'s place is replaced; a locked part is refused', () => {
+    const k = buck();
+    k.transact({ summary: 'a', ops: [{ op: 'propose_placement', parts: [{ ref: 'U1', x_mm: 14, y_mm: 10 }] }] });
+    k.transact({ summary: 'b', ops: [{ op: 'propose_placement', parts: [{ ref: 'U1', x_mm: 14, y_mm: 10, rot: 180 }] }] });
+    expect(at(k, 'U1').rot).toBe(180);
+    expect(k.query({ op: 'get_ledger' })).toHaveLength(1);
+    k.transact({ summary: 'lock', ops: [{ op: 'place', ref: 'J1', x_mm: 4, y_mm: 8, lock: true }] });
+    const r = k.transact({ summary: 'c', ops: [{ op: 'propose_placement', parts: [{ ref: 'J1', x_mm: 4, y_mm: 12 }] }] });
+    expect(r.status).toBe('rejected');
+    expect(r.rejection?.fixHints?.[0]?.op).toBe('remove_constraint');
+  });
+
+  it('try_placements measures each option as propose_placement would place it, without changing the design', () => {
+    const k = buck();
+    k.transact({ summary: 'start', ops: [{ op: 'propose_placement' }] });
+    const design = JSON.stringify(k.draftDesign());
+    const parts = [{ ref: 'U1', x_mm: 14, y_mm: 10, rot: 90 as const }, { ref: 'J1', x_mm: 4, y_mm: 10, rot: 90 as const }];
+    const out = k.query({
+      op: 'try_placements',
+      route: true,
+      candidates: [
+        { name: 'turned', parts },
+        { name: 'as drawn', parts: [{ ref: 'U1', x_mm: 14, y_mm: 10 }] },
+        { name: 'locked?', parts: [{ ref: 'U1', x_mm: 14, y_mm: 10 }, { ref: 'U1', x_mm: 4, y_mm: 4 }] },
+      ],
+    }) as { current: { ratsnest_mm: number }; options: { name: string; error?: string; ratsnest_mm?: number; ratsnest_crossings?: number; routing?: { open_connections: number } }[] };
+    expect(JSON.stringify(k.draftDesign())).toBe(design);
+    expect(out.current.ratsnest_mm).toBeGreaterThan(0);
+    expect(out.options).toHaveLength(3);
+    // a broken option is reported, last
+    expect(out.options.at(-1)).toMatchObject({ name: 'locked?', error: expect.stringContaining('twice') });
+    const turned = out.options.find((o) => o.name === 'turned')!;
+    expect(turned.routing?.open_connections).toBe(0);
+    // what was tried is what propose_placement gives
+    k.transact({ summary: 'apply', ops: [{ op: 'propose_placement', parts }] });
+    const b = k.boardPlacement();
+    expect([b.measures.ratsnestMm, b.measures.crossings]).toEqual([turned.ratsnest_mm, turned.ratsnest_crossings]);
   });
 });
 
@@ -510,6 +580,133 @@ describe('planes', () => {
     expect(brokenNets(b)).toEqual([]);
   });
 
+  it('puts the rail the ICs draw from on the supply plane, not the one with the most pins', () => {
+    const k = buck();
+    // +12V gets more pins (bulk caps), +3V3 feeds more IC supply pins (two op-amps)
+    k.transact({
+      summary: 'loads',
+      ops: [
+        { op: 'add_part', part: 'ti:LM358DR', refdes: 'U2' },
+        { op: 'add_part', part: 'ti:LM358DR', refdes: 'U3' },
+        ...['C10', 'C11', 'C12'].map((refdes) => ({ op: 'add_part' as const, part: 'generic:C', refdes, params: { capacitance: '10uF', voltage: '25V' } })),
+        { op: 'connect', pins: ['U2.V+', 'U3.V+'], net: '+3V3' },
+        { op: 'connect', pins: ['U2.GND', 'U3.GND', 'C10.2', 'C11.2', 'C12.2'], net: 'GND' },
+        { op: 'connect', pins: ['C10.1', 'C11.1', 'C12.1'], net: '+12V' },
+        { op: 'set_board', layers: 4 },
+      ],
+    });
+    const b = k.board();
+    expect(b.planes.map((p) => [b.netNames[p.netId], p.layer])).toEqual([['GND', 'In1.Cu'], ['+3V3', 'In2.Cu']]);
+  });
+
+  it('splits a plane layer: +12V fills In2.Cu, +3V3 only under the op-amp, each pad on its own plane', () => {
+    const k = buck();
+    const r = k.transact({
+      summary: 'split',
+      ops: [
+        { op: 'add_part', part: 'ti:LM358DR', refdes: 'U2' },
+        { op: 'add_part', part: 'generic:C', refdes: 'C10', params: { capacitance: '100nF', voltage: '16V' } },
+        { op: 'connect', pins: ['U2.V+', 'C10.1'], net: '+3V3' },
+        { op: 'connect', pins: ['U2.GND', 'C10.2'], net: 'GND' },
+        { op: 'connect', pins: ['U2.INA+', 'U2.OUTA', 'U2.INA-'], net: 'BUF' },
+        { op: 'connect', pins: ['U2.INB+', 'U2.OUTB', 'U2.INB-'], net: 'BUF2' },
+        { op: 'set_board', layers: 4 },
+        { op: 'set_plane', layer: 'In2.Cu', net: '+12V' },
+        { op: 'set_plane', layer: 'In2.Cu', net: '+3V3', under: ['U2'] },
+      ],
+    });
+    expect(r.status).toBe('ok');
+    const b = routed(k);
+    const u2 = b.parts.find((p) => p.refdes === 'U2')!.courtyard;
+    const area = b.planes.find((p) => b.netNames[p.netId] === '+3V3')!;
+    expect(area).toMatchObject({ layer: 'In2.Cu', under: ['U2'] });
+    // the area: U2's courtyard with the margin round it (within the board)
+    expect(area.area![0]).toBeLessThanOrEqual(u2.x);
+    expect(area.area![2]).toBeCloseTo(u2.x + u2.w + 1.5, 3);
+    const zone = (net: string) => b.zones.find((z) => b.netNames[z.netId] === net && z.layer === 'In2.Cu')!;
+    expect(zone('+3V3').shape!.outline).toEqual([Math.max(0.5, area.area![0]), area.area![1], area.area![2], area.area![3]]);
+    // the full plane goes round the area with the clearance
+    expect(zone('+12V').shape!.cuts).toContainEqual({ k: 'rect', x: expect.closeTo(area.area![0] - 0.2, 3), y: expect.closeTo(area.area![1] - 0.2, 3), w: expect.closeTo(area.area![2] - area.area![0] + 0.4, 3), h: expect.closeTo(area.area![3] - area.area![1] + 0.4, 3) });
+    expect(b.tracks.filter((t) => t.layer === 'In2.Cu')).toEqual([]);
+    expect(b.stats.unrouted).toBe(0);
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(brokenNets(b)).toEqual([]);
+    // the area follows U2
+    const at = b.parts.find((p) => p.refdes === 'U2')!;
+    k.transact({ summary: 'move', ops: [{ op: 'place', ref: 'U2', x_mm: at.x + 3, y_mm: at.y }] });
+    expect(k.board().planes.find((p) => p.area)!.area![2]).toBeCloseTo(area.area![2] + 3, 1);
+  });
+
+  it('set_plane_style shapes a plane: a wider gap round an area, more clearance, pulled back from the edge, joined solid', () => {
+    const k = buck();
+    k.transact({
+      summary: 'split',
+      ops: [
+        { op: 'set_board', layers: 4 },
+        { op: 'set_plane', layer: 'In2.Cu', net: '+12V' },
+        { op: 'set_plane', layer: 'In2.Cu', net: '+3V3', rect: { x_mm: 4, y_mm: 4, width_mm: 8, height_mm: 6 } },
+      ],
+    });
+    const zone = (b: ReturnType<Kernel['board']>, net: string) => b.zones.find((z) => b.netNames[z.netId] === net && z.layer === 'In2.Cu')!.shape!;
+    const before = routed(k);
+    const cut = (b: ReturnType<Kernel['board']>) => zone(b, '+12V').cuts.find((c) => c.k === 'rect' && c.w > 8 && c.h > 6) as { x: number; w: number };
+    expect(cut(before)).toMatchObject({ x: 3.8, w: 8.4 });
+    const r = k.transact({
+      summary: 'style',
+      ops: [
+        { op: 'set_plane_style', layer: 'In2.Cu', net: '+3V3', gap_mm: 1 },
+        { op: 'set_plane_style', layer: 'In2.Cu', net: '+12V', clearance_mm: 0.5, edge_mm: 1.5 },
+        { op: 'set_plane_style', layer: 'In1.Cu', net: 'GND', thermal: false },
+      ],
+    });
+    expect(r.status).toBe('ok');
+    expect(k.board().routing).toBe('stale');
+    const b = routed(k);
+    // the gap: the area plus 1 mm all round is cut from +12V
+    expect(cut(b)).toMatchObject({ x: 3, w: 10 });
+    // +12V pulled back 1.5 mm from the edge, and 0.5 mm clear of other nets' vias
+    expect(zone(b, '+12V').outline.slice(0, 2)).toEqual([1.5, 1.5]);
+    const foreign = b.vias.find((v) => b.netNames[v.netId] !== '+12V')!;
+    expect(zone(b, '+12V').cuts).toContainEqual({ k: 'circle', x: foreign.x, y: foreign.y, d: expect.closeTo(foreign.pad + 1, 3) });
+    // GND joined solid: no relief rings or spokes round its own vias
+    const gnd = b.zones.find((z) => z.layer === 'In1.Cu')!.shape!;
+    expect(gnd.adds).toEqual([]);
+    const own = b.vias.find((v) => b.netNames[v.netId] === 'GND')!;
+    expect(gnd.cuts.some((c) => c.k === 'circle' && c.x === own.x && c.y === own.y)).toBe(false);
+    expect(b.stats.unrouted).toBe(0);
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(brokenNets(b)).toEqual([]);
+    // the style stays when the area is set again; null goes back to the default
+    k.transact({ summary: 'move', ops: [{ op: 'set_plane', layer: 'In2.Cu', net: '+3V3', rect: { x_mm: 5, y_mm: 4, width_mm: 8, height_mm: 6 } }] });
+    expect(k.board().planes.find((p) => p.area)!.style).toEqual({ gap: 1 });
+    k.transact({ summary: 'reset', ops: [{ op: 'set_plane_style', layer: 'In2.Cu', net: '+3V3', gap_mm: null }] });
+    expect(k.board().planes.find((p) => p.area)!.style).toBeUndefined();
+  });
+
+  it('set_plane_style refuses less than the board\'s clearances, a gap on a full plane, and a plane that is not there', () => {
+    const k = buck();
+    k.transact({ summary: '4', ops: [{ op: 'set_board', layers: 4 }] });
+    const refused = (op: Record<string, unknown>) => k.transact({ summary: 'x', ops: [op as never] }).status === 'rejected';
+    expect(refused({ op: 'set_plane_style', layer: 'In1.Cu', net: 'GND', clearance_mm: 0.05 })).toBe(true);
+    expect(refused({ op: 'set_plane_style', layer: 'In1.Cu', net: 'GND', gap_mm: 1 })).toBe(true);
+    expect(refused({ op: 'set_plane_style', layer: 'In1.Cu', net: '+3V3', thermal: false })).toBe(true);
+    expect(refused({ op: 'set_plane_style', layer: 'In1.Cu', net: 'GND' })).toBe(true);
+    expect(refused({ op: 'set_plane_style', layer: 'In1.Cu', net: 'GND', spoke_mm: 0.5 })).toBe(false);
+  });
+
+  it('refuses an area on an outer layer, an area of the net that fills the layer, and an area without a net', () => {
+    const k = buck();
+    k.transact({ summary: '4', ops: [{ op: 'set_board', layers: 4 }] });
+    const refused = (op: Record<string, unknown>) => k.transact({ summary: 'x', ops: [op as never] }).status === 'rejected';
+    expect(refused({ op: 'set_plane', layer: 'B.Cu', net: '+3V3', under: ['U1'] })).toBe(true);
+    expect(refused({ op: 'set_plane', layer: 'In1.Cu', net: 'GND', under: ['U1'] })).toBe(true);
+    expect(refused({ op: 'set_plane', layer: 'In2.Cu', net: null, under: ['U1'] })).toBe(true);
+    expect(refused({ op: 'set_plane', layer: 'In2.Cu', net: '+3V3', rect: { x_mm: 1, y_mm: 1, width_mm: 8, height_mm: 6 } })).toBe(false);
+    // net null clears the layer, area planes too
+    k.transact({ summary: 'clear', ops: [{ op: 'set_plane', layer: 'In2.Cu', net: null }] });
+    expect(k.board().planes.map((p) => p.layer)).toEqual(['In1.Cu']);
+  });
+
   it('lets the agent choose planes per layer and refuses layers the board does not have', () => {
     const k = buck();
     const r2 = k.transact({ summary: 'x', ops: [{ op: 'set_plane', layer: 'In1.Cu', net: 'GND' }] });
@@ -649,7 +846,7 @@ describe('milling: rounded corners and cutouts', () => {
 
   it('keeps parts and copper clear of a cutout; the outline file carries it', async () => {
     const k = buck();
-    k.transact({ summary: 'mill', ops: [{ op: 'set_board', width_mm: 40, height_mm: 30 }, { op: 'add_cutout', shape: 'rect', x_mm: 0, y_mm: 0, anchor: 'center', width_mm: 8, height_mm: 6, corner_radius_mm: 1 }, { op: 'propose_layout' }] });
+    k.transact({ summary: 'mill', ops: [{ op: 'set_board', width_mm: 40, height_mm: 30 }, { op: 'add_cutout', shape: 'rect', x_mm: 0, y_mm: 0, anchor: 'center', width_mm: 8, height_mm: 6, corner_radius_mm: 1 }, { op: 'propose_placement' }] });
     const b = routed(k);
     expect(b.cutouts.map((c) => [c.id, c.x, c.y, c.w, c.h])).toEqual([['CO1', 20, 15, 8, 6]]);
     expect(b.stats.unrouted).toBe(0);
@@ -668,7 +865,7 @@ describe('milling: rounded corners and cutouts', () => {
 
   it('an anchored cutout follows the board size; rounded corners keep copper off them', () => {
     const k = buck();
-    k.transact({ summary: 'mill', ops: [{ op: 'set_board', width_mm: 40, height_mm: 30, corner_radius_mm: 4 }, { op: 'add_cutout', shape: 'slot', x_mm: -6, y_mm: 0, anchor: 'right', width_mm: 8, height_mm: 1.5 }, { op: 'propose_layout' }] });
+    k.transact({ summary: 'mill', ops: [{ op: 'set_board', width_mm: 40, height_mm: 30, corner_radius_mm: 4 }, { op: 'add_cutout', shape: 'slot', x_mm: -6, y_mm: 0, anchor: 'right', width_mm: 8, height_mm: 1.5 }, { op: 'propose_placement' }] });
     let b = routed(k);
     expect([b.cutouts[0]!.x, b.cutouts[0]!.y]).toEqual([34, 15]);
     expect(b.cornerRadius).toBe(4);
@@ -689,7 +886,7 @@ describe('free-form outline (set_outline)', () => {
 
   it('an SVG path becomes the outline, scaled to the size asked for; parts and copper stay inside', async () => {
     const k = buck();
-    k.transact({ summary: 'tree', ops: [{ op: 'set_outline', svg_path: tree, height_mm: 100 }, { op: 'propose_layout' }] });
+    k.transact({ summary: 'tree', ops: [{ op: 'set_outline', svg_path: tree, height_mm: 100 }, { op: 'propose_placement' }] });
     const b = routed(k);
     expect(b.outline.h).toBe(100);
     expect(b.outline.w).toBeCloseTo(88.889, 2);

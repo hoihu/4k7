@@ -10,6 +10,8 @@ export interface RouteProgress {
   /** Fewest connections a finished pass left open (null in the first pass). */
   bestOpen: number | null;
   elapsedMs: number;
+  /** Routing on the grid: horizontal on top, vertical on the bottom, vias wherever they help. */
+  grid: boolean;
   tracks: Track[];
   vias: Via[];
 }

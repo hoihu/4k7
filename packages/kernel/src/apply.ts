@@ -17,6 +17,8 @@ import {
   type PackageInfo,
   type SymbolLayout,
   type BoardSettings,
+  type PlaneArea,
+  type PlaneStyle,
   type CopperLayer,
   type HoleCorner,
   type MountingHole,
@@ -131,12 +133,14 @@ export function applyOp(d: Design, op: EditOp): OpResult {
       return labelOp(d, op);
     case 'erase':
       return eraseOp(d, op);
-    case 'propose_layout':
-      return proposeLayout(d, op.keep_choices ?? true);
+    case 'propose_placement':
+      return proposePlacement(d, op);
     case 'route':
       return routeStep(d);
     case 'set_plane':
       return setPlane(d, op);
+    case 'set_plane_style':
+      return setPlaneStyle(d, op);
     case 'add_hole':
       return addHole(d, op);
     case 'add_cutout':
@@ -348,18 +352,81 @@ function setPlane(d: Design, op: Extract<EditOp, { op: 'set_plane' }>): OpResult
     reject({ code: 'BOARD_INVALID', message: `${op.layer} does not exist on a ${b.layers}-layer board; use set_board layers: 4 for inner planes.`, candidates: layers });
   }
   // explicit from now on: start from the automatic planes currently in effect
-  const planes = b.planes ?? autoPlanes(d, b.layers).map(({ netId, layer }) => ({ netId, layer }));
-  const rest = planes.filter((p) => p.layer !== op.layer);
+  const planes: NonNullable<BoardSettings['planes']> = b.planes ?? autoPlanes(d, b.layers).map(({ netId, layer }) => ({ netId, layer }));
+  const layer = op.layer as CopperLayer;
+  const outer = layer === 'F.Cu' || layer === 'B.Cu';
   if (op.net === null || op.net === undefined) {
-    b.planes = rest;
+    if (op.under || op.rect) reject({ code: 'BOARD_INVALID', message: 'An area plane needs its net (net: "+3V3"); net null clears the whole layer.' });
+    b.planes = planes.filter((p) => p.layer !== layer);
     d.board = b;
-    return { op: 'set_plane', effect: `no plane on ${op.layer}`, ids: ['board'] };
+    return { op: 'set_plane', effect: `no plane on ${layer}`, ids: ['board'] };
   }
   const net = findNet(d, op.net);
   if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${op.net}".`, candidates: Object.values(d.nets).map((n) => n.name) });
-  b.planes = [...rest, { netId: net!.id, layer: op.layer! as CopperLayer }];
+  if (op.under || op.rect) {
+    if (outer) reject({ code: 'BOARD_INVALID', message: `A plane under part of the board works on inner layers (In1.Cu, In2.Cu of a 4-layer board); ${layer} gets a pour over the whole layer.` });
+    if (op.under && op.rect) reject({ code: 'BOARD_INVALID', message: 'Give the area as under (parts) or rect, not both.' });
+    if (planes.some((p) => p.layer === layer && p.netId === net!.id && !p.area)) {
+      reject({ code: 'BOARD_INVALID', message: `${net!.name} already fills ${layer}; give the layer's full plane to another net first (set_plane ${layer} net …), then the area.` });
+    }
+    const comps = (op.under ?? []).map((r) => resolveComponent(d, r));
+    const area: PlaneArea = op.rect
+      ? { rect: [op.rect.x_mm, op.rect.y_mm, op.rect.x_mm + op.rect.width_mm, op.rect.y_mm + op.rect.height_mm] }
+      : { under: comps.map((c) => c.id), ...(op.margin_mm !== undefined ? { margin: op.margin_mm } : {}) };
+    const was = planes.find((p) => p.layer === layer && p.netId === net!.id && p.area);
+    b.planes = [...planes.filter((p) => !(p.layer === layer && p.netId === net!.id)), { netId: net!.id, layer, area, ...(was?.style ? { style: was.style } : {}) }];
+    d.board = b;
+    const where = op.rect ? `${op.rect.width_mm} × ${op.rect.height_mm} mm at (${op.rect.x_mm}, ${op.rect.y_mm})` : `under ${comps.map((c) => c.refdes).join(', ')}`;
+    return { op: 'set_plane', effect: `${net!.name} plane on ${layer}, ${where}; the layer's full plane goes round it`, ids: ['board'] };
+  }
+  // the full plane of the layer; area planes of other nets stay (it goes round them)
+  const was = planes.find((p) => p.layer === layer && p.netId === net!.id && !p.area);
+  b.planes = [...planes.filter((p) => p.layer !== layer || (p.area && p.netId !== net!.id)), { netId: net!.id, layer, ...(was?.style ? { style: was.style } : {}) }];
   d.board = b;
-  return { op: 'set_plane', effect: `${net!.name} plane on ${op.layer}${op.layer === 'F.Cu' || op.layer === 'B.Cu' ? ' (pour)' : ' (dedicated)'}`, ids: ['board'] };
+  return { op: 'set_plane', effect: `${net!.name} plane on ${layer}${outer ? ' (pour)' : ' (dedicated)'}`, ids: ['board'] };
+}
+
+/** Shape a plane: the gap round an area plane, its clearance and edge pull-back, thermal reliefs. */
+function setPlaneStyle(d: Design, op: Extract<EditOp, { op: 'set_plane_style' }>): OpResult {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const net = findNet(d, op.net);
+  if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${op.net}".`, candidates: Object.values(d.nets).map((n) => n.name) });
+  const planes: NonNullable<BoardSettings['planes']> = b.planes ?? autoPlanes(d, b.layers).map(({ netId, layer }) => ({ netId, layer }));
+  const plane = planes.find((p) => p.layer === op.layer && p.netId === net!.id);
+  if (!plane) {
+    const there = planes.filter((p) => p.layer === op.layer).map((p) => d.nets[p.netId]?.name ?? p.netId);
+    reject({ code: 'BOARD_INVALID', message: `${net!.name} has no plane on ${op.layer}${there.length ? ` (it holds ${there.join(', ')})` : ''}; set_plane first.`, ...(there.length ? { candidates: there } : {}) });
+  }
+  const rules = b.rules;
+  const style: PlaneStyle = { ...plane!.style };
+  const done: string[] = [];
+  const mm = (key: 'gap' | 'clearance' | 'edge' | 'spoke', v: number | null | undefined, min: number, what: string) => {
+    if (v === undefined) return;
+    if (v === null) {
+      delete style[key];
+      done.push(`${what} default`);
+      return;
+    }
+    if (v < min - 1e-9) reject({ code: 'BOARD_INVALID', message: `A plane's ${what} of ${v} mm is below the board's ${min} mm; raise the board's rules with set_board first, or give at least ${min} mm.` });
+    style[key] = v;
+    done.push(`${what} ${v} mm`);
+  };
+  if (op.gap_mm !== undefined && op.gap_mm !== null && !plane!.area) reject({ code: 'BOARD_INVALID', message: `${net!.name} fills ${op.layer}: gap_mm is for an area plane (the gap to the plane round it); set it on the area's net.` });
+  mm('gap', op.gap_mm, rules.clearance, 'gap');
+  mm('clearance', op.clearance_mm, rules.clearance, 'clearance');
+  mm('edge', op.edge_mm, rules.edgeClearance, 'edge pull-back');
+  mm('spoke', op.spoke_mm, 0.15, 'spoke width');
+  if (op.thermal !== undefined) {
+    if (op.thermal === null || op.thermal) delete style.thermal;
+    else style.thermal = false;
+    done.push(op.thermal === false ? 'joined solid' : 'thermal reliefs');
+  }
+  if (!done.length) reject({ code: 'BOARD_INVALID', message: 'Nothing to change: give gap_mm, clearance_mm, edge_mm, thermal or spoke_mm.' });
+  const next = { ...plane!, ...(Object.keys(style).length ? { style } : {}) };
+  if (!Object.keys(style).length) delete next.style;
+  b.planes = planes.map((p) => (p === plane ? next : p));
+  d.board = b;
+  return { op: 'set_plane_style', effect: `${net!.name} plane on ${op.layer}: ${done.join(', ')}`, ids: ['board'] };
 }
 
 /** A free-form board outline (an SVG path or points, scaled to the size asked for), or back to a rectangle. */
@@ -420,7 +487,7 @@ function setPanel(d: Design, op: Extract<EditOp, { op: 'set_panel' }>): OpResult
   const h = b.height ?? b.placement?.outline.h;
   if (op.tabs) p.tabs = op.tabs.map((t) => ({ side: t.side as PanelSide, at: t.at }));
   else if (op.tab_sides || op.tabs_per_side || fresh) {
-    if (!w || !h) reject({ code: 'BOARD_INVALID', message: 'The board has no size yet (propose_layout or set_board first), so tabs cannot be spread along its sides.' });
+    if (!w || !h) reject({ code: 'BOARD_INVALID', message: 'The board has no size yet (propose_placement or set_board first), so tabs cannot be spread along its sides.' });
     const sides = (op.tab_sides as PanelSide[] | undefined) ?? [...new Set(p.tabs.map((t) => t.side))];
     p.tabs = autoTabs(sides.length ? sides : PANEL_SIDES, w!, h!, op.tabs_per_side);
   }
@@ -760,24 +827,56 @@ function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
   return { op: 'place', effect: op.lock ? `${comp.refdes} locked at ${at}` : `${comp.refdes} placed at ${at}${anchor ? ` (kept relative to ${anchor.refdes})` : ''}`, ids: [id] };
 }
 
-/** A fresh proposal: board size (unless set) and placement, keeping locked parts (and choices). */
-function proposeLayout(d: Design, keepChoices: boolean): OpResult {
-  let forgot = 0;
-  if (!keepChoices) {
-    for (const k of Object.values(d.ledger)) {
-      if (k.kind === 'position' && k.strength === 'soft') {
-        delete d.ledger[k.id];
-        forgot++;
-      }
+/**
+ * A fresh proposal: board size (unless set) and placement, keeping locked parts (and choices).
+ * With parts, the agent's arrangement of the main parts: each a choice (soft, in board
+ * coordinates) the placer keeps, placing the small parts round them.
+ */
+export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_placement' }>): OpResult {
+  const given = (op.parts ?? []).map((p) => ({ p, comp: resolveComponent(d, p.ref) }));
+  const twice = given.find((g, i) => given.findIndex((h) => h.comp.id === g.comp.id) !== i);
+  if (twice) reject({ code: 'BOARD_INVALID', message: `${twice.comp.refdes} is given twice in parts.` });
+  if ((op.width_mm === undefined) !== (op.height_mm === undefined)) reject({ code: 'BOARD_INVALID', message: 'Give both width_mm and height_mm, or neither.' });
+  const ids = new Set(given.map((g) => g.comp.id));
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind === 'position' && k.strength === 'hard' && k.a && ids.has(k.a)) {
+      reject({ code: 'BOARD_INVALID', message: `${d.components[k.a]?.refdes} is locked (${k.id}); leave it out of parts, or unlock it first (remove_constraint ${k.id}).`, fixHints: [{ op: 'remove_constraint', id: k.id }] });
     }
   }
+  let forgot = 0;
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind !== 'position' || k.strength !== 'soft' || !k.a) continue;
+    if (ids.has(k.a)) delete d.ledger[k.id];
+    else if (op.keep_choices === false) {
+      delete d.ledger[k.id];
+      forgot++;
+    }
+  }
+  if (op.width_mm !== undefined) setBoard(d, { op: 'set_board', width_mm: op.width_mm, height_mm: op.height_mm });
+  const r = (v: number) => Math.round(v * 1000) / 1000;
+  const choices = given.map(({ p, comp }) => {
+    const id = nextId(d, 'k');
+    d.ledger[id] = { id, kind: 'position', a: comp.id, xMm: r(p.x_mm), yMm: r(p.y_mm), rot: p.rot ?? 0, domain: 'placement', strength: 'soft', source: { type: 'agent' } };
+    return d.ledger[id]!;
+  });
   const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
   delete b.placement;
   delete b.routed;
   d.board = b;
   const now = placedNow(d);
   b.placement = storedPlacement(now);
-  return { op: 'propose_layout', effect: `layout proposed: ${now.outline.w} × ${now.outline.h} mm${now.sizeBy === 'user' ? ' (your size)' : ''}, ${now.parts.filter((p) => !p.componentId.startsWith('hole:')).length} parts${forgot ? `, ${forgot} placement choice(s) forgotten` : ''}`, ids: ['board'] };
+  // each choice where its part ended up (the board fitted round the arrangement may have moved it over)
+  for (const k of choices) {
+    const part = now.parts.find((x) => x.componentId === k.a);
+    if (part) Object.assign(k, { xMm: part.x, yMm: part.y });
+  }
+  const placed = now.parts.filter((p) => !p.componentId.startsWith('hole:')).length;
+  const m = now.measures;
+  return {
+    op: 'propose_placement',
+    effect: `placement proposed: ${now.outline.w} × ${now.outline.h} mm${now.sizeBy === 'user' ? ' (your size)' : ''}, ${placed} parts${given.length ? `, ${given.map((g) => g.comp.refdes).join(', ')} where you put them` : ''}${forgot ? `, ${forgot} placement choice(s) forgotten` : ''}; ratsnest ${m.ratsnestMm} mm, ${m.crossings} crossing(s)`,
+    ids: ['board', ...given.map((g) => g.comp.id)],
+  };
 }
 
 /** The route step: route the board as placed now (the board view routes while this placement stays). */

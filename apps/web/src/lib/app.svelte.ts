@@ -430,6 +430,21 @@ class AppState {
     if (await this.kernel.keepCopper(copper)) await this.persist();
   }
 
+  /** A try_placements query, run on a copy of the working design in a worker of its own (trial routing takes seconds). */
+  private async trialQuery(query: unknown): Promise<unknown> {
+    const design = await this.kernel.draftDesign();
+    const worker = new Worker(new URL('./trial.worker.ts', import.meta.url), { type: 'module' });
+    try {
+      return await new Promise((resolve, reject) => {
+        worker.onmessage = (e: MessageEvent<{ result?: unknown; error?: string }>) => (e.data.error ? reject(new Error(e.data.error)) : resolve(e.data.result));
+        worker.onerror = (e) => reject(new Error(e.message || 'The placement trial failed.'));
+        worker.postMessage({ design, query });
+      });
+    } finally {
+      worker.terminate();
+    }
+  }
+
   /** The routed board of the current design, for agents (computed if needed). */
   private async routedBoard(): Promise<BoardView | null> {
     if (!this.boards.busy && this.board && this.boardStage === 'routed' && this.boardRev === this.rev) return this.board;
@@ -707,6 +722,16 @@ class AppState {
     const first = (t: string) => t.split('\n')[0]!;
     switch (tool) {
       case 'design_query': {
+        if ((input as { op?: string })?.op === 'try_placements') {
+          try {
+            const out = (await this.trialQuery(input)) as { error?: string; options?: { name: string; error?: string }[] };
+            if (out.error) return fail('query · try_placements', out.error);
+            const best = out.options?.find((o) => !o.error);
+            return { content: JSON.stringify(out), isError: false, label: 'query · try_placements', detail: `${out.options?.length ?? 0} option(s)${best ? `, best: ${best.name}` : ''}` };
+          } catch (e) {
+            return fail('query · try_placements', (e as Error).message);
+          }
+        }
         if ((input as { op?: string })?.op !== 'get_board') break;
         // routed in the board worker, so the kernel stays responsive
         const b = await this.routedBoard();
@@ -881,7 +906,7 @@ class AppState {
         const p = this.k?.proposal;
         const pending = p ? `\n<pending_changeset hunks="${p.hunks.length}">${p.hunks.map((h) => `${h.change} ${h.title}`).join('; ')}</pending_changeset>` : '';
         log('context', true, `${snap.summary.components.length} parts · ${snap.counts.errors}E ${snap.counts.warnings}W`);
-        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope, view: this.turnView ?? this.currentView(), rules: this.settings.schematicNotes }) + pending + `\nautonomy: ${this.settings.mode}`);
+        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope, view: this.turnView ?? this.currentView(), rules: this.settings.schematicNotes, layoutRules: this.settings.layoutNotes }) + pending + `\nautonomy: ${this.settings.mode}`);
       }
       case 'propose': {
         const args = ProposeInput.safeParse(input);
@@ -1177,7 +1202,7 @@ class AppState {
       } else {
         this.inAppBusy = true;
         this.abort = new AbortController();
-        await this.agent.run(trimmed, { selection: refs, scope: opts.scope ?? null, view: this.turnView, rules: this.settings.schematicNotes }, (e) => this.onEvent(item, e), this.abort.signal);
+        await this.agent.run(trimmed, { selection: refs, scope: opts.scope ?? null, view: this.turnView, rules: this.settings.schematicNotes, layoutRules: this.settings.layoutNotes }, (e) => this.onEvent(item, e), this.abort.signal);
       }
     } catch (e) {
       item.segments.push({ type: 'error', text: (e as Error).message });
