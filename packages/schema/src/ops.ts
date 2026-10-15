@@ -4,7 +4,8 @@
  * See docs/design/ops-api.md.
  */
 import { z } from 'zod';
-import { LandPad } from './ingest.ts';
+import { LandPad, Mating } from './ingest.ts';
+import { EnclosureBrief } from './enclosure.ts';
 import { PAPER_IDS, type PaperId } from './results.ts';
 import { E_SERIES } from './units.ts';
 
@@ -149,7 +150,34 @@ export const SetFootprintOp = z.object({
   round: z.boolean().optional().describe('A cylindrical body (buzzer, electrolytic cap)'),
   height_mm: z.number().positive().optional().describe('Body height above the board'),
   page: z.number().int().optional().describe('Datasheet page with the drawing'),
+  mating: Mating.optional().describe('Connectors, card slots, switches: where the plug, card or finger comes in (also set_mating)'),
 });
+
+export const SetMatingOp = z.object({
+  op: z.literal('set_mating'),
+  ref: componentRef.describe('A component using the part, e.g. "J1"; applies to every component of that part'),
+  face: z
+    .enum(['left', 'right', 'top', 'bottom', 'up'])
+    .nullable()
+    .describe('The side of the footprint drawing (top view, as get_component\'s footprint is drawn, before the part is turned on the board) the plug goes in from; up: from above, straight down onto the board. null: the part is not plugged (forget it)'),
+  plug_mm: Mating.shape.plug_mm,
+  axis_mm: Mating.shape.axis_mm,
+  along_mm: Mating.shape.along_mm,
+}).describe('Where a connector, card slot or switch is used from: the face the plug comes in through and the size of the plug (its overmold), read off the datasheet. The enclosure leaves that way clear (board.scad mating_path), get_board shows which way it faces on the board.');
+
+export const SetEnclosureBriefOp = z.object({
+  op: z.literal('set_enclosure_brief'),
+  brief: EnclosureBrief.nullable().describe('The whole brief (replaces the one before); null removes it'),
+}).describe('The enclosure brief: what the box must do, decided items with their reason and questions for the user (2–4 options, your pick first). The user answers the questions in the app; then set it again with their answers as decisions.');
+
+export const SetEnclosureScriptOp = z.object({
+  op: z.literal('set_enclosure_script'),
+  script: z
+    .string()
+    .min(20)
+    .nullable()
+    .describe('The whole OpenSCAD script (replaces the one before): include <board.scad>, parameters at the top, pieces = ["base", "lid"]; one module per piece, built in assembled position, piece = "all"; and the pieces drawn at the end by piece. null removes it'),
+}).describe('The enclosure as an OpenSCAD script. Render it with render_enclosure (pictures and the measured report) after every change.');
 
 const pkgName = z.string().nullable().optional();
 export const SetPackageDefaultsOp = z.object({
@@ -502,6 +530,9 @@ export const EditOp = z.discriminatedUnion('op', [
   SetOutlineOp,
   SetPanelOp,
   DescribeOp,
+  SetMatingOp,
+  SetEnclosureBriefOp,
+  SetEnclosureScriptOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
 export type EditOpName = EditOp['op'];
@@ -550,5 +581,7 @@ export const QueryOp = z.discriminatedUnion('op', [
     text: z.string().describe('Search text: function, MPN, category ("buck", "capacitor", "555")'),
   }),
   z.object({ op: z.literal('get_part'), id: z.string() }),
+  z.object({ op: z.literal('get_enclosure') }).describe('The enclosure: the brief, the script, the board as an OpenSCAD library (board.scad: its variables and modules, the parts with where they are and which way they are plugged), OpenSCAD on this computer, the last render\'s report'),
+  z.object({ op: z.literal('get_guide'), topic: z.enum(['mechanics']) }).describe('A guide: mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script). Read it before the first brief'),
 ]);
 export type QueryOp = z.infer<typeof QueryOp>;

@@ -1,6 +1,7 @@
 import type { PackageInfo } from './ingest.ts';
 import { fabSummary, type FabProfile } from './fab.ts';
 import type { PanelSettings, PanelView } from './panel.ts';
+import { boardFacing, matingOf, type BoardFacing } from './enclosure.ts';
 
 /**
  * The board: settings stored in the design, and the derived board view (placement, routing,
@@ -638,6 +639,16 @@ export interface BoardView {
   panel?: PanelView;
 }
 
+/** How get_board says where a part is plugged from (top view). */
+const PLUGGED_FROM: Record<BoardFacing, string> = {
+  left: 'the left (x−)',
+  right: 'the right (x+)',
+  top: 'the top edge side (y−)',
+  bottom: 'the bottom edge side (y+)',
+  above: 'above',
+  below: 'below the board',
+};
+
 /** What to do about open connections: the agent is expected to get the board to 100 %. */
 const OPEN_NEXT =
   'A board with an open connection does not work: get it to 100 %. Look at each spot (get_board_image region round at_mm), then make room and route again: move or turn the parts near it (place with rot), so pads face the parts they connect to and the ratsnest lines stop crossing; give a crowded area more space (set_board size); route the blocking nets differently by moving their parts; on a 2-layer board, 4 layers (set_board layers) as the last resort, it costs more. Enclosed: pads or the edge close the pad off, move the part. Plane: no room for the via down to the plane next to the pad, move the part or what crowds it.';
@@ -706,7 +717,20 @@ export function boardSummary(b: BoardView, routed = true) {
       ? { id: b.fab.id, summary: fabSummary(b.fab), limits: b.fab.limits, source: b.fab.source, ...(b.fab.notes?.length ? { notes: b.fab.notes } : {}) }
       : 'none chosen: set_fab_profile (a preset such as "jlcpcb" or "eurocircuits/6C", or limits read from the manufacturer\'s page) makes the DRC check the board against the manufacturer\'s limits',
     outline_by: b.sizeBy,
-    parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, side: p.side, placed: placedLabel(p), ...belongsLabel(p) })),
+    parts: b.parts.map((p) => {
+      const m = matingOf(p.pkgInfo);
+      return {
+        refdes: p.refdes,
+        package: p.pkg,
+        x: p.x,
+        y: p.y,
+        rot: p.rot,
+        side: p.side,
+        placed: placedLabel(p),
+        ...belongsLabel(p),
+        ...(m ? { plugged_from: PLUGGED_FROM[boardFacing(m.face, p.rot, p.side)] } : {}),
+      };
+    }),
     ...(userPlaced(b).length ? { user_placed: { parts: userPlaced(b), note: USER_PLACED_NOTE } } : {}),
     routing: !routed
       ? 'not computed here (see the Layout view)'

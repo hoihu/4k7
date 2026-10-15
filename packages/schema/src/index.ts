@@ -12,3 +12,4 @@ export * from './fab.ts';
 export * from './scope.ts';
 export * from './panel.ts';
 export * from './rules.ts';
+export * from './enclosure.ts';

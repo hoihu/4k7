@@ -56,7 +56,8 @@ export type RejectionCode =
   | 'NET_MISMATCH'
   | 'NO_PATH'
   | 'SHEET_UNKNOWN'
-  | 'WAIVER_UNKNOWN';
+  | 'WAIVER_UNKNOWN'
+  | 'ENCLOSURE_INVALID';
 
 export interface Rejection {
   /** Index of the failing op within the transaction. */
@@ -100,7 +101,7 @@ export interface TransactionResult {
 
 /* ------------------------------- changesets ------------------------------- */
 
-export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'sheet' | 'board' | 'description' | 'drawing';
+export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'sheet' | 'board' | 'description' | 'drawing' | 'enclosure';
 
 export interface Hunk {
   /** Stable id: "<kind>:<entity id>". */

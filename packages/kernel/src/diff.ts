@@ -2,7 +2,7 @@
  * Changesets: entity-level diff between the committed design and the agent's working
  * copy, and merging of a user-selected subset of hunks.
  */
-import { planeStyleText, type Component, type Design, type Hunk } from '@4k7/schema';
+import { openQuestions, planeStyleText, scriptPieces, type Component, type Design, type Hunk } from '@4k7/schema';
 import { layoutText } from '@4k7/parts';
 import { describeConstraint } from './apply.ts';
 import { clone, gcNets, gcParts, natCmp, valueOf } from './doc.ts';
@@ -210,7 +210,33 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     hunks.push({ id: `drawing:${id}`, kind: 'drawing', change: 'change', entityId: id, title, details: details.length ? details : ['wires and labels'] });
   }
 
-  const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6, description: 7, drawing: 8 };
+  /* the enclosure: its brief and its script, each a hunk of its own */
+  const encBrief = (d: Design) => JSON.stringify(d.enclosure?.brief ?? null);
+  if (encBrief(base) !== encBrief(draft)) {
+    const b = draft.enclosure?.brief;
+    const open = openQuestions(b).length;
+    hunks.push({
+      id: 'enclosure:brief',
+      kind: 'enclosure',
+      change: !b ? 'remove' : base.enclosure?.brief ? 'change' : 'add',
+      entityId: 'brief',
+      title: b ? `enclosure brief: ${b.items.length} item${b.items.length === 1 ? '' : 's'}${open ? `, ${open} question${open === 1 ? '' : 's'} open` : ''}` : 'enclosure brief removed',
+      details: (b?.items ?? []).map((i) => `${i.topic}: ${i.decision ?? `? ${i.question}`}`),
+    });
+  }
+  if ((base.enclosure?.script ?? null) !== (draft.enclosure?.script ?? null)) {
+    const sc = draft.enclosure?.script;
+    hunks.push({
+      id: 'enclosure:script',
+      kind: 'enclosure',
+      change: !sc ? 'remove' : base.enclosure?.script ? 'change' : 'add',
+      entityId: 'script',
+      title: sc ? `enclosure script: ${scriptPieces(sc)?.join(', ') ?? 'pieces'} (${sc.split('\n').length} lines)` : 'enclosure script removed',
+      details: [],
+    });
+  }
+
+  const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6, description: 7, drawing: 8, enclosure: 9 };
   const changeOrder = { add: 0, change: 1, remove: 2 };
   return hunks.sort((x, y) => order[x.kind] - order[y.kind] || changeOrder[x.change] - changeOrder[y.change] || natCmp(x.title, y.title));
 }
@@ -296,6 +322,16 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
         if (draft.description) d.description = clone(draft.description);
         else delete d.description;
         break;
+      case 'enclosure': {
+        const key = entity as 'brief' | 'script';
+        const value = draft.enclosure?.[key];
+        const next = { ...d.enclosure };
+        if (value === undefined) delete next[key];
+        else (next as Record<string, unknown>)[key] = clone(value);
+        if (next.brief || next.script) d.enclosure = next;
+        else delete d.enclosure;
+        break;
+      }
       case 'constraint':
         if (draft.ledger[entity]) d.ledger[entity] = clone(draft.ledger[entity]!);
         else delete d.ledger[entity];

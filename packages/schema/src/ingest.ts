@@ -23,6 +23,22 @@ export const LandPad = z.object({
 });
 export type LandPad = z.infer<typeof LandPad>;
 
+/**
+ * Where a connector (or a button, a card slot) is used from: the face a plug, card or finger comes in
+ * through, and the size of what comes in. The enclosure leaves its way out clear (docs/design/enclosure.md §3).
+ */
+export const Mating = z.object({
+  face: z
+    .enum(['left', 'right', 'top', 'bottom', 'up'])
+    .describe('The side of the footprint drawing (top view, pin 1 as drawn) the plug goes in from: left, right, top (the drawing\'s top), bottom; up: plugged from above, straight down onto the board (pin headers, IDC, most wire-to-board connectors)'),
+  plug_mm: dims
+    .optional()
+    .describe('What goes in, measured across the way it goes in: width along the face × height above the board (up: width × length as the footprint is drawn). For a cable, its plug\'s overmold (the plastic body, roughly 12–13 × 6.5–7 for a USB-C cable), not the metal part. Default: the body\'s face'),
+  axis_mm: z.number().optional().describe('Edge faces: height of the plug\'s centre above the board (default: the middle of the body)'),
+  along_mm: z.number().optional().describe('Edge faces: the plug\'s centre along the face from the body centre, right/down is + (default 0)'),
+});
+export type Mating = z.infer<typeof Mating>;
+
 export const PackageInfo = z.object({
   name: z.string().min(2).describe('Package name as in the datasheet, e.g. "LQFP100", "UFQFPN48", "TFBGA216"'),
   family: PackageFamily.describe('AXIAL (through-hole, leads out of both ends: body_mm = length × diameter, pitch_mm = lead spacing) and RADIAL (both leads underneath: body_mm = diameter × diameter) for THT passives; QFP for LQFP/TQFP, QFN for (U)FQFPN/VQFN, BGA for (T/U)FBGA; MODULE for a small carrier board with its pins in two rows along the long edges (Raspberry Pi Pico, ESP32/WROOM modules, Arduino Nano …): body_mm = the board, span_mm[0] = distance between the two pin rows, height_mm = board thickness'),
@@ -42,6 +58,7 @@ export const PackageInfo = z.object({
     .array(LandPad)
     .optional()
     .describe('Explicit land pattern, for packages no family fits (buzzers, relays, switches, terminal blocks, odd connectors; family "other"): one pad per pin, from the recommended footprint or the package drawing. Overrides the generated pads.'),
+  mating: Mating.optional().describe('Connectors, card slots, switches: where the plug, card or finger comes in (from the package drawing)'),
 });
 export type PackageInfo = z.infer<typeof PackageInfo>;
 

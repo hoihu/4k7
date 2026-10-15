@@ -4,6 +4,7 @@
  * See docs/design/data-model.md.
  */
 import type { BoardSettings } from './board.ts';
+import type { EnclosureSettings } from './enclosure.ts';
 import type { PartCard } from './part.ts';
 import type { LabelView, PaperId, Point, Rect, WireView } from './results.ts';
 import type { ESeries } from './units.ts';
@@ -37,6 +38,8 @@ export interface Design {
    * A sheet without one is drawn by the auto-layout, afresh after every change.
    */
   drawing?: Record<string, SheetDrawing>;
+  /** The enclosure: the brief agreed with the user and the OpenSCAD script (docs/design/enclosure.md). */
+  enclosure?: EnclosureSettings;
 }
 
 /**
