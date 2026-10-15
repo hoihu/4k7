@@ -1451,6 +1451,7 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     refdes: it.comp.refdes,
     value: valueOf(d, it.comp),
     part: it.card.id,
+    category: it.card.category,
     ...((it.comp.params.mpn ?? it.card.mpn) ? { mpn: it.comp.params.mpn ?? it.card.mpn } : {}),
     ...(it.card.manufacturer ? { manufacturer: it.card.manufacturer } : {}),
     ...(it.comp.params.lcsc ? { lcsc: it.comp.params.lcsc } : {}),

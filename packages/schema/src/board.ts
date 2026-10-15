@@ -1,4 +1,5 @@
 import type { PackageInfo } from './ingest.ts';
+import type { PartCategory } from './part.ts';
 import { fabSummary, type FabProfile } from './fab.ts';
 import type { PanelSettings, PanelView } from './panel.ts';
 import { boardFacing, matingOf, type BoardFacing } from './enclosure.ts';
@@ -482,6 +483,8 @@ export interface BoardPart {
   value: string;
   /** Part Card id, and orderable part number when known (BOM). */
   part: string;
+  /** What kind of part it is (its card's category); absent for mounting holes. */
+  category?: PartCategory;
   mpn?: string;
   manufacturer?: string;
   /** LCSC / JLCPCB part number chosen for assembly (the component's lcsc parameter). */
