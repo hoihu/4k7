@@ -6,9 +6,9 @@ import { buckTransaction } from './fixtures.ts';
 
 const RULES: BoardRules = { clearance: 0.2, track: 0.25, powerTrack: 0.5, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 };
 
-/** A two-pad part (pads 1 × 1 mm on F.Cu) with its pads on the given nets. */
-function part(refdes: string, pads: [number, number, string][]): BoardPart {
-  const ps: BoardPad[] = pads.map(([x, y, netId], i) => ({ number: String(i + 1), x, y, w: 1, h: 1, shape: 'rect', netId, layers: ['F.Cu'] }));
+/** A part with pads (1 × 1 mm on F.Cu, or h high) on the given nets. */
+function part(refdes: string, pads: [number, number, string][], h = 1): BoardPart {
+  const ps: BoardPad[] = pads.map(([x, y, netId], i) => ({ number: String(i + 1), x, y, w: 1, h, shape: 'rect', netId, layers: ['F.Cu'] }));
   const xs = ps.map((p) => p.x);
   const ys = ps.map((p) => p.y);
   return { componentId: refdes, refdes, x: 0, y: 0, rot: 0, pads: ps, courtyard: { x: Math.min(...xs) - 1, y: Math.min(...ys) - 1, w: Math.max(...xs) - Math.min(...xs) + 2, h: Math.max(...ys) - Math.min(...ys) + 2 } } as unknown as BoardPart;
@@ -22,6 +22,19 @@ function buck() {
 }
 
 describe('routing to completion', () => {
+  it('when the tidy passes get stuck, routes on the grid (top horizontal, bottom vertical) to the last connection', () => {
+    // two columns of pads, the right one in reverse order: every connection crosses every other
+    const n = 12;
+    const left = part('A', Array.from({ length: n }, (_, i) => [2, 2 + i, `N${i}`] as [number, number, string]), 0.6);
+    const right = part('B', Array.from({ length: n }, (_, i) => [12, 2 + (n - 1 - i), `N${i}`] as [number, number, string]), 0.6);
+    const last = new Map<number, { grid: boolean; open: number }>();
+    const r = route({ outline: { w: 14, h: n + 3 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts: [left, right], powerNets: new Set(), onProgress: (p) => last.set(p.pass, { grid: p.grid, open: p.connections - p.done }) });
+    const passes = [...last.values()];
+    expect(passes.some((p) => !p.grid && p.open > 0)).toBe(true);
+    expect(passes.some((p) => p.grid)).toBe(true);
+    expect(r.failed).toEqual([]);
+  });
+
   it('names the net in the way of a connection that cannot be made, and where', () => {
     // one layer: A must cross B, which runs from edge to edge first (it is shorter)
     // (every pad at an edge: neither can go round the other's end)

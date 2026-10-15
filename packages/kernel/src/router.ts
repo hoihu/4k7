@@ -8,16 +8,32 @@
  * (negotiated congestion, as in PathFinder). Each open connection is probed with the other nets'
  * tracks passable at a price; where its way would run, the copper of other nets gets dearer for
  * every later pass (a history cost that only grows), so the nets in its way learn to go round,
- * and it is routed first. The probe also says what blocks it. The best pass wins.
+ * and it is routed first. The probe also says what blocks it. When those passes stop gaining,
+ * grid passes follow (horizontal on F.Cu, vertical on B.Cu, vias cheap; see Style): a board
+ * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, type PlaneStyle, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
 
 const G = 0.1; // grid pitch, mm
 const MULTI = -1; // near copper of two nets: nobody may route here
 const EDGE = -2; // too close to the board edge
-const VIA_COST = 25; // in grid steps (2.5 mm of track)
 const TURN_COST = 0.6;
-const OFF_AXIS_COST = 0.15; // prefer horizontal on F.Cu, vertical on B.Cu
+/**
+ * How a pass routes. free: 45° tracks anywhere, vias dear (2.5 mm of track each), a light
+ * preference for horizontal on F.Cu and vertical on B.Cu: a tidy board. grid: each outer layer
+ * keeps to its direction and vias are cheap, the classic two-layer autorouter way; it is not
+ * pretty, but it gets nearly anything through. Free passes first; when they stop gaining with
+ * connections still open, grid passes follow, and the pass with the fewest open wins.
+ */
+interface Style {
+  via: number; // in grid steps
+  offAxis: number; // per step against the layer's direction
+}
+const FREE: Style = { via: 25, offAxis: 0.15 };
+const GRID: Style = { via: 3, offAxis: 1 };
+/** Free passes without a gain (or this share of the budget) before the grid passes take over. */
+const FREE_STALE = 2;
+const FREE_SHARE = 0.4;
 const CENTRE_COST = 0.5; // per step and grid step off the middle of the gap between two IC pins
 const CLIP_COST = 3; // a step whose copper runs half over one of the net's own pads, off its centre line
 const COARSE = 5; // coarse routing grid, in grid steps (0.5 mm)
@@ -39,9 +55,11 @@ export interface RouteInput {
   netWidths?: Record<string, number>;
   /**
    * Planes: an inner layer dedicated to one net (no tracks there), or a pour on an outer layer
-   * filling what the tracks leave. Pads of the net drop onto their plane with a via.
+   * filling what the tracks leave. Pads of the net drop onto their plane with a via. An inner
+   * plane with an area (x0, y0, x1, y1) covers only that part of its layer, and the layer's full
+   * plane goes round it: the net's pads inside the area drop onto it, the others get tracks.
    */
-  planes?: { netId: string; layer: CopperLayer }[];
+  planes?: Plane[];
   /** Stop routing after this many milliseconds; what is left is reported unrouted. Default 90 s. */
   budgetMs?: number;
   /** Called while routing: the copper laid so far in the current pass, a few times a second. */
@@ -90,7 +108,14 @@ export interface RouteProgress {
   /** Fewest connections left open by a finished pass so far (null in the first pass). */
   bestOpen: number | null;
   elapsedMs: number;
+  /** The pass routes on the grid (see Style): each outer layer one direction, vias cheap. */
+  grid: boolean;
 }
+
+type Plane = { netId: string; layer: CopperLayer; area?: [number, number, number, number]; style?: PlaneStyle };
+
+/** A pad's centre inside an area plane's rectangle. */
+const inArea = (pl: Plane, p: BoardPad) => !!pl.area && p.x >= pl.area[0] && p.x <= pl.area[2] && p.y >= pl.area[1] && p.y <= pl.area[3];
 
 interface Conn {
   netId: string;
@@ -105,19 +130,24 @@ export function route(input: RouteInput, passes = 40): RouteResult {
   const owner = input.parts.flatMap((p) => p.pads.map(() => p));
   const conns = connections(pads);
   let best: ReturnType<typeof routeOnce> | null = null;
-  // nets with a dedicated (inner) plane are connected through it, not with tracks
-  const dedicated = new Set((input.planes ?? []).filter((pl) => !OUTER.has(pl.layer)).map((pl) => pl.netId));
-  const planeOnly = conns.filter((c) => dedicated.has(c.netId));
-  let order = conns.filter((c) => !dedicated.has(c.netId)).sort((x, y) => x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
+  // nets with a dedicated (inner) plane are connected through it, not with tracks; so are two
+  // pads of a net inside the same area plane of it (its other pads get tracks)
+  const dedicated = new Set((input.planes ?? []).filter((pl) => !OUTER.has(pl.layer) && !pl.area).map((pl) => pl.netId));
+  const areas = (input.planes ?? []).filter((pl) => !OUTER.has(pl.layer) && pl.area);
+  const viaArea = (c: Conn) => areas.some((pl) => pl.netId === c.netId && inArea(pl, pads[c.a]!) && inArea(pl, pads[c.b]!));
+  const planeOnly = conns.filter((c) => dedicated.has(c.netId) || viaArea(c));
+  const throughPlane = new Set(planeOnly);
+  let order = conns.filter((c) => !throughPlane.has(c)).sort((x, y) => x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
   const t0 = now();
   const deadline = t0 + (input.budgetMs ?? 90_000);
   // the history cost (see routeOnce), kept from pass to pass
   const history = new Float32Array(input.layers.length * (Math.ceil(input.outline.w / G) + 1) * (Math.ceil(input.outline.h / G) + 1));
   let stale = 0;
   let ran = 0;
+  let style = FREE;
   // nets poured on an outer layer and without an inner plane (see routeOnce): on a tie, the pass
   // that leaves fewer of their connections open wins (one open pad of a pour is the worse defect)
-  const pourNets = new Set((input.planes ?? []).filter((pl) => OUTER.has(pl.layer) && !dedicated.has(pl.netId)).map((pl) => pl.netId));
+  const pourNets = new Set((input.planes ?? []).filter((pl) => OUTER.has(pl.layer) && !pl.area && !dedicated.has(pl.netId)).map((pl) => pl.netId));
   const pourOpen = (x: { failed: Conn[] }) => x.failed.filter((c) => pourNets.has(c.netId)).length;
   // the connections that failed in the pass before (a pour's net routes them with the signals)
   let early = new Set<Conn>();
@@ -125,8 +155,8 @@ export function route(input: RouteInput, passes = 40): RouteResult {
   input.onBest?.(result({ tracks: [], vias: [], zones: [], failed: [...order, ...planeOnly], roots: Int32Array.from(pads, (_, i) => i), timedOut: false, blockage: new Map() }, 0));
   for (let pass = 0; pass < passes; pass++) {
     const bestOpen = best ? best.failed.length : null;
-    const progress = input.onProgress ? (tracks: Track[], vias: Via[], done: number) => input.onProgress!({ pass: pass + 1, tracks, vias, connections: conns.length, done, bestOpen, elapsedMs: now() - t0 }) : undefined;
-    const r = routeOnce(input, pads, owner, order, deadline, planeOnly, early, history, progress);
+    const progress = input.onProgress ? (tracks: Track[], vias: Via[], done: number) => input.onProgress!({ pass: pass + 1, tracks, vias, connections: conns.length, done, bestOpen, elapsedMs: now() - t0, grid: style === GRID }) : undefined;
+    const r = routeOnce(input, pads, owner, order, deadline, planeOnly, early, history, style, progress);
     ran++;
     // each pass's copper, so even a quick pass shows (the next one starts from nothing)
     progress?.(r.tracks, r.vias, conns.length - r.failed.length);
@@ -139,7 +169,13 @@ export function route(input: RouteInput, passes = 40): RouteResult {
     // passes without an improvement: the history costs grow with each, so the nets in the way
     // are pushed harder every time; after a few, more will not help
     stale = improved ? 0 : stale + 1;
-    if (stale >= STALE_PASSES) break;
+    if (style === FREE && (stale >= FREE_STALE || now() - t0 > FREE_SHARE * (deadline - t0)) && input.layers.length > 1) {
+      // the tidy way is stuck: route on the grid, from a clean slate (what the free passes taught
+      // about congestion does not hold for tracks that run another way)
+      style = GRID;
+      stale = 0;
+      history.fill(0);
+    } else if (stale >= STALE_PASSES) break;
     // another pass only if one fits in the budget
     if (now() + (now() - t0) / (pass + 1) > deadline) break;
     // failures first, the rest in the order they had (the history costs, not a shuffled order,
@@ -148,7 +184,7 @@ export function route(input: RouteInput, passes = 40): RouteResult {
     early = failed;
     order = [...order.filter((c) => failed.has(c)), ...order.filter((c) => !failed.has(c))];
   }
-  return result(best ?? routeOnce(input, pads, owner, order, deadline, planeOnly, new Set(), history), ran);
+  return result(best ?? routeOnce(input, pads, owner, order, deadline, planeOnly, new Set(), history, style), ran);
 
   /** A pass's result as the caller sees it. */
   function result(r: ReturnType<typeof routeOnce>, ran: number): RouteResult {
@@ -211,6 +247,7 @@ function routeOnce(
   early: Set<Conn>,
   /** Cost of entering each state (layer × grid point), grown where open connections wanted to go. */
   history: Float32Array,
+  style: Style,
   progress?: (tracks: Track[], vias: Via[], done: number) => void,
 ) {
   const { rules, layers } = input;
@@ -787,7 +824,7 @@ function routeOnce(
         // diagonal steps: both orthogonal neighbours must be clear too (no corner cutting)
         if (dx !== 0 && dy !== 0 && (!ok(y * W + nx) || !ok(ny * W + x))) continue;
         const off = kind === 1 ? dy !== 0 : kind === 2 ? dx !== 0 : false;
-        const nc = base + STEP[d]! + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? OFF_AXIS_COST : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + history[ns]!;
+        const nc = base + STEP[d]! + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? style.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + history[ns]!;
         if (nc < costOf(ns)) {
           seenAt[ns] = run;
           cost[ns] = nc;
@@ -802,7 +839,7 @@ function routeOnce(
           const ns = l2 * N + i;
           // the track goes on from the via: it must fit there too (see wide)
           if (wide && !free(l2, i) && !isGoal(ns)) continue;
-          const nc = base + VIA_COST + history[ns]!;
+          const nc = base + style.via + history[ns]!;
           if (nc < costOf(ns)) {
             seenAt[ns] = run;
             cost[ns] = nc;
@@ -950,7 +987,7 @@ function routeOnce(
         const n = dx && dy ? Math.max(Math.min(lanes(l, x, y, dx, 0), lanes(l, nx, y, 0, dy)), Math.min(lanes(l, x, y, 0, dy), lanes(l, x, ny, dx, 0))) : lanes(l, x, y, dx, dy);
         if (!n) continue;
         const off = kind === 1 ? dy !== 0 : kind === 2 ? dx !== 0 : false;
-        const ncost = ccost[s]! + COARSE * (STEP[d]! * (2 - n / COARSE) + (off ? OFF_AXIS_COST : 0));
+        const ncost = ccost[s]! + COARSE * (STEP[d]! * (2 - n / COARSE) + (off ? style.offAxis : 0));
         if (cseen[ns] !== run || ncost < ccost[ns]!) {
           cseen[ns] = run;
           ccost[ns] = ncost;
@@ -960,12 +997,12 @@ function routeOnce(
       }
       if (L < 2) continue;
       let gain = false; // (a via only where it can make another layer cheaper)
-      for (let l2 = 0; l2 < L && !gain; l2++) if (l2 !== l && (cseen[l2 * CN + c] !== run || ccost[s]! + VIA_COST < ccost[l2 * CN + c]!)) gain = true;
+      for (let l2 = 0; l2 < L && !gain; l2++) if (l2 !== l && (cseen[l2 * CN + c] !== run || ccost[s]! + style.via < ccost[l2 * CN + c]!)) gain = true;
       if (!gain || !viaIn(c)) continue;
       for (let l2 = 0; l2 < L; l2++) {
         if (l2 === l) continue;
         const ns = l2 * CN + c;
-        const ncost = ccost[s]! + VIA_COST;
+        const ncost = ccost[s]! + style.via;
         if (cseen[ns] !== run || ncost < ccost[ns]!) {
           cseen[ns] = run;
           ccost[ns] = ncost;
@@ -1513,11 +1550,26 @@ function routeOnce(
   const zones: Zone[] = [];
   const planes = (input.planes ?? []).filter((pl) => layerIdx.has(pl.layer) && netNum.has(pl.netId));
   const margin = G * 0.75; // a cell stands for a G × G square: keep its corners clear
-  const region = (pl: { netId: string; layer: CopperLayer }) => {
+  /** A plane's distances as set_plane_style shaped it (never below the board's own). */
+  const planeLook = (pl: Plane) => {
+    const st = pl.style ?? {};
+    const clear = Math.max(rules.clearance, st.clearance ?? 0);
+    return {
+      clear,
+      edge: Math.max(rules.edgeClearance, st.edge ?? 0),
+      thermal: st.thermal !== false,
+      ring: Math.max(clear, 0.25),
+      spoke: st.spoke ?? Math.min(0.4, Math.max(0.3, rules.track)),
+    };
+  };
+  /** The gap round an area plane, to the plane it lies in. */
+  const areaGap = (q: Plane) => Math.max(rules.clearance, q.style?.gap ?? 0);
+  const region = (pl: Plane) => {
     const l = layerIdx.get(pl.layer)!;
     const pnet = numOf(pl.netId);
     const ok = new Uint8Array(N);
-    const keep = rules.edgeClearance + margin;
+    const look = planeLook(pl);
+    const keep = look.edge + margin;
     for (let j = 0; j < H; j++) {
       for (let i = 0; i < W; i++) {
         const x = i * G;
@@ -1531,8 +1583,21 @@ function routeOnce(
         for (let i = Math.max(0, Math.floor((x0 - keep) / G)); i <= Math.min(W - 1, Math.ceil((x1 + keep) / G)); i++) if (cutoutDistance(c, i * G, j * G) < keep) ok[j * W + i] = 0;
       }
     }
+    // split planes: an area plane only inside its rectangle; the layer's other planes round each
+    // area on it, with the clearance
+    for (const q of planes) {
+      if (q.layer !== pl.layer || !q.area) continue;
+      const [a0, b0, a1, b1] = q.area;
+      const grow = q === pl ? -margin : areaGap(q) + margin;
+      for (let j = 0; j < H; j++) {
+        for (let i = 0; i < W; i++) {
+          const within = i * G >= a0 - grow && i * G <= a1 + grow && j * G >= b0 - grow && j * G <= b1 + grow;
+          if (within !== (q === pl)) ok[j * W + i] = 0;
+        }
+      }
+    }
     const clearAround = (x0: number, y0: number, x1: number, y1: number, extra: number, dist: (x: number, y: number) => number) => {
-      const reach = rules.clearance + extra + margin;
+      const reach = look.clear + extra + margin;
       for (let j = Math.max(0, Math.floor((y0 - reach) / G)); j <= Math.min(H - 1, Math.ceil((y1 + reach) / G)); j++) {
         for (let i = Math.max(0, Math.floor((x0 - reach) / G)); i <= Math.min(W - 1, Math.ceil((x1 + reach) / G)); i++) if (dist(i * G, j * G) < reach) ok[j * W + i] = 0;
       }
@@ -1555,8 +1620,8 @@ function routeOnce(
      * spokes (easier to solder and to rework than a solid connection).
      */
     const okOthers = ok.slice(); // before the reliefs: where other nets allow copper
-    const gap = Math.max(rules.clearance, 0.25);
-    const spoke = Math.min(0.4, Math.max(0.3, rules.track));
+    const gap = look.ring;
+    const spoke = look.spoke;
     const relief = (cx: number, cy: number, halfW: number, halfH: number, dist: (x: number, y: number) => number) => {
       const outer = gap + margin;
       for (let j = Math.max(0, Math.floor((cy - halfH - outer) / G)); j <= Math.min(H - 1, Math.ceil((cy + halfH + outer) / G)); j++) {
@@ -1570,11 +1635,14 @@ function routeOnce(
         }
       }
     };
-    for (const v of vias) if (v.netId === pl.netId) relief(v.x, v.y, v.pad / 2, v.pad / 2, (x, y) => Math.hypot(x - v.x, y - v.y) - v.pad / 2);
-    pads.forEach((p, idx) => {
-      if (padNet[idx] !== pnet || !(p.drill || p.layers.includes(pl.layer))) return;
-      relief(p.x, p.y, p.w / 2, p.h / 2, padDist(p));
-    });
+    // (joined solid: no reliefs)
+    if (look.thermal) {
+      for (const v of vias) if (v.netId === pl.netId) relief(v.x, v.y, v.pad / 2, v.pad / 2, (x, y) => Math.hypot(x - v.x, y - v.y) - v.pad / 2);
+      pads.forEach((p, idx) => {
+        if (padNet[idx] !== pnet || !(p.drill || p.layers.includes(pl.layer))) return;
+        relief(p.x, p.y, p.w / 2, p.h / 2, padDist(p));
+      });
+    }
     // islands (4-connected)
     const island = new Int32Array(N).fill(-1);
     const sizes: number[] = [];
@@ -1618,10 +1686,17 @@ function routeOnce(
   };
 
   /** Exact plane geometry: outline minus clearances, relief rings and dead islands, plus spokes. */
-  const planeShape = (pl: { netId: string; layer: CopperLayer }, rg: ReturnType<typeof region>, alive: Set<number>): ZoneShape => {
-    const c = rules.clearance;
-    const e = rules.edgeClearance;
+  const planeShape = (pl: Plane, rg: ReturnType<typeof region>, alive: Set<number>): ZoneShape => {
+    const look = planeLook(pl);
+    const c = look.clear;
+    const e = look.edge;
     const cuts: ZoneShape['cuts'] = [];
+    // split planes: the layer's other planes go round each area on it, with its gap
+    for (const q of planes) {
+      if (q === pl || q.layer !== pl.layer || !q.area) continue;
+      const g = areaGap(q);
+      cuts.push({ k: 'rect', x: r3(q.area[0] - g), y: r3(q.area[1] - g), w: r3(q.area[2] - q.area[0] + 2 * g), h: r3(q.area[3] - q.area[1] + 2 * g) });
+    }
     const adds: ZoneShape['adds'] = [];
     pads.forEach((p, idx) => {
       if (padNet[idx] === rg.pnet || !(p.drill || p.layers.includes(pl.layer))) return;
@@ -1631,8 +1706,8 @@ function routeOnce(
     for (const t of tracks) if (t.netId !== pl.netId && t.layer === pl.layer) cuts.push({ k: 'stroke', pts: t.pts, w: r3(t.width + 2 * c) });
     for (const v of vias) if (v.netId !== pl.netId) cuts.push({ k: 'circle', x: v.x, y: v.y, d: r3(v.pad + 2 * c) });
     // thermal reliefs: a ring cut, spokes back where no other net is in the way
-    const gap = Math.max(c, 0.25);
-    const spokeW = Math.min(0.4, Math.max(0.3, rules.track));
+    const gap = look.ring;
+    const spokeW = look.spoke;
     const spokesOf = (x: number, y: number, hx: number, hy: number) => {
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
         const x1 = x + dx * (hx + gap + G);
@@ -1648,12 +1723,12 @@ function routeOnce(
       }
     };
     for (const v of vias) {
-      if (v.netId !== pl.netId) continue;
+      if (v.netId !== pl.netId || !look.thermal) continue;
       cuts.push({ k: 'circle', x: v.x, y: v.y, d: r3(v.pad + 2 * gap) });
       spokesOf(v.x, v.y, v.pad / 2, v.pad / 2);
     }
     pads.forEach((p, idx) => {
-      if (padNet[idx] !== rg.pnet || !(p.drill || p.layers.includes(pl.layer))) return;
+      if (padNet[idx] !== rg.pnet || !(p.drill || p.layers.includes(pl.layer)) || !look.thermal) return;
       if (p.shape === 'round') cuts.push({ k: 'circle', x: p.x, y: p.y, d: r3(Math.min(p.w, p.h) + 2 * gap) });
       else cuts.push({ k: 'rect', x: r3(p.x - p.w / 2 - gap), y: r3(p.y - p.h / 2 - gap), w: r3(p.w + 2 * gap), h: r3(p.h + 2 * gap) });
       spokesOf(p.x, p.y, p.shape === 'round' ? Math.min(p.w, p.h) / 2 : p.w / 2, p.shape === 'round' ? Math.min(p.w, p.h) / 2 : p.h / 2);
@@ -1690,7 +1765,15 @@ function routeOnce(
         }
       }
     }
-    return { outline: [e, e, r3(input.outline.w - e), r3(input.outline.h - e)], ...(clip ? { clip } : {}), cuts, adds };
+    const box: [number, number, number, number] = [e, e, r3(input.outline.w - e), r3(input.outline.h - e)];
+    const outline: [number, number, number, number] = pl.area ? [r3(Math.max(box[0], pl.area[0])), r3(Math.max(box[1], pl.area[1])), r3(Math.min(box[2], pl.area[2])), r3(Math.min(box[3], pl.area[3]))] : box;
+    if (pl.area && clip) {
+      // a shaped board fills its clip polygon, not the outline rectangle: cut what lies outside the area
+      const [x0, y0, x1, y1] = outline;
+      const [W0, H0] = [input.outline.w, input.outline.h];
+      for (const [x, y, w, h] of [[0, 0, W0, y0], [0, y1, W0, H0 - y1], [0, y0, x0, y1 - y0], [x1, y0, W0 - x1, y1 - y0]] as const) if (w > 0 && h > 0) cuts.push({ k: 'rect', x: r3(x), y: r3(y), w: r3(w), h: r3(h) });
+    }
+    return { outline, ...(clip ? { clip } : {}), cuts, adds };
   };
 
   // 1. provisional areas; 2. drops of every group that does not reach its plane
@@ -1770,7 +1853,8 @@ function routeOnce(
   for (const pl of list) {
     const rg = region(pl);
     if (rg.main === undefined || rg.sizes[rg.main]! * G * G < 1) continue;
-    const roots = [...new Set(pads.map((_, idx) => find(idx)).filter((r) => padNet[r] === rg.pnet))];
+    // (an area plane: only the groups with a pad inside the area; the others are joined by tracks)
+    const roots = [...new Set(pads.map((_, idx) => find(idx)).filter((r) => padNet[r] === rg.pnet))].filter((r) => !pl.area || pads.some((p, idx) => find(idx) === r && inArea(pl, p)));
     // copper of the drops so far → the via it leads down to: a later drop may simply join it
     const dropCopper = new Map<number, { x: number; y: number }>();
     for (const r of roots) {
@@ -2027,7 +2111,7 @@ function routeOnce(
       if (seen.has(key) || find(c.a) === find(c.b)) continue;
       seen.add(key);
       // a net on a dedicated plane has no tracks: its pads found no room for their vias
-      const plane = planes.find((pl) => pl.netId === c.netId && !OUTER.has(pl.layer));
+      const plane = planeOnly.includes(c) ? planes.find((pl) => pl.netId === c.netId && !OUTER.has(pl.layer) && (!pl.area || (inArea(pl, pads[c.a]!) && inArea(pl, pads[c.b]!)))) : undefined;
       if (plane) {
         out.set(c, { plane: plane.layer });
         continue;
@@ -2140,7 +2224,7 @@ function routeOnce(
         for (let l2 = 0; l2 < L; l2++) {
           if (l2 === l || !passable(l2, i)) continue;
           const ns = l2 * N + i;
-          const nc = cost[s]! + VIA_COST + dear;
+          const nc = cost[s]! + style.via + dear;
           if (seenAt[ns] !== run || nc < cost[ns]!) {
             seenAt[ns] = run;
             cost[ns] = nc;

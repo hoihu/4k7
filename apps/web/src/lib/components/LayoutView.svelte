@@ -1,6 +1,6 @@
 <script lang="ts">
   import { fabFiles, panelFabFiles, zip } from '@4k7/fab';
-  import type { BoardDiagnostic, CopperLayer } from '@4k7/schema';
+  import { planeNames, type BoardDiagnostic, type CopperLayer } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
   import BoardCanvas from './BoardCanvas.svelte';
@@ -70,9 +70,9 @@
   const layerNames: [string, string][] = $derived([
     ['board', 'Board · substrate / solder mask'],
     ...(b?.layers ?? ['F.Cu', 'B.Cu']).map((l: CopperLayer): [string, string] => {
-      const plane = b?.planes.find((p) => p.layer === l);
+      const planes = b ? planeNames(b, l) : '';
       const name = l === 'F.Cu' ? 'Top copper' : l === 'B.Cu' ? 'Bottom copper' : `Inner ${l.slice(2, 3)}`;
-      return [l, plane ? `${name} · ${b!.netNames[plane.netId] ?? plane.netId} ${l === 'F.Cu' || l === 'B.Cu' ? 'pour' : 'plane'}` : name];
+      return [l, planes ? `${name} · ${planes} ${l === 'F.Cu' || l === 'B.Cu' ? 'pour' : 'plane'}` : name];
     }),
     ['silk', 'Silkscreen'],
     ['courtyard', 'Courtyards'],
@@ -166,7 +166,7 @@
       {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
       <div class="seg"><button aria-pressed={mode === '2d'} onclick={to2d}>2D</button><button aria-pressed={mode === '3d'} onclick={to3d}>3D</button><button aria-pressed={mode === 'panel'} title="The fabrication panel: copies in a frame, tabs with mouse bites" onclick={toPanel}>Panel</button></div>
       {#if b?.parts.length}
-        <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose layout', [{ op: 'propose_layout' }])}>Propose layout</button>
+        <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose placement', [{ op: 'propose_placement' }])}>Propose placement</button>
         {#if choices.length}<button class="btn" disabled={app.running} title="Your {choices.length} placement choice{choices.length > 1 ? 's' : ''} go back to the placer; locked parts stay" onclick={releaseAll}>Release choices ({choices.length})</button>{/if}
         <button class="btn" class:pri={b.routing !== 'done' || b.stopped} disabled={app.running || !!prog || (b.routing === 'done' && !b.stopped)} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' || b.stopped ? 'Route again' : 'Route'}</button>
         <button class="btn" disabled={!b.parts.length} title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
@@ -178,11 +178,11 @@
       <div class="routing" role="status" aria-live="polite">
         <div class="rl">
           <b>Routing</b>
-          <span>pass {prog.pass} · {prog.done}/{prog.connections} connections · {secs(prog.elapsedMs)}</span>
+          <span>pass {prog.pass}{prog.grid ? ' · on the grid' : ''} · {prog.done}/{prog.connections} connections · {secs(prog.elapsedMs)}</span>
           <button class="btn stop" onclick={() => void app.stopRouting()} title={prog.bestOpen === null ? 'Stop routing. The first pass has not finished: nothing will be routed.' : `Stop routing and keep the best pass so far (${prog.bestOpen} connection${prog.bestOpen === 1 ? '' : 's'} open)`}>Stop</button>
         </div>
         <div class="bar"><div style="width: {Math.round((100 * prog.done) / Math.max(1, prog.connections))}%"></div></div>
-        {#if prog.bestOpen !== null}<div class="rs">{prog.bestOpen === 0 ? 'done' : `best pass so far left ${prog.bestOpen} open; trying again, round what blocked them`}</div>{/if}
+        {#if prog.bestOpen !== null}<div class="rs">{prog.bestOpen === 0 ? 'done' : prog.grid ? `best pass so far left ${prog.bestOpen} open; now routing on the grid (horizontal on top, vertical on the bottom, vias wherever they help) to get every connection through` : `best pass so far left ${prog.bestOpen} open; trying again, round what blocked them`}</div>{/if}
       </div>
     {/if}
     {#if app.k?.proposal}

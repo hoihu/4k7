@@ -32,11 +32,12 @@ export interface BoardSettings {
   /** The manufacturer the board is made by: its limits, checked by the DRC (set_fab_profile). Absent = none chosen. */
   fab?: FabProfile;
   /**
-   * Copper planes, one net per layer: inner layers are dedicated planes, outer layers get a
-   * pour. Absent = automatic (2 layers: GND on B.Cu; 4 layers: GND on In1.Cu, the main supply
-   * on In2.Cu).
+   * Copper planes: inner layers are dedicated planes, outer layers get a pour. One net fills a
+   * layer; on an inner layer, planes with an area cover only that part of it (+3V3 under the MCU)
+   * and the layer's full plane goes round them. Absent = automatic (2 layers: GND on B.Cu;
+   * 4 layers: GND on In1.Cu, the main supply on In2.Cu).
    */
-  planes?: { netId: string; layer: CopperLayer }[];
+  planes?: { netId: string; layer: CopperLayer; area?: PlaneArea; style?: PlaneStyle }[];
   /** Mounting holes (board features, not parts). */
   holes?: MountingHole[];
   /** Rounded board corners: the radius (mm); absent or 0 = square corners. */
@@ -53,7 +54,7 @@ export interface BoardSettings {
   /** The fabrication panel the board is made in (set_panel). Absent: single boards. */
   panel?: PanelSettings;
   /**
-   * The placement as last proposed or adjusted (propose_layout, place, route store it). Later
+   * The placement as last proposed or adjusted (propose_placement, place, route store it). Later
    * layouts start from it, so a change moves only what it has to. Absent: proposed afresh.
    */
   placement?: StoredPlacement;
@@ -65,6 +66,37 @@ export interface BoardSettings {
    * change of its own: it is written when routing finishes and ignored once the key differs.
    */
   copper?: StoredCopper;
+}
+
+/**
+ * The part of an inner layer a plane covers (set_plane under / rect): under some parts (their
+ * courtyards' box plus a margin, so it follows them when they move), or a rectangle in mm.
+ */
+export interface PlaneArea {
+  /** Component ids. */
+  under?: string[];
+  /** Around the parts, mm (default PLANE_AREA_MARGIN). */
+  margin?: number;
+  /** x0, y0, x1, y1 in mm. */
+  rect?: [number, number, number, number];
+}
+export const PLANE_AREA_MARGIN = 1.5;
+
+/**
+ * How a plane (or pour) is shaped (set_plane_style), where it differs from the defaults. Distances
+ * in mm; never below the board's own clearance and edge clearance.
+ */
+export interface PlaneStyle {
+  /** An area plane: the gap to the plane round it (default: the board's clearance). */
+  gap?: number;
+  /** From other nets' pads, tracks and vias (default: the board's clearance). */
+  clearance?: number;
+  /** Pulled back from the board edge and cutouts (default: the board's edge clearance). */
+  edge?: number;
+  /** Thermal reliefs round the net's own pads and vias (default true); false: joined solid. */
+  thermal?: boolean;
+  /** Width of the relief spokes. */
+  spoke?: number;
 }
 
 /** Why a connection stayed open (the router's probe: what its way would have to cross). */
@@ -561,8 +593,8 @@ export interface BoardView {
   tracks: Track[];
   vias: Via[];
   zones: Zone[];
-  /** Planes in effect (net, layer; automatic or set with set_plane). */
-  planes: { netId: string; layer: CopperLayer; auto: boolean }[];
+  /** Planes in effect (net, layer; automatic or set with set_plane), an area plane with its rectangle (x0, y0, x1, y1, mm) and the parts it lies under. */
+  planes: { netId: string; layer: CopperLayer; auto: boolean; area?: [number, number, number, number]; under?: string[]; style?: PlaneStyle }[];
   /** Connections not (yet) made by copper. */
   ratsnest: RatsLine[];
   diagnostics: BoardDiagnostic[];
@@ -618,6 +650,27 @@ function openSummary(b: BoardView, u: UnroutedConnection) {
   };
 }
 
+/** A plane's style in words: "gap 1 mm, clearance 0.5 mm, solid". */
+export function planeStyleText(s: PlaneStyle): string {
+  return [
+    s.gap !== undefined ? `gap ${s.gap} mm` : '',
+    s.clearance !== undefined ? `clearance ${s.clearance} mm` : '',
+    s.edge !== undefined ? `edge ${s.edge} mm` : '',
+    s.thermal === false ? 'solid' : '',
+    s.spoke !== undefined ? `spokes ${s.spoke} mm` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+/** The planes on a layer as a legend names them: "+5V, +3V3 under U1". */
+export function planeNames(b: Pick<BoardView, 'planes' | 'netNames'>, layer: CopperLayer): string {
+  return b.planes
+    .filter((p) => p.layer === layer)
+    .map((p) => `${b.netNames[p.netId] ?? p.netId}${p.area ? (p.under ? ` under ${p.under.join(', ')}` : ' (area)') : ''}`)
+    .join(', ');
+}
+
 /** Compact board description for agents (design_query get_board). */
 export function boardSummary(b: BoardView, routed = true) {
   return {
@@ -645,7 +698,7 @@ export function boardSummary(b: BoardView, routed = true) {
           ? 'out of date: the placement changed since the route step (route again when the placement is final)'
           : 'not routed yet (the route op, once the placement is final)',
     placement_measures: { ratsnest_mm: b.measures.ratsnestMm, ratsnest_crossings: b.measures.crossings },
-    planes: b.planes.map((p) => ({ net: b.netNames[p.netId] ?? p.netId, layer: p.layer, dedicated: p.layer !== 'F.Cu' && p.layer !== 'B.Cu', automatic: p.auto })),
+    planes: b.planes.map((p) => ({ net: b.netNames[p.netId] ?? p.netId, layer: p.layer, dedicated: p.layer !== 'F.Cu' && p.layer !== 'B.Cu', automatic: p.auto, ...(p.area ? { area_mm: p.area, ...(p.under ? { under: p.under } : {}) } : {}), ...(p.style ? { style_mm: p.style } : {}) })),
     mounting_holes: b.parts.filter((p) => p.componentId.startsWith('hole:')).map((p) => ({ id: p.refdes, x: p.x, y: p.y, diameter: p.pads[0]?.drill, plated: !p.pads[0]?.npth })),
     corner_radius_mm: b.cornerRadius,
     cutouts: b.cutouts.map((c) => ({ id: c.id, shape: c.shape, x: c.x, y: c.y, ...(c.shape === 'circle' ? { diameter: c.w } : { w: c.w, h: c.h }), ...(c.r ? { corner_radius: c.r } : {}), ...(c.angle ? { angle: c.angle } : {}) })),
@@ -678,6 +731,6 @@ export function boardSummary(b: BoardView, routed = true) {
       : {}),
     drc: b.diagnostics.filter((x) => !x.waivedBy).map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
-    note: 'Workflow: propose_layout (board size and placement), then arrange (place = the user\'s choice for a part, kept relative to its parent part, rot turns it; lock: true pins it exactly; set_board for the size; placement_measures say how the arrangement routes: shorter, fewer crossing ratsnest lines are better), then route as the last step, to 100 %. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
+    note: 'Workflow: decide the main parts\' places and rotations (try_placements compares arrangements, propose_placement parts applies one; the placer puts the small parts round them), then fine-tune (place = a choice for a part, kept relative to its parent part, rot turns it; lock: true pins it exactly; set_board for the size; placement_measures say how the arrangement routes: shorter, fewer crossing ratsnest lines are better), then route as the last step, to 100 %. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
   };
 }

@@ -45,6 +45,7 @@ import type { RouteProgress } from './router.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 import { MIN_FREE, circuitSignature, guardOp, measure, positions, resolveScope, ripple, widenScope, type ResolvedScope } from './scope.ts';
 import { schematicChecks } from './schcheck.ts';
+import { tryPlacements } from './trial.ts';
 
 interface Analysis {
   view: SchematicView;
@@ -447,6 +448,8 @@ export class Kernel {
         const routed = this.boards.get(d);
         return routed ? boardSummary(routed) : boardSummary(this.boardPlacement(), false);
       }
+      case 'try_placements':
+        return tryPlacements(d, this.analyse(d).view, q.candidates, !!q.route, this.boards.get(d));
       case 'get_description':
         return descriptionView(d) ?? { description: null, hint: 'No description yet: write one with design_edit describe (overview and blocks).', parts: componentsSorted(d).map((c) => c.refdes) };
       case 'get_ledger':

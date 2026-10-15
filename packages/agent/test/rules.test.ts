@@ -26,6 +26,13 @@ describe('schematic notes in the design context', () => {
     expect(formatDesignContext({ ...base, rules: '  \n' })).not.toContain('<schematic_notes>');
   });
 
+  it('puts the user\'s layout notes after the schematic notes', () => {
+    const t = formatDesignContext({ ...base, rules: 'Labels horizontal.', layoutRules: '+3V3 plane under the MCU.\n' });
+    expect(/<layout_notes>\n([\s\S]*)\n<\/layout_notes>/.exec(t)?.[1]).toBe('+3V3 plane under the MCU.');
+    expect(t.indexOf('</schematic_notes>')).toBeLessThan(t.indexOf('<layout_notes>'));
+    expect(formatDesignContext({ ...base, layoutRules: ' ' })).not.toContain('<layout_notes>');
+  });
+
   it('tells Optimize to fix the SCH diagnostics first', () => {
     const info: ScopeInfo = {
       scope: { view: 'schematic', sheet: 's_1', rect: { x: 0, y: 0, w: 1000, h: 1000 } },

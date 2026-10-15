@@ -25,8 +25,10 @@ export function formatDesignContext(opts: {
   view?: ViewInfo | null;
   /** The user's schematic notes (Settings → Schematic): how they want the schematic drawn, in their words. */
   rules?: string;
+  /** The user's layout notes (Settings → Board layout): how they want boards laid out, in their words. */
+  layoutRules?: string;
 }): string {
-  const { summary: s, diagnostics, ledger, selection, scope, view, rules } = opts;
+  const { summary: s, diagnostics, ledger, selection, scope, view, rules, layoutRules } = opts;
   const lines: string[] = ['<design_state>'];
   lines.push(`name: ${s.name}; sheets: ${s.sheets.join(', ')}; pages: ${s.pages}`);
   if (s.components.length) {
@@ -56,6 +58,7 @@ export function formatDesignContext(opts: {
   }
   lines.push('</design_state>');
   if (rules?.trim()) lines.push(`<schematic_notes>\n${rules.trim()}\n</schematic_notes>`);
+  if (layoutRules?.trim()) lines.push(`<layout_notes>\n${layoutRules.trim()}\n</layout_notes>`);
   if (selection.length) lines.push(`<selection>${selection.join(', ')}</selection>`);
   if (view && !scope) lines.push(formatView(view));
   if (scope) lines.push(formatScope(scope));

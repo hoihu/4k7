@@ -2,7 +2,7 @@
  * Changesets: entity-level diff between the committed design and the agent's working
  * copy, and merging of a user-selected subset of hunks.
  */
-import type { Component, Design, Hunk } from '@4k7/schema';
+import { planeStyleText, type Component, type Design, type Hunk } from '@4k7/schema';
 import { layoutText } from '@4k7/parts';
 import { describeConstraint } from './apply.ts';
 import { clone, gcNets, gcParts, natCmp, valueOf } from './doc.ts';
@@ -147,7 +147,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
             `track ${b.rules.track} / ${b.rules.powerTrack} mm`,
             ...(b.fab ? [`made by ${b.fab.house}, ${b.fab.tier}${b.fab.origin === 'imported' ? ` (limits imported from ${b.fab.source.url})` : ''}`] : []),
             ...(b.holes?.length ? [`${b.holes.length} mounting hole${b.holes.length > 1 ? 's' : ''} (${[...new Set(b.holes.map((x) => `Ø${x.d}`))].join(', ')})`] : []),
-            ...(b.planes ? [`planes: ${b.planes.map((p) => `${draft.nets[p.netId]?.name ?? p.netId} on ${p.layer}`).join(', ') || 'none'}`] : []),
+            ...(b.planes ? [`planes: ${b.planes.map((p) => `${draft.nets[p.netId]?.name ?? p.netId} on ${p.layer}${p.area ? (p.area.under ? ` under ${p.area.under.map((id) => draft.components[id]?.refdes ?? id).join(', ')}` : ' (an area)') : ''}${p.style ? ` (${planeStyleText(p.style)})` : ''}`).join(', ') || 'none'}`] : []),
           ]
         : [],
     });

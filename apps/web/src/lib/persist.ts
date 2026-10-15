@@ -280,6 +280,8 @@ export interface Settings {
   schematicNotes: string;
   /** The user's levels and limits for the drawing checks (SCH.*), only where they differ from the shipped ones. */
   schematicChecks: CheckSettings;
+  /** The user's notes on how they want boards laid out (placement, planes, routing), sent to the agent with every request; '' = none. */
+  layoutNotes: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -301,6 +303,7 @@ export const DEFAULT_SETTINGS: Settings = {
   project: '',
   schematicNotes: '',
   schematicChecks: {},
+  layoutNotes: '',
 };
 
 /** Bumped when a default changes in a way existing users should get (v2: dark blue theme). */

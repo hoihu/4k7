@@ -1,37 +1,9 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
   import { SCHEMATIC_CHECKS, SCHEMATIC_NOTES_PLACEHOLDER, changedChecks, resolveChecks, type RuleLevel } from '@4k7/schema';
   import { app } from '../../app.svelte.ts';
   import Field from './Field.svelte';
+  import NotesField from './NotesField.svelte';
   import Section from './Section.svelte';
-
-  /** The text in the box, saved after a pause in typing. */
-  let text = $state(untrack(() => app.settings.schematicNotes));
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  // another tab (or Clear) changed the setting: show it, unless it is what the box already says
-  $effect(() => {
-    const t = app.settings.schematicNotes;
-    if (t !== untrack(() => text)) text = t;
-  });
-
-  function save() {
-    clearTimeout(timer);
-    timer = undefined;
-    const next = text.trim() ? text : '';
-    if (next !== app.settings.schematicNotes) void app.updateSettings({ schematicNotes: next });
-  }
-
-  function typed() {
-    clearTimeout(timer);
-    timer = setTimeout(save, 800);
-  }
-
-  function clear() {
-    clearTimeout(timer);
-    text = '';
-    void app.updateSettings({ schematicNotes: '' });
-  }
 
   const LEVELS: { level: RuleLevel; label: string }[] = [
     { level: 'error', label: 'Must fix' },
@@ -56,18 +28,10 @@
 
 <Section id="rules" title="Schematic drawing">
   {#snippet status()}
-    {#if text.trim() || changed}<span class="tag info">your own</span>{:else}<span class="tag">default</span>{/if}
+    {#if app.settings.schematicNotes.trim() || changed}<span class="tag info">your own</span>{:else}<span class="tag">default</span>{/if}
   {/snippet}
 
-  <Field label="Your notes">
-    {#snippet hint()}
-      The agent reads these with every request, and they win over its own habits. Keep them short. Saved as you type.
-    {/snippet}
-    <textarea class="text notes" aria-label="Your notes on how to draw schematics" placeholder={SCHEMATIC_NOTES_PLACEHOLDER} bind:value={text} oninput={typed} onblur={save}></textarea>
-    <div class="row">
-      <button class="btn" onclick={clear} disabled={!text}>Clear</button>
-    </div>
-  </Field>
+  <NotesField setting="schematicNotes" what="how to draw schematics" placeholder={SCHEMATIC_NOTES_PLACEHOLDER} />
 
   <Field label="Checks">
     {#snippet hint()}
@@ -97,8 +61,6 @@
 </Section>
 
 <style>
-  .notes { width: 100%; box-sizing: border-box; min-height: 180px; max-height: 50vh; resize: vertical; line-height: 1.45; }
-  .row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
   .checks { display: flex; flex-direction: column; }
   .check { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--line); }
   .check:last-child { border-bottom: 0; }

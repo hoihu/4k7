@@ -182,8 +182,22 @@ Each step is useful alone.
    steps 3–4): the zoomed area as a scope, `place` (move, turn) only inside it, measures before and
    after (ratsnest length and crossings, open connections, decoupling distance), then
    `route { region }` with the crossing points at the area's edge fixed.
-8. **Layout notes**: the user's words on how they want boards laid out (Settings → Layout), sent like
-   `<schematic_notes>`, filled when the agent does something the user does not like.
+8. **Layout notes** (built 2026-10-13): the user's words on how they want boards laid out
+   (Settings → Board layout, `Settings.layoutNotes`), sent as a `<layout_notes>` block after
+   `<schematic_notes>`; the guide says they win over the agent's judgement and the automatic
+   choices. Notes asking for what no op can do yet are met as closely as the ops allow, and the
+   agent says what is missing.
+9. **Split planes** (built 2026-10-13): `set_plane` with `under` (parts: their courtyards' box
+   plus `margin_mm`, default 1.5 mm, kept as component ids so it follows them) or `rect` gives a
+   net a plane on part of an inner layer (`PlaneArea` in `BoardSettings.planes`, resolved to a
+   rectangle in `BoardView.planes`). The layer's full plane goes round each area with the
+   clearance. In the router, two pads of the net inside the area are joined through it (like a
+   dedicated plane), groups with a pad inside drop onto it, and the net's other connections are
+   routed as tracks. Inner layers only; areas on the outer pours of a 2-layer board are open.
+   `set_plane_style` (2026-10-15) shapes any plane or pour (`PlaneStyle` on its entry): `gap` round
+   an area plane, the plane's own `clearance` to other nets' copper, `edge` pull-back, `thermal`
+   reliefs or solid joints, `spoke` width; never below the board's own clearances. The router's
+   `planeLook` reads them for the raster area and the exact shape alike.
 
 ## 8. Open questions
 

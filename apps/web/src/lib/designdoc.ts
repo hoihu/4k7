@@ -7,7 +7,7 @@
  */
 import { bomLines } from '@4k7/fab';
 import type { Body3D } from '@4k7/parts';
-import { PAPERS, type BoardView, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@4k7/schema';
+import { PAPERS, planeNames, type BoardView, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@4k7/schema';
 import BoardCanvas from './components/BoardCanvas.svelte';
 import { boardDimensions } from './dimensions.ts';
 import { markdown } from './markdown.ts';
@@ -447,8 +447,8 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
     const html: string[] = [];
     const main = boardSvg(layoutInner, b, 'lay', TEXT_W, 150);
     const legend = b.layers.map((l) => {
-      const plane = b.planes.find((p) => p.layer === l);
-      return `<i class="key" style="background:${LAYER[l].color}"></i>${LAYER[l].name}${plane ? ` (${esc(b.netNames[plane.netId] ?? plane.netId)} ${l === 'F.Cu' || l === 'B.Cu' ? 'pour' : 'plane'})` : ''}`;
+      const planes = planeNames(b, l);
+      return `<i class="key" style="background:${LAYER[l].color}"></i>${LAYER[l].name}${planes ? ` (${esc(planes)} ${l === 'F.Cu' || l === 'B.Cu' ? 'pour' : 'plane'})` : ''}`;
     });
     if (b.routing !== 'done') html.push(`<div class="note">The board is ${b.routing === 'stale' ? 'routed for an earlier placement (out of date)' : 'placed but not routed yet'}: the drawing shows the placement.</div>`);
     html.push(figure(main.svg, `Top view, all layers, scale ${scaleText(main.scale)}.${legend.join('')}${twoSided || sides[0]?.side === 'bottom' ? '. Parts on the bottom side are dashed.' : ''}`));

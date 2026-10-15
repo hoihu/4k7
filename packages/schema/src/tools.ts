@@ -237,7 +237,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
       name: TOOL_NAMES.query,
       description:
         'Read the design or the part library. Ops: get_summary, find, get_component, get_net, get_diagnostics, ' +
-        'get_ledger, get_description, get_fab_profiles, get_board, search_parts, get_part. Read-only.',
+        'get_ledger, get_description, get_fab_profiles, get_board, try_placements (compare board arrangements), search_parts, get_part. Read-only.',
       input_schema: schemaOf(QueryOp),
     },
     {

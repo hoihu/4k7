@@ -25,6 +25,9 @@ import {
   type CopperLayer,
   type Design,
   type MountingHole,
+  type PlaneArea,
+  type PlaneStyle,
+  PLANE_AREA_MARGIN,
   type PackageInfo,
   type PartCard,
   type RatsLine,
@@ -231,6 +234,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   // bigger parts first: a choice's anchor (always bigger) is in place before the part itself
   const bySize = [...items].sort((a, b) => b.fp.pads.length - a.fp.pads.length || natCmp(a.comp.refdes, b.comp.refdes));
   const anchorOf = (it: Item) => (it.intent?.rel ? byComp.get(it.intent.rel) : undefined);
+  // a proposed board fitted round the arrangement moves it as a whole: the choices' place on it
+  let offset = { x: 0, y: 0 };
   const applyLocks = () => {
     for (const k of positions) {
       if (k.strength !== 'hard') continue;
@@ -253,8 +258,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
         it.y = a.y + oy;
         if (k.rot !== undefined) it.rot = (((a.rot + k.rot) % 360) + 360) % 360;
       } else {
-        it.x = k.xMm ?? it.x;
-        it.y = k.yMm ?? it.y;
+        if (k.xMm !== undefined) it.x = k.xMm + offset.x;
+        if (k.yMm !== undefined) it.y = k.yMm + offset.y;
         if (k.rot !== undefined) it.rot = k.rot;
       }
     }
@@ -433,9 +438,9 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     return { x: ps.reduce((s, p) => s + p.x, 0) / ps.length, y: ps.reduce((s, p) => s + p.y, 0) / ps.length };
   };
   const fixedItems = items.filter((it) => it.fixed);
-  const planeNets = new Set(settingsPlanes(d, layers.length as 2 | 4).map((pl) => pl.netId));
+  const planeNets = new Set(settingsPlanes(d, layers.length as 2 | 4).filter((pl) => !pl.area).map((pl) => pl.netId));
   // nets with a dedicated inner plane: their pads drop onto it right where they are
-  const innerPlaneNets = new Set(settingsPlanes(d, layers.length as 2 | 4).filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu').map((pl) => pl.netId));
+  const innerPlaneNets = new Set(settingsPlanes(d, layers.length as 2 | 4).filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu' && !pl.area).map((pl) => pl.netId));
   const clashes = (it: Item) => {
     const e = extent(it);
     return fixedItems.some((o) => {
@@ -654,8 +659,28 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       outline = { w: settings.width ?? Math.ceil(bb3.x1 + margin), h: settings.height ?? Math.ceil(bb3.y1 + margin) };
     }
     hugCaps();
-    containing = true;
     applyIntents();
+    if (!userSize && items.length) {
+      /*
+       * The proposed board fits round the whole arrangement, the small parts at an IC's far side
+       * included: what reaches past its top or left edge moves everything over (the choices too;
+       * with locked parts, whose coordinates stay, the board only grows), and it grows to the
+       * right and down as far as the parts reach.
+       */
+      const bb = bounds(items);
+      const sx = Math.max(0, margin - bb.x0);
+      const sy = Math.max(0, margin - bb.y0);
+      if ((sx > 0 || sy > 0) && !fixedItems.length) {
+        offset = { x: sx, y: sy };
+        for (const it of items) {
+          it.x += sx;
+          it.y += sy;
+        }
+      }
+      const bb1 = bounds(items);
+      outline = { w: Math.max(outline.w, Math.ceil(bb1.x1 + margin)), h: Math.max(outline.h, Math.ceil(bb1.y1 + margin)) };
+    }
+    containing = true;
   } else {
     /* ---- from the stored placement: only what changed moves ---- */
     const before = new Map<Item, { x: number; y: number; rot: number }>();
@@ -872,7 +897,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   for (const ref of missing) {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board. Give it one from its datasheet drawing with set_footprint.`, entities: [ref] });
   }
-  const planes = settingsPlanes(d, layers.length as 2 | 4);
+  const planes = placePlanes(settingsPlanes(d, layers.length as 2 | 4), parts, w, h);
   // (keys sorted: a design read back from its file has them in another order than one just edited)
   const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   const view: BoardView = {
@@ -889,7 +914,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     diagnostics,
     stats: { nets: 0, routed: 0, unrouted: 0, trackLength: 0, vias: 0 },
     unrouted: [],
-    measures: placementMeasures(parts, new Set(planes.filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu').map((pl) => pl.netId))),
+    measures: placementMeasures(parts, new Set(planes.filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu' && !pl.area).map((pl) => pl.netId))),
     missing,
     netNames: Object.fromEntries(Object.values(d.nets).map((n) => [n.id, n.name])),
     routing: settings.routed ? (settings.routed === placementKey ? 'done' : 'stale') : 'none',
@@ -910,7 +935,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   return view;
 }
 
-/** The placement to store (propose_layout, place, route): where every part is now. */
+/** The placement to store (propose_placement, place, route): where every part is now. */
 export function storedPlacement(b: BoardView): StoredPlacement {
   return {
     outline: { ...b.outline },
@@ -976,7 +1001,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
         parts: b.parts,
         powerNets,
         netWidths,
-        planes: planes.map(({ netId, layer }) => ({ netId, layer })),
+        planes: planes.map(({ netId, layer, area, style }) => ({ netId, layer, ...(area ? { area } : {}), ...(style ? { style } : {}) })),
         cornerRadius: b.cornerRadius,
         ...(b.shape ? { shape: b.shape } : {}),
         cutouts: b.cutouts,
@@ -1070,7 +1095,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
 /** What the router is given besides the placement, and the key copper routed with it is kept under. */
 function routeSetup(d: Design, b: BoardView) {
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
-  const planes = settingsPlanes(d, b.layers.length as 2 | 4);
+  const planes = b.planes;
   const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
   const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort()]));
   return { powerNets, planes, netWidths, key };
@@ -1470,15 +1495,58 @@ export function autoPlanes(d: Design, layers: 2 | 4): { netId: string; layer: Co
     return out;
   }
   if (ground) out.push({ netId: ground.id, layer: 'In1.Cu', auto: true });
-  const supply = most((n) => isPowerNet(n) && !isGroundNet(n));
+  // the supply plane feeds the ICs: the rail most IC supply pins draw from (+3V3 under an MCU),
+  // not the one with the most pins (an input rail with many connector pins and caps)
+  const icSupply = new Map<string, number>();
+  for (const c of Object.values(d.components)) {
+    const card = cardOf(d, c.part);
+    if (!card || card.pins.length <= 3) continue;
+    for (const pin of card.pins) {
+      const n = c.pins[pin.number];
+      if (n && pin.type === 'pwr_in') icSupply.set(n, (icSupply.get(n) ?? 0) + 1);
+    }
+  }
+  const supply = Object.values(d.nets)
+    .filter((n) => isPowerNet(n) && !isGroundNet(n) && (pins.get(n.id) ?? 0) >= 2)
+    .sort((x, y) => (icSupply.get(y.id) ?? 0) - (icSupply.get(x.id) ?? 0) || (pins.get(y.id) ?? 0) - (pins.get(x.id) ?? 0) || x.name.localeCompare(y.name))[0];
   if (supply) out.push({ netId: supply.id, layer: 'In2.Cu', auto: true });
   return out;
 }
 
 /** Planes in effect: the explicit ones from set_plane, else automatic. */
-function settingsPlanes(d: Design, layers: 2 | 4): { netId: string; layer: CopperLayer; auto: boolean }[] {
+function settingsPlanes(d: Design, layers: 2 | 4): { netId: string; layer: CopperLayer; auto: boolean; area?: PlaneArea; style?: PlaneStyle }[] {
   const explicit = d.board?.planes;
   if (!explicit) return autoPlanes(d, layers);
   const valid = new Set<CopperLayer>(layers === 4 ? ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'] : ['F.Cu', 'B.Cu']);
   return explicit.filter((p) => valid.has(p.layer) && d.nets[p.netId]).map((p) => ({ ...p, auto: false }));
+}
+
+/**
+ * Where each plane lies on the board as placed: an area plane's rectangle (under parts: their
+ * courtyards' box plus the margin, so it follows them), within the board. An area under parts
+ * that are all gone, or one off the board, is left out.
+ */
+function placePlanes(planes: ReturnType<typeof settingsPlanes>, parts: BoardPart[], w: number, h: number): BoardView['planes'] {
+  const out: BoardView['planes'] = [];
+  for (const pl of planes) {
+    const { area, ...plane } = pl;
+    if (!area) {
+      out.push(plane);
+      continue;
+    }
+    let box: [number, number, number, number];
+    let under: string[] | undefined;
+    if (area.rect) box = area.rect;
+    else {
+      const ps = parts.filter((p) => area.under?.includes(p.componentId));
+      if (!ps.length) continue;
+      const m = area.margin ?? PLANE_AREA_MARGIN;
+      box = [Math.min(...ps.map((p) => p.courtyard.x)) - m, Math.min(...ps.map((p) => p.courtyard.y)) - m, Math.max(...ps.map((p) => p.courtyard.x + p.courtyard.w)) + m, Math.max(...ps.map((p) => p.courtyard.y + p.courtyard.h)) + m];
+      under = ps.map((p) => p.refdes);
+    }
+    const r = [Math.max(0, box[0]), Math.max(0, box[1]), Math.min(w, box[2]), Math.min(h, box[3])].map(r3) as [number, number, number, number];
+    if (r[2] - r[0] < 1 || r[3] - r[1] < 1) continue;
+    out.push({ ...plane, area: r, ...(under ? { under } : {}) });
+  }
+  return out;
 }

@@ -47,13 +47,13 @@ export class Agent {
     this.pending = null;
   }
 
-  async run(userText: string, ctx: { selection: string[]; scope?: ScopeInfo | null; view?: ViewInfo | null; rules?: string }, emit: (e: AgentEvent) => void, signal?: AbortSignal): Promise<void> {
+  async run(userText: string, ctx: { selection: string[]; scope?: ScopeInfo | null; view?: ViewInfo | null; rules?: string; layoutRules?: string }, emit: (e: AgentEvent) => void, signal?: AbortSignal): Promise<void> {
     const { kernel } = this.opts;
     const maxSteps = this.opts.maxSteps ?? 40;
     const fixBudget = this.opts.fixBudget ?? 5;
 
     const snap = await kernel.snapshot();
-    const context = formatDesignContext({ ...snap, selection: ctx.selection, scope: ctx.scope ?? null, view: ctx.view ?? null, rules: ctx.rules });
+    const context = formatDesignContext({ ...snap, selection: ctx.selection, scope: ctx.scope ?? null, view: ctx.view ?? null, rules: ctx.rules, layoutRules: ctx.layoutRules });
     const content: Block[] = [];
     if (this.pending) {
       content.push(...this.pending.otherResults, { type: 'tool_result', tool_use_id: this.pending.askId, content: `The user answered: ${userText}` });
