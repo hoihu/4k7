@@ -9,6 +9,7 @@
   import Logo from './lib/components/Logo.svelte';
   import Parts from './lib/components/Parts.svelte';
   import LayoutView from './lib/components/LayoutView.svelte';
+  import EnclosureView from './lib/components/EnclosureView.svelte';
   import { printSchematic } from './lib/print.ts';
   import { PAPER_IDS, type PaperId } from '@4k7/schema';
 
@@ -46,7 +47,7 @@
     void app.init();
     const fromHash = () => {
       const h = location.hash.slice(1) as View;
-      if (['sch', 'lay', 'parts', 'set'].includes(h)) app.view = h;
+      if (['sch', 'lay', 'enc', 'parts', 'set'].includes(h)) app.view = h;
     };
     fromHash();
     window.addEventListener('hashchange', fromHash);
@@ -88,6 +89,7 @@
   const views: { id: View; label: string }[] = [
     { id: 'sch', label: 'Schematic' },
     { id: 'lay', label: 'Layout' },
+    { id: 'enc', label: 'Enclosure' },
     { id: 'parts', label: 'Parts' },
     { id: 'set', label: 'Settings' },
   ];
@@ -222,6 +224,8 @@
       </nav>
     {:else if app.view === 'lay'}
       <LayoutView />
+    {:else if app.view === 'enc'}
+      <EnclosureView />
     {:else if app.view === 'parts'}
       <!-- the chat stays beside the parts, so an import can be talked through without switching views -->
       <section class="partsv" class:nochat={!app.chatOpen}>

@@ -19,7 +19,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { RenderEnclosureInput, openQuestions, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount, type ViewInfo } from '@4k7/schema';
+import { RenderEnclosureInput, openQuestions, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount, type ViewInfo } from '@4k7/schema';
 import { boardScadSummary, enclosureJob, enclosureReport, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import { server } from './server.svelte.ts';
@@ -90,7 +90,7 @@ const portFromAddress = Number(new URLSearchParams(location.search).get('port'))
 /** How often to look for the server that keeps the files while it is not reachable. */
 const DISK_RETRY_MS = 4000;
 
-export type View = 'sch' | 'lay' | 'parts' | 'set';
+export type View = 'sch' | 'lay' | 'enc' | 'parts' | 'set';
 export type InspectorTab = 'issues' | 'ledger' | 'history' | 'sel';
 
 export type Segment =
@@ -188,6 +188,8 @@ class AppState {
   enclosureBusy = $state(false);
   /** OpenSCAD on this computer, as the server last said (null: not asked yet, or no server). */
   scad = $state.raw<ScadStatus | null>(null);
+  /** The working copy's enclosure (brief and script), kept while the Enclosure view is open. */
+  encDraft = $state.raw<EnclosureSettings | null>(null);
   /** Design revision (bumped on every refresh) and the revision the shown board was computed for. */
   private rev = 0;
   private boardRev = -1;
@@ -386,6 +388,13 @@ class AppState {
     for (const id of Object.keys(this.hunkOff)) if (!ids.has(id)) delete this.hunkOff[id];
     if (this.sheet >= (this.k.view.sheets.length || 1)) this.sheet = 0;
     if (this.view === 'lay') void this.refreshBoard();
+    if (this.view === 'enc') void this.refreshEnclosure();
+  }
+
+  /** The Enclosure view: the working copy's brief and script, and the board they go with. */
+  async refreshEnclosure() {
+    this.encDraft = (await this.kernel.draftDesign()).enclosure ?? null;
+    if (!this.board || this.boardRev !== this.rev) void this.refreshBoard();
   }
 
   /** Recompute the board in the board worker: placement first (fast), then routing and DRC. */

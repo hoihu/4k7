@@ -99,7 +99,7 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
       const d = toDir(m.dir);
       const len = 30;
       const geo = new THREE.BoxGeometry(m.size[0], m.size[1], len);
-      const mat = new THREE.MeshBasicMaterial({ color: 0xff9a3c, transparent: true, opacity: 0.18, depthWrite: false });
+      const mat = new THREE.MeshBasicMaterial({ color: 0xff9a3c, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide });
       owned.push(geo, mat);
       const box = new THREE.Mesh(geo, mat);
       box.matrixAutoUpdate = false;
@@ -143,8 +143,8 @@ export function createEnclosureViewer(canvas: HTMLCanvasElement): EnclosureViewe
   return {
     setScene(s, o) {
       h = s.board.outline.h;
-      // keep the camera while only the options or the script change on the same board
-      const k = `${s.board.outline.w}x${s.board.outline.h}`;
+      // keep the camera while only the script or the pieces shown change on the same board (opening it refits)
+      const k = `${s.board.outline.w}x${s.board.outline.h}/${o.open ? 'open' : 'closed'}`;
       core.setContent(enclosureGroup(s, core.res, o, core.redraw), k === key);
       key = k;
     },
