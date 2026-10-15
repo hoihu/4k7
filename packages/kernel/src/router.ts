@@ -36,6 +36,8 @@ const FREE_STALE = 2;
 const FREE_SHARE = 0.4;
 const CENTRE_COST = 0.5; // per step and grid step off the middle of the gap between two IC pins
 const CLIP_COST = 3; // a step whose copper runs half over one of the net's own pads, off its centre line
+const SPLIT_COST = 8; // per step on the band along a split plane's edge (signal nets), in grid steps
+const SPLIT_BAND = 0.3; // the band: this far either side of the gap, mm
 const COARSE = 5; // coarse routing grid, in grid steps (0.5 mm)
 const CORRIDOR = 4; // coarse cells either side of the coarse way (2 mm)
 const MAX_STUB = 30; // longest drop stub reserved for a pour, in grid steps (3 mm)
@@ -544,6 +546,35 @@ function routeOnce(
     }
   }
 
+  /*
+   * Split planes. A signal track on an outer layer runs over the inner layer next to it (F.Cu over
+   * In1.Cu, B.Cu over In2.Cu), its return current in that plane right under it. Where an area
+   * plane's edge splits that layer, a track crossing it makes the return current detour round the
+   * gap: steps along the edge cost signal nets more (crossing it about as much as two vias), so
+   * they cross on the other side of the board, over an unbroken plane, where they can.
+   */
+  const splitCost = L === 4 && (input.planes ?? []).some((pl) => pl.area) ? new Float32Array(L * N) : null;
+  if (splitCost) {
+    for (const [l, ref] of [[0, 1], [3, 2]] as const) {
+      for (const pl of input.planes ?? []) {
+        if (!pl.area || pl.layer !== layers[ref]) continue;
+        const [x0, y0, x1, y1] = pl.area;
+        const band = Math.max(pl.style?.gap ?? rules.clearance, rules.clearance) / 2 + SPLIT_BAND;
+        for (let j = Math.max(0, Math.floor((y0 - band) / G)); j <= Math.min(H - 1, Math.ceil((y1 + band) / G)); j++) {
+          for (let i = Math.max(0, Math.floor((x0 - band) / G)); i <= Math.min(W - 1, Math.ceil((x1 + band) / G)); i++) {
+            const [px, py] = [i * G, j * G];
+            const inside = px > x0 && px < x1 && py > y0 && py < y1;
+            const d = inside ? Math.min(px - x0, x1 - px, py - y0, y1 - py) : Math.hypot(Math.max(x0 - px, 0, px - x1), Math.max(y0 - py, 0, py - y1));
+            if (d <= band) splitCost[l * N + j * W + i] = SPLIT_COST;
+          }
+        }
+      }
+    }
+  }
+  /** Nets that pay for crossing a split: signals (supplies and ground are DC, drawn wide). */
+  let signalNums: Set<number> | null = null;
+  const pays = (net: number) => (signalNums ??= new Set([...netNum].filter(([id]) => !input.powerNets.has(id)).map(([, n]) => n))).has(net);
+
   /** A step in direction (dx, dy) onto cell i of layer l runs half over an own pad, off its centre line. */
   const clips = (net: number, k: number, l: number, i: number, dx: number, dy: number) => {
     const t = k < 2 ? touch[k]![l * N + i]! : 0;
@@ -691,6 +722,7 @@ function routeOnce(
     // only then must a via's landing be checked for the track as well
     const wide = widths[k]! > rules.viaPad;
     const costOf = (st: number) => (seenAt[st] === run ? cost[st]! : Infinity);
+    const split = splitCost && pays(net) ? splitCost : null;
     const heap = new Heap();
     const [bx0, by0, bx1, by1] = 'x0' in target ? [target.x0, target.y0, target.x1, target.y1] : [target.x / G, target.y / G, target.x / G, target.y / G];
     const h = (s: number) => {
@@ -824,7 +856,7 @@ function routeOnce(
         // diagonal steps: both orthogonal neighbours must be clear too (no corner cutting)
         if (dx !== 0 && dy !== 0 && (!ok(y * W + nx) || !ok(ny * W + x))) continue;
         const off = kind === 1 ? dy !== 0 : kind === 2 ? dx !== 0 : false;
-        const nc = base + STEP[d]! + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? style.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + history[ns]!;
+        const nc = base + STEP[d]! + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? style.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + (split !== null ? split[ns]! : 0) + history[ns]!;
         if (nc < costOf(ns)) {
           seenAt[ns] = run;
           cost[ns] = nc;

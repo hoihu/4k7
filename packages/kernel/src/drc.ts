@@ -187,3 +187,82 @@ export function edgeDrc(b: BoardView): BoardDiagnostic[] {
   for (const v of b.vias) report(`via ${b.netNames[v.netId] ?? v.netId}`, v.x, v.y, v.pad / 2);
   return out;
 }
+
+/**
+ * Signal tracks crossing a split plane. A track on an outer layer has its return current in the
+ * inner layer next to it (F.Cu over In1.Cu, B.Cu over In2.Cu); where an area plane splits that
+ * layer, a track crossing the area's edge makes the return current detour round the gap: noise
+ * and emissions on fast signals. One finding per net and area, at the first crossing. `signal`
+ * says which nets count (supplies and ground do not).
+ */
+export function splitDrc(b: BoardView, signal: (netId: string) => boolean): BoardDiagnostic[] {
+  if (b.layers.length !== 4) return [];
+  const over: Partial<Record<CopperLayer, CopperLayer>> = { 'F.Cu': 'In1.Cu', 'B.Cu': 'In2.Cu' };
+  const out: BoardDiagnostic[] = [];
+  for (const pl of b.planes) {
+    if (!pl.area) continue;
+    const [x0, y0, x1, y1] = pl.area;
+    const area = `${b.netNames[pl.netId] ?? pl.netId} ${pl.under ? `under ${pl.under.join(', ')}` : 'area'} on ${pl.layer}`;
+    const found = new Map<string, { layer: CopperLayer; at: { x: number; y: number }; n: number }>();
+    for (const t of b.tracks) {
+      if (over[t.layer] !== pl.layer || !signal(t.netId)) continue;
+      const hits = edgeCrossings(t.pts, x0, y0, x1, y1);
+      if (!hits.length) continue;
+      const f = found.get(t.netId);
+      if (f) f.n += hits.length;
+      else found.set(t.netId, { layer: t.layer, at: hits[0]!, n: hits.length });
+    }
+    for (const [netId, f] of found) {
+      const net = b.netNames[netId] ?? netId;
+      const other = f.layer === 'F.Cu' ? 'B.Cu' : 'F.Cu';
+      out.push({
+        code: 'PLANE.SPLIT_CROSSING',
+        severity: 'warning',
+        message: `${net} crosses the edge of the ${area}${f.n > 1 ? ` ${f.n} times` : ''} on ${f.layer}, the layer over it: its return current detours round the gap. Cross on ${other} (over ${over[other]}) or move the area's edge; waive it for a slow signal.`,
+        at: { x: Math.round(f.at.x * 100) / 100, y: Math.round(f.at.y * 100) / 100 },
+        entities: [`net:${net}`],
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Where a polyline (x0, y0, x1, y1, …) crosses the outline of a rectangle: each change from
+ * outside to inside or back (a point on the outline belongs to the side it came from), and a
+ * segment that runs through the rectangle with both ends outside (twice).
+ */
+export function edgeCrossings(pts: number[], x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] {
+  const side = (x: number, y: number) => (x > x0 + EPS && x < x1 - EPS && y > y0 + EPS && y < y1 - EPS ? 1 : x < x0 - EPS || x > x1 + EPS || y < y0 - EPS || y > y1 + EPS ? -1 : 0);
+  /** Segment a–b clipped to the rectangle (Liang–Barsky): where it enters and leaves, or null. */
+  const clip = (ax: number, ay: number, bx: number, by: number) => {
+    let t0 = 0;
+    let t1 = 1;
+    const dx = bx - ax;
+    const dy = by - ay;
+    for (const [p, q] of [[-dx, ax - x0], [dx, x1 - ax], [-dy, ay - y0], [dy, y1 - ay]] as const) {
+      if (Math.abs(p) < 1e-12) {
+        if (q < 0) return null;
+        continue;
+      }
+      const r = q / p;
+      if (p < 0) t0 = Math.max(t0, r);
+      else t1 = Math.min(t1, r);
+    }
+    return t0 <= t1 ? { a: { x: ax + dx * t0, y: ay + dy * t0 }, b: { x: ax + dx * t1, y: ay + dy * t1 } } : null;
+  };
+  const out: { x: number; y: number }[] = [];
+  let was = 0;
+  for (let i = 0; i + 1 < pts.length; i += 2) {
+    const [x, y] = [pts[i]!, pts[i + 1]!];
+    const now = side(x, y);
+    if (i > 0) {
+      const [px, py] = [pts[i - 2]!, pts[i - 1]!];
+      const c = clip(px, py, x, y);
+      if (now !== 0 && was !== 0 && now !== was && c) out.push(was < 0 ? c.a : c.b);
+      else if (now < 0 && side(px, py) < 0 && c && side((c.a.x + c.b.x) / 2, (c.a.y + c.b.y) / 2) > 0) out.push(c.a, c.b);
+    }
+    if (now !== 0) was = now;
+  }
+  return out;
+}

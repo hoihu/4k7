@@ -504,7 +504,7 @@ class AppState {
       this.flash('Review the pending changes first.');
       return false;
     }
-    const r = await this.kernel.transact({ summary, ops });
+    const r = await this.kernel.transact({ summary, ops }, 'user');
     if (r.status !== 'ok') {
       this.flash(r.rejection?.message ?? 'Rejected');
       return false;

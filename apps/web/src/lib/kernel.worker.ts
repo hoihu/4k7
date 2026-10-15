@@ -10,7 +10,8 @@ import type { Artwork, CheckSettings, Design, OptimizeScope, PartCard, StoredCop
 const kernel = new Kernel();
 
 const methods = {
-  transact: (tx: unknown) => kernel.transact(tx),
+  /** `by`: the user for the app's own edits (drags, buttons); the agent's tool calls leave it out. */
+  transact: (tx: unknown, by?: 'user' | 'agent') => kernel.transact(tx, by),
   query: (q: unknown) => kernel.query(q),
   state: () => kernel.state(),
   setScope: (s: OptimizeScope | null) => kernel.setScope(s),

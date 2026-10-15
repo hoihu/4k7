@@ -40,7 +40,7 @@ import { countDiagnostics, diagKey, runChecks, sortDiagnostics } from './checks.
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, valueOf } from './doc.ts';
 import { schematicView, syncDrawing } from './drawing.ts';
-import { copperKey, layoutBoard, placeBoard } from './board.ts';
+import { copperKey, layoutBoard, placeBoard, planePlan } from './board.ts';
 import type { RouteProgress } from './router.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 import { MIN_FREE, circuitSignature, guardOp, measure, positions, resolveScope, ripple, widenScope, type ResolvedScope } from './scope.ts';
@@ -155,8 +155,8 @@ export class Kernel {
 
   /* ---------------------------- transactions ------------------------------ */
 
-  /** Validate and apply a transaction to the working copy (or dry-run it). */
-  transact(input: unknown): TransactionResult {
+  /** Validate and apply a transaction to the working copy (or dry-run it). `by`: who asked for it, the agent unless the app says the user. */
+  transact(input: unknown, by: 'user' | 'agent' = 'agent'): TransactionResult {
     const parsed = Transaction.safeParse(input);
     if (!parsed.success) {
       return this.rejected({ opIndex: indexOfIssue(parsed.error.issues), code: 'INVALID_OP', message: formatZod(parsed.error.issues) }, false);
@@ -168,7 +168,7 @@ export class Kernel {
     for (let i = 0; i < tx.ops.length; i++) {
       try {
         if (this.scoped) guardOp(work, tx.ops[i]!, this.scoped.sc);
-        results.push(applyOp(work, tx.ops[i]!));
+        results.push(applyOp(work, tx.ops[i]!, by));
       } catch (e) {
         if (e instanceof RejectError) return this.rejected({ opIndex: i, ...e.rejection }, !!tx.dry_run);
         throw e;
@@ -446,7 +446,8 @@ export class Kernel {
       case 'get_board': {
         // routing is expensive: use it when it has been computed, otherwise placement only
         const routed = this.boards.get(d);
-        return routed ? boardSummary(routed) : boardSummary(this.boardPlacement(), false);
+        const b = routed ?? this.boardPlacement();
+        return { ...boardSummary(b, !!routed), plane_plan: planePlan(d, b) };
       }
       case 'try_placements':
         return tryPlacements(d, this.analyse(d).view, q.candidates, !!q.route, this.boards.get(d));

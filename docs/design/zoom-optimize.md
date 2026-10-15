@@ -14,7 +14,7 @@ coordinates for the schematic). That decides what "optimize" can mean.
 | View | Levers the agent has today | Not a lever |
 |---|---|---|
 | **Schematic** | `constrain` left_of / right_of / above / below / near, `constrain arrangement` (diamond vs inline bridge, power_flow vs compact regulator), `set_symbol` single / units / pin layout, `move_to_sheet`, `add_sheet` | Wires. They are derived by the layout from the netlist, so "re-wire" is not a drawing operation. Changing a connection (`connect`, `disconnect`) changes the circuit, which Optimize must never do |
-| **Layout (board)** | `place` (x, y, rot, lock), `constrain near`, `constrain layer`, `set_board` (track widths, layers), `set_plane` | `route` is global: no scope, no per-net or per-region rip-up |
+| **Layout (board)** | `place` (x, y, rot, lock), `attach` (which part a part belongs with), `constrain near`, `constrain layer`, `set_board` (track widths, layers), `set_plane` | `route` is global: no scope, no per-net or per-region rip-up |
 
 So the two views are different features behind one button:
 

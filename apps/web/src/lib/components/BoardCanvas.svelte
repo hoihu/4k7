@@ -71,8 +71,10 @@
   let ch = $state(0);
   /** One screen pixel in mm, so markers keep their size at any zoom. */
   const px = $derived(cw && ch ? 1 / Math.min(cw / vb.w, ch / vb.h) : vb.w / 800);
-  /** How a part got where it is: the placer's, the user's choice, or locked. */
-  const stateOf = (p: BoardView['parts'][number]) => (p.locked ? 'locked' : p.intent ? 'choice' : 'free');
+  /** How a part got where it is: the placer's, the user's choice, the agent's, or locked. */
+  const stateOf = (p: BoardView['parts'][number]) => (p.locked ? 'locked' : p.intent ? (p.by === 'agent' ? 'agent' : 'choice') : 'free');
+  const markTitle = (p: BoardView['parts'][number]) =>
+    `${p.locked ? `Locked here${p.by === 'agent' ? ' by the agent' : ''}` : p.by === 'agent' ? 'Placed by the agent' : 'Your placement'}${!p.locked && p.intent?.anchor ? `, kept relative to ${p.intent.anchor}` : ''}`;
   const centreOf = (ref: string) => board?.parts.find((x) => x.refdes === ref);
   let fittedFor = '';
   let userMoved = false;
@@ -344,14 +346,14 @@
     {/if}
 
     {#if show.placement}
-      <!-- who placed what: your choices and locked parts coloured, the rest dimmed; a choice kept
-           relative to another part is tied to it -->
+      <!-- who placed what: your choices, the agent's and locked parts coloured, the rest dimmed; a
+           choice kept relative to another part is tied to it -->
       {#each board.parts as p (p.componentId)}
         {#if !p.componentId.startsWith('hole:')}
           {@const st = stateOf(p)}
           {@const o = offset(p.refdes)}
           <rect class="pl {st}" x={p.courtyard.x + (o?.dx ?? 0)} y={p.courtyard.y + (o?.dy ?? 0)} width={p.courtyard.w} height={p.courtyard.h} rx={Math.min(0.3, p.courtyard.w / 6)} />
-          {#if st === 'choice' && p.intent?.anchor}
+          {#if (st === 'choice' || st === 'agent') && p.intent?.anchor}
             {@const a = centreOf(p.intent.anchor)}
             {#if a}<line class="tie" x1={p.x + (o?.dx ?? 0)} y1={p.y + (o?.dy ?? 0)} x2={a.x} y2={a.y} stroke-width={px * 1.2} stroke-dasharray="{px * 4} {px * 3}" />{/if}
           {/if}
@@ -403,9 +405,9 @@
           <text class="ref" x={p.x} y={p.y} font-size={Math.max(0.5, Math.min(1.2, Math.min(p.body.w, p.body.h) * 0.45))}>{p.refdes}</text>
         {/if}
         {#if !p.componentId.startsWith('hole:') && stateOf(p) !== 'free'}
-          <!-- a marker of fixed screen size at the courtyard's top right: a padlock (locked) or a dot (your choice) -->
+          <!-- a marker of fixed screen size at the courtyard's top right: a padlock (locked) or a dot (your choice, or the agent's) -->
           <g class="mark {stateOf(p)}" transform="translate({p.courtyard.x + p.courtyard.w} {p.courtyard.y}) scale({px})">
-            <title>{p.locked ? 'Locked here' : `Your placement${p.intent?.anchor ? `, kept relative to ${p.intent.anchor}` : ''}`}</title>
+            <title>{markTitle(p)}</title>
             {#if p.locked}
               <path class="shackle" d="M -3 -2 v -3 a 3 3 0 0 1 6 0 v 3" />
               <rect x="-5" y="-2.5" width="10" height="8" rx="1.5" />
@@ -514,11 +516,13 @@
   /* placement state: the markers (always) and the overlay (Placement on) */
   .mark { pointer-events: none; }
   .mark.choice circle { fill: #6fb5ff; stroke: #0b0f14; stroke-width: 1.5; }
+  .mark.agent circle { fill: #0b0f14; stroke: #6fb5ff; stroke-width: 2; }
   .mark.locked rect { fill: #f0a03c; stroke: #0b0f14; stroke-width: 1.2; }
   .mark.locked .shackle { fill: none; stroke: #f0a03c; stroke-width: 1.8; }
   .pl { pointer-events: none; stroke-width: 0.08; }
   .pl.free { fill: none; stroke: none; }
   .pl.choice { fill: rgba(111, 181, 255, 0.22); stroke: #6fb5ff; }
+  .pl.agent { fill: rgba(111, 181, 255, 0.1); stroke: #6fb5ff; stroke-dasharray: 0.3 0.2; }
   .pl.locked { fill: rgba(240, 160, 60, 0.22); stroke: #f0a03c; }
   .tie { stroke: #6fb5ff; opacity: 0.8; pointer-events: none; }
   .placing .part.free { opacity: 0.4; }
