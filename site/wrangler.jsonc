@@ -9,5 +9,8 @@
     "directory": "./",
     "not_found_handling": "404-page",
     "html_handling": "auto-trailing-slash"
-  }
+  },
+  // Branch builds run `npx wrangler preview`, which refuses to run without this block.
+  // Empty is enough: assets and compatibility settings above apply to previews too.
+  "previews": {}
 }
