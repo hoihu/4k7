@@ -1,9 +1,9 @@
 /**
  * Simple 3D package bodies from datasheet package data (millimetres; x/y like the footprint,
  * viewed from the top with y down; z up, board surface at z = 0). Boxes, balls and cylinders: enough
- * for a 3D preview and collision/height checks, and the basis for a STEP/GLB export later.
+ * for a 3D preview, collision/height checks and the STEP export (@4k7/fab).
  */
-import type { PackageInfo } from '@4k7/schema';
+import type { BoardView, PackageInfo } from '@4k7/schema';
 import { bgaRowName, footprintFor, isModule, moduleSpan, type Pad } from './footprint.ts';
 
 export interface Box3 {
@@ -112,6 +112,16 @@ export function body3dFor(pkg: PackageInfo, pinNumbers: string[] = []): Body3DRe
     default:
       return { ok: false, reason: `no 3D generator for ${pkg.family} packages yet` };
   }
+}
+
+/** The body of every part on the board that has one (by component id): the 3D view and the STEP export. */
+export function boardBodies(b: BoardView): Map<string, Body3D> {
+  const bodies = new Map<string, Body3D>();
+  for (const p of b.parts) {
+    const r = body3dFor(p.pkgInfo, p.pads.map((x) => x.number));
+    if (r.ok) bodies.set(p.componentId, r.body);
+  }
+  return bodies;
 }
 
 /** Lead centre offsets along a side, first lead first (same order as the footprint). */

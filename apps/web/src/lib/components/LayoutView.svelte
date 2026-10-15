@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fabFiles, panelFabFiles, zip } from '@4k7/fab';
+  import { boardStep, fabFiles, panelFabFiles, zip } from '@4k7/fab';
   import { planeNames, type BoardDiagnostic, type CopperLayer } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
@@ -117,18 +117,32 @@
   const CHECKS_SHOWN = 4;
   const routeLabel = $derived(routing ? 'Routing…' : b?.routing === 'done' ? (b.stopped ? 'Routing stopped' : 'Routed') : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
 
+  const projectName = () => (app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : '4k7-board');
+  function download(blob: Blob, file: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+
   /** Gerbers, drill, BOM and pick-and-place as one zip: of the board, or of its panel. */
   function exportFab(panel = false) {
     if (!b) return;
-    const name = app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : '4k7-board';
+    const name = projectName();
     const files = panel ? panelFabFiles(b, name) : fabFiles(b, name);
-    const url = URL.createObjectURL(new Blob([zip(files) as BlobPart], { type: 'application/zip' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${name.replace(/[^\w.-]+/g, '_')}-${panel ? 'panel' : 'fab'}.zip`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    download(new Blob([zip(files) as BlobPart], { type: 'application/zip' }), `${name.replace(/[^\w.-]+/g, '_')}-${panel ? 'panel' : 'fab'}.zip`);
     app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}`);
+  }
+
+  /** The board and its parts in 3D as a STEP file, for a mechanical CAD program. */
+  function exportStep() {
+    if (!b) return;
+    const step = boardStep(b, projectName());
+    download(new Blob([step.content], { type: 'model/step' }), step.name);
+    const without = step.without.length ? ` (no 3D body for ${step.without.join(', ')}: not in the file)` : '';
+    app.flash(`Exported the board and ${step.parts} part${step.parts === 1 ? '' : 's'} as STEP${without}`);
   }
 
   function focus(d: BoardDiagnostic) {
@@ -171,6 +185,7 @@
         <button class="btn" class:pri={b.routing !== 'done' || b.stopped} disabled={app.running || !!prog || (b.routing === 'done' && !b.stopped)} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' || b.stopped ? 'Route again' : 'Route'}</button>
         <button class="btn" disabled={!b.parts.length} title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
         {#if b.panel}<button class="btn" title="The {b.panel.settings.cols} × {b.panel.settings.rows} panel ({b.panel.w} × {b.panel.h} mm): Gerber, drill with the mouse bites and tooling holes, BOM and pick-and-place of every copy, as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}` : ''}" onclick={() => exportFab(true)}>Panel files ⤓</button>{/if}
+        <button class="btn" title="The board and its parts in 3D as a STEP file (.step), for a mechanical CAD program: the outline with its holes and cutouts, and every part body, named by designator" onclick={exportStep}>STEP ⤓</button>
       {/if}
       {#if app.boardBusy && !prog}<span class="busy">updating…</span>{/if}
     </div>

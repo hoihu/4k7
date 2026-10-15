@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { body3dFor, type Body3D } from '@4k7/parts';
+  import { boardBodies } from '@4k7/parts';
   import type { BoardView } from '@4k7/schema';
   import type { BoardViewer, TopView, ViewPreset } from '../three-body.ts';
 
@@ -45,12 +45,7 @@
 
   $effect(() => {
     if (!viewer) return;
-    const bodies = new Map<string, Body3D>();
-    for (const p of board.parts) {
-      const r = body3dFor(p.pkgInfo, p.pads.map((x) => x.number));
-      if (r.ok) bodies.set(p.componentId, r.body);
-    }
-    viewer.setBoard(board, bodies);
+    viewer.setBoard(board, boardBodies(board));
     if (!started) {
       started = true;
       if (from) viewer.flyFromTop(from);
