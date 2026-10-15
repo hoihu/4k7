@@ -275,25 +275,54 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   let outline = userSize ? { w: settings.width!, h: settings.height! } : (stored?.outline ?? { w: 0, h: 0 });
   // (a proposal without the user's size relaxes freely; its outline is fitted afterwards)
   let containing = userSize || !!stored;
+  /*
+   * How close to the edge a part may come. The placer's own parts keep their courtyard the
+   * margin inside (room to route round them); a part the user (or the agent) put somewhere may
+   * go up to the edge: its copper keeps the edge clearance, its body stays on the board (a
+   * connector's mouth flush with the edge). Half a grid step to spare, for the snapping.
+   */
+  const keepsIn = (it: Item): { x: number; y: number; need: number }[] => {
+    if (!it.intent) {
+      const e = extent(it);
+      return ([[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [0, 0]] as const).map(([fx, fy]) => ({ x: (fx * e.w) / 2, y: (fy * e.h) / 2, need: margin }));
+    }
+    const slack = GRID_MM / 2;
+    const box = (cx: number, cy: number, w: number, h: number, need: number) =>
+      ([[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]] as const).map(([fx, fy]) => {
+        const [x, y] = rotate(cx + (fx * w) / 2, cy + (fy * h) / 2, it.rot);
+        return { x, y, need: need + slack };
+      });
+    return [...box(0, 0, it.fp.body.w, it.fp.body.h, 0), ...it.fp.pads.flatMap((p) => box(p.x, p.y, p.w, p.h, rules.edgeClearance))];
+  };
+  /** The room a part needs from its centre to each side of the outline (see keepsIn). */
+  const reach = (it: Item) => {
+    const r = { l: 0, t: 0, r: 0, b: 0 };
+    for (const p of keepsIn(it)) {
+      r.l = Math.max(r.l, p.need - p.x);
+      r.t = Math.max(r.t, p.need - p.y);
+      r.r = Math.max(r.r, p.need + p.x);
+      r.b = Math.max(r.b, p.need + p.y);
+    }
+    return r;
+  };
   const contain = (it: Item) => {
     if (it.fixed || !containing) return;
-    const e = extent(it);
-    it.x = Math.min(Math.max(it.x, margin + e.w / 2), outline.w - margin - e.w / 2);
-    it.y = Math.min(Math.max(it.y, margin + e.h / 2), outline.h - margin - e.h / 2);
+    const r = reach(it);
+    it.x = Math.min(Math.max(it.x, r.l), outline.w - r.r);
+    it.y = Math.min(Math.max(it.y, r.t), outline.h - r.b);
     if (shape) pushInside(it);
   };
-  /** Into a free-form outline: moved inwards (up the distance field) until the courtyard is inside with the margin. */
+  /** Into a free-form outline: moved inwards (up the distance field) until the part keeps its distance from the edge (keepsIn). */
   const pushInside = (it: Item) => {
     for (let k = 0; k < 16; k++) {
-      const e = extent(it);
       let worst = { d: Infinity, x: 0, y: 0 };
-      for (const [fx, fy] of [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [0, 0]] as const) {
-        const x = it.x + (fx * e.w) / 2;
-        const y = it.y + (fy * e.h) / 2;
-        const d = insidePolygon(shape!, x, y);
+      for (const p of keepsIn(it)) {
+        const x = it.x + p.x;
+        const y = it.y + p.y;
+        const d = insidePolygon(shape!, x, y) - p.need;
         if (d < worst.d) worst = { d, x, y };
       }
-      if (worst.d >= margin - 1e-6) return;
+      if (worst.d >= -1e-6) return;
       // the way inwards at the worst point (the distance field's gradient)
       const g = 0.05;
       let gx = insidePolygon(shape!, worst.x + g, worst.y) - insidePolygon(shape!, worst.x - g, worst.y);
@@ -304,7 +333,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
         gy = outline.h / 2 - it.y;
       }
       const l2 = Math.hypot(gx, gy) || 1;
-      const step = margin - worst.d + 0.1;
+      const step = 0.1 - worst.d;
       it.x += (gx / l2) * step;
       it.y += (gy / l2) * step;
     }
@@ -531,13 +560,11 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       outline = { w: Math.ceil(outline.w * 1.1), h: Math.ceil(outline.h * 1.1) };
     }
   };
-  /** Room for a part at (x, y): inside the outline with the margin, clear of every other part. */
+  /** Room for a part at (x, y): inside the outline as far as it must be (keepsIn), clear of every other part. */
   const fits = (it: Item, x: number, y: number) => {
-    const e = extent(it);
-    if (x - e.w / 2 < margin - 1e-6 || y - e.h / 2 < margin - 1e-6 || x + e.w / 2 > outline.w - margin + 1e-6 || y + e.h / 2 > outline.h - margin + 1e-6) return false;
-    if (shape) {
-      for (const [fx, fy] of [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]] as const) if (insidePolygon(shape, x + (fx * e.w) / 2, y + (fy * e.h) / 2) < margin - 1e-6) return false;
-    }
+    const r = reach(it);
+    if (x < r.l - 1e-6 || y < r.t - 1e-6 || x > outline.w - r.r + 1e-6 || y > outline.h - r.b + 1e-6) return false;
+    if (shape && keepsIn(it).some((p) => insidePolygon(shape, x + p.x, y + p.y) < p.need - 1e-6)) return false;
     const [ox, oy] = [it.x, it.y];
     it.x = x;
     it.y = y;
@@ -798,9 +825,9 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       for (const it of movable) snapItem(it);
       if (userSize) {
         const inside = (it: Item) => {
-          const e = extent(it);
-          it.x = Math.min(Math.max(it.x, margin + e.w / 2), w - margin - e.w / 2);
-          it.y = Math.min(Math.max(it.y, margin + e.h / 2), h - margin - e.h / 2);
+          const r = reach(it);
+          it.x = Math.min(Math.max(it.x, r.l), w - r.r);
+          it.y = Math.min(Math.max(it.y, r.t), h - r.b);
         };
         for (const it of movable) inside(it);
       } else {
@@ -1451,8 +1478,14 @@ function placementChecks(parts: BoardPart[], w: number, h: number, edge: number,
     const a = parts[i]!;
     const A = a.courtyard;
     const hole = a.componentId.startsWith('hole:');
-    const corners = [[A.x, A.y], [A.x + A.w, A.y], [A.x, A.y + A.h], [A.x + A.w, A.y + A.h]] as const;
-    if (A.x < 0 || A.y < 0 || A.x + A.w > w || A.y + A.h > h || (outline.shape && !hole && corners.some(([x, y]) => insideBoard(outline, x, y) < 0))) {
+    // on the board: the body and the pads (the courtyard may reach past the edge: a connector flush with it)
+    const Y = a.body;
+    const corners = [[Y.x, Y.y], [Y.x + Y.w, Y.y], [Y.x, Y.y + Y.h], [Y.x + Y.w, Y.y + Y.h]] as const;
+    const x0 = Math.min(Y.x, ...a.pads.map((p) => p.x - p.w / 2));
+    const y0 = Math.min(Y.y, ...a.pads.map((p) => p.y - p.h / 2));
+    const x1 = Math.max(Y.x + Y.w, ...a.pads.map((p) => p.x + p.w / 2));
+    const y1 = Math.max(Y.y + Y.h, ...a.pads.map((p) => p.y + p.h / 2));
+    if (x0 < -1e-6 || y0 < -1e-6 || x1 > w + 1e-6 || y1 > h + 1e-6 || (outline.shape && !hole && corners.some(([x, y]) => insideBoard(outline, x, y) < -1e-6))) {
       out.push({ code: 'DRC.OFF_BOARD', severity: 'error', message: `${a.refdes} is outside the board outline.`, at: { x: a.x, y: a.y }, entities: [a.refdes] });
     } else if (a.pads.some((p) => p.x - p.w / 2 < edge || p.y - p.h / 2 < edge || p.x + p.w / 2 > w - edge || p.y + p.h / 2 > h - edge || (shaped && padPoints(p).some(([x, y]) => insideBoard(outline, x, y) < edge)))) {
       out.push({ code: 'DRC.EDGE_CLEARANCE', severity: 'error', message: `${a.refdes} has copper closer than ${edge} mm to the board edge.`, at: { x: a.x, y: a.y }, entities: [a.refdes] });

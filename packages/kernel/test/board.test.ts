@@ -402,6 +402,50 @@ describe('fixed outline with a pinned part', () => {
   });
 });
 
+describe('a part the user puts at the edge', () => {
+  /** How far inside each side of the board the part's copper (with the edge clearance) and body come. */
+  const room = (b: ReturnType<Kernel['board']>, ref: string) => {
+    const p = b.parts.find((x) => x.refdes === ref)!;
+    const e = b.rules.edgeClearance;
+    const B = p.body;
+    return {
+      left: Math.min(B.x, ...p.pads.map((q) => q.x - q.w / 2 - e)),
+      top: Math.min(B.y, ...p.pads.map((q) => q.y - q.h / 2 - e)),
+      right: b.outline.w - Math.max(B.x + B.w, ...p.pads.map((q) => q.x + q.w / 2 + e)),
+      bottom: b.outline.h - Math.max(B.y + B.h, ...p.pads.map((q) => q.y + q.h / 2 + e)),
+    };
+  };
+
+  it('goes right up to it, any part, turned any way: copper keeps the edge clearance, the body stays on the board', () => {
+    for (const [ref, rot] of [['J1', 0], ['J1', 90], ['C3', 270], ['U1', 180]] as const) {
+      const k = buck();
+      k.transact({ summary: 'board', ops: [{ op: 'set_board', width_mm: 40, height_mm: 30 }] });
+      // dropped past the bottom-right corner: it stops at the edge, not the placer's margin away
+      k.transact({ summary: 'drag', ops: [{ op: 'place', ref, x_mm: 45, y_mm: 35, rot }] });
+      const b = k.board();
+      const r = room(b, ref);
+      expect(r.right, `${ref} ${rot}°`).toBeGreaterThanOrEqual(-1e-6);
+      expect(r.right, `${ref} ${rot}°`).toBeLessThanOrEqual(0.1 + 1e-6);
+      expect(r.bottom, `${ref} ${rot}°`).toBeGreaterThanOrEqual(-1e-6);
+      expect(r.bottom, `${ref} ${rot}°`).toBeLessThanOrEqual(0.1 + 1e-6);
+      expect(b.diagnostics.filter((x) => x.severity === 'error' && x.entities?.includes(ref))).toEqual([]);
+    }
+  });
+
+  it('the placer\'s own parts still keep their margin from the edge', () => {
+    const k = buck();
+    k.transact({ summary: 'board', ops: [{ op: 'set_board', width_mm: 40, height_mm: 30 }] });
+    k.transact({ summary: 'drag', ops: [{ op: 'place', ref: 'J1', x_mm: 0, y_mm: 15, rot: 90 }] });
+    const b = k.board();
+    for (const p of b.parts) {
+      if (p.intent || p.locked) continue;
+      const c = p.courtyard;
+      expect(Math.min(c.x, c.y, b.outline.w - c.x - c.w, b.outline.h - c.y - c.h), p.refdes).toBeGreaterThanOrEqual(1.5 + b.rules.edgeClearance - 0.06);
+    }
+    expect(room(b, 'J1').left).toBeLessThanOrEqual(0.1 + 1e-6);
+  });
+});
+
 describe('pinned parts and rotation', () => {
   it('a part pinned without a rotation still gets the best rotation; an explicit one stays', () => {
     const k = buck();
