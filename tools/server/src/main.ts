@@ -34,6 +34,7 @@ import { openBrowser } from './launch.ts';
 import { createMcpServer, mcpHttpHandler, VERSION } from './mcp.ts';
 import { checkForUpdate } from './update.ts';
 import { storageHandler } from './storage.ts';
+import { OpenScad } from './scad.ts';
 
 const serve = process.argv.includes('--serve');
 /** Open the app link in the browser (what `npx 4k7pcb` does). */
@@ -97,12 +98,14 @@ async function main() {
   });
   const mcpHttp = mcpHttpHandler(server, (t) => chat.modeFor(t));
   const app = appHandler(dir, VERSION, cfg.accessKey);
+  const scad = new OpenScad({ ...(cfg.openscadBin ? { bin: cfg.openscadBin } : {}), log });
   const storage = storageHandler({
     accessKey: cfg.accessKey,
     projectsDir: cfg.projectsDir,
     dataDir: configDir(),
     allowedOrigin: (o) => server.allowedOrigin(o),
     reveal: (d) => openBrowser(d, log),
+    scad,
     log,
   });
   server.setHttpHandler((req, res) => {

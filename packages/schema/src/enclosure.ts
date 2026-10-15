@@ -103,3 +103,42 @@ export function boardFacing(face: Mating['face'], rot: number, side: 'top' | 'bo
   const i = order.indexOf(f);
   return order[(i + Math.round((((rot % 360) + 360) % 360) / 90)) % 4]!;
 }
+
+/* --------------------------- OpenSCAD on the server ------------------------ */
+
+/** OpenSCAD on this computer, as the local server found it (GET /api/scad). */
+export interface ScadStatus {
+  available: boolean;
+  version?: string;
+  /** The program it runs. */
+  path?: string;
+  /** Who chose it: the environment variable (wins), the app's settings, or nobody (found by itself). */
+  from: 'env' | 'settings' | 'auto';
+  /** The environment variable that overrides it. */
+  env: string;
+  /** The fast Manifold geometry engine (OpenSCAD 2025 and later). */
+  manifold?: boolean;
+  /** Why it is not available, or a warning (old and slow). */
+  reason?: string;
+}
+
+/** A render job (POST /api/scad/render): files (board.scad, enclosure.scad) and the runs to make, each its own top-level file. */
+export interface ScadJob {
+  files: Record<string, string>;
+  runs: { id: string; code: string; mesh?: boolean }[];
+}
+
+/** What one run made. */
+export interface ScadRunResult {
+  id: string;
+  /** Rendered (an empty result counts as rendered). */
+  ok: boolean;
+  /** Nothing came out (an intersection that does not meet: the check passed). */
+  empty: boolean;
+  ms: number;
+  bbox?: { min: [number, number, number]; max: [number, number, number] };
+  /** Binary STL, base64, when the run asked for its mesh. */
+  stl?: string;
+  errors?: string[];
+  warnings?: string[];
+}
