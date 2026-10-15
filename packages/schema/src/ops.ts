@@ -328,8 +328,16 @@ export const PlaceOp = z.object({
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
   rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation; omit it to keep the current one'),
-  lock: z.boolean().optional().describe('true: lock the part exactly there (a hard pin, e.g. connectors at the edge). Default: the user\'s choice for this part, kept relative to its parent part (a cap next to its IC follows the IC) and nudged only if it must'),
+  lock: z.boolean().optional().describe('true: lock the part exactly there (a hard pin, e.g. connectors at the edge). Default: a choice for this part, kept relative to its parent part (a cap next to its IC follows the IC) and nudged only if it must'),
+  quote: z.string().optional().describe("The user's words when they asked for this placement: it is then their choice, not yours"),
 });
+
+export const AttachOp = z.object({
+  op: z.literal('attach'),
+  ref: componentRef.describe('The part, e.g. a decoupling cap, a pull-up, a crystal'),
+  to: componentRef.nullable().describe('The part it belongs with on the board (an IC it serves): it stays at that part and follows it when it moves. null: it stands on its own (a bulk cap at the input, a part the placer wrongly put at an IC)'),
+  pin: z.string().optional().describe('The pin of `to` it serves (number or name), e.g. the VDD pin a decoupling cap is for: it goes right at that pin. It must share a net with it'),
+}).describe("Say which part a small part belongs with on the board, where the placer's guess (shown in get_board belongs_to, marked guessed) is wrong. Declared once, it holds for every later placement; remove_constraint goes back to the guess. A part you placed is placed afresh at its new parent; one the user placed stays where it is.");
 
 export const PlaceSymbolOp = z.object({
   op: z.literal('place_symbol'),
@@ -386,8 +394,8 @@ export const ProposePlacementOp = z.object({
     .describe('Your arrangement of the main parts (ICs, connectors, big parts): where each goes and how it is turned. The placer puts the small parts round them (decoupling and support parts at the pins they serve) and fits the board. Leave out for a placement the placer proposes alone (a starting point)'),
   width_mm: z.number().positive().optional().describe('With parts: the board size to arrange in (as set_board); omit to keep the size set, or let the board fit the parts'),
   height_mm: z.number().positive().optional(),
-  keep_choices: z.boolean().optional().describe('Keep the placement choices made before for parts not in parts (default true); false forgets them (locked parts stay)'),
-}).describe('Propose the placement afresh: a board size (unless set) and a placement. With parts, the main parts go where you decide (soft: kept, nudged only where parts would overlap); the placer does the rest. Try arrangements with design_query try_placements first and apply the best one with this. Replaces the current placement.');
+  keep_choices: z.boolean().optional().describe('Keep your earlier placement choices for parts not in parts (default true); false forgets them. Locked parts and the parts the user placed always stay'),
+}).describe('Propose the placement afresh: a board size (unless set) and a placement. With parts, the main parts go where you decide (soft: kept, nudged only where parts would overlap); the placer does the rest. Parts the user placed or locked stay where they are and cannot be in parts. Try arrangements with design_query try_placements first and apply the best one with this. Replaces the current placement.');
 
 export const RouteOp = z.object({
   op: z.literal('route'),
@@ -474,6 +482,7 @@ export const EditOp = z.discriminatedUnion('op', [
   SetBoardOp,
   SetFabProfileOp,
   PlaceOp,
+  AttachOp,
   PlaceSymbolOp,
   WireOp,
   LabelOp,

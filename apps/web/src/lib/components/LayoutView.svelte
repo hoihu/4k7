@@ -1,6 +1,6 @@
 <script lang="ts">
   import { boardStep, fabFiles, panelFabFiles, zip } from '@4k7/fab';
-  import { planeNames, type BoardDiagnostic, type CopperLayer } from '@4k7/schema';
+  import { planeNames, userPlaced, type BoardDiagnostic, type CopperLayer } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
   import BoardCanvas from './BoardCanvas.svelte';
@@ -77,13 +77,24 @@
     ['silk', 'Silkscreen'],
     ['courtyard', 'Courtyards'],
     ['ratsnest', 'Ratsnest'],
-    ['placement', 'Placement · yours / locked'],
+    ['placement', "Placement · yours / agent's / locked"],
     ['dims', 'Dimensions · size, holes (mm)'],
   ]);
 
   const selectedPart = $derived(app.selection.length === 1 ? (b?.parts.find((p) => p.refdes === app.selection[0]) ?? null) : null);
-  /* the parts the user placed (a choice the placer keeps) */
-  const choices = $derived((b?.parts ?? []).filter((p) => !p.componentId.startsWith('hole:') && !p.locked && p.intent).map((p) => p.refdes));
+  /* the parts the user placed (a choice the placer keeps); the agent's choices are released one by one */
+  const choices = $derived((b?.parts ?? []).filter((p) => !p.componentId.startsWith('hole:') && !p.locked && p.intent && p.by !== 'agent').map((p) => p.refdes));
+  /* the parts the user put or locked somewhere: what the agent arranges round when it takes over again */
+  const mine = $derived(b ? userPlaced(b) : []);
+  /** Hand the board back to the agent after arranging parts: it keeps them, plans the planes and routes. */
+  function continueLayout() {
+    const locked = (b?.parts ?? []).filter((p) => mine.includes(p.refdes) && p.locked).map((p) => p.refdes);
+    void app.send(
+      `I have arranged the parts that matter to me: ${mine.join(', ')} ${mine.length > 1 ? 'are' : 'is'} where I want ${mine.length > 1 ? 'them' : 'it'}${locked.length ? ` (${locked.join(', ')} locked)` : ''}. ` +
+        'Take the layout from here: keep my placements, arrange the rest round them, decide the planes (which net on which layer, and whether a plane should be split; say why), then route to 100 %.',
+      { shown: `Continue the layout round my placement (${mine.join(', ')})` },
+    );
+  }
   /** Every choice back to the placer; locked parts stay. */
   function releaseAll() {
     const ids = choices.map((ref) => app.k?.ledger.find((x) => x.text.startsWith(`position(${ref})`))?.id).filter((id): id is string => !!id);
@@ -182,6 +193,7 @@
       {#if b?.parts.length}
         <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose placement', [{ op: 'propose_placement' }])}>Propose placement</button>
         {#if choices.length}<button class="btn" disabled={app.running} title="Your {choices.length} placement choice{choices.length > 1 ? 's' : ''} go back to the placer; locked parts stay" onclick={releaseAll}>Release choices ({choices.length})</button>{/if}
+        {#if mine.length}<button class="btn" disabled={app.running || !!app.k?.proposal} title="Hand the board back to the agent: it keeps the {mine.length} part{mine.length > 1 ? 's' : ''} you placed, arranges the rest round them, decides the planes and routes" onclick={continueLayout}>Continue layout ✦</button>{/if}
         <button class="btn" class:pri={b.routing !== 'done' || b.stopped} disabled={app.running || !!prog || (b.routing === 'done' && !b.stopped)} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' || b.stopped ? 'Route again' : 'Route'}</button>
         <button class="btn" disabled={!b.parts.length} title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
         {#if b.panel}<button class="btn" title="The {b.panel.settings.cols} × {b.panel.settings.rows} panel ({b.panel.w} × {b.panel.h} mm): Gerber, drill with the mouse bites and tooling holes, BOM and pick-and-place of every copy, as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}` : ''}" onclick={() => exportFab(true)}>Panel files ⤓</button>{/if}
@@ -233,9 +245,9 @@
           <h4>{selectedPart.refdes} <span class="muted mono">{selectedPart.pkg}</span></h4>
           <p class="small mono">x {selectedPart.x} · y {selectedPart.y} mm · {selectedPart.rot}°{selectedPart.componentId.startsWith('hole:') ? '' : ` · ${selectedPart.side} side`}</p>
           <p class="small">
-            {#if selectedPart.locked}Locked here.
-            {:else if selectedPart.intent}Your placement{selectedPart.intent.anchor ? `, kept relative to ${selectedPart.intent.anchor} (it follows ${selectedPart.intent.anchor})` : ''}; the placer nudges it only if it must.
-            {:else}Placed automatically{selectedPart.follows ? `; it follows ${selectedPart.follows}` : ''}.{/if}
+            {#if selectedPart.locked}Locked here{selectedPart.by === 'agent' ? ' by the agent' : ''}.
+            {:else if selectedPart.intent}{selectedPart.by === 'agent' ? 'Placed by the agent' : 'Your placement'}{selectedPart.intent.anchor ? `, kept relative to ${selectedPart.intent.anchor} (it follows ${selectedPart.intent.anchor})` : ''}; the placer nudges it only if it must.{selectedPart.by === 'agent' ? ' Move it and it is yours: the agent keeps it there.' : ''}
+            {:else}Placed automatically{selectedPart.follows ? `; it belongs with ${selectedPart.follows}${selectedPart.followsPin ? ` (pin ${selectedPart.followsPin})` : ''} and follows it${selectedPart.belongsDeclared ? '' : " (the placer's guess)"}` : selectedPart.belongsDeclared ? '; it stands on its own' : ''}.{/if}
           </p>
           {#if !selectedPart.componentId.startsWith('hole:')}
             <div class="row2">

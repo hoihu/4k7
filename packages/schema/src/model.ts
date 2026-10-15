@@ -190,6 +190,7 @@ export type ConstraintKind =
   | 'arrangement'
   | 'position'
   | 'sch_position'
+  | 'belongs'
   | 'note';
 
 export type ConstraintDomain = 'schematic' | 'placement' | 'routing' | 'electrical' | 'param';
@@ -203,7 +204,10 @@ export interface Constraint {
   /** Unit letters when a/b address one unit of a split symbol ("U3B" → a = U3, aUnit = "B"). */
   aUnit?: string;
   bUnit?: string;
-  /** For `param`: the parameter name; for `layer`: "top" | "bottom". */
+  /**
+   * For `param`: the parameter name; for `layer`: "top" | "bottom". For `belongs` (the part `a`
+   * belongs with `b` on the board, at `b`'s pin `key` if set; no `b`: it stands on its own).
+   */
   key?: string;
   value?: string;
   /** For `near`: maximum distance in mm (board). */

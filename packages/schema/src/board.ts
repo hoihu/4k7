@@ -504,12 +504,18 @@ export interface BoardPart {
   polarized: boolean;
   /** A picture of the part from the top (from its part card), for the 3D view. */
   topImage?: { src: string; rot: 0 | 90 | 180 | 270 };
-  /** Locked by the user (a hard position constraint); the placer does not move it. */
+  /** Locked (a hard position constraint); the placer does not move it. */
   locked: boolean;
-  /** Placed where the user put it (a soft position constraint), relative to this part if set. */
+  /** Placed where someone put it (a soft position constraint), relative to this part if set. */
   intent?: { anchor?: string };
+  /** Who placed or locked it: the user (a drag, the lock button, their words) or the agent on its own. */
+  by?: 'user' | 'agent';
   /** The part it belongs with (refdes): it follows that part, and a choice for it is relative to it. */
   follows?: string;
+  /** The pin of that part it sits at (number), when it serves one (a decoupling cap at its supply pin). */
+  followsPin?: string;
+  /** Who it belongs with is the agent's word (attach), not the placer's guess; without `follows`: it stands on its own. */
+  belongsDeclared?: boolean;
 }
 
 export interface Track {
@@ -671,6 +677,25 @@ export function planeNames(b: Pick<BoardView, 'planes' | 'netNames'>, layer: Cop
     .join(', ');
 }
 
+/** How a part got where it is, for the agent: "auto", "agent", "user (relative to U1)", "locked by the user". */
+function placedLabel(p: BoardPart): string {
+  if (p.locked) return p.by ? `locked by the ${p.by}` : 'locked';
+  if (!p.intent) return 'auto';
+  return `${p.by ?? 'user'}${p.intent.anchor ? ` (relative to ${p.intent.anchor})` : ''}`;
+}
+
+/** Who a part belongs with, for the agent: "U1.12" (declared with attach), "U1.12 (guessed)", "none" (declared). */
+function belongsLabel(p: BoardPart): { belongs_to?: string } {
+  if (p.follows) return { belongs_to: `${p.follows}${p.followsPin ? `.${p.followsPin}` : ''}${p.belongsDeclared ? '' : ' (guessed)'}` };
+  return p.belongsDeclared ? { belongs_to: 'none' } : {};
+}
+
+/** The parts the user put or locked somewhere themselves (their drag, the lock button, their words). */
+export const userPlaced = (b: Pick<BoardView, 'parts'>) => b.parts.filter((p) => !p.componentId.startsWith('hole:') && p.by === 'user' && (p.locked || p.intent)).map((p) => p.refdes);
+
+const USER_PLACED_NOTE =
+  'The user put these parts where they are: their decisions. Arrange, plan the planes and route round them; propose_placement and try_placements refuse them. Move one only where routing cannot do without it (place, a small step), and tell the user which and why.';
+
 /** Compact board description for agents (design_query get_board). */
 export function boardSummary(b: BoardView, routed = true) {
   return {
@@ -681,7 +706,8 @@ export function boardSummary(b: BoardView, routed = true) {
       ? { id: b.fab.id, summary: fabSummary(b.fab), limits: b.fab.limits, source: b.fab.source, ...(b.fab.notes?.length ? { notes: b.fab.notes } : {}) }
       : 'none chosen: set_fab_profile (a preset such as "jlcpcb" or "eurocircuits/6C", or limits read from the manufacturer\'s page) makes the DRC check the board against the manufacturer\'s limits',
     outline_by: b.sizeBy,
-    parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, side: p.side, placed: p.locked ? 'locked' : p.intent ? `user${p.intent.anchor ? ` (relative to ${p.intent.anchor})` : ''}` : 'auto' })),
+    parts: b.parts.map((p) => ({ refdes: p.refdes, package: p.pkg, x: p.x, y: p.y, rot: p.rot, side: p.side, placed: placedLabel(p), ...belongsLabel(p) })),
+    ...(userPlaced(b).length ? { user_placed: { parts: userPlaced(b), note: USER_PLACED_NOTE } } : {}),
     routing: !routed
       ? 'not computed here (see the Layout view)'
       : b.routing === 'done'

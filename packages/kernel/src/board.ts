@@ -46,8 +46,8 @@ import {
   figureDepths,
 } from '@4k7/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
-import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
-import { copperDrc, edgeDrc } from './drc.ts';
+import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
+import { copperDrc, edgeDrc, splitDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelView } from './panel.ts';
 import { stableJson } from './canonical.ts';
@@ -72,8 +72,10 @@ interface Item {
   tht: boolean;
   /** Locked without a rotation: the placer still picks the rotation. */
   freeRot?: boolean;
-  /** The user's choice for this part (a soft position constraint). */
+  /** The user's or the agent's choice for this part (a soft position constraint). */
   intent?: Constraint;
+  /** Who locked it or chose its place. */
+  by?: 'user' | 'agent';
   /** Courtyard size at rotation 0, centred. */
   cw: number;
   ch: number;
@@ -171,8 +173,20 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     return isGroundNet(net) || isPowerNet(net) ? w * 0.25 : w;
   };
 
+  /*
+   * Which part belongs with which: the agent's word first (`belongs` entries: a parent, the pin it
+   * serves, or none), the placer's guess for the rest (below).
+   */
+  const declared = new Map<Item, { to: Item | null; pin?: string }>();
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind !== 'belongs' || !k.a || !byComp.has(k.a)) continue;
+    const to = k.b ? byComp.get(k.b) : null;
+    if (to === undefined) continue; // the parent has no footprint: the guess
+    declared.set(byComp.get(k.a)!, { to, ...(k.key ? { pin: k.key } : {}) });
+  }
+
   // decoupling caps → one supply pad each (nearest in the schematic sense: first free pad)
-  const springs: { it: Item; to: Item; tx: number; ty: number; px: number; py: number; w: number }[] = [];
+  const springs: { it: Item; to: Item; tx: number; ty: number; px: number; py: number; w: number; pin: string }[] = [];
   const supplyPads = new Map<string, { it: Item; px: number; py: number; used: number }[]>();
   for (const it of items) {
     if (isTwoPin(it.card)) continue;
@@ -182,15 +196,29 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       supplyPads.set(net, [...(supplyPads.get(net) ?? []), { it, px: pad.x, py: pad.y, used: 0 }]);
     }
   }
+  // a declared parent: at the pin given, else at a pin they share (a supply pin first)
+  for (const [it, { to, pin }] of declared) {
+    if (!to) continue;
+    const own = padsOf(it).filter((p) => p.net && !isGroundNet(d.nets[p.net]!));
+    const theirs = padsOf(to).filter((q) => (pin ? q.pad.number === pin : own.some((p) => p.net === q.net)));
+    const typeOf = (n: string) => to.card.pins.find((p) => p.number === n)?.type;
+    const at = theirs.find((q) => typeOf(q.pad.number) === 'pwr_in') ?? theirs[0];
+    const mine = at && padsOf(it).find((p) => p.net === at.net);
+    if (!at || !mine) continue;
+    const target = supplyPads.get(at.net!)?.find((x) => x.it === to && x.px === at.pad.x && x.py === at.pad.y);
+    if (target) target.used++;
+    springs.push({ it, to, tx: at.pad.x, ty: at.pad.y, px: mine.pad.x, py: mine.pad.y, w: 3, pin: at.pad.number });
+  }
   for (const it of items) {
-    if (!isTwoPin(it.card) || it.card.category !== 'capacitor') continue;
+    if (!isTwoPin(it.card) || it.card.category !== 'capacitor' || declared.has(it)) continue;
     const ns = padsOf(it).map((p) => p.net);
     const rail = ns.find((n) => n && !isGroundNet(d.nets[n]!) && supplyPads.has(n));
     if (!rail || !ns.some((n) => n && isGroundNet(d.nets[n]!))) continue;
     const target = [...supplyPads.get(rail)!].sort((a, b) => a.used - b.used)[0]!;
     target.used++;
     const own = padsOf(it).find((p) => p.net === rail)!.pad;
-    springs.push({ it, to: target.it, tx: target.px, ty: target.py, px: own.x, py: own.y, w: 3 });
+    const pin = target.it.fp.pads.find((q) => q.x === target.px && q.y === target.py)!.number;
+    springs.push({ it, to: target.it, tx: target.px, ty: target.py, px: own.x, py: own.y, w: 3, pin });
   }
   const near = Object.values(d.ledger)
     .filter((k) => k.kind === 'near' && k.a && k.b && byComp.has(k.a) && byComp.has(k.b))
@@ -202,16 +230,22 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
    * it shares a signal net with (a supply net if there is none), if that is bigger than itself.
    */
   const parent = new Map<Item, Item>();
-  for (const s of springs) parent.set(s.it, s.to);
+  for (const [it, { to }] of declared) if (to) parent.set(it, to);
+  /** Whether `from` belongs with `it`, directly or through other parts (a guess must not close a circle). */
+  const leadsTo = (from: Item, it: Item) => {
+    for (let at: Item | undefined = from, n = 0; at && n <= items.length; at = parent.get(at), n++) if (at === it) return true;
+    return false;
+  };
+  for (const s of springs) if (!parent.has(s.it) && !leadsTo(s.to, s.it)) parent.set(s.it, s.to);
   for (const it of items) {
-    if (parent.has(it)) continue;
+    if (parent.has(it) || declared.has(it)) continue;
     for (const supply of [false, true]) {
       let best: Item | undefined;
       for (const { net } of padsOf(it)) {
         if (!net || isGroundNet(d.nets[net]!) || isPowerNet(d.nets[net]!) !== supply) continue;
         for (const m of nets.get(net) ?? []) {
           const n = m.it.fp.pads.length;
-          if (m.it === it || n <= it.fp.pads.length) continue;
+          if (m.it === it || n <= it.fp.pads.length || leadsTo(m.it, it)) continue;
           if (!best || n > best.fp.pads.length || (n === best.fp.pads.length && natCmp(m.it.comp.refdes, best.comp.refdes) < 0)) best = m.it;
         }
       }
@@ -226,13 +260,20 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const positions = Object.values(d.ledger).filter((k) => k.kind === 'position' && k.a && byComp.has(k.a));
   for (const k of positions) {
     const it = byComp.get(k.a!)!;
+    it.by = madeBy(k);
     if (k.strength === 'hard') {
       it.fixed = true;
       it.freeRot = k.rot === undefined;
     } else it.intent = k;
   }
-  // bigger parts first: a choice's anchor (always bigger) is in place before the part itself
-  const bySize = [...items].sort((a, b) => b.fp.pads.length - a.fp.pads.length || natCmp(a.comp.refdes, b.comp.refdes));
+  // parents before the parts that belong with them (a choice's anchor is in place before the part
+  // itself), bigger parts first
+  const depth = (it: Item) => {
+    let n = 0;
+    for (let at = parent.get(it); at && n < items.length; at = parent.get(at)) n++;
+    return n;
+  };
+  const bySize = [...items].sort((a, b) => depth(a) - depth(b) || b.fp.pads.length - a.fp.pads.length || natCmp(a.comp.refdes, b.comp.refdes));
   const anchorOf = (it: Item) => (it.intent?.rel ? byComp.get(it.intent.rel) : undefined);
   // a proposed board fitted round the arrangement moves it as a whole: the choices' place on it
   let offset = { x: 0, y: 0 };
@@ -417,7 +458,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       for (const { pad, net } of padsOf(it)) {
         if (!net || isGroundNet(d.nets[net]!)) continue;
         const pin = padsOf(ic).find((p) => p.net === net);
-        if (pin) return [{ it, to: ic, tx: pin.pad.x, ty: pin.pad.y, px: pad.x, py: pad.y, w: 1 }];
+        if (pin) return [{ it, to: ic, tx: pin.pad.x, ty: pin.pad.y, px: pad.x, py: pad.y, w: 1, pin: pin.pad.number }];
       }
       return [];
     }),
@@ -894,7 +935,13 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const parts: BoardPart[] = [
     ...items.map((it) => {
       const pa = parent.get(it);
-      return { ...toPart(d, it, layers), ...(pa ? { follows: pa.comp.refdes } : {}) };
+      const at = springs.find((x) => x.it === it && x.to === pa) ?? satellites.find((x) => x.it === it && x.to === pa);
+      const said = declared.get(it);
+      return {
+        ...toPart(d, it, layers),
+        ...(pa ? { follows: pa.comp.refdes, ...(at ? { followsPin: at.pin } : {}) } : {}),
+        ...(said ? { belongsDeclared: true } : {}),
+      };
     }),
     ...holeParts,
   ];
@@ -1077,7 +1124,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     ...(copper.stopped ? { stopped: true } : {}),
   };
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed)];
+  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id))];
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
@@ -1421,6 +1468,7 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     ...(it.card.topImage ? { topImage: { src: it.card.topImage.src, rot: it.card.topImage.rot } } : {}),
     locked: it.fixed,
     ...(it.intent ? { intent: it.intent.rel ? { anchor: anchorRef(d, it.intent.rel) } : {} } : {}),
+    ...(it.by && (it.fixed || it.intent) ? { by: it.by } : {}),
   };
 }
 
@@ -1509,6 +1557,70 @@ function placementChecks(parts: BoardPart[], w: number, h: number, edge: number,
   return out;
 }
 
+
+/** Parts of one supply this close (mm, courtyard to courtyard) are one group in the plane plan. */
+const PLAN_GROUP_MM = 6;
+
+/**
+ * What the agent decides the planes from (get_board plane_plan): per supply and ground net, its
+ * pins, the ICs drawing from it, where its parts stand (groups of parts close together), and what
+ * carries it now; and which layer each outer layer's tracks run over.
+ */
+export function planePlan(d: Design, b: BoardView) {
+  const four = b.layers.length === 4;
+  const supplies = Object.values(d.nets)
+    .filter((n) => isPowerNet(n))
+    .map((n) => {
+      const parts = b.parts.filter((p) => p.pads.some((q) => q.netId === n.id));
+      const pins = parts.reduce((sum, p) => sum + p.pads.filter((q) => q.netId === n.id).length, 0);
+      return { n, parts, pins };
+    })
+    .filter((x) => x.pins >= 2)
+    .sort((x, y) => y.pins - x.pins || natCmp(x.n.name, y.n.name));
+  const box = (ps: BoardPart[]) => {
+    const r = (v: number) => Math.round(v * 10) / 10;
+    return [r(Math.min(...ps.map((p) => p.courtyard.x))), r(Math.min(...ps.map((p) => p.courtyard.y))), r(Math.max(...ps.map((p) => p.courtyard.x + p.courtyard.w))), r(Math.max(...ps.map((p) => p.courtyard.y + p.courtyard.h)))];
+  };
+  const apart = (p: BoardPart, q: BoardPart) =>
+    Math.max(p.courtyard.x - (q.courtyard.x + q.courtyard.w), q.courtyard.x - (p.courtyard.x + p.courtyard.w), p.courtyard.y - (q.courtyard.y + q.courtyard.h), q.courtyard.y - (p.courtyard.y + p.courtyard.h), 0);
+  return {
+    stackup: four
+      ? 'F.Cu tracks run over In1.Cu, B.Cu tracks over In2.Cu: their return current flows in that plane, right under them. An area plane (set_plane under or rect) splits its layer; a signal track over it that crosses the area\'s edge makes its return current detour round the gap (PLANE.SPLIT_CROSSING), so the router crosses splits on the other outer layer where it can. Put an area where its net\'s pins are, with few signals leaving it on the layer over it.'
+      : 'F.Cu tracks run over the B.Cu pour: it is their return path. Every track on B.Cu cuts the pour, so keep those short and few under fast signals.',
+    supplies: supplies.map(({ n, parts, pins }) => {
+      const feeds = parts
+        .map((p) => {
+          const comp = d.components[p.componentId];
+          const card = comp && cardOf(d, comp.part);
+          const supplyPins = card && card.pins.length > 3 ? card.pins.filter((q) => q.type === 'pwr_in' && comp.pins[q.number] === n.id).length : 0;
+          return { p, supplyPins };
+        })
+        .filter((x) => x.supplyPins > 0)
+        .sort((x, y) => y.supplyPins - x.supplyPins || natCmp(x.p.refdes, y.p.refdes))
+        .map((x) => `${x.p.refdes} (${x.supplyPins} pin${x.supplyPins > 1 ? 's' : ''})`);
+      // groups: parts within PLAN_GROUP_MM of each other (single linkage)
+      const group = parts.map((_, i) => i);
+      const find = (i: number): number => (group[i] === i ? i : (group[i] = find(group[i]!)));
+      for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) if (apart(parts[i]!, parts[j]!) <= PLAN_GROUP_MM) group[find(i)] = find(j);
+      const byRoot = new Map<number, BoardPart[]>();
+      parts.forEach((p, i) => byRoot.set(find(i), [...(byRoot.get(find(i)) ?? []), p]));
+      const groups = [...byRoot.values()].sort((x, y) => y.length - x.length);
+      const on = b.planes
+        .filter((pl) => pl.netId === n.id)
+        .map((pl) => `${pl.layer} ${pl.area ? (pl.under ? `under ${pl.under.join(', ')}` : `area ${pl.area.join(', ')}`) : pl.layer === 'F.Cu' || pl.layer === 'B.Cu' ? 'pour' : 'whole layer'}${pl.auto ? ' (automatic)' : ''}`);
+      return {
+        net: n.name,
+        ...(n.attrs.voltage !== undefined ? { voltage: n.attrs.voltage } : {}),
+        ...(isGroundNet(n) ? { ground: true } : {}),
+        pins,
+        ...(feeds.length ? { feeds } : {}),
+        carried_by: on.length ? on : ['tracks'],
+        box_mm: box(parts),
+        ...(groups.length > 1 ? { groups: groups.map((g) => ({ parts: g.map((p) => p.refdes).sort(natCmp), box_mm: box(g) })) } : {}),
+      };
+    }),
+  };
+}
 
 /**
  * Automatic planes: GND (the ground net with the most pins) on B.Cu for 2 layers; on 4 layers

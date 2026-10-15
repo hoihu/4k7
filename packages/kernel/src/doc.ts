@@ -1,7 +1,7 @@
 /**
  * Low-level design document helpers: ids, lookups, reference resolution.
  */
-import type { Component, Design, Net, PartCard, PartPin, Rejection } from '@4k7/schema';
+import type { Component, Constraint, Design, Net, PartCard, PartPin, Rejection } from '@4k7/schema';
 import { getBuiltinPart } from '@4k7/parts';
 
 export class RejectError extends Error {
@@ -297,6 +297,11 @@ export function connectorRole(d: Design, c: Component, supplied: Set<string>): '
 }
 
 /** Mark the diagnostics a waiver covers (same code, every entity listed in the waiver). */
+/** Who made a ledger entry, as the board tells it: the user (their drag, button or words) or the agent on its own. */
+export function madeBy(k: Constraint): 'user' | 'agent' {
+  return k.source.type === 'agent' || k.source.type === 'recipe' ? 'agent' : 'user';
+}
+
 export function applyWaivers(d: Design, out: { code: string; entities: string[]; waivedBy?: string }[]) {
   const ws = Object.values(d.waivers);
   for (const x of out) {

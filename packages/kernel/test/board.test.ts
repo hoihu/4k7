@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { boardSummary, cutoutDistance } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
+import { edgeCrossings, splitDrc } from '../src/drc.ts';
 import { buckTransaction } from './fixtures.ts';
 
 function buck() {
@@ -387,6 +388,130 @@ describe('the agent decides the main parts (propose_placement parts, try_placeme
   });
 });
 
+describe('who placed a part: the user\'s placement and the agent\'s', () => {
+  const at = (k: Kernel, ref: string) => k.board().parts.find((p) => p.refdes === ref)!;
+  /** The user's own edit, as the app makes it (a drag, the lock button). */
+  const byUser = (k: Kernel, ops: unknown[]) => {
+    expect(k.transact({ summary: 'user', ops }, 'user').status).toBe('ok');
+    k.accept(undefined, 'user');
+  };
+
+  it('a drag is the user\'s, the agent\'s place is its own unless it quotes the user', () => {
+    const k = buck();
+    const c4 = at(k, 'C4');
+    byUser(k, [{ op: 'place', ref: 'C4', x_mm: c4.x - 1, y_mm: c4.y }, { op: 'place', ref: 'J1', x_mm: 4, y_mm: 8, lock: true }]);
+    k.transact({ summary: 'agent', ops: [{ op: 'place', ref: 'R3', x_mm: at(k, 'R3').x, y_mm: at(k, 'R3').y }, { op: 'place', ref: 'C5', x_mm: at(k, 'C5').x, y_mm: at(k, 'C5').y, quote: 'put C5 there' }] });
+    expect(['C4', 'J1', 'R3', 'C5'].map((r) => at(k, r).by)).toEqual(['user', 'user', 'agent', 'user']);
+    expect(at(k, 'U1').by).toBeUndefined();
+    const s = boardSummary(k.board(), false);
+    expect(s.parts.find((p) => p.refdes === 'C4')!.placed).toBe('user (relative to U1)');
+    expect(s.parts.find((p) => p.refdes === 'J1')!.placed).toBe('locked by the user');
+    expect(s.parts.find((p) => p.refdes === 'R3')!.placed).toMatch(/^agent/);
+    expect(s.user_placed!.parts).toEqual(['C4', 'C5', 'J1']);
+  });
+
+  it('the agent moving a part of the user\'s says so; the user moving the agent\'s makes it theirs', () => {
+    const k = buck();
+    byUser(k, [{ op: 'place', ref: 'C4', x_mm: at(k, 'C4').x - 1, y_mm: at(k, 'C4').y }]);
+    const r = k.transact({ summary: 'agent', ops: [{ op: 'place', ref: 'C4', x_mm: at(k, 'C4').x + 0.5, y_mm: at(k, 'C4').y }] });
+    expect(r.results[0]!.effect).toMatch(/was the user's placement/);
+    expect(at(k, 'C4').by).toBe('agent');
+    k.accept();
+    byUser(k, [{ op: 'place', ref: 'C4', x_mm: at(k, 'C4').x, y_mm: at(k, 'C4').y + 0.5 }]);
+    expect(at(k, 'C4').by).toBe('user');
+  });
+
+  it('propose_placement and try_placements refuse the user\'s parts; keep_choices false forgets only the agent\'s', () => {
+    const k = buck();
+    byUser(k, [{ op: 'place', ref: 'U1', x_mm: 14, y_mm: 10, rot: 90 }]);
+    const r = k.transact({ summary: 'arrange', ops: [{ op: 'propose_placement', parts: [{ ref: 'U1', x_mm: 8, y_mm: 8 }] }] });
+    expect(r.status).toBe('rejected');
+    expect(r.rejection!.message).toMatch(/U1 was placed by the user/);
+    const t = k.query({ op: 'try_placements', candidates: [{ parts: [{ ref: 'U1', x_mm: 8, y_mm: 8 }] }, { parts: [{ ref: 'J1', x_mm: 3, y_mm: 10, rot: 90 }] }] }) as { options: { option: number; error?: string }[] };
+    expect(t.options.find((o) => o.option === 1)!.error).toMatch(/placed by the user/);
+    expect(t.options.find((o) => o.option === 2)!.error).toBeUndefined();
+    // the agent arranges round it; starting over forgets its own choices, never the user's
+    expect(k.transact({ summary: 'arrange', ops: [{ op: 'propose_placement', parts: [{ ref: 'J1', x_mm: 3, y_mm: 10, rot: 90 }] }] }).status).toBe('ok');
+    expect([at(k, 'U1').by, at(k, 'J1').by]).toEqual(['user', 'agent']);
+    expect(k.transact({ summary: 'fresh', ops: [{ op: 'propose_placement', keep_choices: false }] }).status).toBe('ok');
+    expect([at(k, 'U1').by, at(k, 'U1').rot, at(k, 'J1').intent]).toEqual(['user', 90, undefined]);
+  });
+
+  it('a waiver the user adds from the app is theirs', () => {
+    const k = buck();
+    byUser(k, [{ op: 'add_waiver', code: 'X.TEST', entities: ['U1'], reason: 'intended' }]);
+    expect(Object.values(JSON.parse(k.exportDesign()).waivers as Record<string, { by: string }>).map((w) => w.by)).toEqual(['user']);
+  });
+});
+
+describe('which part belongs with which (attach)', () => {
+  const at = (k: Kernel, ref: string) => k.board().parts.find((p) => p.refdes === ref)!;
+  const belongs = (k: Kernel) => Object.fromEntries((k.query({ op: 'get_board' }) as { parts: { refdes: string; belongs_to?: string }[] }).parts.map((p) => [p.refdes, p.belongs_to ?? '-']));
+  const pad = (k: Kernel, ref: string, n: string) => at(k, ref).pads.find((q) => q.number === n)!;
+  const gap = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  it('get_board shows the placer\'s guesses, marked as such', () => {
+    const b = belongs(buck());
+    expect(b.C4).toBe('U1.1 (guessed)');
+    expect(b.J1).toBe('U1 (guessed)');
+    expect(b.C2).toBe('-');
+  });
+
+  it('a declared parent and pin: the part goes to that pin and follows its new parent', () => {
+    const k = buck();
+    const r = k.transact({ summary: 'input cap at the connector', ops: [{ op: 'attach', ref: 'C1', to: 'J1', pin: '1' }] });
+    expect(r.status).toBe('ok');
+    expect(r.results[0]!.effect).toBe('C1 belongs with J1 at J1.1');
+    expect(belongs(k).C1).toBe('J1.1');
+    expect(gap(pad(k, 'C1', '1'), pad(k, 'J1', '1'))).toBeLessThan(4);
+    // J1 moved: C1 comes along
+    const j1 = at(k, 'J1');
+    const c1 = at(k, 'C1');
+    k.transact({ summary: 'drag', ops: [{ op: 'place', ref: 'J1', x_mm: j1.x, y_mm: j1.y + 3 }] }, 'user');
+    expect(at(k, 'C1').y).toBeCloseTo(c1.y + 3, 0); // and settles at the pin again
+    expect(k.board().diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+  });
+
+  it('none: the part no longer follows a part it was guessed to belong with', () => {
+    const k = buck();
+    k.transact({ summary: 'J1 stands alone', ops: [{ op: 'attach', ref: 'J1', to: null }] });
+    expect(belongs(k).J1).toBe('none');
+    const j1 = at(k, 'J1');
+    const u1 = at(k, 'U1');
+    k.transact({ summary: 'drag', ops: [{ op: 'place', ref: 'U1', x_mm: u1.x + 4, y_mm: u1.y }] }, 'user');
+    expect([at(k, 'J1').x, at(k, 'J1').y]).toEqual([j1.x, j1.y]);
+    // without the declaration J1 went along with U1
+    const g = buck();
+    const gj = at(g, 'J1');
+    g.transact({ summary: 'drag', ops: [{ op: 'place', ref: 'U1', x_mm: at(g, 'U1').x + 4, y_mm: at(g, 'U1').y }] }, 'user');
+    expect(at(g, 'J1').x).not.toBe(gj.x);
+  });
+
+  it('a part the user placed stays where it is, now kept relative to its new parent', () => {
+    const k = buck();
+    const c1 = at(k, 'C1');
+    k.transact({ summary: 'drag', ops: [{ op: 'place', ref: 'C1', x_mm: c1.x, y_mm: c1.y + 1 }] }, 'user');
+    k.accept(undefined, 'user');
+    const placed = at(k, 'C1');
+    const r = k.transact({ summary: 'at J1', ops: [{ op: 'attach', ref: 'C1', to: 'J1' }] });
+    expect(r.results[0]!.effect).toMatch(/the user's placement: it stays where it is/);
+    expect([at(k, 'C1').x, at(k, 'C1').y, at(k, 'C1').intent]).toEqual([placed.x, placed.y, { anchor: 'J1' }]);
+  });
+
+  it('refuses a circle, a pin it is not connected to, and a pin without a part', () => {
+    const k = buck();
+    expect(k.transact({ summary: 'a', ops: [{ op: 'attach', ref: 'C4', to: 'U1', pin: 'BOOT' }] }).status).toBe('ok');
+    const circle = k.transact({ summary: 'b', ops: [{ op: 'attach', ref: 'U1', to: 'C4' }] });
+    expect(circle.rejection!.message).toMatch(/C4 belongs with U1/);
+    expect(k.transact({ summary: 'c', ops: [{ op: 'attach', ref: 'C1', to: 'U1', pin: 'BOOT' }] }).rejection!.message).toMatch(/C1 is not connected to U1.BOOT/);
+    expect(k.transact({ summary: 'd', ops: [{ op: 'attach', ref: 'C1', to: null, pin: '1' }] }).status).toBe('rejected');
+    // remove_constraint goes back to the guess
+    const id = (k.query({ op: 'get_ledger' }) as { id: string; text: string }[]).find((x) => x.text.startsWith('belongs(C4'))!.id;
+    k.transact({ summary: 'e', ops: [{ op: 'remove_constraint', id }] });
+    expect(belongs(k).C4).toBe('U1.1 (guessed)');
+  });
+});
+
 describe('fixed outline with a pinned part', () => {
   it('keeps every other part inside the board', () => {
     const k = buck();
@@ -765,6 +890,88 @@ describe('planes', () => {
     expect(k.board().planes.map((p) => p.layer)).toEqual(['In1.Cu']);
     k.transact({ summary: 'auto', ops: [{ op: 'set_plane', auto: true }] });
     expect(k.board().planes.every((p) => p.auto)).toBe(true);
+  });
+});
+
+describe('planning the planes (plane_plan, split crossings)', () => {
+  it('edgeCrossings: in and out through the edge, through it with both ends outside, a point on the edge, not along it', () => {
+    const r = [0, 0, 10, 10] as const;
+    expect(edgeCrossings([-5, 5, 5, 5], ...r)).toEqual([{ x: 0, y: 5 }]);
+    expect(edgeCrossings([5, 5, 15, 5], ...r)).toEqual([{ x: 10, y: 5 }]);
+    expect(edgeCrossings([-5, 5, 15, 5], ...r)).toEqual([{ x: 0, y: 5 }, { x: 10, y: 5 }]);
+    // a vertex right on the edge: one crossing, not two or none
+    expect(edgeCrossings([-5, 5, 0, 5, 5, 5], ...r)).toHaveLength(1);
+    // onto the edge and back out, along the edge, or outside: none
+    expect(edgeCrossings([-5, 5, 0, 5, -5, 6], ...r)).toEqual([]);
+    expect(edgeCrossings([0, -2, 0, 12], ...r)).toEqual([]);
+    expect(edgeCrossings([-5, -5, -1, 20], ...r)).toEqual([]);
+    expect(edgeCrossings([2, 2, 8, 8], ...r)).toEqual([]);
+  });
+
+  /** The buck on 4 layers, an op-amp with a +3V3 area under it, and one of its outputs to a resistor away from it. */
+  function split(layer: 'In1.Cu' | 'In2.Cu') {
+    const k = buck();
+    k.transact({
+      summary: 'split',
+      ops: [
+        { op: 'add_part', part: 'ti:LM358DR', refdes: 'U2' },
+        { op: 'add_part', part: 'generic:C', refdes: 'C10', params: { capacitance: '100nF', voltage: '16V' } },
+        { op: 'add_part', part: 'generic:R', refdes: 'R10', params: { resistance: '10k' } },
+        { op: 'connect', pins: ['U2.V+', 'C10.1'], net: '+3V3' },
+        { op: 'connect', pins: ['U2.GND', 'C10.2', 'R10.2'], net: 'GND' },
+        { op: 'connect', pins: ['U2.OUTA', 'U2.INA-', 'R10.1'], net: 'SIG' },
+        { op: 'connect', pins: ['U2.INB+', 'U2.OUTB', 'U2.INB-'], net: 'BUF2' },
+        { op: 'set_board', layers: 4, width_mm: 40, height_mm: 30 },
+        { op: 'set_plane', layer: 'In1.Cu', net: 'GND' },
+        { op: 'set_plane', layer: 'In2.Cu', net: '+12V' },
+        { op: 'set_plane', layer, net: '+3V3', under: ['U2'] },
+        { op: 'place', ref: 'U2', x_mm: 30, y_mm: 8, lock: true },
+        { op: 'place', ref: 'R10', x_mm: 30, y_mm: 24, rot: 90, lock: true },
+      ],
+    });
+    return k;
+  }
+
+  it('the router crosses a split on the other outer layer, so no signal crosses it on the layer over it', () => {
+    for (const layer of ['In1.Cu', 'In2.Cu'] as const) {
+      const b = routed(split(layer));
+      expect(b.stats.unrouted).toBe(0);
+      const area = b.planes.find((p) => p.area)!.area!;
+      const over = layer === 'In1.Cu' ? 'F.Cu' : 'B.Cu';
+      const sig = b.tracks.filter((t) => b.netNames[t.netId] === 'SIG');
+      expect(sig.filter((t) => t.layer === over).flatMap((t) => edgeCrossings(t.pts, ...area))).toEqual([]);
+      expect(b.diagnostics.filter((x) => x.code === 'PLANE.SPLIT_CROSSING')).toEqual([]);
+      expect(brokenNets(b)).toEqual([]);
+    }
+  });
+
+  it('a signal that still crosses a split on the layer over it is reported (once per net), supplies are not', () => {
+    const b = routed(split('In2.Cu'));
+    const area = b.planes.find((p) => p.area)!;
+    const sig = Object.keys(b.netNames).find((id) => b.netNames[id] === 'SIG')!;
+    const gnd = Object.keys(b.netNames).find((id) => b.netNames[id] === 'GND')!;
+    const [x0, y0, x1, y1] = area.area!;
+    const across = (netId: string) => ({ netId, layer: 'B.Cu' as const, width: 0.25, pts: [(x0 + x1) / 2, y1 - 1, (x0 + x1) / 2, y1 + 3, (x0 + x1) / 2 + 1, y1 + 3, (x0 + x1) / 2 + 1, y1 - 1] });
+    const found = splitDrc({ ...b, tracks: [across(sig), across(gnd)] }, (id) => id !== gnd);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ code: 'PLANE.SPLIT_CROSSING', severity: 'warning', entities: ['net:SIG'] });
+    expect(found[0]!.message).toMatch(/SIG crosses the edge of the \+3V3 under U2 on In2\.Cu 2 times on B\.Cu/);
+    // F.Cu runs over In1.Cu (unbroken GND): the same track there is fine
+    expect(splitDrc({ ...b, tracks: [{ ...across(sig), layer: 'F.Cu' }] }, () => true)).toEqual([]);
+  });
+
+  it('get_board plane_plan: each supply with its pins, the ICs it feeds, its groups and what carries it', () => {
+    const k = split('In2.Cu');
+    const plan = (k.query({ op: 'get_board' }) as { plane_plan: { stackup: string; supplies: { net: string; pins: number; ground?: boolean; feeds?: string[]; carried_by: string[]; box_mm: number[]; groups?: { parts: string[] }[] }[] } }).plane_plan;
+    expect(plan.stackup).toMatch(/F\.Cu tracks run over In1\.Cu, B\.Cu tracks over In2\.Cu/);
+    const net = (n: string) => plan.supplies.find((x) => x.net === n)!;
+    expect(plan.supplies[0]!.net).toBe('GND');
+    expect(net('GND')).toMatchObject({ ground: true, carried_by: ['In1.Cu whole layer'] });
+    // +3V3: the buck's output (its caps, the divider) and the op-amp with its cap, apart: two groups
+    expect(net('+3V3')).toMatchObject({ pins: 5, feeds: ['U2 (1 pin)'], carried_by: ['In2.Cu under U2'] });
+    expect(net('+3V3').groups!.some((g) => g.parts.includes('U2') && g.parts.includes('C10') && !g.parts.includes('U1'))).toBe(true);
+    expect(net('+12V').carried_by).toEqual(['In2.Cu whole layer']);
+    expect(net('GND').groups!.some((g) => g.parts.includes('U2') && !g.parts.includes('U1'))).toBe(true);
   });
 });
 

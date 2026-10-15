@@ -58,6 +58,7 @@ import {
   findComponent,
   findNet,
   isAutoNet,
+  madeBy,
   mergeNet,
   natCmp,
   nextId,
@@ -69,7 +70,8 @@ import {
   type PinHandle,
 } from './doc.ts';
 
-export function applyOp(d: Design, op: EditOp): OpResult {
+/** Applies one op. `by`: who asked for it (the app's own buttons and drags are the user's; the agent's tool calls are the agent's). */
+export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent'): OpResult {
   switch (op.op) {
     case 'add_part':
       return addPart(d, op);
@@ -100,7 +102,7 @@ export function applyOp(d: Design, op: EditOp): OpResult {
     }
     case 'add_waiver': {
       const id = nextId(d, 'w');
-      d.waivers[id] = { id, code: op.code, entities: [...op.entities], reason: op.reason, by: 'agent' };
+      d.waivers[id] = { id, code: op.code, entities: [...op.entities], reason: op.reason, by };
       return { op: op.op, effect: `waived ${op.code} for ${op.entities.join(', ')}`, ids: [id] };
     }
     case 'set_symbol':
@@ -122,7 +124,9 @@ export function applyOp(d: Design, op: EditOp): OpResult {
     case 'set_fab_profile':
       return setFabProfile(d, op);
     case 'place':
-      return place(d, op);
+      return place(d, op, by);
+    case 'attach':
+      return attach(d, op, by);
     case 'place_symbol':
       return placeSymbol(d, op);
     case 'auto_draw':
@@ -134,7 +138,7 @@ export function applyOp(d: Design, op: EditOp): OpResult {
     case 'erase':
       return eraseOp(d, op);
     case 'propose_placement':
-      return proposePlacement(d, op);
+      return proposePlacement(d, op, by);
     case 'route':
       return routeStep(d);
     case 'set_plane':
@@ -770,14 +774,16 @@ function autoDraw(d: Design, op: Extract<EditOp, { op: 'auto_draw' }>): OpResult
   return { op: op.op, effect: released.length ? `${released.join(', ')}: drawn by the auto-layout again, afresh after every change` : `${targets.map((s) => s.name).join(', ')}: drawn by the auto-layout already`, ids: targets.map((s) => s.id) };
 }
 
-function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
+function place(d: Design, op: Extract<EditOp, { op: 'place' }>, by: 'user' | 'agent' = 'agent'): OpResult {
   const comp = resolveComponent(d, op.ref);
   if (!d.board?.placement) keepPlacement(d); // start from what the user sees
   const now = placedNow(d);
   let rot: number | undefined = op.rot;
   let prevRel: string | undefined;
+  let wasUsers = false;
   for (const k of Object.values(d.ledger)) {
     if (k.kind !== 'position' || k.a !== comp.id) continue;
+    if (madeBy(k) === 'user') wasUsers = true;
     if (rot === undefined && k.rot !== undefined) {
       // a rotation relative to an anchor: back to the board frame
       const anchor = k.rel ? now.parts.find((p) => p.componentId === k.rel) : undefined;
@@ -788,6 +794,8 @@ function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
   }
   const id = nextId(d, 'k');
   const r = (v: number) => Math.round(v * 1000) / 1000;
+  // the agent placing a part on the user's word makes it the user's choice
+  const source: Constraint['source'] = by === 'user' ? { type: 'user' } : op.quote ? { type: 'user', quote: op.quote } : { type: 'agent' };
   const part = now.parts.find((p) => p.componentId === comp.id);
   const anchorRef = part?.follows ?? (prevRel ? d.components[prevRel]?.refdes : undefined);
   const anchor = !op.lock && anchorRef ? now.parts.find((p) => p.refdes === anchorRef) : undefined;
@@ -807,7 +815,7 @@ function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
       ...(rot !== undefined && { rot: (((rot - anchor.rot) % 360) + 360) % 360 }),
       domain: 'placement',
       strength: 'soft',
-      source: { type: 'user' },
+      source,
     };
   } else {
     d.ledger[id] = {
@@ -819,12 +827,71 @@ function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
       ...(rot !== undefined && { rot }),
       domain: 'placement',
       strength: op.lock ? 'hard' : 'soft',
-      source: { type: 'user' },
+      source,
     };
   }
   keepPlacement(d);
   const at = `(${r(op.x_mm)}, ${r(op.y_mm)}) mm${rot !== undefined ? `, ${rot}°` : ''}`;
-  return { op: 'place', effect: op.lock ? `${comp.refdes} locked at ${at}` : `${comp.refdes} placed at ${at}${anchor ? ` (kept relative to ${anchor.refdes})` : ''}`, ids: [id] };
+  const overrode = wasUsers && source.type === 'agent' ? ` (it was the user's placement; now yours)` : '';
+  return { op: 'place', effect: `${op.lock ? `${comp.refdes} locked at ${at}` : `${comp.refdes} placed at ${at}${anchor ? ` (kept relative to ${anchor.refdes})` : ''}`}${overrode}`, ids: [id] };
+}
+
+/**
+ * Which part a part belongs with on the board (a `belongs` entry, one per part), instead of the
+ * placer's guess: it stays at that part (at the pin it serves, if given) and follows it. A part
+ * the agent or the placer put somewhere goes to its new parent; one the user placed stays where
+ * it is, kept relative to the new parent.
+ */
+function attach(d: Design, op: Extract<EditOp, { op: 'attach' }>, by: 'user' | 'agent'): OpResult {
+  const comp = resolveComponent(d, op.ref);
+  const to = op.to === null ? null : resolveComponent(d, op.to);
+  if (to?.id === comp.id) reject({ code: 'BOARD_INVALID', message: `${comp.refdes} cannot belong with itself.` });
+  if (!to && op.pin) reject({ code: 'BOARD_INVALID', message: 'pin needs a part to belong with (to).' });
+  // no circles: the new parent must not belong with this part, directly or through others
+  const declared = (id: string) => Object.values(d.ledger).find((k) => k.kind === 'belongs' && k.a === id);
+  for (let at = to?.id, n = 0; at && n < 100; at = declared(at)?.b, n++) {
+    if (at === comp.id) reject({ code: 'BOARD_INVALID', message: `${to!.refdes} belongs with ${comp.refdes} (directly or through other parts); ${comp.refdes} cannot belong with ${to!.refdes} as well.` });
+  }
+  let pin: { number: string; label: string } | undefined;
+  if (to && op.pin) {
+    const pins = resolvePins(d, `${to.refdes}.${op.pin}`);
+    if (pins.length > 1) reject({ code: 'PIN_UNKNOWN', message: `${to.refdes}.${op.pin} is ${pins.length} pins (${pins.map((h) => h.pin.number).join(', ')}): give the number of the one ${comp.refdes} serves.`, candidates: pins.map((h) => `${to.refdes}.${h.pin.number}`) });
+    const net = to.pins[pins[0]!.pin.number];
+    if (!net || !Object.values(comp.pins).includes(net)) {
+      reject({ code: 'BOARD_INVALID', message: `${comp.refdes} is not connected to ${pinLabel(pins[0]!)}${net ? ` (${d.nets[net]?.name ?? net})` : ''}: a part goes at a pin it shares a net with.` });
+    }
+    pin = { number: pins[0]!.pin.number, label: pinLabel(pins[0]!) };
+  }
+  if (!d.board?.placement) keepPlacement(d); // start from what the user sees
+  const before = placedNow(d).parts.find((p) => p.componentId === comp.id);
+  for (const k of Object.values(d.ledger)) if (k.kind === 'belongs' && k.a === comp.id) delete d.ledger[k.id];
+  const id = nextId(d, 'k');
+  d.ledger[id] = { id, kind: 'belongs', a: comp.id, ...(to ? { b: to.id } : {}), ...(pin ? { key: pin.number } : {}), domain: 'placement', strength: 'soft', source: { type: by } };
+  // where it stands: the user's place stays (relative to the new parent); else it goes to the parent
+  const own = Object.values(d.ledger).find((k) => k.kind === 'position' && k.a === comp.id);
+  let kept = '';
+  if (own && (madeBy(own) === 'user' || own.strength === 'hard')) {
+    kept = own.strength === 'hard' ? ' (locked: it stays where it is)' : " (the user's placement: it stays where it is)";
+    const anchor = to && placedNow(d).parts.find((p) => p.componentId === to.id);
+    if (own.strength === 'soft' && before) {
+      const r = (v: number) => Math.round(v * 1000) / 1000;
+      if (anchor) {
+        const [dx, dy] = [before.x - anchor.x, before.y - anchor.y];
+        const back = (360 - anchor.rot) % 360;
+        const [ox, oy] = back === 90 ? [-dy, dx] : back === 180 ? [-dx, -dy] : back === 270 ? [dy, -dx] : [dx, dy];
+        Object.assign(own, { rel: anchor.componentId, xMm: r(ox), yMm: r(oy), rot: (((before.rot - anchor.rot) % 360) + 360) % 360 });
+      } else {
+        delete own.rel;
+        Object.assign(own, { xMm: before.x, yMm: before.y, rot: before.rot });
+      }
+    }
+  } else if (to) {
+    if (own) delete d.ledger[own.id];
+    delete d.board!.placement!.parts[comp.id]; // placed afresh, at its parent
+  }
+  keepPlacement(d);
+  const what = to ? `${comp.refdes} belongs with ${to.refdes}${pin ? ` at ${pin.label}` : ''}` : `${comp.refdes} stands on its own (no parent part)`;
+  return { op: 'attach', effect: `${what}${kept}`, ids: [id] };
 }
 
 /**
@@ -832,7 +899,7 @@ function place(d: Design, op: Extract<EditOp, { op: 'place' }>): OpResult {
  * With parts, the agent's arrangement of the main parts: each a choice (soft, in board
  * coordinates) the placer keeps, placing the small parts round them.
  */
-export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_placement' }>): OpResult {
+export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_placement' }>, by: 'user' | 'agent' = 'agent'): OpResult {
   const given = (op.parts ?? []).map((p) => ({ p, comp: resolveComponent(d, p.ref) }));
   const twice = given.find((g, i) => given.findIndex((h) => h.comp.id === g.comp.id) !== i);
   if (twice) reject({ code: 'BOARD_INVALID', message: `${twice.comp.refdes} is given twice in parts.` });
@@ -843,11 +910,18 @@ export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_p
       reject({ code: 'BOARD_INVALID', message: `${d.components[k.a]?.refdes} is locked (${k.id}); leave it out of parts, or unlock it first (remove_constraint ${k.id}).`, fixHints: [{ op: 'remove_constraint', id: k.id }] });
     }
   }
+  // the parts the user placed are their decision: the agent arranges round them
+  const users = (k: Constraint) => by === 'agent' && madeBy(k) === 'user';
+  const theirs = Object.values(d.ledger).filter((k) => k.kind === 'position' && k.a && ids.has(k.a) && users(k));
+  if (theirs.length) {
+    const refs = theirs.map((k) => d.components[k.a!]?.refdes ?? k.a!);
+    reject({ code: 'BOARD_INVALID', message: `${refs.join(', ')} ${refs.length > 1 ? 'were' : 'was'} placed by the user: leave ${refs.length > 1 ? 'them' : 'it'} out of parts and arrange round ${refs.length > 1 ? 'them' : 'it'}. Move a part of theirs only where routing cannot do without it, with place, and tell the user.` });
+  }
   let forgot = 0;
   for (const k of Object.values(d.ledger)) {
     if (k.kind !== 'position' || k.strength !== 'soft' || !k.a) continue;
     if (ids.has(k.a)) delete d.ledger[k.id];
-    else if (op.keep_choices === false) {
+    else if (op.keep_choices === false && !users(k)) {
       delete d.ledger[k.id];
       forgot++;
     }
@@ -856,7 +930,7 @@ export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_p
   const r = (v: number) => Math.round(v * 1000) / 1000;
   const choices = given.map(({ p, comp }) => {
     const id = nextId(d, 'k');
-    d.ledger[id] = { id, kind: 'position', a: comp.id, xMm: r(p.x_mm), yMm: r(p.y_mm), rot: p.rot ?? 0, domain: 'placement', strength: 'soft', source: { type: 'agent' } };
+    d.ledger[id] = { id, kind: 'position', a: comp.id, xMm: r(p.x_mm), yMm: r(p.y_mm), rot: p.rot ?? 0, domain: 'placement', strength: 'soft', source: { type: by } };
     return d.ledger[id]!;
   });
   const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
@@ -1594,6 +1668,8 @@ export function describeConstraint(d: Design, k: Constraint): string {
       return `layer(${n(k.a)}) = ${k.value}`;
     case 'arrangement':
       return `arrangement(${n(k.a)}) = ${k.value}`;
+    case 'belongs':
+      return k.b ? `belongs(${n(k.a)}, ${n(k.b)}${k.key ? `.${k.key}` : ''})` : `belongs(${n(k.a)}, none)`;
     case 'position':
       return `position(${n(k.a)}) = (${k.xMm}, ${k.yMm}) mm${k.rel ? ` from ${n(k.rel)}` : ''}${k.rot !== undefined ? ` ${k.rot}°` : ''}${k.strength === 'hard' ? ', locked' : ''}`;
     case 'sch_position':

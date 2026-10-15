@@ -199,6 +199,50 @@ Each step is useful alone.
    reliefs or solid joints, `spoke` width; never below the board's own clearances. The router's
    `planeLook` reads them for the raster area and the exact shape alike.
 
+10. **Who placed what, and the handoff** (built 2026-10-15). The workflow the user wants, like the
+    schematic's: the agent places everything, the user moves the parts that matter to them roughly,
+    the agent takes over again (planes first, then routing). For that the board has to know whose
+    a placement is. `transact(tx, by)`: the app's own edits (drags, Lock, the buttons) are the
+    user's, the agent's tool calls its own; `place` with `quote` (the user asked for it in chat)
+    is the user's too. `BoardPart.by`, `get_board` `placed` (auto / agent / user / locked by …) and
+    `user_placed` say it. The user's placements are decisions: `propose_placement` and
+    `try_placements` refuse them in `parts`, `keep_choices: false` forgets only the agent's, and an
+    agent `place` over one says so in its effect. In the Layout view the agent's choices are drawn
+    dashed with a ring, the user's solid; **Continue layout ✦** (shown once the user placed
+    something) hands the board back: keep my parts, arrange the rest, decide the planes (split or
+    not, and why), route. The guide's step 3 now starts with the planes; GND stays one plane unless
+    there is a reason (isolation). Placements made before this are all the user's (they cannot be
+    told apart).
+11. **Planning the planes** (built 2026-10-15). `get_board` `plane_plan` (`planePlan`, board.ts):
+    which plane each outer layer's tracks run over (4 layers: F.Cu over In1.Cu, B.Cu over In2.Cu;
+    2 layers: F.Cu over the B.Cu pour), and per supply and ground net its pins, the ICs it feeds
+    (supply pins each), what carries it now (a whole layer, an area under parts, a pour, tracks),
+    its box and its groups (parts within 6 mm of each other, single linkage): a rail whose parts
+    form a group of their own is a candidate for an area plane under it. The guide's step 3 reads
+    it before routing; GND stays whole unless there is a reason.
+    A split's edge in the router: on the outer layer over an inner layer with an area plane, the
+    cells along the area's edge (the gap plus 0.3 mm either side) cost signal nets 8 grid steps
+    each, about two vias to cross, so a signal leaving the area changes to the other outer layer
+    (over an unbroken plane) where it can. Supplies and ground do not pay. The check
+    `PLANE.SPLIT_CROSSING` (warning, one per net and area, `splitDrc` in drc.ts) names the signals
+    that still cross on the layer over the split; a slow one (an LED, a button) is waived.
+12. **Which part belongs with which** (built 2026-10-15). The placer guessed each part's parent
+    (a decoupling cap: the IC whose supply pin it takes; else the biggest part sharing a signal
+    net) and the agent could not say otherwise: a connector followed the regulator it feeds, a
+    bulk cap went to an IC pin. Now `attach { ref, to, pin? }` (a `belongs` ledger entry) declares
+    it: at that pin (it must share a net with it; a name shared by several pins needs the number),
+    or `to: null` for a part that stands on its own. The placer takes the declarations first
+    (a spring to the pin, so the part is hugged there; that pin counts as taken for the guessed
+    caps) and guesses the rest, never closing a circle; parents are placed before their parts
+    (by depth, then size). `get_board` `belongs_to` shows `U1.12`, `U1.12 (guessed)` or `none`.
+    A part the agent or the placer put somewhere goes to its new parent; one the user placed stays,
+    kept relative to the new parent. `remove_constraint` goes back to the guess. The relation stays
+    a mechanism (a dragged IC takes its parts along), but the agent decides it. Benches unchanged
+    (2 and 4 layers: same board, tracks and vias).
+13. **Next.** (a) The placer's guesses softened one by one, judged on the benches: the board
+    density, the alignment snapping, the margin to the edge, satellites always at the courtyard.
+    (b) Planes in try_placements (compare split or not by trial routing).
+
 ## 8. Open questions
 
 - The budget. 90 s covers the benches; a real 300-part board may need more (the user can stop it
