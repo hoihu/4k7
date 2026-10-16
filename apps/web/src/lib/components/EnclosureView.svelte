@@ -2,6 +2,7 @@
   import { openQuestions, scriptPieces, type BriefItem } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Chat from './Chat.svelte';
+  import Splitter from './Splitter.svelte';
   import Enclosure3DView from './Enclosure3DView.svelte';
 
   /**
@@ -115,7 +116,7 @@
 </script>
 
 <section class="enc" class:nochat={!app.chatOpen}>
-  <div class="col chatcol">{#if app.chatOpen}<Chat />{/if}</div>
+  <div class="col chatcol">{#if app.chatOpen}<Chat /><Splitter pane="chat" />{/if}</div>
   <div class="col canvas">
     {#if scene}
       <Enclosure3DView {scene} {options} {cut} />
@@ -165,6 +166,7 @@
     </div>
   </div>
   <aside class="col side">
+    <Splitter pane="side" />
     <div class="scroll">
       {#if brief}
         <h4>Brief {#if questions.length}<span class="tag warn">{questions.length} open</span>{/if}</h4>
@@ -247,9 +249,9 @@
 </section>
 
 <style>
-  .enc { display: grid; grid-template-columns: 330px minmax(0, 1fr) 300px; gap: 1px; background: var(--line); height: 100%; min-height: 0; }
-  .enc.nochat { grid-template-columns: 0 minmax(0, 1fr) 300px; }
-  .col { background: var(--panel); min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+  .enc { display: grid; grid-template-columns: var(--chat-col) minmax(0, 1fr) var(--side-col); gap: 1px; background: var(--line); height: 100%; min-height: 0; }
+  .enc.nochat { grid-template-columns: 0 minmax(0, 1fr) var(--side-col); }
+  .col { position: relative; background: var(--panel); min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   .canvas { position: relative; background: var(--canvas); }
   .top { position: absolute; top: 8px; left: 8px; right: 8px; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; pointer-events: none; }
   .top > * { pointer-events: auto; }
