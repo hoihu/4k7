@@ -13,3 +13,4 @@ export * from './scope.ts';
 export * from './panel.ts';
 export * from './rules.ts';
 export * from './enclosure.ts';
+export * from './conversation.ts';

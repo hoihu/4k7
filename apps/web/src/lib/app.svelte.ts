@@ -19,7 +19,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { RenderEnclosureInput, openQuestions, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount, type ViewInfo } from '@4k7/schema';
+import { RenderEnclosureInput, openQuestions, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount, type ViewInfo } from '@4k7/schema';
 import { boardScadSummary, enclosureJob, enclosureReport, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import { server } from './server.svelte.ts';
@@ -45,6 +45,7 @@ import {
   type Settings,
 } from './persist.ts';
 import { disk, type ProjectEntry } from './disk.svelte.ts';
+import { fitConversation, projectJson, readProject, restoredSessions } from './conversation.ts';
 
 /** A tool's answer before the chat's label is put on it. */
 type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
@@ -93,47 +94,11 @@ const DISK_RETRY_MS = 4000;
 export type View = 'sch' | 'lay' | 'enc' | 'parts' | 'set';
 export type InspectorTab = 'issues' | 'ledger' | 'history' | 'sel';
 
-export type Segment =
-  | { type: 'text'; text: string }
-  | { type: 'thinking'; text: string }
-  | { type: 'tool'; label: string; ok: boolean; detail: string }
-  | { type: 'verify'; round: number; errors: number; message: string }
-  | { type: 'question'; question: string; options: string[]; answered?: string }
-  | { type: 'error'; text: string }
-  /** Something the server says about the run (e.g. a setting the model does not take). */
-  | { type: 'note'; text: string };
-
-/** A picture or PDF the user attached to a chat message (a schematic to recreate, a sketch, a screenshot). */
-export interface ChatFile {
-  /** Numbered through the conversation (#1, #2…), as the agent's view_attachment knows them. */
-  n: number;
-  name: string;
-  mime: string;
-  /** base64, without a data: prefix */
-  data: string;
-  /** A PDF's page count. */
-  pages?: number;
-}
+export type { ChatFile, ChatItem, Segment } from '@4k7/schema';
 
 /** What the chat takes: pictures and PDFs, up to this size. */
 export const CHAT_FILE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
 const MAX_CHAT_FILE_BYTES = 20 * 1024 * 1024;
-
-export interface ChatItem {
-  id: number;
-  role: 'user' | 'agent';
-  text?: string;
-  refs?: string[];
-  files?: ChatFile[];
-  segments: Segment[];
-  status: 'streaming' | 'done';
-  /** Coding agent answering through the server (e.g. "Claude Code", "OpenCode"). */
-  source?: string;
-  /** This turn produced the proposal that is currently pending (or was decided). */
-  changeset?: { state: 'pending' | 'accepted' | 'rejected' | 'superseded'; note?: string };
-  /** Tokens this turn used (live while it runs), with the cost: estimated, or as the coding agent reported it. */
-  usage?: TokenCount & { costUsd: number; exact: boolean };
-}
 
 /** The API price of some token usage (0 for a model without a known price). */
 export function tokenCost(t: TokenCount, fallbackModel: string): number {
@@ -147,6 +112,10 @@ class AppState {
   /** Part cards as the working copy has them (a footprint given in the design shows in Parts). */
   designParts = $state.raw<Record<string, PartCard>>({});
   chat = $state<ChatItem[]>([]);
+  /** The project file keeps the conversation (the user opted in, per project). */
+  keepConversation = $state(false);
+  /** Earlier conversations the project file keeps (before the chat was cleared or the project reopened); the agent does not see them. */
+  chatArchive = $state.raw<ConversationSession[]>([]);
   running = $state(false);
   selection = $state<string[]>([]);
   /** Files waiting in the composer, sent with the next message. */
@@ -331,6 +300,7 @@ class AppState {
       this.flash('Wait for the agent to finish first.');
       return false;
     }
+    this.flushConversation();
     // in the write queue: a save running now writes the design it exported to the file it belongs to
     const design = await this.queueWrite(async () => {
       try {
@@ -340,11 +310,12 @@ class AppState {
           await this.refreshProjects();
           return null;
         }
-        const d = JSON.parse(text) as Design;
+        const { design: d, conversation } = readProject(JSON.parse(text) as ProjectFile);
         await this.kernel.load(d);
         this.projectId = id;
         this.unsaved = false;
         this.renameFile = false;
+        this.restoreConversation(conversation);
         return d;
       } catch (e) {
         // a newer version's file, or a broken one: it is left as it is
@@ -360,6 +331,59 @@ class AppState {
     await this.ingest.adoptParts(design).catch(() => {});
     await this.refresh();
     return true;
+  }
+
+  /** The conversation a project file keeps, as earlier conversations; the chat starts afresh, as the agent does. */
+  private restoreConversation(c: Conversation | null) {
+    this.keepConversation = !!c;
+    this.chatArchive = restoredSessions(c);
+    this.conversationOmitted = 0;
+  }
+
+  /** The conversation for the project file: the earlier ones and the chat. */
+  private conversation(): Conversation {
+    const chat = $state.snapshot(this.chat) as ChatItem[];
+    return { format: CONVERSATION_FORMAT, sessions: [...this.chatArchive, ...(chat.length ? [{ items: chat }] : [])] };
+  }
+
+  /** Attachments the project file left out last time it was written (the user is told when it grows). */
+  private conversationOmitted = 0;
+
+  /** The design's file text: the design, and the conversation when the project keeps it. */
+  private projectText(designJson: string): string {
+    if (!this.keepConversation) return designJson;
+    const { conversation, omitted } = fitConversation(this.conversation());
+    if (omitted > this.conversationOmitted) this.flash(`The conversation is large: the project file keeps its ${omitted} oldest attachment${omitted === 1 ? '' : 's'} by name only.`);
+    this.conversationOmitted = omitted;
+    return projectJson(designJson, conversation);
+  }
+
+  /** Keep the conversation in the project file, or (off) remove it from there. */
+  async setKeepConversation(on: boolean) {
+    this.keepConversation = on;
+    if (!on) this.chatArchive = [];
+    await this.persist();
+    if (!this.unsaved) this.flash(on ? 'The conversation is now kept in the project file.' : 'The conversation was removed from the project file.');
+  }
+
+  /** The chat changed: write it to the project file soon, when the project keeps it (one write for a burst of changes). */
+  private conversationChanged() {
+    if (!this.keepConversation) return;
+    if (this.conversationTimer) clearTimeout(this.conversationTimer);
+    this.conversationTimer = setTimeout(() => {
+      this.conversationTimer = null;
+      void this.persist();
+    }, 1500);
+  }
+
+  private conversationTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Write a conversation change still waiting, before another project replaces this one. */
+  private flushConversation() {
+    if (!this.conversationTimer) return;
+    clearTimeout(this.conversationTimer);
+    this.conversationTimer = null;
+    void this.persist();
   }
 
   async refreshProjects() {
@@ -578,6 +602,7 @@ class AppState {
     await this.kernel.reject();
     this.markChangeset('rejected', 'Rejected. Tell the agent what to change.');
     this.hunkOff = {};
+    this.conversationChanged();
     await this.refresh();
   }
 
@@ -811,7 +836,7 @@ class AppState {
     const agent = server.agent ?? 'External agent';
     const last = this.chat[this.chat.length - 1];
     if (last?.role === 'agent' && last.source === agent && last.status === 'streaming') return last;
-    this.chat.push({ id: this.seq++, role: 'agent', source: agent, segments: [], status: 'streaming' });
+    this.chat.push({ id: this.seq++, role: 'agent', at: new Date().toISOString(), source: agent, segments: [], status: 'streaming' });
     return this.chat[this.chat.length - 1]!;
   }
 
@@ -1082,6 +1107,7 @@ class AppState {
         it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') + (args.data.open_connections ? `\nOpen connections: ${args.data.open_connections}` : '') + (args.data.enclosure_findings ? `\nEnclosure: ${args.data.enclosure_findings}` : '') });
         if (this.agentRun?.item !== it) it.status = 'done';
         it.changeset = { state: 'pending' };
+        this.conversationChanged();
         if (this.settings.mode === 'auto') {
           await this.accept();
           return text(`Committed (autonomy is Auto): ${p.hunks.length} changes.`);
@@ -1110,6 +1136,7 @@ class AppState {
     const out = await this.runTool(tool, input);
     log(out.label, !out.isError, out.detail);
     if (tool === 'design_edit') await this.refresh();
+    this.conversationChanged();
     return {
       isError: out.isError,
       content: [...(out.images ?? []).map((i) => ({ type: 'image' as const, ...i })), ...(out.content ? [{ type: 'text' as const, text: out.content }] : [])],
@@ -1119,8 +1146,9 @@ class AppState {
   /** Write the design to its project file (a new file the first time); without the server, mark it unsaved. */
   private persist(): Promise<void> {
     return this.queueWrite(async () => {
-      const json = await this.kernel.exportDesign();
-      await this.ingest.adoptParts(JSON.parse(json) as Design).catch(() => {});
+      const design = await this.kernel.exportDesign();
+      await this.ingest.adoptParts(JSON.parse(design) as Design).catch(() => {});
+      const json = this.projectText(design);
       if (disk.status !== 'ok' || !this.diskLoaded) {
         this.unsaved = true;
         if (disk.status !== 'connecting') void this.connectDisk();
@@ -1135,7 +1163,7 @@ class AppState {
           await this.refreshProjects();
         }
         this.unsaved = false;
-        if (this.renameFile) await this.renameProjectFile((JSON.parse(json) as Design).name);
+        if (this.renameFile) await this.renameProjectFile((JSON.parse(design) as Design).name);
       } catch (e) {
         this.unsaved = true;
         if (disk.status === 'ok') this.flash(`Saving failed: ${(e as Error).message}`);
@@ -1184,20 +1212,24 @@ class AppState {
     );
   }
 
+  /** The project file's text (with the conversation when the project keeps it), for a copy elsewhere. */
   async exportJson(): Promise<string> {
-    return this.kernel.exportDesign();
+    return this.projectText(await this.kernel.exportDesign());
   }
 
-  /** Open a design as a new project (its own file, named after the design). */
-  async importDesign(d: Design) {
+  /** Open a design (a project file: with the conversation it keeps) as a new project (its own file, named after the design). */
+  async importDesign(file: ProjectFile) {
     if (this.running) {
       this.flash('Wait for the agent to finish first.');
       return;
     }
+    this.flushConversation();
+    const { design: d, conversation } = readProject(file);
     await this.queueWrite(async () => {
       await this.kernel.load(d);
       this.projectId = null;
       this.renameFile = false;
+      this.restoreConversation(conversation);
     });
     this.agent.reset();
     this.chat = [];
@@ -1330,10 +1362,10 @@ class AppState {
     }
     const refs = opts.scope ? [] : [...this.selection];
     this.turnView = opts.scope ? null : this.currentView();
-    this.chat.push({ id: this.seq++, role: 'user', text: opts.shown ?? trimmed, refs, ...(files.length ? { files } : {}), segments: [], status: 'done' });
+    this.chat.push({ id: this.seq++, role: 'user', at: new Date().toISOString(), text: opts.shown ?? trimmed, refs, ...(files.length ? { files } : {}), segments: [], status: 'done' });
     for (const q of this.chat) for (const s of q.segments) if (s.type === 'question' && !s.answered) s.answered = opts.shown ?? trimmed;
     const viaAgent = this.settings.provider === 'agent';
-    this.chat.push({ id: this.seq++, role: 'agent', segments: [], status: 'streaming', ...(viaAgent ? { source: this.harness.name } : {}) });
+    this.chat.push({ id: this.seq++, role: 'agent', at: new Date().toISOString(), segments: [], status: 'streaming', ...(viaAgent ? { source: this.harness.name } : {}) });
     const item = this.chat[this.chat.length - 1]!;
 
     this.running = true;
@@ -1359,6 +1391,7 @@ class AppState {
         item.changeset = { state: 'pending' };
         if (this.settings.mode === 'auto' && !this.k.diagnostics.some(mustFix)) await this.accept();
       }
+      this.conversationChanged();
     }
   }
 
@@ -1532,10 +1565,13 @@ class AppState {
     if (JSON.stringify(this.settings.schematicChecks) !== checks) await this.applyChecks();
   }
 
+  /** A new conversation; with the project keeping it, this one stays in the project file. */
   clearChat() {
     this.agentSession = null;
     this.agent.reset();
+    if (this.keepConversation && this.chat.length) this.chatArchive = [...this.chatArchive, { items: $state.snapshot(this.chat) as ChatItem[] }];
     this.chat = [];
+    this.conversationChanged();
   }
 
   private applyTheme() {
