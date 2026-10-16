@@ -52,6 +52,8 @@ export interface ServerConfig {
   bins: Partial<Record<HarnessId, string>>;
   /** Where the projects are kept (FOURK7_PROJECTS or "projectsDir"); else ~/Documents/4k7. */
   projectsDir: string;
+  /** OpenSCAD chosen in the app (an absolute path); FOURK7_OPENSCAD_BIN wins over it. */
+  openscadBin?: string;
 }
 
 /** The folder's name before 4k7; moved to the new name on the first start (key, profile, logs, workspaces). */
@@ -107,6 +109,7 @@ export function loadConfig(): ServerConfig {
     claude,
     bins: typeof cfg.bins === 'object' && cfg.bins ? cfg.bins : {},
     projectsDir: typeof projects === 'string' && projects ? expandHome(projects) : defaultProjectsDir(),
+    ...(typeof cfg.openscadBin === 'string' && cfg.openscadBin ? { openscadBin: cfg.openscadBin } : {}),
   };
 }
 

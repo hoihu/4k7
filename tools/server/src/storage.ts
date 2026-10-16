@@ -16,7 +16,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { secretsMatch } from './mcp.ts';
+import type { ScadJob } from '@4k7/schema';
 import type { HttpHandler } from './server.ts';
+import type { OpenScad } from './scad.ts';
 
 export const PROJECT_EXT = '.twd.json';
 const RECORD_STORES = ['library', 'artwork'] as const;
@@ -37,6 +39,8 @@ export interface StorageOptions {
   allowedOrigin: (origin: string) => boolean;
   /** Show a folder in the file manager. */
   reveal?: (dir: string) => void;
+  /** OpenSCAD for the enclosure (/api/scad). */
+  scad?: OpenScad;
   log?: (msg: string) => void;
 }
 
@@ -163,6 +167,17 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
         mkdirSync(projectsDir, { recursive: true });
         opts.reveal?.(projectsDir);
         return res.writeHead(204).end();
+      }
+
+      if (kind === 'scad' && opts.scad) {
+        const scad = opts.scad;
+        if (id === undefined && m === 'GET') return json(200, url.searchParams.has('again') ? scad.detect() : scad.status);
+        if (id === 'render' && m === 'POST') return json(200, await scad.render(JSON.parse((await readBody(req)).toString('utf8')) as ScadJob));
+        if (id === 'bin' && m === 'POST') {
+          const { bin } = JSON.parse((await readBody(req)).toString('utf8')) as { bin?: string | null };
+          return json(200, scad.setBin(bin ?? null));
+        }
+        return res.writeHead(405).end();
       }
 
       if (kind === 'projects') {

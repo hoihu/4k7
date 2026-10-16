@@ -56,7 +56,7 @@ const THICKNESS = 1.6;
 const CU = 0.035;
 
 /** Geometry and materials shared by everything one viewer draws. */
-function resources() {
+export function resources() {
   return {
     unitBox: new THREE.BoxGeometry(1, 1, 1),
     ball: new THREE.SphereGeometry(1, 20, 14),
@@ -73,14 +73,15 @@ function resources() {
     edge: new THREE.MeshStandardMaterial({ color: 0xc9b98a, roughness: 0.8 }),
   };
 }
-type Res = ReturnType<typeof resources>;
+export type Res = ReturnType<typeof resources>;
 
 /** A viewer core: renderer, lights, camera and orbit controls around one content group. */
-function viewerCore(canvas: HTMLCanvasElement) {
+export function viewerCore(canvas: HTMLCanvasElement, opts: { pixelRatio?: number; background?: number } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setPixelRatio(opts.pixelRatio ?? Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const scene = new THREE.Scene();
+  if (opts.background !== undefined) scene.background = new THREE.Color(opts.background);
   scene.add(new THREE.HemisphereLight(0xe8eefc, 0x1a1d24, 1.6));
   const key = new THREE.DirectionalLight(0xffffff, 2.2);
   key.position.set(-3, 6, 4);
@@ -107,7 +108,8 @@ function viewerCore(canvas: HTMLCanvasElement) {
     g.traverse((o) => {
       (o.userData.dispose as (() => void) | undefined)?.();
       if (o instanceof THREE.InstancedMesh) o.dispose();
-      if (o instanceof THREE.Mesh && ![res.unitBox, res.ball, res.cyl].includes(o.geometry as never)) o.geometry.dispose();
+      // (keepGeometry: shared with later content, e.g. an enclosure piece parsed once)
+      if (o instanceof THREE.Mesh && !o.userData.keepGeometry && ![res.unitBox, res.ball, res.cyl].includes(o.geometry as never)) o.geometry.dispose();
     });
   }
 
@@ -227,6 +229,16 @@ function viewerCore(canvas: HTMLCanvasElement) {
     picture() {
       render(); // (the drawing buffer is only kept until the frame is shown)
       return canvas.toDataURL('image/png');
+    },
+    /** Cut the view: everything on the planes' negative sides is left out (a section). */
+    clip(planes: THREE.Plane[]) {
+      renderer.clippingPlanes = planes;
+      render();
+    },
+    /** Look at `target` from `position` (the controls orbit round `target` from there). */
+    pose(target: THREE.Vector3, position: THREE.Vector3) {
+      stopFlight();
+      place({ target, position });
     },
     dispose() {
       stopFlight();
@@ -457,7 +469,7 @@ function bodyGroup(body: Body3D, res: Res, mark = true, top?: TopPicture, redraw
 }
 
 /** The assembled board: substrate with solder mask, copper, holes and every part body. */
-function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, redraw?: () => void): THREE.Group {
+export function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, redraw?: () => void): THREE.Group {
   const group = new THREE.Group();
   const { w, h } = b.outline;
   /*

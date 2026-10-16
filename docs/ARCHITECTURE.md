@@ -298,6 +298,8 @@ The schematic-to-manufacturing path works end to end for small boards:
 
 Not yet: bottom-side placement, differential pairs and length/impedance rules, thermal reliefs, non-rectangular outlines, a push-and-shove router for dense boards (the maze router is order-sensitive), and a real fab order as the exit test.
 
+Next after layout (draft 2026-10-15): **the enclosure**. The agent agrees a brief with the user, then writes the box as an OpenSCAD script against the board as a library (`board.scad`), renders it through the user's OpenSCAD and iterates on pictures and measured collisions until it is clean: [enclosure](design/enclosure.md), with the agent's mechanical guide in [mechanics](design/mechanics.md).
+
 ## 8. Main risks
 
 | Risk | Mitigation |

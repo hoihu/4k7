@@ -43,13 +43,16 @@ import {
   PANEL_SIDES,
   autoTabs,
   pointBounds,
+  openQuestions,
+  scriptPieces,
+  scriptProblems,
 } from '@4k7/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
 import { isDrawn, moveSymbol, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
-import { footprintFor, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOptions, planUnits, searchParts, standardPackage, unitCount } from '@4k7/parts';
+import { footprintFor, packageOf, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOptions, planUnits, searchParts, standardPackage, unitCount } from '@4k7/parts';
 import {
   allocRefdes,
   cardOf,
@@ -109,6 +112,12 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent'): 
       return setSymbol(d, op);
     case 'set_footprint':
       return setFootprint(d, op);
+    case 'set_mating':
+      return setMating(d, op);
+    case 'set_enclosure_brief':
+      return setEnclosureBrief(d, op);
+    case 'set_enclosure_script':
+      return setEnclosureScript(d, op);
     case 'rename_part':
       return renamePart(d, op);
     case 'describe':
@@ -1075,6 +1084,7 @@ function setFootprint(d: Design, op: Extract<EditOp, { op: 'set_footprint' }>): 
     ...(op.round ? { body_shape: 'round' as const } : {}),
     ...(op.height_mm ? { height_mm: op.height_mm } : {}),
     ...(op.page ? { page: op.page } : {}),
+    ...(op.mating ? { mating: op.mating } : card.packageInfo?.mating ? { mating: card.packageInfo.mating } : {}),
   };
   const fp = footprintFor(pkg, card.pins.map((p) => p.number));
   if (!fp.ok) reject({ code: 'FOOTPRINT_INVALID', message: `${op.name} for ${comp.refdes}: ${fp.reason}.`, candidates: card.pins.map((p) => `${p.number} ${p.name}`) });
@@ -1084,6 +1094,79 @@ function setFootprint(d: Design, op: Extract<EditOp, { op: 'set_footprint' }>): 
   d.parts[card.id] = copy;
   const f = fp.footprint;
   return { op: 'set_footprint', effect: `${users.join(', ')}: footprint ${op.name}, ${f.pads.length} pads, ${f.courtyard.w} × ${f.courtyard.h} mm courtyard`, ids: [card.id] };
+}
+
+/**
+ * Where a part is plugged from (its package's mating face), kept with the part card like its
+ * footprint. A generic card shared by several components follows each one's package, so it cannot
+ * take one.
+ */
+function setMating(d: Design, op: Extract<EditOp, { op: 'set_mating' }>): OpResult {
+  const comp = resolveComponent(d, op.ref);
+  const card = cardOf(d, comp.part)!;
+  const users = Object.values(d.components).filter((c) => c.part === card.id).map((c) => c.refdes).sort(natCmp);
+  const pkg = packageOf(card, comp.params, d.packageDefaults);
+  if (!pkg) reject({ code: 'FOOTPRINT_INVALID', message: `${comp.refdes} has no footprint yet: give it one with set_footprint (with mating) first.` });
+  if (card.id.startsWith('generic:') && users.length > 1) {
+    reject({ code: 'FOOTPRINT_INVALID', message: `${card.id} is a generic part used by ${users.join(', ')}; give ${comp.refdes} its own footprint with set_footprint (with mating) instead.` });
+  }
+  const copy: PartCard = structuredClone(card);
+  const info: PackageInfo = { ...structuredClone(pkg) };
+  if (op.face === null) delete info.mating;
+  else {
+    info.mating = {
+      face: op.face,
+      ...(op.plug_mm ? { plug_mm: op.plug_mm } : {}),
+      ...(op.axis_mm !== undefined ? { axis_mm: op.axis_mm } : {}),
+      ...(op.along_mm !== undefined ? { along_mm: op.along_mm } : {}),
+    };
+  }
+  copy.packageInfo = info;
+  copy.package ??= info.name;
+  d.parts[card.id] = copy;
+  const m = info.mating;
+  return {
+    op: 'set_mating',
+    effect: m ? `${users.join(', ')}: plugged from ${m.face === 'up' ? 'above' : `the ${m.face} of the footprint`}${m.plug_mm ? `, plug ${m.plug_mm[0]} × ${m.plug_mm[1]} mm` : ''}` : `${users.join(', ')}: not plugged`,
+    ids: [card.id],
+  };
+}
+
+/** The enclosure's brief (replaced as a whole). */
+function setEnclosureBrief(d: Design, op: Extract<EditOp, { op: 'set_enclosure_brief' }>): OpResult {
+  if (!op.brief) {
+    if (d.enclosure) delete d.enclosure.brief;
+    if (d.enclosure && !d.enclosure.script) delete d.enclosure;
+    return { op: 'set_enclosure_brief', effect: 'enclosure brief removed', ids: ['enclosure'] };
+  }
+  const refs = new Set(Object.values(d.components).map((c) => c.refdes));
+  const unknown = [...new Set([...(op.brief.openings ?? []), ...op.brief.items.flatMap((i) => i.refs ?? [])])].filter((r) => !refs.has(r));
+  if (unknown.length) reject({ code: 'REF_UNKNOWN', message: `No part ${unknown.join(', ')} in the design.`, candidates: [...refs].sort(natCmp).slice(0, 40) });
+  const bad = op.brief.items.filter((i) => !i.decision && !i.question);
+  if (bad.length) reject({ code: 'ENCLOSURE_INVALID', message: `Every item is decided or a question: ${bad.map((i) => i.topic).join(', ')} has neither.` });
+  const noOptions = op.brief.items.filter((i) => i.question && !i.decision && !i.options);
+  if (noOptions.length) reject({ code: 'ENCLOSURE_INVALID', message: `Give the user 2–4 options (your pick first) for: ${noOptions.map((i) => i.topic).join(', ')}.` });
+  d.enclosure = { ...d.enclosure, brief: structuredClone(op.brief) };
+  const open = openQuestions(op.brief).length;
+  return {
+    op: 'set_enclosure_brief',
+    effect: `enclosure brief: ${op.brief.items.length} item(s), ${open ? `${open} question(s) for the user (they answer in the app)` : 'all decided'}${op.brief.openings?.length ? `, openings for ${op.brief.openings.join(', ')}` : ''}`,
+    ids: ['enclosure'],
+  };
+}
+
+/** The enclosure's OpenSCAD script (replaced as a whole), checked before it can be rendered. */
+function setEnclosureScript(d: Design, op: Extract<EditOp, { op: 'set_enclosure_script' }>): OpResult {
+  if (op.script === null) {
+    if (d.enclosure) delete d.enclosure.script;
+    if (d.enclosure && !d.enclosure.brief) delete d.enclosure;
+    return { op: 'set_enclosure_script', effect: 'enclosure script removed', ids: ['enclosure'] };
+  }
+  const problems = scriptProblems(op.script);
+  if (problems.length) reject({ code: 'ENCLOSURE_INVALID', message: `The script cannot be rendered yet:\n- ${problems.join('\n- ')}` });
+  d.enclosure = { ...d.enclosure, script: op.script };
+  const lines = op.script.split('\n').length;
+  return { op: 'set_enclosure_script', effect: `enclosure script: ${lines} lines, pieces ${scriptPieces(op.script)!.join(', ')}; render it with render_enclosure`, ids: ['enclosure'] };
 }
 
 /** Packages for generic parts without their own: per kind, and automatic sizing. */
