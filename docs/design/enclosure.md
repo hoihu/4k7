@@ -81,8 +81,7 @@ from above), the plug's size across its way in (the overmold of a cable plug), i
 offset along the face. Pin headers are plugged from above by default; everything else needs it from
 the datasheet: `set_mating`, `set_footprint mating`, or the datasheet import. `get_board` says where
 each part is plugged from on the board (`plugged_from`), turned with the part and mirrored on the
-bottom (`boardFacing`). Generators for the standard connector families (USB-C, barrel jacks, RJ45)
-are not built: there are no such footprint families yet.
+bottom (`boardFacing`).
 
 `board.scad` is useful alone: the Enclosure view downloads it, for users who write their own box.
 
@@ -127,7 +126,7 @@ pictures and a report.
 The local server runs the user's OpenSCAD (2025 or later, `--backend=manifold`: seconds for a
 box), found like the coding agents (PATH, the usual app locations, a path in Settings, "Look
 again"). The GPL program is never shipped with the app. Without OpenSCAD the enclosure step says
-so and links the download; a WebAssembly build in a worker is a later fallback (§8).
+so and links the download.
 
 The server writes `board.scad` and the script into a scratch directory per project, runs one
 OpenSCAD per piece and per check (in parallel), and returns STL and the `--summary-file` JSON
@@ -197,8 +196,7 @@ red in the pictures, blocked paths orange.
 Each step is useful alone.
 
 1. **Mating faces.** `mating` on packages, `set_mating`, `set_footprint mating`, the datasheet
-   import, `plugged_from` in `get_board`. *Built 2026-10-15*; the 3D view of the Layout does not
-   draw the paths yet (the Enclosure view does), and no generator gives one (no connector families).
+   import, `plugged_from` in `get_board`. *Built 2026-10-15.*
 2. **`board.scad`** (`fab/scad.ts`). *Built 2026-10-15*, tested against the real OpenSCAD where it
    is installed.
 3. **The renderer**: `tools/server/src/scad.ts` (FOURK7_OPENSCAD_BIN, the path set in the app, the
@@ -212,12 +210,6 @@ Each step is useful alone.
 6. **Follow-ups** (2026-10-16): the board hidden in the Enclosure view (PCB), enclosure notes,
    print orientation in the script and a 3MF plate, plug paths in the Layout's 3D view, overhang,
    bridge and thin-wall warnings. *Built.*
-7. **Later**: connector footprint families with their faces (USB-C, barrel jack, RJ45). Their
-   pads differ by part number, so a generic footprint would be a wrong footprint; until a part
-   library carries exact ones, the agent reads the face off the datasheet (`set_mating`). The
-   WebAssembly fallback for people without OpenSCAD: openscad-wasm is GPL-2 and about 10 MB,
-   so it is a licensing and download-size decision, not only work.
-
 ## 8. Open questions
 
 - **How mechanics.md reaches the agent.** Decided: `design_query get_guide topic: "mechanics"`,
