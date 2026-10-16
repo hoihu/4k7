@@ -6,6 +6,7 @@
   import BoardCanvas from './BoardCanvas.svelte';
   import type { TopView } from '../three-body.ts';
   import Chat from './Chat.svelte';
+  import Splitter from './Splitter.svelte';
   import FabRules from './FabRules.svelte';
   import PanelCanvas from './PanelCanvas.svelte';
   import PanelSetup from './PanelSetup.svelte';
@@ -163,7 +164,7 @@
 </script>
 
 <section class="lay" class:nochat={!app.chatOpen}>
-  <div class="col chatcol">{#if app.chatOpen}<Chat />{/if}</div>
+  <div class="col chatcol">{#if app.chatOpen}<Chat /><Splitter pane="chat" />{/if}</div>
   <div class="col canvas">
     {#if mode === 'panel' && b?.panel}<div class="stagep"><PanelCanvas board={b} ontabs={(tabs) => void app.userEdit('Panel tabs', [{ op: 'set_panel', tabs }])} /></div>
     {:else if mode === 'panel' && b?.parts.length}<div class="blank"><p><b>No panel yet.</b> A panel holds copies of the board in a frame, milled apart except at tabs with mouse bites. Make one in the side panel, or ask the agent.</p></div>{/if}
@@ -238,6 +239,7 @@
     </div>
   </div>
   <aside class="col side">
+    <Splitter pane="side" />
     <div class="scroll">
       {#if b}
         {#if mode === 'panel' && b.parts.length}<PanelSetup panel={b.panel} size={b.outline} onexport={() => exportFab(true)} />{/if}
@@ -306,9 +308,9 @@
   .ok { color: var(--ok); }
   .stale { color: var(--warn); }
   .row2 { display: flex; gap: 6px; flex-wrap: wrap; }
-  .lay { display: grid; grid-template-columns: 330px minmax(0, 1fr) 280px; gap: 1px; background: var(--line); height: 100%; min-height: 0; }
-  .lay.nochat { grid-template-columns: 0 minmax(0, 1fr) 280px; }
-  .col { background: var(--panel); min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+  .lay { display: grid; grid-template-columns: var(--chat-col) minmax(0, 1fr) var(--side-col); gap: 1px; background: var(--line); height: 100%; min-height: 0; }
+  .lay.nochat { grid-template-columns: 0 minmax(0, 1fr) var(--side-col); }
+  .col { position: relative; background: var(--panel); min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   .canvas { position: relative; background: var(--canvas); }
   .top { position: absolute; top: 8px; left: 8px; right: 8px; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; pointer-events: none; }
   .top > * { pointer-events: auto; }

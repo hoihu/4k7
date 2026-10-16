@@ -10,6 +10,8 @@
   import Parts from './lib/components/Parts.svelte';
   import LayoutView from './lib/components/LayoutView.svelte';
   import EnclosureView from './lib/components/EnclosureView.svelte';
+  import Splitter from './lib/components/Splitter.svelte';
+  import { panes } from './lib/panes.svelte.ts';
   import { printSchematic } from './lib/print.ts';
   import { PAPER_IDS, type PaperId } from '@4k7/schema';
 
@@ -111,7 +113,7 @@
   }
 </script>
 
-<div class="app">
+<div class="app" style:--chat-w="{panes.chat}px" style:--side-w="{panes.side}px">
   <header class="bar">
     <div class="logo" aria-hidden="true">
       <Logo />
@@ -163,7 +165,7 @@
       <div class="loading">Loading…</div>
     {:else if app.view === 'sch'}
       <section class="sch" class:nochat={!app.chatOpen} data-pane={pane}>
-        <div class="col chatcol">{#if app.chatOpen}<Chat />{/if}</div>
+        <div class="col chatcol">{#if app.chatOpen}<Chat /><Splitter pane="chat" />{/if}</div>
         <div class="col canvas">
           <SchematicCanvas
             bind:this={canvas}
@@ -215,7 +217,7 @@
             <span class="sp mono">{app.selection.join(' ') || '—'}</span>
           </div>
         </div>
-        <div class="col inspcol"><Inspector /></div>
+        <div class="col inspcol"><Splitter pane="side" /><Inspector /></div>
       </section>
       <nav class="mobnav" aria-label="Pane">
         <button aria-pressed={pane === 'chat'} onclick={() => { pane = 'chat'; app.chatOpen = true; }}>Agent</button>
@@ -229,7 +231,7 @@
     {:else if app.view === 'parts'}
       <!-- the chat stays beside the parts, so an import can be talked through without switching views -->
       <section class="partsv" class:nochat={!app.chatOpen}>
-        <div class="col chatcol">{#if app.chatOpen}<Chat />{/if}</div>
+        <div class="col chatcol">{#if app.chatOpen}<Chat /><Splitter pane="chat" />{/if}</div>
         <div class="col partscol">
           <Parts />
           {#if !app.chatOpen}<button class="ib agentbtn" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
@@ -250,6 +252,8 @@
 
 <style>
   .app { display: grid; grid-template-rows: 40px minmax(0, 1fr); height: 100vh; height: 100dvh; }
+  /* the chat and detail columns of every view, at the widths the user dragged them to; the canvas keeps 280px */
+  .app { --chat-col: min(var(--chat-w), calc(100vw - var(--side-w) - 280px)); --side-col: min(var(--side-w), calc(100vw - 520px)); }
   .bar { display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); min-width: 0; }
   .logo { width: 22px; height: 22px; display: grid; place-items: center; flex: none; }
   .proj { font-weight: 600; max-width: 180px; }
@@ -268,14 +272,14 @@
   main { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
   .loading { display: grid; place-items: center; color: var(--txt-3); }
 
-  .sch { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr) minmax(240px, 290px); gap: 1px; background: var(--line); min-height: 0; }
-  .sch.nochat { grid-template-columns: 0 minmax(0, 1fr) minmax(240px, 290px); }
-  .partsv { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: 1px; background: var(--line); min-height: 0; }
+  .sch { display: grid; grid-template-columns: var(--chat-col) minmax(0, 1fr) var(--side-col); gap: 1px; background: var(--line); min-height: 0; }
+  .sch.nochat { grid-template-columns: 0 minmax(0, 1fr) var(--side-col); }
+  .partsv { display: grid; grid-template-columns: var(--chat-col) minmax(0, 1fr); gap: 1px; background: var(--line); min-height: 0; }
   .partsv.nochat { grid-template-columns: 0 minmax(0, 1fr); }
-  .partsv .chatcol { display: flex; flex-direction: column; overflow: hidden; }
+  .partsv .chatcol { display: flex; flex-direction: column; }
   .partscol { position: relative; }
   .agentbtn { position: absolute; left: 8px; bottom: 8px; z-index: 2; }
-  .col { min-height: 0; min-width: 0; background: var(--panel); }
+  .col { position: relative; min-height: 0; min-width: 0; background: var(--panel); }
   .canvas { position: relative; overflow: hidden; background: var(--canvas); background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 16px 16px; }
   .fl { position: absolute; z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
   .top { position: absolute; top: 8px; left: 8px; right: 8px; z-index: 3; display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; pointer-events: none; }
@@ -302,7 +306,8 @@
   .mobnav { display: none; }
 
   @media (max-width: 1100px) {
-    .sch, .sch.nochat { grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) 0; }
+    .sch { grid-template-columns: min(var(--chat-w), calc(100vw - 280px)) minmax(0, 1fr) 0; }
+    .sch.nochat { grid-template-columns: 0 minmax(0, 1fr) 0; }
     .inspcol { display: none; }
   }
   @media (max-width: 760px) {
