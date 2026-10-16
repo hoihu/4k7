@@ -33,6 +33,13 @@ describe('schematic notes in the design context', () => {
     expect(formatDesignContext({ ...base, layoutRules: ' ' })).not.toContain('<layout_notes>');
   });
 
+  it('puts the user\'s enclosure notes after the layout notes', () => {
+    const t = formatDesignContext({ ...base, layoutRules: 'GND on B.Cu.', enclosureRules: 'PETG, 0.25 mm per side fits.\n' });
+    expect(/<enclosure_notes>\n([\s\S]*)\n<\/enclosure_notes>/.exec(t)?.[1]).toBe('PETG, 0.25 mm per side fits.');
+    expect(t.indexOf('</layout_notes>')).toBeLessThan(t.indexOf('<enclosure_notes>'));
+    expect(formatDesignContext({ ...base, enclosureRules: ' ' })).not.toContain('<enclosure_notes>');
+  });
+
   it('tells Optimize to fix the SCH diagnostics first', () => {
     const info: ScopeInfo = {
       scope: { view: 'schematic', sheet: 's_1', rect: { x: 0, y: 0, w: 1000, h: 1000 } },

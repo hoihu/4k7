@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Body3D } from '@4k7/parts';
+import { enclosureFacts } from '@4k7/fab';
 import { boardPolygon, cutoutPolygon, type BoardView } from '@4k7/schema';
 
 export type ViewPreset = 'iso' | 'isoBelow' | 'top' | 'bottom' | 'front';
@@ -39,8 +40,8 @@ export interface TopView {
 }
 
 export interface BoardViewer {
-  /** Keeps the camera when only the content changes (same board size). */
-  setBoard(board: BoardView, bodies: Map<string, Body3D>): void;
+  /** Keeps the camera when only the content changes (same board size). `mating`: draw where connectors are plugged from. */
+  setBoard(board: BoardView, bodies: Map<string, Body3D>, opts?: { mating?: boolean }): void;
   view(preset: ViewPreset): void;
   /** Start exactly at this top-down view (the 2D view's), then fly into the 3D view. */
   flyFromTop(from: TopView): void;
@@ -665,13 +666,45 @@ export function createBodyViewer(canvas: HTMLCanvasElement): BodyViewer {
   };
 }
 
+/**
+ * Where the board's connectors are plugged from: a faint orange box from each mating face outwards,
+ * as wide as the plug (the way the enclosure leaves clear), so a wrong face shows on the board.
+ */
+function matingMarks(b: BoardView): THREE.Group {
+  const g = new THREE.Group();
+  const owned: { dispose(): void }[] = [];
+  const h = b.outline.h;
+  // board.scad coordinates (y up, underside at z = 0) → the viewer's (board top at y = 0, z = board y)
+  const pt = (p: readonly number[]) => new THREE.Vector3(p[0]!, p[2]! - THICKNESS, h - p[1]!);
+  const dir = (d: readonly number[]) => new THREE.Vector3(d[0]!, d[2]!, -d[1]!);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xff9a3c, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide });
+  owned.push(mat);
+  const len = 12;
+  for (const p of enclosureFacts(b).parts) {
+    const m = p.mating;
+    if (!m) continue;
+    const geo = new THREE.BoxGeometry(m.size[0], m.size[1], len);
+    owned.push(geo);
+    const box = new THREE.Mesh(geo, mat);
+    box.matrixAutoUpdate = false;
+    const d = dir(m.dir);
+    box.matrix.makeBasis(dir(m.u), dir(m.v), d).setPosition(pt(m.origin).addScaledVector(d, len / 2));
+    box.userData.keepGeometry = true;
+    g.add(box);
+  }
+  g.userData.dispose = () => owned.forEach((x) => x.dispose());
+  return g;
+}
+
 export function createBoardViewer(canvas: HTMLCanvasElement): BoardViewer {
   const core = viewerCore(canvas);
   let size = '';
   return {
-    setBoard(board, bodies) {
+    setBoard(board, bodies, opts = {}) {
       const key = `${board.outline.w}x${board.outline.h}`;
-      core.setContent(boardGroup(board, bodies, core.res, core.redraw), key === size);
+      const group = boardGroup(board, bodies, core.res, core.redraw);
+      if (opts.mating) group.add(matingMarks(board));
+      core.setContent(group, key === size);
       size = key;
     },
     view: core.view,

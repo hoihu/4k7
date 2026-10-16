@@ -3,10 +3,11 @@
  * run per piece (its mesh) and one per check, each an intersection that is empty when the check
  * passes. The report: what OpenSCAD said and what the checks found, in words the agent can act on.
  */
-import { DEFAULT_LID_CLEARANCE, matingOf, scriptPieces, type BoardView, type EnclosureBrief, type ScadJob, type ScadRunResult } from '@4k7/schema';
+import { DEFAULT_LID_CLEARANCE, matingOf, scriptPieces, scriptPrintRotations, type BoardView, type EnclosureBrief, type ScadJob, type ScadRunResult } from '@4k7/schema';
 import { boardScad, type EnclosureFacts } from './scad.ts';
+import { orient, parseStl, plate, printIssues, thinWalls, threeMf, writeStl } from './print.ts';
 
-export type EnclosureCode = 'ENC.SCRIPT' | 'ENC.COLLIDES' | 'ENC.BLOCKED' | 'ENC.NO_MATING' | 'ENC.LOOSE' | 'ENC.LOW_LID' | 'ENC.PIECES_OVERLAP' | 'ENC.SIZE' | 'ENC.WARNING';
+export type EnclosureCode = 'ENC.SCRIPT' | 'ENC.COLLIDES' | 'ENC.BLOCKED' | 'ENC.NO_MATING' | 'ENC.LOOSE' | 'ENC.LOW_LID' | 'ENC.PIECES_OVERLAP' | 'ENC.SIZE' | 'ENC.OVERHANG' | 'ENC.BRIDGE' | 'ENC.THIN' | 'ENC.WARNING';
 
 export interface EnclosureFinding {
   code: EnclosureCode;
@@ -167,6 +168,23 @@ export function enclosureReport(job: EnclosureJob, results: ScadRunResult[], scr
     findings.push({ code: 'ENC.PIECES_OVERLAP', severity: 'error', message: `${a} and ${b} overlap where they meet (${dims(r.bbox!)} mm between ${pt(r.bbox!.min)} and ${pt(r.bbox!.max)}): leave a clearance between them.`, box: r.bbox! });
   }
 
+  // printing: overhangs and wide ceilings as each piece is printed, walls too thin to print
+  const turns = scriptPrintRotations(script);
+  for (const p of pieces) {
+    const tris = parseStl(p.stl);
+    const how = turns[p.name] ? `printed turned ${turns[p.name]!.join(', ')}` : 'printed as built (no print orientation in the script)';
+    for (const x of printIssues(tris, orient(tris, turns[p.name]))) {
+      findings.push(
+        x.kind === 'overhang'
+          ? { code: 'ENC.OVERHANG', severity: 'warning', message: `${p.name}, ${how}: ${x.area} mm² hangs over steeper than 45° between ${pt(x.box.min)} and ${pt(x.box.max)}: it needs supports. Chamfer it, or turn the piece (print = [["${p.name}", [x, y, z]]];).`, box: x.box }
+          : { code: 'ENC.BRIDGE', severity: 'warning', message: `${p.name}, ${how}: a ceiling ${x.size} mm across with nothing under it, between ${pt(x.box.min)} and ${pt(x.box.max)}: wider than a printer bridges (about 20 mm). Turn the piece so it lies on the bed, or support it.`, box: x.box },
+      );
+    }
+    for (const x of thinWalls(tris)) {
+      findings.push({ code: 'ENC.THIN', severity: 'warning', message: `${p.name}: walls down to ${x.size} mm over ${x.area} mm² between ${pt(x.box.min)} and ${pt(x.box.max)}: thinner than two perimeters (0.8 mm) prints weak or not at all, unless it is meant to be (a light window).`, box: x.box });
+    }
+  }
+
   let size: [number, number, number] | null = null;
   if (pieces.length) {
     const min = [0, 1, 2].map((i) => Math.min(...pieces.map((p) => p.bbox.min[i]!)));
@@ -194,4 +212,14 @@ export function reportText(r: EnclosureReport, facts?: EnclosureFacts): string {
 /** Whether a part is used from outside, by what the board says (connectors that are plugged from an edge). */
 export function edgeConnectors(b: BoardView): string[] {
   return b.parts.filter((p) => p.category === 'connector' && matingOf(p.pkgInfo) && matingOf(p.pkgInfo)!.face !== 'up').map((p) => p.refdes);
+}
+
+/** The pieces turned for printing as the script says (each on the bed), as STL files and one 3MF plate. */
+export function printFiles(r: EnclosureReport, project: string): { stl: { name: string; data: Uint8Array }[]; plate: Uint8Array } {
+  const turns = scriptPrintRotations(r.script);
+  const oriented = r.pieces.map((p) => ({ name: p.name, tris: orient(parseStl(p.stl), turns[p.name]) }));
+  return {
+    stl: oriented.map((p) => ({ name: p.name, data: writeStl(p.tris, `${project} ${p.name}`) })),
+    plate: threeMf(plate(oriented), `${project} enclosure`),
+  };
 }

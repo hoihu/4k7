@@ -91,6 +91,15 @@ Connectors go on the board edge, facing out.
 Crystals right at the MCU, nothing routed under them.
 Keep the switching loop of a buck converter small: input cap, switch and diode close together.`;
 
+export const ENCLOSURE_NOTES_PLACEHOLDER = `Nothing here yet: the agent uses the guide's defaults (FDM, 0.4 mm nozzle, PLA indoors, 0.2–0.3 mm clearance for parts that fit together).
+
+Write down your printer, material and what fits for you. For example:
+
+I print PETG on a Prusa MK4 with a 0.4 mm nozzle; 0.25 mm per side fits, 0.15 is a press fit.
+M3 heat-set inserts (hole 4.0 mm, 5.7 mm long) for every screw.
+Lids snap on; no screws I can see from outside.
+Rounded corners, 3 mm radius, and my logo engraved on the lid.`;
+
 /**
  * The notes and check levels from the ruleset text of earlier versions ("### SCH.ID: title"
  * headings with "level:" and "param:" lines). The levels become check settings; the text keeps

@@ -56,6 +56,21 @@ export function scriptPieces(script: string): string[] | null {
   return names.length ? names : null;
 }
 
+/**
+ * How each piece is printed: the script's `print = [["lid", [180, 0, 0]]];` (OpenSCAD rotate angles,
+ * degrees). Pieces it does not name are printed as they are built.
+ */
+export function scriptPrintRotations(script: string): Record<string, [number, number, number]> {
+  const m = /^\s*print\s*=\s*\[([\s\S]*?)\]\s*;/m.exec(stripComments(script));
+  const out: Record<string, [number, number, number]> = {};
+  if (!m) return out;
+  const num = '(-?\\d+(?:\\.\\d+)?)';
+  for (const e of m[1]!.matchAll(new RegExp(`\\[\\s*"([A-Za-z_][A-Za-z0-9_]*)"\\s*,\\s*\\[\\s*${num}\\s*,\\s*${num}\\s*,\\s*${num}\\s*\\]\\s*\\]`, 'g'))) {
+    out[e[1]!] = [Number(e[2]), Number(e[3]), Number(e[4])];
+  }
+  return out;
+}
+
 function stripComments(s: string): string {
   return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 }

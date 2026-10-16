@@ -1,6 +1,6 @@
 # Enclosure: the agent designs the box in OpenSCAD
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-15. Steps 1–5 of §7 built the same day, without the 3D view's mating paths on the Layout, 3MF and enclosure notes.
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-15. Steps 1–5 of §7 built the same day; step 6 mostly on 2026-10-16.
 > The agent's mechanical guide is [mechanics.md](mechanics.md); the board side is [layout.md](layout.md).
 
 ## 1. Why
@@ -81,8 +81,7 @@ from above), the plug's size across its way in (the overmold of a cable plug), i
 offset along the face. Pin headers are plugged from above by default; everything else needs it from
 the datasheet: `set_mating`, `set_footprint mating`, or the datasheet import. `get_board` says where
 each part is plugged from on the board (`plugged_from`), turned with the part and mirrored on the
-bottom (`boardFacing`). Generators for the standard connector families (USB-C, barrel jacks, RJ45)
-are not built: there are no such footprint families yet.
+bottom (`boardFacing`).
 
 `board.scad` is useful alone: the Enclosure view downloads it, for users who write their own box.
 
@@ -127,7 +126,7 @@ pictures and a report.
 The local server runs the user's OpenSCAD (2025 or later, `--backend=manifold`: seconds for a
 box), found like the coding agents (PATH, the usual app locations, a path in Settings, "Look
 again"). The GPL program is never shipped with the app. Without OpenSCAD the enclosure step says
-so and links the download; a WebAssembly build in a worker is a later fallback (§8).
+so and links the download.
 
 The server writes `board.scad` and the script into a scratch directory per project, runs one
 OpenSCAD per piece and per check (in parallel), and returns STL and the `--summary-file` JSON
@@ -148,6 +147,9 @@ Each check is one OpenSCAD run of an intersection, which is empty when the check
 | Pieces apart | `intersection() { a(); b(); }` for every pair, in assembled position | `ENC.PIECES_OVERLAP` (a lip with no clearance) |
 | Script | a run that fails, a piece that draws nothing | `ENC.SCRIPT` with OpenSCAD's errors and line numbers |
 | Size | the assembly's bounding box against the brief's limit | `ENC.SIZE 62 × 41 × 24 mm, the limit is 60 × 40` |
+| Overhang (warning) | each piece's triangles, turned as the script's `print` says: faces steeper than 45° that are not on the bed | `ENC.OVERHANG lid, printed turned 180, 0, 0: 120 mm² hangs over steeper than 45°` |
+| Bridge (warning) | flat faces looking down: their narrow side (the box's, or 4 × area / outline) over 20 mm | `ENC.BRIDGE lid, printed as built: a ceiling 23 mm across with nothing under it` |
+| Thin wall (warning) | from each face a 0.8 mm ray into the material; where it comes out sooner | `ENC.THIN base: walls down to 0.6 mm over 34 mm²` |
 
 For the buck test board a job is 11 runs, about 0.6 s of OpenSCAD in all (a few at a time). Wall thickness and overhangs are not measured yet (§8); the guide gives the rules and the
 pictures show the worst of it.
@@ -182,10 +184,10 @@ red in the pictures, blocked paths orange.
 - **Enclosure view** (after Layout): the 3D view with the box, the pieces toggled and exploded, the
   brief, the report, the script in an editor. The user can edit the script; the edit is a changeset
   like any other and the agent sees the diff.
-- **Exports**: STL per piece (in assembled position: the slicer turns it for printing),
-  `<project>-enclosure.scad` with `board.scad` inlined, and `board.scad`. OpenSCAD cannot write
-  STEP; mechanical CAD imports the STL. 3MF in print orientation is not built.
-- **Notes** (not built): Settings → Enclosure notes, like the layout notes: "I print PETG on a 0.4 mm nozzle,
+- **Exports**: one 3MF plate with every piece turned for printing (the script's `print`), STL per
+  piece the same way, `<project>-enclosure.scad` with `board.scad` inlined, and `board.scad`.
+  OpenSCAD cannot write STEP; mechanical CAD imports the STL or the .scad.
+- **Notes**: Settings → Enclosure notes, like the layout notes: "I print PETG on a 0.4 mm nozzle,
   M3 heat-set inserts, 0.25 mm clearance fits me". Sent as `<enclosure_notes>`; they win over the
   guide's defaults.
 
@@ -194,8 +196,7 @@ red in the pictures, blocked paths orange.
 Each step is useful alone.
 
 1. **Mating faces.** `mating` on packages, `set_mating`, `set_footprint mating`, the datasheet
-   import, `plugged_from` in `get_board`. *Built 2026-10-15*; the 3D view of the Layout does not
-   draw the paths yet (the Enclosure view does), and no generator gives one (no connector families).
+   import, `plugged_from` in `get_board`. *Built 2026-10-15.*
 2. **`board.scad`** (`fab/scad.ts`). *Built 2026-10-15*, tested against the real OpenSCAD where it
    is installed.
 3. **The renderer**: `tools/server/src/scad.ts` (FOURK7_OPENSCAD_BIN, the path set in the app, the
@@ -206,10 +207,9 @@ Each step is useful alone.
    `get_guide mechanics`, the guide's workflow. *Built 2026-10-15.*
 5. **The pictures and the Enclosure view** (§5.3, §6), the script stored and editable, the
    exports. *Built 2026-10-15.*
-6. **Later**: enclosure notes, 3MF in print orientation, mating paths in the Layout's 3D view,
-   connector footprint families with their faces, wall-thickness and overhang measures, the
-   WebAssembly fallback.
-
+6. **Follow-ups** (2026-10-16): the board hidden in the Enclosure view (PCB), enclosure notes,
+   print orientation in the script and a 3MF plate, plug paths in the Layout's 3D view, overhang,
+   bridge and thin-wall warnings. *Built.*
 ## 8. Open questions
 
 - **How mechanics.md reaches the agent.** Decided: `design_query get_guide topic: "mechanics"`,

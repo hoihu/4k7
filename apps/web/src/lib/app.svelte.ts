@@ -1033,7 +1033,7 @@ class AppState {
         const p = this.k?.proposal;
         const pending = p ? `\n<pending_changeset hunks="${p.hunks.length}">${p.hunks.map((h) => `${h.change} ${h.title}`).join('; ')}</pending_changeset>` : '';
         log('context', true, `${snap.summary.components.length} parts · ${snap.counts.errors}E ${snap.counts.warnings}W`);
-        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope, view: this.turnView ?? this.currentView(), rules: this.settings.schematicNotes, layoutRules: this.settings.layoutNotes }) + pending + `\nautonomy: ${this.settings.mode}`);
+        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope, view: this.turnView ?? this.currentView(), rules: this.settings.schematicNotes, layoutRules: this.settings.layoutNotes, enclosureRules: this.settings.enclosureNotes }) + pending + `\nautonomy: ${this.settings.mode}`);
       }
       case 'propose': {
         const args = ProposeInput.safeParse(input);
@@ -1343,7 +1343,7 @@ class AppState {
       } else {
         this.inAppBusy = true;
         this.abort = new AbortController();
-        await this.agent.run(trimmed, { selection: refs, scope: opts.scope ?? null, view: this.turnView, rules: this.settings.schematicNotes, layoutRules: this.settings.layoutNotes }, (e) => this.onEvent(item, e), this.abort.signal);
+        await this.agent.run(trimmed, { selection: refs, scope: opts.scope ?? null, view: this.turnView, rules: this.settings.schematicNotes, layoutRules: this.settings.layoutNotes, enclosureRules: this.settings.enclosureNotes }, (e) => this.onEvent(item, e), this.abort.signal);
       }
     } catch (e) {
       item.segments.push({ type: 'error', text: (e as Error).message });

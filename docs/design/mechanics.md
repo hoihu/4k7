@@ -159,7 +159,9 @@ Say so when the user asks for outdoor use: the printed box keeps rain off, it is
 - Put every choice in a named parameter at the top (`wall = 2;`, `clearance = 0.25;`,
   `lid_gap = 1;`). The user changes them, and so do you between renders.
 - One module per piece (`base()`, `lid()`, `plunger()`), chosen by `piece`. Build each piece in
-  assembled position (the lid on the base). The exports turn it into print orientation.
+  assembled position (the lid on the base), and say how each is turned for printing:
+  `print = [["lid", [180, 0, 0]]];` (OpenSCAD rotate angles; a piece not named prints as built).
+  The print files (STL, one 3MF plate) and the overhang checks use it.
 - Openings from `mating_path(ref)` grown by the clearance (`minkowski` or `offset` on its
   profile), so an opening follows its connector when the board changes.
 - Round outer edges (`hull` of spheres, or `offset(r)` on the outline before `linear_extrude`).

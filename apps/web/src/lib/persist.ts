@@ -282,6 +282,8 @@ export interface Settings {
   schematicChecks: CheckSettings;
   /** The user's notes on how they want boards laid out (placement, planes, routing), sent to the agent with every request; '' = none. */
   layoutNotes: string;
+  /** The user's notes for enclosures (printer, material, fasteners, fits), sent to the agent with every request; '' = none. */
+  enclosureNotes: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -304,6 +306,7 @@ export const DEFAULT_SETTINGS: Settings = {
   schematicNotes: '',
   schematicChecks: {},
   layoutNotes: '',
+  enclosureNotes: '',
 };
 
 /** Bumped when a default changes in a way existing users should get (v2: dark blue theme). */

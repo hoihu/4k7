@@ -8,6 +8,7 @@
   import ApiKeysSection from './settings/ApiKeysSection.svelte';
   import RulesSection from './settings/RulesSection.svelte';
   import LayoutSection from './settings/LayoutSection.svelte';
+  import EnclosureSection from './settings/EnclosureSection.svelte';
 
   const nav = [
     { id: 'project', label: 'General', section: ProjectSection },
@@ -18,6 +19,7 @@
     { id: 'agent', label: 'Layout and Schematic', section: AgentSection },
     { id: 'rules', label: 'Schematic drawing', section: RulesSection },
     { id: 'layout', label: 'Board layout', section: LayoutSection },
+    { id: 'enclosure', label: 'Enclosure', section: EnclosureSection },
     { id: 'about', label: 'About', section: AboutSection },
   ];
 

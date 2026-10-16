@@ -4,7 +4,7 @@
   import Field from './Field.svelte';
 
   /** The user's own notes for the agent (schematic or board layout): a text box saved after a pause in typing. */
-  let { setting, what, placeholder }: { setting: 'schematicNotes' | 'layoutNotes'; what: string; placeholder: string } = $props();
+  let { setting, what, placeholder }: { setting: 'schematicNotes' | 'layoutNotes' | 'enclosureNotes'; what: string; placeholder: string } = $props();
 
   let text = $state(untrack(() => app.settings[setting]));
   let timer: ReturnType<typeof setTimeout> | undefined;
