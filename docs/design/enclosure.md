@@ -1,6 +1,6 @@
 # Enclosure: the agent designs the box in OpenSCAD
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-15. Steps 1–5 of §7 built the same day, without the 3D view's mating paths on the Layout, 3MF and enclosure notes.
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-15. Steps 1–5 of §7 built the same day; step 6 mostly on 2026-10-16.
 > The agent's mechanical guide is [mechanics.md](mechanics.md); the board side is [layout.md](layout.md).
 
 ## 1. Why
@@ -209,9 +209,14 @@ Each step is useful alone.
    `get_guide mechanics`, the guide's workflow. *Built 2026-10-15.*
 5. **The pictures and the Enclosure view** (§5.3, §6), the script stored and editable, the
    exports. *Built 2026-10-15.*
-6. **Later**: enclosure notes, 3MF in print orientation, mating paths in the Layout's 3D view,
-   connector footprint families with their faces, wall-thickness and overhang measures, the
-   WebAssembly fallback.
+6. **Follow-ups** (2026-10-16): the board hidden in the Enclosure view (PCB), enclosure notes,
+   print orientation in the script and a 3MF plate, plug paths in the Layout's 3D view, overhang,
+   bridge and thin-wall warnings. *Built.*
+7. **Later**: connector footprint families with their faces (USB-C, barrel jack, RJ45). Their
+   pads differ by part number, so a generic footprint would be a wrong footprint; until a part
+   library carries exact ones, the agent reads the face off the datasheet (`set_mating`). The
+   WebAssembly fallback for people without OpenSCAD: openscad-wasm is GPL-2 and about 10 MB,
+   so it is a licensing and download-size decision, not only work.
 
 ## 8. Open questions
 

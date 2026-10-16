@@ -45,7 +45,7 @@
 
   $effect(() => {
     if (!viewer) return;
-    viewer.setBoard(board, boardBodies(board));
+    viewer.setBoard(board, boardBodies(board), { mating: true });
     if (!started) {
       started = true;
       if (from) viewer.flyFromTop(from);
