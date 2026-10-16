@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Design } from '@4k7/schema';
+  import type { ProjectFile } from '@4k7/schema';
   import { app } from '../../app.svelte.ts';
   import { disk } from '../../disk.svelte.ts';
   import Field from './Field.svelte';
@@ -56,13 +56,19 @@
       if (inFolder) {
         if (id !== app.projectId && !(await app.openProject(id))) return;
       } else {
-        await app.importDesign(JSON.parse(text) as Design);
+        await app.importDesign(JSON.parse(text) as ProjectFile);
         app.flash(`Copied ${f.name} into the projects folder`);
       }
       app.view = 'sch';
     } catch (err) {
       app.flash(`Could not open ${f.name}: ${(err as Error).message}`);
     }
+  }
+
+  function keepConversation(on: boolean) {
+    if (on === app.keepConversation) return;
+    if (!on && !window.confirm('Remove the conversation from the project file? The chat on screen stays until you clear it.')) return;
+    void app.setKeepConversation(on);
   }
 
   let newName = $state('');
@@ -84,6 +90,16 @@
       {#if disk.status !== 'ok'}<span class="bad">Not saved: the 4k7 server is not reachable.</span>
       {:else if app.unsaved}<span class="bad">Not saved yet.</span>
       {:else if app.projectId}<code>{disk.projectsDir}/{app.projectId}.twd.json</code> · saved as you work{/if}
+    {/snippet}
+  </Field>
+  <Field label="Conversation">
+    <div class="seg">
+      <button aria-pressed={!app.keepConversation} onclick={() => keepConversation(false)}>Not kept</button>
+      <button aria-pressed={app.keepConversation} onclick={() => keepConversation(true)}>Kept in the project file</button>
+    </div>
+    {#snippet hint()}
+      {#if app.keepConversation}Every message with the agent that led to this design is saved with it, the attachments too, and goes with every copy of the file. Earlier conversations show at the top of the chat.
+      {:else}The chat is not saved: it is gone when you open another project. Keep it to have the conversation that led to the design in its file.{/if}
     {/snippet}
   </Field>
   <Field label="Open" hint="Files from elsewhere are copied into the projects folder.">

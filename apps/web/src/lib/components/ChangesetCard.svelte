@@ -1,9 +1,10 @@
 <script lang="ts">
   import { app, type ChatItem } from '../app.svelte.ts';
 
-  let { item }: { item: ChatItem } = $props();
+  /** `readonly`: a message of an earlier conversation, never the live proposal. */
+  let { item, readonly = false }: { item: ChatItem; readonly?: boolean } = $props();
 
-  const live = $derived(item.changeset?.state === 'pending' ? app.k?.proposal ?? null : null);
+  const live = $derived(!readonly && item.changeset?.state === 'pending' ? app.k?.proposal ?? null : null);
   const delta = $derived(live ? { e: live.after.errors - live.before.errors, w: live.after.warnings - live.before.warnings } : null);
   const sign = (n: number) => (n > 0 ? `+${n}` : String(n));
 </script>
@@ -43,7 +44,7 @@
         <span class="muted" style="font-size:11px">hover a row to see it on the canvas</span>
       </div>
     {:else}
-      <div class="cs-h"><span class="muted">{item.changeset.state === 'accepted' ? '✓' : item.changeset.state === 'rejected' ? '✕' : '↓'} {item.changeset.note}</span></div>
+      <div class="cs-h"><span class="muted">{item.changeset.state === 'accepted' ? '✓' : item.changeset.state === 'rejected' ? '✕' : item.changeset.state === 'superseded' ? '↓' : '–'} {item.changeset.note ?? 'Still to review when this conversation ended.'}</span></div>
     {/if}
   </div>
 {/if}

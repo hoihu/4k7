@@ -17,7 +17,7 @@ geometry and checks every change.
 - **Manufacturer limits**: pick JLCPCB, PCBWay or Eurocircuits (Layout → Manufacturer) and the design rules are kept above what they can make. For another manufacturer the agent reads its capabilities page and imports the limits for you to review.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
 - **Printable by construction**: the schematic flows onto pages by itself (A4, A3 or A2), never splitting a functional block. **Document** writes a design document with the functional blocks, layout, assembly drawing, BOM and schematic pages.
-- **Local-first**: runs on your computer, in your browser (download from [4k7.dev](https://4k7.dev), or `npx github:hoihu/4k7`). Every project is a file on your computer (`~/Documents/4k7/<name>.twd.json`), saved as you work; your API keys stay in your browser.
+- **Local-first**: runs on your computer, in your browser (download from [4k7.dev](https://4k7.dev), or `npx github:hoihu/4k7`). Every project is a file on your computer (`~/Documents/4k7/<name>.twd.json`), saved as you work; your API keys stay in your browser. Opt in per project (Settings → General → **Conversation**) and the file also keeps the whole AI conversation that led to the design, attachments included.
 
 ## Running it
 
