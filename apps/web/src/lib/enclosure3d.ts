@@ -29,6 +29,8 @@ export interface EnclosureScene {
 export interface SceneOptions {
   /** Pieces to show (all when absent). */
   show?: string[];
+  /** The board with its parts (default true): off, to see how the box holds it. */
+  board?: boolean;
   /** Lift the pieces after the first apart, 0 (closed) to 1 (each by the box's height and 10 mm). */
   open?: number;
   /** Draw the ways out and the findings. */
@@ -72,7 +74,7 @@ function liftStep(s: EnclosureScene) {
 /** The board, the pieces and the marks, as one group for the viewer core. */
 export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}, redraw?: () => void): THREE.Group {
   const h = s.board.outline.h;
-  const group = boardGroup(s.board, boardBodies(s.board), res, redraw);
+  const group = o.board === false ? new THREE.Group() : boardGroup(s.board, boardBodies(s.board), res, redraw);
   const owned: { dispose(): void }[] = [];
   const lift = liftStep(s) * (o.open ?? 0);
   s.pieces.forEach((p, i) => {

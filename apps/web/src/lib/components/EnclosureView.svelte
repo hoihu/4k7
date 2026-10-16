@@ -42,11 +42,13 @@
   /* the 3D view */
   let open = $state(false);
   let hidden = $state<Record<string, boolean>>({});
+  /** The board with its parts, shown in the box (off: how the box holds it). */
+  let pcb = $state(true);
   let cut = $state<string | null>(null);
   const pieces = $derived(report?.pieces ?? []);
   const openings = $derived(brief?.openings ?? []);
   const scene = $derived(b && last ? { board: b, facts: last.facts, pieces, findings: last.report.findings, openings } : null);
-  const options = $derived({ open: open ? 1 : 0, show: pieces.filter((p) => !hidden[p.name]).map((p) => p.name), marks: true });
+  const options = $derived({ open: open ? 1 : 0, show: pieces.filter((p) => !hidden[p.name]).map((p) => p.name), marks: true, board: pcb });
 
   /* the brief's questions: the user's answers, sent to the agent as the next message */
   let picks = $state<Record<string, string>>({});
@@ -128,6 +130,7 @@
         {#if pieces.length}
           <div class="seg"><button aria-pressed={!open} onclick={() => (open = false)}>Closed</button><button aria-pressed={open} onclick={() => (open = true)}>Opened</button></div>
           <div class="seg">
+            <button aria-pressed={pcb} title="Show or hide the board with its parts (hide it to see how the box holds it)" onclick={() => (pcb = !pcb)}>PCB</button>
             {#each pieces as p (p.name)}<button aria-pressed={!hidden[p.name]} title="Show or hide the {p.name}" onclick={() => (hidden = { ...hidden, [p.name]: !hidden[p.name] })}>{p.name}</button>{/each}
           </div>
           {#if openings.length}
