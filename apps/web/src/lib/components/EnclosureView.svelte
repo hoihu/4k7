@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { openQuestions, scriptPieces, type BriefItem } from '@4k7/schema';
+  import { printFiles } from '@4k7/fab';
+  import { openQuestions, scriptPieces, scriptPrintRotations, type BriefItem } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Chat from './Chat.svelte';
   import Enclosure3DView from './Enclosure3DView.svelte';
@@ -46,6 +47,7 @@
   let pcb = $state(true);
   let cut = $state<string | null>(null);
   const pieces = $derived(report?.pieces ?? []);
+  const printTurns = $derived(script ? scriptPrintRotations(script) : {});
   const openings = $derived(brief?.openings ?? []);
   const scene = $derived(b && last ? { board: b, facts: last.facts, pieces, findings: last.report.findings, openings } : null);
   const options = $derived({ open: open ? 1 : 0, show: pieces.filter((p) => !hidden[p.name]).map((p) => p.name), marks: true, board: pcb });
@@ -95,13 +97,16 @@
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
+  /** One piece as STL, turned for printing as the script says (print = …), on the bed. */
   function stl(name: string) {
-    const p = pieces.find((x) => x.name === name);
-    if (!p) return;
-    const bin = atob(p.stl);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    download(new Blob([bytes], { type: 'model/stl' }), `${projectName()}-${name}.stl`);
+    if (!report) return;
+    const f = printFiles(report, projectName()).stl.find((x) => x.name === name);
+    if (f) download(new Blob([f.data as BlobPart], { type: 'model/stl' }), `${projectName()}-${name}.stl`);
+  }
+  /** Every piece on one plate, turned for printing: a 3MF the slicers open as it is. */
+  function plate3mf() {
+    if (!report) return;
+    download(new Blob([printFiles(report, projectName()).plate as BlobPart], { type: 'model/3mf' }), `${projectName()}-enclosure.3mf`);
   }
   /** The script with board.scad in it: one file that opens in OpenSCAD as it is. */
   async function scadFile() {
@@ -211,7 +216,8 @@
 
         <h4>Files</h4>
         <div class="row2">
-          {#each pieces as p (p.name)}<button class="btn" title="The {p.name} as STL, as it sits on the box (turn it for printing in the slicer)" onclick={() => stl(p.name)}>{p.name}.stl ⤓</button>{/each}
+          <button class="btn" title="Every piece on one plate, turned for printing as the script says: a 3MF for the slicer" onclick={plate3mf}>Print plate .3mf ⤓</button>
+          {#each pieces as p (p.name)}<button class="btn" title="The {p.name} as STL, {printTurns[p.name] ? `turned ${printTurns[p.name]!.join(', ')} for printing` : 'as built (the script gives no print orientation for it)'}, on the bed" onclick={() => stl(p.name)}>{p.name}.stl ⤓</button>{/each}
           <button class="btn" title="The script with board.scad in it: one file that opens in OpenSCAD" onclick={scadFile}>.scad ⤓</button>
           <button class="btn" title="The board as an OpenSCAD library (outline, holes, parts, plug paths)" onclick={boardScad}>board.scad ⤓</button>
         </div>
