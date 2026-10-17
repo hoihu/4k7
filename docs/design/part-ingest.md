@@ -22,7 +22,9 @@ the user's local Claude Code through the server, like the app chat.
    column for that package and the package drawing, and submits a `PartDraft`
    (`packages/schema/src/ingest.ts`): pins with number, name, type, alternate functions and the
    **page of each pin's table row**, plus package family, nominal dimensions and drawing page,
-   decoupling notes and absolute-maximum supply.
+   decoupling notes and absolute-maximum supply. It also notes where the datasheet's design
+   sections are (`pages`: pinout, package, typical application, design procedure, layout
+   guidelines), pages only; the card keeps them as `datasheetPages`. Both passes' pages are kept.
 3. **The tab checks every submission** with `draftToCard` (`packages/parts/src/ingest.ts`):
    schema, duplicate numbers, pin count against the package (exposed pad excluded), numbering 1…N
    for leaded packages, valid JEDEC ball names for BGA, supply/ground presence, pages present, and
@@ -47,10 +49,22 @@ the user's local Claude Code through the server, like the app chat.
      renderer and data the board's 3D view will use. Export (STEP/GLB) comes with the board work.
 6. **Review**: symbol (single or units), footprint/3D and the pin table, next to the check results
    and the cross-check. With the datasheet open, clicking a pin shows its page with the row
-   highlighted, and "drawing p. N" shows the package drawing. **Add to library** stores the card in
-   IndexedDB (`library` store) and the PDF by SHA-256 (`datasheets` store, referenced from
+   highlighted, "drawing p. N" shows the package drawing, and the typical application, design
+   procedure and layout guidelines open from their links. **Add to library** stores the card in
+   `~/.4k7/library` and the whole PDF by SHA-256 in `~/.4k7/datasheets` (referenced from
    `provenance.document`), and registers the card with the kernel so the agent can place it.
-   Designs embed the cards they use.
+   Designs embed the cards they use, not the PDFs.
+7. **Designing with the datasheet**: the agent's `read_datasheet` reads the whole PDF (page index,
+   text search, a page's text with its picture). The index lists the sections noted at import and
+   the design sections found by their headings (`findDesignSections` in
+   `packages/parts/src/datasheet.ts`: "Typical Application", "Detailed Design Procedure",
+   "Inductor Selection", "Layout Guidelines" …), so parts imported before the importer noted them
+   are covered too. The design guide has the agent start from the typical application, size the
+   parts round an IC with the datasheet's design procedure, place to its layout guidelines, and
+   say which page each choice comes from. A part with only a datasheet link (a built-in part, a
+   project from another computer) has its PDF downloaded by the server on first read
+   (`POST /api/datasheets/fetch`, once per link) and kept like an imported one; when that file is
+   not the one the part was imported from, the agent is told its page numbers may be off.
 
 Not yet: per-field bounding boxes (the row is found again by searching the page text), the
 footprint overlay on the datasheet's land-pattern drawing, and STEP/GLB export.

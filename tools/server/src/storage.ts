@@ -4,13 +4,14 @@
  * - Projects: one `<name>.twd.json` per project in a folder the user can see (~/Documents/4k7 by
  *   default), written as the design changes. The file's name is the project's id.
  * - Imported parts and artwork: one JSON file per record in ~/.4k7/library and ~/.4k7/artwork.
- * - Datasheets: ~/.4k7/datasheets/<sha256>.pdf with the file's original name next to it.
+ * - Datasheets: ~/.4k7/datasheets/<sha256>.pdf with the file's original name (and link) next to it.
  *
  * Every request needs the access key (`authorization: Bearer <key>`). Requests from a page carry
  * its origin, which must be one of the app's (the server's own pages, the dev server); a website
  * reaching into this computer gets nothing. Writes go to a temporary file renamed over the old
  * one, so a crash never leaves half a project.
  */
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
@@ -19,6 +20,7 @@ import { secretsMatch } from './mcp.ts';
 import type { ScadJob } from '@4k7/schema';
 import type { HttpHandler } from './server.ts';
 import type { OpenScad } from './scad.ts';
+import { download as fetchPdf, isPdf, MAX_PDF_BYTES, pdfName } from './download.ts';
 
 export const PROJECT_EXT = '.twd.json';
 const RECORD_STORES = ['library', 'artwork'] as const;
@@ -42,6 +44,8 @@ export interface StorageOptions {
   /** OpenSCAD for the enclosure (/api/scad). */
   scad?: OpenScad;
   log?: (msg: string) => void;
+  /** Downloads a datasheet link (tests replace it). */
+  download?: (url: string) => Promise<Uint8Array>;
 }
 
 /** ~/Documents/4k7 where there is a Documents folder, else ~/4k7. FOURK7_PROJECTS or "projectsDir" in server.json override it. */
@@ -117,6 +121,27 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
       }
     }
     return out;
+  };
+
+  /** What is kept next to a datasheet: its original name, and the link it was downloaded from. */
+  const sheetMeta = (hash: string): { name?: string; url?: string } | undefined => {
+    try {
+      return JSON.parse(readFileSync(join(sheetDir, `${hash}.json`), 'utf8')) as { name?: string; url?: string };
+    } catch {
+      return undefined;
+    }
+  };
+
+  /** The datasheet already downloaded from `url`. */
+  const sheetForUrl = (url: string): { hash: string; name: string } | undefined => {
+    if (!existsSync(sheetDir)) return undefined;
+    for (const f of readdirSync(sheetDir)) {
+      const hash = f.slice(0, -'.json'.length);
+      if (!f.endsWith('.json') || !HASH.test(hash)) continue;
+      const meta = sheetMeta(hash);
+      if (meta?.url === url && existsSync(join(sheetDir, `${hash}.pdf`))) return { hash, name: meta.name ?? `${hash}.pdf` };
+    }
+    return undefined;
   };
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<unknown> => {
@@ -231,6 +256,24 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
         return res.writeHead(405).end();
       }
 
+      // the datasheet behind a link (a library part that came with one, a project from another computer):
+      // downloaded once, then kept like an imported one
+      if (kind === 'datasheets' && id === 'fetch' && action === undefined && m === 'POST') {
+        const { url } = JSON.parse((await readBody(req)).toString('utf8')) as { url?: unknown };
+        if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return res.writeHead(400).end('an http(s) link is needed');
+        const known = sheetForUrl(url);
+        if (known) return json(200, known);
+        const data = await (opts.download ?? fetchPdf)(url);
+        if (data.byteLength > MAX_PDF_BYTES) return res.writeHead(422).end(`the PDF is larger than ${MAX_PDF_BYTES >> 20} MB`);
+        if (!isPdf(data)) return res.writeHead(422).end('the link does not lead to a PDF file');
+        const hash = createHash('sha256').update(data).digest('hex');
+        const meta = sheetMeta(hash);
+        const name = meta?.name ?? pdfName(url);
+        if (!existsSync(join(sheetDir, `${hash}.pdf`))) writeAtomic(join(sheetDir, `${hash}.pdf`), Buffer.from(data));
+        writeAtomic(join(sheetDir, `${hash}.json`), JSON.stringify({ ...meta, name, url }));
+        return json(200, { hash, name });
+      }
+
       if (kind === 'datasheets' && id && HASH.test(id) && action === undefined) {
         const pdf = join(sheetDir, `${id}.pdf`);
         const meta = join(sheetDir, `${id}.json`);
@@ -254,7 +297,7 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
             // keep the hash as its name
           }
           writeAtomic(pdf, body);
-          writeAtomic(meta, JSON.stringify({ name }));
+          writeAtomic(meta, JSON.stringify({ ...sheetMeta(id), name }));
           return res.writeHead(204).end();
         }
         if (m === 'DELETE') {

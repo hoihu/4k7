@@ -4,7 +4,7 @@
  * missing pin number or an impossible ball name is reported back to the AI (and the user)
  * instead of silently becoming a broken symbol.
  */
-import { PartDraft, type IngestIssue, type PartCard, type PartRequirement } from '@4k7/schema';
+import { PartDraft, type DatasheetPages, type IngestIssue, type PartCard, type PartRequirement } from '@4k7/schema';
 import { bgaRowName, footprintFor } from './footprint.ts';
 import { planSymbolLayout } from './symbolgen.ts';
 
@@ -112,11 +112,24 @@ export function draftToCard(input: unknown): IngestResult {
     ...(draft.datasheet ? { datasheet: draft.datasheet } : {}),
     provenance: { source: 'datasheet', ...(draft.datasheet ? { document: draft.datasheet } : {}), ...(draft.pages?.pinout?.[0] ? { page: draft.pages.pinout[0] } : {}) },
     ...(draft.notes?.length ? { notes: draft.notes } : {}),
+    ...(datasheetPages(draft.pages) ? { datasheetPages: datasheetPages(draft.pages) } : {}),
     packageInfo: pkg,
     // large ICs get the conventional arrangement (supplies top, grounds bottom, ports grouped)
     ...(pins.length >= 12 ? { symbolLayout: planSymbolLayout(pins) } : {}),
   };
   return { card: issues.some((i) => i.severity === 'error') ? null : card, issues };
+}
+
+const SECTIONS = ['pinout', 'package', 'application', 'design', 'layout'] as const;
+
+/** The draft's section pages, sorted and without repeats; undefined when there are none. */
+function datasheetPages(pages: PartDraft['pages']): DatasheetPages | undefined {
+  const out: DatasheetPages = {};
+  for (const k of SECTIONS) {
+    const list = [...new Set((pages?.[k] ?? []).filter((n) => n > 0))].sort((a, b) => a - b);
+    if (list.length) out[k] = list;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** 1,2,3,7,9,10 → "1–3, 7, 9–10" */
@@ -206,6 +219,12 @@ export function mergeDrafts(a: PartDraft, b: PartDraft, takeB: Set<string>): Par
       if (v === undefined) delete (out.package as Record<string, unknown>)[f];
       else (out.package as Record<string, unknown>)[f] = copy(v);
     }
+  }
+  // section pages only say where to read: what either pass found is kept
+  if (b.pages) {
+    const pages: NonNullable<PartDraft['pages']> = { ...out.pages };
+    for (const k of SECTIONS) if (pages[k] || b.pages[k]) pages[k] = [...new Set([...(pages[k] ?? []), ...(b.pages[k] ?? [])])];
+    out.pages = pages;
   }
   return out;
 }

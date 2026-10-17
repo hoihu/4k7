@@ -21,6 +21,22 @@ export function openPdf(key: string, data: ArrayBuffer): Promise<Doc> {
   return d;
 }
 
+type Page = Awaited<ReturnType<Doc['getPage']>>;
+
+/**
+ * A page's text items. Not page.getTextContent(): it reads its stream with `for await`, which
+ * Safari cannot do ("undefined is not a function … value of readableStream").
+ */
+async function textItems(page: Page): Promise<unknown[]> {
+  const reader = (page.streamTextContent() as ReadableStream<{ items: unknown[] }>).getReader();
+  const items: unknown[] = [];
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return items;
+    items.push(...value.items);
+  }
+}
+
 export interface Highlight {
   x: number;
   y: number;
@@ -45,9 +61,8 @@ export async function renderPage(doc: Doc, pageNo: number, canvas: HTMLCanvasEle
   await page.render({ canvas, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined }).promise;
   if (!terms.length) return [];
 
-  const content = await page.getTextContent();
   type Item = { str: string; transform: number[]; width: number; height: number };
-  const items = (content.items as Item[]).filter((i) => i.str?.trim());
+  const items = ((await textItems(page)) as Item[]).filter((i) => i.str?.trim());
   // group items into lines by baseline, like the server's text extraction
   const lines = new Map<number, Item[]>();
   for (const it of items) {
@@ -75,10 +90,9 @@ export async function renderPage(doc: Doc, pageNo: number, canvas: HTMLCanvasEle
 /** A page's text, one line per baseline, items separated by " | " where there is a gap (tables). */
 export async function pageText(doc: Doc, pageNo: number): Promise<string> {
   const page = await doc.getPage(Math.min(Math.max(1, pageNo), doc.numPages));
-  const content = await page.getTextContent();
   type Item = { str: string; transform: number[]; width: number };
   const lines = new Map<number, Item[]>();
-  for (const it of content.items as Item[]) {
+  for (const it of (await textItems(page)) as Item[]) {
     if (!it.str?.trim()) continue;
     const y = Math.round(it.transform[5]! / 2) * 2;
     lines.set(y, [...(lines.get(y) ?? []), it]);

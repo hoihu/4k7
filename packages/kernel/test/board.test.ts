@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { boardSummary, cutoutDistance } from '@4k7/schema';
+import { draftToCard, registerUserParts, unregisterUserPart } from '@4k7/parts';
 import { Kernel } from '../src/index.ts';
 import { edgeCrossings, splitDrc } from '../src/drc.ts';
 import { buckTransaction } from './fixtures.ts';
@@ -863,11 +864,10 @@ describe('planes', () => {
     expect(refused({ op: 'set_plane_style', layer: 'In1.Cu', net: 'GND', spoke_mm: 0.5 })).toBe(false);
   });
 
-  it('refuses an area on an outer layer, an area of the net that fills the layer, and an area without a net', () => {
+  it('refuses an inner area of the net that fills the layer, and an area without a net', () => {
     const k = buck();
     k.transact({ summary: '4', ops: [{ op: 'set_board', layers: 4 }] });
     const refused = (op: Record<string, unknown>) => k.transact({ summary: 'x', ops: [op as never] }).status === 'rejected';
-    expect(refused({ op: 'set_plane', layer: 'B.Cu', net: '+3V3', under: ['U1'] })).toBe(true);
     expect(refused({ op: 'set_plane', layer: 'In1.Cu', net: 'GND', under: ['U1'] })).toBe(true);
     expect(refused({ op: 'set_plane', layer: 'In2.Cu', net: null, under: ['U1'] })).toBe(true);
     expect(refused({ op: 'set_plane', layer: 'In2.Cu', net: '+3V3', rect: { x_mm: 1, y_mm: 1, width_mm: 8, height_mm: 6 } })).toBe(false);
@@ -1031,6 +1031,176 @@ describe('vias', () => {
     const pad = b.parts.find((p) => p.refdes === 'C1')!.pads[0]!;
     const strict = { ...b, rules: { ...b.rules, viaInPad: false }, vias: [...b.vias, { netId: pad.netId!, x: pad.x, y: pad.y, drill: 0.3, pad: 0.6 }] };
     expect(copperDrc(strict).some((x) => x.code === 'DRC.VIA_IN_PAD' && x.entities.includes('C1'))).toBe(true);
+  });
+});
+
+/** A buck regulator with an exposed pad on GND (pin 9), as imported, for thermal vias. */
+const { card: padBuck } = draftToCard({
+  mpn: 'BUCK8EPVIAS',
+  manufacturer: 'Test',
+  description: 'test buck regulator with a thermal pad',
+  package: { name: 'SOIC-8-EP', family: 'SOIC', pins: 8, pitch_mm: 1.27, body_mm: [3.9, 4.9], span_mm: [6, 4.9], exposed_pad_mm: [2.4, 3.1] },
+  pins: [['BOOT', 'passive'], ['VIN', 'pwr_in'], ['EN', 'in'], ['RT', 'in'], ['FB', 'in'], ['COMP', 'out'], ['GND', 'pwr_in'], ['SW', 'pwr_out'], ['PAD', 'pwr_in']].map(([name, type], i) => ({ number: String(i + 1), name: name!, type: type as 'in' })),
+});
+registerUserParts([padBuck!]);
+afterAll(() => unregisterUserPart(padBuck!.id));
+
+function padRegulator() {
+  const k = new Kernel();
+  const r = k.transact({
+    summary: 'regulator',
+    ops: [
+      { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J1' },
+      { op: 'add_part', part: padBuck!.id, refdes: 'U1' },
+      { op: 'add_part', part: 'generic:C', refdes: 'C1', params: { capacitance: '10uF', voltage: '25V', package: '1206' } },
+      { op: 'add_part', part: 'generic:C', refdes: 'C2', params: { capacitance: '100nF', voltage: '25V' } },
+      { op: 'add_part', part: 'generic:L', refdes: 'L1', params: { inductance: '10uH', current: '3A', package: 'IND-4x4' } },
+      { op: 'add_part', part: 'generic:C', refdes: 'C3', params: { capacitance: '47uF', voltage: '10V', package: '1210' } },
+      { op: 'connect', pins: ['J1.1', 'U1.VIN', 'C1.1', 'U1.EN'], net: 'VIN' },
+      { op: 'connect', pins: ['J1.2', 'U1.GND', 'U1.PAD', 'C1.2', 'C3.2', 'U1.RT', 'U1.COMP'], net: 'GND' },
+      { op: 'connect', pins: ['U1.BOOT', 'C2.1'], net: 'BOOT' },
+      { op: 'connect', pins: ['U1.SW', 'C2.2', 'L1.1'], net: 'SW' },
+      { op: 'connect', pins: ['L1.2', 'C3.1', 'U1.FB'], net: 'VOUT' },
+    ],
+  });
+  expect(r.status, JSON.stringify(r).slice(0, 400)).toBe('ok');
+  k.accept();
+  return k;
+}
+
+describe('vias placed on purpose (add_vias)', () => {
+  const ok = (k: Kernel, ops: unknown[]) => {
+    const r = k.transact({ summary: 'x', ops: ops as never });
+    expect(r.status, JSON.stringify(r).slice(0, 500)).toBe('ok');
+    k.accept();
+    return r;
+  };
+
+  it('fills a thermal pad with vias that move with the part, are allowed there and join the plane solid', () => {
+    const k = padRegulator();
+    const r = ok(k, [{ op: 'add_vias', kind: 'pad', ref: 'U1', pad: '9' }]);
+    expect(r.status === 'ok' && r.results[0]!.effect).toContain('2 × 3 thermal vias in U1.9 (GND), 1 mm apart');
+    const placed = k.board();
+    const ep = placed.parts.find((p) => p.refdes === 'U1')!.pads.find((p) => p.number === '9')!;
+    const mine = placed.vias.filter((v) => v.group === 'V1');
+    expect(mine).toHaveLength(6); // there before the routing
+    for (const v of mine) {
+      expect(v.inPad).toBe(true);
+      expect(v.netId).toBe(ep.netId);
+      expect(Math.abs(v.x - ep.x) + v.pad / 2).toBeLessThanOrEqual(ep.w / 2 + 1e-6);
+      expect(Math.abs(v.y - ep.y) + v.pad / 2).toBeLessThanOrEqual(ep.h / 2 + 1e-6);
+    }
+    const b = routed(k);
+    expect(b.vias.filter((v) => v.group === 'V1')).toHaveLength(6);
+    expect(b.diagnostics.filter((x) => x.code === 'DRC.VIA_IN_PAD' || x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE')).toEqual([]);
+    expect(brokenNets(b)).toEqual([]);
+    // the B.Cu GND pour takes them solid: no relief ring round them
+    const pour = b.zones.find((z) => z.layer === 'B.Cu' && z.netId === ep.netId)!;
+    const ringAt = (x: number, y: number) => pour.shape!.cuts.some((c) => c.k === 'circle' && Math.hypot(c.x - x, c.y - y) < 1e-6);
+    expect(mine.some((v) => ringAt(v.x, v.y))).toBe(false);
+    // moved with the part
+    ok(k, [{ op: 'place', ref: 'U1', x_mm: ep.x + 3, y_mm: ep.y + 2 }]);
+    const moved = k.board();
+    const ep2 = moved.parts.find((p) => p.refdes === 'U1')!.pads.find((p) => p.number === '9')!;
+    const v2 = moved.vias.filter((v) => v.group === 'V1');
+    expect(v2).toHaveLength(6);
+    expect(Math.hypot(v2[0]!.x - ep2.x, v2[0]!.y - ep2.y)).toBeCloseTo(Math.hypot(mine[0]!.x - ep.x, mine[0]!.y - ep.y), 3);
+    expect(boardSummary(moved).via_groups).toEqual([{ id: 'V1', net: 'GND', kind: 'pad', vias: 6 }]);
+  });
+
+  it('refuses thermal vias in a pad that is too small, on another net or crowded, and replaces a pad\'s group', () => {
+    const k = padRegulator();
+    const refused = (op: Record<string, unknown>) => k.transact({ summary: 'x', ops: [op as never] }).status === 'rejected';
+    expect(refused({ op: 'add_vias', kind: 'pad', ref: 'U1', pad: '9', net: 'VIN' })).toBe(true);
+    expect(refused({ op: 'add_vias', kind: 'pad', ref: 'U1', pad: '3' })).toBe(false); // EN is on VIN: fine
+    k.reject();
+    expect(refused({ op: 'add_vias', kind: 'pad', ref: 'U1', pad: '9', size_mm: 4 })).toBe(true);
+    expect(refused({ op: 'add_vias', kind: 'pad', ref: 'U1', pad: '9', pitch_mm: 0.5 })).toBe(true);
+    expect(refused({ op: 'add_vias', kind: 'pad', ref: 'U1', pad: '42' })).toBe(true);
+    expect(refused({ op: 'add_vias', kind: 'grid', net: 'GND' })).toBe(true);
+    ok(k, [{ op: 'add_vias', kind: 'pad', ref: 'U1', pad: '9' }]);
+    ok(k, [{ op: 'add_vias', kind: 'pad', ref: 'U1', pad: '9', pitch_mm: 1.2, drill_mm: 0.25, size_mm: 0.5 }]);
+    expect(k.board().vias.filter((v) => v.group === 'V1').map((v) => [v.drill, v.pad])).toEqual(Array(6).fill([0.25, 0.5])); // 2 × 3 at 1.2 mm
+    ok(k, [{ op: 'remove_vias', id: 'V1' }]);
+    expect(k.board().vias).toEqual([]);
+  });
+
+  it('pours an outer layer only round some parts', () => {
+    const k = padRegulator();
+    const r = ok(k, [
+      { op: 'set_plane', layer: 'F.Cu', net: 'GND' },
+      { op: 'set_plane', layer: 'F.Cu', net: 'GND', under: ['U1', 'C1', 'C3'] },
+    ]);
+    expect(r.status === 'ok' && r.results[1]!.effect).toContain('GND pour on F.Cu, under U1, C1, C3; it no longer pours the whole layer');
+    const b = routed(k);
+    const top = b.planes.find((p) => p.layer === 'F.Cu')!;
+    expect(top.under?.sort()).toEqual(['C1', 'C3', 'U1']);
+    const zone = b.zones.find((z) => z.layer === 'F.Cu')!;
+    expect(zone.shape!.outline).toEqual(top.area);
+    expect(top.area![2] - top.area![0]).toBeLessThan(b.outline.w);
+    expect(b.zones.some((z) => z.layer === 'B.Cu')).toBe(true); // the automatic GND pour stays
+    expect(brokenNets(b)).toEqual([]);
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+  });
+
+  it('stitches two pours with a grid of vias where they fit, and fences an area', () => {
+    const k = padRegulator();
+    ok(k, [{ op: 'set_plane', layer: 'F.Cu', net: 'GND' }]);
+    const before = routed(k);
+    const { w, h } = before.outline;
+    ok(k, [
+      { op: 'add_vias', kind: 'grid', net: 'GND', rect: { x_mm: 0, y_mm: 0, width_mm: w, height_mm: h }, pitch_mm: 2 },
+      { op: 'add_vias', kind: 'fence', net: 'GND', under: ['J1'], margin_mm: 1 },
+    ]);
+    expect(boardSummary(k.board()).via_groups![0]!.vias).toMatch(/^up to \d+, laid by the route step/);
+    const b = routed(k);
+    const grid = b.vias.filter((v) => v.group === 'V1');
+    const fence = b.vias.filter((v) => v.group === 'V2');
+    const wanted = b.viaGroups.find((g) => g.id === 'V1')!.wanted;
+    expect(grid.length).toBeGreaterThan(0);
+    expect(grid.length).toBeLessThan(wanted); // not where other nets or pads are
+    expect(fence.length).toBeGreaterThan(0);
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(brokenNets(b)).toEqual([]);
+    expect(boardSummary(b).via_groups![0]!.vias).toBe(`${grid.length} of ${wanted} spots (the others are blocked or miss the net's planes)`);
+    // without copper of the net on a second layer there, a stitching via joins nothing: none
+    ok(k, [{ op: 'set_plane', layer: 'F.Cu', net: null }]);
+    expect(routed(k).vias.filter((v) => v.group === 'V1')).toEqual([]);
+  });
+});
+
+describe('a local pour inside another, stitched to an inner plane', () => {
+  it('lays the smaller area over the bigger one and stitches it to the plane of its net', () => {
+    const k = buck();
+    const ok = (ops: unknown[]) => {
+      const r = k.transact({ summary: 'x', ops: ops as never });
+      expect(r.status, JSON.stringify(r).slice(0, 500)).toBe('ok');
+      k.accept();
+    };
+    ok([
+      { op: 'set_board', layers: 4 },
+      { op: 'set_plane', layer: 'In2.Cu', net: '+3V3' },
+      { op: 'set_plane', layer: 'F.Cu', net: 'GND', under: ['U1', 'C1', 'C2', 'C3', 'C4', 'C5', 'L1', 'D1', 'R1', 'R2', 'R3'] },
+    ]);
+    // the output's top copper round L1 and C2, inside the GND pour, and vias down to In2.Cu
+    ok([
+      { op: 'set_plane', layer: 'F.Cu', net: '+3V3', under: ['C2', 'L1'], margin_mm: 2.5 },
+      { op: 'add_vias', kind: 'grid', net: '+3V3', under: ['C2', 'L1'], margin_mm: 2.5, pitch_mm: 1.2 },
+    ]);
+    const b = routed(k);
+    const top = (net: string) => b.zones.find((z) => z.layer === 'F.Cu' && b.netNames[z.netId] === net)!;
+    const area = b.planes.find((p) => p.layer === 'F.Cu' && b.netNames[p.netId] === '+3V3')!.area!;
+    expect(top('+3V3').rects.length).toBeGreaterThan(20);
+    // the GND pour goes round it (its gap), not the other way round
+    expect(top('GND').shape!.cuts.some((c) => c.k === 'rect' && Math.abs(c.x - (area[0] - 0.2)) < 1e-6 && Math.abs(c.y - (area[1] - 0.2)) < 1e-6)).toBe(true);
+    const stitched = b.vias.filter((v) => v.group === 'V1');
+    expect(stitched.length).toBeGreaterThan(5);
+    for (const v of stitched) {
+      expect(v.x - v.pad / 2).toBeGreaterThanOrEqual(area[0] - 1e-6);
+      expect(v.x + v.pad / 2).toBeLessThanOrEqual(area[2] + 1e-6);
+    }
+    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(brokenNets(b)).toEqual([]);
   });
 });
 

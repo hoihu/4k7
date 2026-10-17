@@ -153,6 +153,17 @@ describe('two-pass reconciliation', () => {
     expect(compareDrafts(merged, b).map((d) => d.key)).toEqual(['package:lead_width_mm']);
   });
 
+  it('keeps the section pages either pass found, for reading the datasheet later', async () => {
+    const { mergeDrafts } = await import('../src/index.ts');
+    const a = mcuDraft({ pages: { pinout: [4], application: [24] } });
+    const b = mcuDraft({ pages: { pinout: [4, 5], layout: [39, 40] } });
+    const { card } = draftToCard(mergeDrafts(a, b, new Set()));
+    expect(card?.datasheetPages).toEqual({ pinout: [4, 5], application: [24], layout: [39, 40] });
+    expect(card?.provenance.page).toBe(4);
+    expect(draftToCard(mcuDraft({ pages: { design: [30, 25, 25, 0] } })).card?.datasheetPages).toEqual({ design: [25, 30] });
+    expect(draftToCard(mcuDraft({ pages: {} })).card).not.toHaveProperty('datasheetPages');
+  });
+
   it('merges the app\'s reactive drafts, which cannot be structured-cloned', async () => {
     // the app's drafts are Svelte $state proxies; structuredClone throws on them ("The object can
     // not be cloned"), which broke saving a part once a pass-2 value was picked

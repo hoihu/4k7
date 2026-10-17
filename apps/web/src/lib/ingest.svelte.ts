@@ -8,7 +8,7 @@
 import { compareDrafts, draftToCard, listUserParts, mergeDrafts, planUnits, registerUserParts, unregisterUserPart, type Disagreement } from '@4k7/parts';
 import { PartDraft, type ToolContent, type DraftPin, type PackageInfo, type Design, type IngestIssue, type PartCard, type TokenCount } from '@4k7/schema';
 import { server } from './server.svelte.ts';
-import { deleteDatasheet, deleteLibraryPart, loadDatasheet, loadLibrary, saveDatasheet, saveLibraryPart } from './files.ts';
+import { deleteDatasheet, deleteLibraryPart, fetchDatasheet, loadDatasheet, loadLibrary, saveDatasheet, saveLibraryPart } from './files.ts';
 import { loadPendingImport, savePendingImport, type StoredDatasheet } from './persist.ts';
 
 export interface IngestRequest {
@@ -81,12 +81,12 @@ export class IngestState {
 
   /** Facts the two passes read differently. */
   disagreements = $derived.by((): Disagreement[] => (this.drafts[0] && this.drafts[1] ? compareDrafts(this.drafts[0], this.drafts[1]) : []));
-  /** The part as it would be saved: pass 1 plus the user's picks from pass 2. */
+  /** The part as it would be saved: pass 1 plus the user's picks from pass 2 (and the section pages either found). */
   result = $derived.by((): { card: PartCard | null; issues: IngestIssue[] } => {
     const [a, b] = this.drafts;
     if (!a) return { card: null, issues: this.lastIssues };
     const picks = new Set(Object.keys(this.takeB).filter((k) => this.takeB[k]));
-    const { card, issues } = draftToCard(b && picks.size ? mergeDrafts(a, b, picks) : a);
+    const { card, issues } = draftToCard(b ? mergeDrafts(a, b, picks) : a);
     if (!card) return { card, issues };
     const withUnits = this.split ? { ...card, units: planUnits(card.pins) } : card;
     return {
@@ -449,14 +449,22 @@ export class IngestState {
     this.library = listUserParts();
   }
 
-  /** The datasheet behind a part: the one being reviewed, or a stored one. */
-  async datasheetFor(card: PartCard): Promise<Datasheet | null> {
+  /**
+   * The datasheet behind a part: the one being reviewed, or a stored one. `download`: a part that only
+   * has its link (a built-in part, a project from another computer) gets it downloaded and kept;
+   * throws when that fails.
+   */
+  async datasheetFor(card: PartCard, opts: { download?: boolean } = {}): Promise<Datasheet | null> {
     const doc = card.provenance.document;
     if (this.datasheet && doc === `sha256:${this.datasheet.hash}`) return this.datasheet;
-    if (!doc?.startsWith('sha256:')) return null;
-    const hash = doc.slice(7);
-    const s = await loadDatasheet(hash);
-    return s ? { ...s, hash } : null;
+    if (doc?.startsWith('sha256:')) {
+      const hash = doc.slice(7);
+      const s = await loadDatasheet(hash);
+      if (s) return { ...s, hash };
+    }
+    if (!opts.download || !card.datasheet) return null;
+    const { hash, sheet } = await fetchDatasheet(card.datasheet);
+    return { ...sheet, hash };
   }
 
   #reset() {

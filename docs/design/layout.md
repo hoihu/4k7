@@ -193,11 +193,31 @@ Each step is useful alone.
    rectangle in `BoardView.planes`). The layer's full plane goes round each area with the
    clearance. In the router, two pads of the net inside the area are joined through it (like a
    dedicated plane), groups with a pad inside drop onto it, and the net's other connections are
-   routed as tracks. Inner layers only; areas on the outer pours of a 2-layer board are open.
+   routed as tracks. On an outer layer (2026-10-17) the same gives a local pour: it replaces the
+   net's pour over that layer (F.Cu GND only round a switching regulator, as TI's layout guidelines
+   ask), joins what reaches it, and gets no drop sites reserved (those are for whole-layer pours).
    `set_plane_style` (2026-10-15) shapes any plane or pour (`PlaneStyle` on its entry): `gap` round
    an area plane, the plane's own `clearance` to other nets' copper, `edge` pull-back, `thermal`
    reliefs or solid joints, `spoke` width; never below the board's own clearances. The router's
    `planeLook` reads them for the raster area and the exact shape alike.
+
+    **Vias placed on purpose** (2026-10-17): `add_vias` / `remove_vias`, kept as `ViaGroup`s in
+    `BoardSettings.vias` and resolved per placement by `planVias` (board.ts). `pad`: thermal vias,
+    a grid filling one pad at the pitch (default 1 mm), on the pad's net, marked `inPad` (the
+    `DRC.VIA_IN_PAD` rule passes them, whatever `via_in_pad` says) and moving with the part;
+    `points`: vias at given spots. Both are copper from the start (in the board view before routing,
+    in the router before anything is routed, part of the pad they lie in, so a thermal pad reaches
+    every layer through them). `grid` (stitching, default 3 mm) and `fence` (round an area's edge,
+    default 2 mm) are spots the router fills after the routing, where a via fits (clear of other
+    nets and pads, the via spacing kept) and lies inside its net's planes or pours on two layers
+    or more (any piece of that copper: a piece cut off by a track is what the via connects, as
+    long as one layer's piece is connected). Grid spots stay inside the area by half a via and the
+    clearance; fence spots lie on its edge. Two areas on one layer overlap like this: the smaller
+    lies on top and the bigger goes round it (the later one when they are as big), so a +5V patch
+    inside a local GND pour is a hole in the GND, not the other way round. Vias of a group join their planes solid (no reliefs), and so does a pad with thermal
+    vias. They are vias, not footprint pads, on purpose: a drilled pad would make the part
+    through-hole for the placer, the 3D view, pick-and-place and the fab hole rules. `get_board`
+    `via_groups` lists each group with how many vias it got.
 
 10. **Who placed what, and the handoff** (built 2026-10-15). The workflow the user wants, like the
     schematic's: the agent places everything, the user moves the parts that matter to them roughly,

@@ -276,6 +276,17 @@
     dsTerms = [];
     dsLabel = `package ${card.packageInfo.name}`;
   }
+  /** The design sections the importer noted, in reading order. */
+  const SECTIONS = [
+    ['application', 'typical application'],
+    ['design', 'design procedure'],
+    ['layout', 'layout guidelines'],
+  ] as const;
+  function showSection(label: string, page: number) {
+    dsPage = page;
+    dsTerms = [];
+    dsLabel = label;
+  }
   async function toggleSplit(card: PartCard) {
     if (mode === 'import') {
       ingest.split = !ingest.split;
@@ -423,6 +434,15 @@
         <button aria-pressed={!!card.units?.length} onclick={() => !card.units?.length && toggleSplit(card)}>Split into units</button>
       </div>
       {#if card.units?.length}<span class="muted">{card.units.map((u) => `${u.name}: ${u.title}`).join(' · ')}</span>{/if}
+    </div>
+  {/if}
+  {#if sheetDoc && SECTIONS.some(([k]) => card.datasheetPages?.[k]?.length)}
+    <div class="sections">
+      <span class="muted">Datasheet</span>
+      {#each SECTIONS as [k, label] (k)}
+        {@const first = card.datasheetPages?.[k]?.[0]}
+        {#if first}<button class="link" onclick={() => showSection(label, first)}>{label} p. {first}</button>{/if}
+      {/each}
     </div>
   {/if}
   <div class="grid" class:big={big(card)}>
@@ -772,6 +792,7 @@
   .parts { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 1px; background: var(--line); height: 100%; min-height: 0; }
   .parts.withds { grid-template-columns: 240px minmax(0, 1fr) minmax(320px, 40%); }
   .dspane { min-height: 0; }
+  .sections { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin: 0 0 8px; }
   .tools { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12px; flex-wrap: wrap; }
   .seg, .tabs { display: inline-flex; gap: 0; }
   .seg button, .tabs button { border: 1px solid var(--line-2); background: var(--panel); padding: 2px 10px; font-size: 12px; color: var(--txt-2); cursor: pointer; }

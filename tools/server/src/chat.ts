@@ -16,6 +16,7 @@ import { AGENT_EFFORTS, type ChatEvent, type HarnessId, type TabToServer, type T
 import type { LocalServer, ChatMessage } from './server.ts';
 import type { ClaudeProfile } from './config.ts';
 import { secretsMatch, type McpMode } from './mcp.ts';
+import { download, isPdf, MAX_PDF_BYTES, pdfName } from './download.ts';
 import { prepareDatasheet } from './pdf.ts';
 import { ClaudeHarness } from './harness/claude.ts';
 import type { ChatJob, DoneEvent, Harness, Invocation, RunSink } from './harness/types.ts';
@@ -23,7 +24,6 @@ import type { ChatJob, DoneEvent, Harness, Invocation, RunSink } from './harness
 export { childEnv, detectClaude } from './harness/claude.ts';
 
 type IngestMessage = Extract<TabToServer, { type: 'ingest' }>;
-const MAX_PDF_BYTES = 24 * 1024 * 1024;
 
 export interface ChatRunnerOptions {
   server: LocalServer;
@@ -167,14 +167,13 @@ export class ChatRunner {
       } else if (msg.url) {
         this.#emit(msg.id, { kind: 'status', text: `Downloading ${msg.url}` });
         data = await download(msg.url);
-        if (Buffer.from(data.subarray(0, 5)).toString('latin1') === '%PDF-' && data.byteLength <= MAX_PDF_BYTES) {
+        if (isPdf(data) && data.byteLength <= MAX_PDF_BYTES) {
           // the app keeps the datasheet to show the source of every value
-          const name = decodeURIComponent(new URL(msg.url).pathname.split('/').pop() || 'datasheet.pdf');
-          this.#emit(msg.id, { kind: 'datasheet', name, base64: Buffer.from(data).toString('base64') });
+          this.#emit(msg.id, { kind: 'datasheet', name: pdfName(msg.url), base64: Buffer.from(data).toString('base64') });
         }
       } else return fail('No datasheet: attach a PDF or give its URL.');
       if (data.byteLength > MAX_PDF_BYTES) return fail(`The PDF is larger than ${MAX_PDF_BYTES >> 20} MB.`);
-      if (Buffer.from(data.subarray(0, 5)).toString('latin1') !== '%PDF-') return fail('That is not a PDF file.');
+      if (!isPdf(data)) return fail('That is not a PDF file.');
       if (run.cancelled) return fail('Stopped.');
       rmSync(dir, { recursive: true, force: true });
       mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -270,18 +269,4 @@ export class ChatRunner {
   stopAll() {
     for (const id of this.#runs.keys()) this.cancel(id);
   }
-}
-
-/** Download a datasheet (manufacturers often refuse requests without a browser-like agent). */
-async function download(url: string): Promise<Uint8Array> {
-  if (!/^https?:\/\//i.test(url)) throw new Error('only http(s) links can be downloaded');
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) 4k7', Accept: 'application/pdf,*/*' },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(60_000),
-  });
-  if (!res.ok) throw new Error(`download failed (HTTP ${res.status})`);
-  const len = Number(res.headers.get('content-length') ?? 0);
-  if (len > MAX_PDF_BYTES) throw new Error(`the PDF is larger than ${MAX_PDF_BYTES >> 20} MB`);
-  return new Uint8Array(await res.arrayBuffer());
 }
