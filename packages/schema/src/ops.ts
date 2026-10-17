@@ -71,7 +71,7 @@ export const SetNetOp = z.object({
   voltage: z.number().nullable().optional().describe('Nominal DC voltage in volts'),
   external: z.boolean().optional().describe('True for nets driven from outside the design (e.g. supply input on a connector)'),
   power: z.boolean().optional().describe('Draw as a power rail'),
-  max_current: z.number().nullable().optional().describe('Expected maximum current in amps'),
+  max_current: z.number().nullable().optional().describe('Expected maximum current in amps: get_net suggests a track width for it, and on the board each pad of the net drops onto its plane with as many vias as it needs (about 0.9 A per 0.3 mm via, as many as fit along the pad)'),
   track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise)'),
 });
 

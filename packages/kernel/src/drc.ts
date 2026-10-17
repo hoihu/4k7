@@ -2,7 +2,7 @@
  * Copper design-rule check on exact geometry, independent of the router's grid: clearance
  * between tracks, vias and pads of different nets on the same layer.
  */
-import { cutoutDistance, insideBoard } from '@4k7/schema';
+import { cutoutDistance, insideBoard, padViasFor, viaCurrentFor } from '@4k7/schema';
 import type { BoardDiagnostic, BoardView, CopperLayer } from '@4k7/schema';
 
 type Shape =
@@ -222,6 +222,64 @@ export function splitDrc(b: BoardView, signal: (netId: string) => boolean): Boar
         message: `${net} crosses the edge of the ${area}${f.n > 1 ? ` ${f.n} times` : ''} on ${f.layer}, the layer over it: its return current detours round the gap. Cross on ${other} (over ${over[other]}) or move the area's edge; waive it for a slow signal.`,
         at: { x: Math.round(f.at.x * 100) / 100, y: Math.round(f.at.y * 100) / 100 },
         entities: [`net:${net}`],
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Pads that reach their net's plane through fewer vias than they want (padViasFor: a big pad on
+ * a supply, or a net with a current): the pad's own vias (in it, or at the end of a track of the
+ * net that starts in it, 3 mm at most), counted on the copper as it lies. A pad in its net's pour
+ * on its own layer is left alone (the pour spreads the current). `net` says which nets are
+ * supplies and the current each carries.
+ */
+export function planeViaDrc(b: BoardView, net: (netId: string) => { power: boolean; amps?: number }): BoardDiagnostic[] {
+  const out: BoardDiagnostic[] = [];
+  const near = (x: number, y: number, pad: BoardView['parts'][number]['pads'][number], grow: number) => Math.max(Math.abs(x - pad.x) - pad.w / 2, Math.abs(y - pad.y) - pad.h / 2) <= grow;
+  for (const part of b.parts) {
+    for (const pad of part.pads) {
+      const id = pad.netId;
+      if (!id || pad.drill) continue;
+      const plane = b.planes.find((pl) => pl.netId === id && !pad.layers.includes(pl.layer) && (!pl.area || (pad.x >= pl.area[0] && pad.x <= pl.area[2] && pad.y >= pl.area[1] && pad.y <= pl.area[3])));
+      if (!plane) continue;
+      const n = net(id);
+      const want = padViasFor(pad, n, b.rules);
+      if (want < 2) continue;
+      // in its own net's pour on its layer
+      const poured = b.zones.some((z) => {
+        if (z.netId !== id || !pad.layers.includes(z.layer)) return false;
+        for (let i = 0; i + 3 < z.rects.length; i += 4) {
+          const [x, y, w, h] = [z.rects[i]!, z.rects[i + 1]!, z.rects[i + 2]!, z.rects[i + 3]!];
+          if (x < pad.x + pad.w / 2 + 0.5 && x + w > pad.x - pad.w / 2 - 0.5 && y < pad.y + pad.h / 2 + 0.5 && y + h > pad.y - pad.h / 2 - 0.5) return true;
+        }
+        return false;
+      });
+      if (poured) continue;
+      const own = b.vias.filter((v) => v.netId === id);
+      const reached = new Set(own.filter((v) => near(v.x, v.y, pad, v.pad / 2)));
+      for (const t of b.tracks) {
+        if (t.netId !== id || !pad.layers.includes(t.layer) || t.pts.length < 4) continue;
+        let len = 0;
+        for (let i = 0; i + 3 < t.pts.length; i += 2) len += Math.hypot(t.pts[i + 2]! - t.pts[i]!, t.pts[i + 3]! - t.pts[i + 1]!);
+        if (len > 3) continue;
+        const ends = [[t.pts[0]!, t.pts[1]!], [t.pts.at(-2)!, t.pts.at(-1)!]] as const;
+        for (const [[ax, ay], [bx, by]] of [[ends[0], ends[1]], [ends[1], ends[0]]] as const) {
+          if (!near(ax, ay, pad, 0.01)) continue;
+          for (const v of own) if (Math.hypot(v.x - bx, v.y - by) <= v.pad / 2) reached.add(v);
+        }
+      }
+      if (reached.size >= want) continue;
+      const name = b.netNames[id] ?? id;
+      const per = Math.round(viaCurrentFor(b.rules.viaDrill) * 10) / 10;
+      const why = n.amps ? `${n.amps} A on ${name} wants ${want} (about ${per} A per ${b.rules.viaDrill} mm via${want < Math.ceil(n.amps / viaCurrentFor(b.rules.viaDrill) - 1e-6) ? `; ${want} is all that fit along the pad` : ''})` : `a pad this big on a supply wants ${want}`;
+      out.push({
+        code: 'DRC.PLANE_VIAS',
+        severity: 'warning',
+        message: `${part.refdes}.${pad.number} (${name}) reaches the ${plane.layer} plane through ${reached.size || 'no'} via${reached.size === 1 ? '' : 's'} of its own: ${why}. Make room beside the pad (move what crowds it) and route again, or place them with add_vias points right beside the pad (the router joins them to it).`,
+        at: { x: Math.round(pad.x * 100) / 100, y: Math.round(pad.y * 100) / 100 },
+        entities: [part.refdes],
       });
     }
   }

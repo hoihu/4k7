@@ -12,7 +12,7 @@
  * grid passes follow (horizontal on F.Cu, vertical on B.Cu, vias cheap; see Style): a board
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, type PlaneStyle, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, padViasFor, type PlaneStyle, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
 
 const G = 0.1; // grid pitch, mm
 const MULTI = -1; // near copper of two nets: nobody may route here
@@ -41,6 +41,7 @@ const SPLIT_BAND = 0.3; // the band: this far either side of the gap, mm
 const COARSE = 5; // coarse routing grid, in grid steps (0.5 mm)
 const CORRIDOR = 4; // coarse cells either side of the coarse way (2 mm)
 const MAX_STUB = 30; // longest drop stub reserved for a pour, in grid steps (3 mm)
+const EXTRA_STUB = 20; // longest stub to a power pad's further drop vias, in grid steps (2 mm)
 const PROBE_PENALTY = 12; // probe: entering another net's copper, in grid steps
 const HISTORY_STEP = 2; // history cost added where an open connection's probe runs, per pass
 const STALE_PASSES = 8; // passes in a row without an improvement before the router gives up
@@ -55,6 +56,8 @@ export interface RouteInput {
   powerNets: Set<string>;
   /** Track width per net (the user's choice, mm), where its pads allow it; else the class width. */
   netWidths?: Record<string, number>;
+  /** Expected maximum current per net (A): how many vias its pads drop onto their plane with (padViasFor). */
+  netCurrents?: Record<string, number>;
   /**
    * Planes: an inner layer dedicated to one net (no tracks there), or a pour on an outer layer
    * filling what the tracks leave. Pads of the net drop onto their plane with a via. An inner
@@ -1865,10 +1868,32 @@ function routeOnce(
         pads.some((p, idx) => find(idx) === r && (p.drill || p.layers.includes(pl.layer)) && inMain(p.x, p.y)),
     );
   };
-  /** The net's own width for a drop where all the group's pads can take it, else the signal width. */
-  const dropClass = (netId: string, root: number) => {
+  /**
+   * A drop's width: the net's own where all the pads it starts from can take it; else, on a power
+   * net, the power width where they can take that; else the signal width.
+   */
+  const dropClass = (netId: string, from: number[]) => {
+    const takes = (w: number) => from.every((idx) => Math.min(pads[idx]!.w, pads[idx]!.h) >= w * 0.9);
     const own = input.netWidths?.[netId];
-    return own && (own <= rules.track || pads.every((p, idx) => find(idx) !== root || Math.min(p.w, p.h) >= own * 0.9)) ? trackClass(own) : 0;
+    if (own) return own <= rules.track || takes(own) ? trackClass(own) : 0;
+    return input.powerNets.has(netId) && takes(rules.powerTrack) ? 1 : 0;
+  };
+  const groupPads = (root: number) => pads.flatMap((_, idx) => (find(idx) === root ? [idx] : []));
+  /*
+   * The vias each pad's own drops lead down to (grid cells), and every via some pad counts. A big
+   * pad on a power net, or one whose net carries a current, wants more than one (padViasFor): its
+   * further drops come after the first (see moreDrops).
+   */
+  const padVias = new Map<number, Set<number>>();
+  const claimed = new Set<number>();
+  const claim = (idx: number, x: number, y: number) => {
+    const i = Math.round(y / G) * W + Math.round(x / G);
+    padVias.set(idx, (padVias.get(idx) ?? new Set()).add(i));
+    claimed.add(i);
+  };
+  const viasWanted = (idx: number) => {
+    const id = pads[idx]!.netId;
+    return id ? padViasFor(pads[idx]!, { power: input.powerNets.has(id), amps: input.netCurrents?.[id] }, rules) : 1;
   };
   /*
    * Drop sites for outer pours, reserved before the signals: every SMD pad of the pour's net off
@@ -1887,24 +1912,30 @@ function routeOnce(
       const rr = rules.viaPad / 2 + margin + rules.clearance;
       pads.forEach((p, idx) => {
         if (padNet[idx] !== pnet || p.drill || p.layers.includes(pl.layer) || now() > until) return;
-        const k = dropClass(pl.netId, idx);
-        const free = freeFor(pnet, k);
-        const path = search(pnet, k, padCells[idx]!, (st) => {
-          if (Math.floor(st / N) === l) return false;
-          const i = st % N;
-          if (viaAt[i] === pnet) return true; // another pad's site
-          if (!viaFree(i)) return false;
-          // room for the pour round the via
-          const vx = (i % W) * G;
-          const vy = Math.floor(i / W) * G;
-          for (const [dx, dy] of [[rr, 0], [-rr, 0], [0, rr], [0, -rr]] as const) {
-            const ii = Math.round((vx + dx) / G) + Math.round((vy + dy) / G) * W;
-            if (ii < 0 || ii >= N || !free(l, ii)) return false;
-          }
-          return true;
-        }, p, undefined, 0, false, 2 * MAX_STUB);
-        // (a long way to a via site, or one over other layers, would block more than it saves)
-        if (!path || path.length > MAX_STUB || path.some((st) => Math.floor(st / N) !== Math.floor(path[0]! / N))) return;
+        const siteAt = (k: number) => {
+          const free = freeFor(pnet, k);
+          const path = search(pnet, k, padCells[idx]!, (st) => {
+            if (Math.floor(st / N) === l) return false;
+            const i = st % N;
+            if (viaAt[i] === pnet) return true; // another pad's site
+            if (!viaFree(i)) return false;
+            // room for the pour round the via
+            const vx = (i % W) * G;
+            const vy = Math.floor(i / W) * G;
+            for (const [dx, dy] of [[rr, 0], [-rr, 0], [0, rr], [0, -rr]] as const) {
+              const ii = Math.round((vx + dx) / G) + Math.round((vy + dy) / G) * W;
+              if (ii < 0 || ii >= N || !free(l, ii)) return false;
+            }
+            return true;
+          }, p, undefined, 0, false, 2 * MAX_STUB);
+          // (a long way to a via site, or one over other layers, would block more than it saves)
+          return path && path.length <= MAX_STUB && path.every((st) => Math.floor(st / N) === Math.floor(path[0]! / N)) ? path : null;
+        };
+        // (a power-width stub that finds no site is tried again at the signal width)
+        let k = dropClass(pl.netId, [idx]);
+        let path = siteAt(k);
+        if (!path && k) path = siteAt((k = 0));
+        if (!path) return;
         const l0 = Math.floor(path[0]! / N);
         const e = escapes[idx];
         const pts = simplify([...(e && e.state === path[0] ? [p.x, p.y, e.p1.x, e.p1.y] : [p.x, p.y]), ...path.flatMap((st) => [((st % N) % W) * G, Math.floor((st % N) / W) * G])]);
@@ -1926,6 +1957,18 @@ function routeOnce(
   for (const pl of list) {
     const rg = region(pl);
     if (rg.main === undefined || rg.sizes[rg.main]! * G * G < 1) continue;
+    const rr = rules.viaPad / 2 + margin + rules.clearance;
+    /** A new via site well inside the main area (the via then joins the plane). */
+    const siteOk = (i: number) => {
+      if (rg.island[i] !== rg.main || !viaFreeFor(rg.pnet)(i)) return false;
+      const vx = (i % W) * G;
+      const vy = Math.floor(i / W) * G;
+      for (const [dx, dy] of [[rr, 0], [-rr, 0], [0, rr], [0, -rr]] as const) {
+        const ii = Math.round((vx + dx) / G) + Math.round((vy + dy) / G) * W;
+        if (rg.island[ii] !== rg.main) return false;
+      }
+      return true;
+    };
     // (an area plane: only the groups with a pad inside the area; the others are joined by tracks)
     const roots = [...new Set(pads.map((_, idx) => find(idx)).filter((r) => padNet[r] === rg.pnet))].filter((r) => !pl.area || pads.some((p, idx) => find(idx) === r && inArea(pl, p)));
     // copper of the drops so far → the via it leads down to: a later drop may simply join it
@@ -1933,7 +1976,6 @@ function routeOnce(
     for (const r of roots) {
       const reaches = groupCells.get(r)!.some((st) => Math.floor(st / N) === rg.l && rg.island[st % N] === rg.main);
       if (reaches) continue;
-      const k = dropClass(pl.netId, r);
       // a site reserved before the signals that lies in the main area: laid as it is (no search,
       // so even once the time is up)
       const site = pads.findIndex((_, idx) => find(idx) === r && reserved.has(idx) && rg.island[reserved.get(idx)!.path.at(-1)! % N] === rg.main);
@@ -1946,27 +1988,24 @@ function routeOnce(
         const via = joins ?? { x: (end % W) * G, y: Math.floor(end / W) * G };
         for (const st of copper) dropCopper.set(st, via);
         dropVias.set(r, [...(dropVias.get(r) ?? []), via]);
+        claim(site, via.x, via.y);
         continue;
       }
       if (now() > deadline) continue;
       const starts = groupCells.get(r)!.filter((st) => Math.floor(st / N) !== rg.l);
       if (!starts.length) continue;
-      const path = search(rg.pnet, k, starts, (st) => {
-        // a via site well inside the main area (the via then joins the plane)
-        if (Math.floor(st / N) === rg.l) return false;
-        if (dropCopper.has(st)) return true; // join an earlier drop
-        const i = st % N;
-        if (viaAt[i] === rg.pnet && rg.island[i] === rg.main) return true; // join an existing via
-        if (rg.island[i] !== rg.main || !viaFreeFor(rg.pnet)(i)) return false;
-        const vx = (i % W) * G;
-        const vy = Math.floor(i / W) * G;
-        const rr = rules.viaPad / 2 + margin + rules.clearance;
-        for (const [dx, dy] of [[rr, 0], [-rr, 0], [0, rr], [0, -rr]] as const) {
-          const ii = Math.round((vx + dx) / G) + Math.round((vy + dy) / G) * W;
-          if (rg.island[ii] !== rg.main) return false;
-        }
-        return true;
-      }, pads[r]!);
+      const wayAt = (k: number) =>
+        search(rg.pnet, k, starts, (st) => {
+          if (Math.floor(st / N) === rg.l) return false;
+          if (dropCopper.has(st)) return true; // join an earlier drop
+          const i = st % N;
+          if (viaAt[i] === rg.pnet && rg.island[i] === rg.main) return true; // join an existing via
+          return siteOk(i);
+        }, pads[r]!);
+      // (a power-width drop that finds no way is tried again at the signal width)
+      let k = dropClass(pl.netId, groupPads(r));
+      let path = wayAt(k);
+      if (!path && k && now() <= deadline) path = wayAt((k = 0));
       if (!path) continue;
       const joins = dropCopper.get(path.at(-1)!);
       // a way that changed layer itself already has a via: not another one right next to it
@@ -1977,13 +2016,95 @@ function routeOnce(
         return d > 1e-9 && d < VIA_SPACING;
       };
       if (!joins && path.some((_, q) => crowded(q) && q < path.length - 1)) continue;
-      const copper = commit(pl.netId, rg.pnet, k, path, padAt(r, path[0]!), -1, !joins);
+      const from = padAt(r, path[0]!);
+      const copper = commit(pl.netId, rg.pnet, k, path, from, -1, !joins);
       groupCells.get(r)!.push(...copper);
       const via = joins ?? { x: (end % W) * G, y: Math.floor(end / W) * G };
       for (const st of copper) dropCopper.set(st, via);
       dropVias.set(r, [...(dropVias.get(r) ?? []), via]);
+      if (from >= 0) claim(from, via.x, via.y);
     }
+    moreDrops(pl, rg, siteOk);
   }
+  };
+  /*
+   * A pad that wants more than one via down to its plane (viasWanted: a big pad on a power net, or
+   * a net with a current) gets the rest after the first drops, each with its own stub from the
+   * pad (power width where the pad takes it), to a free site or to a via of the net that no pad
+   * counts yet (one placed on purpose next to the pad). Best a straight stub out of a side of the
+   * pad, as short as can be, a long side before a short one and from its middle out, so the vias
+   * line up along the pad; failing that, the shortest way to a site within EXTRA_STUB. What does
+   * not fit stays short: DRC.PLANE_VIAS reports it.
+   */
+  const moreDrops = (pl: (typeof planes)[number], rg: ReturnType<typeof region>, siteOk: (i: number) => boolean) => {
+    pads.forEach((p, idx) => {
+      if (padNet[idx] !== rg.pnet || p.drill || p.layers.includes(pl.layer) || solidPads.has(idx) || (pl.area && !inArea(pl, p))) return;
+      const want = viasWanted(idx);
+      const have = padVias.get(idx) ?? new Set<number>();
+      if (have.size >= want) return;
+      const starts = padCells[idx]!.filter((st) => Math.floor(st / N) !== rg.l);
+      if (!starts.length) return;
+      const l0 = Math.floor(starts[0]! / N);
+      const inPad = new Set(starts);
+      const target = (i: number) => !have.has(i) && rg.island[i] === rg.main && (viaAt[i] === rg.pnet ? !claimed.has(i) : siteOk(i));
+      /** A straight stub out of a side of the pad (cells from inside the pad to the via), or null. */
+      const straightAt = (k: number) => {
+        const free = freeFor(rg.pnet, k);
+        const w = widths[k]!;
+        let best: { path: number[]; cost: number } | null = null;
+        for (const [nx, ny] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
+          const sgn = nx + ny;
+          const [half, span] = nx ? [p.w / 2, p.h / 2] : [p.h / 2, p.w / 2];
+          const [across, along] = nx ? [p.x, p.y] : [p.y, p.x];
+          // the stub's first cell: inside the pad by half its width
+          const b0 = sgn > 0 ? Math.floor((across + half - w / 2) / G) : Math.ceil((across - half + w / 2) / G);
+          const lo = Math.ceil((along - span + w / 2) / G);
+          const hi = Math.floor((along + span - w / 2) / G);
+          for (let a = lo; a <= hi; a++) {
+            const cell = (b: number) => (nx ? a * W + b : b * W + a);
+            const cells = [l0 * N + cell(b0)];
+            if (!inPad.has(cells[0]!)) continue;
+            for (let m = 1; m <= EXTRA_STUB; m++) {
+              const b = b0 + sgn * m;
+              if (b < 0 || b >= (nx ? W : H)) break;
+              const i = cell(b);
+              if (!free(l0, i)) break;
+              cells.push(l0 * N + i);
+              if (!target(i)) continue;
+              const cost = m + (span < half ? 4 : 0) + Math.abs(a * G - along) * 0.5;
+              if (!best || cost < best.cost) best = { path: cells.slice(), cost };
+              break;
+            }
+          }
+        }
+        return best?.path ?? null;
+      };
+      const wayAt = (k: number) => {
+        const path = search(rg.pnet, k, starts, (st) => Math.floor(st / N) === l0 && target(st % N), p, undefined, 0, false, 4 * EXTRA_STUB);
+        // (the stub beyond the pad: a way may run inside a long pad first)
+        return path && path.filter((st) => !inPad.has(st)).length <= EXTRA_STUB && path.every((st) => Math.floor(st / N) === l0) ? path : null;
+      };
+      while (have.size < want && now() <= deadline) {
+        const k0 = dropClass(pl.netId, [idx]);
+        let k = k0;
+        let straight = true;
+        let path: number[] | null = null;
+        for (k of k0 ? [k0, 0] : [0]) if ((path = straightAt(k))) break;
+        if (!path) {
+          straight = false;
+          for (k of k0 ? [k0, 0] : [0]) if ((path = wayAt(k))) break;
+        }
+        if (!path) break;
+        const end = path.at(-1)! % N;
+        // (a straight stub starts where it leaves the pad, not at the pad's centre)
+        const copper = commit(pl.netId, rg.pnet, k, path, straight ? -1 : idx, -1, viaAt[end] !== rg.pnet);
+        groupCells.get(find(idx))!.push(...copper);
+        const via = { x: (end % W) * G, y: Math.floor(end / W) * G };
+        dropVias.set(find(idx), [...(dropVias.get(find(idx)) ?? []), via]);
+        claim(idx, via.x, via.y);
+        have.add(end);
+      }
+    });
   };
   /*
    * Fan-out first: pads on a net with a dedicated inner plane drop onto it before the signals are
