@@ -1785,6 +1785,83 @@ describe('track width per net', () => {
   });
 });
 
+describe('power pads down to their plane (several vias)', () => {
+  /** The buck on 4 layers with a 1812 bulk cap C9 on +3V3 / GND (GND on In1.Cu). */
+  const bulk = (ops: unknown[] = []) => {
+    const k = buck();
+    const r = k.transact({ summary: 'bulk', ops: [{ op: 'set_board', layers: 4 }, { op: 'add_part', part: 'generic:C', refdes: 'C9', params: { capacitance: '100uF', voltage: '25V', package: '1812' } }, { op: 'connect', pins: ['C9.1'], net: '+3V3' }, { op: 'connect', pins: ['C9.2'], net: 'GND' }, ...ops] as never });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    return k;
+  };
+  /** The vias at the end of the pad's own stubs (tracks of its net that start in it). */
+  const padVias = (b: ReturnType<Kernel['board']>, ref: string, num: string) => {
+    const pad = b.parts.find((p) => p.refdes === ref)!.pads.find((q) => q.number === num)!;
+    const inPad = (x: number, y: number) => Math.abs(x - pad.x) <= pad.w / 2 + 0.01 && Math.abs(y - pad.y) <= pad.h / 2 + 0.01;
+    const stubs = b.tracks.filter((t) => t.netId === pad.netId && t.layer === 'F.Cu' && inPad(t.pts[0]!, t.pts[1]!));
+    const vias = b.vias.filter((v) => v.netId === pad.netId && stubs.some((t) => Math.hypot(t.pts.at(-2)! - v.x, t.pts.at(-1)! - v.y) < 0.05));
+    return { pad, stubs: stubs.filter((t) => vias.some((v) => Math.hypot(t.pts.at(-2)! - v.x, t.pts.at(-1)! - v.y) < 0.05)), vias };
+  };
+
+  it('wants vias by pad size on a supply and by the net\'s current, no more than fit along the pad', async () => {
+    const { padViasFor, viaCurrentFor } = await import('@4k7/schema');
+    const rules = { viaDrill: 0.3, viaPad: 0.6, clearance: 0.2 };
+    expect(viaCurrentFor(0.3)).toBeCloseTo(0.9, 1);
+    expect(padViasFor({ w: 0.6, h: 0.95 }, { power: true }, rules)).toBe(1); // 0603
+    expect(padViasFor({ w: 0.9, h: 2.7 }, { power: true }, rules)).toBe(2); // 1210
+    expect(padViasFor({ w: 3.4, h: 1 }, { power: true }, rules)).toBe(2); // 1812
+    expect(padViasFor({ w: 1.7, h: 5 }, { power: true }, rules)).toBe(3); // a big electrolytic
+    expect(padViasFor({ w: 1.7, h: 5 }, { power: false }, rules)).toBe(1);
+    expect(padViasFor({ w: 3.4, h: 1 }, { power: true, amps: 3 }, rules)).toBe(4); // 4 fit along 3.4 mm
+    expect(padViasFor({ w: 0.6, h: 0.95 }, { power: true, amps: 3 }, rules)).toBe(1); // one fits
+  });
+
+  it('drops a big supply pad with power-width stubs to a row of vias beside it', () => {
+    const b = routed(bulk());
+    expect(b.stats.unrouted).toBe(0);
+    for (const [ref, num, n] of [['C9', '2', 2], ['C2', '2', 2]] as const) {
+      const { stubs, vias } = padVias(b, ref, num);
+      expect(vias.length, `${ref}.${num}`).toBeGreaterThanOrEqual(n);
+      expect(stubs.every((t) => t.width === b.rules.powerTrack), `${ref}.${num}`).toBe(true);
+    }
+    // the further ones straight out of the pad's side, the vias in a row
+    const { pad, vias } = padVias(b, 'C9', '2');
+    expect(new Set(vias.map((v) => v.y)).size).toBe(1);
+    expect(vias.every((v) => v.y > pad.y + pad.h / 2)).toBe(true);
+    expect(b.diagnostics.filter((d) => d.code === 'DRC.PLANE_VIAS')).toEqual([]);
+  });
+
+  it('takes more vias for the net\'s current, and joins a via placed on purpose beside the pad', () => {
+    const k = bulk([{ op: 'set_net', net: 'GND', max_current: 3 }]);
+    let b = routed(k);
+    expect(padVias(b, 'C9', '2').vias).toHaveLength(4);
+    expect(padVias(b, 'C1', '2').vias.length).toBeGreaterThanOrEqual(2);
+    // one placed by hand right of the pad: one of the four (no fifth)
+    const pad = padVias(b, 'C9', '2').pad;
+    const at = { x_mm: Math.round((pad.x + pad.w / 2 + 0.7) * 10) / 10, y_mm: pad.y };
+    k.transact({ summary: 'via', ops: [{ op: 'add_vias', kind: 'points', net: 'GND', at: [at] }] });
+    b = routed(k);
+    const { vias } = padVias(b, 'C9', '2');
+    expect(vias).toHaveLength(4);
+    expect(vias.some((v) => v.group && Math.hypot(v.x - at.x_mm, v.y - at.y_mm) < 1e-6)).toBe(true);
+  });
+
+  it('DRC.PLANE_VIAS: a big supply pad with fewer vias than it wants, on the copper as it lies', async () => {
+    const { planeViaDrc } = await import('../src/drc.ts');
+    const b = routed(bulk([{ op: 'set_net', net: 'GND', max_current: 3 }]));
+    const net = (id: string) => ({ power: true, amps: b.netNames[id] === 'GND' ? 3 : undefined });
+    expect(planeViaDrc(b, net)).toEqual([]);
+    // all but one of C9.2's vias gone
+    const { vias } = padVias(b, 'C9', '2');
+    const found = planeViaDrc({ ...b, vias: b.vias.filter((v) => !vias.slice(1).includes(v)) }, net);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ code: 'DRC.PLANE_VIAS', severity: 'warning', entities: ['C9'] });
+    expect(found[0]!.message).toContain('C9.2 (GND) reaches the In1.Cu plane through 1 via of its own: 3 A on GND wants 4');
+    // in a pour of its net on its own layer: the pour spreads the current
+    const pad = vias[0]!;
+    expect(planeViaDrc({ ...b, vias: b.vias.filter((v) => !vias.slice(1).includes(v)), zones: [...b.zones, { netId: vias[0]!.netId, layer: 'F.Cu', rects: [pad.x - 3, pad.y - 3, 6, 6] }] }, net)).toEqual([]);
+  });
+});
+
 describe('trackWidthFor', () => {
   it('follows IPC-2221 for 1 oz outer copper at 10 °C rise', async () => {
     const { trackWidthFor } = await import('@4k7/schema');

@@ -219,6 +219,22 @@ Each step is useful alone.
     through-hole for the placer, the 3D view, pick-and-place and the fab hole rules. `get_board`
     `via_groups` lists each group with how many vias it got.
 
+    **Drops sized for the current** (2026-10-17). A drop used to be one signal-width stub to one
+    via per copper group, so a bulk capacitor's ground pad hung off its plane by 0.25 mm and a
+    0.3 mm via. Now `padViasFor` (schema) says how many vias a pad wants: enough for the net's
+    `max_current` (`viaCurrentFor`: the plated barrel as an IPC-2221 inner conductor, about 0.9 A
+    for a 0.3 mm drill; the whole net's current, an upper bound for one pad), and on a supply 2
+    from 2 mm² of pad, 3 from 5 mm²; never more than fit in a row along the pad's long side. The
+    stubs of a supply's drops are power width where the pads take it (signal width when that finds
+    no site, as a power track is necked down). After a plane's first drops, `moreDrops` gives each
+    pad the rest: a straight stub out of a side of the pad (shortest, long side first, from its
+    middle out, so the vias line up beside the pad), else the shortest way within 2 mm; a via of
+    the net that no pad counts yet (one placed with `add_vias points` beside the pad) is joined
+    rather than a new one added. `DRC.PLANE_VIAS` (drc.ts `planeViaDrc`) counts each pad's own
+    vias on the copper as it lies (in the pad, or at the end of a track of its net that starts in
+    it, 3 mm at most) and warns where they fall short; a pad in its net's pour on its own layer is
+    left alone. The current goes into the copper key only where a net has one.
+
 10. **Who placed what, and the handoff** (built 2026-10-15). The workflow the user wants, like the
     schematic's: the agent places everything, the user moves the parts that matter to them roughly,
     the agent takes over again (planes first, then routing). For that the board has to know whose

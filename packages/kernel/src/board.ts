@@ -51,7 +51,7 @@ import {
 } from '@4k7/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
 import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
-import { copperDrc, edgeDrc, splitDrc } from './drc.ts';
+import { copperDrc, edgeDrc, planeViaDrc, splitDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelView } from './panel.ts';
 import { stableJson } from './canonical.ts';
@@ -1055,7 +1055,7 @@ const COPPER_FORMAT = 1;
 export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean; onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
   const b = placeBoard(d, sch);
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
-  const { powerNets, planes, netWidths, key } = routeSetup(d, b);
+  const { powerNets, planes, netWidths, netCurrents, key } = routeSetup(d, b);
   const pads = b.parts.flatMap((p) => p.pads);
   const kept = d.board?.copper?.key === key ? d.board.copper : null;
   const index = new Map(pads.map((p, i) => [p, i]));
@@ -1081,6 +1081,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
         parts: b.parts,
         powerNets,
         netWidths,
+        netCurrents,
         planes: planes.map(({ netId, layer, area, style }) => ({ netId, layer, ...(area ? { area } : {}), ...(style ? { style } : {}) })),
         ...(b.viaGroups.length ? { vias: planVias(d.board?.vias ?? [], b.parts, b.outline.w, b.outline.h, b.rules) } : {}),
         cornerRadius: b.cornerRadius,
@@ -1131,7 +1132,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     ...(copper.stopped ? { stopped: true } : {}),
   };
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id))];
+  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed, (id) => ({ power: powerNets.has(id), amps: d.nets[id]?.attrs.maxCurrent }))];
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
@@ -1178,8 +1179,11 @@ function routeSetup(d: Design, b: BoardView) {
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const planes = b.planes;
   const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
-  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort()]));
-  return { powerNets, planes, netWidths, key };
+  const netCurrents = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.maxCurrent).map((n) => [n.id, n.attrs.maxCurrent!]));
+  // (the currents only where a net has one: the copper a design without them keeps stays its own)
+  const currents = Object.entries(netCurrents).sort();
+  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort(), ...(currents.length ? [currents] : [])]));
+  return { powerNets, planes, netWidths, netCurrents, key };
 }
 
 /** The key copper routed for this design's board now would be kept under (see BoardSettings.copper). */

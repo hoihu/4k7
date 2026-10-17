@@ -33,6 +33,7 @@ import {
   fabPresets,
   fabSummary,
   trackWidthFor,
+  viaCurrentFor,
 } from '@4k7/schema';
 import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
 import { applyOp, describeConstraint, descriptionView } from './apply.ts';
@@ -397,7 +398,10 @@ export class Kernel {
           ...(n.attrs.maxCurrent ? { suggested_mm: trackWidthFor(n.attrs.maxCurrent), for_current_a: n.attrs.maxCurrent } : {}),
           rules: { signal_mm: rules.track, power_mm: rules.powerTrack },
         };
-        return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, track };
+        // the vias each of its pads drops onto its plane with, for its current
+        const perVia = viaCurrentFor(rules.viaDrill);
+        const vias = n.attrs.maxCurrent ? { plane_vias: { per_pad: Math.ceil(n.attrs.maxCurrent / perVia - 1e-6), per_via_a: Math.round(perVia * 10) / 10, note: 'as many as fit along a pad (DRC.PLANE_VIAS where fewer)' } } : {};
+        return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, track, ...vias };
       }
       case 'get_diagnostics':
         return this.analyse(d).diagnostics;
