@@ -224,7 +224,7 @@ export const SetBoardOp = z.object({
   via_drill_mm: z.number().positive().optional().describe('Via drill (default 0.3)'),
   via_pad_mm: z.number().positive().optional().describe('Via pad diameter (default 0.6)'),
   edge_clearance_mm: z.number().positive().optional().describe('Keep copper this far from the board edge (default 0.5)'),
-  via_in_pad: z.boolean().optional().describe('Allow vias inside pads (default false; only when the user asks for it, e.g. for tight BGA fan-out or thermal pads)'),
+  via_in_pad: z.boolean().optional().describe('Let the router put its vias inside pads, anywhere on the board (default false; only when the user asks for it, e.g. for tight BGA fan-out). Thermal vias in one pad need no such switch: add_vias kind pad'),
   corner_radius_mm: z.number().min(0).optional().describe('Rounded board corners: the radius (0 = square corners)'),
 }).describe('Board size, layers and design rules. With a fab profile chosen (set_fab_profile) a rule below the manufacturer\'s limit is refused.');
 
@@ -433,14 +433,14 @@ export const SetPlaneOp = z.object({
   op: z.literal('set_plane'),
   layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Copper layer; inner layers (4-layer boards) become dedicated planes, outer layers get a pour around the tracks'),
   net: netName.nullable().optional().describe('Net to pour on that layer (e.g. "GND", "+3V3"); null removes every plane from the layer'),
-  under: z.array(componentRef).min(1).optional().describe('Inner layers: the plane covers only the area under these parts (their box plus margin_mm; it follows them when they move), e.g. +3V3 under the MCU while +5V fills the rest of the layer. Pads inside the area drop onto it with vias; the net\'s other pads are joined with tracks'),
+  under: z.array(componentRef).min(1).optional().describe('The plane covers only the area under these parts (their box plus margin_mm; it follows them when they move), e.g. +3V3 under the MCU while +5V fills the rest of an inner layer, or GND on F.Cu only round a regulator. Pads inside the area join it (drop onto an inner one with vias); the net\'s other pads are joined with tracks'),
   margin_mm: z.number().min(0).max(20).optional().describe('With under: how far the area reaches past the parts (default 1.5 mm)'),
   rect: z
     .object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() })
     .optional()
-    .describe('Inner layers: the plane covers only this rectangle (top-left corner and size, mm) instead of the whole layer'),
+    .describe('The plane covers only this rectangle (top-left corner and size, mm) instead of the whole layer'),
   auto: z.boolean().optional().describe('true: back to the automatic planes (GND on B.Cu; on 4 layers GND on In1.Cu and the main supply on In2.Cu)'),
-}).describe('A net\'s copper plane on a layer. Without under/rect it fills the layer (replacing the layer\'s full plane; area planes on it stay, and it goes round them). With under or rect it covers only that area of an inner layer (replacing that net\'s area there), a split plane: e.g. In2.Cu +5V everywhere and +3V3 under U1. net null clears the layer.');
+}).describe('A net\'s copper plane on a layer. Without under/rect it fills the layer (replacing the layer\'s full plane; area planes on it stay, and it goes round them). With under or rect it covers only that area (replacing that net\'s area there): on an inner layer a split plane (In2.Cu +5V everywhere and +3V3 under U1), on an outer layer a local pour (F.Cu GND only round a switching regulator, as its layout guidelines ask; it replaces the net\'s pour over the whole layer). net null clears the layer.');
 
 const planeMm = (what: string) => z.number().min(0).max(10).nullable().optional().describe(`${what} (mm); null: back to the default`);
 export const SetPlaneStyleOp = z.object({
@@ -468,6 +468,34 @@ export const AddHoleOp = z.object({
 export const RemoveHoleOp = z.object({
   op: z.literal('remove_hole'),
   id: z.string().describe('Hole id ("MH1") or "all"'),
+});
+
+const viaArea = {
+  under: z.array(componentRef).min(1).optional().describe('grid, fence: the area round these parts (their box plus margin_mm; it follows them)'),
+  margin_mm: z.number().min(0).max(20).optional().describe('With under: how far the area reaches past the parts (default 1.5 mm)'),
+  rect: z
+    .object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() })
+    .optional()
+    .describe('grid, fence: the area as a rectangle (top-left corner and size, mm)'),
+};
+export const AddViasOp = z.object({
+  op: z.literal('add_vias'),
+  kind: z
+    .enum(['pad', 'points', 'grid', 'fence'])
+    .describe('pad: thermal vias, a grid filling one exposed or thermal pad (not a passive\'s pad: they wick its solder), allowed in the pad and moving with the part; points: vias at the given spots; grid: stitching vias over an area (e.g. a top pour to an inner plane, many vias sharing the current); fence: a row of vias round the edge of an area (GND round an antenna or an RF part)'),
+  net: netName.optional().describe('The vias\' net (pad: default the pad\'s net)'),
+  ref: componentRef.optional().describe('pad: the component, e.g. "U1"'),
+  pad: z.string().min(1).optional().describe('pad: the pad (pin) number, e.g. "9" or "EP"'),
+  at: z.array(z.object({ x_mm: z.number(), y_mm: z.number() })).min(1).optional().describe('points: via centres (mm from the board\'s top-left corner)'),
+  ...viaArea,
+  pitch_mm: z.number().positive().optional().describe('Centre to centre (default: pad 1.0, grid 3.0, fence 2.0 mm); the datasheet\'s layout example gives it for thermal vias, a fence wants under a tenth of the wavelength'),
+  drill_mm: z.number().positive().optional().describe('Drill (default the board\'s via drill)'),
+  size_mm: z.number().positive().optional().describe('Via pad diameter (default the board\'s via pad)'),
+}).describe('Place vias on purpose, of one net: thermal vias in a pad, stitching over an area, a fence round one, or at given spots. pad and points vias are copper from the start (the routing goes round them); grid and fence vias are laid by the route step where a via fits (no other net in the way, clear of pads) and joins the net\'s planes or pours on two layers or more. get_board lists each group (via_groups) with how many it got. Replaces nothing: remove_vias takes a group away.');
+
+export const RemoveViasOp = z.object({
+  op: z.literal('remove_vias'),
+  id: z.string().describe('Via group id ("V1", from get_board via_groups) or "all"'),
 });
 
 export const DescribeOp = z.object({
@@ -522,6 +550,8 @@ export const EditOp = z.discriminatedUnion('op', [
   SetPlaneStyleOp,
   AddHoleOp,
   RemoveHoleOp,
+  AddViasOp,
+  RemoveViasOp,
   AddCutoutOp,
   RemoveCutoutOp,
   AddGraphicOp,

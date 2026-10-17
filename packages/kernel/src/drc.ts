@@ -59,6 +59,7 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
   const viaIssues: BoardDiagnostic[] = [];
   if (!b.rules.viaInPad) {
     for (const v of b.vias) {
+      if (v.inPad) continue; // thermal vias, placed in their pad on purpose (add_vias)
       for (const part of b.parts) {
         const inPad = part.pads.some((p) => {
           const dx = Math.max(Math.abs(v.x - p.x) - p.w / 2, 0);

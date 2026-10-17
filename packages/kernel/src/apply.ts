@@ -22,6 +22,8 @@ import {
   type CopperLayer,
   type HoleCorner,
   type MountingHole,
+  type ViaGroup,
+  VIA_PITCH,
   type Cutout,
   type SilkGraphic,
   type FabProfile,
@@ -156,6 +158,18 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent'): 
       return setPlaneStyle(d, op);
     case 'add_hole':
       return addHole(d, op);
+    case 'add_vias':
+      return addVias(d, op);
+    case 'remove_vias': {
+      const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+      const before = b.vias ?? [];
+      const keep = op.id.toLowerCase() === 'all' ? [] : before.filter((g) => g.id.toUpperCase() !== op.id.toUpperCase());
+      if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: `No via group "${op.id}".`, candidates: before.map((g) => g.id) });
+      if (keep.length) b.vias = keep;
+      else delete b.vias;
+      d.board = b;
+      return { op: 'remove_vias', effect: `removed ${before.length - keep.length} via group(s)`, ids: ['board'] };
+    }
     case 'add_cutout':
       return addCutout(d, op);
     case 'set_outline':
@@ -377,20 +391,23 @@ function setPlane(d: Design, op: Extract<EditOp, { op: 'set_plane' }>): OpResult
   const net = findNet(d, op.net);
   if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${op.net}".`, candidates: Object.values(d.nets).map((n) => n.name) });
   if (op.under || op.rect) {
-    if (outer) reject({ code: 'BOARD_INVALID', message: `A plane under part of the board works on inner layers (In1.Cu, In2.Cu of a 4-layer board); ${layer} gets a pour over the whole layer.` });
     if (op.under && op.rect) reject({ code: 'BOARD_INVALID', message: 'Give the area as under (parts) or rect, not both.' });
-    if (planes.some((p) => p.layer === layer && p.netId === net!.id && !p.area)) {
+    // an outer layer: the local pour replaces the net's pour over the whole layer
+    const fills = planes.some((p) => p.layer === layer && p.netId === net!.id && !p.area);
+    if (fills && !outer) {
       reject({ code: 'BOARD_INVALID', message: `${net!.name} already fills ${layer}; give the layer's full plane to another net first (set_plane ${layer} net …), then the area.` });
     }
     const comps = (op.under ?? []).map((r) => resolveComponent(d, r));
     const area: PlaneArea = op.rect
       ? { rect: [op.rect.x_mm, op.rect.y_mm, op.rect.x_mm + op.rect.width_mm, op.rect.y_mm + op.rect.height_mm] }
       : { under: comps.map((c) => c.id), ...(op.margin_mm !== undefined ? { margin: op.margin_mm } : {}) };
-    const was = planes.find((p) => p.layer === layer && p.netId === net!.id && p.area);
+    // (its style stays: the area's, else that of the pour it replaces)
+    const was = planes.find((p) => p.layer === layer && p.netId === net!.id && p.area) ?? planes.find((p) => p.layer === layer && p.netId === net!.id);
     b.planes = [...planes.filter((p) => !(p.layer === layer && p.netId === net!.id)), { netId: net!.id, layer, area, ...(was?.style ? { style: was.style } : {}) }];
     d.board = b;
     const where = op.rect ? `${op.rect.width_mm} × ${op.rect.height_mm} mm at (${op.rect.x_mm}, ${op.rect.y_mm})` : `under ${comps.map((c) => c.refdes).join(', ')}`;
-    return { op: 'set_plane', effect: `${net!.name} plane on ${layer}, ${where}; the layer's full plane goes round it`, ids: ['board'] };
+    const rest = outer ? (fills ? `; it no longer pours the whole layer` : '') + (b.planes.some((p) => p.layer === layer && !p.area) ? `; the layer's pour goes round it` : '') : `; the layer's full plane goes round it`;
+    return { op: 'set_plane', effect: `${net!.name} ${outer ? 'pour' : 'plane'} on ${layer}, ${where}${rest}`, ids: ['board'] };
   }
   // the full plane of the layer; area planes of other nets stay (it goes round them)
   const was = planes.find((p) => p.layer === layer && p.netId === net!.id && !p.area);
@@ -700,6 +717,71 @@ function addHole(d: Design, op: Extract<EditOp, { op: 'add_hole' }>): OpResult {
   b.holes = holes;
   d.board = b;
   return { op: 'add_hole', effect: `mounting hole${added.length > 1 ? 's' : ''} Ø${op.diameter_mm} mm${op.plated ? ' plated' : ''}: ${added.join(', ')}`, ids: ['board'] };
+}
+
+/** Vias placed on purpose: thermal vias in a pad, at given spots, stitching over an area, a fence round one. */
+function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const drill = op.drill_mm ?? b.rules.viaDrill;
+  const size = op.size_mm ?? Math.max(b.rules.viaPad, drill + 0.2);
+  if (size < drill + 0.1) reject({ code: 'BOARD_INVALID', message: `A ${size} mm via pad round a ${drill} mm drill leaves no copper ring; give size_mm at least ${drill + 0.1} mm.` });
+  const pitch = op.pitch_mm ?? VIA_PITCH[op.kind];
+  if (op.kind !== 'points' && pitch < size + 0.1) reject({ code: 'BOARD_INVALID', message: `Vias ${size} mm wide ${pitch} mm apart would touch; give pitch_mm at least ${r3(size + 0.1)} mm.` });
+  const netOf = (name: string) => {
+    const net = findNet(d, name);
+    if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${name}".`, candidates: Object.values(d.nets).map((n) => n.name) });
+    return net!;
+  };
+  const groups = [...(b.vias ?? [])];
+  const nextId = () => {
+    for (let i = 1; ; i++) if (!groups.some((g) => g.id === `V${i}`)) return `V${i}`;
+  };
+  const sizes = { ...(op.drill_mm !== undefined ? { drill } : {}), ...(op.size_mm !== undefined ? { size } : {}) };
+  let group: ViaGroup;
+  let what: string;
+  if (op.kind === 'pad') {
+    if (!op.ref || !op.pad) reject({ code: 'INVALID_OP', message: 'add_vias kind "pad" needs ref (the component) and pad (its pad number, e.g. "9" or "EP").' });
+    const comp = resolveComponent(d, op.ref!);
+    const card = cardOf(d, comp.part);
+    const pkg = card ? packageOf(card, comp.params, d.packageDefaults) : null;
+    const fp = card && pkg ? footprintFor(pkg, card.pins.map((p) => p.number)) : null;
+    if (!fp?.ok) reject({ code: 'BOARD_INVALID', message: `${comp.refdes} has no footprint yet (set_footprint first).` });
+    const pad = fp!.ok ? fp!.footprint.pads.find((p) => p.number.toUpperCase() === op.pad!.toUpperCase()) : undefined;
+    if (!pad) reject({ code: 'REF_UNKNOWN', message: `${comp.refdes} has no pad "${op.pad}".`, candidates: fp!.ok ? [...new Set(fp!.footprint.pads.map((p) => p.number))] : [] });
+    const netId = comp.pins[pad!.number];
+    if (!netId) reject({ code: 'BOARD_INVALID', message: `${comp.refdes}.${pad!.number} is not connected; connect it (e.g. to GND) before giving it vias.` });
+    if (op.net && netOf(op.net).id !== netId) reject({ code: 'BOARD_INVALID', message: `${comp.refdes}.${pad!.number} is on ${d.nets[netId!]!.name}, not ${op.net}: vias in it are on its net.` });
+    if (Math.min(pad!.w, pad!.h) < size) reject({ code: 'BOARD_INVALID', message: `${comp.refdes}.${pad!.number} (${pad!.w} × ${pad!.h} mm) is smaller than a ${size} mm via.` });
+    // one group per pad: giving it again replaces it
+    const was = groups.findIndex((g) => g.kind === 'pad' && g.pad?.componentId === comp.id && g.pad.number === pad!.number);
+    group = { id: was >= 0 ? groups[was]!.id : nextId(), netId: netId!, kind: 'pad', pad: { componentId: comp.id, number: pad!.number }, pitch, ...sizes };
+    if (was >= 0) groups.splice(was, 1);
+    const cols = Math.floor((pad!.w - size) / pitch + 1e-6) + 1;
+    const rows = Math.floor((pad!.h - size) / pitch + 1e-6) + 1;
+    what = `${cols} × ${rows} thermal vias in ${comp.refdes}.${pad!.number} (${d.nets[netId!]!.name}), ${pitch} mm apart`;
+  } else if (op.kind === 'points') {
+    if (!op.at) reject({ code: 'INVALID_OP', message: 'add_vias kind "points" needs at (the via centres, mm).' });
+    if (!op.net) reject({ code: 'INVALID_OP', message: 'add_vias needs the vias\' net (net: "GND").' });
+    const net = netOf(op.net!);
+    group = { id: nextId(), netId: net.id, kind: 'points', points: op.at!.map((p) => [r3(p.x_mm), r3(p.y_mm)]), ...sizes };
+    what = `${op.at!.length} ${net.name} via${op.at!.length > 1 ? 's' : ''} at ${op.at!.map((p) => `(${p.x_mm}, ${p.y_mm})`).join(', ')}`;
+  } else {
+    if (!op.net) reject({ code: 'INVALID_OP', message: 'add_vias needs the vias\' net (net: "GND").' });
+    if (!op.under === !op.rect) reject({ code: 'INVALID_OP', message: `add_vias kind "${op.kind}" needs its area: under (parts) or rect, one of them.` });
+    const net = netOf(op.net!);
+    const comps = (op.under ?? []).map((r) => resolveComponent(d, r));
+    const area: PlaneArea = op.rect
+      ? { rect: [op.rect.x_mm, op.rect.y_mm, op.rect.x_mm + op.rect.width_mm, op.rect.y_mm + op.rect.height_mm] }
+      : { under: comps.map((c) => c.id), ...(op.margin_mm !== undefined ? { margin: op.margin_mm } : {}) };
+    group = { id: nextId(), netId: net.id, kind: op.kind, area, pitch, ...sizes };
+    const where = op.rect ? `${op.rect.width_mm} × ${op.rect.height_mm} mm at (${op.rect.x_mm}, ${op.rect.y_mm})` : comps.map((c) => c.refdes).join(', ');
+    what = `${net.name} ${op.kind === 'grid' ? 'stitching vias over' : 'via fence round'} ${where}, ${pitch} mm apart (laid by the route step where they fit)`;
+  }
+  groups.push(group);
+  b.vias = groups;
+  d.board = b;
+  return { op: 'add_vias', effect: `${group.id}: ${what}`, ids: ['board'] };
 }
 
 /** The board as placed now (for ops that record where parts are). */

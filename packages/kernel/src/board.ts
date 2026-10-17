@@ -36,6 +36,10 @@ import {
   type StoredCopper,
   type UnroutedConnection,
   type BoardCutout,
+  type BoardRules,
+  type Via,
+  type ViaGroup,
+  VIA_PITCH,
   cutoutBounds,
   cutoutDistance,
   cutoutPolygon,
@@ -972,8 +976,9 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board. Give it one from its datasheet drawing with set_footprint.`, entities: [ref] });
   }
   const planes = placePlanes(settingsPlanes(d, layers.length as 2 | 4), parts, w, h);
+  const viaPlan = planVias(settings.vias ?? [], parts, w, h, rules);
   // (keys sorted: a design read back from its file has them in another order than one just edited)
-  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
+  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   const view: BoardView = {
     outline: { w, h },
     layers,
@@ -981,9 +986,10 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     ...(settings.fab ? { fab: settings.fab } : {}),
     parts,
     tracks: [],
-    vias: [],
+    vias: viaPlan.fixed,
     zones: [],
     planes,
+    viaGroups: viaPlan.groups,
     ratsnest: ratsnest(parts),
     diagnostics,
     stats: { nets: 0, routed: 0, unrouted: 0, trackLength: 0, vias: 0 },
@@ -1076,6 +1082,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
         powerNets,
         netWidths,
         planes: planes.map(({ netId, layer, area, style }) => ({ netId, layer, ...(area ? { area } : {}), ...(style ? { style } : {}) })),
+        ...(b.viaGroups.length ? { vias: planVias(d.board?.vias ?? [], b.parts, b.outline.w, b.outline.h, b.rules) } : {}),
         cornerRadius: b.cornerRadius,
         ...(b.shape ? { shape: b.shape } : {}),
         cutouts: b.cutouts,
@@ -1672,6 +1679,89 @@ function settingsPlanes(d: Design, layers: 2 | 4): { netId: string; layer: Coppe
  * courtyards' box plus the margin, so it follows them), within the board. An area under parts
  * that are all gone, or one off the board, is left out.
  */
+/** The vias placed on purpose, where they go now: copper from the start (fixed), or spots the router fills where a via fits. */
+export interface ViaPlan {
+  fixed: Via[];
+  fill: Via[];
+  groups: BoardView['viaGroups'];
+}
+
+/** Where each via group's vias go on this placement (a pad group follows its part). */
+export function planVias(groups: ViaGroup[], parts: BoardPart[], w: number, h: number, rules: BoardRules): ViaPlan {
+  const out: ViaPlan = { fixed: [], fill: [], groups: [] };
+  for (const g of groups) {
+    const via = (x: number, y: number, extra: Partial<Via> = {}): Via => ({ netId: g.netId, x: r3(x), y: r3(y), drill: g.drill ?? rules.viaDrill, pad: g.size ?? Math.max(rules.viaPad, (g.drill ?? rules.viaDrill) + 0.2), group: g.id, ...extra });
+    const size = g.size ?? Math.max(rules.viaPad, (g.drill ?? rules.viaDrill) + 0.2);
+    const pitch = g.pitch ?? VIA_PITCH[g.kind];
+    // centres spread evenly across a span, as many as fit `pitch` apart
+    const spread = (a: number, b: number) => {
+      const n = Math.max(1, Math.floor((b - a) / pitch + 1e-6) + 1);
+      const s0 = a + (b - a - (n - 1) * pitch) / 2;
+      return Array.from({ length: n }, (_, i) => s0 + i * pitch);
+    };
+    const entry = (wanted: number, note?: string) => out.groups.push({ id: g.id, netId: g.netId, kind: g.kind, wanted, ...(note ? { note } : {}) });
+    if (g.kind === 'pad') {
+      const part = parts.find((p) => p.componentId === g.pad?.componentId);
+      const pad = part?.pads.filter((p) => p.number === g.pad?.number).sort((a, b) => b.w * b.h - a.w * a.h)[0];
+      if (!part || !pad) {
+        entry(0, part ? `${part.refdes} has no pad ${g.pad?.number} any more` : 'its part is not on the board');
+        continue;
+      }
+      if (pad.netId !== g.netId) {
+        entry(0, `${part.refdes}.${pad.number} is on another net now: add the vias again`);
+        continue;
+      }
+      const xs = spread(pad.x - pad.w / 2 + size / 2, pad.x + pad.w / 2 - size / 2);
+      const ys = spread(pad.y - pad.h / 2 + size / 2, pad.y + pad.h / 2 - size / 2);
+      for (const y of ys) for (const x of xs) out.fixed.push(via(x, y, { inPad: true }));
+      entry(xs.length * ys.length);
+    } else if (g.kind === 'points') {
+      for (const [x, y] of g.points ?? []) out.fixed.push(via(x, y));
+      entry(g.points?.length ?? 0);
+    } else {
+      const box = areaBox(g.area ?? {}, parts, w, h);
+      if (!box) {
+        entry(0, 'its parts are not on the board');
+        continue;
+      }
+      const [x0, y0, x1, y1] = box;
+      const spots: [number, number][] = [];
+      // a grid stays inside the area (a via on its edge would stick out of a pour there); a fence
+      // runs along the edge, in the copper round the area
+      const inset = size / 2 + rules.clearance;
+      if (g.kind === 'grid') for (const y of spread(y0 + inset, y1 - inset)) for (const x of spread(x0 + inset, x1 - inset)) spots.push([x, y]);
+      else {
+        // round the edge, corners once, no gap wider than the pitch
+        const side = (ax: number, ay: number, bx: number, by: number) => {
+          const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / pitch - 1e-6));
+          for (let i = 0; i < n; i++) spots.push([ax + ((bx - ax) * i) / n, ay + ((by - ay) * i) / n]);
+        };
+        side(x0, y0, x1, y0);
+        side(x1, y0, x1, y1);
+        side(x1, y1, x0, y1);
+        side(x0, y1, x0, y0);
+      }
+      for (const [x, y] of spots) out.fill.push(via(x, y));
+      entry(spots.length);
+    }
+  }
+  return out;
+}
+
+/** An area (under parts, with its margin, or a rectangle) on this placement, clamped to the board; null: nothing left of it. */
+function areaBox(area: PlaneArea, parts: BoardPart[], w: number, h: number): [number, number, number, number] | null {
+  let box: [number, number, number, number];
+  if (area.rect) box = area.rect;
+  else {
+    const ps = parts.filter((p) => area.under?.includes(p.componentId));
+    if (!ps.length) return null;
+    const m = area.margin ?? PLANE_AREA_MARGIN;
+    box = [Math.min(...ps.map((p) => p.courtyard.x)) - m, Math.min(...ps.map((p) => p.courtyard.y)) - m, Math.max(...ps.map((p) => p.courtyard.x + p.courtyard.w)) + m, Math.max(...ps.map((p) => p.courtyard.y + p.courtyard.h)) + m];
+  }
+  const r = [Math.max(0, box[0]), Math.max(0, box[1]), Math.min(w, box[2]), Math.min(h, box[3])].map(r3) as [number, number, number, number];
+  return r[2] - r[0] < 1 || r[3] - r[1] < 1 ? null : r;
+}
+
 function placePlanes(planes: ReturnType<typeof settingsPlanes>, parts: BoardPart[], w: number, h: number): BoardView['planes'] {
   const out: BoardView['planes'] = [];
   for (const pl of planes) {
@@ -1680,18 +1770,9 @@ function placePlanes(planes: ReturnType<typeof settingsPlanes>, parts: BoardPart
       out.push(plane);
       continue;
     }
-    let box: [number, number, number, number];
-    let under: string[] | undefined;
-    if (area.rect) box = area.rect;
-    else {
-      const ps = parts.filter((p) => area.under?.includes(p.componentId));
-      if (!ps.length) continue;
-      const m = area.margin ?? PLANE_AREA_MARGIN;
-      box = [Math.min(...ps.map((p) => p.courtyard.x)) - m, Math.min(...ps.map((p) => p.courtyard.y)) - m, Math.max(...ps.map((p) => p.courtyard.x + p.courtyard.w)) + m, Math.max(...ps.map((p) => p.courtyard.y + p.courtyard.h)) + m];
-      under = ps.map((p) => p.refdes);
-    }
-    const r = [Math.max(0, box[0]), Math.max(0, box[1]), Math.min(w, box[2]), Math.min(h, box[3])].map(r3) as [number, number, number, number];
-    if (r[2] - r[0] < 1 || r[3] - r[1] < 1) continue;
+    const r = areaBox(area, parts, w, h);
+    if (!r) continue;
+    const under = area.rect ? undefined : parts.filter((p) => area.under?.includes(p.componentId)).map((p) => p.refdes);
     out.push({ ...plane, area: r, ...(under ? { under } : {}) });
   }
   return out;

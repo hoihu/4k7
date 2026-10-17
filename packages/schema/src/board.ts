@@ -42,6 +42,8 @@ export interface BoardSettings {
   planes?: { netId: string; layer: CopperLayer; area?: PlaneArea; style?: PlaneStyle }[];
   /** Mounting holes (board features, not parts). */
   holes?: MountingHole[];
+  /** Vias placed on purpose (add_vias): thermal vias in a pad, stitching over an area, a fence round one, given spots. */
+  vias?: ViaGroup[];
   /** Rounded board corners: the radius (mm); absent or 0 = square corners. */
   cornerRadius?: number;
   /**
@@ -455,6 +457,34 @@ export interface MountingHole {
   inset?: number;
 }
 
+/**
+ * Vias the agent places on purpose, of one net (add_vias). `pad`: a grid filling a pad (thermal
+ * vias under an exposed pad; they move with the part and may sit in the pad). `points`: at those
+ * spots. Both are copper before the routing. `grid`: stitching, a grid over an area; `fence`: a row
+ * round an area's edge (RF shielding): laid after the routing wherever a via fits and joins the
+ * net's planes on two layers or more.
+ */
+export interface ViaGroup {
+  /** "V1", "V2" … */
+  id: string;
+  netId: string;
+  kind: ViaKind;
+  /** pad: the component and pad number. */
+  pad?: { componentId: string; number: string };
+  /** grid, fence: the area, as for an area plane (under parts, or a rectangle). */
+  area?: PlaneArea;
+  /** points: centres, mm. */
+  points?: [number, number][];
+  /** Centre to centre, mm (pad, grid, fence). */
+  pitch?: number;
+  /** Drill and pad diameter, mm; default: the board's via. */
+  drill?: number;
+  size?: number;
+}
+export type ViaKind = 'pad' | 'points' | 'grid' | 'fence';
+/** Default pitch per kind, mm. */
+export const VIA_PITCH: Record<ViaKind, number> = { pad: 1, points: 0, grid: 3, fence: 2 };
+
 export const DEFAULT_RULES: BoardRules = { clearance: 0.2, track: 0.25, powerTrack: 0.5, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 };
 export const DEFAULT_BOARD: BoardSettings = { layers: 2, rules: DEFAULT_RULES };
 
@@ -536,6 +566,10 @@ export interface Via {
   y: number;
   drill: number;
   pad: number;
+  /** Placed on purpose (add_vias): the group's id. Joined to its planes solid, without reliefs. */
+  group?: string;
+  /** A thermal via in a pad (add_vias pad): allowed there whatever via_in_pad says. */
+  inPad?: boolean;
 }
 
 /**
@@ -605,6 +639,8 @@ export interface BoardView {
   zones: Zone[];
   /** Planes in effect (net, layer; automatic or set with set_plane), an area plane with its rectangle (x0, y0, x1, y1, mm) and the parts it lies under. */
   planes: { netId: string; layer: CopperLayer; auto: boolean; area?: [number, number, number, number]; under?: string[]; style?: PlaneStyle }[];
+  /** The vias placed on purpose (add_vias), per group: how many it asks for (grid, fence: the spots it may use). */
+  viaGroups: { id: string; netId: string; kind: ViaKind; wanted: number; note?: string }[];
   /** Connections not (yet) made by copper. */
   ratsnest: RatsLine[];
   diagnostics: BoardDiagnostic[];
@@ -752,6 +788,15 @@ export function boardSummary(b: BoardView, routed = true) {
           : 'not routed yet (the route op, once the placement is final)',
     placement_measures: { ratsnest_mm: b.measures.ratsnestMm, ratsnest_crossings: b.measures.crossings },
     planes: b.planes.map((p) => ({ net: b.netNames[p.netId] ?? p.netId, layer: p.layer, dedicated: p.layer !== 'F.Cu' && p.layer !== 'B.Cu', automatic: p.auto, ...(p.area ? { area_mm: p.area, ...(p.under ? { under: p.under } : {}) } : {}), ...(p.style ? { style_mm: p.style } : {}) })),
+    ...(b.viaGroups.length
+      ? {
+          via_groups: b.viaGroups.map((g) => {
+            const placed = b.vias.filter((v) => v.group === g.id).length;
+            const later = (g.kind === 'grid' || g.kind === 'fence') && b.routing !== 'done';
+            return { id: g.id, net: b.netNames[g.netId] ?? g.netId, kind: g.kind, vias: later ? `up to ${g.wanted}, laid by the route step where they fit` : g.kind === 'grid' || g.kind === 'fence' ? `${placed} of ${g.wanted} spots (the others are blocked or miss the net's planes)` : placed, ...(g.note ? { note: g.note } : {}) };
+          }),
+        }
+      : {}),
     mounting_holes: b.parts.filter((p) => p.componentId.startsWith('hole:')).map((p) => ({ id: p.refdes, x: p.x, y: p.y, diameter: p.pads[0]?.drill, plated: !p.pads[0]?.npth })),
     corner_radius_mm: b.cornerRadius,
     cutouts: b.cutouts.map((c) => ({ id: c.id, shape: c.shape, x: c.x, y: c.y, ...(c.shape === 'circle' ? { diameter: c.w } : { w: c.w, h: c.h }), ...(c.r ? { corner_radius: c.r } : {}), ...(c.angle ? { angle: c.angle } : {}) })),

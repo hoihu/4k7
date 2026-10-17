@@ -62,6 +62,12 @@ export interface RouteInput {
    * plane goes round it: the net's pads inside the area drop onto it, the others get tracks.
    */
   planes?: Plane[];
+  /**
+   * Vias placed on purpose (add_vias): `fixed` are copper from the start (thermal vias in a pad,
+   * vias at given spots), `fill` are spots for stitching vias, laid after the routing where a via
+   * fits and joins its net's planes on two layers or more.
+   */
+  vias?: { fixed: Via[]; fill: Via[] };
   /** Stop routing after this many milliseconds; what is left is reported unrouted. Default 90 s. */
   budgetMs?: number;
   /** Called while routing: the copper laid so far in the current pass, a few times a second. */
@@ -328,14 +334,16 @@ function routeOnce(
   const viaAt = new Int32Array(W * H);
   const viaNear = new Uint8Array(W * H);
   const VIA_SPACING = rules.viaPad + rules.clearance;
-  const stampVia = (net: number, x: number, y: number) => {
-    for (let l = 0; l < L; l++) stamp(l, net, x, y, x, y, rules.viaPad / 2, (px, py) => Math.hypot(px - x, py - y));
-    const ci = Math.round(x / G);
-    const cj = Math.round(y / G);
+  /** A via `size` wide (default the board's): copper on every layer, and no other via too close. */
+  const stampVia = (net: number, x: number, y: number, size = rules.viaPad) => {
+    for (let l = 0; l < L; l++) stamp(l, net, x, y, x, y, size / 2, (px, py) => Math.hypot(px - x, py - y));
+    const ci = Math.min(W - 1, Math.max(0, Math.round(x / G)));
+    const cj = Math.min(H - 1, Math.max(0, Math.round(y / G)));
     viaAt[cj * W + ci] = net;
-    const r = Math.ceil(VIA_SPACING / G);
+    const spacing = (size + rules.viaPad) / 2 + rules.clearance;
+    const r = Math.ceil(spacing / G);
     for (let j = Math.max(0, cj - r); j <= Math.min(H - 1, cj + r); j++) {
-      for (let i = Math.max(0, ci - r); i <= Math.min(W - 1, ci + r); i++) if (Math.hypot((i - ci) * G, (j - cj) * G) < VIA_SPACING - 1e-6) viaNear[j * W + i] = 1;
+      for (let i = Math.max(0, ci - r); i <= Math.min(W - 1, ci + r); i++) if (Math.hypot((i - ci) * G, (j - cj) * G) < spacing - 1e-6) viaNear[j * W + i] = 1;
     }
   };
   /** Record a via (once per place and net). */
@@ -375,6 +383,8 @@ function routeOnce(
     }
   }
   pads.forEach((p, i) => stampPad(p, padNet[i]!));
+  // the vias placed on purpose that are there from the start (see RouteInput.vias)
+  for (const v of input.vias?.fixed ?? []) stampVia(numOf(v.netId), v.x, v.y, v.pad);
   // dedicated plane layers carry no tracks (vias still pass through, with clearance)
   for (const pl of input.planes ?? []) {
     const l = layerIdx.get(pl.layer);
@@ -625,6 +635,22 @@ function routeOnce(
   const tracks: Track[] = [];
   const vias: Via[] = [];
   const failed: Conn[] = [];
+  /*
+   * The fixed vias placed on purpose belong to the pad they lie in (thermal vias: the exposed pad
+   * reaches every layer through them, and tracks may start there); such a pad and its vias are
+   * joined to the planes solid, without reliefs (they are there to carry heat or current).
+   */
+  const solidPads = new Set<number>();
+  for (const v of input.vias?.fixed ?? []) {
+    vias.push(v);
+    const net = numOf(v.netId);
+    const c = Math.min(W - 1, Math.max(0, Math.round(v.x / G))) + Math.min(H - 1, Math.max(0, Math.round(v.y / G))) * W;
+    pads.forEach((p, idx) => {
+      if (padNet[idx] !== net || padDist(p)(v.x, v.y) > 1e-6) return;
+      for (let l = 0; l < L; l++) groupCells.get(find(idx))!.push(l * N + c);
+      if (v.inPad) solidPads.add(idx);
+    });
+  }
 
   // where searches stop: the deadline (with a pour, the signals stop a little earlier)
   let until = deadline;
@@ -1596,6 +1622,18 @@ function routeOnce(
   };
   /** The gap round an area plane, to the plane it lies in. */
   const areaGap = (q: Plane) => Math.max(rules.clearance, q.style?.gap ?? 0);
+  /**
+   * Whether `pl` goes round the area plane `q` on its layer: a full plane goes round every area;
+   * of two areas the smaller lies on top (a +5V patch inside a local GND pour), the later one
+   * when they are as big.
+   */
+  const areaSize = (a: [number, number, number, number]) => (a[2] - a[0]) * (a[3] - a[1]);
+  const goesRound = (pl: Plane, q: Plane) => {
+    if (q === pl || q.layer !== pl.layer || !q.area) return false;
+    if (!pl.area) return true;
+    const d = areaSize(q.area) - areaSize(pl.area);
+    return Math.abs(d) > 1e-6 ? d < 0 : planes.indexOf(q) > planes.indexOf(pl);
+  };
   const region = (pl: Plane) => {
     const l = layerIdx.get(pl.layer)!;
     const pnet = numOf(pl.netId);
@@ -1618,6 +1656,7 @@ function routeOnce(
     // split planes: an area plane only inside its rectangle; the layer's other planes round each
     // area on it, with the clearance
     for (const q of planes) {
+      if (q !== pl && !goesRound(pl, q)) continue;
       if (q.layer !== pl.layer || !q.area) continue;
       const [a0, b0, a1, b1] = q.area;
       const grow = q === pl ? -margin : areaGap(q) + margin;
@@ -1669,9 +1708,9 @@ function routeOnce(
     };
     // (joined solid: no reliefs)
     if (look.thermal) {
-      for (const v of vias) if (v.netId === pl.netId) relief(v.x, v.y, v.pad / 2, v.pad / 2, (x, y) => Math.hypot(x - v.x, y - v.y) - v.pad / 2);
+      for (const v of vias) if (v.netId === pl.netId && !v.group) relief(v.x, v.y, v.pad / 2, v.pad / 2, (x, y) => Math.hypot(x - v.x, y - v.y) - v.pad / 2);
       pads.forEach((p, idx) => {
-        if (padNet[idx] !== pnet || !(p.drill || p.layers.includes(pl.layer))) return;
+        if (padNet[idx] !== pnet || solidPads.has(idx) || !(p.drill || p.layers.includes(pl.layer))) return;
         relief(p.x, p.y, p.w / 2, p.h / 2, padDist(p));
       });
     }
@@ -1725,7 +1764,7 @@ function routeOnce(
     const cuts: ZoneShape['cuts'] = [];
     // split planes: the layer's other planes go round each area on it, with its gap
     for (const q of planes) {
-      if (q === pl || q.layer !== pl.layer || !q.area) continue;
+      if (!goesRound(pl, q) || !q.area) continue;
       const g = areaGap(q);
       cuts.push({ k: 'rect', x: r3(q.area[0] - g), y: r3(q.area[1] - g), w: r3(q.area[2] - q.area[0] + 2 * g), h: r3(q.area[3] - q.area[1] + 2 * g) });
     }
@@ -1755,12 +1794,12 @@ function routeOnce(
       }
     };
     for (const v of vias) {
-      if (v.netId !== pl.netId || !look.thermal) continue;
+      if (v.netId !== pl.netId || !look.thermal || v.group) continue;
       cuts.push({ k: 'circle', x: v.x, y: v.y, d: r3(v.pad + 2 * gap) });
       spokesOf(v.x, v.y, v.pad / 2, v.pad / 2);
     }
     pads.forEach((p, idx) => {
-      if (padNet[idx] !== rg.pnet || !(p.drill || p.layers.includes(pl.layer)) || !look.thermal) return;
+      if (padNet[idx] !== rg.pnet || !(p.drill || p.layers.includes(pl.layer)) || !look.thermal || solidPads.has(idx)) return;
       if (p.shape === 'round') cuts.push({ k: 'circle', x: p.x, y: p.y, d: r3(Math.min(p.w, p.h) + 2 * gap) });
       else cuts.push({ k: 'rect', x: r3(p.x - p.w / 2 - gap), y: r3(p.y - p.h / 2 - gap), w: r3(p.w + 2 * gap), h: r3(p.h + 2 * gap) });
       spokesOf(p.x, p.y, p.shape === 'round' ? Math.min(p.w, p.h) / 2 : p.w / 2, p.shape === 'round' ? Math.min(p.w, p.h) / 2 : p.h / 2);
@@ -1951,8 +1990,9 @@ function routeOnce(
    * sites are reserved now (see reserveDrops).
    */
   dropOnto(planes.filter((pl) => !OUTER.has(pl.layer)));
-  // pours of nets without an inner plane (GND on B.Cu of a 2-layer board)
-  const pours = planes.filter((pl) => OUTER.has(pl.layer) && !planes.some((q) => q.netId === pl.netId && !OUTER.has(q.layer)));
+  // pours of nets without an inner plane (GND on B.Cu of a 2-layer board); a local pour (an area
+  // on an outer layer) only joins what reaches it, as an area plane does
+  const pours = planes.filter((pl) => OUTER.has(pl.layer) && !pl.area && !planes.some((q) => q.netId === pl.netId && !OUTER.has(q.layer)));
   reserveDrops(pours);
   /*
    * A pour's net is joined through its pour, so a connection between two pads that can each
@@ -2075,6 +2115,48 @@ function routeOnce(
       if (!later(c)) continue;
       if (viaPour.has(c.a) && viaPour.has(c.b)) leftToPour.push(c);
       else routeConn(c);
+    }
+  }
+
+  /*
+   * Stitching vias (add_vias over an area or round one): each spot that takes a via clear of other
+   * nets and of pads, inside the net's planes on two layers or more (else it would join nothing).
+   */
+  if (input.vias?.fill.length) {
+    const regions = new Map<string, ReturnType<typeof region>[]>();
+    for (const v of input.vias.fill) {
+      const net = numOf(v.netId);
+      const i = Math.round(v.x / G);
+      const j = Math.round(v.y / G);
+      if (i < 0 || j < 0 || i >= W || j >= H) continue;
+      const c = j * W + i;
+      if (viaAt[c] === net || !viaFreeFor(net)(c)) continue;
+      // a via wider than the board's: room for the rest of it too
+      const extra = Math.ceil(Math.max(0, (v.pad - rules.viaPad) / 2) / G - 1e-6);
+      let room = true;
+      for (let dj = -extra; dj <= extra && room; dj++) {
+        for (let di = -extra; di <= extra && room; di++) {
+          if (Math.hypot(di, dj) > extra || i + di < 0 || j + dj < 0 || i + di >= W || j + dj >= H) continue;
+          for (let l = 0; l < L && room; l++) {
+            const m = maps[2]![l]![c + di + dj * W]!;
+            if (m !== 0 && m !== net) room = false;
+          }
+        }
+      }
+      if (!room) continue;
+      let rgs = regions.get(v.netId);
+      if (!rgs) regions.set(v.netId, (rgs = planes.filter((pl) => pl.netId === v.netId).map(region)));
+      // the via inside one piece of the net's copper on each layer it joins (a piece cut off
+      // from the rest by a track is fine: the via is what connects it), one of them connected
+      const r = Math.ceil(v.pad / 2 / G);
+      const pieceAt = (rg: ReturnType<typeof region>) => {
+        const at = rg.island[c]!;
+        return at >= 0 && [[r, 0], [-r, 0], [0, r], [0, -r]].every(([di, dj]) => i + di! >= 0 && i + di! < W && rg.island[c + di! + dj! * W] === at) ? at : -1;
+      };
+      const pieces = rgs.map((rg) => ({ rg, at: pieceAt(rg) })).filter((x) => x.at >= 0);
+      if (pieces.length < 2 || !pieces.some(({ rg, at }) => at === rg.main || rg.touched.has(at))) continue;
+      stampVia(net, v.x, v.y, v.pad);
+      vias.push(v);
     }
   }
 
