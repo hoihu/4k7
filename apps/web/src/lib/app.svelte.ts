@@ -27,6 +27,7 @@ import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
+import { describeDatasheetPages, findDesignSections, getBuiltinPart } from '@4k7/parts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
 import { jlcTool } from './jlc.ts';
@@ -745,20 +746,29 @@ class AppState {
     const card =
       this.designParts[id] ??
       this.ingest.library.find((p) => p.id === id) ??
+      getBuiltinPart(id) ??
       (pending && (pending.id === id || pending.mpn?.toLowerCase() === args.part.toLowerCase()) ? pending : undefined);
     if (!card) return text(`No part or component "${args.part}".`, true);
-    const ds = await this.ingest.datasheetFor(card);
-    if (!ds) return text(`${card.id} has no stored datasheet (only parts imported from a PDF keep theirs)${card.datasheet ? `; its datasheet link: ${card.datasheet}` : ''}.`, true);
+    let ds: Awaited<ReturnType<IngestState['datasheetFor']>>;
+    try {
+      ds = await this.ingest.datasheetFor(card, { download: true });
+    } catch (e) {
+      return text(`${card.id}'s datasheet could not be downloaded from ${card.datasheet}: ${(e as Error).message}.`, true);
+    }
+    if (!ds) return text(`${card.id} has no datasheet: neither a stored PDF nor a link.`, true);
     const { openPdf, pageText, pageCount, cropPage } = await import('./pdf.ts');
     const doc = await openPdf(ds.hash, ds.data);
     const n = pageCount(doc);
+    // the card's page numbers were read from the file it was imported from
+    const other = card.provenance.document?.startsWith('sha256:') && card.provenance.document !== `sha256:${ds.hash}`;
+    const caveat = other ? ' (downloaded from its link: not the file the part was imported from, so the page numbers on the card may be off)' : '';
     if (args.page) {
       if (args.page > n) return text(`The datasheet has ${n} pages.`, true);
       const body = await pageText(doc, args.page);
       const src = await cropPage(doc, args.page, args.region ?? [0, 0, 1, 1], args.region ? 1600 : 1400);
       return {
         isError: false,
-        content: `${card.id} datasheet, page ${args.page} of ${n}${args.region ? ` (region ${args.region.join(', ')})` : ''}:\n${body}`,
+        content: `${card.id} datasheet, page ${args.page} of ${n}${args.region ? ` (region ${args.region.join(', ')})` : ''}${caveat}:\n${body}`,
         images: [{ data: src.slice(src.indexOf(',') + 1), mimeType: 'image/jpeg' }],
       };
     }
@@ -772,8 +782,23 @@ class AppState {
       return text(hits.length ? hits.join('\n') : `"${args.find}" is not in the datasheet text (drawings may hold it as a picture: read the page).`);
     }
     const index = pages.map((t, i) => `p.${i + 1}: ${t.split('\n').find((l) => l.trim().length > 3)?.slice(0, 100) ?? '(no text: a picture)'}`);
-    const refs = [card.packageInfo?.page && `package drawing p.${card.packageInfo.page}`, card.provenance.page && `pinout p.${card.provenance.page}`].filter(Boolean);
-    return text(`${card.id} datasheet ${ds.name}, ${n} pages${refs.length ? ` (${refs.join(', ')})` : ''}:\n${index.join('\n')}`);
+    const known = describeDatasheetPages({
+      ...(card.provenance.page ? { pinout: [card.provenance.page] } : {}),
+      ...(card.packageInfo?.page ? { package: [card.packageInfo.page] } : {}),
+      ...card.datasheetPages,
+    });
+    const headings = findDesignSections(pages);
+    return text(
+      [
+        `${card.id} datasheet ${ds.name}, ${n} pages${caveat}.`,
+        known && `Noted at import: ${known}.`,
+        headings.length && `Design sections (by heading): ${headings.map((h) => `p.${h.page} ${h.heading}`).join(' · ')}.`,
+        'Pages:',
+        ...index,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
   }
 
   async queryNet(net: string): Promise<unknown> {

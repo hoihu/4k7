@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -11,7 +12,7 @@ afterEach(() => {
   for (const c of cleanups.splice(0).reverse()) c();
 });
 
-async function start() {
+async function start(extra: { download?: (url: string) => Promise<Uint8Array> } = {}) {
   const root = mkdtempSync(join(tmpdir(), '4k7-storage-'));
   const projectsDir = join(root, 'projects');
   const dataDir = join(root, 'data');
@@ -22,6 +23,7 @@ async function start() {
     dataDir,
     allowedOrigin: (o) => o === 'http://localhost:5173',
     reveal: (d) => revealed.push(d),
+    ...extra,
   });
   const http: Server = createServer((req, res) => void handler(req, res));
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
@@ -103,6 +105,30 @@ describe('storage on this computer', () => {
     await api(`datasheets/${hash}`, { method: 'DELETE' });
     expect((await api(`datasheets/${hash}`)).status).toBe(404);
     expect((await api('datasheets/nothex')).status).toBe(404);
+  });
+
+  it('downloads the datasheet behind a link once and keeps it by hash', async () => {
+    const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 1, 2, 3]);
+    const hash = createHash('sha256').update(pdf).digest('hex');
+    const fetched: string[] = [];
+    const { api, dataDir } = await start({
+      download: async (url) => {
+        fetched.push(url);
+        return url.endsWith('.pdf') ? pdf : new TextEncoder().encode('<html>');
+      },
+    });
+    const post = (url: unknown) => api('datasheets/fetch', { method: 'POST', body: JSON.stringify({ url }), headers: { 'content-type': 'application/json' } });
+    const url = 'https://www.ti.com/lit/ds/symlink/tps54331.pdf';
+    expect(await (await post(url)).json()).toEqual({ hash, name: 'tps54331.pdf' });
+    expect(await (await post(url)).json()).toEqual({ hash, name: 'tps54331.pdf' });
+    expect(fetched).toEqual([url]);
+    expect(readFileSync(join(dataDir, 'datasheets', `${hash}.pdf`))).toEqual(Buffer.from(pdf));
+    expect(JSON.parse(readFileSync(join(dataDir, 'datasheets', `${hash}.json`), 'utf8'))).toEqual({ name: 'tps54331.pdf', url });
+    // a new name for the stored file keeps its link
+    await api(`datasheets/${hash}`, { method: 'PUT', body: pdf, headers: { 'x-name': 'TPS54331.pdf' } });
+    expect(await (await post(url)).json()).toEqual({ hash, name: 'TPS54331.pdf' });
+    expect((await post('https://example.com/page')).status).toBe(422);
+    expect((await post('file:///etc/passwd')).status).toBe(400);
   });
 
   it('shows the projects folder', async () => {

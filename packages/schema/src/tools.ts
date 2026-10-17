@@ -89,7 +89,7 @@ export type ArtworkInput = z.infer<typeof ArtworkInput>;
 export const DatasheetInput = z.object({
   part: z.string().min(1).describe('A component using the part ("BZ1") or the part id'),
   page: z.number().int().positive().optional().describe('Page to read: its text and a picture of it (drawings, dimension figures). Leave out for the page index.'),
-  find: z.string().optional().describe('Search the datasheet for this text (e.g. "pitch", "dimensions"); lists the pages that contain it'),
+  find: z.string().optional().describe('Search the datasheet for this text (e.g. "pitch", "inductor", "feedback resistor", "layout"); lists the pages that contain it'),
   region: z
     .tuple([z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1)])
     .optional()
@@ -300,8 +300,11 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
     {
       name: TOOL_NAMES.datasheet,
       description:
-        "Read the datasheet stored with an imported part: the page index, a text search, or one page's text with a picture of it " +
-        '(use region to zoom into a drawing). For checking pinouts, package drawings and recommended footprints.',
+        "Read a part's datasheet (the PDF it was imported from; a part with only a datasheet link gets it downloaded): the page index " +
+        "with where its sections are (pinout, package drawing, typical application, design procedure, layout guidelines), a text search, " +
+        "or one page's text with a picture of it (use region to zoom into a drawing or a schematic). For designing with the part: its " +
+        'typical application circuit, how to choose the parts round it (formulas, recommended values and ratings), its layout guidelines; ' +
+        'and for checking pinouts, package drawings and recommended footprints.',
       input_schema: schemaOf(DatasheetInput),
     },
     {

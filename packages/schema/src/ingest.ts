@@ -89,7 +89,16 @@ export const PartDraft = z.object({
     .optional()
     .describe('Datasheet decoupling requirements per supply pin name'),
   notes: z.array(z.string()).optional().describe('Short facts a designer needs (VCAP values, BOOT0 handling, …)'),
-  pages: z.object({ pinout: z.array(z.number().int()).optional(), package: z.array(z.number().int()).optional() }).optional(),
+  pages: z
+    .object({
+      pinout: z.array(z.number().int()).optional(),
+      package: z.array(z.number().int()).optional(),
+      application: z.array(z.number().int()).optional().describe('Typical application circuits, reference and example schematics, application information'),
+      design: z.array(z.number().int()).optional().describe('How to design with the part: design procedure, design requirements, component selection and formulas (inductor, capacitors, feedback divider, crystal load caps …)'),
+      layout: z.array(z.number().int()).optional().describe('Layout guidelines and layout examples, thermal and PCB recommendations'),
+    })
+    .optional()
+    .describe('PDF pages (the NNN of pages/page-NNN.txt) of each section, every page the section covers'),
 });
 export type PartDraft = z.infer<typeof PartDraft>;
 

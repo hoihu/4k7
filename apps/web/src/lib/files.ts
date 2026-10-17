@@ -59,3 +59,12 @@ export async function loadDatasheet(hash: string): Promise<StoredDatasheet | und
     return undefined;
   }
 }
+
+/** The datasheet behind a link, downloaded by the server and kept like an imported one. Throws when it cannot be had. */
+export async function fetchDatasheet(url: string): Promise<{ hash: string; sheet: StoredDatasheet }> {
+  const got = await disk.fetchDatasheet(url);
+  if (!got) throw new Error('this 4k7 server cannot download datasheets yet: update it (restart the app)');
+  const sheet = await disk.datasheet(got.hash);
+  if (!sheet) throw new Error('the downloaded datasheet went missing');
+  return { hash: got.hash, sheet };
+}

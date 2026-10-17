@@ -141,6 +141,12 @@ class Disk {
     await this.#req('PUT', `datasheets/${hash}${ifAbsent ? '?ifAbsent=1' : ''}`, sheet.data, { 'content-type': 'application/pdf', 'x-name': encodeURIComponent(sheet.name) });
   }
 
+  /** Have the server download the datasheet behind a link and keep it (once per link). Null: an older server. */
+  async fetchDatasheet(url: string): Promise<{ hash: string; name: string } | null> {
+    const r = await this.#req('POST', 'datasheets/fetch', JSON.stringify({ url }), { 'content-type': 'application/json' });
+    return r ? ((await r.json()) as { hash: string; name: string }) : null;
+  }
+
   async deleteDatasheet(hash: string): Promise<void> {
     await this.#req('DELETE', `datasheets/${hash}`);
   }

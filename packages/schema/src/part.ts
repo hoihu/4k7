@@ -126,6 +126,8 @@ export interface PartCard {
   provenance: Provenance;
   /** Short hints that help the agent use the part correctly. */
   notes?: string[];
+  /** Where the datasheet's sections are (PDF pages), for reading it while designing with the part. */
+  datasheetPages?: DatasheetPages;
   /** Mechanical package data (from the datasheet); footprints are generated from it. */
   packageInfo?: PackageInfo;
   /** Explicit symbol arrangement (generated for large ICs such as MCUs, or given with set_symbol layout). */
@@ -139,6 +141,18 @@ export interface PartCard {
   units?: SymbolUnit[];
   /** A picture of the part seen from the top (cropped from its datasheet), shown on its 3D body. */
   topImage?: TopImage;
+}
+
+/** PDF pages of a datasheet's sections, as the importer found them. */
+export interface DatasheetPages {
+  pinout?: number[];
+  package?: number[];
+  /** Typical application circuits, reference schematics. */
+  application?: number[];
+  /** Design procedure, component selection, formulas. */
+  design?: number[];
+  /** Layout guidelines and examples. */
+  layout?: number[];
 }
 
 export interface TopImage {
