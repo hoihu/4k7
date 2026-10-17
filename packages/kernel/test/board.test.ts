@@ -1287,6 +1287,9 @@ describe('router: tracks wider than a via', () => {
       ],
     });
     expect(r.tracks.filter((t) => t.layer === 'In1.Cu' || t.layer === 'In2.Cu')).toEqual([]);
+    // closed off by the walls alone: the router says so and stops after one pass
+    expect(r.failed.map((f) => f.enclosed)).toEqual([true]);
+    expect(r.passes).toBe(1);
   });
 
   it('drops onto a plane with the net\'s own track width', async () => {

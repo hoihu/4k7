@@ -168,6 +168,8 @@ export function route(input: RouteInput, passes = 40): RouteResult {
       if (r.failed.length) input.onBest?.(result(r, ran));
     }
     if (!r.failed.length || r.timedOut) break;
+    // every open connection closed off by pads, keep-outs or the edge alone: no pass can help
+    if (r.failed.every((c) => r.blockage.get(c)?.enclosed)) break;
     // passes without an improvement: the history costs grow with each, so the nets in the way
     // are pushed harder every time; after a few, more will not help
     stale = improved ? 0 : stale + 1;
