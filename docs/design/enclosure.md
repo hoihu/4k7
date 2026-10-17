@@ -166,7 +166,7 @@ agent:
 - the base from above without the lid, which shows posts, ribs and the board on them.
 
 `views` picks a subset; `section` cuts anywhere (`{ axis: "x", at: 21 }`). Collisions are drawn
-red in the pictures, blocked paths orange.
+red in the pictures, blocked paths orange, printing warnings (overhangs, bridges, thin walls) amber.
 
 ### 5.4 The loop
 

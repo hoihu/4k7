@@ -9,6 +9,7 @@
  */
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { boardBodies } from '@4k7/parts';
 import type { BoardView } from '@4k7/schema';
 import type { EnclosureFacts, EnclosureFinding, EnclosurePiece } from '@4k7/fab';
@@ -42,9 +43,15 @@ const toPoint = (p: V3, h: number) => new THREE.Vector3(p[0]!, p[2]! - T, h - p[
 const toDir = (d: V3) => new THREE.Vector3(d[0]!, d[2]!, -d[1]!);
 const toViewer = (h: number) => new THREE.Matrix4().set(1, 0, 0, 0, 0, 0, 1, -T, 0, -1, 0, h, 0, 0, 0, 1);
 
-/** Colours of the pieces (base, lid, more), and of a cut through them. */
-const PIECE_COLOURS = [0xc9ced6, 0x9db5d8, 0xd6c49d, 0xa8d1b0];
+/**
+ * Colours of the pieces (base, lid, more): muted mid tones, so the lights shade them as they do the
+ * Layout's 3D view (pale ones wash out); their edges a darker line; a cut through them.
+ */
+const PIECE_COLOURS = [0x6b727d, 0x4d6688, 0x8c7b5a, 0x5c7d66];
+const EDGE = 0x10141a;
 const CUT = 0xe0703a;
+/** Facets meeting at less than this are shaded smooth (rounded corners, holes), and get no edge line. */
+const CREASE = 30;
 
 function decode(b64: string): ArrayBuffer {
   const bin = atob(b64);
@@ -53,13 +60,16 @@ function decode(b64: string): ArrayBuffer {
   return out.buffer;
 }
 
-/** Geometry of the pieces, parsed once per report. */
-const parsed = new WeakMap<EnclosurePiece, THREE.BufferGeometry>();
-function pieceGeometry(p: EnclosurePiece, h: number): THREE.BufferGeometry {
+/** Geometry of the pieces and their edges, parsed once per report. */
+const parsed = new WeakMap<EnclosurePiece, { faces: THREE.BufferGeometry; edges: THREE.EdgesGeometry }>();
+function pieceGeometry(p: EnclosurePiece, h: number) {
   let g = parsed.get(p);
   if (!g) {
-    g = new STLLoader().parse(decode(p.stl));
-    g.applyMatrix4(toViewer(h));
+    const stl = new STLLoader().parse(decode(p.stl));
+    stl.applyMatrix4(toViewer(h));
+    // (an STL's normals are per facet: curved faces would show every facet)
+    g = { faces: toCreasedNormals(stl, THREE.MathUtils.degToRad(CREASE)), edges: new THREE.EdgesGeometry(stl, CREASE) };
+    stl.dispose();
     parsed.set(p, g);
   }
   return g;
@@ -81,14 +91,16 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
     if (o.show && !o.show.includes(p.name)) return;
     const geo = pieceGeometry(p, h);
     // the outside in the piece's colour; where a section cuts it open, its inside shows in the cut colour
-    const front = new THREE.MeshStandardMaterial({ color: PIECE_COLOURS[i % PIECE_COLOURS.length], roughness: 0.7, metalness: 0.02, side: THREE.FrontSide });
-    const back = new THREE.MeshBasicMaterial({ color: CUT, side: THREE.BackSide });
-    owned.push(front, back);
-    for (const mat of [front, back]) {
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = lift * i;
-      mesh.userData.keepGeometry = true;
-      group.add(mesh);
+    // (pushed back, so the inside never shows through where the outside meets another piece's)
+    const front = new THREE.MeshStandardMaterial({ color: PIECE_COLOURS[i % PIECE_COLOURS.length], roughness: 0.6, metalness: 0.05, side: THREE.FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    const back = new THREE.MeshBasicMaterial({ color: CUT, side: THREE.BackSide, polygonOffset: true, polygonOffsetFactor: 3, polygonOffsetUnits: 3 });
+    const edge = new THREE.LineBasicMaterial({ color: EDGE, transparent: true, opacity: 0.55 });
+    owned.push(front, back, edge);
+    const parts: THREE.Object3D[] = [new THREE.Mesh(geo.faces, front), new THREE.Mesh(geo.faces, back), new THREE.LineSegments(geo.edges, edge)];
+    for (const o of parts) {
+      o.position.y = lift * i;
+      o.userData.keepGeometry = true;
+      group.add(o);
     }
   });
   if (o.marks !== false) {
@@ -110,12 +122,16 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
       box.userData.keepGeometry = true;
       group.add(box);
     }
-    // what the report found: red boxes round each spot
+    // what the report found: boxes round each spot (errors red, warnings amber), lifted with their piece
     for (const f of s.findings) {
       if (!f.box) continue;
-      const a = toPoint(f.box.min, h);
-      const b = toPoint(f.box.max, h);
-      const helper = new THREE.Box3Helper(new THREE.Box3(a.clone().min(b), a.clone().max(b)).expandByScalar(0.2), f.code === 'ENC.BLOCKED' ? 0xff9a3c : 0xff3344);
+      const at = f.piece ? s.pieces.findIndex((p) => p.name === f.piece) : -1;
+      if (at >= 0 && o.show && !o.show.includes(f.piece!)) continue;
+      const up = new THREE.Vector3(0, lift * Math.max(at, 0), 0);
+      const a = toPoint(f.box.min, h).add(up);
+      const b = toPoint(f.box.max, h).add(up);
+      const colour = f.code === 'ENC.BLOCKED' ? 0xff9a3c : f.severity === 'warning' ? 0xf2b53a : 0xff3344;
+      const helper = new THREE.Box3Helper(new THREE.Box3(a.clone().min(b), a.clone().max(b)).expandByScalar(0.2), colour);
       owned.push(helper.geometry, helper.material as THREE.Material);
       helper.userData.keepGeometry = true;
       group.add(helper);
