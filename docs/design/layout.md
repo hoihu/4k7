@@ -1,6 +1,6 @@
 # Board layout: the agent arranges and routes
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-13. Steps 1–4 of §7 built the same day.
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-13. Steps 1–4 of §7 built the same day, step 5 (incremental routing) 2026-10-17.
 > The schematic counterpart is [schematic-drawing.md](schematic-drawing.md); the zoom-and-optimize button is [zoom-optimize.md](zoom-optimize.md).
 
 ## 1. Why
@@ -149,10 +149,102 @@ Found on the way: the placement key hashed the board rules in their key order, a
 from its file has them sorted, so every routed project opened as "routing out of date". Keys are now
 hashed from sorted JSON (`stableJson`), which leaves the keys of designs already saved unchanged.
 
+### 5.5 Routing incrementally
+
+A `route` after a change keeps the copper the change did not touch and routes only what is open.
+The copper kept with the design (§5.4) records what it was routed under (`StoredCopper.basis`): a
+hash of the board's layers and rules, and one per net of its width, power class, current and
+planes. A route for another placement hands the router that copper, less the nets whose hash
+changed (`RouteInput.keep`); another board hash routes everything again. The outline is not in the
+hash: an auto-sized board grows when a part moves (39 × 55 → 43 × 61 mm for a 1.5 mm move on the
+bench), so the copper is checked against the edge as it is instead.
+
+`keep.ts` decides what still holds, on exact geometry, against the board as it is now:
+
+- a track goes where it comes too close to a pad of another net (a moved part), to a via placed on
+  purpose or to the edge, a cutout or a rounded corner; a via also where it now stands in a pad or
+  a small part's land pattern (the router's rules for a new via);
+- then what that leaves hanging, until nothing more does: a track end must meet copper of its net
+  (a pad on its layer, a via, another track on its layer), a via must join two things (a drop to
+  a plane: one);
+- the rest is grouped by the pads it joins; a group joining no pad goes, and one joining a single
+  pad unless it is that pad's drop to its plane.
+
+The router stamps the kept copper before anything else is routed (not into the map the probe uses:
+a kept net can still be let go), joins its pads, counts its drops for the pads they serve (so
+`moreDrops` does not add more), and routes the connections still open. A pass that leaves one
+open lets go of the kept nets its probe names as in the way, once; if that does not close it, the
+board is routed from scratch (connection order, history costs and staleness reset, as a fresh
+route). Letting go net by net could run for a dozen passes, each naming the next.
+
+Bench (`bench/board.ts 2|4 3 6`: route, then move six small parts across the board 1.5 mm each,
+routing after each move, incrementally and from scratch for comparison):
+
+| | incremental | from scratch |
+|---|---|---|
+| 2 layers | 0.5–1.5 s for 4 of 6 moves (1–2 passes, 385–500 of ~510 tracks kept); 3.9 s and 12.6 s for two that fell back to scratch | 2–10 s |
+| 4 layers | 0.3–0.4 s for 4 of 6 moves; 2.1 s and 11.7 s for two that fell back | 1.7–10 s |
+
+No DRC errors; one move leaves a connection open either way (the placement's, not the kept
+copper's). Routing a board for the first time was unchanged (the benches' route hashes the same
+before and after). `get_board` says how much was kept (`routing.incremental`).
+Found on the way: `DRC.VIA_IN_PAD` measured a round pad as its square, so a via the router put
+legally beside a header pin was an error.
+
+### 5.6 Placement first
+
+The user, after incremental routing: *the agent does not move or turn parts into better places
+when the layout runs into trouble, and the trials of other arrangements show no real improvement;
+placement and orientation should come first, before the agent fights with vias; resistors could
+be moved a little or turned.* Three things were in the way:
+
+- **Trials on another board.** `propose_placement` with the main parts given (what
+  `try_placements` does for each option) proposed a board 1.7 times the size: when a few small
+  parts stayed wedged against a main part, `settle` grew the outline by 10 %, six times, which
+  moves nothing. The same main parts where they stood came back on 127 × 111 mm instead of
+  74 × 69. Every option was measured on that, against the current placement on the real one.
+  `settle` now moves the parts still in the way to the nearest free spot (`legalize`, as for the
+  user's size) and grows the outline only if that is not enough. (The plain proposal on the
+  128-part bench shrank from 74 × 69 to 67 × 62 mm; its one wedged pair had grown it too.)
+- **Nobody searched.** The agent varied the main parts by hand, a few options at a time.
+  `try_placements` now improves on the best option itself (`explore`, trial.ts, on by default):
+  `exploreMain` (refine.ts) turns each main part by 90°, 180° and 270° round its centre, shifts it
+  1 and 3 mm, and swaps two of one package or within 25 mm, each with the parts that follow it,
+  keeping every change that lowers 4 × crossings + ratsnest mm; only main parts, locked parts and
+  holes count as obstacles (the placer puts the small parts round them again). The changes are
+  tried on a model of the ratsnest (the nets a change touches drawn again, only the lines that
+  change counted against all others: thousands a second), then placed by the placer and measured
+  for real, and explored again from there while that improves. The result is one more option,
+  named by its changes, with its `parts` to apply.
+- **Small parts stayed where the placer guessed.** `refinePlacement` (refine.ts) moves each small
+  part the placer put down (2–3 pads, no connector, nobody's choice) by up to 2 mm and turns it,
+  keeping the move that lowers the same cost most, a decoupling cap's distance to its pin weighed
+  3 times. `propose_placement` does it with the main parts given (`refine`), `refine_placement`
+  on its own (`parts`, or `near` some parts: the ones round an open connection), kept only if the
+  placement as the placer then makes it measures better. From a stored placement the placer no
+  longer flips two-pin parts that did not move (`flipTwoPin`), which turned refined parts back.
+
+Six bench boards (2 and 4 layers, 1–3 clusters, 56–128 parts), each routed after placing; totals:
+
+| | crossings | open | vias | track | routing |
+|---|---|---|---|---|---|
+| the placer's proposal | 1074 | 0 | 1039 | 7137 mm | 7.7 s |
+| … small parts refined | 823 | 0 | 1237 | 7187 mm | 17.0 s |
+| `try_placements` explored, small parts refined | 590 | 0 | 987 | 6092 mm | 5.2 s |
+
+Refining the placer's own proposal lowers the crossings but routed no better (more vias on the
+big boards: the ratsnest crossings are a weak measure of routability at that scale), so
+`propose_placement` without parts does not refine by default. Explored and refined, the track is
+15 % shorter and routing faster; on the 4-layer 128-part board 1539 → 1210 mm of track and 249 →
+221 vias. The guide now puts placement first: the crossings are the number to get down before
+planes, vias and routing, and an open connection is fixed by placement (`refine_placement near`,
+a part turned or moved, `try_placements`) before anything is done to the copper.
+
+    node --experimental-transform-types packages/kernel/bench/board.ts 4 3 place
+
 ## 6. What the agent cannot do yet
 
-- Draw or remove a track itself, or route one net, or keep the copper that a change did not touch.
-  Every `route` routes the whole board from nothing.
+- Draw or remove a track itself, or route one net (§7 step 6).
 - Optimize a zoomed area of the board with the scope guard the schematic has (`zoom-optimize.md`
   steps 3–4).
 - Be told the user's taste for layouts (the schematic has notes in Settings).
@@ -166,11 +258,9 @@ Each step is useful alone.
 3. **Open connections for the agent, the loop and the propose rule** (§4, §5.2): `BoardView.unrouted`,
    placement measures, guide text, `propose open_connections`. *Built 2026-10-13.*
 4. **Progress and kept copper** (§5.3, §5.4). *Built 2026-10-13.*
-5. **Incremental routing.** Copper kept per net: a placement change removes only the copper of the
-   nets whose pads moved (and copper that now clashes with a moved part); `route` routes what is open
-   with the rest as fixed obstacles. The router takes existing copper as input (stamped into the
-   grid, its pads joined). Makes the arrange–route loop seconds instead of a minute on a big board,
-   and is the base for step 6.
+5. **Incremental routing** (built 2026-10-17, §5.5). A placement change removes only the copper
+   that no longer holds; `route` routes what is open with the rest in place. The arrange–route loop
+   takes about a second on the 128-part bench, and it is the base for step 6.
 6. **Copper ops for the agent**, as `wire`/`label`/`erase` on the schematic:
    - `route { nets?, region? }`: route only those (the rest stays as it is);
    - `unroute { nets? | parts? | region? }`: rip up;
@@ -235,6 +325,43 @@ Each step is useful alone.
     it, 3 mm at most) and warns where they fall short; a pad in its net's pour on its own layer is
     left alone. The current goes into the copper key only where a net has one.
 
+    **Asked for, not guessed** (2026-10-18). The size rule above put two vias on a bar beside
+    every big supply pad: a tactile switch's GND pads and an IC's exposed pad got them, the
+    latter squeezed between the pad and the pins (the user: *only stitch several vias where it is
+    necessary, for higher currents*). And a net's `max_current` sized every pad of the net as if
+    the whole current flowed through it, a button's GND pad included. Which pads a current flows
+    through is the circuit's, not the netlist's: the agent knows it (the schematic, the datasheet),
+    the kernel does not. So every pad now drops with one via, and `add_vias kind: "drop"` (`ref`,
+    `pad`, `count` or `amps`, else the net's `max_current`) asks for more on one pad: the router
+    lays them on a bar beside it (below), tags them with the request's group (counted in
+    `via_groups`, joined to the planes solid, kept by incremental routing), and `DRC.PLANE_VIAS`
+    names a pad that got fewer than asked. `get_net` lists the pads' vias and the count for the
+    net's current; the guide has the agent trace the high-current paths (supply in, regulator,
+    switch node and inductor, bulk and output caps, out to the loads, each ground return) and ask
+    on those pads only. A bar never reaches under its part's body. Net currents no longer go into
+    the router or the copper key; the drop requests do.
+
+    **On a bar, and ties** (2026-10-17). The user: *the vias could go on a smaller copper rectangle
+    or a wider track rather than stitching a very large rectangle, which adds nothing; the current
+    counts.* A pad that wants two or more vias (since 2026-10-18: asked for with `add_vias drop`) gets them on one bar (`barDrop`, router.ts),
+    before the single drops: the vias in a row along a side of the pad (long sides first; more rows
+    outwards if they do not fit along it), as close as a via may stand (out of the pad and the
+    part's land pattern), and a short wide track over them that overlaps the pad's edge, along the
+    whole side where that fits. A neck from the pad's centre onto the bar joins them as tracks join
+    pads. Where no bar fits, the stubs of before. A via placed with `add_vias points` beside the
+    pad counts towards the pad's vias and is joined as before. `DRC.PLANE_VIAS` and `keep.ts` count
+    a via on a short track over the pad's edge as the pad's own.
+    `add_vias kind: "tie"` carries a current across layers at one spot: `at` (one point) and
+    `amps` (else the net's `max_current`; at least 2 vias, at most 16), resolved by `planVias` into
+    a tight block round the spot at the closest pitch (0.8 mm for 0.6 mm vias), squarest first,
+    with a ring of spare spots round it. The router lays them like grid vias but at most the
+    block's count (`RouteInput.vias.limits`), and a tie also counts a layer where the via lies
+    wholly on a track or pad of its net (vias on a wide track over the plane), joining that copper's
+    group to the plane. A grid over a supply's copper gets a note in `via_groups` when its spots
+    carry more than twice what the net draws: a tie where the current crosses does the same. The
+    guide no longer suggests a grid over a regulator's output pour: the output caps' drops sized by
+    `max_current` carry the current to the plane, a tie where it leaves the pour elsewhere.
+
 10. **Who placed what, and the handoff** (built 2026-10-15). The workflow the user wants, like the
     schematic's: the agent places everything, the user moves the parts that matter to them roughly,
     the agent takes over again (planes first, then routing). For that the board has to know whose
@@ -282,7 +409,16 @@ Each step is useful alone.
 ## 8. Open questions
 
 - The budget. 90 s covers the benches; a real 300-part board may need more (the user can stop it
-  and keep the best pass). Once routing is incremental (step 5), a long first route matters less.
+  and keep the best pass). With incremental routing (§5.5) a long first route matters less.
+- The placer moves parts a move did not touch: a 1.5 mm move of one part on the bench nudged up
+  to 20 others by 0.1–1.4 mm (the outline grew, snapping, small parts placed again). Incremental
+  routing copes (a pad that moved within its own copper keeps its tracks), but a steadier placer
+  would keep more copper and surprise the user less (§7 step 13a).
+- A stopped routing is still routed again from scratch (`route` drops it); it could be kept as the
+  start of an incremental route instead.
+- A better measure of routability than crossing ratsnest lines: the router's result swings with a
+  small move (one board: 211 vias placed one way, 318 refined), so a congestion estimate (where the
+  nets' boxes overlap more than the board's two layers carry) may judge small-part moves better.
 - Should open connections block `propose` for the in-app agent too? Today the rule is in the
   Claude Code path (`propose` is its tool); the in-app agent's turn ends with the changeset whatever
   the board says.

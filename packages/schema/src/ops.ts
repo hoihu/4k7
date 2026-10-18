@@ -423,7 +423,14 @@ export const ProposePlacementOp = z.object({
   width_mm: z.number().positive().optional().describe('With parts: the board size to arrange in (as set_board); omit to keep the size set, or let the board fit the parts'),
   height_mm: z.number().positive().optional(),
   keep_choices: z.boolean().optional().describe('Keep your earlier placement choices for parts not in parts (default true); false forgets them. Locked parts and the parts the user placed always stay'),
-}).describe('Propose the placement afresh: a board size (unless set) and a placement. With parts, the main parts go where you decide (soft: kept, nudged only where parts would overlap); the placer does the rest. Parts the user placed or locked stay where they are and cannot be in parts. Try arrangements with design_query try_placements first and apply the best one with this. Replaces the current placement.');
+  refine: z.boolean().optional().describe('Then refine the small parts (as refine_placement does; default: true with parts, false without)'),
+}).describe('Propose the placement afresh: a board size (unless set) and a placement. With parts, the main parts go where you decide (soft: kept, nudged only where parts would overlap); the placer does the rest, and then the small parts are refined (moved a little and turned where that untangles the ratsnest; with parts, or refine: true). Parts the user placed or locked stay where they are and cannot be in parts. Try arrangements with design_query try_placements first and apply the best one with this. Replaces the current placement.');
+
+export const RefinePlacementOp = z.object({
+  op: z.literal('refine_placement'),
+  parts: z.array(componentRef).optional().describe('Only these small parts (default: all the placer put down)'),
+  near: z.array(componentRef).optional().describe('Only the small parts within 5 mm of these parts (e.g. the parts round an open connection)'),
+}).describe('Refine the placement of the small parts the placer put down (resistors, capacitors, diodes; not the parts you or the user placed or locked, nor connectors): each is moved up to 2 mm and turned where that untangles the ratsnest (fewer crossing lines first, then a shorter one), clear of the other parts, a decoupling cap staying at its pin. Kept only if placement_measures improve; the effect lists what moved. Routing is then out of date.');
 
 export const RouteOp = z.object({
   op: z.literal('route'),
@@ -481,12 +488,14 @@ const viaArea = {
 export const AddViasOp = z.object({
   op: z.literal('add_vias'),
   kind: z
-    .enum(['pad', 'points', 'grid', 'fence'])
-    .describe('pad: thermal vias, a grid filling one exposed or thermal pad (not a passive\'s pad: they wick its solder), allowed in the pad and moving with the part; points: vias at the given spots; grid: stitching vias over an area (e.g. a top pour to an inner plane, many vias sharing the current); fence: a row of vias round the edge of an area (GND round an antenna or an RF part)'),
+    .enum(['pad', 'points', 'grid', 'fence', 'tie', 'drop'])
+    .describe('drop: more vias for one pad down to its plane, where a current flows through it (a pad on a high-current path: a regulator\'s input or output, an inductor, a connector\'s supply pin, a bulk cap, and their ground return); count, or amps (default the net\'s max_current: about 0.9 A per 0.3 mm via); laid in a row on a bar beside the pad. Every pad gets one via without it; pad: thermal vias, a grid filling one exposed or thermal pad (not a passive\'s pad: they wick its solder), allowed in the pad and moving with the part; points: vias at the given spots; tie: a tight block of vias at one spot (at, one point) joining a net\'s copper on two layers where its current crosses (a pour or a wide track on top to an inner plane), as many as the current needs (amps, default the net\'s max_current: about 0.9 A per 0.3 mm via; at least 2); grid: stitching vias over an area (GND pours on both sides tied together for the return currents and shielding, not for a supply\'s current: a tie carries that); fence: a row of vias round the edge of an area (GND round an antenna or an RF part)'),
   net: netName.optional().describe('The vias\' net (pad: default the pad\'s net)'),
-  ref: componentRef.optional().describe('pad: the component, e.g. "U1"'),
-  pad: z.string().min(1).optional().describe('pad: the pad (pin) number, e.g. "9" or "EP"'),
-  at: z.array(z.object({ x_mm: z.number(), y_mm: z.number() })).min(1).optional().describe('points: via centres (mm from the board\'s top-left corner)'),
+  ref: componentRef.optional().describe('pad, drop: the component, e.g. "U1"'),
+  pad: z.string().min(1).optional().describe('pad, drop: the pad (pin) number, e.g. "9" or "EP"'),
+  count: z.number().int().min(1).max(16).optional().describe('drop: how many vias (wins over amps)'),
+  at: z.array(z.object({ x_mm: z.number(), y_mm: z.number() })).min(1).optional().describe('points: via centres (mm from the board\'s top-left corner); tie: the spot, one point (on the net\'s copper on both layers: inside its pour or on its wide track, over its plane)'),
+  amps: z.number().positive().max(100).optional().describe('tie, drop: the current it carries (A); default the net\'s max_current'),
   ...viaArea,
   pitch_mm: z.number().positive().optional().describe('Centre to centre (default: pad 1.0, grid 3.0, fence 2.0 mm); the datasheet\'s layout example gives it for thermal vias, a fence wants under a tenth of the wavelength'),
   drill_mm: z.number().positive().optional().describe('Drill (default the board\'s via drill)'),
@@ -545,6 +554,7 @@ export const EditOp = z.discriminatedUnion('op', [
   EraseOp,
   AutoDrawOp,
   ProposePlacementOp,
+  RefinePlacementOp,
   RouteOp,
   SetPlaneOp,
   SetPlaneStyleOp,
@@ -605,7 +615,8 @@ export const QueryOp = z.discriminatedUnion('op', [
       .min(1)
       .max(8),
     route: z.boolean().optional().describe('Also route each option for a few seconds (a trial: how many connections it closes). Slower; use it to choose between options whose ratsnest is close'),
-  }).describe('Compare arrangements of the main parts without changing the design: each is placed as propose_placement would place it (small parts round them) and measured (ratsnest length, crossing ratsnest lines, overlaps, board size; with route a trial routing). Lists the current placement too, then the options best first. Apply the winner with design_edit propose_placement'),
+    explore: z.boolean().optional().describe('Then improve on the best option (default true): turn its main parts, swap two of them, shift one a few mm, keeping each change that makes the ratsnest cross less and shorter; the result is one more option, with its parts to apply'),
+  }).describe('Compare arrangements of the main parts without changing the design: each is placed as propose_placement would place it (small parts round them, refined) and measured (ratsnest length, crossing ratsnest lines, overlaps, board size; with route a trial routing). Then the kernel improves on the best (explore) and adds that as an option. Lists the current placement too, then the options best first. Apply the winner with design_edit propose_placement and its parts'),
   z.object({
     op: z.literal('search_parts'),
     text: z.string().describe('Search text: function, MPN, category ("buck", "capacitor", "555")'),

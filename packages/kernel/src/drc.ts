@@ -2,8 +2,10 @@
  * Copper design-rule check on exact geometry, independent of the router's grid: clearance
  * between tracks, vias and pads of different nets on the same layer.
  */
-import { cutoutDistance, insideBoard, padViasFor, viaCurrentFor } from '@4k7/schema';
+import { cutoutDistance, insideBoard } from '@4k7/schema';
 import type { BoardDiagnostic, BoardView, CopperLayer } from '@4k7/schema';
+import { padSegDist } from './keep.ts';
+import { segDist } from './segments.ts';
 
 type Shape =
   | { kind: 'seg'; ax: number; ay: number; bx: number; by: number; r: number }
@@ -62,6 +64,8 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
       if (v.inPad) continue; // thermal vias, placed in their pad on purpose (add_vias)
       for (const part of b.parts) {
         const inPad = part.pads.some((p) => {
+          // (a round pad as the circle it is, not its square)
+          if (p.shape === 'round') return Math.hypot(v.x - p.x, v.y - p.y) - Math.min(p.w, p.h) / 2 < v.pad / 2 - 1e-6;
           const dx = Math.max(Math.abs(v.x - p.x) - p.w / 2, 0);
           const dy = Math.max(Math.abs(v.y - p.y) - p.h / 2, 0);
           return Math.hypot(dx, dy) < v.pad / 2 - 1e-6;
@@ -229,24 +233,25 @@ export function splitDrc(b: BoardView, signal: (netId: string) => boolean): Boar
 }
 
 /**
- * Pads that reach their net's plane through fewer vias than they want (padViasFor: a big pad on
- * a supply, or a net with a current): the pad's own vias (in it, or at the end of a track of the
- * net that starts in it, 3 mm at most), counted on the copper as it lies. A pad in its net's pour
- * on its own layer is left alone (the pour spreads the current). `net` says which nets are
- * supplies and the current each carries.
+ * Pads that asked for several vias down to their plane (add_vias drop) and reach it through
+ * fewer: the pad's own vias (in it, at the end of a track of the net that starts in it, or on a
+ * short track over its edge, 3 mm at most), counted on the copper as it lies. A pad in its net's
+ * pour on its own layer is left alone (the pour spreads the current).
  */
-export function planeViaDrc(b: BoardView, net: (netId: string) => { power: boolean; amps?: number }): BoardDiagnostic[] {
+export function planeViaDrc(b: BoardView): BoardDiagnostic[] {
   const out: BoardDiagnostic[] = [];
   const near = (x: number, y: number, pad: BoardView['parts'][number]['pads'][number], grow: number) => Math.max(Math.abs(x - pad.x) - pad.w / 2, Math.abs(y - pad.y) - pad.h / 2) <= grow;
-  for (const part of b.parts) {
-    for (const pad of part.pads) {
-      const id = pad.netId;
-      if (!id || pad.drill) continue;
+  for (const g of b.viaGroups) {
+    if (g.kind !== 'drop' || !g.pad || g.wanted < 2) continue;
+    const [ref, num] = [g.pad.slice(0, g.pad.lastIndexOf('.')), g.pad.slice(g.pad.lastIndexOf('.') + 1)];
+    const part = b.parts.find((p) => p.refdes === ref);
+    const pad = part?.pads.find((p) => p.number === num);
+    if (!part || !pad) continue;
+    {
+      const id = g.netId;
       const plane = b.planes.find((pl) => pl.netId === id && !pad.layers.includes(pl.layer) && (!pl.area || (pad.x >= pl.area[0] && pad.x <= pl.area[2] && pad.y >= pl.area[1] && pad.y <= pl.area[3])));
       if (!plane) continue;
-      const n = net(id);
-      const want = padViasFor(pad, n, b.rules);
-      if (want < 2) continue;
+      const want = g.wanted;
       // in its own net's pour on its layer
       const poured = b.zones.some((z) => {
         if (z.netId !== id || !pad.layers.includes(z.layer)) return false;
@@ -269,15 +274,18 @@ export function planeViaDrc(b: BoardView, net: (netId: string) => { power: boole
           if (!near(ax, ay, pad, 0.01)) continue;
           for (const v of own) if (Math.hypot(v.x - bx, v.y - by) <= v.pad / 2) reached.add(v);
         }
+        // a bar beside the pad (its copper over the pad's edge): every via on it
+        const pieces: [number, number, number, number][] = [];
+        for (let i = 0; i + 3 < t.pts.length; i += 2) pieces.push([t.pts[i]!, t.pts[i + 1]!, t.pts[i + 2]!, t.pts[i + 3]!]);
+        if (!pieces.some(([ax, ay, bx, by]) => padSegDist(pad, ax, ay, bx, by) <= t.width / 2 - 0.01)) continue;
+        for (const v of own) if (pieces.some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(v.x, v.y) <= t.width / 2)) reached.add(v);
       }
       if (reached.size >= want) continue;
       const name = b.netNames[id] ?? id;
-      const per = Math.round(viaCurrentFor(b.rules.viaDrill) * 10) / 10;
-      const why = n.amps ? `${n.amps} A on ${name} wants ${want} (about ${per} A per ${b.rules.viaDrill} mm via${want < Math.ceil(n.amps / viaCurrentFor(b.rules.viaDrill) - 1e-6) ? `; ${want} is all that fit along the pad` : ''})` : `a pad this big on a supply wants ${want}`;
       out.push({
         code: 'DRC.PLANE_VIAS',
         severity: 'warning',
-        message: `${part.refdes}.${pad.number} (${name}) reaches the ${plane.layer} plane through ${reached.size || 'no'} via${reached.size === 1 ? '' : 's'} of its own: ${why}. Make room beside the pad (move what crowds it) and route again, or place them with add_vias points right beside the pad (the router joins them to it).`,
+        message: `${part.refdes}.${pad.number} (${name}) reaches the ${plane.layer} plane through ${reached.size || 'no'} via${reached.size === 1 ? '' : 's'} of its own; ${g.id} asks for ${want}${g.note ? ` (${g.note})` : ''}. Make room beside the pad (move what crowds it) and route again, or place them with add_vias points right beside the pad (the router joins them to it).`,
         at: { x: Math.round(pad.x * 100) / 100, y: Math.round(pad.y * 100) / 100 },
         entities: [part.refdes],
       });

@@ -179,19 +179,9 @@ export function viaCurrentFor(drillMm: number, riseC = 10, platingUm = 25): numb
   return 0.024 * Math.pow(riseC, 0.44) * Math.pow(areaMil2, 0.725);
 }
 
-/**
- * Vias a pad wants down to its net's plane: enough for the net's current (`amps`, viaCurrentFor
- * each; the whole net's current, an upper bound for one pad), and on a power net 2 for a pad of
- * 2 mm² or more, 3 from 5 mm² (a bulk capacitor's or an inductor's pad: one via would be its
- * bottleneck).
- * Never more than fit in a row along the pad's long side (with the via spacing), nor than 8.
- */
-export function padViasFor(pad: { w: number; h: number }, net: { power: boolean; amps?: number }, rules: { viaDrill: number; viaPad: number; clearance: number }): number {
-  const fit = Math.max(1, Math.floor((Math.max(pad.w, pad.h) - rules.viaPad) / (rules.viaPad + rules.clearance) + 1e-6) + 1);
-  const area = pad.w * pad.h;
-  const forSize = !net.power ? 1 : area >= 5 ? 3 : area >= 2 ? 2 : 1;
-  const forCurrent = net.amps ? Math.ceil(net.amps / viaCurrentFor(rules.viaDrill) - 1e-6) : 1;
-  return Math.max(1, Math.min(fit, 8, Math.max(forSize, forCurrent)));
+/** Vias that carry `amps` together (viaCurrentFor each): at least one. */
+export function viasForCurrent(amps: number, drillMm: number): number {
+  return Math.max(1, Math.ceil(amps / viaCurrentFor(drillMm) - 1e-6));
 }
 
 export interface Net {

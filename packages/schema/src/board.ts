@@ -133,6 +133,14 @@ export interface StoredCopper {
   passes: number;
   /** The user stopped the routing: this is the best pass it had finished (or nothing routed). */
   stopped?: boolean;
+  /**
+   * What it was routed under, so the next route keeps what still holds (incremental routing): the
+   * board's hash (outline, layers, rules) and one per net (its width, current and planes). A net
+   * whose hash differs is routed again; another board hash routes everything again.
+   */
+  basis?: { board: string; nets: Record<string, string> };
+  /** Copper taken over from the routing before it (incremental routing), as it lies in this one. */
+  reused?: { tracks: number; vias: number };
 }
 
 export interface StoredPlacement {
@@ -469,21 +477,25 @@ export interface ViaGroup {
   id: string;
   netId: string;
   kind: ViaKind;
-  /** pad: the component and pad number. */
+  /** pad, drop: the component and pad number. */
   pad?: { componentId: string; number: string };
   /** grid, fence: the area, as for an area plane (under parts, or a rectangle). */
   area?: PlaneArea;
-  /** points: centres, mm. */
+  /** points: centres, mm; tie: the spot (one point). */
   points?: [number, number][];
+  /** tie, drop: the current it carries (A); default the net's max_current. Sets how many vias. */
+  amps?: number;
+  /** drop: how many vias (wins over amps). */
+  count?: number;
   /** Centre to centre, mm (pad, grid, fence). */
   pitch?: number;
   /** Drill and pad diameter, mm; default: the board's via. */
   drill?: number;
   size?: number;
 }
-export type ViaKind = 'pad' | 'points' | 'grid' | 'fence';
-/** Default pitch per kind, mm. */
-export const VIA_PITCH: Record<ViaKind, number> = { pad: 1, points: 0, grid: 3, fence: 2 };
+export type ViaKind = 'pad' | 'points' | 'grid' | 'fence' | 'tie' | 'drop';
+/** Default pitch per kind, mm (tie, drop: 0, as close as vias may stand). */
+export const VIA_PITCH: Record<ViaKind, number> = { pad: 1, points: 0, grid: 3, fence: 2, tie: 0, drop: 0 };
 
 export const DEFAULT_RULES: BoardRules = { clearance: 0.2, track: 0.25, powerTrack: 0.5, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 };
 export const DEFAULT_BOARD: BoardSettings = { layers: 2, rules: DEFAULT_RULES };
@@ -639,8 +651,8 @@ export interface BoardView {
   zones: Zone[];
   /** Planes in effect (net, layer; automatic or set with set_plane), an area plane with its rectangle (x0, y0, x1, y1, mm) and the parts it lies under. */
   planes: { netId: string; layer: CopperLayer; auto: boolean; area?: [number, number, number, number]; under?: string[]; style?: PlaneStyle }[];
-  /** The vias placed on purpose (add_vias), per group: how many it asks for (grid, fence: the spots it may use). */
-  viaGroups: { id: string; netId: string; kind: ViaKind; wanted: number; note?: string }[];
+  /** The vias placed on purpose (add_vias), per group: how many it asks for (grid, fence: the spots it may use; tie: the vias its current wants). */
+  viaGroups: { id: string; netId: string; kind: ViaKind; wanted: number; note?: string; pad?: string }[];
   /** Connections not (yet) made by copper. */
   ratsnest: RatsLine[];
   diagnostics: BoardDiagnostic[];
@@ -656,6 +668,8 @@ export interface BoardView {
   newCopper?: StoredCopper;
   /** The user stopped the routing; the copper is the best pass it had finished. */
   stopped?: boolean;
+  /** Copper kept from the routing before (incremental routing): tracks and vias, of how many. */
+  reused?: { tracks: number; vias: number };
   /** Components without a footprint (no package data). */
   missing: string[];
   /** Net id → name. */
@@ -690,7 +704,7 @@ const PLUGGED_FROM: Record<BoardFacing, string> = {
 
 /** What to do about open connections: the agent is expected to get the board to 100 %. */
 const OPEN_NEXT =
-  'A board with an open connection does not work: get it to 100 %. Look at each spot (get_board_image region round at_mm), then make room and route again: move or turn the parts near it (place with rot), so pads face the parts they connect to and the ratsnest lines stop crossing; give a crowded area more space (set_board size); route the blocking nets differently by moving their parts; on a 2-layer board, 4 layers (set_board layers) as the last resort, it costs more. Enclosed: pads or the edge close the pad off, move the part. Plane: no room for the via down to the plane next to the pad, move the part or what crowds it.';
+  'A board with an open connection does not work: get it to 100 %. Fix the placement first, not the copper: look at each spot (get_board_image region round at_mm), then refine_placement near the parts named there (the small parts moved and turned to untangle the ratsnest), and move or turn the main parts near it (place with rot, or try_placements with the arrangement as it is: the kernel improves on it and gives the parts to apply), so pads face the parts they connect to and the ratsnest lines stop crossing; give a crowded area more space (set_board size); route again (it keeps what holds and takes seconds). On a 2-layer board, 4 layers (set_board layers) only as the last resort, it costs more. Enclosed: pads or the edge close the pad off, move the part. Plane: no room for the via down to the plane next to the pad, move the part or what crowds it.';
 
 function openSummary(b: BoardView, u: UnroutedConnection) {
   const name = (id: string) => b.netNames[id] ?? id;
@@ -781,6 +795,7 @@ export function boardSummary(b: BoardView, routed = true) {
             vias: b.stats.vias,
             track_mm: b.stats.trackLength,
             ...(b.stopped ? { stopped: 'The user stopped the routing: this is the best pass it had finished. route runs it again from the start.' } : {}),
+            ...(b.reused ? { incremental: `${b.reused.tracks} of ${b.tracks.length} tracks and ${b.reused.vias} vias kept from the routing before; only what the change touched was routed again` } : {}),
             ...(b.unrouted.length ? { open: b.unrouted.slice(0, 20).map((u) => openSummary(b, u)), next: OPEN_NEXT } : {}),
           }
         : b.routing === 'stale'
@@ -792,8 +807,18 @@ export function boardSummary(b: BoardView, routed = true) {
       ? {
           via_groups: b.viaGroups.map((g) => {
             const placed = b.vias.filter((v) => v.group === g.id).length;
-            const later = (g.kind === 'grid' || g.kind === 'fence') && b.routing !== 'done';
-            return { id: g.id, net: b.netNames[g.netId] ?? g.netId, kind: g.kind, vias: later ? `up to ${g.wanted}, laid by the route step where they fit` : g.kind === 'grid' || g.kind === 'fence' ? `${placed} of ${g.wanted} spots (the others are blocked or miss the net's planes)` : placed, ...(g.note ? { note: g.note } : {}) };
+            const filled = g.kind === 'grid' || g.kind === 'fence' || g.kind === 'tie';
+            const later = filled && b.routing !== 'done';
+            const vias = later
+              ? `${g.kind === 'tie' || g.kind === 'drop' ? '' : 'up to '}${g.wanted}, laid by the route step where they fit`
+              : g.kind === 'drop'
+                ? `${placed} of ${g.wanted} beside ${g.pad}${placed < g.wanted ? ' (no room for the rest: make room beside the pad)' : ''}`
+              : g.kind === 'tie'
+                ? `${placed} of the ${g.wanted} its current wants${placed < g.wanted ? ' (no room for the rest round the spot, or it misses the net\'s copper on a second layer)' : ''}`
+                : filled
+                  ? `${placed} of ${g.wanted} spots (the others are blocked or miss the net's planes)`
+                  : placed;
+            return { id: g.id, net: b.netNames[g.netId] ?? g.netId, kind: g.kind, vias, ...(g.note ? { note: g.note } : {}) };
           }),
         }
       : {}),
