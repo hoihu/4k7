@@ -68,6 +68,11 @@ module part_box(ref, grow = 0);      // the box round a part
 module mating_path(ref, length = 30, grow = 0);  // the way a plug needs, from its face outwards
 module keepouts(refs = brief_openings, grow = 0);
 module hole_posts(from, d = 6);      // a post under each mounting hole, from z = from up to the board
+graphics = [["logo", [24, 10]]];    // the design's graphics for the box (§3.1)
+module label(t, size = 5, …);        // 2D text in Liberation Sans Bold (comes with OpenSCAD)
+module graphic(name, width = 0, height = 0);  // 2D: a graphic, centred, scaled
+module on_face(face, at);            // 2D children laid on a face, reading the right way from outside
+module engrave(face, at, depth = 0.6); module emboss(face, at, height = 0.6);
 ```
 
 A part's solids are its body (boxes, cylinders) plus one box round its leads above the board and
@@ -84,6 +89,34 @@ each part is plugged from on the board (`plugged_from`), turned with the part an
 bottom (`boardFacing`).
 
 `board.scad` is useful alone: the Enclosure view downloads it, for users who write their own box.
+
+### 3.1 Labels and logos
+
+Port names, a product name and a logo on the box (2026-10-17). Text is OpenSCAD's `text()`; the
+box needs no new kind of geometry. What the agent needs is a way to get it on the right face the
+right way round, and a way to get the user's logo into a script that may not read files.
+
+- **Faces.** `on_face(face, at)` maps 2D x, y onto a face of the box: x to the reader's right, y
+  up, z out. The faces are named like a connector's plugged-from (`left`, `right`, `top`,
+  `bottom`, `above`, `below`), so a port's name goes on `part_info(ref)[6][0]`. `engrave` and
+  `emboss` extrude along it, so the agent never writes a rotation for a label.
+- **Graphics.** `import()` stays forbidden (§8). A logo is copied into the design instead
+  (`design_edit set_enclosure_graphic`: a saved artwork by name, or an SVG path the agent writes for
+  an icon). It is stored like a silkscreen graphic: figures in mm, filled even-odd or outlines.
+  `board.scad` writes it out as a polygon behind `graphic(name)`; the agent reads only its name and
+  size. The design keeps its own copy, so the box renders the same on another computer. The
+  artwork library (Parts → Artwork: SVG import, pictures traced into dots) serves the board and the
+  box alike, and the Enclosure view adds an artwork to the box in one click. The graphics are a
+  hunk of their own; a render is out of date when they change (`enclosureKey`).
+- **Two colours.** `inlays = [["lid_logo", "lid", "white"]];` names pieces that fill an engraving
+  in another filament. An inlay is printed with its host: turned the same way, and in the 3MF one
+  object of components, which the slicers open as one object with a part each. The 3D view draws
+  it in its colour and lifts it with the host. It is not checked against its host for overlap
+  (the two meet face to face, and OpenSCAD can leave a zero-volume sliver there), nor for thin walls
+  or overhangs.
+- **Checks.** ENC.THIN already finds strokes and ridges too fine to print. `render_enclosure faces`
+  takes pictures of chosen faces, tilted about 20° so an engraving shows (straight on, its floor
+  shades like the face). The guide (mechanics.md §6) gives sizes, depths and where labels go.
 
 ## 4. The brief
 
@@ -210,6 +243,10 @@ Each step is useful alone.
 6. **Follow-ups** (2026-10-16): the board hidden in the Enclosure view (PCB), enclosure notes,
    print orientation in the script and a 3MF plate, plug paths in the Layout's 3D view, overhang,
    bridge and thin-wall warnings. *Built.*
+7. **Labels and logos** (§3.1): `label`, `graphic`, `on_face`, `engrave`, `emboss` in
+   `board.scad`, `set_enclosure_graphic`, inlays in the print files, face pictures. *Built
+   2026-10-17.*
+
 ## 8. Open questions
 
 - **How mechanics.md reaches the agent.** Decided: `design_query get_guide topic: "mechanics"`,

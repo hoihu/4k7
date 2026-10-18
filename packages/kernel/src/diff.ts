@@ -236,6 +236,22 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     });
   }
 
+  const encGraphics = (d: Design) => JSON.stringify(d.enclosure?.graphics ?? []);
+  if (encGraphics(base) !== encGraphics(draft)) {
+    const before = new Map((base.enclosure?.graphics ?? []).map((g) => [g.name, JSON.stringify(g)]));
+    const after = draft.enclosure?.graphics ?? [];
+    const changed = after.filter((g) => before.get(g.name) !== JSON.stringify(g));
+    const gone = [...before.keys()].filter((n) => !after.some((g) => g.name === n));
+    hunks.push({
+      id: 'enclosure:graphics',
+      kind: 'enclosure',
+      change: !after.length ? 'remove' : before.size ? 'change' : 'add',
+      entityId: 'graphics',
+      title: after.length ? `enclosure graphics: ${after.map((g) => g.name).join(', ')}` : 'enclosure graphics removed',
+      details: [...changed.map((g) => `${g.name}: ${g.source ?? 'graphic'}, ${g.w} × ${g.h}`), ...gone.map((n) => `${n}: removed`)],
+    });
+  }
+
   const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6, description: 7, drawing: 8, enclosure: 9 };
   const changeOrder = { add: 0, change: 1, remove: 2 };
   return hunks.sort((x, y) => order[x.kind] - order[y.kind] || changeOrder[x.change] - changeOrder[y.change] || natCmp(x.title, y.title));
@@ -323,12 +339,13 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
         else delete d.description;
         break;
       case 'enclosure': {
-        const key = entity as 'brief' | 'script';
+        const key = entity as 'brief' | 'script' | 'graphics';
         const value = draft.enclosure?.[key];
         const next = { ...d.enclosure };
         if (value === undefined) delete next[key];
         else (next as Record<string, unknown>)[key] = clone(value);
-        if (next.brief || next.script) d.enclosure = next;
+        if (!next.graphics?.length) delete next.graphics;
+        if (next.brief || next.script || next.graphics) d.enclosure = next;
         else delete d.enclosure;
         break;
       }

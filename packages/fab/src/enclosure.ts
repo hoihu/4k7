@@ -3,9 +3,9 @@
  * run per piece (its mesh) and one per check, each an intersection that is empty when the check
  * passes. The report: what OpenSCAD said and what the checks found, in words the agent can act on.
  */
-import { DEFAULT_LID_CLEARANCE, matingOf, scriptPieces, scriptPrintRotations, type BoardView, type EnclosureBrief, type ScadJob, type ScadRunResult } from '@4k7/schema';
+import { DEFAULT_LID_CLEARANCE, enclosureKey, matingOf, scriptInlays, scriptPieces, scriptPrintRotations, type BoardView, type EnclosureBrief, type EnclosureGraphic, type ScadJob, type ScadRunResult } from '@4k7/schema';
 import { boardScad, type EnclosureFacts } from './scad.ts';
-import { orient, parseStl, plate, printIssues, thinWalls, threeMf, writeStl } from './print.ts';
+import { orient, orientTogether, parseStl, plate, printIssues, thinWalls, threeMf, writeStl, type PlateObject } from './print.ts';
 
 export type EnclosureCode = 'ENC.SCRIPT' | 'ENC.COLLIDES' | 'ENC.BLOCKED' | 'ENC.NO_MATING' | 'ENC.LOOSE' | 'ENC.LOW_LID' | 'ENC.PIECES_OVERLAP' | 'ENC.SIZE' | 'ENC.OVERHANG' | 'ENC.BRIDGE' | 'ENC.THIN' | 'ENC.WARNING';
 
@@ -29,6 +29,8 @@ export interface EnclosurePiece {
 export interface EnclosureReport {
   /** The script it was made from. */
   script: string;
+  /** What it was made from (the script and the graphics: enclosureKey); another key means it is out of date. */
+  key: string;
   pieces: EnclosurePiece[];
   findings: EnclosureFinding[];
   /** The closed box: x × y × z. */
@@ -42,6 +44,7 @@ export interface EnclosureJob extends ScadJob {
   pieces: string[];
   facts: EnclosureFacts;
   brief?: EnclosureBrief;
+  key: string;
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100 || 0;
@@ -49,9 +52,10 @@ const pt = (v: readonly number[]) => `(${v.map(r2).join(', ')})`;
 const dims = (b: { min: readonly number[]; max: readonly number[] }) => b.max.map((v, i) => r2(v - b.min[i]!)).join(' × ');
 
 /** The job for a script on this board: the pieces, then the checks. */
-export function enclosureJob(b: BoardView, project: string, script: string, brief?: EnclosureBrief): EnclosureJob {
-  const lib = boardScad(b, project, brief);
+export function enclosureJob(b: BoardView, project: string, script: string, brief?: EnclosureBrief, graphics?: EnclosureGraphic[]): EnclosureJob {
+  const lib = boardScad(b, project, brief, graphics);
   const pieces = scriptPieces(script) ?? [];
+  const inlays = scriptInlays(script);
   const all = `union() { ${pieces.map((p) => `${p}();`).join(' ')} }`;
   const head = 'use <enclosure.scad>\ninclude <board.scad>\n';
   const runs: ScadJob['runs'] = [];
@@ -69,9 +73,13 @@ export function enclosureJob(b: BoardView, project: string, script: string, brie
     for (const h of lib.facts.holes) runs.push({ id: `rest:${h.id}`, code: `${head}intersection() { ${all} translate([${h.x}, ${h.y}, -0.25]) cylinder(h = 0.25, r = ${h.d / 2 + 1.5}, $fn = 24); }\n` });
   } else runs.push({ id: 'rest:board', code: `${head}intersection() { ${all} translate([0, 0, -0.25]) linear_extrude(height = 0.25) pcb_shape(); }\n` });
   for (let i = 0; i < pieces.length; i++) {
-    for (let j = i + 1; j < pieces.length; j++) runs.push({ id: `overlap:${pieces[i]}:${pieces[j]}`, code: `use <enclosure.scad>\nintersection() { ${pieces[i]}(); ${pieces[j]}(); }\n` });
+    for (let j = i + 1; j < pieces.length; j++) {
+      // an inlay fills the hollow cut for it in its host: they meet face to face, which OpenSCAD can leave as a sliver
+      if (inlays[pieces[i]!]?.host === pieces[j] || inlays[pieces[j]!]?.host === pieces[i]) continue;
+      runs.push({ id: `overlap:${pieces[i]}:${pieces[j]}`, code: `use <enclosure.scad>\nintersection() { ${pieces[i]}(); ${pieces[j]}(); }\n` });
+    }
   }
-  return { files: { 'board.scad': lib.content, 'enclosure.scad': script }, runs, pieces, facts: lib.facts, ...(brief ? { brief } : {}) };
+  return { files: { 'board.scad': lib.content, 'enclosure.scad': script }, runs, pieces, facts: lib.facts, ...(brief ? { brief } : {}), key: enclosureKey({ script, ...(graphics ? { graphics } : {}) }) };
 }
 
 /** Parts whose box meets `box` (grown a hair). */
@@ -90,7 +98,7 @@ export function enclosureReport(job: EnclosureJob, results: ScadRunResult[], scr
   if (failed.length) {
     const lines = [...new Set(failed.flatMap((r) => r.errors ?? []))].slice(0, 12);
     findings.push({ code: 'ENC.SCRIPT', severity: 'error', message: `OpenSCAD could not render it:\n${lines.join('\n') || 'no output'}` });
-    return { script, pieces: [], findings, size: null, ms };
+    return { script, key: job.key, pieces: [], findings, size: null, ms };
   }
   const warnings = [...new Set(results.flatMap((r) => r.warnings ?? []))];
   if (warnings.length) findings.push({ code: 'ENC.WARNING', severity: 'warning', message: `OpenSCAD warned:\n${warnings.slice(0, 8).join('\n')}` });
@@ -169,8 +177,11 @@ export function enclosureReport(job: EnclosureJob, results: ScadRunResult[], scr
   }
 
   // printing: overhangs and wide ceilings as each piece is printed, walls too thin to print
+  // (not for inlays: they lie in or on their host, which carries them, and are as thin as they are meant to be)
   const turns = scriptPrintRotations(script);
+  const inlays = scriptInlays(script);
   for (const p of pieces) {
+    if (inlays[p.name]) continue;
     const tris = parseStl(p.stl);
     const how = turns[p.name] ? `printed turned ${turns[p.name]!.join(', ')}` : 'printed as built (no print orientation in the script)';
     for (const x of printIssues(tris, orient(tris, turns[p.name]))) {
@@ -181,7 +192,7 @@ export function enclosureReport(job: EnclosureJob, results: ScadRunResult[], scr
       );
     }
     for (const x of thinWalls(tris)) {
-      findings.push({ code: 'ENC.THIN', severity: 'warning', message: `${p.name}: walls down to ${x.size} mm over ${x.area} mm² between ${pt(x.box.min)} and ${pt(x.box.max)}: thinner than two perimeters (0.8 mm) prints weak or not at all, unless it is meant to be (a light window).`, box: x.box });
+      findings.push({ code: 'ENC.THIN', severity: 'warning', message: `${p.name}: walls down to ${x.size} mm over ${x.area} mm² between ${pt(x.box.min)} and ${pt(x.box.max)}: thinner than two perimeters (0.8 mm) prints weak or not at all, unless it is meant to be (a light window). In a label or logo: details too fine to print; make it larger or bolder.`, box: x.box });
     }
   }
 
@@ -195,7 +206,7 @@ export function enclosureReport(job: EnclosureJob, results: ScadRunResult[], scr
       findings.push({ code: 'ENC.SIZE', severity: 'error', message: `The box is ${size.join(' × ')} mm; the brief allows ${limit.join(' × ')} mm.` });
     }
   }
-  return { script, pieces, findings, size, ms };
+  return { script, key: job.key, pieces, findings, size, ms };
 }
 
 /** The report as the agent reads it. */
@@ -217,9 +228,18 @@ export function edgeConnectors(b: BoardView): string[] {
 /** The pieces turned for printing as the script says (each on the bed), as STL files and one 3MF plate. */
 export function printFiles(r: EnclosureReport, project: string): { stl: { name: string; data: Uint8Array }[]; plate: Uint8Array } {
   const turns = scriptPrintRotations(r.script);
-  const oriented = r.pieces.map((p) => ({ name: p.name, tris: orient(parseStl(p.stl), turns[p.name]) }));
+  const inlays = scriptInlays(r.script);
+  const hosts = r.pieces.filter((p) => !inlays[p.name] || !r.pieces.some((h) => h.name === inlays[p.name]!.host));
+  // a piece and its inlays turned alike and set on the bed together, so the inlays stay where they belong
+  const objects: PlateObject[] = hosts.map((h) => {
+    const with_ = r.pieces.filter((p) => inlays[p.name]?.host === h.name);
+    if (!with_.length) return { name: h.name, tris: orient(parseStl(h.stl), turns[h.name]) };
+    const [tris, ...rest] = orientTogether([h, ...with_].map((p) => parseStl(p.stl)), turns[h.name]);
+    return { name: h.name, tris: tris!, parts: with_.map((p, i) => ({ name: p.name, tris: rest[i]! })) };
+  });
+  const byName = new Map(objects.flatMap((o) => [[o.name, o.tris] as const, ...(o.parts ?? []).map((x) => [x.name, x.tris] as const)]));
   return {
-    stl: oriented.map((p) => ({ name: p.name, data: writeStl(p.tris, `${project} ${p.name}`) })),
-    plate: threeMf(plate(oriented), `${project} enclosure`),
+    stl: r.pieces.map((p) => ({ name: p.name, data: writeStl(byName.get(p.name)!, `${project} ${p.name}`) })),
+    plate: threeMf(plate(objects), `${project} enclosure`),
   };
 }

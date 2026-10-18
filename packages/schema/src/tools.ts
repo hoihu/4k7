@@ -118,6 +118,10 @@ export const RenderEnclosureInput = z.object({
     .array(z.enum(ENCLOSURE_VIEWS))
     .optional()
     .describe('Pictures to get back: front_left and back_right (the closed box from above, two corners), open (the lid lifted off), sections (a cut across the wall through every opening in the brief), base_top (the base from above without the lid: posts, ribs, the board on them), bottom (from below). Default: all but bottom on the first render; ask for fewer once only details change'),
+  faces: z
+    .array(z.enum(['left', 'right', 'top', 'bottom', 'above', 'below']))
+    .optional()
+    .describe('Pictures of these faces of the closed box (as on_face names them), as a reader sees them, tilted a little so engraving shows: check that labels and logos read the right way round, are the right size and sit where they should'),
   section: z
     .object({ axis: z.enum(['x', 'y', 'z']), at_mm: z.number() })
     .optional()
@@ -325,7 +329,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
       description:
         "Render the enclosure script (the working copy's, set with design_edit set_enclosure_script) with the user's OpenSCAD, in 3D with the board: " +
         'the report (OpenSCAD\'s errors with line numbers, and what the checks measured: collisions with named parts, blocked openings, ' +
-        'room under the lid, the board held, pieces overlapping, the size) and pictures. Fix what the report says first, then what the pictures show; render again after every change.',
+        'room under the lid, the board held, pieces overlapping, the size) and pictures (faces: straight at the faces with labels or logos). Fix what the report says first, then what the pictures show; render again after every change.',
       input_schema: schemaOf(RenderEnclosureInput),
     },
     ...(engine !== 'cli'
