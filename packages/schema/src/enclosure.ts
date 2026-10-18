@@ -29,11 +29,51 @@ export const EnclosureBrief = z.object({
 });
 export type EnclosureBrief = z.infer<typeof EnclosureBrief>;
 
+/**
+ * A graphic for the box (a logo, an icon): copied into the design from the artwork library or an
+ * SVG path, so the box renders the same everywhere. board.scad draws it as graphic(name), 2D.
+ */
+export interface EnclosureGraphic {
+  /** What the script calls it: graphic("logo"). */
+  name: string;
+  /** Filled (even-odd, figures inside figures are holes) or drawn as outlines `line` wide. */
+  mode: 'fill' | 'outline';
+  line?: number;
+  /** Closed figures, flat x, y lists in mm centred on 0, 0, y down (as the artwork library's). */
+  polys: number[][];
+  /** Its size as stored (mm); the script scales it: graphic("logo", width = 20). */
+  w: number;
+  h: number;
+  /** Where it came from: "artwork Acme logo", "SVG path". */
+  source?: string;
+}
+
 /** The enclosure as stored in the design. */
 export interface EnclosureSettings {
   brief?: EnclosureBrief;
   /** The OpenSCAD script (enclosure.scad): includes board.scad, one module per piece. */
   script?: string;
+  /** Graphics the script draws (graphic(name) in board.scad). */
+  graphics?: EnclosureGraphic[];
+}
+
+/** The graphics as the agent reads them (get_enclosure): without their figures. */
+export function enclosureGraphicsInfo(list: EnclosureGraphic[] | undefined): { name: string; size_mm: [number, number]; mode: string; figures: number; source?: string }[] {
+  return (list ?? []).map((g) => ({ name: g.name, size_mm: [g.w, g.h], mode: g.mode === 'fill' ? 'filled' : `outlines ${g.line} mm`, figures: g.polys.length, ...(g.source ? { source: g.source } : {}) }));
+}
+
+/**
+ * What a render is made from, as one key: the script and the graphics. A report made from another
+ * key is out of date.
+ */
+export function enclosureKey(e: EnclosureSettings | null | undefined): string {
+  if (!e?.script) return '';
+  if (!e.graphics?.length) return e.script;
+  // FNV-1a over the graphics: their figures can be large
+  let h = 0x811c9dc5;
+  const s = JSON.stringify(e.graphics);
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return `${e.script}\n// graphics ${(h >>> 0).toString(16)}`;
 }
 
 /** The brief's questions the user has not answered yet. */
@@ -71,6 +111,23 @@ export function scriptPrintRotations(script: string): Record<string, [number, nu
   return out;
 }
 
+/**
+ * Pieces printed in another colour, inside or on a piece they belong to: the script's
+ * `inlays = [["lid_logo", "lid", "white"]];` (the inlay, its host, the colour it is shown in). An
+ * inlay prints with its host (turned the same, one object in the 3MF, its own part for a second
+ * filament) and lifts with it in the opened view.
+ */
+export function scriptInlays(script: string): Record<string, { host: string; colour?: string }> {
+  const m = /^\s*inlays\s*=\s*\[([\s\S]*?\])\s*\]\s*;/m.exec(stripComments(script));
+  const out: Record<string, { host: string; colour?: string }> = {};
+  if (!m) return out;
+  const id = '"([A-Za-z_][A-Za-z0-9_]*)"';
+  for (const e of m[1]!.matchAll(new RegExp(`\\[\\s*${id}\\s*,\\s*${id}\\s*(?:,\\s*"([^"]*)"\\s*)?\\]`, 'g'))) {
+    out[e[1]!] = { host: e[2]!, ...(e[3] ? { colour: e[3] } : {}) };
+  }
+  return out;
+}
+
 function stripComments(s: string): string {
   return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 }
@@ -92,6 +149,11 @@ export function scriptProblems(script: string): string[] {
   else {
     for (const p of pieces) if (!new RegExp(`\\bmodule\\s+${p}\\s*\\(`).test(code)) out.push(`pieces names "${p}" but there is no module ${p}().`);
     if (!/\bpiece\s*=/.test(code)) out.push('Choose the piece with a variable: piece = "all"; and draw only that piece (or all of them) at the end.');
+    for (const [inlay, { host }] of Object.entries(scriptInlays(script))) {
+      if (!pieces.includes(inlay)) out.push(`inlays names "${inlay}", which is not in pieces.`);
+      else if (!pieces.includes(host)) out.push(`The inlay ${inlay} belongs to "${host}", which is not in pieces.`);
+      else if (scriptInlays(script)[host]) out.push(`The inlay ${inlay} belongs to ${host}, itself an inlay: give it the piece they are both printed with.`);
+    }
   }
   return out;
 }

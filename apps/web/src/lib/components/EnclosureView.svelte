@@ -1,6 +1,6 @@
 <script lang="ts">
   import { printFiles } from '@4k7/fab';
-  import { openQuestions, scriptPieces, scriptPrintRotations, type BriefItem } from '@4k7/schema';
+  import { enclosureKey, openQuestions, scriptInlays, scriptPieces, scriptPrintRotations, type BriefItem, type EnclosureGraphic } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Chat from './Chat.svelte';
   import Splitter from './Splitter.svelte';
@@ -21,8 +21,10 @@
   const brief = $derived(enc?.brief);
   const script = $derived(enc?.script ?? null);
   const questions = $derived(openQuestions(brief));
-  // the last render, if it was made from the script as it is now
-  const last = $derived(app.enclosure && script && app.enclosure.report.script === script ? app.enclosure : null);
+  const graphics = $derived(enc?.graphics ?? []);
+  // the last render, if it was made from the script (and graphics) as they are now
+  const encKey = $derived(enclosureKey(enc));
+  const last = $derived(app.enclosure && script && app.enclosure.report.key === encKey ? app.enclosure : null);
   const report = $derived(last?.report ?? null);
   const errors = $derived(report?.findings.filter((f) => f.severity === 'error') ?? []);
   const warnings = $derived(report?.findings.filter((f) => f.severity === 'warning') ?? []);
@@ -31,8 +33,8 @@
   let tried = $state<string | null>(null);
   let renderError = $state<string | null>(null);
   $effect(() => {
-    if (!script || last || app.enclosureBusy || tried === script || !app.scad?.available || !b) return;
-    tried = script;
+    if (!script || last || app.enclosureBusy || tried === encKey || !app.scad?.available || !b) return;
+    tried = encKey;
     void render();
   });
   async function render() {
@@ -49,9 +51,12 @@
   let cut = $state<string | null>(null);
   const pieces = $derived(report?.pieces ?? []);
   const printTurns = $derived(script ? scriptPrintRotations(script) : {});
+  const inlays = $derived(script ? scriptInlays(script) : {});
+  /** The pieces shown and hidden on their own: inlays come and go with their host. */
+  const hosts = $derived(pieces.filter((p) => !inlays[p.name] || !pieces.some((h) => h.name === inlays[p.name]!.host)));
   const openings = $derived(brief?.openings ?? []);
-  const scene = $derived(b && last ? { board: b, facts: last.facts, pieces, findings: last.report.findings, openings } : null);
-  const options = $derived({ open: open ? 1 : 0, show: pieces.filter((p) => !hidden[p.name]).map((p) => p.name), marks: true, board: pcb });
+  const scene = $derived(b && last ? { board: b, facts: last.facts, pieces, findings: last.report.findings, openings, inlays } : null);
+  const options = $derived({ open: open ? 1 : 0, show: hosts.filter((p) => !hidden[p.name]).map((p) => p.name), marks: true, board: pcb });
 
   /* the brief's questions: the user's answers, sent to the agent as the next message */
   let picks = $state<Record<string, string>>({});
@@ -78,6 +83,32 @@
   }
   async function saveScript() {
     if (await app.userEdit('Edit the enclosure script', [{ op: 'set_enclosure_script', script: draft }])) editing = false;
+  }
+
+  /* graphics for the box: logos and icons, added from the artwork library (or by the agent) */
+  let artPick = $state('');
+  const gfxPath = (g: EnclosureGraphic) => g.polys.map((p) => `M${p.slice(0, 2).join(' ')}L${p.slice(2).join(' ')}Z`).join('');
+  const gfxBox = (g: EnclosureGraphic) => {
+    const pad = Math.max(g.w, g.h) * 0.08 + (g.mode === 'outline' ? (g.line ?? 0.2) : 0);
+    return `${-g.w / 2 - pad} ${-g.h / 2 - pad} ${g.w + 2 * pad} ${g.h + 2 * pad}`;
+  };
+  /** A name the script can use for an artwork: letters, digits and _, unique among the graphics. */
+  function gfxName(artName: string): string {
+    let base = artName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32) || 'logo';
+    if (!/^[a-z]/.test(base)) base = `g_${base}`;
+    for (let i = 1; ; i++) {
+      const name = i === 1 ? base : `${base}_${i}`;
+      if (!graphics.some((g) => g.name === name)) return name;
+    }
+  }
+  async function addGraphic() {
+    const a = app.artwork.items.find((x) => x.id === artPick);
+    if (!a) return;
+    const name = gfxName(a.name);
+    if (await app.userEdit(`Graphic "${name}" for the box`, [{ op: 'set_enclosure_graphic', name, artwork: a.name }])) artPick = '';
+  }
+  function removeGraphic(g: EnclosureGraphic) {
+    void app.userEdit(`Remove the graphic "${g.name}" from the box`, [{ op: 'set_enclosure_graphic', name: g.name, remove: true }]);
   }
 
   /* OpenSCAD */
@@ -137,7 +168,7 @@
           <div class="seg"><button aria-pressed={!open} onclick={() => (open = false)}>Closed</button><button aria-pressed={open} onclick={() => (open = true)}>Opened</button></div>
           <div class="seg">
             <button aria-pressed={pcb} title="Show or hide the board with its parts (hide it to see how the box holds it)" onclick={() => (pcb = !pcb)}>PCB</button>
-            {#each pieces as p (p.name)}<button aria-pressed={!hidden[p.name]} title="Show or hide the {p.name}" onclick={() => (hidden = { ...hidden, [p.name]: !hidden[p.name] })}>{p.name}</button>{/each}
+            {#each hosts as p (p.name)}<button aria-pressed={!hidden[p.name]} title="Show or hide the {p.name}" onclick={() => (hidden = { ...hidden, [p.name]: !hidden[p.name] })}>{p.name}</button>{/each}
           </div>
           {#if openings.length}
             <div class="seg">
@@ -200,6 +231,26 @@
         </ul>
         {#if brief.openings?.length}<p class="small">Openings for {brief.openings.join(', ')}{#if brief.max_size_mm} · at most {brief.max_size_mm.join(' × ')} mm{/if}</p>{/if}
       {/if}
+
+      <h4>Graphics <span class="muted small">logos and icons for the box</span></h4>
+      {#each graphics as g (g.name)}
+        <div class="gfx">
+          <svg class="thumb" viewBox={gfxBox(g)} aria-hidden="true"><path d={gfxPath(g)} fill-rule="evenodd" class={g.mode} stroke-width={g.mode === 'outline' ? Math.max(g.line ?? 0.2, Math.max(g.w, g.h) / 25) : undefined} /></svg>
+          <span class="mono">{g.name}</span>
+          <span class="muted small trunc" title={g.source}>{g.source ?? ''}</span>
+          <button class="ib" disabled={app.running} title="Remove it (the script must not draw it any more)" onclick={() => removeGraphic(g)}>✕</button>
+        </div>
+      {/each}
+      {#if app.artwork.items.length}
+        <div class="row2">
+          <select class="other" bind:value={artPick}>
+            <option value="" disabled>From your artwork…</option>
+            {#each app.artwork.items as a (a.id)}<option value={a.id}>{a.name} ({a.w} × {a.h} mm)</option>{/each}
+          </select>
+          <button class="btn" disabled={!artPick || app.running} onclick={addGraphic}>Add</button>
+        </div>
+      {/if}
+      <p class="small muted">Import a logo in Parts → Artwork (an SVG, or a picture traced), add it here, and tell the agent where it goes. Port names and other text need nothing: ask for them ("label the USB port").</p>
 
       {#if script}
         <h4>Checks {#if report}<span class="tag err">{errors.length}</span> <span class="tag warn">{warnings.length}</span>{/if}</h4>
@@ -292,6 +343,11 @@
   .opt { display: flex; gap: 6px; align-items: baseline; font-size: 12px; padding: 2px 0; cursor: pointer; }
   .other { width: 100%; box-sizing: border-box; font-size: 12px; padding: 3px 6px; border: 1px solid var(--line-2); border-radius: 5px; background: var(--panel-2); color: var(--txt); }
   .row2 .other { flex: 1; width: auto; min-width: 0; }
+  .gfx { display: flex; gap: 6px; align-items: center; font-size: 12px; padding: 2px 0; }
+  .gfx .trunc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thumb { width: 28px; height: 20px; flex: none; background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; }
+  .thumb path.fill { fill: var(--txt); }
+  .thumb path.outline { fill: none; stroke: var(--txt); }
   .items { list-style: none; margin: 4px 0; padding: 0; font-size: 12px; color: var(--txt-2); }
   .items li { padding: 2px 0; }
   .findings { list-style: none; margin: 0; padding: 0; }

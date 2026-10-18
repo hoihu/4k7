@@ -620,7 +620,7 @@
                 </button>
               </li>
             {:else}
-              <li class="none">Silkscreen graphics you save (ask the agent) or import from SVG appear here.</li>
+              <li class="none">Logos and clipart for the silkscreen and the enclosure: saved by the agent, or imported from an SVG or a picture.</li>
             {/each}
           </ul>
         {/if}

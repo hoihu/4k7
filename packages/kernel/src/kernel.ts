@@ -35,6 +35,7 @@ import {
   trackWidthFor,
   viaCurrentFor,
   viasForCurrent,
+  enclosureGraphicsInfo,
 } from '@4k7/schema';
 import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
 import { applyOp, describeConstraint, descriptionView } from './apply.ts';
@@ -487,7 +488,7 @@ export class Kernel {
       }
       // the app answers these with board.scad, OpenSCAD and the guide; the kernel alone knows the design's part
       case 'get_enclosure':
-        return { brief: d.enclosure?.brief ?? null, script: d.enclosure?.script ?? null };
+        return { brief: d.enclosure?.brief ?? null, script: d.enclosure?.script ?? null, graphics: enclosureGraphicsInfo(d.enclosure?.graphics) };
       case 'get_guide':
         return { error: 'The guides are served by the app.' };
     }

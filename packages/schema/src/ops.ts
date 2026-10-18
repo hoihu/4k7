@@ -179,6 +179,14 @@ export const SetEnclosureScriptOp = z.object({
     .describe('The whole OpenSCAD script (replaces the one before): include <board.scad>, parameters at the top, pieces = ["base", "lid"]; one module per piece, built in assembled position, piece = "all"; and the pieces drawn at the end by piece. null removes it'),
 }).describe('The enclosure as an OpenSCAD script. Render it with render_enclosure (pictures and the measured report) after every change.');
 
+export const SetEnclosureGraphicOp = z.object({
+  op: z.literal('set_enclosure_graphic'),
+  name: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/, 'letters, digits, - and _, starting with a letter').describe('What the script calls it: graphic("logo"). Setting a name again replaces that graphic'),
+  artwork: z.string().optional().describe('A saved artwork by name (the artwork library: the user\'s logos, imported SVGs, traced pictures). List it with the artwork tool'),
+  svg_path: z.string().min(1).optional().describe('Or SVG path data you write (an icon: a USB trident, a power symbol, an arrow; any units, M L H V C S Q T A Z), filled even-odd: figures inside figures are holes'),
+  remove: z.boolean().optional().describe('true: remove the graphic of this name'),
+}).describe('A graphic for the box (a logo, an icon), kept in the design: board.scad draws it as graphic(name, width, height), 2D and centred, to emboss, engrave or inlay on a face like a label. Text needs no graphic: label("USB").');
+
 const pkgName = z.string().nullable().optional();
 export const SetPackageDefaultsOp = z.object({
   op: z.literal('set_package_defaults'),
@@ -573,6 +581,7 @@ export const EditOp = z.discriminatedUnion('op', [
   SetMatingOp,
   SetEnclosureBriefOp,
   SetEnclosureScriptOp,
+  SetEnclosureGraphicOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
 export type EditOpName = EditOp['op'];

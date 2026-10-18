@@ -74,6 +74,11 @@ export function bounds(t: Tris): { min: [number, number, number]; max: [number, 
  * bed: its lowest point at z = 0, centred on x = 0, y = 0.
  */
 export function orient(t: Tris, rot: [number, number, number] = [0, 0, 0]): Tris {
+  return orientTogether([t], rot)[0]!;
+}
+
+/** Meshes printed as one (a piece and its inlays): turned alike and set on the bed together, as orient does one. */
+export function orientTogether(list: Tris[], rot: [number, number, number] = [0, 0, 0]): Tris[] {
   const [a, b, c] = rot.map((d) => (d * Math.PI) / 180) as [number, number, number];
   const [ca, sa, cb, sb, cc, sc] = [Math.cos(a), Math.sin(a), Math.cos(b), Math.sin(b), Math.cos(c), Math.sin(c)];
   // Rz(c) · Ry(b) · Rx(a)
@@ -82,27 +87,45 @@ export function orient(t: Tris, rot: [number, number, number] = [0, 0, 0]): Tris
     sc * cb, sc * sb * sa + cc * ca, sc * sb * ca - cc * sa,
     -sb, cb * sa, cb * ca,
   ];
-  const out = new Float32Array(t.length);
-  for (let i = 0; i < t.length; i += 3) {
-    const [x, y, z] = [t[i]!, t[i + 1]!, t[i + 2]!];
-    out[i] = m[0]! * x + m[1]! * y + m[2]! * z;
-    out[i + 1] = m[3]! * x + m[4]! * y + m[5]! * z;
-    out[i + 2] = m[6]! * x + m[7]! * y + m[8]! * z;
-  }
-  const b0 = bounds(out);
+  const outs = list.map((t) => {
+    const out = new Float32Array(t.length);
+    for (let i = 0; i < t.length; i += 3) {
+      const [x, y, z] = [t[i]!, t[i + 1]!, t[i + 2]!];
+      out[i] = m[0]! * x + m[1]! * y + m[2]! * z;
+      out[i + 1] = m[3]! * x + m[4]! * y + m[5]! * z;
+      out[i + 2] = m[6]! * x + m[7]! * y + m[8]! * z;
+    }
+    return out;
+  });
+  const b0 = boundsOf(outs);
   const dx = -(b0.min[0] + b0.max[0]) / 2, dy = -(b0.min[1] + b0.max[1]) / 2, dz = -b0.min[2];
-  for (let i = 0; i < out.length; i += 3) {
-    out[i] = out[i]! + dx;
-    out[i + 1] = out[i + 1]! + dy;
-    out[i + 2] = out[i + 2]! + dz;
+  for (const out of outs) {
+    for (let i = 0; i < out.length; i += 3) {
+      out[i] = out[i]! + dx;
+      out[i + 1] = out[i + 1]! + dy;
+      out[i + 2] = out[i + 2]! + dz;
+    }
   }
-  return out;
+  return outs;
+}
+
+function boundsOf(list: Tris[]): { min: [number, number, number]; max: [number, number, number] } {
+  const bs = list.filter((t) => t.length).map(bounds);
+  if (!bs.length) return bounds(new Float32Array(0));
+  return { min: [0, 1, 2].map((k) => Math.min(...bs.map((b) => b.min[k]!))) as [number, number, number], max: [0, 1, 2].map((k) => Math.max(...bs.map((b) => b.max[k]!))) as [number, number, number] };
+}
+
+/** One object on the plate: a piece, and the parts printed with it in other filaments (its inlays). */
+export interface PlateObject {
+  name: string;
+  tris: Tris;
+  parts?: { name: string; tris: Tris }[];
 }
 
 /** The pieces on one plate: side by side along x, `gap` apart, the plate centred on 0, 0. */
-export function plate(pieces: { name: string; tris: Tris }[], gap = 8): { name: string; tris: Tris }[] {
+export function plate(pieces: PlateObject[], gap = 8): PlateObject[] {
   const widths = pieces.map((p) => {
-    const b = bounds(p.tris);
+    const b = boundsOf([p.tris, ...(p.parts ?? []).map((x) => x.tris)]);
     return b.max[0] - b.min[0];
   });
   const total = widths.reduce((s, w) => s + w, 0) + gap * Math.max(0, pieces.length - 1);
@@ -110,24 +133,32 @@ export function plate(pieces: { name: string; tris: Tris }[], gap = 8): { name: 
   return pieces.map((p, i) => {
     const shift = x + widths[i]! / 2; // each piece is centred on 0 by orient
     x += widths[i]! + gap;
-    const out = Float32Array.from(p.tris);
-    for (let k = 0; k < out.length; k += 3) out[k] = out[k]! + shift;
-    return { name: p.name, tris: out };
+    const move = (t: Tris) => {
+      const out = Float32Array.from(t);
+      for (let k = 0; k < out.length; k += 3) out[k] = out[k]! + shift;
+      return out;
+    };
+    return { name: p.name, tris: move(p.tris), ...(p.parts?.length ? { parts: p.parts.map((x) => ({ name: x.name, tris: move(x.tris) })) } : {}) };
   });
 }
 
-/** A 3MF file (the slicers' format: one object per piece, millimetres) as bytes. */
-export function threeMf(pieces: { name: string; tris: Tris }[], title = 'enclosure'): Uint8Array {
+/**
+ * A 3MF file (the slicers' format, millimetres) as bytes: one object per piece; a piece with parts
+ * (its inlays) is one object made of components, which the slicers open as one object with a part
+ * each, so each part can get its own filament.
+ */
+export function threeMf(pieces: PlateObject[], title = 'enclosure'): Uint8Array {
   const esc = (s: string) => s.replace(/[<>&"]/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[ch]!);
   const objects: string[] = [];
   const items: string[] = [];
-  pieces.forEach((p, idx) => {
+  let next = 1;
+  const mesh = (name: string, t: Tris): number => {
     // shared corners once: 3MF meshes are indexed
     const index = new Map<string, number>();
     const verts: string[] = [];
     const tris: string[] = [];
     const vid = (k: number) => {
-      const x = p.tris[k]!, y = p.tris[k + 1]!, z = p.tris[k + 2]!;
+      const x = t[k]!, y = t[k + 1]!, z = t[k + 2]!;
       const key = `${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}`;
       let id = index.get(key);
       if (id === undefined) {
@@ -137,14 +168,24 @@ export function threeMf(pieces: { name: string; tris: Tris }[], title = 'enclosu
       }
       return id;
     };
-    for (let i = 0; i < p.tris.length; i += 9) {
+    for (let i = 0; i < t.length; i += 9) {
       const [a, b, c] = [vid(i), vid(i + 3), vid(i + 6)];
       if (a !== b && b !== c && a !== c) tris.push(`<triangle v1="${a}" v2="${b}" v3="${c}"/>`);
     }
-    const id = idx + 1;
-    objects.push(`<object id="${id}" name="${esc(p.name)}" type="model"><mesh><vertices>${verts.join('')}</vertices><triangles>${tris.join('')}</triangles></mesh></object>`);
+    const id = next++;
+    objects.push(`<object id="${id}" name="${esc(name)}" type="model"><mesh><vertices>${verts.join('')}</vertices><triangles>${tris.join('')}</triangles></mesh></object>`);
+    return id;
+  };
+  for (const p of pieces) {
+    if (!p.parts?.length) {
+      items.push(`<item objectid="${mesh(p.name, p.tris)}"/>`);
+      continue;
+    }
+    const ids = [mesh(p.name, p.tris), ...p.parts.map((x) => mesh(x.name, x.tris))];
+    const id = next++;
+    objects.push(`<object id="${id}" name="${esc(p.name)}" type="model"><components>${ids.map((c) => `<component objectid="${c}"/>`).join('')}</components></object>`);
     items.push(`<item objectid="${id}"/>`);
-  });
+  }
   const model = `<?xml version="1.0" encoding="UTF-8"?>
 <model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
 <metadata name="Title">${esc(title)}</metadata>
