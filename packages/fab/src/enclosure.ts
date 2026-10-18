@@ -17,6 +17,8 @@ export interface EnclosureFinding {
   box?: { min: [number, number, number]; max: [number, number, number] };
   /** The parts it is about. */
   parts?: string[];
+  /** The piece it is on (the 3D view lifts its box with the piece). */
+  piece?: string;
 }
 
 export interface EnclosurePiece {
@@ -187,12 +189,12 @@ export function enclosureReport(job: EnclosureJob, results: ScadRunResult[], scr
     for (const x of printIssues(tris, orient(tris, turns[p.name]))) {
       findings.push(
         x.kind === 'overhang'
-          ? { code: 'ENC.OVERHANG', severity: 'warning', message: `${p.name}, ${how}: ${x.area} mm² hangs over steeper than 45° between ${pt(x.box.min)} and ${pt(x.box.max)}: it needs supports. Chamfer it, or turn the piece (print = [["${p.name}", [x, y, z]]];).`, box: x.box }
-          : { code: 'ENC.BRIDGE', severity: 'warning', message: `${p.name}, ${how}: a ceiling ${x.size} mm across with nothing under it, between ${pt(x.box.min)} and ${pt(x.box.max)}: wider than a printer bridges (about 20 mm). Turn the piece so it lies on the bed, or support it.`, box: x.box },
+          ? { code: 'ENC.OVERHANG', severity: 'warning', message: `${p.name}, ${how}: ${x.area} mm² hangs over steeper than 45° between ${pt(x.box.min)} and ${pt(x.box.max)}: it needs supports. Chamfer it, or turn the piece (print = [["${p.name}", [x, y, z]]];).`, box: x.box, piece: p.name }
+          : { code: 'ENC.BRIDGE', severity: 'warning', message: `${p.name}, ${how}: a ceiling ${x.size} mm across with nothing under it, between ${pt(x.box.min)} and ${pt(x.box.max)}: wider than a printer bridges (about 20 mm). Turn the piece so it lies on the bed, or support it.`, box: x.box, piece: p.name },
       );
     }
     for (const x of thinWalls(tris)) {
-      findings.push({ code: 'ENC.THIN', severity: 'warning', message: `${p.name}: walls down to ${x.size} mm over ${x.area} mm² between ${pt(x.box.min)} and ${pt(x.box.max)}: thinner than two perimeters (0.8 mm) prints weak or not at all, unless it is meant to be (a light window). In a label or logo: details too fine to print; make it larger or bolder.`, box: x.box });
+      findings.push({ code: 'ENC.THIN', severity: 'warning', message: `${p.name}: walls down to ${x.size} mm over ${x.area} mm² between ${pt(x.box.min)} and ${pt(x.box.max)}: thinner than two perimeters (0.8 mm) prints weak or not at all, unless it is meant to be (a light window). In a label or logo: details too fine to print; make it larger or bolder.`, box: x.box, piece: p.name });
     }
   }
 
