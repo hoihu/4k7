@@ -92,7 +92,7 @@
     const locked = (b?.parts ?? []).filter((p) => mine.includes(p.refdes) && p.locked).map((p) => p.refdes);
     void app.send(
       `I have arranged the parts that matter to me: ${mine.join(', ')} ${mine.length > 1 ? 'are' : 'is'} where I want ${mine.length > 1 ? 'them' : 'it'}${locked.length ? ` (${locked.join(', ')} locked)` : ''}. ` +
-        'Take the layout from here: keep my placements, arrange the rest round them, decide the planes (which net on which layer, and whether a plane should be split; say why), then route to 100 %.',
+        'Take the layout from here: keep my placements, arrange the rest round them (compare arrangements with try_placements and get the crossing ratsnest lines down before anything else), decide the planes (which net on which layer, and whether a plane should be split; say why), then route to 100 %.',
       { shown: `Continue the layout round my placement (${mine.join(', ')})` },
     );
   }

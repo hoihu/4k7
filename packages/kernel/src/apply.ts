@@ -49,8 +49,11 @@ import {
   openQuestions,
   scriptPieces,
   scriptProblems,
+  viaCurrentFor,
+  viasForCurrent,
 } from '@4k7/schema';
 import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
+import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
 import { isDrawn, moveSymbol, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
@@ -153,6 +156,8 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent'): 
       return eraseOp(d, op);
     case 'propose_placement':
       return proposePlacement(d, op, by);
+    case 'refine_placement':
+      return refineStep(d, op);
     case 'route':
       return routeStep(d);
     case 'set_plane':
@@ -730,7 +735,7 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
   const size = op.size_mm ?? Math.max(b.rules.viaPad, drill + 0.2);
   if (size < drill + 0.1) reject({ code: 'BOARD_INVALID', message: `A ${size} mm via pad round a ${drill} mm drill leaves no copper ring; give size_mm at least ${drill + 0.1} mm.` });
   const pitch = op.pitch_mm ?? VIA_PITCH[op.kind];
-  if (op.kind !== 'points' && pitch < size + 0.1) reject({ code: 'BOARD_INVALID', message: `Vias ${size} mm wide ${pitch} mm apart would touch; give pitch_mm at least ${r3(size + 0.1)} mm.` });
+  if (op.kind !== 'points' && op.kind !== 'drop' && (op.kind !== 'tie' || op.pitch_mm !== undefined) && pitch < size + 0.1) reject({ code: 'BOARD_INVALID', message: `Vias ${size} mm wide ${pitch} mm apart would touch; give pitch_mm at least ${r3(size + 0.1)} mm.` });
   const netOf = (name: string) => {
     const net = findNet(d, name);
     if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${name}".`, candidates: Object.values(d.nets).map((n) => n.name) });
@@ -743,8 +748,8 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
   const sizes = { ...(op.drill_mm !== undefined ? { drill } : {}), ...(op.size_mm !== undefined ? { size } : {}) };
   let group: ViaGroup;
   let what: string;
-  if (op.kind === 'pad') {
-    if (!op.ref || !op.pad) reject({ code: 'INVALID_OP', message: 'add_vias kind "pad" needs ref (the component) and pad (its pad number, e.g. "9" or "EP").' });
+  if (op.kind === 'pad' || op.kind === 'drop') {
+    if (!op.ref || !op.pad) reject({ code: 'INVALID_OP', message: `add_vias kind "${op.kind}" needs ref (the component) and pad (its pad number, e.g. "9" or "EP").` });
     const comp = resolveComponent(d, op.ref!);
     const card = cardOf(d, comp.part);
     const pkg = card ? packageOf(card, comp.params, d.packageDefaults) : null;
@@ -755,6 +760,21 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
     const netId = comp.pins[pad!.number];
     if (!netId) reject({ code: 'BOARD_INVALID', message: `${comp.refdes}.${pad!.number} is not connected; connect it (e.g. to GND) before giving it vias.` });
     if (op.net && netOf(op.net).id !== netId) reject({ code: 'BOARD_INVALID', message: `${comp.refdes}.${pad!.number} is on ${d.nets[netId!]!.name}, not ${op.net}: vias in it are on its net.` });
+    if (op.kind === 'drop') {
+      const net = d.nets[netId!]!;
+      const amps = op.amps ?? net.attrs.maxCurrent;
+      if (op.count === undefined && !amps) reject({ code: 'INVALID_OP', message: `add_vias kind "drop" needs count (how many vias) or amps (the current through ${comp.refdes}.${pad!.number}); ${net.name} has no max_current.` });
+      const n = Math.min(16, op.count ?? viasForCurrent(amps!, drill));
+      // one group per pad: giving it again replaces it
+      const was = groups.findIndex((g) => g.kind === 'drop' && g.pad?.componentId === comp.id && g.pad.number === pad!.number);
+      group = { id: was >= 0 ? groups[was]!.id : nextId(), netId: netId!, kind: 'drop', pad: { componentId: comp.id, number: pad!.number }, ...(op.count !== undefined ? { count: op.count } : {}), ...(op.amps !== undefined ? { amps: op.amps } : {}), ...sizes };
+      if (was >= 0) groups.splice(was, 1);
+      what = `${n} via${n > 1 ? 's' : ''} from ${comp.refdes}.${pad!.number} (${net.name}) down to its plane${op.count === undefined ? ` for ${amps} A (about ${Math.round(viaCurrentFor(drill) * 10) / 10} A each)` : ''}, in a row on a bar beside the pad (laid by the route step)`;
+      groups.push(group);
+      b.vias = groups;
+      d.board = b;
+      return { op: 'add_vias', effect: `${group.id}: ${what}`, ids: ['board'] };
+    }
     if (Math.min(pad!.w, pad!.h) < size) reject({ code: 'BOARD_INVALID', message: `${comp.refdes}.${pad!.number} (${pad!.w} × ${pad!.h} mm) is smaller than a ${size} mm via.` });
     // one group per pad: giving it again replaces it
     const was = groups.findIndex((g) => g.kind === 'pad' && g.pad?.componentId === comp.id && g.pad.number === pad!.number);
@@ -763,6 +783,16 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
     const cols = Math.floor((pad!.w - size) / pitch + 1e-6) + 1;
     const rows = Math.floor((pad!.h - size) / pitch + 1e-6) + 1;
     what = `${cols} × ${rows} thermal vias in ${comp.refdes}.${pad!.number} (${d.nets[netId!]!.name}), ${pitch} mm apart`;
+  } else if (op.kind === 'tie') {
+    if (!op.at || op.at.length !== 1) reject({ code: 'INVALID_OP', message: 'add_vias kind "tie" needs at: one point, the spot where the net\'s copper crosses to the other layer (mm).' });
+    if (!op.net) reject({ code: 'INVALID_OP', message: 'add_vias needs the vias\' net (net: "+3V3").' });
+    const net = netOf(op.net!);
+    const [p] = op.at!;
+    const amps = op.amps ?? net.attrs.maxCurrent;
+    const per = viaCurrentFor(drill);
+    const n = Math.max(2, Math.min(16, amps ? Math.ceil(amps / per - 1e-6) : 2));
+    group = { id: nextId(), netId: net.id, kind: 'tie', points: [[r3(p!.x_mm), r3(p!.y_mm)]], ...(op.amps !== undefined ? { amps: op.amps } : {}), ...(op.pitch_mm !== undefined ? { pitch: op.pitch_mm } : {}), ...sizes };
+    what = `${net.name} tie at (${p!.x_mm}, ${p!.y_mm}): ${n} vias ${amps ? `for ${amps} A (about ${Math.round(per * 10) / 10} A each)` : '(no current known: give amps or the net\'s max_current)'}, laid close together by the route step where they fit and join the net's copper on two layers`;
   } else if (op.kind === 'points') {
     if (!op.at) reject({ code: 'INVALID_OP', message: 'add_vias kind "points" needs at (the via centres, mm).' });
     if (!op.net) reject({ code: 'INVALID_OP', message: 'add_vias needs the vias\' net (net: "GND").' });
@@ -1039,11 +1069,83 @@ export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_p
     if (part) Object.assign(k, { xMm: part.x, yMm: part.y });
   }
   const placed = now.parts.filter((p) => !p.componentId.startsWith('hole:')).length;
-  const m = now.measures;
+  // (by default with the agent's arrangement of the main parts; the placer's own proposal routed
+  // no better refined on the benches, its arrangement being the placer's guess anyway)
+  const refined = (op.refine ?? given.length > 0) ? refineSmallParts(d) : null;
+  const m = refined?.after ?? now.measures;
   return {
     op: 'propose_placement',
-    effect: `placement proposed: ${now.outline.w} × ${now.outline.h} mm${now.sizeBy === 'user' ? ' (your size)' : ''}, ${placed} parts${given.length ? `, ${given.map((g) => g.comp.refdes).join(', ')} where you put them` : ''}${forgot ? `, ${forgot} placement choice(s) forgotten` : ''}; ratsnest ${m.ratsnestMm} mm, ${m.crossings} crossing(s)`,
+    effect: `placement proposed: ${now.outline.w} × ${now.outline.h} mm${now.sizeBy === 'user' ? ' (your size)' : ''}, ${placed} parts${given.length ? `, ${given.map((g) => g.comp.refdes).join(', ')} where you put them` : ''}${forgot ? `, ${forgot} placement choice(s) forgotten` : ''}; ratsnest ${m.ratsnestMm} mm, ${m.crossings} crossing(s)${refined?.moved.length ? ` (the small parts refined: ${refined.moved.length} moved or turned, from ${refined.before.ratsnestMm} mm, ${refined.before.crossings} crossings)` : ''}`,
     ids: ['board', ...given.map((g) => g.comp.id)],
+  };
+}
+
+/**
+ * Refine the small parts the placer put down (refine.ts): moved a little and turned where that
+ * untangles the ratsnest. Checked on the placement as the placer then makes it, and kept only if
+ * its measures are better (fewer crossings, or as many and a shorter ratsnest). `only`: these
+ * components at most.
+ */
+export function refineSmallParts(d: Design, only?: Set<string>): { moved: RefineMove[]; before: { ratsnestMm: number; crossings: number }; after: { ratsnestMm: number; crossings: number } } {
+  if (!d.board?.placement) keepPlacement(d);
+  const b0 = placedNow(d);
+  const before = b0.measures;
+  const movable = new Set([...refinable(b0)].filter((id) => !only || only.has(id)));
+  const none = { moved: [], before, after: before };
+  if (!movable.size) return none;
+  const planeNets = new Set(b0.planes.filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu' && !pl.area).map((pl) => pl.netId));
+  const r = refinePlacement(b0, movable, planeNets, 1.5 + b0.rules.edgeClearance);
+  if (!r.moves.length) return none;
+  const saved = structuredClone(d.board!.placement!);
+  for (const mv of r.moves) d.board!.placement!.parts[mv.componentId] = { x: mv.x, y: mv.y, rot: mv.rot };
+  const b1 = placedNow(d);
+  const after = b1.measures;
+  if (!(after.crossings < before.crossings || (after.crossings === before.crossings && after.ratsnestMm < before.ratsnestMm - 0.05))) {
+    d.board!.placement = saved;
+    return none;
+  }
+  // as the placer left it (a part it had to nudge clear of another is stored where it ended up)
+  d.board!.placement = storedPlacement(b1);
+  return { moved: r.moves, before, after };
+}
+
+/** What refinement did, in words: "R3 turned 90°, C5 moved 0.5 mm right, …". */
+function refineText(moves: RefineMove[]): string {
+  const dir = (dx: number, dy: number) => {
+    const d = Math.round(Math.hypot(dx, dy) * 10) / 10;
+    const h = Math.abs(dx) < 0.05 ? '' : dx > 0 ? 'right' : 'left';
+    const v = Math.abs(dy) < 0.05 ? '' : dy > 0 ? 'down' : 'up';
+    return `moved ${d} mm ${[v, h].filter(Boolean).join(' and ')}`;
+  };
+  const one = (mv: RefineMove) => {
+    const turn = (((mv.rot - mv.was.rot) % 360) + 360) % 360;
+    const moved = Math.hypot(mv.x - mv.was.x, mv.y - mv.was.y) >= 0.05;
+    return `${mv.refdes} ${[turn ? `turned ${turn}°` : '', moved ? dir(mv.x - mv.was.x, mv.y - mv.was.y) : ''].filter(Boolean).join(', ')}`;
+  };
+  return moves.slice(0, 12).map(one).join('; ') + (moves.length > 12 ? `; ${moves.length - 12} more` : '');
+}
+
+/** refine_placement: the small parts refined, all of them or those given (parts) or near some (near). */
+function refineStep(d: Design, op: Extract<EditOp, { op: 'refine_placement' }>): OpResult {
+  if (!d.board?.placement) keepPlacement(d);
+  const b = placedNow(d);
+  if (!b.parts.length) reject({ code: 'BOARD_INVALID', message: 'Nothing to refine: the board has no parts.' });
+  let only: Set<string> | undefined;
+  if (op.parts) only = new Set(op.parts.map((r) => resolveComponent(d, r).id));
+  if (op.near) {
+    const around = op.near.map((r) => b.parts.find((p) => p.componentId === resolveComponent(d, r).id)).filter((p) => !!p);
+    const near = (p: (typeof b.parts)[number]) => around.some((a) => Math.max(a.courtyard.x - (p.courtyard.x + p.courtyard.w), p.courtyard.x - (a.courtyard.x + a.courtyard.w), a.courtyard.y - (p.courtyard.y + p.courtyard.h), p.courtyard.y - (a.courtyard.y + a.courtyard.h)) <= 5);
+    const ids = new Set(b.parts.filter(near).map((p) => p.componentId));
+    only = only ? new Set([...only].filter((id) => ids.has(id))) : ids;
+  }
+  const mine = new Set([...refinable(b)].filter((id) => !only || only.has(id)));
+  if (!mine.size) return { op: 'refine_placement', effect: 'nothing to refine: no small part the placer put down among them (parts you or the user placed or locked, and connectors, stay as they are)', ids: [] };
+  const r = refineSmallParts(d, only);
+  if (!r.moved.length) return { op: 'refine_placement', effect: `no better place found for the ${mine.size} small part(s): ratsnest ${r.before.ratsnestMm} mm, ${r.before.crossings} crossing(s) as they are. If the tangle remains, move or turn the main parts (try_placements)`, ids: [] };
+  return {
+    op: 'refine_placement',
+    effect: `${r.moved.length} small part(s) moved or turned: ratsnest ${r.before.ratsnestMm} → ${r.after.ratsnestMm} mm, crossings ${r.before.crossings} → ${r.after.crossings}. ${refineText(r.moved)}`,
+    ids: ['board', ...r.moved.map((m) => m.componentId)],
   };
 }
 

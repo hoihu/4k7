@@ -34,6 +34,7 @@ import {
   fabSummary,
   trackWidthFor,
   viaCurrentFor,
+  viasForCurrent,
   enclosureGraphicsInfo,
 } from '@4k7/schema';
 import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
@@ -399,9 +400,23 @@ export class Kernel {
           ...(n.attrs.maxCurrent ? { suggested_mm: trackWidthFor(n.attrs.maxCurrent), for_current_a: n.attrs.maxCurrent } : {}),
           rules: { signal_mm: rules.track, power_mm: rules.powerTrack },
         };
-        // the vias each of its pads drops onto its plane with, for its current
+        // the vias its pads drop onto its plane with: one each, more where the agent asked (add_vias drop)
         const perVia = viaCurrentFor(rules.viaDrill);
-        const vias = n.attrs.maxCurrent ? { plane_vias: { per_pad: Math.ceil(n.attrs.maxCurrent / perVia - 1e-6), per_via_a: Math.round(perVia * 10) / 10, note: 'as many as fit along a pad (DRC.PLANE_VIAS where fewer)' } } : {};
+        const drops = (d.board?.vias ?? []).filter((g) => g.kind === 'drop' && g.netId === n.id);
+        const asked = drops.map((g) => {
+          const c = d.components[g.pad!.componentId];
+          const want = g.count ?? (g.amps ?? n.attrs.maxCurrent ? viasForCurrent((g.amps ?? n.attrs.maxCurrent)!, g.drill ?? rules.viaDrill) : 1);
+          return { pad: `${c?.refdes ?? '?'}.${g.pad!.number}`, vias: want, group: g.id };
+        });
+        const vias = {
+          plane_vias: {
+            each_pad: 1,
+            ...(asked.length ? { asked_for: asked } : {}),
+            per_via_a: Math.round(perVia * 10) / 10,
+            ...(n.attrs.maxCurrent ? { for_max_current: viasForCurrent(n.attrs.maxCurrent, rules.viaDrill) } : {}),
+            note: 'Each pad drops onto its plane with one via. On the pads the current flows through (trace the path: where it comes in, the regulator or switch, the inductor, the bulk and output caps, where it goes out, and the ground return of each), ask for as many as that current needs: add_vias kind drop (ref, pad, amps or count). Not on pads no current to speak of flows through (a switch, an LED, a pull-up, an IC\'s logic pins).',
+          },
+        };
         return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, track, ...vias };
       }
       case 'get_diagnostics':
@@ -455,7 +470,7 @@ export class Kernel {
         return { ...boardSummary(b, !!routed), plane_plan: planePlan(d, b) };
       }
       case 'try_placements':
-        return tryPlacements(d, this.analyse(d).view, q.candidates, !!q.route, this.boards.get(d));
+        return tryPlacements(d, this.analyse(d).view, q.candidates, !!q.route, this.boards.get(d), q.explore !== false);
       case 'get_description':
         return descriptionView(d) ?? { description: null, hint: 'No description yet: write one with design_edit describe (overview and blocks).', parts: componentsSorted(d).map((c) => c.refdes) };
       case 'get_ledger':

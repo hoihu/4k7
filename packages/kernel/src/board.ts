@@ -40,6 +40,8 @@ import {
   type Via,
   type ViaGroup,
   VIA_PITCH,
+  viaCurrentFor,
+  viasForCurrent,
   cutoutBounds,
   cutoutDistance,
   cutoutPolygon,
@@ -556,9 +558,11 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
    * rotation is taken as its direction (lying or standing), so it may be turned round by 180°
    * (the same footprint area: nothing else moves). Pads on a net with a dedicated inner plane do
    * not count (they drop onto it where they are). Locked parts keep their rotation; an IC's small
-   * parts keep the one that puts them at their pin.
+   * parts keep the one that puts them at their pin. From a stored placement only the parts that
+   * moved (`only`): the others keep the turn they were given (refine_placement weighs crossings,
+   * which this does not).
    */
-  const flipTwoPin = () => {
+  const flipTwoPin = (only?: Set<Item>) => {
     const hugged = new Set(satellites.map((x) => x.it));
     const length = (it: Item) => {
       let len = 0;
@@ -574,7 +578,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     // twice: two connected parts (a resistor and its LED) each see the other's final side
     for (let pass = 0; pass < 2; pass++) {
       for (const it of items) {
-        if (it.fixed || hugged.has(it) || !isTwoPin(it.card)) continue;
+        if (it.fixed || hugged.has(it) || !isTwoPin(it.card) || (only && !only.has(it))) continue;
         const was = it.rot;
         const before = length(it);
         it.rot = (was + 180) % 360;
@@ -598,10 +602,12 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
         // settled: the spacing holds to within a grid step (what the strict separation leaves)
         if (!overlapping(items, SPACING - GRID_MM)) return;
       }
-      if (userSize) {
-        legalize();
-        return; // the user's size: what still overlaps shows as DRC errors
-      }
+      // the parts still in the way to the nearest spot where they fit (a pair the separation
+      // cannot pull apart: a small part wedged against a main part someone placed)
+      legalize();
+      if (userSize) return; // the user's size: what still overlaps shows as DRC errors
+      if (!overlapping(items, SPACING - GRID_MM)) return;
+      // a proposed outline grows only where that is not enough (growing moves nothing by itself)
       outline = { w: Math.ceil(outline.w * 1.1), h: Math.ceil(outline.h * 1.1) };
     }
   };
@@ -646,6 +652,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }
   };
 
+  // from a stored placement: the parts that moved (only they are flipped, see flipTwoPin)
+  let flipOnly: Set<Item> | undefined;
   if (!stored) {
     /* ---- proposal: start from the schematic, scaled into the outline ---- */
     const targetW = Math.sqrt(area * 2.8 * 1.4);
@@ -705,10 +713,13 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
         }
       }
     } else if (items.length) {
-      // the proposed size: the relaxed cluster, spread until the parts cover at most DENSITY
+      // the proposed size: the relaxed cluster, spread until the parts cover at most DENSITY. Not
+      // with parts placed by someone: they stay, so spreading would only push the small parts
+      // away from them (the frame they start in, the board placed without them, has that
+      // density already)
       const partsArea = items.reduce((sum, it) => sum + (it.cw + SPACING) * (it.ch + SPACING), 0);
       const bb1 = bounds(items);
-      const f = Math.sqrt(partsArea / DENSITY / Math.max((bb1.x1 - bb1.x0) * (bb1.y1 - bb1.y0), 1e-6));
+      const f = positions.length ? 1 : Math.sqrt(partsArea / DENSITY / Math.max((bb1.x1 - bb1.x0) * (bb1.y1 - bb1.y0), 1e-6));
       if (f > 1) {
         const cx = (bb1.x0 + bb1.x1) / 2;
         const cy = (bb1.y0 + bb1.y1) / 2;
@@ -812,8 +823,14 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       for (const it of still) it.fixed = false;
     }
     orient(items.filter((it) => it.fixed && it.freeRot && !before.has(it)));
+    flipOnly = new Set(
+      items.filter((it) => {
+        const was = before.get(it);
+        return !was || was.x !== it.x || was.y !== it.y || was.rot !== it.rot;
+      }),
+    );
   }
-  flipTwoPin();
+  flipTwoPin(flipOnly);
   settle();
   alignSimilar(items, contain);
 
@@ -976,9 +993,9 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board. Give it one from its datasheet drawing with set_footprint.`, entities: [ref] });
   }
   const planes = placePlanes(settingsPlanes(d, layers.length as 2 | 4), parts, w, h);
-  const viaPlan = planVias(settings.vias ?? [], parts, w, h, rules);
+  const viaPlan = planVias(settings.vias ?? [], parts, w, h, rules, (id) => d.nets[id]?.attrs.maxCurrent);
   // (keys sorted: a design read back from its file has them in another order than one just edited)
-  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
+  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : [])] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   const view: BoardView = {
     outline: { w, h },
     layers,
@@ -1055,9 +1072,14 @@ const COPPER_FORMAT = 1;
 export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean; onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
   const b = placeBoard(d, sch);
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
-  const { powerNets, planes, netWidths, netCurrents, key } = routeSetup(d, b);
+  const { powerNets, planes, netWidths, key, basis } = routeSetup(d, b);
   const pads = b.parts.flatMap((p) => p.pads);
   const kept = d.board?.copper?.key === key ? d.board.copper : null;
+  // routed before for another placement on the same board: the router keeps what still holds of
+  // it (incremental routing), but not the copper of a net whose width, current or planes changed
+  const before = !kept && d.board?.copper?.basis?.board === basis.board ? d.board.copper : null;
+  const same = (netId: string) => before?.basis?.nets[netId] === basis.nets[netId];
+  const keep = before ? { tracks: before.tracks.filter((t) => same(t.netId)), vias: before.vias.filter((v) => same(v.netId)) } : null;
   const index = new Map(pads.map((p, i) => [p, i]));
   const toCopper = (r: ReturnType<typeof route>): StoredCopper => ({
     key,
@@ -1070,6 +1092,8 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     netsDone: r.netsDone,
     timedOut: r.timedOut,
     passes: r.passes,
+    basis,
+    ...(r.reused ? { reused: r.reused } : {}),
   });
   const copper =
     kept ??
@@ -1081,12 +1105,12 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
         parts: b.parts,
         powerNets,
         netWidths,
-        netCurrents,
         planes: planes.map(({ netId, layer, area, style }) => ({ netId, layer, ...(area ? { area } : {}), ...(style ? { style } : {}) })),
-        ...(b.viaGroups.length ? { vias: planVias(d.board?.vias ?? [], b.parts, b.outline.w, b.outline.h, b.rules) } : {}),
+        ...(b.viaGroups.length ? { vias: planVias(d.board?.vias ?? [], b.parts, b.outline.w, b.outline.h, b.rules, (id) => d.nets[id]?.attrs.maxCurrent) } : {}),
         cornerRadius: b.cornerRadius,
         ...(b.shape ? { shape: b.shape } : {}),
         cutouts: b.cutouts,
+        ...(keep ? { keep } : {}),
         ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}),
         ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
         // what a stop keeps: the best pass so far, marked as stopped
@@ -1130,9 +1154,10 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     unrouted,
     ...(kept ? {} : { newCopper: copper }),
     ...(copper.stopped ? { stopped: true } : {}),
+    ...(copper.reused ? { reused: copper.reused } : {}),
   };
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed, (id) => ({ power: powerNets.has(id), amps: d.nets[id]?.attrs.maxCurrent }))];
+  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed)];
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
@@ -1179,11 +1204,21 @@ function routeSetup(d: Design, b: BoardView) {
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const planes = b.planes;
   const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
-  const netCurrents = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.maxCurrent).map((n) => [n.id, n.attrs.maxCurrent!]));
-  // (the currents only where a net has one: the copper a design without them keeps stays its own)
-  const currents = Object.entries(netCurrents).sort();
-  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort(), ...(currents.length ? [currents] : [])]));
-  return { powerNets, planes, netWidths, netCurrents, key };
+  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort()]));
+  // the pads that ask for more than one via (add_vias drop), per net
+  const drops = (d.board?.vias ?? []).filter((g) => g.kind === 'drop');
+  // what copper routed now holds under (StoredCopper.basis): the board, and per net what decides its
+  // copper. (Not the outline: an auto-sized board grows as parts move; the copper is checked
+  // against the edge as it is now.)
+  const basis = {
+    board: hash(stableJson([COPPER_FORMAT, b.layers, b.rules])),
+    nets: Object.fromEntries(
+      Object.keys(d.nets)
+        .sort()
+        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.count ?? null, g.amps ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null])]))]),
+    ),
+  };
+  return { powerNets, planes, netWidths, key, basis };
 }
 
 /** The key copper routed for this design's board now would be kept under (see BoardSettings.copper). */
@@ -1683,15 +1718,29 @@ function settingsPlanes(d: Design, layers: 2 | 4): { netId: string; layer: Coppe
  * courtyards' box plus the margin, so it follows them), within the board. An area under parts
  * that are all gone, or one off the board, is left out.
  */
-/** The vias placed on purpose, where they go now: copper from the start (fixed), or spots the router fills where a via fits. */
+/**
+ * The vias placed on purpose, where they go now: copper from the start (fixed), or spots the
+ * router fills where a via fits, in order, at most `limits` of a group (a tie: its spots round the
+ * one it is centred on, more than it wants, so a blocked one is made up for).
+ */
 export interface ViaPlan {
   fixed: Via[];
   fill: Via[];
+  limits?: Record<string, number>;
+  /** Pads asking for more than one via down to their plane (add_vias drop): the router lays them on a bar beside the pad. */
+  drops?: { group: string; componentId: string; number: string; count: number }[];
   groups: BoardView['viaGroups'];
 }
 
-/** Where each via group's vias go on this placement (a pad group follows its part). */
-export function planVias(groups: ViaGroup[], parts: BoardPart[], w: number, h: number, rules: BoardRules): ViaPlan {
+/** Ties: never fewer vias than this (one may be bad), nor more than this many. */
+const TIE_MIN = 2;
+const TIE_MAX = 16;
+
+/**
+ * Where each via group's vias go on this placement (a pad group follows its part). `amps`: a
+ * net's max_current, for ties without their own (and to judge a grid's).
+ */
+export function planVias(groups: ViaGroup[], parts: BoardPart[], w: number, h: number, rules: BoardRules, amps: (netId: string) => number | undefined = () => undefined): ViaPlan {
   const out: ViaPlan = { fixed: [], fill: [], groups: [] };
   for (const g of groups) {
     const via = (x: number, y: number, extra: Partial<Via> = {}): Via => ({ netId: g.netId, x: r3(x), y: r3(y), drill: g.drill ?? rules.viaDrill, pad: g.size ?? Math.max(rules.viaPad, (g.drill ?? rules.viaDrill) + 0.2), group: g.id, ...extra });
@@ -1722,6 +1771,41 @@ export function planVias(groups: ViaGroup[], parts: BoardPart[], w: number, h: n
     } else if (g.kind === 'points') {
       for (const [x, y] of g.points ?? []) out.fixed.push(via(x, y));
       entry(g.points?.length ?? 0);
+    } else if (g.kind === 'drop') {
+      const part = parts.find((p) => p.componentId === g.pad?.componentId);
+      const pad = part?.pads.find((p) => p.number === g.pad?.number);
+      if (!part || !pad) {
+        entry(0, part ? `${part.refdes} has no pad ${g.pad?.number} any more` : 'its part is not on the board');
+        continue;
+      }
+      const current = g.amps ?? amps(g.netId);
+      const n = Math.min(16, g.count ?? (current ? viasForCurrent(current, g.drill ?? rules.viaDrill) : 1));
+      (out.drops ??= []).push({ group: g.id, componentId: part.componentId, number: pad.number, count: n });
+      out.groups.push({ id: g.id, netId: g.netId, kind: 'drop', wanted: n, pad: `${part.refdes}.${pad.number}`, ...(g.count === undefined && current ? { note: `${n} for ${r3(current)} A` } : {}) });
+    } else if (g.kind === 'tie') {
+      // as many as the current wants, in a tight block round the spot (as square as can be), then
+      // the spots round it in case some are blocked
+      const [cx, cy] = g.points?.[0] ?? [w / 2, h / 2];
+      const current = g.amps ?? amps(g.netId);
+      const per = viaCurrentFor(g.drill ?? rules.viaDrill);
+      const n = Math.max(TIE_MIN, Math.min(TIE_MAX, current ? Math.ceil(current / per - 1e-6) : TIE_MIN));
+      const q = g.pitch || Math.ceil((size + rules.clearance) / 0.1 - 1e-6) * 0.1;
+      const cols = Math.ceil(Math.sqrt(n));
+      const rows = Math.ceil(n / cols);
+      const spots: [number, number, number][] = [];
+      for (let j = -1; j <= rows; j++) {
+        for (let i = -1; i <= cols; i++) {
+          const x = cx + (i - (cols - 1) / 2) * q;
+          const y = cy + (j - (rows - 1) / 2) * q;
+          const ring = i < 0 || j < 0 || i >= cols || j >= rows ? 1 : 0;
+          spots.push([x, y, ring * 1e3 + Math.hypot(x - cx, y - cy)]);
+        }
+      }
+      spots.sort((a, b) => a[2] - b[2]);
+      for (const [x, y] of spots) out.fill.push(via(Math.round(x * 10) / 10, Math.round(y * 10) / 10));
+      (out.limits ??= {})[g.id] = n;
+      const why = current ? `${n} for ${r3(current)} A (about ${Math.round(per * 10) / 10} A per ${g.drill ?? rules.viaDrill} mm via)` : `${n}: no current known (give amps, or the net's max_current)`;
+      entry(n, why);
     } else {
       const box = areaBox(g.area ?? {}, parts, w, h);
       if (!box) {
@@ -1746,7 +1830,11 @@ export function planVias(groups: ViaGroup[], parts: BoardPart[], w: number, h: n
         side(x0, y1, x0, y0);
       }
       for (const [x, y] of spots) out.fill.push(via(x, y));
-      entry(spots.length);
+      // stitching a supply's copper: say what its vias carry against what the net draws
+      const current = g.kind === 'grid' ? amps(g.netId) : undefined;
+      const per = viaCurrentFor(g.drill ?? rules.viaDrill);
+      const need = current ? Math.max(TIE_MIN, Math.ceil(current / per - 1e-6)) : 0;
+      entry(spots.length, current && spots.length > 2 * need ? `${spots.length} spots carry about ${Math.round(spots.length * per)} A; the net draws ${current} A, which ${need} vias carry: a tie (add_vias kind tie) where the current crosses to the plane does the same with less copper drilled` : undefined);
     }
   }
   return out;

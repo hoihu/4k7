@@ -35,6 +35,6 @@ describe('tool schemas', () => {
     };
     expect(q.properties.op?.enum).toEqual(['get_summary', 'find', 'get_component', 'get_net', 'get_diagnostics', 'get_ledger', 'get_description', 'get_fab_profiles', 'get_schematic', 'get_board', 'try_placements', 'search_parts', 'get_part', 'get_enclosure', 'get_guide']);
     expect(q.required).toEqual(['op']);
-    expect(Object.keys(q.properties).sort()).toEqual(['candidates', 'category', 'id', 'net', 'op', 'ref', 'route', 'text', 'topic']);
+    expect(Object.keys(q.properties).sort()).toEqual(['candidates', 'category', 'explore', 'id', 'net', 'op', 'ref', 'route', 'text', 'topic']);
   });
 });
