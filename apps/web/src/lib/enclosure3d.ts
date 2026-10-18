@@ -25,10 +25,12 @@ export interface EnclosureScene {
   findings: EnclosureFinding[];
   /** Parts the brief says are used from outside: their ways out are drawn. */
   openings: string[];
+  /** Pieces in another colour that belong to a host piece (the script's inlays): drawn in their colour, lifted with the host. */
+  inlays?: Record<string, { host: string; colour?: string }>;
 }
 
 export interface SceneOptions {
-  /** Pieces to show (all when absent). */
+  /** Pieces to show (all when absent); inlays follow their host. */
   show?: string[];
   /** The board with its parts (default true): off, to see how the box holds it. */
   board?: boolean;
@@ -45,9 +47,11 @@ const toViewer = (h: number) => new THREE.Matrix4().set(1, 0, 0, 0, 0, 0, 1, -T,
 
 /**
  * Colours of the pieces (base, lid, more): muted mid tones, so the lights shade them as they do the
- * Layout's 3D view (pale ones wash out); their edges a darker line; a cut through them.
+ * Layout's 3D view (pale ones wash out); of an inlay the script gives no colour; their edges a darker
+ * line; a cut through them.
  */
 const PIECE_COLOURS = [0x6b727d, 0x4d6688, 0x8c7b5a, 0x5c7d66];
+const INLAY = 0x2a2e35;
 const EDGE = 0x10141a;
 const CUT = 0xe0703a;
 /** Facets meeting at less than this are shaded smooth (rounded corners, holes), and get no edge line. */
@@ -75,6 +79,11 @@ function pieceGeometry(p: EnclosurePiece, h: number) {
   return g;
 }
 
+/** The pieces that are not inlays, in order: the open view lifts each by its place here, its inlays with it. */
+function hosts(s: EnclosureScene): EnclosurePiece[] {
+  return s.pieces.filter((p) => !s.inlays?.[p.name] || !s.pieces.some((h) => h.name === s.inlays![p.name]!.host));
+}
+
 /** How far the open view lifts each piece after the first. */
 function liftStep(s: EnclosureScene) {
   const zs = s.pieces.flatMap((p) => [p.bbox.min[2], p.bbox.max[2]]);
@@ -87,12 +96,31 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
   const group = o.board === false ? new THREE.Group() : boardGroup(s.board, boardBodies(s.board), res, redraw);
   const owned: { dispose(): void }[] = [];
   const lift = liftStep(s) * (o.open ?? 0);
-  s.pieces.forEach((p, i) => {
-    if (o.show && !o.show.includes(p.name)) return;
+  const order = hosts(s).map((p) => p.name);
+  /** The piece a piece moves and shows with: an inlay's host, else itself. */
+  const hostOf = (name: string) => {
+    const inlay = s.inlays?.[name];
+    return inlay && order.includes(inlay.host) ? inlay.host : name;
+  };
+  s.pieces.forEach((p) => {
+    const inlay = s.inlays?.[p.name];
+    const host = hostOf(p.name);
+    // an inlay shows with its host
+    if (o.show && !o.show.includes(host)) return;
+    const i = order.indexOf(host);
     const geo = pieceGeometry(p, h);
     // the outside in the piece's colour; where a section cuts it open, its inside shows in the cut colour
+    let colour: THREE.ColorRepresentation = PIECE_COLOURS[i % PIECE_COLOURS.length]!;
+    if (host !== p.name) {
+      colour = INLAY;
+      try {
+        if (inlay?.colour) colour = new THREE.Color().setStyle(inlay.colour);
+      } catch {
+        // not a CSS colour: the default
+      }
+    }
     // (pushed back, so the inside never shows through where the outside meets another piece's)
-    const front = new THREE.MeshStandardMaterial({ color: PIECE_COLOURS[i % PIECE_COLOURS.length], roughness: 0.6, metalness: 0.05, side: THREE.FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    const front = new THREE.MeshStandardMaterial({ color: colour, roughness: 0.6, metalness: 0.05, side: THREE.FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     const back = new THREE.MeshBasicMaterial({ color: CUT, side: THREE.BackSide, polygonOffset: true, polygonOffsetFactor: 3, polygonOffsetUnits: 3 });
     const edge = new THREE.LineBasicMaterial({ color: EDGE, transparent: true, opacity: 0.55 });
     owned.push(front, back, edge);
@@ -125,8 +153,8 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
     // what the report found: boxes round each spot (errors red, warnings amber), lifted with their piece
     for (const f of s.findings) {
       if (!f.box) continue;
-      const at = f.piece ? s.pieces.findIndex((p) => p.name === f.piece) : -1;
-      if (at >= 0 && o.show && !o.show.includes(f.piece!)) continue;
+      const at = f.piece ? order.indexOf(hostOf(f.piece)) : -1;
+      if (at >= 0 && o.show && !o.show.includes(order[at]!)) continue;
       const up = new THREE.Vector3(0, lift * Math.max(at, 0), 0);
       const a = toPoint(f.box.min, h).add(up);
       const b = toPoint(f.box.max, h).add(up);
@@ -178,11 +206,28 @@ export function createEnclosureViewer(canvas: HTMLCanvasElement): EnclosureViewe
 }
 
 export type PictureName = 'front_left' | 'back_right' | 'open' | 'sections' | 'base_top' | 'bottom';
+export type FaceName = 'left' | 'right' | 'top' | 'bottom' | 'above' | 'below';
+
+/**
+ * Where the camera stands to read a face (board.scad directions, as board.scad's on_face): out from
+ * it, tilted about 20° so engraved and raised edges catch the light (straight on, a groove's floor
+ * shades like the face round it). Walls lean towards the text's top and left; the lid and the floor
+ * only towards the text's foot, which keeps the face's up at the top of the picture (the camera does
+ * not roll). `out` is the axis the face looks along.
+ */
+const FACE_VIEW: Record<FaceName, { dir: [number, number, number]; out: 0 | 1 | 2 }> = {
+  left: { dir: [-1, 0.2, 0.35], out: 0 },
+  right: { dir: [1, -0.2, 0.35], out: 0 },
+  top: { dir: [0.2, 1, 0.35], out: 1 },
+  bottom: { dir: [-0.2, -1, 0.35], out: 1 },
+  above: { dir: [0, -0.35, 1], out: 2 },
+  below: { dir: [0, -0.35, -1], out: 2 },
+};
 
 /** Pictures of the enclosure for the agent: JPEGs with a title each. */
 export async function enclosurePictures(
   s: EnclosureScene,
-  req: { views?: PictureName[]; section?: { axis: 'x' | 'y' | 'z'; at_mm: number }; width?: number },
+  req: { views?: PictureName[]; faces?: FaceName[]; section?: { axis: 'x' | 'y' | 'z'; at_mm: number }; width?: number },
 ): Promise<{ data: string; mimeType: string; title: string }[]> {
   const width = req.width ?? 900;
   const height = Math.round(width * 0.68);
@@ -192,6 +237,7 @@ export async function enclosurePictures(
   const h = s.board.outline.h;
   const out: { data: string; mimeType: string; title: string }[] = [];
   const views = req.views ?? ['front_left', 'back_right', 'open', 'sections', 'base_top'];
+  const main = hosts(s);
   const fov = 30;
   /** Camera `dist` away from `target` along `dir` (viewer coordinates). */
   const look = (target: THREE.Vector3, dir: THREE.Vector3, dist: number) => core.pose(target, target.clone().addScaledVector(dir.normalize(), dist));
@@ -218,16 +264,16 @@ export async function enclosurePictures(
         look(f.centre, dir, f.dist);
         core.redraw();
         snap(v === 'front_left' ? 'closed, from the front left above' : v === 'back_right' ? 'closed, from the back right above' : 'from below');
-      } else if (v === 'open' && s.pieces.length > 1) {
+      } else if (v === 'open' && main.length > 1) {
         const f = show({ open: 1 });
         look(f.centre, new THREE.Vector3(-0.55, 0.6, 0.9), f.dist);
         core.redraw();
-        snap(`opened: ${s.pieces.slice(1).map((p) => p.name).join(', ')} lifted off ${s.pieces[0]!.name}`);
+        snap(`opened: ${main.slice(1).map((p) => p.name).join(', ')} lifted off ${main[0]!.name}`);
       } else if (v === 'base_top') {
-        const f = show({ show: [s.pieces[0]!.name] });
+        const f = show({ show: [main[0]!.name] });
         look(f.centre, new THREE.Vector3(0, 1, 0.0001), f.dist * 0.95);
         core.redraw();
-        snap(`${s.pieces[0]!.name} from above, without the other pieces`);
+        snap(`${main[0]!.name} from above, without the other pieces`);
       } else if (v === 'sections') {
         for (const ref of s.openings) {
           const m = s.facts.parts.find((x) => x.ref === ref)?.mating;
@@ -244,7 +290,23 @@ export async function enclosurePictures(
         }
       }
     }
+    for (const face of req.faces ?? []) {
+      core.clip([]);
+      // without the plug paths and findings, which would hide labels; framed on the face, not the whole box
+      const g = enclosureGroup(s, core.res, { marks: false });
+      core.setContent(g);
+      const v = FACE_VIEW[face];
+      const box = new THREE.Box3().setFromObject(g);
+      const size = box.getSize(new THREE.Vector3());
+      // board.scad x, y, z are the viewer's x, z, y
+      const across = ([size.x, size.z, size.y] as number[]).filter((_, i) => i !== v.out);
+      const r = Math.hypot(across[0]!, across[1]!) / 2;
+      look(box.getCenter(new THREE.Vector3()), toDir(v.dir), (r / Math.sin(THREE.MathUtils.degToRad(fov / 2))) * 1.1 + ([size.x, size.z, size.y][v.out]! / 2));
+      core.redraw();
+      snap(`the ${face === 'above' ? 'lid from above' : face === 'below' ? 'floor from below (the box tipped towards you)' : `${face} face`}, as a reader sees it (tilted a little, so engraving shows)`);
+    }
     if (req.section) {
+      core.clip([]);
       const f = show({});
       const axis = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[req.section.axis] as [number, number, number];
       const n = toDir(axis).normalize();

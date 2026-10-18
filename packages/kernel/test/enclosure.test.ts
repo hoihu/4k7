@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { boardFacing, boardSummary, scriptPieces, scriptProblems, type EnclosureBrief } from '@4k7/schema';
-import { Kernel } from '../src/index.ts';
+import { boardFacing, boardSummary, scriptInlays, scriptPieces, scriptProblems, type EnclosureBrief } from '@4k7/schema';
+import { Kernel, registerArtwork, unregisterArtwork } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 
 function kernel() {
@@ -126,5 +126,61 @@ describe('enclosure script', () => {
     const k = kernel();
     const r = k.transact({ summary: 'box', ops: [{ op: 'set_enclosure_script', script: 'cube([10, 10, 10]); // a box' }] });
     expect(r).toMatchObject({ status: 'rejected', rejection: { code: 'ENCLOSURE_INVALID' } });
+  });
+});
+
+describe('enclosure graphics', () => {
+  const LOGO_PATH = 'M0 0 H20 V10 H0 Z M3 3 H8 V7 H3 Z';
+  const drawn = SCRIPT.replace('module lid() { translate([0, 0, 6]) cube([10, 10, 1]); }', 'module lid() { translate([0, 0, 6]) linear_extrude(1) graphic("logo", width = 8); }');
+
+  it('are kept in the design, centred, and become a hunk of their own', () => {
+    const k = kernel();
+    const r = k.transact({ summary: 'logo', ops: [{ op: 'set_enclosure_graphic', name: 'logo', svg_path: LOGO_PATH }] });
+    expect(r.status).toBe('ok');
+    const g = k.draftDesign().enclosure!.graphics![0]!;
+    expect(g).toMatchObject({ name: 'logo', mode: 'fill', w: 20, h: 10, source: 'SVG path' });
+    expect(g.polys[0]).toEqual([-10, -5, 10, -5, 10, 5, -10, 5]);
+    expect(k.proposal()!.hunks.map((h) => h.id)).toEqual(['enclosure:graphics']);
+    expect((k.query({ op: 'get_enclosure' }) as { graphics: unknown[] }).graphics).toEqual([{ name: 'logo', size_mm: [20, 10], mode: 'filled', figures: 2, source: 'SVG path' }]);
+    // the script may draw it now; accepting the script alone leaves the graphic out
+    expect(k.transact({ summary: 'box', ops: [{ op: 'set_enclosure_script', script: drawn }] }).status).toBe('ok');
+    k.accept(['enclosure:graphics'], 'user');
+    expect(k.committedDesign().enclosure).toEqual({ graphics: [g] });
+    // removing it removes the enclosure that was only it
+    expect(k.transact({ summary: 'no logo', ops: [{ op: 'set_enclosure_graphic', name: 'logo', remove: true }] }).status).toBe('ok');
+    expect(k.draftDesign().enclosure).toBeUndefined();
+  });
+
+  it('come from the artwork library by name, outlines and all', () => {
+    registerArtwork([{ id: 'acme', name: 'Acme logo', mode: 'outline', line: 0.3, polys: [[-2, -1, 2, -1, 2, 1, -2, 1]], w: 4, h: 2 }]);
+    try {
+      const k = kernel();
+      expect(k.transact({ summary: 'logo', ops: [{ op: 'set_enclosure_graphic', name: 'acme', artwork: 'acme logo' }] }).status).toBe('ok');
+      expect(k.draftDesign().enclosure!.graphics![0]).toMatchObject({ name: 'acme', mode: 'outline', line: 0.3, w: 4, h: 2, source: 'artwork Acme logo' });
+      const r = k.transact({ summary: 'logo', ops: [{ op: 'set_enclosure_graphic', name: 'other', artwork: 'Nope' }] });
+      expect(r).toMatchObject({ status: 'rejected', rejection: { code: 'REF_UNKNOWN', candidates: ['Acme logo'] } });
+    } finally {
+      unregisterArtwork('acme');
+    }
+  });
+
+  it('a script cannot draw a graphic the design does not have', () => {
+    const k = kernel();
+    const r = k.transact({ summary: 'box', ops: [{ op: 'set_enclosure_script', script: drawn }] });
+    expect(r).toMatchObject({ status: 'rejected', rejection: { code: 'ENCLOSURE_INVALID' } });
+    expect(JSON.stringify(r)).toContain('graphic(\\"logo\\"): there is no such graphic');
+    // in one transaction: the graphic first, then the script
+    expect(k.transact({ summary: 'box', ops: [{ op: 'set_enclosure_graphic', name: 'logo', svg_path: LOGO_PATH }, { op: 'set_enclosure_script', script: drawn }] }).status).toBe('ok');
+    // neither both nor none of artwork and svg_path
+    expect(k.transact({ summary: 'x', ops: [{ op: 'set_enclosure_graphic', name: 'x' }] })).toMatchObject({ status: 'rejected' });
+  });
+
+  it('inlays name their host among the pieces', () => {
+    const inlaid = SCRIPT.replace('pieces = ["base", "lid"];', 'pieces = ["base", "lid", "lid_text"];\ninlays = [["lid_text", "lid", "#ffffff"]];').replace('module lid()', 'module lid_text() { cube(1); }\nmodule lid()');
+    expect(scriptInlays(inlaid)).toEqual({ lid_text: { host: 'lid', colour: '#ffffff' } });
+    expect(scriptInlays(SCRIPT)).toEqual({});
+    expect(scriptProblems(inlaid)).toEqual([]);
+    expect(scriptProblems(inlaid.replace('["lid_text", "lid", "#ffffff"]', '["lid_text", "cover"]')).join(' ')).toContain('"cover", which is not in pieces');
+    expect(scriptProblems(inlaid.replace('["lid_text", "lid", "#ffffff"]', '["lid_text", "lid"], ["lid", "base"]')).join(' ')).toContain('itself an inlay');
   });
 });

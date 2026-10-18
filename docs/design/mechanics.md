@@ -37,6 +37,9 @@ request, the board or a sensible default settles, with the reason. Ask what only
 - Heat (a linear regulator dropping volts, a power stage), outdoor use, water, dust.
 - Fasteners and process when the notes do not say: M2.5 or M3, heat-set inserts or self-tapping
   screws, the material (PLA indoors, PETG for warm or sturdier, ASA outdoors).
+- Labels and a logo, when the user wants them or the box has several ports that look alike: which
+  ports to name and with what words, a logo (from their artwork, §6) and where it goes, engraved or
+  in a second colour (an inlay needs a multi-material printer or a filament change).
 
 **Decide yourself** (say so, do not ask): wall thickness, clearances, post sizes, the split
 between base and lid (the lid on top, the board in the base), print orientation, corner radius
@@ -152,7 +155,71 @@ so in the brief. Keep warm parts away from the walls.
 **Water and dust.** A sealed box (a gasket groove, glands) is beyond what you should promise.
 Say so when the user asks for outdoor use: the printed box keeps rain off, it is not sealed.
 
-## 6. Writing the script
+## 6. Labels and logos
+
+Port names ("USB", "12 V", "IN", "OUT"), a product name, a logo, arrows and icons go on the
+outside of the box. board.scad has the helpers. Never rotate text by hand: mirrored and upside-down
+labels are the usual mistake.
+
+- `label("USB", size = 4)` is 2D text, centred, in the font that comes with OpenSCAD (Liberation
+  Sans Bold). `size` is the height of the capitals.
+- `graphic("logo", width = 20)` is a graphic from the design, 2D and centred. The user's logos are
+  in their artwork library (the artwork tool lists them; they import SVGs and trace pictures in
+  Parts → Artwork). Put one in the design first with `design_edit set_enclosure_graphic name: "logo"
+  artwork: "<its name>"`. For a simple icon (the USB trident, a power symbol, an arrow), write the
+  SVG path yourself (`svg_path`). Do not trace text into a graphic: use `label`.
+- `on_face(face, at)` lays 2D children on a face of the box, reading the right way from outside:
+  their x to the reader's right, their y up, their z out of the box. `at` is a point on the face's
+  outside: you know where your walls are. Faces are named as `parts_info`'s plugged-from: `left`,
+  `right`, `top`, `bottom` (the walls along the board's edges seen from above), `above` (the lid,
+  read from above with the board's top edge away from the reader) and `below` (the floor, read with
+  the box tipped towards you).
+- `engrave(face, at, depth = 0.6)` is the 2D children sunk into the face: `difference()` it from
+  the piece. `emboss(face, at, height = 0.6)` is the 2D children raised out of the face: `union()`
+  it with the piece.
+
+```scad
+j1 = part_info("J1")[6];                       // J1's mating: [from, face centre, …]
+module usb_label() engrave("left", [-gap - wall, j1[1][1], j1[1][2] - 6], 0.5) label("USB", size = 4);
+module base() difference() { base_body(); usb_label(); }
+```
+
+**Which way.** Engrave by default. It prints well on every face and nothing sticks out. Raised
+text on a vertical wall prints fine too. Raised text on the lid's outside face does not: the lid
+prints that face down, so engrave there. On the bed face, an engraving's floor is a short bridge.
+That is fine for letters; keep a filled logo under ~10 mm across, or make it an inlay.
+
+**Size.** Strokes at least 0.8 mm wide (two perimeters) and gaps between them at least 0.5 mm. With
+Liberation Sans Bold that means capitals ≥ 4 mm on walls; ≥ 3 mm prints on the bed face. Depth or
+height 0.4–0.6 mm, and at least 1 mm of wall left behind an engraving. The thin-wall warning
+(ENC.THIN) catches strokes and ridges too fine to print. Make the text bigger, bolder or shorter.
+
+**Where.** Name a port next to its opening, on the same face, centred on it (its mating face centre
+in `parts_info`). Put the name below the opening or beside it, at least 1.5 mm from the opening's
+edge and from the wall's edges. A logo goes on the lid or the largest wall, centred.
+
+**Two colours (inlay).** A label or logo in another filament. It is a piece of its own that fills
+the engraving exactly: the engraving cut from the host, and the same shape cut out of the host's
+body.
+
+```scad
+pieces = ["base", "lid", "lid_logo"];
+inlays = [["lid_logo", "lid", "white"]];       // [inlay, host, colour shown]; list inlays after their hosts
+module logo() engrave("above", [cx, cy, lid_top], 0.6) graphic("logo", width = 24);
+module lid() difference() { lid_body(); logo(); }
+module lid_logo() intersection() { lid_body(); logo(); }
+```
+
+An inlay prints with its host: turned the same way, in the same 3MF object as a part of its own, so
+the slicer gives it its own filament. The pieces-apart check leaves an inlay and its host alone,
+and the thin-wall and overhang checks skip inlays. On the bed face, 0.4–0.6 mm deep (two or three
+layers) is enough; it needs a multi-material printer or a filament change. Say which in the brief.
+
+**Check it.** `render_enclosure faces: ["left", "above"]` takes pictures of those faces as a
+reader sees them. Look at every label there: does it read the right way round, is it the right
+size, and is it in the right place?
+
+## 7. Writing the script
 
 - Start with `include <board.scad>`. Take every position and size from it (`holes`,
   `parts_info`, `pcb_outline`, `tallest_top`). Never type a coordinate the board already has.
@@ -168,7 +235,7 @@ Say so when the user asks for outdoor use: the printed box keeps rain off, it is
   Leave sharp inside corners where printing needs them.
 - `$fn = 48` for holes and posts, lower for big rounds while iterating.
 
-## 7. Judging your render
+## 8. Judging your render
 
 Work through the report first: it is exact. Then look at the pictures:
 
@@ -178,6 +245,8 @@ Work through the report first: it is exact. Then look at the pictures:
   inside? Is anything floating (a post not touching the floor, a rib not joined to the lid)?
 - **The angled views**: does every brief item show (opening, plunger, label, feet)? Would it print
   without supports?
+- **The faces with labels** (`faces`): does every label read the right way round, sit where it
+  should, and stay clear of openings and edges?
 
 Fix one thing at a time when a change is risky. Fix several when they are independent. Stop when
 the report is clean and every brief item is seen. Then say in the proposal what you assumed and

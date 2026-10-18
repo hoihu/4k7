@@ -7,7 +7,7 @@
  * corner, z up, the board's underside at z = 0 (its top at pcb_thickness).
  */
 import { boardBodies, type Body3D } from '@4k7/parts';
-import { boardFacing, boardPolygon, cutoutPolygon, matingOf, type BoardFacing, type BoardPart, type BoardView, type EnclosureBrief, type Mating } from '@4k7/schema';
+import { boardFacing, boardPolygon, cutoutPolygon, matingOf, type BoardFacing, type BoardPart, type BoardView, type EnclosureBrief, type EnclosureGraphic, type Mating } from '@4k7/schema';
 import type { FabFile } from './gerber.ts';
 
 /** Board thickness and copper (as the 3D view and the STEP export: parts sit on the copper). */
@@ -255,6 +255,36 @@ function solidScad(s: Solid): string {
   return `translate(${vec([c.x, -c.y, c.z0])}) cylinder(h = ${n(c.z1 - c.z0)}, r = ${n(c.r)});`;
 }
 
+/**
+ * The faces labels go on, each as [the reader's right, up, out of the box] (board.scad: x right,
+ * y up, z up). Read from outside, upright; the floor is read with the box tipped towards you.
+ */
+const FACE_FRAMES: Record<BoardFacing, [V3, V3, V3]> = {
+  left: [[0, -1, 0], [0, 0, 1], [-1, 0, 0]],
+  right: [[0, 1, 0], [0, 0, 1], [1, 0, 0]],
+  top: [[-1, 0, 0], [0, 0, 1], [0, 1, 0]],
+  bottom: [[1, 0, 0], [0, 0, 1], [0, -1, 0]],
+  above: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+  below: [[1, 0, 0], [0, -1, 0], [0, 0, -1]],
+};
+const vec3s = (f: readonly V3[]) => `[${f.map(vec).join(', ')}]`;
+
+/** A graphic's figures in OpenSCAD (y up): one even-odd polygon, or each figure's outline as a band `line` wide. */
+function graphicScad(g: EnclosureGraphic): string {
+  const loops = g.polys.filter((p) => p.length >= 6).map((p) => {
+    const pts: string[] = [];
+    for (let i = 0; i + 1 < p.length; i += 2) pts.push(`[${n(p[i]!)},${n(-p[i + 1]!)}]`);
+    return pts;
+  });
+  if (g.mode === 'outline') {
+    const half = n((g.line ?? 0.2) / 2);
+    return `{\n${loops.map((pts) => `    difference() { offset(delta = ${half}) polygon([${pts.join(',')}]); offset(delta = -${half}) polygon([${pts.join(',')}]); }`).join('\n')}\n  }`;
+  }
+  let k = 0;
+  const paths = loops.map((pts) => `[${pts.map(() => k++).join(',')}]`);
+  return `polygon(points = [${loops.flat().join(',')}], paths = [${paths.join(',')}]);`;
+}
+
 /** The modules' signatures and what they do: shown to the agent (get_enclosure) without the parts' solids. */
 export const BOARD_SCAD_API = `// modules (board.scad)
 // pcb_shape(delta = 0)            2D: the outline grown by delta (mm, negative shrinks), with the cutouts; offset it for walls
@@ -269,10 +299,25 @@ export const BOARD_SCAD_API = `// modules (board.scad)
 // keepouts(refs = brief_openings, grow = 0)
 //                                 parts() and the mating paths of refs: where the box must not be
 // hole_posts(from, d = 6)        a post under each mounting hole, diameter d, from z = from (the floor) up to the board's underside (z = 0)
-// functions: part_info(ref) → [ref, kind, min, max, side, approx, mating]; hole_info(id)`;
+// functions: part_info(ref) → [ref, kind, min, max, side, approx, mating]; hole_info(id)
+//
+// labels and logos on the box's outside (2D shapes laid on a face, reading the right way from outside)
+// label(t, size = 5, font = label_font, halign = "center", valign = "center")
+//                                 2D text, centred on the origin; size is the capitals' height (mm)
+// graphic(name, width = 0, height = 0)
+//                                 2D: a graphic from graphics (set_enclosure_graphic), centred; scaled to width or height
+//                                 (the other in proportion), both: stretched, neither: its stored size
+// on_face(face, at)               lays 2D children on a face: their x to the reader's right, y up, z out of the box,
+//                                 the origin at the point at (on the face's outside). face: "left", "right", "top",
+//                                 "bottom" (the walls along the board's edges as seen from above, as mating's plugged
+//                                 from), "above" (the lid, read from above, y towards the top edge), "below" (the floor,
+//                                 read from below with the box tipped towards you, y towards the bottom edge)
+// emboss(face, at, height = 0.6)  the 2D children raised out of the face: union() it with the piece
+// engrave(face, at, depth = 0.6)  the 2D children sunk into the face (0.01 proud of it, for a clean cut): difference() it
+//                                 from the piece; intersection() of the same with the piece is an inlay that fills it`;
 
 /** board.scad for the enclosure script. */
-export function boardScad(b: BoardView, project: string, brief?: EnclosureBrief): FabFile & { facts: EnclosureFacts } {
+export function boardScad(b: BoardView, project: string, brief?: EnclosureBrief, graphics?: EnclosureGraphic[]): FabFile & { facts: EnclosureFacts } {
   const f = enclosureFacts(b);
   const { solids, ...facts } = f;
   const L: string[] = [];
@@ -302,6 +347,10 @@ export function boardScad(b: BoardView, project: string, brief?: EnclosureBrief)
   L.push('// from the enclosure brief: the parts used from outside, and the room over the tallest part');
   L.push(`brief_openings = [${(brief?.openings ?? []).map(str).join(', ')}];`);
   L.push(`lid_clearance = ${n(brief?.lid_clearance_mm ?? 1)};`);
+  L.push('');
+  L.push('// graphics for the box (set_enclosure_graphic): [name, [width, height] as stored]; draw one with graphic(name)');
+  L.push(`graphics = [${(graphics ?? []).map((g) => `[${str(g.name)}, ${vec([g.w, g.h])}]`).join(', ')}];`);
+  L.push('label_font = "Liberation Sans:style=Bold";   // comes with OpenSCAD: the same on every computer');
   L.push('');
   L.push(BOARD_SCAD_API);
   L.push('');
@@ -357,6 +406,37 @@ export function boardScad(b: BoardView, project: string, brief?: EnclosureBrief)
   L.push('');
   L.push('module hole_posts(from, d = 6) {');
   L.push('  for (x = holes) translate([x[1], x[2], from]) cylinder(h = -from, d = d, $fn = 48);');
+  L.push('}');
+  L.push('');
+  L.push('module label(t, size = 5, font = label_font, halign = "center", valign = "center", spacing = 1) {');
+  L.push('  text(t, size = size, font = font, halign = halign, valign = valign, spacing = spacing, $fn = 24);');
+  L.push('}');
+  L.push('');
+  L.push('// a face\'s frame: [the reader\'s right, up, out of the box]');
+  L.push('function face_frame(face) =');
+  for (const [face, f] of Object.entries(FACE_FRAMES)) L.push(`  face == ${str(face)} ? ${vec3s(f)} :`);
+  L.push('  assert(false, str("on_face: no face \\"", face, "\\" (left, right, top, bottom, above, below)")) undef;');
+  L.push('');
+  L.push('module on_face(face, at) {');
+  L.push('  f = face_frame(face);');
+  L.push('  multmatrix([[f[0][0], f[1][0], f[2][0], at[0]], [f[0][1], f[1][1], f[2][1], at[1]], [f[0][2], f[1][2], f[2][2], at[2]], [0, 0, 0, 1]]) children();');
+  L.push('}');
+  L.push('');
+  L.push('module emboss(face, at, height = 0.6) { on_face(face, at) linear_extrude(height = height) children(); }');
+  L.push('');
+  L.push('module engrave(face, at, depth = 0.6) { on_face(face, at) translate([0, 0, -depth]) linear_extrude(height = depth + 0.01) children(); }');
+  L.push('');
+  L.push('module graphic(name, width = 0, height = 0) {');
+  L.push('  g = [for (x = graphics) if (x[0] == name) x][0];');
+  L.push('  assert(g != undef, str("no graphic \\"", name, "\\": add it with design_edit set_enclosure_graphic"));');
+  L.push('  sx = width > 0 ? width / g[1][0] : height > 0 ? height / g[1][1] : 1;');
+  L.push('  sy = height > 0 ? height / g[1][1] : sx;');
+  L.push('  scale([sx, sy]) graphic_shape(name);');
+  L.push('}');
+  L.push('');
+  L.push('// the graphics\' figures (y up), at their stored size');
+  L.push('module graphic_shape(name) {');
+  for (const g of graphics ?? []) L.push(`  if (name == ${str(g.name)}) ${graphicScad(g)}`);
   L.push('}');
   L.push('');
   return { name: 'board.scad', content: L.join('\n'), facts };
