@@ -873,6 +873,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   }
   flipTwoPin(flipOnly);
   if (!frozen) settle();
+  // (drawn copper: a new part that lands on another goes to the nearest free spot; the others stay, fixed for now)
+  else if (items.some((it) => !it.fixed)) legalize();
   alignSimilar(items, contain);
 
   // locked parts outside a proposed outline widen it
@@ -1135,7 +1137,12 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   // (drawn copper is the agent's: nothing to keep)
   const before = !kept && !b.drawn && d.board?.copper?.basis?.board === basis.board ? d.board.copper : null;
   const same = (netId: string) => before?.basis?.nets[netId] === basis.nets[netId];
-  const keep = before ? { tracks: before.tracks.filter((t) => same(t.netId)), vias: before.vias.filter((v) => same(v.netId)) } : null;
+  // (copper kept while the copper was drawn carries ids, anchors and the helper mark: the router's has none)
+  const plain = <T extends object>(x: T): T => {
+    const { id: _i, from: _f, to: _t, by: _b, ...rest } = x as T & { id?: string; from?: unknown; to?: unknown; by?: string };
+    return rest as T;
+  };
+  const keep = before ? { tracks: before.tracks.filter((t) => same(t.netId)).map(plain), vias: before.vias.filter((v) => same(v.netId)).map(plain) } : null;
   const index = new Map(pads.map((p, i) => [p, i]));
   const toCopper = (r: ReturnType<typeof route>): StoredCopper => ({
     key,

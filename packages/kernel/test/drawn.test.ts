@@ -376,10 +376,131 @@ describe('joints survive a move', () => {
     expect(b.diagnostics.find((x) => x.code === 'DRAW.DANGLING' && x.entities[0] === 't4')!.message).toMatch(/its start/);
   });
 
-  it('a part added onto drawn copper: the op says what it lands on', () => {
+  it('a part put onto drawn copper: the op says what it lands on', () => {
     const k = drawnBuck();
     ok(k, [{ op: 'route' }]);
-    const r = ok(k, [{ op: 'add_part', part: 'generic:R', refdes: 'R9', params: { resistance: '1k' } }, { op: 'connect', pins: ['R9.1', 'U1.COMP'] }]);
-    expect(r.results.some((x) => /; check: \d+ error\(s\)/.test(x.effect))).toBe(true);
+    const t = k.board().drawn!.tracks.find((x) => x.pts.length >= 4 && Math.hypot(x.pts[2]! - x.pts[0]!, x.pts[3]! - x.pts[1]!) > 2)!;
+    const [mx, my] = [(t.pts[0]! + t.pts[2]!) / 2, (t.pts[1]! + t.pts[3]!) / 2];
+    const r = ok(k, [{ op: 'add_part', part: 'generic:R', refdes: 'R9', params: { resistance: '1k' } }, { op: 'place', ref: 'R9', x_mm: mx, y_mm: my }]);
+    expect(r.results[1]!.effect).toMatch(/; check: \d+ error\(s\)/);
+  });
+});
+
+describe('what the review found', () => {
+  const takenOver = () => {
+    const k = buck();
+    ok(k, [{ op: 'route' }]);
+    k.accept();
+    expect(k.keepCopper(k.board().newCopper!)).toBe(true);
+    ok(k, [{ op: 'set_copper_mode', mode: 'drawn' }]);
+    k.accept();
+    return k;
+  };
+  const sharp = (pts: number[]) => {
+    for (let i = 2; i + 3 < pts.length; i += 2) {
+      const [ax, ay, bx, by] = [pts[i]! - pts[i - 2]!, pts[i + 1]! - pts[i - 1]!, pts[i + 2]! - pts[i]!, pts[i + 3]! - pts[i + 1]!];
+      if (ax * bx + ay * by < -1e-9 && Math.min(Math.hypot(ax, ay), Math.hypot(bx, by)) > 0.05) return true;
+    }
+    return false;
+  };
+
+  it('helper results found for an earlier working copy are refused (STALE)', () => {
+    const k = drawnBuck();
+    const { design, rev } = k.draftSnapshot();
+    const tx = { summary: 'route', ops: [{ op: 'route', nets: ['FB'] }] };
+    const results: Record<number, import('@4k7/schema').RouteHelperResult> = {};
+    new Kernel(design).transact(tx, 'user', { onDone: (i, r) => (results[i] = r) });
+    const u1 = part(k.board(), 'U1');
+    ok(k, [{ op: 'place', ref: 'U1', x_mm: u1.x + 1.5, y_mm: u1.y + 1 }]);
+    expect(k.transact(tx, 'user', { results, rev }).rejection?.code).toBe('STALE');
+    expect(k.transact(tx, 'user', { results, rev: k.draftSnapshot().rev }).status).toBe('ok');
+  });
+
+  it('fresh for one connection lays its whole net again; a stopped fresh run changes nothing', () => {
+    const k = takenOver();
+    const gnd = netId(k, 'GND');
+    const r = ok(k, [{ op: 'route', from: 'C3.2', to: 'U1.7', fresh: true }]);
+    expect(r.results[0]!.effect).toMatch(/C3\.2 → U1\.7: GND, fresh/);
+    expect(openOf(k.board(), gnd)).toEqual([]);
+    const n = k.board().drawn!.tracks.length;
+    const s = k.transact({ summary: 'x', ops: [{ op: 'route', fresh: true }] }, 'user', { results: { 0: { tracks: [], vias: [], open: [], passes: 0, stopped: true } } });
+    expect(s.results[0]!.effect).toMatch(/stopped by the user, nothing changed/);
+    expect(k.board().drawn!.tracks.length).toBe(n);
+  });
+
+  it('moves and turns leave no sharp corners in the router\'s copper taken over', () => {
+    const k0 = takenOver();
+    const design = k0.draftDesign();
+    for (const ref of ['C3', 'C4', 'C5', 'R1', 'R3', 'D1']) {
+      for (const [dx, dy, turn] of [[1, 1, 0], [-0.5, 1, 0], [0, 0, 90], [0.5, 0.5, 180]] as const) {
+        const k = new Kernel(design);
+        const p = part(k.board(), ref);
+        if (k.transact({ summary: 'm', ops: [{ op: 'place', ref, x_mm: p.x + dx, y_mm: p.y + dy, rot: ((p.rot + turn) % 360) as 0 }] }).status !== 'ok') continue;
+        for (const t of k.draftDesign().board!.drawn!.tracks) {
+          expect(sharp(t.pts), `${ref} ${dx} ${dy} ${turn}: ${t.id} ${t.pts.join(',')}`).toBe(false);
+          expect(t.pts.length).toBeGreaterThanOrEqual(4);
+        }
+      }
+    }
+  });
+
+  it('a part added with drawn copper finds a free place; nothing else moves', () => {
+    const k = drawnBuck();
+    const b0 = k.board();
+    ok(k, [{ op: 'add_part', part: 'generic:R', refdes: 'R9', params: { resistance: '1k' } }, { op: 'add_part', part: 'generic:C', refdes: 'C9', params: { capacitance: '1uF' } }, { op: 'connect', pins: ['R9.1', 'U1.COMP'] }, { op: 'connect', pins: ['C9.1', 'U1.BOOT'] }]);
+    const b = k.board();
+    expect(b.diagnostics.filter((x) => x.code === 'DRC.COURTYARD_OVERLAP')).toEqual([]);
+    for (const p of b0.parts) expect([part(b, p.refdes).x, part(b, p.refdes).y]).toEqual([p.x, p.y]);
+  });
+
+  it('drawn ids go on past those a waiver names, and router copper carries none', () => {
+    const k = drawnBuck();
+    ok(k, [{ op: 'draw_track', net: 'FB', from: [20, 20], to: [22, 20] }, { op: 'add_waiver', code: 'DRAW.DANGLING', entities: ['t1'], reason: 'a loose end kept on purpose here' }]);
+    ok(k, [{ op: 'set_copper_mode', mode: 'router' }, { op: 'set_copper_mode', mode: 'drawn', keep: false }, { op: 'draw_track', net: 'FB', from: [20, 20], to: [22, 20] }]);
+    expect(k.board().drawn!.tracks.map((t) => t.id)).toEqual(['t2']);
+    // the drawn view's copper kept as a cache, then back to the router: none of it keeps an id
+    const h = takenOver();
+    h.keepCopper(h.board().newCopper!);
+    ok(h, [{ op: 'set_copper_mode', mode: 'router' }, { op: 'route' }]);
+    expect(h.board().tracks.filter((t) => 'id' in t || 'by' in t)).toEqual([]);
+  });
+});
+
+describe('suggest_moves', () => {
+  it('finds the turn that frees a pad the copper walls in', () => {
+    const k = new Kernel();
+    ok(k, [
+      { op: 'add_part', part: 'generic:R', refdes: 'R1', params: { resistance: '1k' } },
+      { op: 'add_part', part: 'generic:R', refdes: 'R2', params: { resistance: '1k' } },
+      { op: 'connect', pins: ['R1.1', 'R2.1'], net: 'A' },
+      { op: 'connect', pins: ['R1.2', 'R2.2'], net: 'B' },
+      { op: 'set_board', width_mm: 22, height_mm: 14 },
+    ]);
+    k.accept();
+    ok(k, [{ op: 'place', ref: 'R1', x_mm: 7, y_mm: 7, rot: 0 }, { op: 'place', ref: 'R2', x_mm: 16, y_mm: 7, rot: 0 }, { op: 'set_copper_mode', mode: 'drawn', keep: false }]);
+    // a ring of B round R1.1 on its layer, too tight for a via: A cannot reach R1.1
+    const b0 = k.board();
+    const p = pad(b0, 'R1', '1');
+    const [x0, y0, x1, y1] = [p.x - p.w / 2 - 0.36, p.y - p.h / 2 - 0.36, p.x + p.w / 2 + 0.36, p.y + p.h / 2 + 0.36];
+    ok(k, [{ op: 'draw_track', net: 'B', from: [x0, y0], to: [x0, y0], via: [[x1, y0], [x1, y1], [x0, y1]], width_mm: 0.25 }]);
+    expect(k.query({ op: 'suggest_moves', parts: ['R9'] })).toEqual({ error: 'Not on the board: R9.' });
+    const s = k.query({ op: 'suggest_moves', parts: ['R1'] }) as { suggestions: { change: string; apply: unknown[]; closes: number; then?: unknown }[]; tried: number };
+    expect(s.tried).toBeGreaterThan(0);
+    const turn = s.suggestions.find((x) => x.change === 'R1 turned to 180°');
+    expect(turn, JSON.stringify(s)).toBeDefined();
+    expect(turn!.closes).toBeGreaterThan(0);
+    expect(turn!.then).toEqual({ op: 'route', nets: expect.arrayContaining(['A', 'B']) });
+    // applied, with the route it names: A connects
+    ok(k, [...(turn!.apply as never[]), turn!.then as never]);
+    expect(openOf(k.board(), netId(k, 'A'))).toEqual([]);
+  });
+
+  it('asks to route first, and leaves main parts alone', () => {
+    const k = buck();
+    expect(k.query({ op: 'suggest_moves' })).toEqual({ error: 'Route first: a suggestion is measured by how the board routes with and without it.' });
+    ok(k, [{ op: 'set_copper_mode', mode: 'drawn', keep: false }]);
+    const s = k.query({ op: 'suggest_moves', parts: ['U1'] }) as { suggestions: unknown[]; not_moved: string[] };
+    expect(s.suggestions).toEqual([]);
+    expect(s.not_moved).toEqual(['U1']);
   });
 });

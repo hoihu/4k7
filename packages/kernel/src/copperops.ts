@@ -165,6 +165,29 @@ function simplify(pts: number[]): number[] {
   return out;
 }
 
+/**
+ * A track's points without spikes: where it turns back on itself (more than 90°), as a move can
+ * leave it, the corner is cut and the pieces either side are joined, at 45° (the way that leaves no
+ * new sharp corner) where they are not on a 45° line already. The ends stay.
+ */
+function unspike(pts: number[]): number[] {
+  const p = pointsOf(pts);
+  const sharp = (a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }) => (b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y) < -1e-9;
+  for (let guard = 0; guard < 2 * p.length + 4; guard++) {
+    const k = p.findIndex((_, i) => i > 0 && i + 1 < p.length && sharp(p[i - 1]!, p[i]!, p[i + 1]!));
+    if (k < 0) break;
+    const [a, c] = [p[k - 1]!, p[k + 1]!];
+    const ways = (['diagonal_first', 'straight_first'] as const).map((w) => dogleg(a.x, a.y, c.x, c.y, w));
+    const badness = (corner: [number, number] | null) => {
+      const q = [...p.slice(Math.max(0, k - 2), k), ...(corner ? [{ x: corner[0], y: corner[1] }] : []), ...p.slice(k + 1, k + 3)];
+      return q.reduce((n, _, i) => n + (i > 0 && i + 1 < q.length && sharp(q[i - 1]!, q[i]!, q[i + 1]!) ? 1 : 0), 0);
+    };
+    const corner = ways[0] === null ? null : badness(ways[1]!) < badness(ways[0]!) ? ways[1]! : ways[0]!;
+    p.splice(k, 1, ...(corner ? [{ x: corner[0], y: corner[1] }] : []));
+  }
+  return simplify(p.flatMap((q) => [q.x, q.y]));
+}
+
 /** The point of a track's centre line nearest to (x, y), and how far it is. */
 function nearestOn(pts: number[], x: number, y: number): { x: number; y: number; d: number } {
   let best = { x: pts[0]!, y: pts[1]!, d: Math.hypot(pts[0]! - x, pts[1]! - y) };
@@ -189,7 +212,9 @@ const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1], ...[[1, 1], 
  */
 function rebend(fx: number, fy: number, ox: number, oy: number, mx: number, my: number): [number, number] | null {
   const len = Math.hypot(ox - fx, oy - fy);
-  if (len < 0.05 || !octilinear(ox - fx, oy - fy) || octilinear(mx - fx, my - fy)) return null;
+  // (still at 45° and the same way round: nothing to do; turned back, it needs a corner too)
+  const same = (ox - fx) * (mx - fx) + (oy - fy) * (my - fy) > 0;
+  if (len < 0.05 || !octilinear(ox - fx, oy - fy) || (octilinear(mx - fx, my - fy) && same)) return null;
   const [dx, dy] = [(ox - fx) / len, (oy - fy) / len];
   let best: { cost: number; k: [number, number] } | null = null;
   for (const [ex, ey] of DIRS) {
@@ -256,7 +281,9 @@ export function setCopperMode(d: Design, op: Extract<EditOp, { op: 'set_copper_m
   const b = boardOf(d);
   // the parts stay exactly where they are shown now (from here on the placement only changes on purpose)
   b.placement = storedPlacement(before);
-  const dc: DrawnCopper = { tracks: [], vias: [], next: 1 };
+  // (ids go on from any a waiver names, so a waiver of copper gone never covers new copper)
+  const named = Object.values(d.waivers).flatMap((w) => w.entities.flatMap((e) => (/^[tv]\d+$/.test(e) ? [Number(e.slice(1))] : [])));
+  const dc: DrawnCopper = { tracks: [], vias: [], next: Math.max(0, ...named) + 1 };
   if (current) {
     // (the stubs and vias of add_vias groups stay theirs: the groups lay them)
     const stubs = new Set(before.tracks.map((t) => JSON.stringify(t)));
@@ -347,7 +374,8 @@ export function editCopper(d: Design, op: Extract<EditOp, { op: 'edit_copper' }>
   if (unknown.length) reject({ code: 'REF_UNKNOWN', message: `No drawn copper ${unknown.join(', ')}.`, candidates: [...dc.tracks.map((t) => t.id), ...dc.vias.map((v) => v.id)].slice(0, 40) });
   const tracks = dc.tracks.filter((t) => ids.includes(t.id));
   const vias = dc.vias.filter((v) => ids.includes(v.id));
-  const forTracks = op.via !== undefined || op.bend !== undefined || op.width_mm !== undefined || op.layer !== undefined;
+  // (with move, bend bends what the move stretches, the tracks at a moved via too)
+  const forTracks = op.via !== undefined || (op.bend !== undefined && !op.move) || op.width_mm !== undefined || op.layer !== undefined;
   const forVias = op.drill_mm !== undefined || op.size_mm !== undefined;
   if (!op.move && !forTracks && !forVias) reject({ code: 'INVALID_OP', message: 'edit_copper needs move, via, bend, width_mm, layer, drill_mm or size_mm.' });
   if (forTracks && !tracks.length) reject({ code: 'INVALID_OP', message: 'via, bend, width_mm and layer change tracks; ids names only vias.' });
@@ -418,6 +446,8 @@ export function editCopper(d: Design, op: Extract<EditOp, { op: 'edit_copper' }>
     }
     did.push(`vias ${op.drill_mm ?? '…'}/${op.size_mm ?? '…'} mm`);
   }
+  const met = dc.tracks.find((t) => simplify(t.pts).length < 4);
+  if (met) reject({ code: 'INVALID_OP', message: `${met.id} would start and end at the same point.` });
   // (edited, it is yours: route fresh leaves it alone)
   for (const x of [...tracks, ...vias]) delete x.by;
   d.board = b;
@@ -458,6 +488,8 @@ export function eraseCopper(d: Design, op: Extract<EditOp, { op: 'erase_copper' 
 export interface HelperHooks {
   /** Results computed elsewhere, by the route op's index in the transaction: used instead of routing. */
   results?: Record<number, RouteHelperResult>;
+  /** The working copy's revision the results were computed for (Kernel.draftSnapshot): refused as STALE if it changed since. */
+  rev?: number;
   onProgress?: (opIndex: number, p: RouteProgress) => void;
   onBest?: (opIndex: number, r: RouteHelperResult) => void;
   onDone?: (opIndex: number, r: RouteHelperResult) => void;
@@ -467,7 +499,12 @@ export interface HelperHooks {
 export interface OpContext {
   index: number;
   helper?: HelperHooks;
+  /** When the transaction's route ops must be done by (Date.now() ms). */
+  deadline?: number;
 }
+
+/** All route ops of one transaction together (ms), well inside the server's minute for a tool call. */
+export const HELPER_TX_MS = 40_000;
 
 /** The route helper on drawn copper: paths for the named open connections, added as drawn copper. */
 export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx: OpContext = { index: 0 }): OpResult {
@@ -494,7 +531,12 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
     what = op.nets ? op.nets.join(', ') : 'every open connection';
   }
   const scoped = only.nets ?? [only.pairs![0]![0].netId!];
-  // fresh: the helper's own copper of these nets goes first (yours stays), so it is laid again round yours
+  const hooks = ctx.helper;
+  let res = hooks?.results?.[ctx.index];
+  // a fresh run the user stopped changes nothing (its best pass so far is no better than the copper it would take up)
+  if (op.fresh && res?.stopped) return { op: op.op, effect: `route helper (${what}, fresh): stopped by the user, nothing changed`, ids: [] };
+  // fresh: the helper's own copper of these nets goes first (yours stays), so it is laid again round
+  // yours; for one connection (from, to) its whole net, which then is routed again
   let takenUp = 0;
   if (op.fresh) {
     const mine = (x: { netId: string; by?: 'helper' }) => x.by === 'helper' && (!op.nets && !op.from ? true : scoped.includes(x.netId));
@@ -502,12 +544,16 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
     dc.tracks = dc.tracks.filter((t) => !mine(t));
     dc.vias = dc.vias.filter((v) => !mine(v));
     board = placed(d);
-    if (op.from) only.pairs = [[padOf(d, board, op.from).pad, padOf(d, board, op.to!).pad]];
+    if (op.from) {
+      delete only.pairs;
+      only.nets = scoped;
+      what = `${op.from} → ${op.to}: ${netName(d, scoped[0]!)}`;
+    }
   }
-  const hooks = ctx.helper;
-  let res = hooks?.results?.[ctx.index];
   if (!res) {
-    const input = boardRouteInput(d, board, { budgetMs: HELPER_BUDGET_MS });
+    // (the route ops of one transaction share the time: an agent's call must come back)
+    const budgetMs = Math.max(1000, Math.min(HELPER_BUDGET_MS, (ctx.deadline ?? Infinity) - Date.now()));
+    const input = boardRouteInput(d, board, { budgetMs });
     input.drawn = { ...input.drawn!, only };
     if (op.width_mm) input.netWidths = { ...input.netWidths, ...Object.fromEntries(scoped.map((n) => [n, op.width_mm!])) };
     // what the router laid: not the drawn copper (it has ids), nor the stubs and vias of add_vias groups
@@ -677,11 +723,10 @@ function keepContacts(contacts: Contact[], touch: (t: DrawnTrack) => void, moved
  * tracks would be on the wrong layer): the note says so. Returns a note for the op's effect and the
  * ids moved (to check them), or null when no drawn copper had to follow.
  */
-export function followParts(d: Design, before: BoardView): { note: string; ids: string[] } | null {
+export function followParts(d: Design, before: BoardView, after: BoardView = placed(d)): { note: string; ids: string[] } | null {
   // (ids: what followed, and the copper where a moved, turned or new part now stands: checked after the transaction)
   const dc = d.board?.drawn;
   if (!dc || (!dc.tracks.length && !dc.vias.length)) return null;
-  const after = placed(d);
   const now = new Map(after.parts.map((p) => [p.componentId, p]));
   const moves = new Map<string, Move>();
   const flipped: BoardPart[] = [];
@@ -698,7 +743,6 @@ export function followParts(d: Design, before: BoardView): { note: string; ids: 
   const was = new Set(before.parts.map((p) => p.componentId));
   const added = after.parts.filter((p) => !was.has(p.componentId));
   if (!moves.size && !flipped.length && !added.length) return null;
-  const stillParts = before.parts.filter((p) => !moves.has(p.componentId));
   const contacts = contactsOf(dc);
   // the points of the tracks touched, as they were, and which of them moved
   const olds = new Map<DrawnTrack, { pts: number[]; moved: Map<number, Move> }>();
@@ -722,7 +766,8 @@ export function followParts(d: Design, before: BoardView): { note: string; ids: 
       const am = moves.get(a.componentId);
       return !am || !alike(am, m);
     }
-    return onPadOf(stillParts, t, old(t)[2 * i]!, old(t)[2 * i + 1]!);
+    // (on a pad of a part that stays, or that moves otherwise: that part's walk takes it)
+    return onPadOf(before.parts.filter((p) => !moves.has(p.componentId) || !alike(moves.get(p.componentId)!, m)), t, old(t)[2 * i]!, old(t)[2 * i + 1]!);
   };
   const used = new Set<Move>();
   const movedVias = new Set<DrawnVia>();
@@ -802,6 +847,14 @@ export function followParts(d: Design, before: BoardView): { note: string; ids: 
   const rejoined = keepContacts(contacts, (t) => {
     if (!olds.has(t)) olds.set(t, { pts: t.pts.slice(), moved: new Map() });
   }, movedVias);
+  // (no track the move bent turns back on itself; one whose ends now meet, e.g. a via that landed
+  // on the pad it was joined to, is gone)
+  for (const t of olds.keys()) t.pts = unspike(t.pts);
+  const collapsed = [...olds.keys()].filter((t) => t.pts.length < 4);
+  if (collapsed.length) {
+    dc.tracks = dc.tracks.filter((t) => !collapsed.includes(t));
+    for (const t of collapsed) olds.delete(t);
+  }
   const flippedTracks = flipped.map((p) => ({ p, n: dc.tracks.filter((t) => t.from?.componentId === p.componentId || t.to?.componentId === p.componentId).length })).filter((x) => x.n);
   // the copper where a part now stands (moved, turned over or new): checked with what followed
   const c = (d.board ?? DEFAULT_BOARD).rules.clearance;
@@ -827,10 +880,11 @@ export function followParts(d: Design, before: BoardView): { note: string; ids: 
       `drawn copper followed ${refs.slice(0, 6).join(', ')}${refs.length > 6 ? ', …' : ''}: ${olds.size} track(s)${movedVias.size ? ` and ${movedVias.size} via(s)` : ''} moved with ${refs.length === 1 ? 'it' : 'them'}` +
         (bent ? `, ${bent} stretched piece(s) bent back to 45°` : '') +
         (rejoined ? `, ${rejoined} joint(s) kept (a track end or via on other copper of its net)` : '') +
+        (collapsed.length ? `, ${collapsed.map((t) => t.id).join(', ')} gone (its ends met)` : '') +
         (stretched ? `, ${stretched} piece(s) now off 45°` : ''),
     );
   }
-  for (const { p, n } of flippedTracks) notes.push(`${p.refdes} turned over to the ${p.side} side: its ${n} track(s) stay where they were (redraw them on its side)`);
+  for (const { p, n } of flippedTracks) notes.push(`${p.refdes} turned over to the ${p.side} side: its ${n} track(s) did not go with it, only their ends on its pads follow the pads (mirrored now), so redraw them on its side`);
   return { note: notes.join('; '), ids: [...new Set([...[...olds.keys()].map((t) => t.id), ...[...movedVias].map((v) => v.id), ...under])] };
 }
 

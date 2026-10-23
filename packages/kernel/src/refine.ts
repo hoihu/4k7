@@ -273,6 +273,24 @@ function model(b: BoardView, planeNets: Set<string>, margin: number) {
 const snap = (v: number) => Math.round(v * 10) / 10;
 
 /**
+ * Sets of moves screened on the model (suggest_moves): for each, null where the parts would not
+ * fit (overlapping, off the outline), else what it changes, as the refinement weighs it (crossing
+ * ratsnest lines × CROSSING_MM, plus ratsnest mm; lower is better).
+ */
+export function screenMoves(b: BoardView, planeNets: Set<string>, margin: number, sets: { refdes: string; x: number; y: number; rot: number }[][]): (number | null)[] {
+  const m = model(b, planeNets, margin);
+  return sets.map((moves) => {
+    const over = new Map<number, Pose>();
+    for (const mv of moves) {
+      const i = m.byRef.get(mv.refdes);
+      if (i === undefined) return null;
+      over.set(i, { x: mv.x, y: mv.y, rot: mv.rot });
+    }
+    return m.fits(over) ? m.delta(over) : null;
+  });
+}
+
+/**
  * Refine the placement of `movable` parts (component ids) on the placed board `b` (see the
  * header). Stops after `budgetMs`.
  */

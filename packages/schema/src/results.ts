@@ -57,7 +57,9 @@ export type RejectionCode =
   | 'NO_PATH'
   | 'SHEET_UNKNOWN'
   | 'WAIVER_UNKNOWN'
-  | 'ENCLOSURE_INVALID';
+  | 'ENCLOSURE_INVALID'
+  /** The route helper's results were computed for an earlier working copy (it changed meanwhile). */
+  | 'STALE';
 
 export interface Rejection {
   /** Index of the failing op within the transaction. */

@@ -916,6 +916,17 @@ class AppState {
             return fail('query · try_placements', (e as Error).message);
           }
         }
+        // (it routes each try for a moment: off the kernel worker too)
+        if ((input as { op?: string })?.op === 'suggest_moves') {
+          try {
+            const out = (await this.trialQuery(input)) as { error?: string; suggestions?: { change: string; closes: number }[]; tried?: number };
+            if (out.error) return fail('query · suggest_moves', out.error);
+            const best = out.suggestions?.[0];
+            return { content: JSON.stringify(out), isError: false, label: 'query · suggest_moves', detail: best ? `${out.suggestions!.length} suggestion(s), best: ${best.change} (closes ${best.closes})` : `none of ${out.tried ?? 0} tries closes a connection` };
+          } catch (e) {
+            return fail('query · suggest_moves', (e as Error).message);
+          }
+        }
         if ((input as { op?: string })?.op === 'get_enclosure') {
           const out = await this.enclosureQuery();
           return { content: JSON.stringify(out), isError: false, label: 'query · get_enclosure', detail: (out as { open_questions: string[] }).open_questions.length ? 'questions open' : 'ok' };
@@ -1086,11 +1097,19 @@ class AppState {
   private helperQueue: Promise<unknown> = Promise.resolve();
 
   private async transactHelped(tx: unknown, by: 'user' | undefined, ops: RouteAsk[]): Promise<TransactionResult> {
-    const design = await this.kernel.draftDesign();
-    if (!design.board?.drawn && !ops.some((o) => o?.op === 'set_copper_mode')) return this.kernel.transact(tx, by);
     const what = ops.filter((o) => o?.op === 'route').map((o) => (o.nets?.length ? o.nets.join(', ') : o.from ? `${o.from} → ${o.to}` : 'every open connection') + (o.fresh ? ', its own copper again' : '')).join('; ');
-    const routed = await this.runHelper(design, tx, by ?? 'agent', ops.flatMap((o, i) => (o?.op === 'route' ? [i] : [])), what);
-    return this.kernel.transact(tx, by, routed ?? undefined);
+    // the results are laid only on the working copy they were found for; changed meanwhile (a drag,
+    // an undo), the helper searches again on it, a few times, then the kernel routes itself
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { design, rev } = await this.kernel.draftSnapshot();
+      if (!design.board?.drawn && !ops.some((o) => o?.op === 'set_copper_mode')) return this.kernel.transact(tx, by);
+      const run = await this.runHelper(design, tx, by ?? 'agent', ops.flatMap((o, i) => (o?.op === 'route' ? [i] : [])), what);
+      if (!run) return this.kernel.transact(tx, by);
+      const r = await this.kernel.transact(tx, by, run.results, rev);
+      if (r.rejection?.code !== 'STALE') return r;
+      if (run.stopped) return { ...r, rejection: { ...r.rejection, message: 'The route helper was stopped, and the design changed while it searched: nothing was laid. Route again.' } };
+    }
+    return this.kernel.transact(tx, by);
   }
 
   /**
@@ -1098,23 +1117,23 @@ class AppState {
    * failed: the kernel then routes itself). Stop keeps the best the running op had found and
    * nothing for the route ops not started.
    */
-  private runHelper(design: Design, tx: unknown, by: 'user' | 'agent', routeOps: number[], what: string): Promise<Record<number, RouteHelperResult> | null> {
+  private runHelper(design: Design, tx: unknown, by: 'user' | 'agent', routeOps: number[], what: string): Promise<{ results: Record<number, RouteHelperResult>; stopped: boolean } | null> {
     return new Promise((resolve) => {
       const worker = new Worker(new URL('./helper.worker.ts', import.meta.url), { type: 'module' });
       const results: Record<number, RouteHelperResult> = {};
       let best: { op: number; result: RouteHelperResult } | null = null;
-      const end = (out: Record<number, RouteHelperResult> | null) => {
+      const end = (out: Record<number, RouteHelperResult> | null, stopped = false) => {
         worker.terminate();
         this.helperRun = null;
         this.helperStop = null;
-        resolve(out);
+        resolve(out ? { results: out, stopped } : null);
       };
       this.helperRun = { what, progress: null };
       this.helperStop = () => {
         const out = { ...results };
         for (const i of routeOps) out[i] ??= i === best?.op ? { ...best.result, stopped: true } : { tracks: [], vias: [], open: [], passes: 0, stopped: true };
         this.flash(best?.result.passes ? `Route helper stopped: kept what it had found (${best.result.tracks.length} tracks, ${best.result.vias.length} vias)` : 'Route helper stopped before its first pass ended: nothing laid');
-        end(out);
+        end(out, true);
       };
       worker.onmessage = (e: MessageEvent<{ progress?: RouteProgress; best?: { op: number; result: RouteHelperResult }; done?: { op: number; result: RouteHelperResult }; finished?: { results: Record<number, RouteHelperResult> }; error?: string }>) => {
         const m = e.data;

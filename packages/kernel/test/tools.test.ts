@@ -33,8 +33,8 @@ describe('tool schemas', () => {
       properties: Record<string, { enum?: string[] }>;
       required: string[];
     };
-    expect(q.properties.op?.enum).toEqual(['get_summary', 'find', 'get_component', 'get_net', 'get_diagnostics', 'get_ledger', 'get_description', 'get_fab_profiles', 'get_schematic', 'get_copper', 'get_board', 'try_placements', 'search_parts', 'get_part', 'get_enclosure', 'get_guide']);
+    expect(q.properties.op?.enum).toEqual(['get_summary', 'find', 'get_component', 'get_net', 'get_diagnostics', 'get_ledger', 'get_description', 'get_fab_profiles', 'get_schematic', 'get_copper', 'get_board', 'try_placements', 'suggest_moves', 'search_parts', 'get_part', 'get_enclosure', 'get_guide']);
     expect(q.required).toEqual(['op']);
-    expect(Object.keys(q.properties).sort()).toEqual(['candidates', 'category', 'explore', 'id', 'net', 'nets', 'op', 'rect', 'ref', 'route', 'text', 'topic']);
+    expect(Object.keys(q.properties).sort()).toEqual(['at', 'candidates', 'category', 'explore', 'id', 'max', 'net', 'nets', 'op', 'parts', 'radius_mm', 'rect', 'ref', 'route', 'text', 'topic']);
   });
 });
