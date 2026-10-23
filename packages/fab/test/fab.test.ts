@@ -47,6 +47,20 @@ describe('fab outputs', () => {
     expect(top).toContain('%TF.FileFunction,Copper,L1,Top*%');
   });
 
+  it('routes a slotted hole from one end to the other, and draws its pad oval', () => {
+    const b = board();
+    const part = b.parts.find((p) => p.pads.some((q) => q.drill))!;
+    const pad = part.pads.find((q) => q.drill)!;
+    Object.assign(pad, { x: 10, y: 5, w: 1.1, h: 2.2, shape: 'round', drill: 0.6, slot: { w: 0.6, h: 1.7 } });
+    const drl = drill(b);
+    const H = b.outline.h;
+    // the tool of its width, from one end's centre to the other's (0.55 mm off the middle each way)
+    expect(drl).toContain('C0.600');
+    expect(drl).toContain(`G00X10.000Y${(H - 4.45).toFixed(3)}\nM15\nG01X10.000Y${(H - 5.55).toFixed(3)}\nM16\nG05`);
+    const top = fabFiles(b, 'slot').find((f) => f.name.endsWith('F_Cu.gbr'))!.content;
+    expect(top).toMatch(/%ADD\d+O,1\.100000X2\.200000\*%/);
+  });
+
   it('drills vias and through-hole pads, and lists the BOM and placement', () => {
     const b = board();
     const drl = drill(b);

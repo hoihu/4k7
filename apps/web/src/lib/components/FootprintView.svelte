@@ -1,6 +1,6 @@
 <script lang="ts">
   import { footprintFor } from '@4k7/parts';
-  import type { PartCard } from '@4k7/schema';
+  import { padPins, type PartCard } from '@4k7/schema';
   import type { TopView } from '../three-body.ts';
 
   /** Top view of the generated land pattern: pads, body outline, courtyard and pin 1. */
@@ -64,8 +64,10 @@
       <rect class="court" x={-fp.courtyard.w / 2} y={-fp.courtyard.h / 2} width={fp.courtyard.w} height={fp.courtyard.h} />
       {#if fp.body.round}<circle class="body" cx="0" cy="0" r={fp.body.w / 2} />
       {:else}<rect class="body" x={-fp.body.w / 2} y={-fp.body.h / 2} width={fp.body.w} height={fp.body.h} />{/if}
-      {#each fp.pads as p (p.number)}
+      {#each fp.pads as p, i (i)}
         {@const on = hover === p.number}
+        {@const pins = padPins(p)}
+        {@const fs = Math.min(labelSize, 0.8)}
         <g
           class="pad"
           class:on
@@ -73,15 +75,15 @@
           onmouseenter={() => (hover = p.number)}
           onmouseleave={() => (hover = null)}
         >
-          <title>{p.number} {names.get(p.number.toUpperCase()) ?? ''}</title>
-          {#if p.shape === 'round'}
-            <circle cx={p.x} cy={p.y} r={p.w / 2} />
-          {:else}
-            <rect x={p.x - p.w / 2} y={p.y - p.h / 2} width={p.w} height={p.h} rx={Math.min(p.w, p.h) * 0.15} />
-          {/if}
-          {#if p.drill}<circle class="drill" cx={p.x} cy={p.y} r={p.drill / 2} />{/if}
+          <title>{pins.map((n) => `${n} ${names.get(n.toUpperCase()) ?? ''}`).join(', ')}</title>
+          <rect x={p.x - p.w / 2} y={p.y - p.h / 2} width={p.w} height={p.h} rx={p.shape === 'round' ? Math.min(p.w, p.h) / 2 : Math.min(p.w, p.h) * 0.15} />
+          {#if p.slot}<rect class="drill" x={p.x - p.slot.w / 2} y={p.y - p.slot.h / 2} width={p.slot.w} height={p.slot.h} rx={p.drill! / 2} />
+          {:else if p.drill}<circle class="drill" cx={p.x} cy={p.y} r={p.drill / 2} />{/if}
           {#if labelSize > 0.18}
-            <text x={p.x} y={p.y} font-size={Math.min(labelSize, 0.8)} dominant-baseline="central" text-anchor="middle">{p.number}</text>
+            <!-- pins sharing the pad: one under the other -->
+            {#each pins as n, k (k)}
+              <text x={p.x} y={p.y + (k - (pins.length - 1) / 2) * fs * 1.1} font-size={fs} dominant-baseline="central" text-anchor="middle">{n}</text>
+            {/each}
           {/if}
         </g>
       {/each}

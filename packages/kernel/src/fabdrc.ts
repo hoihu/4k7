@@ -5,11 +5,15 @@
  */
 import { fabRuleIssues } from '@4k7/schema';
 import type { BoardDiagnostic, BoardView } from '@4k7/schema';
+import { segSegDist } from './segments.ts';
 
 interface Hole {
   x: number;
   y: number;
   d: number;
+  /** A slot: half its centre line's length along x and y (it runs from x − hx, y − hy to x + hx, y + hy). */
+  hx: number;
+  hy: number;
   what: string;
   via: boolean;
   part?: string;
@@ -20,8 +24,14 @@ const mm = (v: number) => `${Math.round(v * 1000) / 1000} mm`;
 
 function holes(b: BoardView, vias: boolean): Hole[] {
   const out: Hole[] = [];
-  for (const p of b.parts) for (const q of p.pads) if (q.drill) out.push({ x: q.x, y: q.y, d: q.drill, what: `${p.refdes}.${q.number}`, via: false, part: p.refdes });
-  if (vias) for (const v of b.vias) out.push({ x: v.x, y: v.y, d: v.drill, what: `via ${b.netNames[v.netId] ?? v.netId}`, via: true });
+  for (const p of b.parts) {
+    for (const q of p.pads) {
+      if (!q.drill) continue;
+      const [hx, hy] = q.slot ? [(q.slot.w - q.drill) / 2, (q.slot.h - q.drill) / 2] : [0, 0];
+      out.push({ x: q.x, y: q.y, d: q.drill, hx, hy, what: `${p.refdes}.${q.number}`, via: false, part: p.refdes });
+    }
+  }
+  if (vias) for (const v of b.vias) out.push({ x: v.x, y: v.y, d: v.drill, hx: 0, hy: 0, what: `via ${b.netNames[v.netId] ?? v.netId}`, via: true });
   return out;
 }
 
@@ -33,16 +43,16 @@ function spacing(b: BoardView, viaPairs: boolean): BoardDiagnostic[] {
   const seen = new Set<string>();
   const widest = Math.max(l.holeToHole ?? 0, l.padHoleToHole ?? 0);
   if (!widest) return out;
-  const biggest = Math.max(0, ...hs.map((x) => x.d));
+  const biggest = Math.max(0, ...hs.map((x) => x.d + 2 * x.hx));
   for (let i = 0; i < hs.length; i++) {
     const A = hs[i]!;
     for (let j = i + 1; j < hs.length; j++) {
       const B = hs[j]!;
-      if (B.x - A.x - (A.d + biggest) / 2 >= widest) break;
+      if (B.x - A.x - (A.d + 2 * A.hx + biggest) / 2 >= widest) break;
       if (viaPairs && !A.via && !B.via) continue;
       const min = A.via && B.via ? l.holeToHole : (l.padHoleToHole ?? l.holeToHole);
       if (min === undefined) continue;
-      const wall = Math.hypot(A.x - B.x, A.y - B.y) - (A.d + B.d) / 2;
+      const wall = segSegDist(A.x - A.hx, A.y - A.hy, A.x + A.hx, A.y + A.hy, B.x - B.hx, B.y - B.hy, B.x + B.hx, B.y + B.hy) - (A.d + B.d) / 2;
       if (wall >= min - EPS) continue;
       const key = A.part && A.part === B.part ? `${A.part}` : `${A.what}|${B.what}`;
       if (seen.has(key)) continue;
@@ -109,7 +119,7 @@ export function fabPlacementDrc(b: BoardView): BoardDiagnostic[] {
         out.push({ code: 'DRC.FAB_HOLE', severity: 'error', message: `${p.refdes}.${q.number}: the ${kind} hole ${mm(q.drill)} is below ${fab.house}'s smallest (${mm(hole)}).`, at, entities: [p.refdes] });
       }
       if (!q.npth && l.annularRing !== undefined) {
-        const ring = (Math.min(q.w, q.h) - q.drill) / 2;
+        const ring = q.slot ? Math.min(q.w - q.slot.w, q.h - q.slot.h) / 2 : (Math.min(q.w, q.h) - q.drill) / 2;
         if (ring < l.annularRing - EPS && !flagged.has(`${p.refdes}|ring`)) {
           flagged.add(`${p.refdes}|ring`);
           out.push({ code: 'DRC.FAB_RING', severity: 'error', message: `${p.refdes}.${q.number}: annular ring ${mm(Math.max(0, ring))} is below ${fab.house}'s minimum (${mm(l.annularRing)}); a bigger pad (set_footprint) or a smaller drill fixes it.`, at, entities: [p.refdes] });

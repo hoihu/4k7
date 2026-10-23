@@ -253,6 +253,25 @@ export function viewerCore(canvas: HTMLCanvasElement, opts: { pixelRatio?: numbe
 }
 
 /** Silkscreen graphics of one side drawn into an alpha texture (white = ink), kept off pads and vias. */
+/** An oval (a slotted hole, or the pad round it) of w × h round (cx, cy), as a polygon: half circles at the ends of its longer side. */
+const oval = (cx: number, cy: number, w: number, h: number) => cutoutPolygon({ id: '', shape: 'slot', x: cx, y: cy, w: Math.max(w, h), h: Math.min(w, h), r: 0, angle: h > w ? 90 : 0 });
+
+function polyPath<T extends THREE.Path>(pts: number[], path: T): T {
+  path.moveTo(pts[0]!, pts[1]!);
+  for (let i = 2; i < pts.length; i += 2) path.lineTo(pts[i]!, pts[i + 1]!);
+  path.closePath();
+  return path;
+}
+
+function polyFill(ctx: CanvasRenderingContext2D, pts: number[]) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0]!, pts[1]!);
+  for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i]!, pts[i + 1]!);
+  ctx.fill();
+}
+
+type Drill = { x: number; y: number; d: number; slot?: { w: number; h: number } };
+
 function silkTexture(graphics: BoardView['graphics'], b: BoardView, side: 'top' | 'bottom'): THREE.CanvasTexture | null {
   const { w, h } = b.outline;
   const k = Math.min(25, 4096 / Math.max(w, h));
@@ -284,7 +303,9 @@ function silkTexture(graphics: BoardView['graphics'], b: BoardView, side: 'top' 
   for (const part of b.parts) {
     for (const p of part.pads) {
       if (!p.drill && !p.npth && !p.layers.includes(side === 'top' ? 'F.Cu' : 'B.Cu')) continue;
-      if (p.shape === 'round' || p.npth) {
+      if (p.slot && p.npth) polyFill(ctx, oval(p.x, p.y, p.slot.w + 2 * gap, p.slot.h + 2 * gap));
+      else if (p.shape === 'round' && p.w !== p.h && !p.npth) polyFill(ctx, oval(p.x, p.y, p.w + 2 * gap, p.h + 2 * gap));
+      else if (p.shape === 'round' || p.npth) {
         ctx.beginPath();
         ctx.arc(p.x, p.y, (p.npth ? p.drill! : Math.min(p.w, p.h)) / 2 + gap, 0, Math.PI * 2);
         ctx.fill();
@@ -302,7 +323,7 @@ function silkTexture(graphics: BoardView['graphics'], b: BoardView, side: 'top' 
 }
 
 /** A pour's exact shape drawn into an alpha texture (white = copper), ~25 px/mm. */
-function zoneTexture(z: BoardView['zones'][number], w: number, h: number, drills: { x: number; y: number; d: number }[] = []): THREE.CanvasTexture | null {
+function zoneTexture(z: BoardView['zones'][number], w: number, h: number, drills: Drill[] = []): THREE.CanvasTexture | null {
   const k = Math.min(25, 4096 / Math.max(w, h));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(w * k));
@@ -350,6 +371,10 @@ function zoneTexture(z: BoardView['zones'][number], w: number, h: number, drills
   // no copper over a drilled hole
   ctx.globalCompositeOperation = 'destination-out';
   for (const d of drills) {
+    if (d.slot) {
+      polyFill(ctx, oval(d.x, d.y, d.slot.w, d.slot.h));
+      continue;
+    }
     ctx.beginPath();
     ctx.arc(d.x, d.y, d.d / 2, 0, Math.PI * 2);
     ctx.fill();
@@ -478,7 +503,7 @@ export function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, 
    * pads) cut through it. Caps get the solder mask, the outer edge and the hole walls bare FR4.
    * (Vias stay tented: covered by the mask, as usual.)
    */
-  const drills = b.parts.flatMap((p) => p.pads.filter((q) => q.drill).map((q) => ({ x: q.x, y: q.y, d: q.drill!, pad: q })));
+  const drills: Drill[] = b.parts.flatMap((p) => p.pads.filter((q) => q.drill).map((q) => ({ x: q.x, y: q.y, d: q.drill!, ...(q.slot ? { slot: q.slot } : {}) })));
   const outline = new THREE.Shape();
   const ring = boardPolygon(b);
   outline.moveTo(ring[0]!, ring[1]!);
@@ -486,14 +511,13 @@ export function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, 
   outline.closePath();
   // milled cutouts go through, like the holes
   for (const c of b.cutouts ?? []) {
-    const pts = cutoutPolygon(c);
-    const path = new THREE.Path();
-    path.moveTo(pts[0]!, pts[1]!);
-    for (let i = 2; i < pts.length; i += 2) path.lineTo(pts[i]!, pts[i + 1]!);
-    path.closePath();
-    outline.holes.push(path);
+    outline.holes.push(polyPath(cutoutPolygon(c), new THREE.Path()));
   }
   for (const d of drills) {
+    if (d.slot) {
+      outline.holes.push(polyPath(oval(d.x, d.y, d.slot.w, d.slot.h), new THREE.Path()));
+      continue;
+    }
     const hole = new THREE.Path();
     hole.absarc(d.x, d.y, d.d / 2, 0, Math.PI * 2, true);
     outline.holes.push(hole);
@@ -517,11 +541,12 @@ export function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, 
   // drilled, plated pads: a copper ring (round or square) on both sides and a barrel through the hole
   const ringGeos = new Map<string, THREE.BufferGeometry>();
   const ringGeo = (p: (typeof b.parts)[number]['pads'][number]) => {
-    const key = `${p.shape}/${p.w}/${p.h}/${p.drill}`;
+    const key = `${p.shape}/${p.w}/${p.h}/${p.drill}/${p.slot?.w}/${p.slot?.h}`;
     let geo = ringGeos.get(key);
     if (!geo) {
-      const s2 = new THREE.Shape();
-      if (p.shape === 'round') s2.absarc(0, 0, Math.min(p.w, p.h) / 2, 0, Math.PI * 2, false);
+      let s2 = new THREE.Shape();
+      if (p.shape === 'round' && p.w !== p.h) s2 = polyPath(oval(0, 0, p.w, p.h), s2);
+      else if (p.shape === 'round') s2.absarc(0, 0, Math.min(p.w, p.h) / 2, 0, Math.PI * 2, false);
       else {
         s2.moveTo(-p.w / 2, -p.h / 2);
         s2.lineTo(p.w / 2, -p.h / 2);
@@ -529,9 +554,8 @@ export function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, 
         s2.lineTo(-p.w / 2, p.h / 2);
         s2.closePath();
       }
-      const hole = new THREE.Path();
-      hole.absarc(0, 0, p.drill! / 2, 0, Math.PI * 2, true);
-      s2.holes.push(hole);
+      if (p.slot) s2.holes.push(polyPath(oval(0, 0, p.slot.w, p.slot.h), new THREE.Path()));
+      else s2.holes.push(new THREE.Path().absarc(0, 0, p.drill! / 2, 0, Math.PI * 2, true));
       geo = new THREE.ExtrudeGeometry(s2, { depth: CU, bevelEnabled: false, curveSegments: 32 });
       geo.rotateX(Math.PI / 2); // (x, y) → (x, 0, y), CU thick downwards
       ringGeos.set(key, geo);
@@ -546,6 +570,17 @@ export function boardGroup(b: BoardView, bodies: Map<string, Body3D>, res: Res, 
           const ring = new THREE.Mesh(ringGeo(p), res.pad);
           ring.position.set(p.x, top ? CU : -THICKNESS, p.y);
           group.add(ring);
+        }
+        if (p.slot) {
+          // a slot's plated wall: a thin oval ring through the board
+          const wall = polyPath(oval(0, 0, p.slot.w, p.slot.h), new THREE.Shape());
+          wall.holes.push(polyPath(oval(0, 0, p.slot.w - 0.05, p.slot.h - 0.05), new THREE.Path()));
+          const geo = new THREE.ExtrudeGeometry(wall, { depth: THICKNESS, bevelEnabled: false });
+          geo.rotateX(Math.PI / 2);
+          const barrel = new THREE.Mesh(geo, res.barrel);
+          barrel.position.set(p.x, 0, p.y);
+          group.add(barrel);
+          continue;
         }
         const barrel = new THREE.Mesh(new THREE.CylinderGeometry(p.drill / 2, p.drill / 2, THICKNESS, 32, 1, true), res.barrel);
         barrel.position.set(p.x, -THICKNESS / 2, p.y);

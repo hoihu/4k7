@@ -41,7 +41,8 @@ class Gerber {
   pad(p: { x: number; y: number; w: number; h: number; shape: 'rect' | 'round' }, grow = 0) {
     const w = p.w + 2 * grow;
     const h = p.h + 2 * grow;
-    this.aperture(p.shape === 'round' ? `C,${(Math.min(w, h)).toFixed(6)}` : `R,${w.toFixed(6)}X${h.toFixed(6)}`);
+    // round and longer one way: an oval (obround), as a slotted hole's pad is
+    this.aperture(p.shape === 'rect' ? `R,${w.toFixed(6)}X${h.toFixed(6)}` : Math.abs(w - h) < 1e-6 ? `C,${w.toFixed(6)}` : `O,${w.toFixed(6)}X${h.toFixed(6)}`);
     this.body.push(`${this.xy(p.x, p.y)}D03*`);
   }
   /** An exact plane: the outline filled, cutouts cleared (clear polarity), spokes drawn back. */
@@ -248,23 +249,37 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFi
 
 /**
  * Excellon, metric, decimal coordinates: plated holes (vias, through-hole pads, plated
- * mounting holes), or with `plated = false` the non-plated ones (mounting holes).
+ * mounting holes), or with `plated = false` the non-plated ones (mounting holes). A slotted
+ * hole is routed with its width's tool from one end's centre to the other (G00 … M15 G01 … M16).
  */
 export function drill(b: BoardView, plated = true): string {
-  const holes: { d: number; x: number; y: number }[] = [
+  const holes: { d: number; x: number; y: number; to?: [number, number] }[] = [
     ...(plated ? b.vias.map((v) => ({ d: v.drill, x: v.x, y: v.y })) : []),
-    ...b.parts.flatMap((p) => p.pads.filter((q) => q.drill && !!q.npth !== plated).map((q) => ({ d: q.drill!, x: q.x, y: q.y }))),
+    ...b.parts.flatMap((p) => p.pads.filter((q) => q.drill && !!q.npth !== plated).map((q) => ({ d: q.drill!, ...slotEnds(q) }))),
   ];
   const sizes = [...new Set(holes.map((x) => x.d.toFixed(3)))].sort();
   const lines = ['M48', '; 4k7 0.1', `; ${plated ? 'PLATED' : 'NON-PLATED'} holes`, '; FORMAT={-:-/ absolute / metric / decimal}', 'FMAT,2', 'METRIC,TZ'];
   sizes.forEach((s, i) => lines.push(`T${i + 1}C${s}`));
   lines.push('%', 'G90', 'G05');
+  const at = (x: number, y: number) => `X${x.toFixed(3)}Y${(b.outline.h - y).toFixed(3)}`;
   sizes.forEach((s, i) => {
     lines.push(`T${i + 1}`);
-    for (const hole of holes) if (hole.d.toFixed(3) === s) lines.push(`X${hole.x.toFixed(3)}Y${(b.outline.h - hole.y).toFixed(3)}`);
+    for (const hole of holes) {
+      if (hole.d.toFixed(3) !== s) continue;
+      if (hole.to) lines.push(`G00${at(hole.x, hole.y)}`, 'M15', `G01${at(...hole.to)}`, 'M16', 'G05');
+      else lines.push(at(hole.x, hole.y));
+    }
   });
   lines.push('M30', '');
   return lines.join('\n');
+}
+
+/** A hole's start, and for a slot the centre of its other end (along its longer side). */
+function slotEnds(p: BoardPad): { x: number; y: number; to?: [number, number] } {
+  if (!p.slot) return { x: p.x, y: p.y };
+  const half = (Math.max(p.slot.w, p.slot.h) - Math.min(p.slot.w, p.slot.h)) / 2;
+  const [dx, dy] = p.slot.w > p.slot.h ? [half, 0] : [0, half];
+  return { x: p.x - dx, y: p.y - dy, to: [p.x + dx, p.y + dy] };
 }
 
 const csv = (rows: (string | number)[][]) => rows.map((r) => r.map((c) => (/[",\n]/.test(String(c)) ? `"${String(c).replace(/"/g, '""')}"` : String(c))).join(',')).join('\n') + '\n';

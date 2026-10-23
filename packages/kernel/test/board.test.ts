@@ -1613,6 +1613,66 @@ describe('set_footprint (a land pattern from the datasheet drawing)', () => {
   });
 });
 
+describe('set_footprint: pins sharing a pad, slotted holes', () => {
+  function withUsb() {
+    const k = new Kernel();
+    const d = k.committedDesign();
+    d.parts['acme:USBC'] = {
+      id: 'acme:USBC',
+      description: 'USB-C receptacle (power only)',
+      category: 'connector',
+      refPrefix: 'J',
+      pins: [
+        { number: 'A1', name: 'GND', type: 'pwr_in' },
+        { number: 'B12', name: 'GND', type: 'pwr_in' },
+        { number: 'A4', name: 'VBUS', type: 'pwr_in' },
+        { number: 'S1', name: 'SHIELD', type: 'passive' },
+      ],
+      params: {},
+      provenance: { source: 'datasheet' },
+    };
+    k.load(d);
+    k.transact({ summary: 'usb', ops: [
+      { op: 'add_part', part: 'acme:USBC', refdes: 'J1' },
+      { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J2' },
+      { op: 'connect', pins: ['J1.B12', 'J2.2'], net: 'GND' },
+      { op: 'connect', pins: ['J1.A4', 'J2.1'], net: 'VBUS' },
+    ] });
+    const r = k.transact({ summary: 'footprint', ops: [{ op: 'set_footprint', ref: 'J1', name: 'USB-C', pads: [
+      { number: 'A1', also: ['B12'], x: -1, y: 0, w: 0.6, h: 1.15 },
+      { number: 'A4', x: 0, y: 0, w: 0.6, h: 1.15 },
+      { number: 'S1', x: -4.3, y: 1, w: 1.1, h: 2.2, slot: [0.6, 1.7] },
+    ] }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    return k;
+  }
+
+  it('gives the shared pad the net of whichever of its pins is connected', () => {
+    const k = withUsb();
+    const b = k.board();
+    const pad = b.parts.find((p) => p.refdes === 'J1')!.pads.find((p) => p.number === 'A1')!;
+    expect(pad.also).toEqual(['B12']);
+    expect(b.netNames[pad.netId!]).toBe('GND');
+    expect(b.diagnostics.some((x) => x.code === 'DRC.SHARED_PAD_NETS')).toBe(false);
+  });
+
+  it('flags pins on one pad wired to different nets', () => {
+    const k = withUsb();
+    k.transact({ summary: 'short', ops: [{ op: 'connect', pins: ['J1.A1', 'J2.1'] }] });
+    const d = k.board().diagnostics.find((x) => x.code === 'DRC.SHARED_PAD_NETS');
+    expect(d?.severity).toBe('error');
+    expect(d?.message).toContain('A1, B12');
+  });
+
+  it('turns the slot with the part', () => {
+    const k = withUsb();
+    const r = k.transact({ summary: 'turn', ops: [{ op: 'place', ref: 'J1', x_mm: 15, y_mm: 15, rot: 90 }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const s1 = k.board().parts.find((p) => p.refdes === 'J1')!.pads.find((p) => p.number === 'S1')!;
+    expect(s1).toMatchObject({ w: 2.2, h: 1.1, drill: 0.6, slot: { w: 1.7, h: 0.6 } });
+  });
+});
+
 describe('set_footprint review', () => {
   it('shows up as a change to accept, and accepting commits it', () => {
     const k = new Kernel();

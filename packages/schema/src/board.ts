@@ -521,12 +521,44 @@ export interface BoardPad {
   w: number;
   h: number;
   shape: 'rect' | 'round';
+  /** Drill diameter; a slot's width (its narrow side). */
   drill?: number;
+  /** A slotted (oval) hole: its extent after rotation, round-ended along the longer side. */
+  slot?: { w: number; h: number };
+  /** Further pins on this pad (pins the part lands on one pad, a USB-C GND pad is A1 and B12). */
+  also?: string[];
   /** Not plated (a mounting hole): no copper, only a keep-out of this pad's size. */
   npth?: boolean;
   netId?: string;
   /** Copper layers the pad is on (through-hole: all). */
   layers: CopperLayer[];
+}
+
+/**
+ * A round pad as the capsule it is: the centre line along its longer side and the radius (a circle
+ * when w = h; an oval pad, as round a slotted hole, when not).
+ */
+export function padCapsule(p: { x: number; y: number; w: number; h: number }): { ax: number; ay: number; bx: number; by: number; r: number } {
+  const r = Math.min(p.w, p.h) / 2;
+  const [hx, hy] = [p.w / 2 - r, p.h / 2 - r];
+  return { ax: p.x - hx, ay: p.y - hy, bx: p.x + hx, by: p.y + hy, r };
+}
+
+/** Distance from a point to a round pad's edge (its capsule), negative inside. */
+export function roundPadDist(p: { x: number; y: number; w: number; h: number }, x: number, y: number): number {
+  const r = Math.min(p.w, p.h) / 2;
+  return Math.hypot(Math.max(Math.abs(x - p.x) - (p.w / 2 - r), 0), Math.max(Math.abs(y - p.y) - (p.h / 2 - r), 0)) - r;
+}
+
+/** The pins a pad carries: its number, then the pins sharing it. */
+export function padPins(p: { number: string; also?: string[] }): string[] {
+  return p.also?.length ? [p.number, ...p.also] : [p.number];
+}
+
+/** Does the pad carry this pin (number, any case)? */
+export function padHasPin(p: { number: string; also?: string[] }, pin: string): boolean {
+  const n = pin.toUpperCase();
+  return padPins(p).some((x) => x.toUpperCase() === n);
 }
 
 export interface BoardPart {

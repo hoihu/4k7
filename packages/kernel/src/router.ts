@@ -12,7 +12,7 @@
  * grid passes follow (horizontal on F.Cu, vertical on B.Cu, vias cheap; see Style): a board
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, type PlaneStyle, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, padCapsule, roundPadDist, type PlaneStyle, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
 import { keptCopper, type KeptCopper } from './keep.ts';
 import { segDist, segSegDist } from './segments.ts';
 
@@ -369,7 +369,7 @@ function routeOnce(
   };
   const padDist = (p: BoardPad) =>
     p.shape === 'round'
-      ? (x: number, y: number) => Math.hypot(x - p.x, y - p.y) - Math.min(p.w, p.h) / 2
+      ? (x: number, y: number) => roundPadDist(p, x, y)
       : (x: number, y: number) => Math.hypot(Math.max(Math.abs(x - p.x) - p.w / 2, 0), Math.max(Math.abs(y - p.y) - p.h / 2, 0));
   const stampPad = (p: BoardPad, net: number) => {
     for (const lay of p.layers) {
@@ -551,7 +551,7 @@ function routeOnce(
       const c = s % N;
       const x = (c % W) * G;
       const y = Math.floor(c / W) * G;
-      const inset = p.shape === 'round' ? Math.min(p.w, p.h) / 2 - Math.hypot(x - p.x, y - p.y) : Math.min(p.w / 2 - Math.abs(x - p.x), p.h / 2 - Math.abs(y - p.y));
+      const inset = p.shape === 'round' ? -roundPadDist(p, x, y) : Math.min(p.w / 2 - Math.abs(x - p.x), p.h / 2 - Math.abs(y - p.y));
       if (ownCopper[s] !== padNet[i] || inset > ownInset[s]!) ownInset[s] = inset;
       ownCopper[s] = padNet[i]!;
     }
@@ -1914,9 +1914,12 @@ function routeOnce(
     }
     pads.forEach((p, idx) => {
       if (padNet[idx] !== rg.pnet || !(p.drill || p.layers.includes(pl.layer)) || !look.thermal || solidPads.has(idx)) return;
-      if (p.shape === 'round') cuts.push({ k: 'circle', x: p.x, y: p.y, d: r3(Math.min(p.w, p.h) + 2 * gap) });
-      else cuts.push({ k: 'rect', x: r3(p.x - p.w / 2 - gap), y: r3(p.y - p.h / 2 - gap), w: r3(p.w + 2 * gap), h: r3(p.h + 2 * gap) });
-      spokesOf(p.x, p.y, p.shape === 'round' ? Math.min(p.w, p.h) / 2 : p.w / 2, p.shape === 'round' ? Math.min(p.w, p.h) / 2 : p.h / 2);
+      if (p.shape === 'round' && p.w === p.h) cuts.push({ k: 'circle', x: p.x, y: p.y, d: r3(p.w + 2 * gap) });
+      else if (p.shape === 'round') {
+        const c = padCapsule(p); // an oval pad
+        cuts.push({ k: 'stroke', pts: [r3(c.ax), r3(c.ay), r3(c.bx), r3(c.by)], w: r3(2 * c.r + 2 * gap) });
+      } else cuts.push({ k: 'rect', x: r3(p.x - p.w / 2 - gap), y: r3(p.y - p.h / 2 - gap), w: r3(p.w + 2 * gap), h: r3(p.h + 2 * gap) });
+      spokesOf(p.x, p.y, p.w / 2, p.h / 2);
     });
     // milled cutouts and rounded board corners, with the edge clearance around them
     for (const co of input.cutouts ?? []) {
@@ -2298,7 +2301,7 @@ function routeOnce(
       // (a wide track on top, over the inner plane); that copper is joined to the net
       const tie = !!v.group && limits[v.group] !== undefined;
       const r0 = v.pad / 2 - 0.01;
-      const onPad = (p: BoardPad) => (p.shape === 'round' ? Math.hypot(v.x - p.x, v.y - p.y) <= Math.min(p.w, p.h) / 2 - r0 : Math.abs(v.x - p.x) <= p.w / 2 - r0 && Math.abs(v.y - p.y) <= p.h / 2 - r0);
+      const onPad = (p: BoardPad) => (p.shape === 'round' ? roundPadDist(p, v.x, v.y) <= -r0 : Math.abs(v.x - p.x) <= p.w / 2 - r0 && Math.abs(v.y - p.y) <= p.h / 2 - r0);
       const onCopper = tie
         ? layers.filter((layer, l) => !pieces.some(({ rg }) => rg.l === l) && (tracks.some((t) => t.netId === v.netId && t.layer === layer && pieceList(t.pts).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(v.x, v.y) <= t.width / 2 - r0)) || pads.some((p, q) => padNet[q] === net && (p.drill || p.layers.includes(layer)) && onPad(p)))).length
         : 0;

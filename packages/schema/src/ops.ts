@@ -145,7 +145,7 @@ export const SetFootprintOp = z.object({
   op: z.literal('set_footprint'),
   ref: componentRef.describe('A component using the part, e.g. "BZ1"; applies to every component of that part'),
   name: z.string().min(2).describe('Package name, e.g. "Buzzer_12x9.5RM7.6"'),
-  pads: z.array(LandPad).min(1).describe('One pad per pin (pad number = pin number), from the datasheet\'s recommended footprint or package drawing, mm from the body centre, top view'),
+  pads: z.array(LandPad).min(1).describe('One pad per pin (pad number = pin number; pins the datasheet puts on one pad share it with also), from the datasheet\'s recommended footprint or package drawing, mm from the body centre, top view'),
   body_mm: z.tuple([z.number().positive(), z.number().positive()]).optional().describe('Body width × length (round: diameter × diameter); default: around the pads'),
   round: z.boolean().optional().describe('A cylindrical body (buzzer, electrolytic cap)'),
   height_mm: z.number().positive().optional().describe('Body height above the board'),

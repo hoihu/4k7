@@ -295,6 +295,16 @@ function boardPrism(b: BoardView): Prism {
   }
   for (const part of b.parts) {
     for (const p of part.pads) {
+      if (p.drill && p.slot) {
+        // a slotted hole: an oblong along its longer side
+        const long = Math.max(p.slot.w, p.slot.h);
+        const poly = cutoutPolygon({ id: '', shape: 'slot', x: p.x, y: p.y, w: long, h: p.drill, r: 0, angle: p.slot.h > p.slot.w ? 90 : 0 });
+        const pts = cleanPoly(flip(poly));
+        if (!pts || !clear(p.x, p.y, long / 2)) continue;
+        holes.push({ k: 'poly', pts });
+        taken.push({ x: 0, y: 0, r: 0, poly });
+        continue;
+      }
       if (!p.drill || !clear(p.x, p.y, p.drill / 2)) continue;
       holes.push({ k: 'circle', c: [p.x, H - p.y], r: p.drill / 2 });
       taken.push({ x: p.x, y: p.y, r: p.drill / 2 });

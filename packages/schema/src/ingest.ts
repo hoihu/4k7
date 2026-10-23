@@ -13,13 +13,20 @@ const dims = z.tuple([mm, mm]);
 
 /** One pad of an explicit land pattern (mm, top view, y down, origin at the body centre). */
 export const LandPad = z.object({
-  number: z.string().min(1).describe('The pin number this pad belongs to'),
+  number: z.string().min(1).describe('The pin number this pad belongs to (the first one, when pins share the pad: also)'),
   x: z.number().describe('Pad centre from the body centre, mm (right is +)'),
   y: z.number().describe('Pad centre from the body centre, mm (down is +, top view)'),
   w: mm.describe('Pad width (x); through-hole: the copper ring diameter'),
   h: mm.optional().describe('Pad height (y); default = w'),
   shape: z.enum(['rect', 'round']).optional().describe('Default round for drilled pads, rect otherwise'),
   drill: mm.optional().describe('Through-hole drill diameter (the datasheet hole size, else lead diameter + 0.2–0.3 mm)'),
+  slot: dims
+    .optional()
+    .describe('A slotted (oval) hole instead of a round drill, where the datasheet draws one (USB-C shell legs, flat tabs): its width × height (x × y, top view), e.g. [0.6, 1.7]; the pad must be larger than it on both axes'),
+  also: z
+    .array(z.string().min(1))
+    .optional()
+    .describe('Further pins that share this one pad, where the datasheet lands several pins on a single pad (USB-C: A1 and B12 on one GND pad, A4 and B9 on one VBUS pad): give the pad once, number the first pin, also the others. Never split such a pad into halves'),
 });
 export type LandPad = z.infer<typeof LandPad>;
 

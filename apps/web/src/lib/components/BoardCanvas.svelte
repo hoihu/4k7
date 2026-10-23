@@ -394,7 +394,8 @@
             rx={r}
             data-net={pad.netId}
           />
-          {#if pad.drill}<circle class="drill" cx={pad.x} cy={pad.y} r={pad.drill / 2} />{/if}
+          {#if pad.slot}<rect class="drill" x={pad.x - pad.slot.w / 2} y={pad.y - pad.slot.h / 2} width={pad.slot.w} height={pad.slot.h} rx={pad.drill! / 2} />
+          {:else if pad.drill}<circle class="drill" cx={pad.x} cy={pad.y} r={pad.drill / 2} />{/if}
           {/if}
         {/each}
         {#if show.silk && !p.componentId.startsWith('hole:')}

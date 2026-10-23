@@ -51,6 +51,9 @@ import {
   placeCutout,
   placeGraphic,
   figureDepths,
+  padCapsule,
+  padHasPin,
+  padPins,
 } from '@4k7/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
 import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
@@ -120,6 +123,12 @@ export function dropOffset(part: Pick<BoardPart, 'rot' | 'side'>, pad: Pick<Boar
   return [r3(part.side === 'bottom' ? -dx : dx) || 0, r3(dy) || 0];
 }
 
+/** The net on a pad: its pin's, or for a pad several pins share, the first of them connected. */
+export function padNet(comp: Pick<Component, 'pins'>, pad: { number: string; also?: string[] }): string | undefined {
+  for (const n of padPins(pad)) if (comp.pins[n]) return comp.pins[n];
+  return undefined;
+}
+
 /** A footprint as it lies on the bottom side, seen from the top: flipped about its vertical axis. */
 function mirrored(fp: Footprint): Footprint {
   return { ...fp, pads: fp.pads.map((p) => ({ ...p, x: -p.x || 0 })), pin1: { x: -fp.pin1.x || 0, y: fp.pin1.y } };
@@ -175,7 +184,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const sx = pts.length ? Math.max(...pts.map((p) => p.x)) - Math.min(...pts.map((p) => p.x)) : 1;
   const sy = pts.length ? Math.max(...pts.map((p) => p.y)) - Math.min(...pts.map((p) => p.y)) : 1;
   const byComp = new Map(items.map((it) => [it.comp.id, it]));
-  const padsOf = (it: Item) => it.fp.pads.map((p) => ({ pad: p, net: it.comp.pins[p.number] }));
+  const padsOf = (it: Item) => it.fp.pads.map((p) => ({ pad: p, net: padNet(it.comp, p) }));
   const padPos = (it: Item, px: number, py: number) => {
     const [x, y] = rotate(px, py, it.rot);
     return { x: it.x + x, y: it.y + y };
@@ -213,8 +222,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   for (const it of items) {
     if (isTwoPin(it.card)) continue;
     for (const { pad, net } of padsOf(it)) {
-      const pin = it.card.pins.find((p) => p.number === pad.number);
-      if (!net || !pin || pin.type !== 'pwr_in' || isGroundNet(d.nets[net]!)) continue;
+      const pin = it.card.pins.find((p) => p.type === 'pwr_in' && padHasPin(pad, p.number));
+      if (!net || !pin || isGroundNet(d.nets[net]!)) continue;
       supplyPads.set(net, [...(supplyPads.get(net) ?? []), { it, px: pad.x, py: pad.y, used: 0 }]);
     }
   }
@@ -222,7 +231,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   for (const [it, { to, pin }] of declared) {
     if (!to) continue;
     const own = padsOf(it).filter((p) => p.net && !isGroundNet(d.nets[p.net]!));
-    const theirs = padsOf(to).filter((q) => (pin ? q.pad.number === pin : own.some((p) => p.net === q.net)));
+    const theirs = padsOf(to).filter((q) => (pin ? padHasPin(q.pad, pin) : own.some((p) => p.net === q.net)));
     const typeOf = (n: string) => to.card.pins.find((p) => p.number === n)?.type;
     const at = theirs.find((q) => typeOf(q.pad.number) === 'pwr_in') ?? theirs[0];
     const mine = at && padsOf(it).find((p) => p.net === at.net);
@@ -1005,6 +1014,16 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       .map((p) => p.refdes);
     if (g.over.length) diagnostics.push({ code: 'DRC.SILK_OVER_PARTS', severity: 'warning', message: `${label} lies over ${g.over.join(', ')}; ink is kept off pads but covers the rest. Move it to a free spot (edit_graphic).`, entities: [g.id, ...g.over] });
   }
+  // pins sharing one pad are one piece of copper: on two nets they short
+  for (const it of items) {
+    for (const pad of it.fp.pads) {
+      if (!pad.also) continue;
+      const on = padPins(pad).filter((n) => it.comp.pins[n]);
+      if (new Set(on.map((n) => it.comp.pins[n])).size < 2) continue;
+      const which = on.map((n) => `${n} on ${d.nets[it.comp.pins[n]!]?.name ?? '?'}`).join(', ');
+      diagnostics.push({ code: 'DRC.SHARED_PAD_NETS', severity: 'error', message: `${it.comp.refdes}: pins ${padPins(pad).join(', ')} share one pad but are on different nets (${which}); that shorts them. Connect them to the same net.`, entities: [it.comp.refdes] });
+    }
+  }
   for (const ref of missing) {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board. Give it one from its datasheet drawing with set_footprint.`, entities: [ref] });
   }
@@ -1490,15 +1509,17 @@ function bounds(items: Item[]) {
 function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
   const pads: BoardPad[] = it.fp.pads.map((p) => {
     const [x, y] = rotate(p.x, p.y, it.rot);
-    const net = it.comp.pins[p.number];
+    const net = padNet(it.comp, p);
     return {
       number: p.number,
+      ...(p.also ? { also: p.also } : {}),
       x: r3(it.x + x),
       y: r3(it.y + y),
       w: swapped(it.rot) ? p.h : p.w,
       h: swapped(it.rot) ? p.w : p.h,
       shape: p.shape,
       ...(p.drill ? { drill: p.drill } : {}),
+      ...(p.slot ? { slot: swapped(it.rot) ? { w: p.slot.h, h: p.slot.w } : p.slot } : {}),
       ...(net ? { netId: net } : {}),
       layers: p.drill ? [...layers] : [it.side === 'bottom' ? 'B.Cu' : 'F.Cu'],
     };
@@ -1817,9 +1838,12 @@ export function planVias(groups: ViaGroup[], parts: BoardPart[], w: number, h: n
       for (const [x, y] of spots) {
         let [ax, ay] = [x, y];
         if (pad.shape === 'round') {
-          const d = Math.hypot(x - pad.x, y - pad.y);
-          const r = Math.max(0, Math.min(pad.w, pad.h) / 2 - sw / 2);
-          if (d > r) [ax, ay] = [pad.x + ((x - pad.x) * r) / d, pad.y + ((y - pad.y) * r) / d];
+          // towards the nearest point of the pad's centre line (its centre, or along an oval)
+          const c = padCapsule(pad);
+          const [cx, cy] = [Math.max(c.ax, Math.min(c.bx, x)), Math.max(c.ay, Math.min(c.by, y))];
+          const d = Math.hypot(x - cx, y - cy);
+          const r = Math.max(0, c.r - sw / 2);
+          if (d > r) [ax, ay] = [cx + ((x - cx) * r) / d, cy + ((y - cy) * r) / d];
         } else {
           const [hx, hy] = [Math.max(0, pad.w / 2 - sw / 2), Math.max(0, pad.h / 2 - sw / 2)];
           [ax, ay] = [Math.max(pad.x - hx, Math.min(pad.x + hx, x)), Math.max(pad.y - hy, Math.min(pad.y + hy, y))];

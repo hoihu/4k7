@@ -4,6 +4,7 @@
  * IPC-7351 nominal-density rules of thumb: toe/heel extensions on gull-wing leads, pads
  * reaching out past the body edge on no-lead packages, balls at ~80 % diameter.
  */
+import { padPins } from '@4k7/schema';
 import type { PackageInfo } from '@4k7/schema';
 
 export interface Pad {
@@ -13,8 +14,12 @@ export interface Pad {
   w: number;
   h: number;
   shape: 'rect' | 'round';
-  /** Through-hole drill diameter. */
+  /** Through-hole drill diameter; a slot's width (its narrow side). */
   drill?: number;
+  /** A slotted (oval) hole: width × height, round-ended along the longer side. */
+  slot?: { w: number; h: number };
+  /** Further pins on this pad (the datasheet lands them on one pad). */
+  also?: string[];
 }
 
 export interface Footprint {
@@ -127,34 +132,44 @@ export function footprintFor(pkg: PackageInfo, pinNumbers: string[] = []): Footp
 
 /**
  * A land pattern given pad by pad (from the datasheet's drawing): checked for a pad per pin, no
- * overlapping copper and drills inside their pads. The body is the given one, else the pads'
+ * overlapping copper and drills (round or slotted) inside their pads. The body is the given one, else the pads'
  * extent; the courtyard covers both.
  */
 function explicit(pkg: PackageInfo, pinNumbers: string[]): FootprintResult {
-  const pads: Pad[] = pkg.pads!.map((p) => ({
-    number: p.number,
-    x: r2(p.x),
-    y: r2(p.y),
-    w: r2(p.w),
-    h: r2(p.h ?? p.w),
-    shape: p.shape ?? (p.drill ? 'round' : 'rect'),
-    ...(p.drill ? { drill: r2(p.drill) } : {}),
-  }));
+  const pads: Pad[] = pkg.pads!.map((p) => {
+    const slot = p.slot && { w: r2(p.slot[0]), h: r2(p.slot[1]) };
+    const drill = slot ? Math.min(slot.w, slot.h) : p.drill && r2(p.drill);
+    const also = [...new Set(p.also ?? [])].filter((n) => n.toUpperCase() !== p.number.toUpperCase());
+    return {
+      number: p.number,
+      x: r2(p.x),
+      y: r2(p.y),
+      w: r2(p.w),
+      h: r2(p.h ?? p.w),
+      shape: p.shape ?? (drill ? 'round' : 'rect'),
+      ...(drill ? { drill } : {}),
+      ...(slot && slot.w !== slot.h ? { slot } : {}),
+      ...(also.length ? { also } : {}),
+    };
+  });
+  const pinsOf = (p: Pad) => padPins(p).map((n) => n.toUpperCase());
+  const have = new Set(pads.flatMap(pinsOf));
   if (pinNumbers.length) {
-    const have = new Set(pads.map((p) => p.number.toUpperCase()));
     const known = new Set(pinNumbers.map((n) => n.toUpperCase()));
     const noPad = pinNumbers.filter((n) => !have.has(n.toUpperCase()));
     if (noPad.length) return { ok: false, reason: `pins without a pad: ${noPad.join(', ')}` };
-    const stray = pads.filter((p) => !known.has(p.number.toUpperCase()));
-    if (stray.length) return { ok: false, reason: `pads for pins the part does not have: ${stray.map((p) => p.number).join(', ')} (pins: ${pinNumbers.join(', ')})` };
+    const stray = [...new Set(pads.flatMap((p) => padPins(p)).filter((n) => !known.has(n.toUpperCase())))];
+    if (stray.length) return { ok: false, reason: `pads for pins the part does not have: ${stray.join(', ')} (pins: ${pinNumbers.join(', ')})` };
   }
   for (const p of pads) {
-    if (p.drill && p.drill >= Math.min(p.w, p.h) - 0.2) return { ok: false, reason: `pad ${p.number}: the ${p.drill} mm drill leaves no copper ring in a ${p.w} × ${p.h} mm pad (make the pad at least drill + 0.5 mm)` };
+    const [hw, hh] = p.slot ? [p.slot.w, p.slot.h] : [p.drill ?? 0, p.drill ?? 0];
+    const hole = p.slot ? `${hw} × ${hh} mm slot` : `${hw} mm drill`;
+    if (p.drill && (hw >= p.w - 0.2 || hh >= p.h - 0.2)) return { ok: false, reason: `pad ${p.number}: the ${hole} leaves no copper ring in a ${p.w} × ${p.h} mm pad (make the pad at least the hole + 0.5 mm on each axis)` };
   }
   for (let i = 0; i < pads.length; i++) {
     for (let j = i + 1; j < pads.length; j++) {
       const [a, b] = [pads[i]!, pads[j]!];
-      if (a.number.toUpperCase() === b.number.toUpperCase()) continue; // several pads of one pin may touch
+      if (pinsOf(a).some((n) => pinsOf(b).includes(n))) continue; // several pads of one pin may touch
       if (Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2) {
         return { ok: false, reason: `pads ${a.number} and ${b.number} overlap (centres ${a.x}, ${a.y} and ${b.x}, ${b.y} mm)` };
       }

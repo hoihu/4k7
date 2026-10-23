@@ -6,7 +6,7 @@
  * that leaves hanging (a via joined to nothing, a stub to where a pad was). What stays is kept by
  * the router as it lies (RouteInput.keep), which then routes only the connections left open.
  */
-import { cutoutDistance, insideBoard, type BoardPad, type CopperLayer, type Track, type Via } from '@4k7/schema';
+import { cutoutDistance, insideBoard, padCapsule, roundPadDist, type BoardPad, type CopperLayer, type Track, type Via } from '@4k7/schema';
 import type { RouteInput } from './router.ts';
 import { segDist, segSegDist } from './segments.ts';
 
@@ -33,13 +33,16 @@ const BUCKET = 2;
 
 /** Distance from a point to a pad's copper (0 inside). */
 export function padPointDist(p: BoardPad, x: number, y: number): number {
-  if (p.shape === 'round') return Math.max(0, Math.hypot(x - p.x, y - p.y) - Math.min(p.w, p.h) / 2);
+  if (p.shape === 'round') return Math.max(0, roundPadDist(p, x, y));
   return Math.hypot(Math.max(Math.abs(x - p.x) - p.w / 2, 0), Math.max(Math.abs(y - p.y) - p.h / 2, 0));
 }
 
 /** Distance from a segment to a pad's copper (0 where they meet). */
 export function padSegDist(p: BoardPad, ax: number, ay: number, bx: number, by: number): number {
-  if (p.shape === 'round') return Math.max(0, segDist(ax, ay, bx, by)(p.x, p.y) - Math.min(p.w, p.h) / 2);
+  if (p.shape === 'round') {
+    const c = padCapsule(p);
+    return Math.max(0, segSegDist(ax, ay, bx, by, c.ax, c.ay, c.bx, c.by) - c.r);
+  }
   if (padPointDist(p, ax, ay) === 0 || padPointDist(p, bx, by) === 0) return 0;
   const [x0, y0, x1, y1] = [p.x - p.w / 2, p.y - p.h / 2, p.x + p.w / 2, p.y + p.h / 2];
   return Math.min(segSegDist(ax, ay, bx, by, x0, y0, x1, y0), segSegDist(ax, ay, bx, by, x1, y0, x1, y1), segSegDist(ax, ay, bx, by, x1, y1, x0, y1), segSegDist(ax, ay, bx, by, x0, y1, x0, y0));
