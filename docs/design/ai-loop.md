@@ -27,7 +27,11 @@ stateDiagram-v2
   "1. Add U1 + input caps 2. Feedback divider for 3.3 V 3. Inductor per datasheet eq. 12 …".
 - **Act**: tool calls against the ops catalogue, always in a transaction with `dry_run: true` first.
 - **Verify**: kernel diagnostics go back to the model. There's a **fix budget** (default 5 rounds) so a
-  weak model doesn't loop forever.
+  weak model doesn't loop forever. Once no errors are open, drawing warnings (`SCH.*`, not the
+  rules the layout follows itself) that the turn brought get one **review round**: the model is
+  asked to look at the page, fix what reads badly (with the checks' suggested ops, e.g. `constrain
+  arrangement up` for a pull-up drawn hanging) or say why it stays. Warnings that were there
+  before the turn are not raised again.
 - **Escalate**: instead of guessing, the agent asks one concrete question with options
   ("Inductor saturation current: 3 A part is 6×6 mm; 2.5 A part is 4×4 mm. Which?").
 - **Propose → Commit**: a changeset with summary, ghost diff and diagnostics delta.

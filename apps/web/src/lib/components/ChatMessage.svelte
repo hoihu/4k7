@@ -36,7 +36,7 @@
       {:else if s.type === 'tool'}
         <div class="tl" title={s.detail}><span class={s.ok ? 'ok' : 'er'}>{s.ok ? '✓' : '✕'}</span> {s.label}<span class="muted"> · {s.detail}</span></div>
       {:else if s.type === 'verify'}
-        <details class="verify"><summary>kernel: {s.errors} error{s.errors === 1 ? '' : 's'} open → fix round {s.round}</summary><pre>{s.message}</pre></details>
+        <details class="verify"><summary>{#if s.review}kernel: {s.errors} new drawing finding{s.errors === 1 ? '' : 's'} → schematic review{:else}kernel: {s.errors} error{s.errors === 1 ? '' : 's'} open → fix round {s.round}{/if}</summary><pre>{s.message}</pre></details>
       {:else if s.type === 'question'}
         <div class="q">
           <div>{s.question}</div>

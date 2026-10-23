@@ -128,7 +128,7 @@ not know stays guidance for the agent (and the settings page says so). Guidance 
   propose: no edit of the design fixes a layout bug). Setting such a rule to `off` lets the layout
   break it (someone who wants sideways rails can have them): planned with step 3, the layout does
   not read the ruleset yet, so today `off` only silences the check.
-- **Checks.** The rest are measured, not enforced (`SCH.TEXT_OVERLAP`, `SCH.JOG`, `SCH.CROSSING`):
+- **Checks.** The rest are measured, not enforced (`SCH.TEXT_OVERLAP`, `SCH.JOG`, `SCH.CROSSING`, `SCH.RAIL_SIDE`):
   the layout tries, the diagnostic reports where it did not manage, the agent improves it with hints.
 - **Guidance.** Read by the agent, checked by nobody. Judgement.
 

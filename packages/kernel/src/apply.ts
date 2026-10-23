@@ -1972,10 +1972,13 @@ function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResul
   } else if (op.kind === 'arrangement') {
     need(op.a, '"a" (one of the parts of the sub-circuit)');
     const a = resolveComponent(d, op.a!);
-    const category = requireCard(d, a).category;
-    const allowed = category === 'diode' ? ['diamond', 'inline'] : category === 'ic' ? ['power_flow', 'compact'] : [];
+    const card = requireCard(d, a);
+    const category = card.category;
+    // a two-pin part at an IC's or connector's pin: which way it stands from the pin's wire
+    const standing = isTwoPin(card) ? ['up', 'down'] : [];
+    const allowed = [...(category === 'diode' ? ['diamond', 'inline'] : category === 'ic' ? ['power_flow', 'compact'] : []), ...standing];
     if (!allowed.length) {
-      reject({ code: 'CONSTRAINT_INVALID', message: `arrangement applies to diode bridges and regulator ICs; ${a.refdes} is neither.` });
+      reject({ code: 'CONSTRAINT_INVALID', message: `arrangement applies to diode bridges, regulator ICs and two-pin parts; ${a.refdes} is none of them.` });
     }
     if (!allowed.includes(op.value ?? '')) {
       reject({ code: 'CONSTRAINT_INVALID', message: `arrangement for ${a.refdes}: value must be ${allowed.map((v) => `"${v}"`).join(' or ')}.` });

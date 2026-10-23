@@ -438,6 +438,66 @@ describe('supply symbols always point their own way', () => {
     expect(rail!.stubLen!).toBeGreaterThanOrEqual(250 + 50); // half the name clears the lead
   });
 
+  it('stands a pull-up under another pin\'s pull-up upright too, its column further out so no wire runs through a part', () => {
+    const ic = { id: 'acme:IC', mpn: 'IC', description: 'ic', category: 'ic', refPrefix: 'U', pins: [{ number: '1', name: 'A', type: 'in' }, { number: '2', name: 'B', type: 'in' }, { number: '3', name: 'GND', type: 'pwr_in' }], params: {}, provenance: { source: 'datasheet' } };
+    const s = sheetWith([{ part: 'acme:IC', refdes: 'U1' }, { part: 'generic:R', refdes: 'R1', params: { resistance: '10k' } }, { part: 'generic:R', refdes: 'R2', params: { resistance: '10k' } }], [
+      { op: 'connect', pins: ['U1.1', 'R1.1'], net: 'A' },
+      { op: 'connect', pins: ['U1.2', 'R2.1'], net: 'B' },
+      { op: 'connect', pins: ['R1.2', 'R2.2'], net: '+3V3' },
+      { op: 'set_net', net: '+3V3', voltage: 3.3 },
+      { op: 'connect', pins: ['U1.3'], net: 'GND' },
+    ], ic);
+    const pin = (n: string) => s.symbols.find((x) => x.refdes === 'U1')!.pins.find((p) => p.number === n)!;
+    for (const [ref, n] of [['R1', '1'], ['R2', '2']] as const) {
+      const r = s.symbols.find((x) => x.refdes === ref)!;
+      expect(r.bbox.y + r.bbox.h).toBeLessThanOrEqual(pin(n).y); // above its pin
+    }
+    expect(labelsOf(s, '+3V3').every((l) => l.dir === 'up' && !l.stub)).toBe(true); // no rail turned aside
+    // no pin's wire runs through the other resistor
+    for (const w of s.wires.filter((w) => w.pts[1] === w.pts[3])) {
+      for (const r of s.symbols.filter((x) => x.refdes.startsWith('R'))) {
+        const [x1, y, x2] = [Math.min(w.pts[0]!, w.pts[2]!), w.pts[1]!, Math.max(w.pts[0]!, w.pts[2]!)];
+        expect(y > r.bbox.y && y < r.bbox.y + r.bbox.h && x1 < r.bbox.x && x2 > r.bbox.x + r.bbox.w).toBe(false);
+      }
+    }
+  });
+
+  it('stands a pull-up the way the agent asks (constrain arrangement), and flags a hanging one', () => {
+    const ic = { id: 'acme:IC', mpn: 'IC', description: 'ic', category: 'ic', refPrefix: 'U', pins: [{ number: '1', name: 'A', type: 'in' }, { number: '2', name: 'B', type: 'in' }, { number: '3', name: 'GND', type: 'pwr_in' }], params: {}, provenance: { source: 'datasheet' } };
+    const k = new Kernel();
+    const d = k.committedDesign();
+    d.parts[ic.id] = ic as never;
+    k.load(d);
+    // an RC hanging from the pin above leaves the layout no clear way up for R2
+    const r = k.transact({ summary: 'x', ops: [
+      ...[{ part: 'acme:IC', refdes: 'U1' }, { part: 'generic:R', refdes: 'R1', params: { resistance: '1k' } }, { part: 'generic:C', refdes: 'C1', params: { capacitance: '100nF', voltage: '16V' } }, { part: 'generic:R', refdes: 'R2', params: { resistance: '10k' } }].map((p) => ({ op: 'add_part', ...p })),
+      { op: 'connect', pins: ['U1.1', 'R1.1'], net: 'A' },
+      { op: 'connect', pins: ['R1.2', 'C1.1'], net: 'A_RC' },
+      { op: 'connect', pins: ['C1.2', 'U1.3'], net: 'GND' },
+      { op: 'connect', pins: ['U1.2', 'R2.1'], net: 'B' },
+      { op: 'connect', pins: ['R2.2'], net: '+3V3' },
+      { op: 'set_net', net: '+3V3', voltage: 3.3 },
+    ] } as never);
+    expect(r.rejection).toBeUndefined();
+    const finding = k.state().diagnostics.find((x) => x.code === 'SCH.RAIL_SIDE');
+    expect(finding?.entities).toEqual(['R2', 'net:B']);
+    expect(finding?.fixHints).toEqual([{ op: 'constrain', kind: 'arrangement', a: 'R2', value: 'up', strength: 'soft' }]);
+
+    expect(k.transact({ summary: 'up', ops: finding!.fixHints! }).rejection).toBeUndefined();
+    const s = sheetOf(k);
+    const r2 = s.symbols.find((x) => x.refdes === 'R2')!;
+    const pin = s.symbols.find((x) => x.refdes === 'U1')!.pins.find((p) => p.number === '2')!;
+    expect(r2.bbox.y + r2.bbox.h).toBeLessThanOrEqual(pin.y);
+    expect(s.labels.find((l) => l.text === '+3V3')).toMatchObject({ dir: 'up' });
+    expect(k.state().diagnostics.some((x) => x.code === 'SCH.RAIL_SIDE')).toBe(false);
+
+    // and down when asked, the rail turned aside below it
+    expect(k.transact({ summary: 'down', ops: [{ op: 'constrain', kind: 'arrangement', a: 'R2', value: 'down' }] } as never).rejection).toBeUndefined();
+    const down = sheetOf(k);
+    const pin2 = down.symbols.find((x) => x.refdes === 'U1')!.pins.find((p) => p.number === '2')!;
+    expect(down.symbols.find((x) => x.refdes === 'R2')!.bbox.y).toBeGreaterThanOrEqual(pin2.y);
+  });
+
   it('steps a rail pin beyond a supply bus out past the bus', () => {
     const ic = { id: 'acme:IC2', mpn: 'IC2', description: 'ic', category: 'ic', refPrefix: 'U', pins: [{ number: '1', name: 'PVDD', type: 'pwr_in' }, { number: '2', name: 'PVDD', type: 'pwr_in' }, { number: '3', name: 'PVIO', type: 'pwr_in' }, { number: '4', name: 'GND', type: 'pwr_in' }], params: {}, provenance: { source: 'datasheet' } };
     const s = sheetWith([{ part: 'acme:IC2', refdes: 'U1' }], [

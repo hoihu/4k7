@@ -11,7 +11,7 @@ export type Segment =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
   | { type: 'tool'; label: string; ok: boolean; detail: string }
-  | { type: 'verify'; round: number; errors: number; message: string }
+  | { type: 'verify'; round: number; errors: number; message: string; /** A look over the drawing (new SCH.* warnings), not errors to fix. */ review?: boolean }
   | { type: 'question'; question: string; options: string[]; answered?: string }
   | { type: 'error'; text: string }
   /** Something the server says about the run (e.g. a setting the model does not take). */
