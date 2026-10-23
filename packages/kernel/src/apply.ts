@@ -61,6 +61,7 @@ import { autoPlanes, dropOffset, padNet, placeBoard, storedPlacement } from './b
 import { underBody } from './drc.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
+import { drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
 import { isDrawn, moveSymbol, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
@@ -85,8 +86,12 @@ import {
   type PinHandle,
 } from './doc.ts';
 
-/** Applies one op. `by`: who asked for it (the app's own buttons and drags are the user's; the agent's tool calls are the agent's). */
-export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent'): OpResult {
+/**
+ * Applies one op. `by`: who asked for it (the app's own buttons and drags are the user's; the
+ * agent's tool calls are the agent's). `ctx`: where it sits in its transaction (the route helper's
+ * results computed elsewhere are found by it).
+ */
+export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', ctx?: OpContext): OpResult {
   switch (op.op) {
     case 'add_part':
       return addPart(d, op);
@@ -165,7 +170,17 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent'): 
     case 'refine_placement':
       return refineStep(d, op);
     case 'route':
-      return routeStep(d);
+      return d.board?.drawn ? routeDrawn(d, op, ctx) : routeStep(d);
+    case 'set_copper_mode':
+      return setCopperMode(d, op);
+    case 'draw_track':
+      return drawTrack(d, op);
+    case 'draw_via':
+      return drawVia(d, op);
+    case 'edit_copper':
+      return editCopper(d, op);
+    case 'erase_copper':
+      return eraseCopper(d, op);
     case 'set_plane':
       return setPlane(d, op);
     case 'set_plane_style':

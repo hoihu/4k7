@@ -267,6 +267,8 @@
   /** Each pour's cells as one path (thousands of them: built once per board, not on every frame). */
   const zonePaths = $derived(new Map(board?.zones.map((z) => [z, zonePath(z.rects)])));
   const path = (pts: number[]) => pts.reduce((s, v, i) => s + (i % 2 ? `,${v}` : `${i ? ' L' : 'M'}${v}`), '');
+  /** Drawn copper's id (t3, v1): shown on hover, so the user can name it to the agent. */
+  const copperId = (x: object) => (x as { id?: string }).id;
 </script>
 
 <!-- an interactive canvas: pointer and keyboard (R = rotate, L = lock, F = flip) are the point -->
@@ -314,7 +316,7 @@
             {/if}
           {/each}
           {#each tracksOn(layer) as t, i (i)}
-            <path d={path(t.pts)} stroke-width={t.width} data-net={t.netId} class:hot={hotNet === t.netId} />
+            <path d={path(t.pts)} stroke-width={t.width} data-net={t.netId} class:hot={hotNet === t.netId}>{#if copperId(t)}<title>{copperId(t)} · {board.netNames[t.netId] ?? t.netId} · {t.width} mm · {layer}</title>{/if}</path>
           {/each}
         </g>
       {/if}
@@ -424,6 +426,7 @@
       <g class="via" data-net={v.netId} class:hot={hotNet === v.netId}>
         <circle cx={v.x} cy={v.y} r={v.pad / 2} />
         <circle class="drill" cx={v.x} cy={v.y} r={v.drill / 2} />
+        {#if copperId(v)}<title>{copperId(v)} · {board.netNames[v.netId] ?? v.netId} · via {v.drill}/{v.pad} mm</title>{/if}
       </g>
     {/each}
 
