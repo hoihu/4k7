@@ -4,7 +4,7 @@
  * missing pin number or an impossible ball name is reported back to the AI (and the user)
  * instead of silently becoming a broken symbol.
  */
-import { PartDraft, type DatasheetPages, type IngestIssue, type PartCard, type PartRequirement } from '@4k7/schema';
+import { PartDraft, padPins, type DatasheetPages, type IngestIssue, type PartCard, type PartRequirement } from '@4k7/schema';
 import { bgaRowName, footprintFor } from './footprint.ts';
 import { planSymbolLayout } from './symbolgen.ts';
 
@@ -76,7 +76,7 @@ export function draftToCard(input: unknown): IngestResult {
   const fp = footprintFor(pkg, draft.pins.map((p) => p.number));
   if (!fp.ok) warn(`Footprint not generated: ${fp.reason}.`);
   else if (!grid) {
-    const padNums = new Set(fp.footprint.pads.map((p) => p.number.toUpperCase()));
+    const padNums = new Set(fp.footprint.pads.flatMap((p) => padPins(p)).map((n) => n.toUpperCase()));
     const noPad = draft.pins.filter((p) => !padNums.has(p.number.toUpperCase()));
     if (noPad.length) err(`Pins without a pad in the generated ${pkg.name} footprint: ${noPad.slice(0, 10).map((p) => p.number).join(', ')}.`);
   }

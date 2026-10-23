@@ -54,8 +54,10 @@ import {
   scriptProblems,
   viaCurrentFor,
   viasForCurrent,
+  padHasPin,
+  roundPadDist,
 } from '@4k7/schema';
-import { autoPlanes, dropOffset, placeBoard, storedPlacement } from './board.ts';
+import { autoPlanes, dropOffset, padNet, placeBoard, storedPlacement } from './board.ts';
 import { underBody } from './drc.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
@@ -776,9 +778,9 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
     const pkg = card ? packageOf(card, comp.params, d.packageDefaults) : null;
     const fp = card && pkg ? footprintFor(pkg, card.pins.map((p) => p.number)) : null;
     if (!fp?.ok) reject({ code: 'BOARD_INVALID', message: `${comp.refdes} has no footprint yet (set_footprint first).` });
-    const pad = fp!.ok ? fp!.footprint.pads.find((p) => p.number.toUpperCase() === op.pad!.toUpperCase()) : undefined;
+    const pad = fp!.ok ? (fp!.footprint.pads.find((p) => p.number.toUpperCase() === op.pad!.toUpperCase()) ?? fp!.footprint.pads.find((p) => padHasPin(p, op.pad!))) : undefined;
     if (!pad) reject({ code: 'REF_UNKNOWN', message: `${comp.refdes} has no pad "${op.pad}".`, candidates: fp!.ok ? [...new Set(fp!.footprint.pads.map((p) => p.number))] : [] });
-    const netId = comp.pins[pad!.number];
+    const netId = padNet(comp, pad!);
     if (!netId) reject({ code: 'BOARD_INVALID', message: `${comp.refdes}.${pad!.number} is not connected; connect it (e.g. to GND) before giving it vias.` });
     if (op.net && netOf(op.net).id !== netId) reject({ code: 'BOARD_INVALID', message: `${comp.refdes}.${pad!.number} is on ${d.nets[netId!]!.name}, not ${op.net}: vias in it are on its net.` });
     if (op.kind === 'drop') {
@@ -791,7 +793,7 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
       const here = part?.pads.find((p) => p.number === pad!.number);
       if (!part || !here) reject({ code: 'BOARD_INVALID', message: `${comp.refdes} is not on the board yet (propose_placement first).` });
       const off = (p: BoardPad, x: number, y: number) =>
-        p.shape === 'round' ? Math.hypot(x - p.x, y - p.y) - Math.min(p.w, p.h) / 2 : Math.hypot(Math.max(Math.abs(x - p.x) - p.w / 2, 0), Math.max(Math.abs(y - p.y) - p.h / 2, 0));
+        p.shape === 'round' ? roundPadDist(p, x, y) : Math.hypot(Math.max(Math.abs(x - p.x) - p.w / 2, 0), Math.max(Math.abs(y - p.y) - p.h / 2, 0));
       const gap = size / 2 + b.rules.clearance;
       const spots = op.at!.map((p) => [r3(p.x_mm), r3(p.y_mm)] as [number, number]);
       spots.forEach(([x, y], i) => {

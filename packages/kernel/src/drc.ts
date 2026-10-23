@@ -2,7 +2,7 @@
  * Copper design-rule check on exact geometry, independent of the router's grid: clearance
  * between tracks, vias and pads of different nets on the same layer.
  */
-import { cutoutDistance, insideBoard } from '@4k7/schema';
+import { cutoutDistance, insideBoard, padCapsule, roundPadDist } from '@4k7/schema';
 import type { BoardDiagnostic, BoardPart, BoardView, CopperLayer } from '@4k7/schema';
 import { segDist } from './segments.ts';
 
@@ -31,7 +31,7 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
       const layers = pad.drill ? b.layers : pad.layers;
       const shape: Shape =
         pad.shape === 'round'
-          ? { kind: 'seg', ax: pad.x, ay: pad.y, bx: pad.x, by: pad.y, r: Math.min(pad.w, pad.h) / 2 }
+          ? { kind: 'seg', ...padCapsule(pad) }
           : { kind: 'rect', x0: pad.x - pad.w / 2, y0: pad.y - pad.h / 2, x1: pad.x + pad.w / 2, y1: pad.y + pad.h / 2 };
       for (const layer of layers) {
         items.push({ net: pad.netId ?? `nc:${p.refdes}.${pad.number}`, layer, shape, bb: [pad.x - pad.w / 2, pad.y - pad.h / 2, pad.x + pad.w / 2, pad.y + pad.h / 2], what: `${p.refdes}.${pad.number}`, part: p.refdes, track: false });
@@ -63,8 +63,8 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
       if (v.inPad) continue; // thermal vias, placed in their pad on purpose (add_vias)
       for (const part of b.parts) {
         const inPad = part.pads.some((p) => {
-          // (a round pad as the circle it is, not its square)
-          if (p.shape === 'round') return Math.hypot(v.x - p.x, v.y - p.y) - Math.min(p.w, p.h) / 2 < v.pad / 2 - 1e-6;
+          // (a round pad as the circle or oval it is, not its box)
+          if (p.shape === 'round') return roundPadDist(p, v.x, v.y) < v.pad / 2 - 1e-6;
           const dx = Math.max(Math.abs(v.x - p.x) - p.w / 2, 0);
           const dy = Math.max(Math.abs(v.y - p.y) - p.h / 2, 0);
           return Math.hypot(dx, dy) < v.pad / 2 - 1e-6;

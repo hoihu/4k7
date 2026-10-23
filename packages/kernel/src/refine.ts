@@ -14,7 +14,7 @@
  * checks the result on the placement as the placer then makes it. Every move keeps the parts
  * clear of each other and inside the outline as the placer keeps them.
  */
-import { cutoutDistance, insideBoard, matingOf, type BoardView } from '@4k7/schema';
+import { cutoutDistance, insideBoard, matingOf, padHasPin, type BoardView } from '@4k7/schema';
 
 /** A crossing costs as much as this much more ratsnest (mm): untangling comes first. */
 const CROSSING_MM = 4;
@@ -86,7 +86,7 @@ function model(b: BoardView, planeNets: Set<string>, margin: number) {
     const back = (360 - p.rot) % 360;
     const pads = p.pads.map((q) => {
       const [x, y] = rotate(q.x - p.x, q.y - p.y, back);
-      return { x, y, net: q.netId, number: q.number };
+      return { x, y, net: q.netId, number: q.number, also: q.also };
     });
     const c = p.courtyard;
     const corners = [[c.x, c.y], [c.x + c.w, c.y], [c.x, c.y + c.h], [c.x + c.w, c.y + c.h]].map(([x, y]) => rotate(x! - p.x, y! - p.y, back));
@@ -174,7 +174,7 @@ function model(b: BoardView, planeNets: Set<string>, margin: number) {
   const attach = parts.map((q) => {
     const pa = q.p.follows ? byRef.get(q.p.follows) : undefined;
     if (pa === undefined || !q.p.followsPin) return null;
-    const pk = parts[pa]!.pads.findIndex((x) => x.number === q.p.followsPin);
+    const pk = parts[pa]!.pads.findIndex((x) => padHasPin(x, q.p.followsPin!));
     const pin = parts[pa]!.pads[pk];
     const k = q.pads.findIndex((x) => !!x.net && x.net === pin?.net);
     return pin && k >= 0 ? { pa, pk, k } : null;

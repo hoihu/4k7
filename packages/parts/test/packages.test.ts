@@ -116,6 +116,39 @@ describe('explicit land patterns (from a datasheet drawing)', () => {
     expect(footprintFor({ ...buzzer, pads: [buzzer.pads[0]!, { ...buzzer.pads[1]!, drill: 1.5 }] }, ['1', '2'])).toMatchObject({ ok: false, reason: expect.stringContaining('copper ring') });
   });
 
+  // a USB-C receptacle in short: GND on A1 and B12 share one pad, the shell legs go into slots
+  const usbc = {
+    name: 'USB-C',
+    family: 'other' as const,
+    pins: 4,
+    pads: [
+      { number: 'A1', also: ['B12'], x: -1, y: 0, w: 0.6, h: 1.15 },
+      { number: 'A4', x: 0, y: 0, w: 0.6, h: 1.15 },
+      { number: 'S1', x: -4.3, y: 1, w: 1.1, h: 2.2, slot: [0.6, 1.7] as [number, number] },
+      { number: 'S1', x: 4.3, y: 1, w: 1.1, h: 2.2, slot: [0.6, 1.7] as [number, number] },
+    ],
+  };
+
+  it('lands several pins on one pad, and drills slots', () => {
+    const r = footprintFor(usbc, ['A1', 'B12', 'A4', 'S1']);
+    expect(r.ok, r.ok ? '' : r.reason).toBe(true);
+    if (!r.ok) return;
+    expect(r.footprint.pads[0]).toMatchObject({ number: 'A1', also: ['B12'], w: 0.6, h: 1.15, shape: 'rect' });
+    expect(r.footprint.pads[0]!.drill).toBeUndefined();
+    // a slot: round-ended copper round it, its width the drill
+    expect(r.footprint.pads[2]).toMatchObject({ shape: 'round', drill: 0.6, slot: { w: 0.6, h: 1.7 } });
+  });
+
+  it('refuses a shared pin the part does not have, and a slot without a copper ring', () => {
+    const pins = ['A1', 'B12', 'A4', 'S1'];
+    const stray = { ...usbc, pads: [{ ...usbc.pads[0]!, also: ['B12', 'B13'] }, ...usbc.pads.slice(1)] };
+    expect(footprintFor(stray, pins)).toMatchObject({ ok: false, reason: expect.stringContaining('pins the part does not have: B13') });
+    const noB12 = { ...usbc, pads: [{ ...usbc.pads[0]!, also: [] }, ...usbc.pads.slice(1)] };
+    expect(footprintFor(noB12, pins)).toMatchObject({ ok: false, reason: expect.stringContaining('pins without a pad: B12') });
+    const tight = { ...usbc, pads: [...usbc.pads.slice(0, 3), { ...usbc.pads[3]!, h: 1.8 }] };
+    expect(footprintFor(tight, pins)).toMatchObject({ ok: false, reason: expect.stringContaining('0.6 × 1.7 mm slot leaves no copper ring') });
+  });
+
   it('builds a cylindrical 3D body with leads through the board', () => {
     const r = body3dFor(buzzer, ['1', '2']);
     expect(r.ok).toBe(true);
