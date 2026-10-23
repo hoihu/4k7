@@ -488,9 +488,14 @@ export interface ViaGroup {
   area?: PlaneArea;
   /** points: centres, mm; tie: the spot (one point). */
   points?: [number, number][];
-  /** tie, drop: the current it carries (A); default the net's max_current. Sets how many vias. */
+  /**
+   * drop: the vias' centres relative to the pad's centre, mm, in the footprint's own frame (as
+   * on the top side, not turned), so they move and turn with the part.
+   */
+  offsets?: [number, number][];
+  /** tie: the current it carries (A), default the net's max_current, sets how many vias; drop: checked against the vias given. */
   amps?: number;
-  /** drop: how many vias (wins over amps). */
+  /** drop, before the agent placed each via (older designs): how many. Nothing is laid for it now. */
   count?: number;
   /** Centre to centre, mm (pad, grid, fence). */
   pitch?: number;
@@ -817,13 +822,15 @@ export function boardSummary(b: BoardView, routed = true) {
             const vias = later
               ? `${g.kind === 'tie' || g.kind === 'drop' ? '' : 'up to '}${g.wanted}, laid by the route step where they fit`
               : g.kind === 'drop'
-                ? `${placed} of ${g.wanted} beside ${g.pad}${placed < g.wanted ? ' (no room for the rest: make room beside the pad)' : ''}`
+                ? `${placed} beside ${g.pad}, each on its own stub from the pad`
               : g.kind === 'tie'
                 ? `${placed} of the ${g.wanted} its current wants${placed < g.wanted ? ' (no room for the rest round the spot, or it misses the net\'s copper on a second layer)' : ''}`
                 : filled
                   ? `${placed} of ${g.wanted} spots (the others are blocked or miss the net's planes)`
                   : placed;
-            return { id: g.id, net: b.netNames[g.netId] ?? g.netId, kind: g.kind, vias, ...(g.note ? { note: g.note } : {}) };
+            // (a drop's vias where they stand, to check against the board image)
+            const at = g.kind === 'drop' ? { at_mm: b.vias.filter((v) => v.group === g.id).map((v) => [v.x, v.y]) } : {};
+            return { id: g.id, net: b.netNames[g.netId] ?? g.netId, kind: g.kind, vias, ...at, ...(g.note ? { note: g.note } : {}) };
           }),
         }
       : {}),

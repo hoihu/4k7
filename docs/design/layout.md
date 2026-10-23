@@ -333,13 +333,39 @@ Each step is useful alone.
     through is the circuit's, not the netlist's: the agent knows it (the schematic, the datasheet),
     the kernel does not. So every pad now drops with one via, and `add_vias kind: "drop"` (`ref`,
     `pad`, `count` or `amps`, else the net's `max_current`) asks for more on one pad: the router
-    lays them on a bar beside it (below), tags them with the request's group (counted in
+    lays them on a bar beside it (below; since 2026-10-23 the agent places each one, on its own
+    stub), tags them with the request's group (counted in
     `via_groups`, joined to the planes solid, kept by incremental routing), and `DRC.PLANE_VIAS`
     names a pad that got fewer than asked. `get_net` lists the pads' vias and the count for the
     net's current; the guide has the agent trace the high-current paths (supply in, regulator,
     switch node and inductor, bulk and output caps, out to the loads, each ground return) and ask
     on those pads only. A bar never reaches under its part's body. Net currents no longer go into
     the router or the copper key; the drop requests do.
+
+    **Placed by the agent, each on its own stub** (2026-10-23). The bar was the wrong reading of
+    *the vias could go on a wider track*: the user (a bulk capacitor's pad with six vias on a bar
+    the width of the pad, out past the courtyard): *the vias are placed on a separate thick track
+    which is not necessary … the agent should place every via explicitly*. The bar was that
+    thick because a via had to stay out of a small part's whole courtyard (router keep-out and
+    `DRC.VIA_IN_PAD`), so the vias stood beyond its margin and the bar reached back to the pad.
+    Now `add_vias kind: "drop"` takes `at`, each via's centre as the part stands, and `count`
+    goes: the agent places every one. `apply` checks them against the board placed now (at
+    least half a via plus the clearance off the pad's edge, so the mask stays between them; within
+    2 mm of it; clear of other pads; not under a small part's body, the box round its pads; a via
+    plus the clearance apart) and stores them as `offsets` from the pad's centre in the
+    footprint's frame (`dropOffset`), so they move and turn with the part (`dropSpot`; mirrored
+    on the bottom). `amps` (else the net's `max_current`) only checks them: the effect and
+    `via_groups` say when the current wants more. `planVias` puts them in `fixed` (copper from
+    the start) with one stub each (`ViaPlan.stubs`): a straight track from inside the pad (its
+    round end in it) to the via, power width or narrower where the via or the pad is. The router
+    stamps the stubs with the fixed vias and counts them as the pad's copper (it reaches every
+    layer through them, so it gets no via of the router's); `barDrop` and `moreDrops` are gone,
+    and so is joining a `points` via beside the pad. `keep.ts` takes no stub over (it is laid
+    afresh). `DRC.VIA_IN_PAD` applies the courtyard rule to vias placed on purpose as the box
+    round the pads, so a drop may stand in the courtyard's margin. `via_groups` lists a drop's
+    vias (`at_mm`), and the guide has the agent look at each pad it gave vias with
+    `get_board_image region` after routing. A drop group of an older design (a count, no spots)
+    lays nothing and says to place them. What follows describes the bar it replaced.
 
     **On a bar, and ties** (2026-10-17). The user: *the vias could go on a smaller copper rectangle
     or a wider track rather than stitching a very large rectangle, which adds nothing; the current

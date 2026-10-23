@@ -400,13 +400,13 @@ export class Kernel {
           ...(n.attrs.maxCurrent ? { suggested_mm: trackWidthFor(n.attrs.maxCurrent), for_current_a: n.attrs.maxCurrent } : {}),
           rules: { signal_mm: rules.track, power_mm: rules.powerTrack },
         };
-        // the vias its pads drop onto its plane with: one each, more where the agent asked (add_vias drop)
+        // the vias its pads drop onto its plane with: one each, those the agent placed (add_vias drop)
         const perVia = viaCurrentFor(rules.viaDrill);
         const drops = (d.board?.vias ?? []).filter((g) => g.kind === 'drop' && g.netId === n.id);
         const asked = drops.map((g) => {
           const c = d.components[g.pad!.componentId];
-          const want = g.count ?? (g.amps ?? n.attrs.maxCurrent ? viasForCurrent((g.amps ?? n.attrs.maxCurrent)!, g.drill ?? rules.viaDrill) : 1);
-          return { pad: `${c?.refdes ?? '?'}.${g.pad!.number}`, vias: want, group: g.id };
+          const amps = g.amps ?? n.attrs.maxCurrent;
+          return { pad: `${c?.refdes ?? '?'}.${g.pad!.number}`, vias: g.offsets?.length ?? 0, ...(amps ? { for_a: amps, wants: viasForCurrent(amps, g.drill ?? rules.viaDrill) } : {}), group: g.id };
         });
         const vias = {
           plane_vias: {
@@ -414,7 +414,7 @@ export class Kernel {
             ...(asked.length ? { asked_for: asked } : {}),
             per_via_a: Math.round(perVia * 10) / 10,
             ...(n.attrs.maxCurrent ? { for_max_current: viasForCurrent(n.attrs.maxCurrent, rules.viaDrill) } : {}),
-            note: 'Each pad drops onto its plane with one via. On the pads the current flows through (trace the path: where it comes in, the regulator or switch, the inductor, the bulk and output caps, where it goes out, and the ground return of each), ask for as many as that current needs: add_vias kind drop (ref, pad, amps or count). Not on pads no current to speak of flows through (a switch, an LED, a pull-up, an IC\'s logic pins).',
+            note: 'Each pad drops onto its plane with one via of the router\'s. On the pads the current flows through (trace the path: where it comes in, the regulator or switch, the inductor, the bulk and output caps, where it goes out, and the ground return of each), place as many as that current needs yourself: add_vias kind drop (ref, pad, at: each via\'s centre, in a row right beside the pad on the side facing away from the part, half a via plus the clearance off its edge; each gets its own short stub to the pad), then look at them (get_board_image region round the pad). Not on pads no current to speak of flows through (a switch, an LED, a pull-up, an IC\'s logic pins).',
           },
         };
         return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, track, ...vias };

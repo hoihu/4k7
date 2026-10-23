@@ -43,7 +43,6 @@ const SPLIT_BAND = 0.3; // the band: this far either side of the gap, mm
 const COARSE = 5; // coarse routing grid, in grid steps (0.5 mm)
 const CORRIDOR = 4; // coarse cells either side of the coarse way (2 mm)
 const MAX_STUB = 30; // longest drop stub reserved for a pour, in grid steps (3 mm)
-const EXTRA_STUB = 20; // longest stub to a power pad's further drop vias, in grid steps (2 mm)
 const PROBE_PENALTY = 12; // probe: entering another net's copper, in grid steps
 const HISTORY_STEP = 2; // history cost added where an open connection's probe runs, per pass
 const STALE_PASSES = 8; // passes in a row without an improvement before the router gives up
@@ -71,9 +70,10 @@ export interface RouteInput {
    * vias at given spots), `fill` are spots for stitching vias and ties, laid after the routing in
    * order where a via fits and joins its net's copper on two layers or more (planes; for a tie also
    * a track or pad of the net the via lies on), at most `limits` of a group. `drops`: pads that
-   * drop onto their plane with more than one via (add_vias drop; every other pad gets one).
+   * drop onto their plane through vias the agent placed (add_vias drop; among `fixed`), each
+   * joined to its pad by one of `stubs` (every other pad gets one via of the router's).
    */
-  vias?: { fixed: Via[]; fill: Via[]; limits?: Record<string, number>; drops?: { group: string; componentId: string; number: string; count: number }[] };
+  vias?: { fixed: Via[]; fill: Via[]; limits?: Record<string, number>; drops?: { group: string; componentId: string; number: string; vias: { x: number; y: number }[] }[]; stubs?: Track[] };
   /**
    * Copper of the routing before (incremental routing): what still holds for this board (see
    * keep.ts) is kept as it lies, and only the connections it leaves open are routed. Where it is
@@ -459,6 +459,11 @@ function routeOnce(
   pads.forEach((p, i) => stampPad(p, padNet[i]!));
   // the vias placed on purpose that are there from the start (see RouteInput.vias)
   for (const v of input.vias?.fixed ?? []) stampVia(numOf(v.netId), v.x, v.y, v.pad);
+  // and the stubs joining a pad's drop vias to it
+  for (const t of input.vias?.stubs ?? []) {
+    const l = layerIdx.get(t.layer);
+    if (l !== undefined) stampSeg(l, numOf(t.netId), t.pts[0]!, t.pts[1]!, t.pts[2]!, t.pts[3]!, t.width);
+  }
   // dedicated plane layers carry no tracks (vias still pass through, with clearance)
   for (const pl of input.planes ?? []) {
     const l = layerIdx.get(pl.layer);
@@ -739,6 +744,21 @@ function routeOnce(
       for (let l = 0; l < L; l++) groupCells.get(find(idx))!.push(l * N + c);
       if (v.inPad) solidPads.add(idx);
     });
+  }
+  // a pad's drop vias and their stubs (add_vias drop) are its copper: it reaches every layer through them
+  for (const r of input.vias?.drops ?? []) {
+    const idx = pads.findIndex((p, q) => owner[q]!.componentId === r.componentId && p.number === r.number);
+    if (idx < 0) continue;
+    const cells = groupCells.get(find(idx))!;
+    for (const v of r.vias) {
+      const c = Math.min(W - 1, Math.max(0, Math.round(v.x / G))) + Math.min(H - 1, Math.max(0, Math.round(v.y / G))) * W;
+      for (let l = 0; l < L; l++) cells.push(l * N + c);
+      const t = (input.vias?.stubs ?? []).find((t) => t.netId === pads[idx]!.netId && t.pts[2] === v.x && t.pts[3] === v.y);
+      const l = t && layerIdx.get(t.layer);
+      if (!t || l === undefined) continue;
+      tracks.push(t);
+      cells.push(...copperCells(l, t.pts, t.width));
+    }
   }
 
   // the kept copper: its tracks and vias, each piece joining its pads (as copper just routed does)
@@ -1969,26 +1989,6 @@ function routeOnce(
   };
   const groupPads = (root: number) => pads.flatMap((_, idx) => (find(idx) === root ? [idx] : []));
   /*
-   * The vias each pad's own drops lead down to (grid cells), and every via some pad counts. A pad
-   * wants one, unless the agent asked for more (add_vias drop, where a current flows through it):
-   * those go on a bar beside it (barDrop), or come after the first (moreDrops).
-   */
-  const padVias = new Map<number, Set<number>>();
-  const claimed = new Set<number>();
-  const claim = (idx: number, x: number, y: number) => {
-    const i = Math.round(y / G) * W + Math.round(x / G);
-    padVias.set(idx, (padVias.get(idx) ?? new Set()).add(i));
-    claimed.add(i);
-  };
-  const dropOf = new Map<number, { group: string; count: number }>();
-  for (const r of input.vias?.drops ?? []) {
-    const idx = pads.findIndex((p, q) => owner[q]!.componentId === r.componentId && p.number === r.number);
-    if (idx >= 0) dropOf.set(idx, r);
-  }
-  const viasWanted = (idx: number) => dropOf.get(idx)?.count ?? 1;
-  // the kept drops count for their pads
-  for (const pc of kept?.pieces ?? []) for (const d of pc.drops) claim(d.pad, d.x, d.y);
-  /*
    * Drop sites for outer pours, reserved before the signals: every SMD pad of the pour's net off
    * the pour layer gets the nearest via site with a short stub (on its own layer, within
    * MAX_STUB), and that copper is kept clear of other nets (as the escape stubs are). It is laid
@@ -2048,101 +2048,6 @@ function routeOnce(
       });
     }
   };
-  /*
-   * Several vias for one pad (viasWanted ≥ 2: a supply's big pad, a net with a current) on one bar
-   * of copper beside it: the vias in a row along a side of the pad (more rows outwards if they do
-   * not fit along it), as close as a via may come (clear of the pad and the part's land pattern),
-   * and a short wide track over them that overlaps the pad's edge, so the current spreads from
-   * the pad into all of them at once; a neck from the pad's centre onto the bar joins them the
-   * way tracks join pads (an end in the pad). Long sides first. Returns false where no bar fits
-   * (the single drops and moreDrops take over).
-   */
-  const barDrop = (idx: number, n: number, siteOk: (i: number) => boolean): boolean => {
-    const p = pads[idx]!;
-    const l0 = layerIdx.get(p.layers[0]!);
-    if (l0 === undefined) return false;
-    const net = padNet[idx]!;
-    const q = Math.ceil((rules.viaPad + rules.clearance) / G - 1e-6) * G; // via pitch, on the grid
-    const part = owner[idx]!;
-    // sides as (outward normal); the long sides first, then the one facing away from the part
-    const sides = ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const)
-      .map(([nx, ny]) => ({ nx, ny, span: nx ? p.h : p.w, away: nx * (p.x - part.x) + ny * (p.y - part.y) }))
-      .sort((a, b) => b.span - a.span || b.away - a.away);
-    for (const { nx, ny, span } of sides) {
-      const perRow = Math.max(1, Math.min(n, Math.floor((span - rules.viaPad) / q + 1e-6) + 1));
-      const rows = Math.ceil(n / perRow);
-      const edge = nx ? p.x + (nx * p.w) / 2 : p.y + (ny * p.h) / 2; // the side, across
-      const mid = nx ? p.y : p.x; // its middle, along
-      // the first row as close as it may come, then a grid step farther at a time (up to 1 mm)
-      for (let s = 0; s <= 10; s++) {
-        const d = rules.viaPad / 2 + rules.clearance + s * G;
-        const at: { x: number; y: number }[] = [];
-        for (let r = 0; r < rows; r++) {
-          const cnt = Math.min(perRow, n - r * perRow);
-          for (let c = 0; c < cnt; c++) {
-            const along = Math.round((mid + (c - (cnt - 1) / 2) * q) / G) * G;
-            const across = Math.round((edge + (nx + ny) * (d + r * q)) / G) * G;
-            at.push(nx ? { x: across, y: along } : { x: along, y: across });
-          }
-        }
-        const cells = at.map((v) => Math.round(v.y / G) * W + Math.round(v.x / G));
-        if (at.some((v) => v.x < 0 || v.y < 0 || v.x > input.outline.w || v.y > input.outline.h) || !cells.every((i) => siteOk(i))) continue;
-        // the bar: the box round the vias, from just inside the pad's edge, along the whole side
-        // where that fits (else just along the vias), drawn as one track along its longer side
-        // (its round ends stay within the vias' rings)
-        const xs = at.map((v) => v.x);
-        const ys = at.map((v) => v.y);
-        const r0 = rules.viaPad / 2;
-        let laid = false;
-        for (const whole of [true, false]) {
-          let [x0, y0, x1, y1] = [Math.min(...xs) - r0, Math.min(...ys) - r0, Math.max(...xs) + r0, Math.max(...ys) + r0];
-          if (whole && nx) [y0, y1] = [Math.min(y0, p.y - p.h / 2), Math.max(y1, p.y + p.h / 2)];
-          if (whole && ny) [x0, x1] = [Math.min(x0, p.x - p.w / 2), Math.max(x1, p.x + p.w / 2)];
-          if (nx > 0) x0 = edge - 0.05;
-          if (nx < 0) x1 = edge + 0.05;
-          if (ny > 0) y0 = edge - 0.05;
-          if (ny < 0) y1 = edge + 0.05;
-          // never under the part's body (between its pins): no deeper into it than the overlap with the pad's edge
-          const body = part.body;
-          const deep = nx ? Math.min(x1, body.x + body.w) - Math.max(x0, body.x) : Math.min(y1, body.y + body.h) - Math.max(y0, body.y);
-          const along = nx ? Math.min(y1, body.y + body.h) - Math.max(y0, body.y) : Math.min(x1, body.x + body.w) - Math.max(x0, body.x);
-          if (deep > 0.1 && along > 0) continue;
-          const [cx, cy] = [(x0 + x1) / 2, (y0 + y1) / 2];
-          const horizontal = x1 - x0 >= y1 - y0;
-          const width = r3(horizontal ? y1 - y0 : x1 - x0);
-          const reach = Math.max(G / 2, ((horizontal ? x1 - x0 : y1 - y0) - width) / 2);
-          const pts = (horizontal ? [cx - reach, cy, cx + reach, cy] : [cx, cy - reach, cx, cy + reach]).map(r3);
-          const e = rules.edgeClearance + width / 2;
-          if (Math.min(...pts) < e || Math.max(pts[0]!, pts[2]!) > input.outline.w - e || Math.max(pts[1]!, pts[3]!) > input.outline.h - e) continue;
-          // the neck: from the pad's centre straight onto the bar's centre line, as wide as the pad takes
-          const [ax, ay, bx, by] = pts as [number, number, number, number];
-          const len2 = (bx - ax) ** 2 + (by - ay) ** 2;
-          const u = len2 ? Math.max(0, Math.min(1, ((p.x - ax) * (bx - ax) + (p.y - ay) * (by - ay)) / len2)) : 0;
-          const neck = [p.x, p.y, ax + u * (bx - ax), ay + u * (by - ay)].map(r3);
-          const neckW = r3(Math.max(rules.track, Math.min(width, p.w, p.h)));
-          if (!clearOf(net, l0, width, [[ax, ay, bx, by]]) || !clearOf(net, l0, neckW, [[neck[0]!, neck[1]!, neck[2]!, neck[3]!]])) continue;
-          const group = groupCells.get(find(idx))!;
-          for (const [tw, tp] of [[width, pts], [neckW, neck]] as const) {
-            tracks.push({ netId: p.netId!, layer: layers[l0]!, width: tw, pts: tp });
-            stampSeg(l0, net, tp[0]!, tp[1]!, tp[2]!, tp[3]!, tw);
-            group.push(...copperCells(l0, tp, tw));
-          }
-          for (const v of at) {
-            addVia(p.netId!, net, v.x, v.y);
-            const c = Math.round(v.y / G) * W + Math.round(v.x / G);
-            for (let l = 0; l < L; l++) group.push(l * N + c);
-            dropVias.set(find(idx), [...(dropVias.get(find(idx)) ?? []), v]);
-            claim(idx, v.x, v.y);
-          }
-          laid = true;
-          break;
-        }
-        if (!laid) continue;
-        return true;
-      }
-    }
-    return false;
-  };
   const dropOnto = (list: typeof planes) => {
   for (const pl of list) {
     const rg = region(pl);
@@ -2161,15 +2066,6 @@ function routeOnce(
     };
     // (an area plane: only the groups with a pad inside the area; the others are joined by tracks)
     const roots = [...new Set(pads.map((_, idx) => find(idx)).filter((r) => padNet[r] === rg.pnet))].filter((r) => !pl.area || pads.some((p, idx) => find(idx) === r && inArea(pl, p)));
-    // a pad that wants several vias gets them on a bar beside it first (see barDrop); vias placed
-    // on purpose beside it (add_vias points) count, moreDrops joins them
-    pads.forEach((p, idx) => {
-      if (padNet[idx] !== rg.pnet || p.drill || p.layers.includes(pl.layer) || solidPads.has(idx) || (pl.area && !inArea(pl, p)) || now() > deadline) return;
-      const want = viasWanted(idx);
-      const have = padVias.get(idx)?.size ?? 0;
-      const spare = (input.vias?.fixed ?? []).filter((v) => numOf(v.netId) === rg.pnet && !v.inPad && padDist(p)(v.x, v.y) <= EXTRA_STUB * G && !claimed.has(Math.round(v.y / G) * W + Math.round(v.x / G))).length;
-      if (want - have - spare >= 2) barDrop(idx, want - have - spare, siteOk);
-    });
     // copper of the drops so far → the via it leads down to: a later drop may simply join it
     const dropCopper = new Map<number, { x: number; y: number }>();
     for (const r of roots) {
@@ -2187,7 +2083,6 @@ function routeOnce(
         const via = joins ?? { x: (end % W) * G, y: Math.floor(end / W) * G };
         for (const st of copper) dropCopper.set(st, via);
         dropVias.set(r, [...(dropVias.get(r) ?? []), via]);
-        claim(site, via.x, via.y);
         continue;
       }
       if (now() > deadline) continue;
@@ -2221,89 +2116,8 @@ function routeOnce(
       const via = joins ?? { x: (end % W) * G, y: Math.floor(end / W) * G };
       for (const st of copper) dropCopper.set(st, via);
       dropVias.set(r, [...(dropVias.get(r) ?? []), via]);
-      if (from >= 0) claim(from, via.x, via.y);
     }
-    moreDrops(pl, rg, siteOk);
   }
-  };
-  /*
-   * A pad that wants more than one via down to its plane (viasWanted: a big pad on a power net, or
-   * a net with a current) gets the rest after the first drops, each with its own stub from the
-   * pad (power width where the pad takes it), to a free site or to a via of the net that no pad
-   * counts yet (one placed on purpose next to the pad). Best a straight stub out of a side of the
-   * pad, as short as can be, a long side before a short one and from its middle out, so the vias
-   * line up along the pad; failing that, the shortest way to a site within EXTRA_STUB. What does
-   * not fit stays short: DRC.PLANE_VIAS reports it.
-   */
-  const moreDrops = (pl: (typeof planes)[number], rg: ReturnType<typeof region>, siteOk: (i: number) => boolean) => {
-    pads.forEach((p, idx) => {
-      if (padNet[idx] !== rg.pnet || p.drill || p.layers.includes(pl.layer) || solidPads.has(idx) || (pl.area && !inArea(pl, p))) return;
-      const want = viasWanted(idx);
-      const have = padVias.get(idx) ?? new Set<number>();
-      if (have.size >= want) return;
-      const starts = padCells[idx]!.filter((st) => Math.floor(st / N) !== rg.l);
-      if (!starts.length) return;
-      const l0 = Math.floor(starts[0]! / N);
-      const inPad = new Set(starts);
-      const target = (i: number) => !have.has(i) && rg.island[i] === rg.main && (viaAt[i] === rg.pnet ? !claimed.has(i) : siteOk(i));
-      /** A straight stub out of a side of the pad (cells from inside the pad to the via), or null. */
-      const straightAt = (k: number) => {
-        const free = freeFor(rg.pnet, k);
-        const w = widths[k]!;
-        let best: { path: number[]; cost: number } | null = null;
-        for (const [nx, ny] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
-          const sgn = nx + ny;
-          const [half, span] = nx ? [p.w / 2, p.h / 2] : [p.h / 2, p.w / 2];
-          const [across, along] = nx ? [p.x, p.y] : [p.y, p.x];
-          // the stub's first cell: inside the pad by half its width
-          const b0 = sgn > 0 ? Math.floor((across + half - w / 2) / G) : Math.ceil((across - half + w / 2) / G);
-          const lo = Math.ceil((along - span + w / 2) / G);
-          const hi = Math.floor((along + span - w / 2) / G);
-          for (let a = lo; a <= hi; a++) {
-            const cell = (b: number) => (nx ? a * W + b : b * W + a);
-            const cells = [l0 * N + cell(b0)];
-            if (!inPad.has(cells[0]!)) continue;
-            for (let m = 1; m <= EXTRA_STUB; m++) {
-              const b = b0 + sgn * m;
-              if (b < 0 || b >= (nx ? W : H)) break;
-              const i = cell(b);
-              if (!free(l0, i)) break;
-              cells.push(l0 * N + i);
-              if (!target(i)) continue;
-              const cost = m + (span < half ? 4 : 0) + Math.abs(a * G - along) * 0.5;
-              if (!best || cost < best.cost) best = { path: cells.slice(), cost };
-              break;
-            }
-          }
-        }
-        return best?.path ?? null;
-      };
-      const wayAt = (k: number) => {
-        const path = search(rg.pnet, k, starts, (st) => Math.floor(st / N) === l0 && target(st % N), p, undefined, 0, false, 4 * EXTRA_STUB);
-        // (the stub beyond the pad: a way may run inside a long pad first)
-        return path && path.filter((st) => !inPad.has(st)).length <= EXTRA_STUB && path.every((st) => Math.floor(st / N) === l0) ? path : null;
-      };
-      while (have.size < want && now() <= deadline) {
-        const k0 = dropClass(pl.netId, [idx]);
-        let k = k0;
-        let straight = true;
-        let path: number[] | null = null;
-        for (k of k0 ? [k0, 0] : [0]) if ((path = straightAt(k))) break;
-        if (!path) {
-          straight = false;
-          for (k of k0 ? [k0, 0] : [0]) if ((path = wayAt(k))) break;
-        }
-        if (!path) break;
-        const end = path.at(-1)! % N;
-        // (a straight stub starts where it leaves the pad, not at the pad's centre)
-        const copper = commit(pl.netId, rg.pnet, k, path, straight ? -1 : idx, -1, viaAt[end] !== rg.pnet);
-        groupCells.get(find(idx))!.push(...copper);
-        const via = { x: (end % W) * G, y: Math.floor(end / W) * G };
-        dropVias.set(find(idx), [...(dropVias.get(find(idx)) ?? []), via]);
-        claim(idx, via.x, via.y);
-        have.add(end);
-      }
-    });
   };
   /*
    * Fan-out first: pads on a net with a dedicated inner plane drop onto it before the signals are
@@ -2503,14 +2317,6 @@ function routeOnce(
     }
   }
 
-  // the vias laid for a pad that asked for them carry its request's group (get_board counts them; the planes join them solid)
-  for (const [idx, r] of dropOf) {
-    const cells = padVias.get(idx) ?? new Set<number>();
-    for (let q = 0; q < vias.length; q++) {
-      const v = vias[q]!;
-      if (!v.group && v.netId === pads[idx]!.netId && cells.has(Math.round(v.y / G) * W + Math.round(v.x / G))) vias[q] = { ...v, group: r.group };
-    }
-  }
   // 3. final areas, clear of all drops; 4. what reaches the main area is connected through it
   for (const pl of planes) {
     const rg = region(pl);

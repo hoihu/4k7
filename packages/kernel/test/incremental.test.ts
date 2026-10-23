@@ -35,7 +35,7 @@ describe('what of the routing before still holds', () => {
     const before = [track('A', [2, 2, 8, 2]), track('B', [2, 6, 8, 6])];
     const kept = keptCopper(board([part('P', [[2, 2, 'A'], [2, 6, 'B']]), part('Q', [[8, 2, 'A'], [12, 6, 'B']])]), { tracks: before, vias: [] });
     expect(kept.tracks).toEqual([before[0]]);
-    expect(kept.pieces).toEqual([{ netId: 'A', pads: [0, 2], tracks: [0], vias: [], drops: [] }]);
+    expect(kept.pieces).toEqual([{ netId: 'A', pads: [0, 2], tracks: [0], vias: [] }]);
   });
 
   it('drops a track that a moved pad of another net now comes too close to', () => {
@@ -63,7 +63,7 @@ describe('what of the routing before still holds', () => {
     const vias = [{ netId: 'GND', x: 3.5, y: 2, drill: 0.3, pad: 0.6 }];
     const input = board([part('P', [[2, 2, 'GND']])], { layers: ['F.Cu', 'B.Cu'], planes: [{ netId: 'GND', layer: 'B.Cu' }] });
     const kept = keptCopper(input, { tracks: before, vias });
-    expect(kept.pieces).toEqual([{ netId: 'GND', pads: [0], tracks: [0], vias: [0], drops: [{ pad: 0, x: 3.5, y: 2 }] }]);
+    expect(kept.pieces).toEqual([{ netId: 'GND', pads: [0], tracks: [0], vias: [0] }]);
     // without the plane the same copper joins nothing
     expect(keptCopper({ ...input, planes: [] }, { tracks: before, vias }).tracks).toEqual([]);
   });

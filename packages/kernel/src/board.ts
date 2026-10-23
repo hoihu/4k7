@@ -37,6 +37,7 @@ import {
   type UnroutedConnection,
   type BoardCutout,
   type BoardRules,
+  type Track,
   type Via,
   type ViaGroup,
   VIA_PITCH,
@@ -102,6 +103,21 @@ function rotate(x: number, y: number, rot: number): [number, number] {
     default:
       return [x, y];
   }
+}
+
+/**
+ * A drop via's spot on the board, from its offset to the pad's centre in the footprint's own frame
+ * (add_vias drop): mirrored on the bottom side, turned with the part.
+ */
+export function dropSpot(part: Pick<BoardPart, 'rot' | 'side'>, pad: Pick<BoardPad, 'x' | 'y'>, [dx, dy]: [number, number]): [number, number] {
+  const [x, y] = rotate(part.side === 'bottom' ? -dx : dx, dy, part.rot);
+  return [r3(pad.x + x), r3(pad.y + y)];
+}
+
+/** The offset dropSpot takes for a spot on the board, as the part stands now. */
+export function dropOffset(part: Pick<BoardPart, 'rot' | 'side'>, pad: Pick<BoardPad, 'x' | 'y'>, x: number, y: number): [number, number] {
+  const [dx, dy] = rotate(x - pad.x, y - pad.y, -part.rot);
+  return [r3(part.side === 'bottom' ? -dx : dx) || 0, r3(dy) || 0];
 }
 
 /** A footprint as it lies on the bottom side, seen from the top: flipped about its vertical axis. */
@@ -1002,7 +1018,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     rules,
     ...(settings.fab ? { fab: settings.fab } : {}),
     parts,
-    tracks: [],
+    tracks: viaPlan.stubs ?? [],
     vias: viaPlan.fixed,
     zones: [],
     planes,
@@ -1205,7 +1221,7 @@ function routeSetup(d: Design, b: BoardView) {
   const planes = b.planes;
   const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
   const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort()]));
-  // the pads that ask for more than one via (add_vias drop), per net
+  // the pads dropping through vias the agent placed (add_vias drop), per net
   const drops = (d.board?.vias ?? []).filter((g) => g.kind === 'drop');
   // what copper routed now holds under (StoredCopper.basis): the board, and per net what decides its
   // copper. (Not the outline: an auto-sized board grows as parts move; the copper is checked
@@ -1215,7 +1231,7 @@ function routeSetup(d: Design, b: BoardView) {
     nets: Object.fromEntries(
       Object.keys(d.nets)
         .sort()
-        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.count ?? null, g.amps ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null])]))]),
+        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.offsets ?? g.count ?? null, g.drill ?? null, g.size ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null])]))]),
     ),
   };
   return { powerNets, planes, netWidths, key, basis };
@@ -1727,8 +1743,13 @@ export interface ViaPlan {
   fixed: Via[];
   fill: Via[];
   limits?: Record<string, number>;
-  /** Pads asking for more than one via down to their plane (add_vias drop): the router lays them on a bar beside the pad. */
-  drops?: { group: string; componentId: string; number: string; count: number }[];
+  /**
+   * Pads dropping onto their plane through vias the agent placed (add_vias drop): those vias are
+   * in `fixed`, `stubs` join each to its pad.
+   */
+  drops?: { group: string; componentId: string; number: string; vias: { x: number; y: number }[] }[];
+  /** A drop via's stub: a short track from inside its pad to the via, power width (narrower where the via or the pad is). */
+  stubs?: Track[];
   groups: BoardView['viaGroups'];
 }
 
@@ -1778,10 +1799,37 @@ export function planVias(groups: ViaGroup[], parts: BoardPart[], w: number, h: n
         entry(0, part ? `${part.refdes} has no pad ${g.pad?.number} any more` : 'its part is not on the board');
         continue;
       }
+      const name = `${part.refdes}.${pad.number}`;
+      if (!g.offsets?.length) {
+        out.groups.push({ id: g.id, netId: g.netId, kind: 'drop', wanted: g.count ?? 0, pad: name, note: `the vias' spots are not given: place them with add_vias drop at (each right beside ${name})` });
+        continue;
+      }
+      if (pad.netId !== g.netId) {
+        out.groups.push({ id: g.id, netId: g.netId, kind: 'drop', wanted: 0, pad: name, note: `${name} is on another net now: add the vias again` });
+        continue;
+      }
+      const spots = g.offsets.map((o) => dropSpot(part, pad, o));
+      for (const [x, y] of spots) out.fixed.push(via(x, y));
+      (out.drops ??= []).push({ group: g.id, componentId: part.componentId, number: pad.number, vias: spots.map(([x, y]) => ({ x, y })) });
+      // each via's stub: from inside the pad (its round end within it) straight to the via
+      const sw = r3(Math.min(rules.powerTrack, size, pad.w, pad.h));
+      const layer = pad.layers[0]!;
+      for (const [x, y] of spots) {
+        let [ax, ay] = [x, y];
+        if (pad.shape === 'round') {
+          const d = Math.hypot(x - pad.x, y - pad.y);
+          const r = Math.max(0, Math.min(pad.w, pad.h) / 2 - sw / 2);
+          if (d > r) [ax, ay] = [pad.x + ((x - pad.x) * r) / d, pad.y + ((y - pad.y) * r) / d];
+        } else {
+          const [hx, hy] = [Math.max(0, pad.w / 2 - sw / 2), Math.max(0, pad.h / 2 - sw / 2)];
+          [ax, ay] = [Math.max(pad.x - hx, Math.min(pad.x + hx, x)), Math.max(pad.y - hy, Math.min(pad.y + hy, y))];
+        }
+        (out.stubs ??= []).push({ netId: g.netId, layer, width: sw, pts: [r3(ax), r3(ay), x, y] });
+      }
       const current = g.amps ?? amps(g.netId);
-      const n = Math.min(16, g.count ?? (current ? viasForCurrent(current, g.drill ?? rules.viaDrill) : 1));
-      (out.drops ??= []).push({ group: g.id, componentId: part.componentId, number: pad.number, count: n });
-      out.groups.push({ id: g.id, netId: g.netId, kind: 'drop', wanted: n, pad: `${part.refdes}.${pad.number}`, ...(g.count === undefined && current ? { note: `${n} for ${r3(current)} A` } : {}) });
+      const need = current ? viasForCurrent(current, g.drill ?? rules.viaDrill) : 0;
+      const note = need > spots.length ? `${spots.length} for ${r3(current!)} A, which wants ${need}: place more beside the pad` : current ? `enough for ${r3(current)} A` : undefined;
+      out.groups.push({ id: g.id, netId: g.netId, kind: 'drop', wanted: spots.length, pad: name, ...(note ? { note } : {}) });
     } else if (g.kind === 'tie') {
       // as many as the current wants, in a tight block round the spot (as square as can be), then
       // the spots round it in case some are blocked

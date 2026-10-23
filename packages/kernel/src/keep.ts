@@ -12,15 +12,13 @@ import { segDist, segSegDist } from './segments.ts';
 
 /**
  * Kept copper of one net that joins pads: the pads (indices into all parts' pads in order), its
- * tracks and vias (indices into KeptCopper's lists), and the drops among them: the vias that are
- * a pad's own way down to its plane (in the pad, or at the end of a stub from it).
+ * tracks and vias (indices into KeptCopper's lists).
  */
 export interface KeptPiece {
   netId: string;
   pads: number[];
   tracks: number[];
   vias: number[];
-  drops: { pad: number; x: number; y: number }[];
 }
 
 export interface KeptCopper {
@@ -30,8 +28,6 @@ export interface KeptCopper {
 }
 
 const EPS = 1e-3;
-/** A drop's stub is at most this long (as DRC.PLANE_VIAS counts a pad's own vias), mm. */
-const DROP_STUB = 3;
 /** Bucket size of the pad index, mm. */
 const BUCKET = 2;
 
@@ -56,7 +52,6 @@ function pieces(t: Track): [number, number, number, number][] {
   return out;
 }
 
-const trackLength = (t: Track) => pieces(t).reduce((s, [ax, ay, bx, by]) => s + Math.hypot(bx - ax, by - ay), 0);
 
 /**
  * The copper of `before` that still holds on the board `input` describes (its parts, planes,
@@ -149,9 +144,10 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
     return !fixed.some((f) => Math.hypot(f.x - v.x, f.y - v.y) < (f.pad + v.pad) / 2 + rules.clearance - EPS);
   };
 
-  let tracks = before.tracks.filter((t) => nets.has(t.netId) && input.layers.includes(t.layer) && !closed.has(t.layer) && t.pts.length >= 4 && trackClear(t));
-  // (vias of a group the router lays afresh are not taken over: placed on purpose or stitching;
-  // a pad's drops it asked for are)
+  // (a drop via's stub is laid afresh with its via)
+  const stubs = new Set((input.vias?.stubs ?? []).map((t) => `${t.netId} ${t.layer} ${t.pts.join(' ')}`));
+  let tracks = before.tracks.filter((t) => nets.has(t.netId) && input.layers.includes(t.layer) && !closed.has(t.layer) && t.pts.length >= 4 && !stubs.has(`${t.netId} ${t.layer} ${t.pts.join(' ')}`) && trackClear(t));
+  // (vias of a group the router lays afresh are not taken over: placed on purpose or stitching)
   const afresh = new Set([...fixed, ...(input.vias?.fill ?? [])].map((v) => v.group));
   let vias = before.vias.filter((v) => (!v.group || !afresh.has(v.group)) && nets.has(v.netId) && viaClear(v));
 
@@ -241,30 +237,11 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
       const hasVia = members.some((i) => i >= P + T);
       if (!gt.length && !gv.length) continue;
       if (!gp.length || (gp.length === 1 && !(hasVia && planes.some((pl) => pl.netId === netId)))) continue;
-      // drops: a via in the pad, at the end of a short stub of this piece that starts in it, or on
-      // a short bar over the pad's edge
-      const drops: KeptPiece['drops'] = [];
-      for (const v of members.filter((i) => i >= P + T).map((i) => allVias[i - P - T]!)) {
-        for (const pi of gp) {
-          const p = pads[pi]!;
-          const own =
-            padPointDist(p, v.x, v.y) <= v.pad / 2 ||
-            gt.some((ti) => {
-              const t = ts[ti]!;
-              if (!onLayer(p, t.layer) || trackLength(t) > DROP_STUB) return false;
-              const ends = [[t.pts[0]!, t.pts[1]!], [t.pts.at(-2)!, t.pts.at(-1)!]] as const;
-              if (ends.some(([x, y], e) => padPointDist(p, x, y) <= EPS && Math.hypot(ends[1 - e]![0] - v.x, ends[1 - e]![1] - v.y) <= v.pad / 2)) return true;
-              const segs = pieces(t);
-              return segs.some(([ax, ay, bx, by]) => padSegDist(p, ax, ay, bx, by) <= t.width / 2 - 0.01) && segs.some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(v.x, v.y) <= t.width / 2);
-            });
-          if (own && !v.inPad) drops.push({ pad: pi, x: v.x, y: v.y });
-        }
-      }
       const t0 = kept.tracks.length;
       const v0 = kept.vias.length;
       kept.tracks.push(...gt.map((i) => ts[i]!));
       kept.vias.push(...gv.map((i) => vs[i]!));
-      kept.pieces.push({ netId, pads: gp, tracks: gt.map((_, k) => t0 + k), vias: gv.map((_, k) => v0 + k), drops });
+      kept.pieces.push({ netId, pads: gp, tracks: gt.map((_, k) => t0 + k), vias: gv.map((_, k) => v0 + k) });
     }
   }
   return kept;
