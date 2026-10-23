@@ -24,6 +24,9 @@ request, the board or a sensible default settles, with the reason. Ask what only
 - What the box **stands on or hangs from**: a desk (rubber feet), a wall (keyholes or tabs), a
   DIN rail, in the hand, inside another device.
 - **Size limits**, if the box has to fit somewhere.
+- **Who prints it**: the user's own printer (and which material) or a service (JLC3DP, PCBWay and
+  others: SLA resin, MJF or SLS nylon, FDM). A service decides the orientation and the supports, and
+  checks the files for warping and for names and logos (§5.1, §6.1).
 
 **Ask when it applies**:
 
@@ -139,6 +142,33 @@ round the plug must not touch the receptacle's shell: keep 0.2–0.3 mm round it
 | First-layer edge | chamfer 0.4–0.5 mm so the slight squash ("elephant's foot") does not show |
 | Snap-fit hook | PETG/ABS/ASA rather than PLA, the arm ≥ 5× as long as the hook is deep, printed along its length |
 
+### 5.1 Stiffness and warping
+
+Long, flat or frame-like pieces bow and twist as they cool (FDM) or cure (resin) and sinter (MJF,
+SLS). Thin edges and large openings shrink towards the middle and pull the piece out of flat along
+its diagonals. A box with a floor and walls is stiff; a lid, a plate, a diffuser, a frame round a
+window or a long bar is not. Design every piece longer than about 50 mm against it:
+
+- **Stiffen, do not just thicken.** A plate's stiffness grows with the cube of its depth, so a rib
+  or a rim adds far more than the same plastic spread over the plate. Ribs on the inside: 2–3 × the
+  plate high, 0.6–0.8 × its thickness (thicker ribs leave sink marks on the outside face), at most
+  ~30 mm apart, joined to the rim. Ribs one way stiffen that way only: use a cross or a grid.
+- **A rim all round.** A lid's lip or a skirt 4–6 mm deep turns a plate into a shallow tray. A rim
+  round a large window or cut-out keeps the frame from twisting.
+- **Even walls.** Thick and thin next to each other shrink differently: core out thick spots, keep
+  ribs thinner than the wall, add a fillet (about half the wall) where a wall meets a plate.
+- **Slenderness.** The report's ENC.WARP measures each piece as a beam: its length over the
+  thickness of a solid plate as stiff as its sections. Keep it under about 50 for PLA and PETG on a
+  heated bed, 35 for ABS, ASA and sintered nylon, 30 for resin; a frame (a quarter or more of its
+  outline open) 20 % lower. A 100 × 60 mm lid of 2 mm is 50; with a 5 mm lip all round it is 22.
+- **The process.** SLA resin is the most prone: cure shrinkage, peel forces and post-curing bend
+  thin flat parts, so keep resin walls ≥ 1.5–2 mm for parts around 100 mm and stiffen every large
+  flat piece. A service may warn about warping and ask whether to go on: say in the brief which
+  pieces carry the risk and how the script meets it. FDM: rounded corners on the bed (2 mm or more)
+  and a brim for ABS and ASA.
+- **Light parts.** A diffuser or a light window is thin on purpose: let its frame or the lid hold
+  it flat (clamped in a pocket, ribs over its cell walls), and say so.
+
 **Print orientation.** The base prints open side up. The lid prints outside face down (a smooth
 face; text engraved there reads right way round from outside). Plungers print standing. Design so
 neither piece needs supports: openings in the walls of the base are fine (bridges), posts rise from
@@ -215,6 +245,20 @@ the slicer gives it its own filament. The pieces-apart check leaves an inlay and
 and the thin-wall and overhang checks skip inlays. On the bed face, 0.4–0.6 mm deep (two or three
 layers) is enough; it needs a multi-material printer or a filament change. Say which in the brief.
 
+### 6.1 Names and logos at a print service
+
+Print and PCB services (JLC3DP, PCBWay and others) check uploads for names and logos and stop an
+order whose text looks like a company name or trademark until the user sends an authorization
+(a trademark licence, a manufacturing authorization), or takes it off. That happens for the user's
+own name when a brand has it too.
+
+- When the box carries a name or logo and a service prints it, say so in the brief: ask whether it
+  is the user's own mark (or one they may use), and whether to keep it off the service's files.
+- Put every name and logo behind one parameter at the top, `brand = true;`, and draw them only
+  `if (brand)`. The user turns it off for the upload (and adds a sticker or engraves it later)
+  without losing it.
+- Generic port labels ("USB", "12 V", "IN") and icons are never a problem.
+
 **Check it.** `render_enclosure faces: ["left", "above"]` takes pictures of those faces as a
 reader sees them. Look at every label there: does it read the right way round, is it the right
 size, and is it in the right place?
@@ -245,6 +289,7 @@ Work through the report first: it is exact. Then look at the pictures:
   inside? Is anything floating (a post not touching the floor, a rib not joined to the lid)?
 - **The angled views**: does every brief item show (opening, plunger, label, feet)? Would it print
   without supports?
+- **Each long piece** (ENC.WARP): is it a tray, ribbed or framed, or a bare plate that will bow?
 - **The faces with labels** (`faces`): does every label read the right way round, sit where it
   should, and stay clear of openings and edges?
 

@@ -5,9 +5,9 @@
  */
 import { DEFAULT_LID_CLEARANCE, enclosureKey, matingOf, scriptInlays, scriptPieces, scriptPrintRotations, type BoardView, type EnclosureBrief, type EnclosureGraphic, type ScadJob, type ScadRunResult } from '@4k7/schema';
 import { boardScad, type EnclosureFacts } from './scad.ts';
-import { orient, orientTogether, parseStl, plate, printIssues, thinWalls, threeMf, writeStl, type PlateObject } from './print.ts';
+import { orient, orientTogether, parseStl, plate, printIssues, thinWalls, threeMf, warping, writeStl, type PlateObject } from './print.ts';
 
-export type EnclosureCode = 'ENC.SCRIPT' | 'ENC.COLLIDES' | 'ENC.BLOCKED' | 'ENC.NO_MATING' | 'ENC.LOOSE' | 'ENC.LOW_LID' | 'ENC.PIECES_OVERLAP' | 'ENC.SIZE' | 'ENC.OVERHANG' | 'ENC.BRIDGE' | 'ENC.THIN' | 'ENC.WARNING';
+export type EnclosureCode = 'ENC.SCRIPT' | 'ENC.COLLIDES' | 'ENC.BLOCKED' | 'ENC.NO_MATING' | 'ENC.LOOSE' | 'ENC.LOW_LID' | 'ENC.PIECES_OVERLAP' | 'ENC.SIZE' | 'ENC.OVERHANG' | 'ENC.BRIDGE' | 'ENC.THIN' | 'ENC.WARP' | 'ENC.WARNING';
 
 export interface EnclosureFinding {
   code: EnclosureCode;
@@ -82,6 +82,19 @@ export function enclosureJob(b: BoardView, project: string, script: string, brie
     }
   }
   return { files: { 'board.scad': lib.content, 'enclosure.scad': script }, runs, pieces, facts: lib.facts, ...(brief ? { brief } : {}), key: enclosureKey({ script, ...(graphics ? { graphics } : {}) }) };
+}
+
+/**
+ * How slender a piece may be before it warps (WarpIssue), by the process the brief names: resin
+ * cures and shrinks unevenly and peels from the vat, sintered powder cools slowly in the build, ABS
+ * and ASA shrink more than PLA and PETG, which sit on a heated bed.
+ */
+export function warpLimit(brief?: EnclosureBrief): { process: string; slenderness: number } {
+  const text = (brief?.items ?? []).filter((i) => /process|material|print/i.test(i.topic)).map((i) => `${i.topic} ${i.decision ?? ''}`).join(' ');
+  if (/\b(sla|dlp|msla|lcd|resin)\b/i.test(text)) return { process: 'resin (SLA)', slenderness: 30 };
+  if (/\b(mjf|sls|multi jet|sinter\w*|pa ?12|pa ?11)\b/i.test(text)) return { process: 'sintered nylon (MJF, SLS)', slenderness: 35 };
+  if (/\b(abs|asa|pc|polycarbonate|nylon|pa)\b/i.test(text)) return { process: 'FDM in ABS, ASA, PC or nylon', slenderness: 35 };
+  return { process: 'FDM in PLA or PETG', slenderness: 50 };
 }
 
 /** Parts whose box meets `box` (grown a hair). */
@@ -178,7 +191,7 @@ export function enclosureReport(job: EnclosureJob, results: ScadRunResult[], scr
     findings.push({ code: 'ENC.PIECES_OVERLAP', severity: 'error', message: `${a} and ${b} overlap where they meet (${dims(r.bbox!)} mm between ${pt(r.bbox!.min)} and ${pt(r.bbox!.max)}): leave a clearance between them.`, box: r.bbox! });
   }
 
-  // printing: overhangs and wide ceilings as each piece is printed, walls too thin to print
+  // printing: overhangs and wide ceilings as each piece is printed, pieces that may warp, walls too thin to print
   // (not for inlays: they lie in or on their host, which carries them, and are as thin as they are meant to be)
   const turns = scriptPrintRotations(script);
   const inlays = scriptInlays(script);
@@ -192,6 +205,20 @@ export function enclosureReport(job: EnclosureJob, results: ScadRunResult[], scr
           ? { code: 'ENC.OVERHANG', severity: 'warning', message: `${p.name}, ${how}: ${x.area} mm² hangs over steeper than 45° between ${pt(x.box.min)} and ${pt(x.box.max)}: it needs supports. Chamfer it, or turn the piece (print = [["${p.name}", [x, y, z]]];).`, box: x.box, piece: p.name }
           : { code: 'ENC.BRIDGE', severity: 'warning', message: `${p.name}, ${how}: a ceiling ${x.size} mm across with nothing under it, between ${pt(x.box.min)} and ${pt(x.box.max)}: wider than a printer bridges (about 20 mm). Turn the piece so it lies on the bed, or support it.`, box: x.box, piece: p.name },
       );
+    }
+    const w = warping(tris);
+    const limit = warpLimit(job.brief);
+    // a frame (a window, a lattice) shrinks towards its openings and twists: it warps sooner
+    const max = Math.round(w && w.open >= 0.25 ? limit.slenderness * 0.8 : limit.slenderness);
+    if (w && w.slenderness > max) {
+      const frame = w.open >= 0.25 ? ` ${Math.round(w.open * 100)} % of its outline is open (a frame round a window, a lattice): it shrinks towards the openings and twists along its diagonals.` : '';
+      findings.push({
+        code: 'ENC.WARP',
+        severity: 'warning',
+        message: `${p.name} may warp: ${w.span} mm along ${w.along}, but only as stiff as a ${w.thickness} mm plate (slenderness ${w.slenderness}; keep it under ${max} for ${limit.process}).${frame} Stiffen it rather than thicken it all: ribs on its inside, 2–3 × the plate high and 0.6–0.8 × its thickness, at most ~30 mm apart (a cross or a grid, joined to the rim); a deeper rim or lip all round (4–6 mm); a rim round each large opening; a fillet where walls meet the plate. Or a plate about ${Math.ceil((w.span / max) * 10) / 10} mm thick.`,
+        box: w.box,
+        piece: p.name,
+      });
     }
     for (const x of thinWalls(tris)) {
       findings.push({ code: 'ENC.THIN', severity: 'warning', message: `${p.name}: walls down to ${x.size} mm over ${x.area} mm² between ${pt(x.box.min)} and ${pt(x.box.max)}: thinner than two perimeters (0.8 mm) prints weak or not at all, unless it is meant to be (a light window). In a label or logo: details too fine to print; make it larger or bolder.`, box: x.box, piece: p.name });

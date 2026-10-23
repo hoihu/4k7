@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import { Kernel } from '@4k7/kernel';
 import { scriptPrintRotations, type EnclosureBrief } from '@4k7/schema';
-import { bounds, enclosureJob, enclosureReport, orient, parseStl, plate, printFiles, printIssues, thinWalls, threeMf, writeStl, type Tris } from '../src/index.ts';
+import { bounds, enclosureJob, enclosureReport, orient, parseStl, plate, printFiles, printIssues, thinWalls, threeMf, warpLimit, warping, writeStl, type Tris } from '../src/index.ts';
 import { OpenScad, openscadCandidates } from '../../../tools/server/src/scad.ts';
 import { buckTransaction } from '../../kernel/test/fixtures.ts';
 
@@ -98,6 +98,38 @@ describe('printing the pieces', () => {
     expect(thin).toHaveLength(1);
     expect(thin[0]!.size).toBeCloseTo(0.5, 2);
     expect(thinWalls(box(0, 0, 20, 2, 20))).toEqual([]);
+  });
+
+  it('finds pieces that may warp: long thin plates and frames, not ribbed plates or boxes', () => {
+    // box(x0, z0, x1, z1, depth along y): a 100 × 60 × 2 mm plate bends like a 2 mm plate over 100 mm
+    const plateOnly = box(0, 0, 100, 2, 60);
+    const bare = warping(plateOnly)!;
+    expect(bare).toMatchObject({ along: 'x', across: 'z', open: 0 });
+    expect(bare.thickness).toBeCloseTo(2, 0);
+    expect(bare.slenderness).toBeGreaterThan(40);
+    // ribs one way, 6 mm high and 1.5 mm thick, stiffen it that way only: across them it is a bare plate 60 mm wide
+    const ribs = [10, 29, 48].map((y) => box(0, 2, 100, 8, 1.5, y));
+    expect(warping(join(plateOnly, ...ribs))).toMatchObject({ along: 'y', slenderness: 30 });
+    // a grid of them stiffens it both ways
+    const grid = warping(join(plateOnly, ...ribs, ...[25, 50, 75].map((x) => box(x, 2, x + 1.5, 8, 60))))!;
+    expect(grid.slenderness).toBeLessThan(bare.slenderness / 2);
+    // an open box (floor and walls) is stiff
+    const tray = join(box(0, 0, 100, 2, 60), box(0, 2, 2, 20, 60), box(98, 2, 100, 20, 60), box(2, 2, 98, 20, 2), box(2, 2, 98, 20, 2, 58));
+    expect(warping(tray)!.slenderness).toBeLessThan(15);
+    // a frame round a window: open inside its outline
+    const frame = join(box(0, 0, 100, 2, 10), box(0, 0, 100, 2, 10, 50), box(0, 0, 10, 2, 40, 10), box(90, 0, 100, 2, 40, 10));
+    expect(warping(frame)!.open).toBeCloseTo(0.53, 1);
+    // too small to warp
+    expect(warping(box(0, 0, 40, 1, 30))).toBeNull();
+  });
+
+  it('allows less slenderness for resin, powder and ABS than for PLA', () => {
+    const brief = (decision: string): EnclosureBrief => ({ items: [{ topic: 'Process and material', decision }] });
+    expect(warpLimit(brief('SLA resin at JLC3DP')).slenderness).toBe(30);
+    expect(warpLimit(brief('MJF nylon PA12')).slenderness).toBe(35);
+    expect(warpLimit(brief('FDM, ASA')).slenderness).toBe(35);
+    expect(warpLimit(brief('FDM, PLA on a 0.4 mm nozzle')).slenderness).toBe(50);
+    expect(warpLimit().slenderness).toBe(50);
   });
 
   it('reads the print orientation from the script', () => {

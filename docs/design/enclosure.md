@@ -182,10 +182,12 @@ Each check is one OpenSCAD run of an intersection, which is empty when the check
 | Size | the assembly's bounding box against the brief's limit | `ENC.SIZE 62 × 41 × 24 mm, the limit is 60 × 40` |
 | Overhang (warning) | each piece's triangles, turned as the script's `print` says: faces steeper than 45° that are not on the bed | `ENC.OVERHANG lid, printed turned 180, 0, 0: 120 mm² hangs over steeper than 45°` |
 | Bridge (warning) | flat faces looking down: their narrow side (the box's, or 4 × area / outline) over 20 mm | `ENC.BRIDGE lid, printed as built: a ceiling 23 mm across with nothing under it` |
+| Warping (warning) | each piece longer than 50 mm voxelized: every section across it as a beam, its equivalent thickness √(12 I / A); the length over the median against a limit by the brief's process (PLA/PETG 50, ABS/ASA/nylon 35, resin 30; frames 20 % lower) | `ENC.WARP lid may warp: 156 mm along y, but only as stiff as a 3.5 mm plate (slenderness 44; keep it under 24 for resin (SLA)). 35 % of its outline is open …` |
 | Thin wall (warning) | from each face a 0.8 mm ray into the material; where it comes out sooner | `ENC.THIN base: walls down to 0.6 mm over 34 mm²` |
 
-For the buck test board a job is 11 runs, about 0.6 s of OpenSCAD in all (a few at a time). Wall thickness and overhangs are not measured yet (§8); the guide gives the rules and the
-pictures show the worst of it.
+For the buck test board a job is 11 runs, about 0.6 s of OpenSCAD in all (a few at a time). Warping (2026-10-23, after a print service flagged a resin lid and diffuser as long, flat and frame-like)
+is measured from the shape alone, not simulated; the guide (mechanics.md §5.1) gives the ways to stiffen
+a piece.
 
 ### 5.3 The pictures
 
