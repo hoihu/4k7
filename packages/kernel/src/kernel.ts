@@ -185,7 +185,7 @@ export class Kernel {
         if (placed) {
           const f = followParts(work, placed);
           if (f) {
-            r.effect += `; ${f.note}`;
+            if (f.note) r.effect += `; ${f.note}`;
             drawn.set(i, f.ids);
           }
         } else if (work.board?.drawn && DRAWING_OPS.has(op.op)) drawn.set(i, (r.ids ?? []).filter((id) => /^[tv]\d+$/.test(id)));

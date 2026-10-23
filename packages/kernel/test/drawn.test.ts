@@ -268,6 +268,8 @@ describe('drawn copper is checked at once', () => {
     const angle = ok(k, [{ op: 'draw_track', net: 'SS', from: [3, 18], to: [4, 20.5] }]);
     expect(angle.results[0]!.effect).toMatch(/warning DRAW\.ANGLE: Track t3/);
     expect(b.diagnostics.some((x) => x.code === 'DRC.SHORT' && x.entities.includes('t2'))).toBe(true);
+    // get_board lists the code and the entities a waiver takes
+    expect((k.query({ op: 'get_board' }) as { drc: string[] }).drc).toContainEqual(expect.stringMatching(/^warning DRAW\.ANGLE \[t3\]: Track t3/));
     ok(k, [{ op: 'add_waiver', code: 'DRAW.ANGLE', entities: ['t3'], reason: 'a test of waiving a soft rule' }]);
     expect(k.board().diagnostics.find((x) => x.code === 'DRAW.ANGLE' && x.entities.includes('t3'))?.waivedBy).toBeDefined();
   });
@@ -336,5 +338,48 @@ describe('the helper\'s copper', () => {
     ok(k, [{ op: 'set_copper_mode', mode: 'drawn' }]);
     const d = k.board().drawn!;
     expect([...d.tracks, ...d.vias].every((x) => x.by === 'helper')).toBe(true);
+  });
+});
+
+describe('joints survive a move', () => {
+  const distTo = (pts: number[], x: number, y: number) => {
+    let best = Infinity;
+    for (let i = 0; i + 3 < pts.length; i += 2) {
+      const [ax, ay, bx, by] = [pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!];
+      const l2 = (bx - ax) ** 2 + (by - ay) ** 2;
+      const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / l2)) : 0;
+      best = Math.min(best, Math.hypot(x - ax - t * (bx - ax), y - ay - t * (by - ay)));
+    }
+    return best;
+  };
+
+  it('a via on a moved piece of track goes with it, and a track teeing onto it stays on it', () => {
+    const k = drawnBuck();
+    const g = pad(k.board(), 'C5', '2');
+    ok(k, [
+      { op: 'draw_track', from: 'C5.2', to: [8, g.y + 1.5], via: [[g.x, g.y + 1.5]] }, // t1: down from the pad, then left
+      { op: 'draw_via', net: 'GND', at: [g.x, g.y + 1] }, // v2: on t1's first piece, not at its end
+      { op: 'draw_track', from: 'v2', to: [15, g.y + 1], layer: 'B.Cu' }, // t3: from the via, on the bottom
+      { op: 'draw_track', net: 'GND', from: [g.x + 1.4, g.y + 0.5], to: [g.x, g.y + 0.5] }, // t4: a T onto t1, clear of the via
+    ]);
+    const c5 = part(k.board(), 'C5');
+    const r = ok(k, [{ op: 'place', ref: 'C5', x_mm: c5.x - 0.5, y_mm: c5.y }]);
+    expect(r.results[0]!.effect).toMatch(/joint\(s\) kept/);
+    const b = k.board();
+    const [t1, t3, t4] = [trackOf(b, 't1'), trackOf(b, 't3'), trackOf(b, 't4')];
+    const v = b.drawn!.vias[0]!;
+    expect(distTo(t1.pts, v.x, v.y)).toBeLessThan(0.002);
+    expect([t3.pts[0], t3.pts[1]]).toEqual([v.x, v.y]);
+    expect(distTo(t1.pts, t4.pts.at(-2)!, t4.pts.at(-1)!)).toBeLessThan(0.002);
+    // (t1's far end and t4's start are loose by design)
+    expect(b.diagnostics.filter((x) => x.code === 'DRAW.DANGLING').map((x) => x.entities[0])).toEqual(['t1', 't4']);
+    expect(b.diagnostics.find((x) => x.code === 'DRAW.DANGLING' && x.entities[0] === 't4')!.message).toMatch(/its start/);
+  });
+
+  it('a part added onto drawn copper: the op says what it lands on', () => {
+    const k = drawnBuck();
+    ok(k, [{ op: 'route' }]);
+    const r = ok(k, [{ op: 'add_part', part: 'generic:R', refdes: 'R9', params: { resistance: '1k' } }, { op: 'connect', pins: ['R9.1', 'U1.COMP'] }]);
+    expect(r.results.some((x) => /; check: \d+ error\(s\)/.test(x.effect))).toBe(true);
   });
 });

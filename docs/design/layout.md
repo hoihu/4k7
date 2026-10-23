@@ -508,9 +508,16 @@ tracks ending on its pads, from that end as far as their points stay within 1 mm
 courtyard, the vias such a track ends on and, in turn, the tracks ending on those (a pad's drop, a
 fanout). A track whose two ends go with parts moved alike moves whole. Where a piece runs between a
 point that moved and one that did not (or moved otherwise), a corner is put back next to the point
-that moved least, keeping its piece's direction, so a piece that ran at 45° does again. A part
-turned over to the other side takes nothing along (its tracks would be on the wrong layer). The
-move's effect says what followed.
+that moved least, keeping its piece's direction, so a piece that ran at 45° does again. Joints
+are kept: before the move every place where copper of one net touches is noted (a track end on
+another track, as the router joins copper; a via on a track, where it changes layer mid-track; a
+track end on a via), and after it what lost its contact goes back onto what it touched (a via onto
+the nearest point of its track, a track end onto its via or track, the piece to it bent to 45°
+where it can be). Without that, 25 random moves on the router's copper broke a signal net; with
+it none (the GND pour still loses pads on that test, where the moves pile parts onto each other).
+A part turned over to the other side takes nothing along (its tracks would be on the wrong layer).
+The move's effect says what followed, and the copper where a moved, turned or new part now stands
+is checked with it (`add_part` says when the new part lands on a track).
 
 **The helper off the kernel.** A transaction with a `route` op on drawn copper is run first in a
 worker of its own (`helper.worker.ts`, a copy of the working design): the kernel stays responsive

@@ -165,6 +165,21 @@ function simplify(pts: number[]): number[] {
   return out;
 }
 
+/** The point of a track's centre line nearest to (x, y), and how far it is. */
+function nearestOn(pts: number[], x: number, y: number): { x: number; y: number; d: number } {
+  let best = { x: pts[0]!, y: pts[1]!, d: Math.hypot(pts[0]! - x, pts[1]! - y) };
+  for (let i = 0; i + 3 < pts.length; i += 2) {
+    const [ax, ay, bx, by] = [pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!];
+    const [vx, vy] = [bx - ax, by - ay];
+    const l2 = vx * vx + vy * vy;
+    const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / l2)) : 0;
+    const [px, py] = [ax + t * vx, ay + t * vy];
+    const d = Math.hypot(px - x, py - y);
+    if (d < best.d) best = { x: px, y: py, d };
+  }
+  return best;
+}
+
 const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1], ...[[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([x, y]) => [x! / Math.SQRT2, y! / Math.SQRT2] as [number, number])];
 
 /**
@@ -571,6 +586,88 @@ const alike = (m: Move, n: Move) => m === n || [[0, 0], [10, 7]].every(([x, y]) 
 const inBox = (r: [number, number, number, number], x: number, y: number) => x >= r[0] && y >= r[1] && x <= r[2] && y <= r[3];
 
 /**
+ * Where drawn copper of one net touches, so a move does not part it: a track end on another
+ * track (a T, as the router joins copper), a via on a track (a layer change mid-track), a track
+ * end on a via.
+ */
+type Contact =
+  | { kind: 'end-track'; u: DrawnTrack; last: boolean; o: DrawnTrack }
+  | { kind: 'via-track'; v: DrawnVia; o: DrawnTrack }
+  | { kind: 'end-via'; u: DrawnTrack; last: boolean; v: DrawnVia };
+
+const onTrack = (o: DrawnTrack, x: number, y: number) => nearestOn(o.pts, x, y).d <= o.width / 2 + 1e-3;
+const endPoint = (t: DrawnTrack, last: boolean): [number, number] => (last ? [t.pts.at(-2)!, t.pts.at(-1)!] : [t.pts[0]!, t.pts[1]!]);
+
+function contactsOf(dc: DrawnCopper): Contact[] {
+  const out: Contact[] = [];
+  const byNet = new Map<string, { tracks: DrawnTrack[]; vias: DrawnVia[] }>();
+  const of = (net: string) => byNet.get(net) ?? (byNet.set(net, { tracks: [], vias: [] }), byNet.get(net)!);
+  for (const t of dc.tracks) of(t.netId).tracks.push(t);
+  for (const v of dc.vias) of(v.netId).vias.push(v);
+  for (const { tracks, vias } of byNet.values()) {
+    for (const u of tracks) {
+      for (const last of [false, true]) {
+        if ((last ? u.to : u.from) !== undefined) continue; // on a pad: it goes with the pad
+        const [x, y] = endPoint(u, last);
+        const v = vias.find((w) => onVia(w, x, y));
+        if (v) {
+          out.push({ kind: 'end-via', u, last, v });
+          continue;
+        }
+        const o = tracks.find((w) => w !== u && w.layer === u.layer && onTrack(w, x, y));
+        if (o) out.push({ kind: 'end-track', u, last, o });
+      }
+    }
+    for (const v of vias) {
+      // (a via at a track's end is that end's contact, above)
+      const o = tracks.find((w) => onTrack(w, v.x, v.y) && !onVia(v, ...endPoint(w, false)) && !onVia(v, ...endPoint(w, true)));
+      if (o) out.push({ kind: 'via-track', v, o });
+    }
+  }
+  return out;
+}
+
+/**
+ * After a move: what lost its contact goes back onto what it touched, a via onto the nearest
+ * point of its track, then a track end onto its via or the nearest point of its track (the piece
+ * to it keeps its direction at its other end and is bent back to 45° where it can be). `touch`
+ * is told about each track changed; `moved` gets the vias moved. Returns how many were rejoined.
+ */
+function keepContacts(contacts: Contact[], touch: (t: DrawnTrack) => void, moved: Set<DrawnVia>): number {
+  let n = 0;
+  const setEnd = (u: DrawnTrack, last: boolean, mx: number, my: number) => {
+    touch(u);
+    const k = u.pts.length / 2;
+    const i = last ? k - 1 : 0;
+    const j = last ? k - 2 : 1;
+    const [x, y] = [u.pts[2 * i]!, u.pts[2 * i + 1]!];
+    const c = rebend(u.pts[2 * j]!, u.pts[2 * j + 1]!, x, y, mx, my);
+    const pts = u.pts.slice();
+    pts.splice(2 * i, 2, mx, my);
+    if (c) pts.splice(last ? 2 * i : 2, 0, c[0], c[1]);
+    u.pts = simplify(pts);
+    n++;
+  };
+  for (const c of contacts) {
+    if (c.kind !== 'via-track' || onTrack(c.o, c.v.x, c.v.y)) continue;
+    const at = nearestOn(c.o.pts, c.v.x, c.v.y);
+    [c.v.x, c.v.y] = [r3(at.x), r3(at.y)];
+    moved.add(c.v);
+    n++;
+  }
+  for (const c of contacts) {
+    if (c.kind === 'end-via' && !onVia(c.v, ...endPoint(c.u, c.last))) setEnd(c.u, c.last, c.v.x, c.v.y);
+    if (c.kind === 'end-track') {
+      const [x, y] = endPoint(c.u, c.last);
+      if (onTrack(c.o, x, y)) continue;
+      const at = nearestOn(c.o.pts, x, y);
+      setEnd(c.u, c.last, r3(at.x), r3(at.y));
+    }
+  }
+  return n;
+}
+
+/**
  * Drawn copper follows the parts an op moved or turned (Kernel.transact; `before`: the placement
  * before the op). What lies next to a moved part goes with it: each track ending on one of its pads,
  * as far as it stays within FOLLOW_MM of the part's courtyard, and a via such a track ends on, with
@@ -581,6 +678,7 @@ const inBox = (r: [number, number, number, number], x: number, y: number) => x >
  * ids moved (to check them), or null when no drawn copper had to follow.
  */
 export function followParts(d: Design, before: BoardView): { note: string; ids: string[] } | null {
+  // (ids: what followed, and the copper where a moved, turned or new part now stands: checked after the transaction)
   const dc = d.board?.drawn;
   if (!dc || (!dc.tracks.length && !dc.vias.length)) return null;
   const after = placed(d);
@@ -597,8 +695,11 @@ export function followParts(d: Design, before: BoardView): { note: string; ids: 
     const c = p.courtyard;
     moves.set(p.componentId, { part: p, map: poseMap(p, q), region: [c.x - FOLLOW_MM, c.y - FOLLOW_MM, c.x + c.w + FOLLOW_MM, c.y + c.h + FOLLOW_MM] });
   }
-  if (!moves.size && !flipped.length) return null;
+  const was = new Set(before.parts.map((p) => p.componentId));
+  const added = after.parts.filter((p) => !was.has(p.componentId));
+  if (!moves.size && !flipped.length && !added.length) return null;
   const stillParts = before.parts.filter((p) => !moves.has(p.componentId));
+  const contacts = contactsOf(dc);
   // the points of the tracks touched, as they were, and which of them moved
   const olds = new Map<DrawnTrack, { pts: number[]; moved: Map<number, Move> }>();
   const old = (t: DrawnTrack) => olds.get(t)?.pts ?? t.pts;
@@ -698,19 +799,39 @@ export function followParts(d: Design, before: BoardView): { note: string; ids: 
     bent += r.bent;
     stretched += Math.max(0, offAngle(t.pts) - offAngle(s.pts));
   }
+  const rejoined = keepContacts(contacts, (t) => {
+    if (!olds.has(t)) olds.set(t, { pts: t.pts.slice(), moved: new Map() });
+  }, movedVias);
   const flippedTracks = flipped.map((p) => ({ p, n: dc.tracks.filter((t) => t.from?.componentId === p.componentId || t.to?.componentId === p.componentId).length })).filter((x) => x.n);
-  if (!olds.size && !movedVias.size && !flippedTracks.length) return null;
+  // the copper where a part now stands (moved, turned over or new): checked with what followed
+  const c = (d.board ?? DEFAULT_BOARD).rules.clearance;
+  const under = new Set<string>();
+  for (const p of [...[...moves.keys()].map((id) => now.get(id)!), ...flipped, ...added]) {
+    const [x0, y0, x1, y1] = [p.courtyard.x - c, p.courtyard.y - c, p.courtyard.x + p.courtyard.w + c, p.courtyard.y + p.courtyard.h + c];
+    for (const t of dc.tracks) {
+      for (let i = 0; i + 3 < t.pts.length; i += 2) {
+        const r = t.width / 2;
+        if (Math.max(t.pts[i]!, t.pts[i + 2]!) + r >= x0 && Math.min(t.pts[i]!, t.pts[i + 2]!) - r <= x1 && Math.max(t.pts[i + 1]!, t.pts[i + 3]!) + r >= y0 && Math.min(t.pts[i + 1]!, t.pts[i + 3]!) - r <= y1) {
+          under.add(t.id);
+          break;
+        }
+      }
+    }
+    for (const v of dc.vias) if (v.x + v.pad / 2 >= x0 && v.x - v.pad / 2 <= x1 && v.y + v.pad / 2 >= y0 && v.y - v.pad / 2 <= y1) under.add(v.id);
+  }
+  if (!olds.size && !movedVias.size && !flippedTracks.length) return under.size ? { note: '', ids: [...under] } : null;
   const notes: string[] = [];
   if (olds.size || movedVias.size) {
     const refs = [...used].map((m) => m.part.refdes);
     notes.push(
       `drawn copper followed ${refs.slice(0, 6).join(', ')}${refs.length > 6 ? ', …' : ''}: ${olds.size} track(s)${movedVias.size ? ` and ${movedVias.size} via(s)` : ''} moved with ${refs.length === 1 ? 'it' : 'them'}` +
         (bent ? `, ${bent} stretched piece(s) bent back to 45°` : '') +
+        (rejoined ? `, ${rejoined} joint(s) kept (a track end or via on other copper of its net)` : '') +
         (stretched ? `, ${stretched} piece(s) now off 45°` : ''),
     );
   }
   for (const { p, n } of flippedTracks) notes.push(`${p.refdes} turned over to the ${p.side} side: its ${n} track(s) stay where they were (redraw them on its side)`);
-  return { note: notes.join('; '), ids: [...[...olds.keys()].map((t) => t.id), ...[...movedVias].map((v) => v.id)] };
+  return { note: notes.join('; '), ids: [...new Set([...[...olds.keys()].map((t) => t.id), ...[...movedVias].map((v) => v.id), ...under])] };
 }
 
 /* ----------------------------- checked at once ----------------------------- */

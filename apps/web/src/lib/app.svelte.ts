@@ -107,6 +107,9 @@ export function tokenCost(t: TokenCount, fallbackModel: string): number {
   return costUsd(t.model ?? fallbackModel, { input: t.input, output: t.output, cacheRead: t.cacheRead, cacheWrite: t.cacheWrite });
 }
 
+/** An op of a transaction, as far as the route helper's worker needs to know it (see transactEdit). */
+type RouteAsk = { op?: string; nets?: string[]; from?: string; to?: string; fresh?: boolean };
+
 class AppState {
   view = $state<View>('sch');
   tab = $state<InspectorTab>('issues');
@@ -1072,9 +1075,17 @@ class AppState {
    * copper fill in and may stop it; the kernel then applies the transaction with what the helper
    * found (the same copper, without routing again). Everything else goes straight to the kernel.
    */
-  private async transactEdit(tx: unknown, by?: 'user'): Promise<TransactionResult> {
-    const ops = (tx as { ops?: { op?: string; nets?: string[]; from?: string; to?: string; fresh?: boolean }[] })?.ops;
-    if (!Array.isArray(ops) || !ops.some((o) => o?.op === 'route') || this.helperRun) return this.kernel.transact(tx, by);
+  private transactEdit(tx: unknown, by?: 'user'): Promise<TransactionResult> {
+    const ops = (tx as { ops?: RouteAsk[] })?.ops;
+    if (!Array.isArray(ops) || !ops.some((o) => o?.op === 'route')) return this.kernel.transact(tx, by);
+    // one at a time (the agent may send two at once): each starts from the design the one before left
+    const run = this.helperQueue.then(() => this.transactHelped(tx, by, ops));
+    this.helperQueue = run.catch(() => {});
+    return run;
+  }
+  private helperQueue: Promise<unknown> = Promise.resolve();
+
+  private async transactHelped(tx: unknown, by: 'user' | undefined, ops: RouteAsk[]): Promise<TransactionResult> {
     const design = await this.kernel.draftDesign();
     if (!design.board?.drawn && !ops.some((o) => o?.op === 'set_copper_mode')) return this.kernel.transact(tx, by);
     const what = ops.filter((o) => o?.op === 'route').map((o) => (o.nets?.length ? o.nets.join(', ') : o.from ? `${o.from} → ${o.to}` : 'every open connection') + (o.fresh ? ', its own copper again' : '')).join('; ');
