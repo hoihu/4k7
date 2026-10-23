@@ -1523,7 +1523,7 @@ class AppState {
         if (e.name === 'design_edit') void this.refresh();
         break;
       case 'verify':
-        item.segments.push({ type: 'verify', round: e.round, errors: e.errors, message: e.message });
+        item.segments.push({ type: 'verify', round: e.round, errors: e.errors, message: e.message, ...(e.review ? { review: true } : {}) });
         break;
       case 'question':
         item.segments.push({ type: 'question', question: e.question, options: e.options });

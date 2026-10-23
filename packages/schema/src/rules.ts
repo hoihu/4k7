@@ -31,6 +31,7 @@ export interface SchematicCheck extends SchematicRule {
 export const SCHEMATIC_CHECKS: readonly SchematicCheck[] = [
   { id: 'SCH.RAIL_UP', title: 'Power symbols point up', text: 'A supply arrow points up (a negative rail down), never sideways, even when that means crossing a wire.', level: 'error', layout: true },
   { id: 'SCH.GND_DOWN', title: 'Ground symbols point down', text: 'Never up, never sideways.', level: 'error', layout: true },
+  { id: 'SCH.RAIL_SIDE', title: 'Pull-ups up, pull-downs down', text: 'A resistor between a signal and a positive rail has the rail end on top (a pull-up stands above its wire), one to ground the ground end at the bottom.', level: 'warning', layout: false },
   { id: 'SCH.ORTHOGONAL', title: 'Wires run straight', text: 'Across or up and down, never slanted.', level: 'error', layout: true },
   { id: 'SCH.DANGLING', title: 'No loose wire ends', text: 'Every wire ends at a pin, a junction or another wire.', level: 'error', layout: true },
   { id: 'SCH.TEXT_OVERLAP', title: 'Text stays readable', text: 'Names, values and labels do not run into each other, a part or a wire.', level: 'warning', layout: false },

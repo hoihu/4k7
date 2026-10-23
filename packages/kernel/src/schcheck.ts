@@ -4,8 +4,8 @@
  * the layout follows by itself, so a finding there is a layout bug; the others say where the
  * drawing fell short, for the agent to improve with placement constraints.
  */
-import { type Design, type Diagnostic, type LabelView, type PinView, type SchematicRule, type SchematicView, type SheetView, type SymbolView } from '@4k7/schema';
-import { natCmp } from './doc.ts';
+import { type Design, type Diagnostic, type EditOp, type LabelView, type PinView, type SchematicRule, type SchematicView, type SheetView, type SymbolView } from '@4k7/schema';
+import { cardOf, natCmp } from './doc.ts';
 import { supplyDir } from './scene.ts';
 import { labelOverlaps, segments, touches, wireCrossings, wireShape, type PinOn } from './scope.ts';
 
@@ -20,6 +20,7 @@ export function schematicChecks(d: Design, view: SchematicView, rules: Record<st
   const ctx: Ctx = { d, rules, out: [] };
   for (const sheet of view.sheets) {
     if (on(ctx, 'SCH.RAIL_UP') || on(ctx, 'SCH.GND_DOWN')) supplyChecks(ctx, sheet);
+    if (on(ctx, 'SCH.RAIL_SIDE')) railSideChecks(ctx, sheet);
     if (on(ctx, 'SCH.ORTHOGONAL')) orthogonalChecks(ctx, sheet);
     if (on(ctx, 'SCH.DANGLING')) danglingChecks(ctx, sheet);
     if (on(ctx, 'SCH.TEXT_OVERLAP')) overlapChecks(ctx, sheet);
@@ -31,10 +32,10 @@ export function schematicChecks(d: Design, view: SchematicView, rules: Record<st
 
 const on = (ctx: Ctx, id: string) => !!ctx.rules[id] && ctx.rules[id]!.level !== 'off';
 
-function push(ctx: Ctx, id: string, entities: string[], message: string) {
+function push(ctx: Ctx, id: string, entities: string[], message: string, fixHints?: EditOp[]) {
   const rule = ctx.rules[id];
   if (!rule || rule.level === 'off') return;
-  ctx.out.push({ code: id, severity: rule.level, entities, message });
+  ctx.out.push({ code: id, severity: rule.level, entities, message, ...(fixHints ? { fixHints } : {}) });
 }
 
 const netName = (ctx: Ctx, id: string) => ctx.d.nets[id]?.name ?? id;
@@ -84,6 +85,35 @@ function pinsNear(sheet: SheetView, netId: string, pts: [number, number][]): str
 }
 
 /* -------------------------------- supplies -------------------------------- */
+
+/**
+ * A standing resistor between a signal and one supply has that supply's end where its symbol
+ * points: a positive rail on top (a pull-up above its wire), ground or a negative rail at the bottom.
+ * Parts between two supplies (decoupling) and lying parts are left alone.
+ */
+function railSideChecks(ctx: Ctx, sheet: SheetView) {
+  for (const s of sheet.symbols) {
+    const top = s.pins.find((p) => p.side === 'top');
+    const bottom = s.pins.find((p) => p.side === 'bottom');
+    if (s.pins.length !== 2 || !top || !bottom) continue;
+    const comp = ctx.d.components[s.componentId];
+    if (!comp || cardOf(ctx.d, comp.part)?.category !== 'resistor') continue;
+    const netOf = (p: PinView) => (comp.pins[p.number] ? ctx.d.nets[comp.pins[p.number]!] : undefined);
+    const [up, down] = [netOf(top), netOf(bottom)];
+    const dirUp = up && supplyDir(up);
+    const dirDown = down && supplyDir(down);
+    if (!up || !down || (dirUp && dirDown)) continue;
+    const wrong = dirDown === 'up' ? { rail: down, signal: up, end: 'bottom', want: 'up' } : dirUp === 'down' ? { rail: up, signal: down, end: 'top', want: 'down' } : null;
+    if (!wrong) continue;
+    push(
+      ctx,
+      'SCH.RAIL_SIDE',
+      [s.refdes, `net:${wrong.signal.name}`],
+      `${s.refdes} has ${wrong.rail.name} at its ${wrong.end}: ${wrong.want === 'up' ? 'a pull-up stands above' : 'a pull-down hangs below'} ${wrong.signal.name}'s wire`,
+      [{ op: 'constrain', kind: 'arrangement', a: s.refdes, value: wrong.want, strength: 'soft' }],
+    );
+  }
+}
 
 /** A rail symbol points up (a negative rail down), a ground symbol down: supplyDir says which. */
 function supplyChecks(ctx: Ctx, sheet: SheetView) {

@@ -1124,10 +1124,47 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
   }
 
   /* satellite columns */
+  const standing = new Map(Object.values(d.ledger).filter((k) => k.kind === 'arrangement' && k.a && (k.value === 'up' || k.value === 'down')).map((k) => [k.a!, k.value]));
   const placeColumns = (side: 'left' | 'right') => {
-    const pins = sym.pins
-      .filter((p) => p.side === side && satsByPin.has(p.number))
-      .sort((a, b) => b.y - a.y); // bottom pin first → nearest column, no crossings
+    const toRail = (s: Sat) => {
+      let far: string | undefined = s.net;
+      for (const c of [s.comp, ...s.chain]) far = Object.values(c.pins).find((n) => n !== far) ?? far;
+      return !!far && far !== s.net && supplyDir(d.nets[far]!) === 'up';
+    };
+    const reach = (s: Sat) => (s.chain.length + 1) * (400 + CHAIN_GAP) + 400;
+    // a pull-up (the far end a positive rail) stands above the wire with its rail on top, unless
+    // parts hanging from a pin above reach down past its pin: one wire would then run through the
+    // other's parts, whichever column is nearer
+    const pinOf = new Map(sym.pins.map((p) => [p.number, p]));
+    const isUp = (s: Sat) => {
+      // the agent's choice (constrain arrangement up/down) over the guess
+      const asked = [s.comp, ...s.chain].map((c) => standing.get(c.id)).find((v) => !!v);
+      if (asked) return asked === 'up';
+      if (!toRail(s)) return false;
+      const p = pinOf.get(s.anchorPin)!;
+      return !sym.pins.some((q) => q.side === side && q.y < p.y && (satsByPin.get(q.number) ?? []).some((o) => !toRail(o) && q.y + reach(o) > p.y));
+    };
+    // how far a pin's parts reach above and below it
+    const span = (p: { number: string; y: number }) => {
+      const sats = satsByPin.get(p.number)!;
+      const up = Math.max(0, ...sats.filter(isUp).map(reach));
+      const down = Math.max(0, ...sats.filter((s) => !isUp(s)).map(reach));
+      return { top: p.y - up, bottom: p.y + down };
+    };
+    // nearest column first: each time the pin whose parts the fewest wires of the pins still to
+    // come (further out) would run through, then the lowest; parts hanging down go bottom pin
+    // first, pull-ups top pin first, and a crossing only where the two cannot both be clear
+    const todo = sym.pins.filter((p) => p.side === side && satsByPin.has(p.number));
+    const pins: typeof todo = [];
+    while (todo.length) {
+      const cost = (p: (typeof todo)[number]) => {
+        const sp = span(p);
+        return todo.filter((q) => q !== p && q.y > sp.top && q.y < sp.bottom).length;
+      };
+      const next = todo.reduce((a, b) => (cost(b) < cost(a) || (cost(b) === cost(a) && b.y > a.y) ? b : a));
+      pins.push(next);
+      todo.splice(todo.indexOf(next), 1);
+    }
     const pinEndX = side === 'right' ? bodyW + 200 : -200;
     let x = side === 'right' ? grid(pinEndX + gapRight) : 0;
     let first = true;
@@ -1140,20 +1177,6 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
         return s.comp.pins[otherPin.number] ? d.nets[s.comp.pins[otherPin.number]!] : undefined;
       };
       const widthOf = (s: Sat) => Math.max(satWidth(d, s.comp, otherNetOf(s)), ...s.chain.map((c) => satWidth(d, c, chainBottomNet(ctx, c, s))));
-      // a pull-up (the far end a positive rail) stands above the wire with its rail on top,
-      // where no pin above has parts whose wires would run through it
-      const isUp = (s: Sat) => {
-        const ends = [s.comp, ...s.chain];
-        let far: string | undefined = s.net;
-        for (const c of ends) far = Object.values(c.pins).find((n) => n !== far) ?? far;
-        const height = ends.length * (400 + CHAIN_GAP) + 400;
-        return (
-          !!far &&
-          far !== s.net &&
-          supplyDir(d.nets[far]!) === 'up' &&
-          !sym.pins.some((q) => q.side === side && q.number !== p.number && satsByPin.has(q.number) && q.y < p.y && q.y >= p.y - height)
-        );
-      };
       // a part going up and one going down share a column, so a divider is one straight line
       // (rail, R, node, R, ground) instead of two columns joined by a jog
       const cols: { up?: Sat; down?: Sat }[] = [];

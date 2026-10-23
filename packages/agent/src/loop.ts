@@ -3,8 +3,8 @@
  * finish a turn while the design has open errors (within a fix budget).
  * See docs/design/ai-loop.md.
  */
-import { AskUser, TOOL_NAMES, agentTools, mustFix, type ScopeInfo, type ViewInfo } from '@4k7/schema';
-import { SYSTEM_PROMPT, formatDesignContext, formatVerification } from './prompt.ts';
+import { AskUser, LAYOUT_SCH_RULES, TOOL_NAMES, agentTools, mustFix, type Diagnostic, type ScopeInfo, type ViewInfo } from '@4k7/schema';
+import { SYSTEM_PROMPT, formatDesignContext, formatReview, formatVerification } from './prompt.ts';
 import { runKernelTool, unknownTool, type ToolExecutor, type ToolOutcome } from './tools.ts';
 import type { AgentEvent, Block, KernelPort, Message, Provider } from './types.ts';
 
@@ -65,6 +65,9 @@ export class Agent {
     this.messages.push({ role: 'user', content });
 
     let fixRounds = 0;
+    // the drawing warnings there were before the turn: only new ones are reviewed, once
+    const before = new Set(snap.diagnostics.filter(drawingWarning).map(findingKey));
+    let reviewed = false;
     for (let step = 0; ; step++) {
       if (signal?.aborted) return this.abort(emit);
       if (step >= maxSteps) {
@@ -146,6 +149,14 @@ export class Agent {
         this.messages.push({ role: 'user', content: [{ type: 'text', text: message }] });
         continue;
       }
+      const fresh = errors.length ? [] : after.diagnostics.filter((x) => drawingWarning(x) && !before.has(findingKey(x)));
+      if (fresh.length && !reviewed) {
+        reviewed = true;
+        const message = formatReview(fresh);
+        emit({ type: 'verify', round: 0, errors: fresh.length, message, review: true });
+        this.messages.push({ role: 'user', content: [{ type: 'text', text: message }] });
+        continue;
+      }
       emit({
         type: 'done',
         reason: 'complete',
@@ -179,6 +190,10 @@ export class Agent {
     }
   }
 }
+
+/** A drawing check's warning the agent can act on (a rule the layout follows itself is its bug, not the agent's). */
+const drawingWarning = (x: Diagnostic) => x.code.startsWith('SCH.') && x.severity === 'warning' && !x.waivedBy && !LAYOUT_SCH_RULES.has(x.code);
+const findingKey = (x: Diagnostic) => `${x.code} ${x.entities.join(',')}`;
 
 function truncate(s: string): string {
   return s.length > MAX_RESULT_CHARS ? `${s.slice(0, MAX_RESULT_CHARS)}… [truncated; query more specifically]` : s;

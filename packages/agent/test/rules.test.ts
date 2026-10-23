@@ -79,4 +79,22 @@ describe('drawing rules in the loop', () => {
     expect(ev.filter((e) => e.type === 'verify')).toHaveLength(3);
     expect((ev.at(-1) as { message: string }).message).toMatch(/1 error\(s\) remain/);
   });
+
+  it('reviews the drawing warnings a turn brought once, then finishes', async () => {
+    let calls = 0;
+    const hanging: Diagnostic = { code: 'SCH.RAIL_SIDE', severity: 'warning', entities: ['R10', 'net:QSPI_SS'], message: "R10 has +3V3 at its bottom: a pull-up stands above QSPI_SS's wire", fixHints: [{ op: 'constrain', kind: 'arrangement', a: 'R10', value: 'up', strength: 'soft' }] };
+    // none at the start of the turn, the warning after the agent's work
+    const kernel: KernelPort = { ...stub([]), snapshot: async () => ({ ...base, diagnostics: calls++ ? [hanging] : [], counts: { errors: 0, warnings: calls > 1 ? 1 : 0, infos: 0, waived: 0 } }) };
+    const ev = await run(kernel);
+    const reviews = ev.filter((e) => e.type === 'verify');
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({ review: true, errors: 1 });
+    expect((reviews[0] as { message: string }).message).toContain('"value":"up"');
+    expect(ev.at(-1)).toEqual({ type: 'done', reason: 'complete' });
+  });
+
+  it('does not review drawing warnings that were there before the turn', async () => {
+    const ev = await run(stub([{ code: 'SCH.JOG', severity: 'warning', entities: ['net:FB', 'R1.2', 'R2.1'], message: 'the wire jogs' }]));
+    expect(ev.filter((e) => e.type === 'verify')).toHaveLength(0);
+  });
 });

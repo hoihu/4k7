@@ -60,7 +60,7 @@ export type AgentEvent =
   | { type: 'text'; delta: string }
   | { type: 'thinking'; delta: string }
   | { type: 'tool'; id: string; name: string; label: string; ok: boolean; detail: string }
-  | { type: 'verify'; round: number; errors: number; message: string }
+  | { type: 'verify'; round: number; errors: number; message: string; /** A look over the drawing (new SCH.* warnings), not errors to fix. */ review?: boolean }
   | { type: 'question'; question: string; options: string[] }
   | { type: 'usage'; usage: Usage; model?: string }
   | { type: 'done'; reason: 'complete' | 'question' | 'budget' | 'refusal' | 'max_tokens' | 'aborted' | 'error'; message?: string };
