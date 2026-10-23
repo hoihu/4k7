@@ -12,7 +12,7 @@
  * grid passes follow (horizontal on F.Cu, vertical on B.Cu, vias cheap; see Style): a board
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, padCapsule, roundPadDist, type DrawnStatus, type PlaneStyle, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, padCapsule, roundPadDist, type DrawnStatus, type LockedStatus, type PlaneStyle, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
 import { keptCopper, type KeptCopper } from './keep.ts';
 import { segDist, segSegDist } from './segments.ts';
 
@@ -85,6 +85,11 @@ export interface RouteInput {
    */
   keep?: { tracks: Track[]; vias: Via[] };
   /**
+   * Copper the agent locked (lock_copper): what still holds for this board (as for `keep`, see
+   * keep.ts) is laid as it lies before anything else, and no rip-up clears it.
+   */
+  locked?: { tracks: Track[]; vias: Via[] };
+  /**
    * Connections laid as the agent asked (the track op), before anything else is routed: pad
    * `from` to pad `to` (indices into all parts' pads in order) through `points`, at `width` (else
    * the net's), on `layer` from the start and on a point's layer from that point (a via there);
@@ -127,6 +132,8 @@ export interface RouteResult {
   reused?: { tracks: number; vias: number };
   /** Per RouteInput.drawn: laid as asked, or why not. */
   drawn?: DrawnStatus[];
+  /** Per net with RouteInput.locked copper: how much of it still holds (and is laid). */
+  locked?: LockedStatus[];
 }
 
 /** Why a connection stayed open: what its way would have to cross (see probe in routeOnce). */
@@ -195,6 +202,8 @@ export function route(input: RouteInput, passes = 40): RouteResult {
    * from scratch (letting go net by net can go on for many passes, each naming the next).
    */
   const keep = input.keep ? keptCopper(input, input.keep) : null;
+  // the copper the agent locked, as far as it still holds (never let go)
+  const locked = input.locked ? keptCopper(input, input.locked) : null;
   const keptNets = new Set(keep?.pieces.map((pc) => pc.netId));
   const letGo = new Set<string>();
   let keeping = keptNets.size > 0;
@@ -207,7 +216,7 @@ export function route(input: RouteInput, passes = 40): RouteResult {
   for (let pass = 0; pass < passes; pass++) {
     const bestOpen = best ? best.failed.length : null;
     const progress = input.onProgress ? (tracks: Track[], vias: Via[], done: number) => input.onProgress!({ pass: pass + 1, tracks, vias, connections: conns.length, done, bestOpen, elapsedMs: now() - t0, grid: style === GRID }) : undefined;
-    const r = routeOnce(input, pads, owner, order, deadline, planeOnly, early, history, style, keptNow(), progress);
+    const r = routeOnce(input, pads, owner, order, deadline, planeOnly, early, history, style, keptNow(), locked, progress);
     ran++;
     // each pass's copper, so even a quick pass shows (the next one starts from nothing)
     progress?.(r.tracks, r.vias, conns.length - r.failed.length);
@@ -273,7 +282,20 @@ export function route(input: RouteInput, passes = 40): RouteResult {
     early = failed;
     order = [...order.filter((c) => failed.has(c)), ...order.filter((c) => !failed.has(c))];
   }
-  return result(best ?? routeOnce(input, pads, owner, order, deadline, planeOnly, new Set(), history, style, keptNow()), ran);
+  return result(best ?? routeOnce(input, pads, owner, order, deadline, planeOnly, new Set(), history, style, keptNow(), locked), ran);
+
+  /** Per net with locked copper: how much there is, and how much of it holds. */
+  function lockedStatus(): LockedStatus[] {
+    const nets = [...new Set([...input.locked!.tracks, ...input.locked!.vias].map((x) => x.netId))].sort();
+    const held = locked!.pieces;
+    return nets.map((netId) => ({
+      netId,
+      tracks: input.locked!.tracks.filter((t) => t.netId === netId).length,
+      vias: input.locked!.vias.filter((v) => v.netId === netId).length,
+      heldTracks: held.filter((pc) => pc.netId === netId).reduce((n, pc) => n + pc.tracks.length, 0),
+      heldVias: held.filter((pc) => pc.netId === netId).reduce((n, pc) => n + pc.vias.length, 0),
+    }));
+  }
 
   /** A pass's result as the caller sees it. */
   function result(r: ReturnType<typeof routeOnce>, ran: number): RouteResult {
@@ -296,6 +318,7 @@ export function route(input: RouteInput, passes = 40): RouteResult {
       groups: Array.from(r.roots),
       ...(r.reused ? { reused: r.reused } : {}),
       ...(r.drawn.length ? { drawn: r.drawn } : {}),
+      ...(input.locked ? { locked: lockedStatus() } : {}),
     };
   }
 }
@@ -341,6 +364,8 @@ function routeOnce(
   style: Style,
   /** Copper kept from the routing before (see RouteInput.keep), there from the start. */
   kept: KeptCopper | null,
+  /** Copper the agent locked that still holds (see RouteInput.locked): there from the start, never cleared. */
+  locked: KeptCopper | null,
   progress?: (tracks: Track[], vias: Via[], done: number) => void,
 ) {
   const { rules, layers } = input;
@@ -498,6 +523,15 @@ function routeOnce(
   }
   // the signal map with pads, keep-outs and the edge only: what no rip-up can clear (for the probe)
   const fixedMap = maps[0]!.map((m) => m.slice());
+  // the copper the agent locked: there in every pass and never let go, but after fixedMap, so the
+  // probe names its net as in the way (not a pad or the edge)
+  const lockedTracks = locked ? locked.pieces.flatMap((pc) => pc.tracks.map((i) => locked.tracks[i]!)) : [];
+  const lockedVias = locked ? locked.pieces.flatMap((pc) => pc.vias.map((i) => locked.vias[i]!)) : [];
+  for (const t of lockedTracks) {
+    const l = layerIdx.get(t.layer)!;
+    for (let q = 0; q + 3 < t.pts.length; q += 2) stampSeg(l, numOf(t.netId), t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!, t.width);
+  }
+  for (const v of lockedVias) stampVia(numOf(v.netId), v.x, v.y, v.pad);
   // the copper kept from the routing before: after fixedMap (a later pass may route its nets
   // again), before the escapes (they keep clear of it)
   const keptTracks = kept ? kept.pieces.flatMap((pc) => pc.tracks.map((i) => kept.tracks[i]!)) : [];
@@ -507,11 +541,13 @@ function routeOnce(
     for (let q = 0; q + 3 < t.pts.length; q += 2) stampSeg(l, numOf(t.netId), t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!, t.width);
   }
   for (const v of keptVias) stampVia(numOf(v.netId), v.x, v.y, v.pad);
-  /** Segments of a net (width w, on layer l) keep the clearance from the kept copper of other nets. */
+  /** Segments of a net (width w, on layer l) keep the clearance from the kept and locked copper of other nets. */
+  const heldTracks = [...lockedTracks, ...keptTracks];
+  const heldVias = [...lockedVias, ...keptVias];
   const clearOfKept = (netId: string, l: number, w: number, segs: [number, number, number, number][]) =>
     segs.every(([ax, ay, bx, by]) =>
-      keptTracks.every((t) => t.netId === netId || t.layer !== layers[l] || pieceList(t.pts).every(([cx, cy, dx, dy]) => segSegDist(ax, ay, bx, by, cx, cy, dx, dy) >= rules.clearance + (w + t.width) / 2 - 1e-3)) &&
-      keptVias.every((v) => v.netId === netId || segDist(ax, ay, bx, by)(v.x, v.y) >= rules.clearance + (w + v.pad) / 2 - 1e-3),
+      heldTracks.every((t) => t.netId === netId || t.layer !== layers[l] || pieceList(t.pts).every(([cx, cy, dx, dy]) => segSegDist(ax, ay, bx, by, cx, cy, dx, dy) >= rules.clearance + (w + t.width) / 2 - 1e-3)) &&
+      heldVias.every((v) => v.netId === netId || segDist(ax, ay, bx, by)(v.x, v.y) >= rules.clearance + (w + v.pad) / 2 - 1e-3),
     );
 
   // copper cells per pad (inside the pad), for starts and goals
@@ -787,20 +823,22 @@ function routeOnce(
     }
   }
 
-  // the kept copper: its tracks and vias, each piece joining its pads (as copper just routed does)
-  for (const pc of kept?.pieces ?? []) {
-    for (let q = 1; q < pc.pads.length; q++) union(pc.pads[0]!, pc.pads[q]!);
-    const cells = groupCells.get(find(pc.pads[0]!))!;
-    for (const i of pc.tracks) {
-      const t = kept!.tracks[i]!;
-      tracks.push(t);
-      cells.push(...copperCells(layerIdx.get(t.layer)!, t.pts, t.width));
-    }
-    for (const i of pc.vias) {
-      const v = kept!.vias[i]!;
-      vias.push(v);
-      const c = Math.min(W - 1, Math.max(0, Math.round(v.x / G))) + Math.min(H - 1, Math.max(0, Math.round(v.y / G))) * W;
-      for (let l = 0; l < L; l++) cells.push(l * N + c);
+  // the locked and the kept copper: its tracks and vias, each piece joining its pads (as copper just routed does)
+  for (const [held, tag] of [[locked, true], [kept, false]] as const) {
+    for (const pc of held?.pieces ?? []) {
+      for (let q = 1; q < pc.pads.length; q++) union(pc.pads[0]!, pc.pads[q]!);
+      const cells = groupCells.get(find(pc.pads[0]!))!;
+      for (const i of pc.tracks) {
+        const t = held!.tracks[i]!;
+        tracks.push(tag ? { ...t, locked: true } : t);
+        cells.push(...copperCells(layerIdx.get(t.layer)!, t.pts, t.width));
+      }
+      for (const i of pc.vias) {
+        const v = held!.vias[i]!;
+        vias.push(tag ? { ...v, locked: true } : v);
+        const c = Math.min(W - 1, Math.max(0, Math.round(v.x / G))) + Math.min(H - 1, Math.max(0, Math.round(v.y / G))) * W;
+        for (let l = 0; l < L; l++) cells.push(l * N + c);
+      }
     }
   }
 
@@ -2282,19 +2320,15 @@ function routeOnce(
    * The tracks the agent laid (RouteInput.drawn), before anything else: each stretch from point
    * to point a search of its own (the same way every pass: see drawing), held to its layer where
    * one is given, the whole laid by commit turning at the points. One that finds no way is not
-   * laid, and its connection is routed as any other. What is laid no rip-up clears (fixedMap).
+   * laid, and its connection is routed as any other. What is laid is there in every pass (as the
+   * locked copper: the probe names its net where it is in the way).
    */
   const drawnStatus: DrawnStatus[] = [];
   if (input.drawn?.length) {
-    const before = maps[0]!.map((m) => m.slice());
     drawing = true;
     for (const t of input.drawn) drawnStatus.push(layDrawn(t));
     drawing = false;
     neckRun = 0;
-    for (let l = 0; l < L; l++) {
-      const [m, was, fx] = [maps[0]![l]!, before[l]!, fixedMap[l]!];
-      for (let i = 0; i < N; i++) if (m[i] !== was[i]) fx[i] = m[i]!;
-    }
   }
   function layDrawn(t: NonNullable<RouteInput['drawn']>[number]): DrawnStatus {
     const r2 = (v: number) => Math.round(v * 100) / 100;

@@ -46,6 +46,12 @@ export interface BoardSettings {
   vias?: ViaGroup[];
   /** Connections laid by the agent (the track op): the router lays them first, as asked, and never rips them up. */
   tracks?: DrawnTrack[];
+  /**
+   * Copper the agent locked (lock_copper): a net's routed tracks and vias as they lay, kept as
+   * they are. The router lays what still holds on the board as it is (nothing a moved part broke
+   * away from) before anything else, and never rips it up.
+   */
+  locked?: LockedCopper[];
   /** Rounded board corners: the radius (mm); absent or 0 = square corners. */
   cornerRadius?: number;
   /**
@@ -145,6 +151,17 @@ export interface StoredCopper {
   reused?: { tracks: number; vias: number };
   /** The tracks the agent laid (BoardSettings.tracks): laid as asked, or why not. */
   drawn?: DrawnStatus[];
+  /** Per net with locked copper (BoardSettings.locked): its tracks and vias, and how many of them still hold. */
+  locked?: LockedStatus[];
+}
+
+/** How much of a net's locked copper still holds on the board (RouteResult.locked). */
+export interface LockedStatus {
+  netId: string;
+  tracks: number;
+  vias: number;
+  heldTracks: number;
+  heldVias: number;
 }
 
 export interface StoredPlacement {
@@ -532,6 +549,13 @@ export interface DrawnTrack {
   through?: { end: 'from' | 'to'; dx: number; dy: number; layer?: CopperLayer }[];
 }
 
+/** One net's locked copper (BoardSettings.locked): its tracks and vias as they lay when locked. */
+export interface LockedCopper {
+  netId: string;
+  tracks: Track[];
+  vias: Via[];
+}
+
 /** Whether a drawn track could be laid as asked, and if not why and where (RouteResult.drawn). */
 export interface DrawnStatus {
   id: string;
@@ -651,6 +675,8 @@ export interface Track {
   pts: number[];
   /** Laid as the agent asked (BoardSettings.tracks): that track's id. */
   drawn?: string;
+  /** Locked copper (BoardSettings.locked), laid as it was. */
+  locked?: boolean;
 }
 
 export interface Via {
@@ -665,6 +691,8 @@ export interface Via {
   inPad?: boolean;
   /** Laid as the agent asked (BoardSettings.tracks): that track's id. */
   drawn?: string;
+  /** Locked copper (BoardSettings.locked), laid as it was. */
+  locked?: boolean;
 }
 
 /**
@@ -740,6 +768,8 @@ export interface BoardView {
    * The tracks the agent laid (BoardSettings.tracks), as they stand on this placement: ends as
    * "U1.3", points in board mm; after routing, whether each could be laid as asked.
    */
+  /** Nets with locked copper (BoardSettings.locked): how much; after routing, how much of it still holds. */
+  locked: { netId: string; tracks: number; vias: number; heldTracks?: number; heldVias?: number }[];
   drawn: { id: string; netId: string; from: string; to: string; layer?: CopperLayer; width?: number; through: { x: number; y: number; layer?: CopperLayer }[]; laid?: boolean; why?: string; at?: { x: number; y: number } }[];
   /** Connections not (yet) made by copper. */
   ratsnest: RatsLine[];
@@ -801,7 +831,7 @@ function openSummary(b: BoardView, u: UnroutedConnection) {
     from: u.from,
     to: u.to,
     ...(u.at ? { at_mm: [u.at.x, u.at.y], layer: u.at.layer } : {}),
-    ...(u.blockedBy?.length ? { blocked_by: u.blockedBy.map(name) } : {}),
+    ...(u.blockedBy?.length ? { blocked_by: u.blockedBy.map((id) => `${name(id)}${b.locked.some((l) => l.netId === id) ? ' (locked)' : b.drawn.some((t) => t.netId === id && t.laid) ? ' (your track)' : ''}`) } : {}),
     ...(u.enclosed ? { enclosed: true } : {}),
     ...(u.plane ? { plane: u.plane } : {}),
     ...(u.near.length ? { near: u.near } : {}),
@@ -923,6 +953,21 @@ export function boardSummary(b: BoardView, routed = true) {
             ...(t.width ? { width_mm: t.width } : {}),
             ...(t.through.length ? { through_mm: t.through.map((p) => (p.layer ? [p.x, p.y, p.layer] : [p.x, p.y])) } : {}),
             state: t.laid === undefined ? 'laid by the route step' : t.laid ? 'laid as asked' : `not laid: ${t.why}; the router routed this connection its own way`,
+          })),
+        }
+      : {}),
+    ...(b.locked.length
+      ? {
+          locked_copper: b.locked.map((l) => ({
+            net: b.netNames[l.netId] ?? l.netId,
+            tracks: l.tracks,
+            vias: l.vias,
+            state:
+              l.heldTracks === undefined
+                ? 'laid by the route step, as locked'
+                : l.heldTracks === l.tracks && l.heldVias === l.vias
+                  ? 'laid as locked'
+                  : `${l.heldTracks} of ${l.tracks} tracks and ${l.heldVias} of ${l.vias} vias still fit the board as it is (a part moved off the rest, or something new comes too close); the router routed round them. Kept as locked: they come back if the part does`,
           })),
         }
       : {}),

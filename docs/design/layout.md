@@ -299,8 +299,9 @@ lays one connection as the agent wants it.
   the history costs and use the free style, so the track lies the same way in every pass.
   `commit` lays the whole path with the points as pins: a run ends at each and the next begins,
   so the straightening, which cuts corners wherever it can, keeps them, and runs that meet at a
-  pin are one track again. Its cells go into `fixedMap`, so no rip-up clears it and the probe
-  names it like a pad. Its tracks and vias carry the track's id (`drawn`): incremental routing
+  pin are one track again. It is there in every pass and never let go, but not in `fixedMap`:
+  where it is in the way, the probe names its net (`DRC.UNROUTED` and `blocked_by` add "a track
+  you laid"), not a pad or the edge. Its tracks and vias carry the track's id (`drawn`): incremental routing
   does not keep them as ordinary copper (they are laid afresh), and the net's hash includes the
   track, so changing it routes that net again.
 - **When it finds no way** (a point too close to other copper, no room for a via, a pad on
@@ -314,9 +315,31 @@ lays one connection as the agent wants it.
 The guide: route first and look, then lay only the few connections that matter (the switching
 loop, the high-current path, a sensitive trace), with only the points where the way matters.
 
+### 5.9 Locked copper
+
+Often the router gets a net right on one route and the next route, after some other change,
+lays it differently. `lock_copper { nets }` keeps the router's copper of those nets exactly as it
+lies (`BoardSettings.locked`, `LockedCopper`: tracks and vias in board mm; not tracks laid with
+`track` nor vias placed on purpose, which are laid as asked anyway). Only from routing done for
+the board as it stands (the copper kept with the design under the current key), never from a
+stopped one. Locking a net again takes its copper as it lies then; `unlock_copper` lets it go.
+
+The router (`RouteInput.locked`) checks it as kept copper is checked (`keep.ts`: clearance to other
+nets' pads, vias placed on purpose and the edge, then what that leaves hanging), lays what holds
+before anything else in every pass, joins the pads it joins, and never lets it go (it is not kept
+copper, which a pass may give up to route its net again). Like a track the agent laid it is not in `fixedMap`, so the
+probe names its net where it is in the way ("its copper is locked"). What does not hold (a part
+moved off it, or another net's pad now too close) is not laid, and the connections it made are
+routed as any other; `DRC.LOCKED_BROKEN` (warning) and `get_board` `locked_copper` say how much
+still holds. The lock is not changed: put the part back and it all holds again.
+
+The lock is in the copper key, not in the placement key: locking or unlocking re-routes the board
+(incrementally: the other nets are kept) without making the routing out of date. The net's hash
+includes it, so its copper from before is not kept beside the locked copper.
+
 ## 6. What the agent cannot do yet
 
-- Route one net, keep the router's copper for a net, or keep the router out of an area (§7 step 6c–d).
+- Route one net first, prefer a layer for a net, or keep the router out of an area (§7 step 6d).
 - Optimize a zoomed area of the board with the scope guard the schematic has (`zoom-optimize.md`
   steps 3–4).
 - Be told the user's taste for layouts (the schematic has notes in Settings).
@@ -341,9 +364,8 @@ Each step is useful alone.
      pad to pad through the points it gives, laid first and never ripped up. Where it finds no
      way, the router routes the connection its own way and the DRC says why (rather than leaving
      it open, as first planned: the board keeps working while the agent fixes the track).
-   - (c) `lock_copper { nets | connection }`: the router's own copper for a net, taken into
-     `BoardSettings.tracks` as it lies (a pass that got a run right keeps it); after a move it is
-     checked as kept copper is (`keep.ts`) and what no longer holds is reported, not dropped.
+   - (c) **`lock_copper` and `unlock_copper`** (built 2026-10-23, §5.9): a net's routed copper
+     kept exactly as it lies (whole nets; locking a single connection is left for later).
    - (d) Softer than geometry: `route { nets }` routes those first (the clean ways go to the
      critical nets), a preferred layer per net (`set_net layer`, a cost, not a ban), keep-outs
      (`add_keepout { rect | under: parts, layers, except_nets }`: no signals under the inductor).

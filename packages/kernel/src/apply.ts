@@ -58,7 +58,7 @@ import {
   padHasPin,
   roundPadDist,
 } from '@4k7/schema';
-import { autoPlanes, dropOffset, padNet, placeBoard, storedPlacement } from './board.ts';
+import { autoPlanes, copperKey, dropOffset, padNet, placeBoard, storedPlacement } from './board.ts';
 import { underBody } from './drc.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
@@ -196,6 +196,24 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent'): 
       else delete b.tracks;
       d.board = b;
       return { op: 'erase_track', effect: `erased ${before.length - keep.length} track(s); the router routes those connections its own way`, ids: ['board'] };
+    }
+    case 'lock_copper':
+      return lockCopper(d, op);
+    case 'unlock_copper': {
+      const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+      const before = b.locked ?? [];
+      const all = op.nets.some((n) => n.toLowerCase() === 'all');
+      const ids = all ? [] : op.nets.map((n) => {
+        const net = findNet(d, n);
+        if (!net || !before.some((l) => l.netId === net.id)) reject({ code: 'REF_UNKNOWN', message: `${n} has no locked copper.`, candidates: before.map((l) => d.nets[l.netId]?.name ?? l.netId) });
+        return net!.id;
+      });
+      const keep = all ? [] : before.filter((l) => !ids.includes(l.netId));
+      if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: 'No copper is locked.' });
+      if (keep.length) b.locked = keep;
+      else delete b.locked;
+      d.board = b;
+      return { op: 'unlock_copper', effect: `let go of the locked copper of ${before.filter((l) => !keep.includes(l)).map((l) => d.nets[l.netId]?.name ?? l.netId).join(', ')}; the router may route it again`, ids: ['board'] };
     }
     case 'add_cutout':
       return addCutout(d, op);
@@ -957,6 +975,31 @@ function trackOp(d: Design, op: Extract<EditOp, { op: 'track' }>): OpResult {
   const pts = (op.through ?? []).map((p) => `(${r3(p.x_mm)}, ${r3(p.y_mm)}${p.layer ? ` → ${p.layer}` : ''})`);
   const what = `${a.label} → ${z.label} (${net.name}), ${op.layer ?? 'on the layers the router picks'}, ${op.width_mm !== undefined ? `${r3(op.width_mm)} mm` : "the net's width"}${pts.length ? `, through ${pts.join(', ')}` : ''}`;
   return { op: 'track', effect: `${id}${was >= 0 ? ' (replaced)' : ''}: ${what}; route lays it first, as asked, and never rips it up`, ids: ['board'] };
+}
+
+/** A net's routed copper, kept as it lies (lock_copper): only from routing done for the board as it stands. */
+function lockCopper(d: Design, op: Extract<EditOp, { op: 'lock_copper' }>): OpResult {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const copper = d.board?.copper;
+  if (!copper || copper.stopped || copper.key !== copperKey(d, schematicView(d))) reject({ code: 'BOARD_INVALID', message: 'The board is not routed as it stands: route first (and let it finish), look at it, then lock what came out right.' });
+  const locked = [...(b.locked ?? [])];
+  const said: string[] = [];
+  for (const name of op.nets) {
+    const net = findNet(d, name);
+    if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${name}".`, candidates: Object.values(d.nets).map((n) => n.name) });
+    // the router's copper only: tracks laid with track and vias placed on purpose are laid as asked anyway
+    const bare = <T extends { drawn?: string; locked?: boolean }>({ drawn: _d, locked: _l, ...x }: T) => x;
+    const tracks = copper!.tracks.filter((t) => t.netId === net!.id && !t.drawn).map(bare);
+    const vias = copper!.vias.filter((v) => v.netId === net!.id && !v.drawn && !v.group).map(bare);
+    if (!tracks.length) reject({ code: 'BOARD_INVALID', message: `${net!.name} has no routed tracks to lock${b.planes?.some((pl) => pl.netId === net!.id) ? ' (it is joined through its plane)' : ''}.` });
+    const was = locked.findIndex((l) => l.netId === net!.id);
+    if (was >= 0) locked.splice(was, 1);
+    locked.push({ netId: net!.id, tracks, vias });
+    said.push(`${net!.name} (${tracks.length} tracks, ${vias.length} vias${was >= 0 ? ', locked again as it lies now' : ''})`);
+  }
+  b.locked = locked;
+  d.board = b;
+  return { op: 'lock_copper', effect: `locked the copper of ${said.join(', ')}: route lays it as it is, before anything else, and never rips it up`, ids: ['board'] };
 }
 
 /** The board as placed now (for ops that record where parts are). */

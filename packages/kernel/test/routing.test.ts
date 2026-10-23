@@ -213,6 +213,30 @@ describe('tracks the agent laid', () => {
   });
 });
 
+describe('copper the agent locked', () => {
+  it('is laid as it lies and never let go: the net in the way is named', () => {
+    // B from the top edge to the bottom edge (its pads reach the edge clearance), routed alone, then
+    // locked; A must cross it on one layer
+    const bOnly = [part('Q1', [[10, 1, 'B']]), part('Q2', [[10, 9, 'B']])];
+    const first = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts: bOnly, powerNets: new Set() });
+    const parts = [part('P1', [[0.5, 5, 'A']]), part('P2', [[19.5, 5, 'A']]), ...bOnly];
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts, powerNets: new Set(), locked: { tracks: first.tracks, vias: [] } });
+    expect(r.tracks.filter((t) => t.netId === 'B')).toEqual(first.tracks.map((t) => ({ ...t, locked: true })));
+    expect(r.locked).toEqual([{ netId: 'B', tracks: first.tracks.length, vias: 0, heldTracks: first.tracks.length, heldVias: 0 }]);
+    expect(r.failed.map((f) => [f.netId, f.blockedBy, f.enclosed])).toEqual([['A', ['B'], undefined]]);
+  });
+
+  it('what a moved part broke away from is not laid; the net is routed again round the rest', () => {
+    const bOnly = [part('Q1', [[10, 1, 'B']]), part('Q2', [[10, 9, 'B']])];
+    const first = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts: bOnly, powerNets: new Set() });
+    const moved = [part('Q1', [[10, 1, 'B']]), part('Q2', [[14, 9, 'B']])];
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts: moved, powerNets: new Set(), locked: { tracks: first.tracks, vias: [] } });
+    expect(r.locked![0]!.heldTracks).toBe(0);
+    expect(r.failed).toEqual([]);
+    expect(r.tracks.some((t) => t.locked)).toBe(false);
+  });
+});
+
 describe('the routed copper, kept with the design', () => {
   it('a routed design read back from its file is still routed (key order does not matter)', () => {
     const k = buck();

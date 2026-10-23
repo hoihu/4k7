@@ -1045,6 +1045,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     planes,
     viaGroups: viaPlan.groups,
     drawn: drawnPlan.view,
+    locked: (settings.locked ?? []).map((l) => ({ netId: l.netId, tracks: l.tracks.length, vias: l.vias.length })),
     ratsnest: ratsnest(parts),
     diagnostics,
     stats: { nets: 0, routed: 0, unrouted: 0, trackLength: 0, vias: 0 },
@@ -1134,6 +1135,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     basis,
     ...(r.reused ? { reused: r.reused } : {}),
     ...(r.drawn ? { drawn: r.drawn } : {}),
+    ...(r.locked ? { locked: r.locked } : {}),
   });
   const copper =
     kept ??
@@ -1152,6 +1154,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
         cutouts: b.cutouts,
         ...(keep ? { keep } : {}),
         ...(settingsDrawn.length ? { drawn: settingsDrawn } : {}),
+        ...(d.board?.locked?.length ? { locked: { tracks: d.board.locked.flatMap((l) => l.tracks), vias: d.board.locked.flatMap((l) => l.vias) } } : {}),
         ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}),
         ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
         // what a stop keeps: the best pass so far, marked as stopped
@@ -1197,6 +1200,10 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
       const st = copper.drawn?.find((x) => x.id === t.id);
       return st ? { ...t, laid: st.laid, ...(st.why ? { why: st.why + (st.blockedBy ? ` (${d.nets[st.blockedBy]?.name ?? st.blockedBy} is in the way)` : '') } : {}), ...(st.at ? { at: st.at } : {}) } : t;
     }),
+    locked: b.locked.map((l) => {
+      const st = copper.locked?.find((x) => x.netId === l.netId);
+      return st ? { ...l, heldTracks: st.heldTracks, heldVias: st.heldVias } : l;
+    }),
     ...(kept ? {} : { newCopper: copper }),
     ...(copper.stopped ? { stopped: true } : {}),
     ...(copper.reused ? { reused: copper.reused } : {}),
@@ -1213,6 +1220,17 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
       entities: [...new Set([t.from, t.to].map((x) => x.slice(0, x.lastIndexOf('.'))))],
     });
   }
+  for (const l of routed.locked) {
+    if (l.heldTracks === undefined || (l.heldTracks === l.tracks && l.heldVias === l.vias)) continue;
+    diags.push({
+      code: 'DRC.LOCKED_BROKEN',
+      severity: 'warning',
+      message: `Only ${l.heldTracks} of ${l.tracks} locked tracks and ${l.heldVias} of ${l.vias} vias of ${name(l.netId)} still fit the board as it is: a part moved off the rest (or something new comes too close), and the router routed round them. Move the part back (they stay locked and come back), or lock_copper ${name(l.netId)} again once it is routed as you want, or unlock_copper.`,
+      entities: [],
+    });
+  }
+  // a net in the way whose copper the router may not move: locked, or a track laid by the agent
+  const inWay = (id: string) => `${name(id)}${routed.locked.some((l) => l.netId === id) ? ' (its copper is locked)' : routed.drawn.some((t) => t.netId === id && t.laid) ? ' (a track you laid)' : ''}`;
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
@@ -1223,7 +1241,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
       : u.plane
         ? `; no room for a via down to the ${u.plane} plane`
         : u.blockedBy?.length
-          ? `; ${u.blockedBy.map(name).join(', ')} ${u.blockedBy.length > 1 ? 'are' : 'is'} in the way${u.near.length ? ` near ${u.near.slice(0, 3).join(', ')}` : ''}`
+          ? `; ${u.blockedBy.map(inWay).join(', ')} ${u.blockedBy.length > 1 ? 'are' : 'is'} in the way${u.near.length ? ` near ${u.near.slice(0, 3).join(', ')}` : ''}`
           : '';
     diags.push({
       code: 'DRC.UNROUTED',
@@ -1259,7 +1277,9 @@ function routeSetup(d: Design, b: BoardView) {
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const planes = b.planes;
   const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
-  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort()]));
+  // (locked copper is in the key, not in the placement's: locking re-routes without making the routing out of date)
+  const locked = d.board?.locked ?? [];
+  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort(), ...(locked.length ? [locked] : [])]));
   // the pads dropping through vias the agent placed (add_vias drop), per net
   const drops = (d.board?.vias ?? []).filter((g) => g.kind === 'drop');
   const drawn = d.board?.tracks ?? [];
@@ -1271,7 +1291,7 @@ function routeSetup(d: Design, b: BoardView) {
     nets: Object.fromEntries(
       Object.keys(d.nets)
         .sort()
-        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.offsets ?? g.count ?? null, g.drill ?? null, g.size ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null]), drawn.filter((t) => t.netId === id)]))]),
+        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.offsets ?? g.count ?? null, g.drill ?? null, g.size ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null]), drawn.filter((t) => t.netId === id), locked.filter((l) => l.netId === id)]))]),
     ),
   };
   return { powerNets, planes, netWidths, key, basis };

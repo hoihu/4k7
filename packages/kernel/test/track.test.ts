@@ -95,3 +95,61 @@ describe('the track op', () => {
     expect(bad({ from: 'U1.8', to: 'D1.1', through: [{ x_mm: 99, y_mm: 5 }] }).status).toBe('rejected');
   });
 });
+
+describe('lock_copper', () => {
+  /** The buck routed, its copper kept in the design (as the app does when routing finishes). */
+  function routed() {
+    const k = buck();
+    k.keepCopper(k.board().newCopper!);
+    return k;
+  }
+  const sw = (k: Kernel) => k.board().tracks.filter((t) => k.board().netNames[t.netId] === 'SW');
+
+  it('needs the board routed as it stands', () => {
+    const k = buck();
+    expect(k.transact({ summary: 'lock', ops: [{ op: 'lock_copper', nets: ['SW'] }] }).status).toBe('rejected');
+  });
+
+  it('keeps a net\'s copper as it lies: routing stays done and lays it again as it was', () => {
+    const k = routed();
+    const before = sw(k).map(({ netId, layer, width, pts }) => ({ netId, layer, width, pts }));
+    expect(before.length).toBeGreaterThan(0);
+    expect(k.transact({ summary: 'lock', ops: [{ op: 'lock_copper', nets: ['SW'] }] }).status).toBe('ok');
+    const b = k.board();
+    expect(b.routing).toBe('done');
+    expect(sw(k).filter((t) => t.locked).map(({ netId, layer, width, pts }) => ({ netId, layer, width, pts }))).toEqual(before);
+    expect(b.locked).toEqual([{ netId: expect.any(String), tracks: before.length, vias: expect.any(Number), heldTracks: before.length, heldVias: expect.any(Number) }]);
+    expect(b.unrouted).toEqual([]);
+    const s = boardSummary(b) as { locked_copper?: { net: string; state: string }[] };
+    expect(s.locked_copper).toEqual([expect.objectContaining({ net: 'SW', state: 'laid as locked' })]);
+  });
+
+  it('a part moved off it breaks what it touched: said so, and still kept as locked', () => {
+    const k = routed();
+    k.transact({ summary: 'lock', ops: [{ op: 'lock_copper', nets: ['SW'] }] });
+    k.keepCopper(k.board().newCopper!);
+    const d1 = k.board().parts.find((p) => p.refdes === 'D1')!;
+    // down 2 mm: its GND pad comes too close to the locked track that ran to its SW pad
+    k.transact({ summary: 'move', ops: [{ op: 'place', ref: 'D1', x_mm: d1.x, y_mm: d1.y + 2 }] });
+    k.transact({ summary: 'route', ops: [{ op: 'route' }] });
+    const b = k.board();
+    const l = b.locked[0]!;
+    expect(l.heldTracks!).toBeLessThan(l.tracks);
+    expect(b.diagnostics.find((x) => x.code === 'DRC.LOCKED_BROKEN')!.message).toMatch(/^Only \d of 3 locked tracks and 0 of 0 vias of SW still fit the board as it is/);
+    expect(b.unrouted).toEqual([]);
+    // (not dropped: a part put back where it was gets it back)
+    k.accept();
+    const saved = JSON.parse(k.exportDesign()) as { board: { locked: { tracks: unknown[] }[] } };
+    expect(saved.board.locked[0]!.tracks).toHaveLength(3);
+  });
+
+  it('unlock_copper lets it go', () => {
+    const k = routed();
+    k.transact({ summary: 'lock', ops: [{ op: 'lock_copper', nets: ['SW', 'BOOT'] }] });
+    expect(k.transact({ summary: 'unlock', ops: [{ op: 'unlock_copper', nets: ['SW'] }] }).status).toBe('ok');
+    expect(k.board().locked.map((l) => k.board().netNames[l.netId])).toEqual(['BOOT']);
+    expect(k.transact({ summary: 'unlock', ops: [{ op: 'unlock_copper', nets: ['all'] }] }).status).toBe('ok');
+    expect(k.board().locked).toEqual([]);
+    expect(k.transact({ summary: 'unlock', ops: [{ op: 'unlock_copper', nets: ['SW'] }] }).status).toBe('rejected');
+  });
+});

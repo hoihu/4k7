@@ -541,6 +541,16 @@ export const EraseTrackOp = z.object({
   id: z.string().describe('A track id ("T1", from get_board laid_tracks) or "all"'),
 });
 
+export const LockCopperOp = z.object({
+  op: z.literal('lock_copper'),
+  nets: z.array(netName).min(1).describe('The nets whose routed copper to keep as it is, e.g. ["SW", "+5V"]'),
+}).describe('Keep the router\'s copper for these nets exactly as it lies now: when a pass got a connection right (the switching loop tight, the power path short) and later routes should not change it. The board must be routed as it stands. Route then lays it before anything else and never rips it up; the rest is routed round it. A part moved off locked copper breaks the pieces it touched: those are not laid (get_board locked_copper and the DRC say so) but stay locked, and come back if the part does. Locking a net again takes its copper as it lies then; unlock_copper lets it go. Tracks you laid with track are kept anyway.');
+
+export const UnlockCopperOp = z.object({
+  op: z.literal('unlock_copper'),
+  nets: z.array(netName).min(1).describe('The nets to let go, or ["all"]'),
+});
+
 export const DescribeOp = z.object({
   op: z.literal('describe'),
   overview: z.string().min(1).optional().describe('The whole design in a few short paragraphs (Markdown): what it is for, its inputs and outputs, the supplies, how the blocks work together. Omit to keep the current one'),
@@ -598,6 +608,8 @@ export const EditOp = z.discriminatedUnion('op', [
   RemoveViasOp,
   TrackOp,
   EraseTrackOp,
+  LockCopperOp,
+  UnlockCopperOp,
   AddCutoutOp,
   RemoveCutoutOp,
   AddGraphicOp,
