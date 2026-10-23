@@ -401,3 +401,153 @@ function hit(o: [number, number, number], d: [number, number, number], t: Tris, 
   const dist = (e2[0]! * qq[0]! + e2[1]! * qq[1]! + e2[2]! * qq[2]!) * inv;
   return dist > 0 ? dist : null;
 }
+
+/* -------------------------------- warping --------------------------------- */
+
+/**
+ * How a piece may warp: long, flat or frame-like pieces without ribs bow and twist as they cool (FDM)
+ * or cure (resin, powder). Each section across the piece is measured as a beam: its equivalent
+ * thickness (the solid plate as stiff as the section, √(12 I / A)), so a floor with walls or a lid
+ * with ribs counts as thick and a bare plate as thin. The slenderness is the piece's length over the
+ * median of its sections; above about 30–50 it warps.
+ */
+export interface WarpIssue {
+  /** The worst way: along this axis (assembled coordinates), bending across `across`. */
+  along: 'x' | 'y' | 'z';
+  across: 'x' | 'y' | 'z';
+  /** Length along it (mm). */
+  span: number;
+  /** Equivalent thickness of its sections, median (mm). */
+  thickness: number;
+  /** span / thickness. */
+  slenderness: number;
+  /** Share of its outline (seen along `across`) that is open: a frame round a window, a lattice. */
+  open: number;
+  box: { min: [number, number, number]; max: [number, number, number] };
+}
+
+/** Pieces shorter than this hardly warp, whatever their shape. */
+const WARP_MIN_SPAN = 50;
+
+/** The piece filled in on a grid of `h` mm cells (a vertical ray through each column, in and out). */
+function voxels(t: Tris, h: number): { v: Uint8Array; n: [number, number, number] } {
+  const b = bounds(t);
+  const n = [0, 1, 2].map((k) => Math.max(1, Math.ceil((b.max[k]! - b.min[k]!) / h))) as [number, number, number];
+  const v = new Uint8Array(n[0] * n[1] * n[2]);
+  const columns = new Map<number, number[]>();
+  for (let i = 0; i < t.length / 9; i++) {
+    const o = i * 9;
+    const x0 = Math.min(t[o]!, t[o + 3]!, t[o + 6]!), x1 = Math.max(t[o]!, t[o + 3]!, t[o + 6]!);
+    const y0 = Math.min(t[o + 1]!, t[o + 4]!, t[o + 7]!), y1 = Math.max(t[o + 1]!, t[o + 4]!, t[o + 7]!);
+    for (let ix = Math.max(0, Math.ceil((x0 - b.min[0]) / h - 0.5)); ix <= Math.min(n[0] - 1, Math.floor((x1 - b.min[0]) / h - 0.5)); ix++)
+      for (let iy = Math.max(0, Math.ceil((y0 - b.min[1]) / h - 0.5)); iy <= Math.min(n[1] - 1, Math.floor((y1 - b.min[1]) / h - 0.5)); iy++) {
+        const k = ix * n[1] + iy;
+        const list = columns.get(k);
+        if (list) list.push(i);
+        else columns.set(k, [i]);
+      }
+  }
+  for (const [k, list] of columns) {
+    const ix = Math.floor(k / n[1]), iy = k % n[1];
+    // off the cell's centre by a hair, so the ray does not run along a shared edge
+    const px = b.min[0] + (ix + 0.5) * h + 1.3e-5, py = b.min[1] + (iy + 0.5) * h + 0.7e-5;
+    const zs: number[] = [];
+    for (const i of list) {
+      const o = i * 9;
+      const [ax, ay, az, bx, by, bz, cx, cy, cz] = [t[o]!, t[o + 1]!, t[o + 2]!, t[o + 3]!, t[o + 4]!, t[o + 5]!, t[o + 6]!, t[o + 7]!, t[o + 8]!];
+      const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+      if (Math.abs(d) < 1e-12) continue;
+      const l1 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / d;
+      const l2 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / d;
+      if (l1 < 0 || l2 < 0 || l1 + l2 > 1) continue;
+      zs.push(l1 * az + l2 * bz + (1 - l1 - l2) * cz);
+    }
+    zs.sort((p, q) => p - q);
+    for (let j = 0; j + 1 < zs.length; j += 2) {
+      const z1 = Math.min(n[2], Math.round((zs[j + 1]! - b.min[2]) / h));
+      for (let iz = Math.max(0, Math.round((zs[j]! - b.min[2]) / h)); iz < z1; iz++) v[k * n[2] + iz] = 1;
+    }
+  }
+  return { v, n };
+}
+
+/** The way a piece bends most easily (see WarpIssue), or null when it is too short to warp. */
+export function warping(t: Tris): WarpIssue | null {
+  if (!t.length) return null;
+  const box = bounds(t);
+  const size = [0, 1, 2].map((k) => box.max[k]! - box.min[k]!);
+  if (Math.max(...size) < WARP_MIN_SPAN) return null;
+  const h = Math.max(0.3, Math.max(...size) / 300);
+  const { v, n } = voxels(t, h);
+  const at = (i: number[]) => v[(i[0]! * n[1] + i[1]!) * n[2] + i[2]!]!;
+  const axis = ['x', 'y', 'z'] as const;
+  let worst: WarpIssue | null = null;
+  for (let a = 0; a < 3; a++) {
+    if (size[a]! < WARP_MIN_SPAN) continue;
+    for (let c = 0; c < 3; c++) {
+      if (c === a) continue;
+      const w = 3 - a - c;
+      const [na, nc, nw] = [n[a]!, n[c]!, n[w]!];
+      // each section across a: its second moment about the axis w (bending in c)
+      const thick: number[] = [];
+      const idx = [0, 0, 0];
+      for (let s = 0; s < na; s++) {
+        idx[a] = s;
+        let area = 0, m1 = 0, m2 = 0;
+        for (let p = 0; p < nc; p++) {
+          idx[c] = p;
+          for (let q = 0; q < nw; q++) {
+            idx[w] = q;
+            if (at(idx)) {
+              area++;
+              m1 += p;
+              m2 += p * p;
+            }
+          }
+        }
+        // (+1: a cell's own thickness, so a one-cell plate is h thick)
+        if (area) thick.push(Math.sqrt(12 * (m2 / area - (m1 / area) ** 2) + 1) * h);
+      }
+      if (!thick.length) continue;
+      thick.sort((p, q) => p - q);
+      const thickness = thick[Math.floor(thick.length / 2)]!;
+      const slenderness = size[a]! / thickness;
+      if (worst && slenderness <= worst.slenderness) continue;
+      // the outline seen along c: cells with material somewhere behind them; open are the empty ones
+      // it encloses (not reached from the border): windows, lattices, not rounded corners
+      const seen = new Uint8Array(na * nw);
+      for (let p = 0; p < na; p++) {
+        idx[a] = p;
+        for (let q = 0; q < nw; q++) {
+          idx[w] = q;
+          for (let r = 0; r < nc && !seen[p * nw + q]; r++) {
+            idx[c] = r;
+            seen[p * nw + q] = at(idx);
+          }
+        }
+      }
+      const outside = new Uint8Array(seen.length);
+      const stack: number[] = [];
+      for (let p = 0; p < na; p++) for (let q = 0; q < nw; q++) if ((p === 0 || q === 0 || p === na - 1 || q === nw - 1) && !seen[p * nw + q]) stack.push(p * nw + q);
+      for (const k of stack) outside[k] = 1;
+      while (stack.length) {
+        const k = stack.pop()!;
+        const p = Math.floor(k / nw), q = k % nw;
+        for (const [pp, qq] of [[p - 1, q], [p + 1, q], [p, q - 1], [p, q + 1]] as const) {
+          const kk = pp * nw + qq;
+          if (pp < 0 || qq < 0 || pp >= na || qq >= nw || seen[kk] || outside[kk]) continue;
+          outside[kk] = 1;
+          stack.push(kk);
+        }
+      }
+      let filled = 0, open = 0;
+      for (let k = 0; k < seen.length; k++) {
+        if (seen[k]) filled++;
+        else if (!outside[k]) open++;
+      }
+      const r1 = (x: number) => Math.round(x * 10) / 10;
+      worst = { along: axis[a]!, across: axis[c]!, span: r1(size[a]!), thickness: r1(thickness), slenderness: Math.round(slenderness), open: Math.round((open / (filled + open)) * 100) / 100, box };
+    }
+  }
+  return worst;
+}
