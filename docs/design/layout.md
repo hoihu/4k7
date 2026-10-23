@@ -451,3 +451,63 @@ Each step is useful alone.
 - History costs only grow. On boards that need hundreds of passes PathFinder also uses a present-
   congestion cost (sharing allowed, priced). Our passes forbid sharing, which keeps every pass a
   legal routing (the best pass is always usable) at the price of slower convergence.
+
+## 9. Drawn copper (spike, 2026-10-23)
+
+The user, after the via work of §7 step 9: *the rules are too strict and the agent cannot shape
+the copper as it means to; what if the agent takes control of everything, with only the rules and
+the layout notes it is given?* Time is not the constraint (30 s for a better board is fine), tokens
+neither. This spike lets the two ways run side by side on one design, so they can be compared.
+
+**The mode.** `set_copper_mode drawn` makes the copper the agent's: `BoardSettings.drawn`
+(`DrawnCopper`: tracks and vias with ids `t1`, `v2`, …) is design data, in the changeset diff,
+undo and the file like everything else. `keep` (default) starts from the router's copper when it
+is for the placement as it is; `router` drops the drawn copper and goes back. With drawn copper
+the board is always `routing: 'done'` and `BoardView.drawn` carries it.
+
+**The ops** (`copperops.ts`):
+
+- `draw_track { from, to, via?, layer?, net?, width_mm? }`: one polyline, exactly as given. An
+  end given as a pad (`"U1.3"`) lies on the pad's centre and is anchored (`PadAnchor`): when the
+  part moves or turns, that end follows (`drawnCopper` in board.ts) and the piece next to it
+  stretches; the rest stays where it was drawn. Refused only for what cannot be meant: an unknown
+  pad or net, a pad of another net (a short by construction), an inner layer that is a plane.
+- `draw_via { at, net, drill_mm?, size_mm? }`: a through via.
+- `erase_copper { ids? | nets? | parts? | rect? | all? }`.
+- `route { nets? | from, to, width_mm? }`: the router as a helper. It routes only those
+  connections (nothing given: every open one), round the drawn copper, which it never moves; what
+  it lays is added as drawn copper with ids, for the agent to keep, edit or erase.
+- `design_query get_copper { nets?, rect? }` lists the drawn copper by id.
+
+**The router as a fixed engine.** `RouteInput.drawn` hands the router the copper verbatim
+(`keptCopper(…, asDrawn)`: nothing checked or dropped, pieces joining no pad included, stamped as
+obstacles) and the scope it may lay copper for (`only`: nets, or pairs of pads). Out of scope it
+lays nothing: no connections, no drops to planes (`mayDrop`), so the board view of drawn copper
+is one pass that only fills the pours and works out connectivity. Open connections are counted
+between the pieces each net's copper is in (`openBetween`), not the router's spanning tree, so a
+net drawn in another order than the tree's is not reported open.
+
+**Hard and soft rules.** Errors are hard and refuse `propose` (the app's propose checks the routed
+board's errors with drawn copper; before, copper DRC errors did not block it at all): `DRC.SHORT`,
+`DRC.CLEARANCE`, `DRC.EDGE_CLEARANCE` (now on straight edges too: the router never went near them,
+the agent may), the fab's limits, parts off the board or overlapping, `DRC.UNROUTED` ("not drawn
+yet", unless `propose open_connections` says why). Warnings are soft, the agent's judgement:
+`DRAW.DANGLING` (a track end meeting no copper of its net), `DRAW.ANGLE` (a piece off 45°, the
+short jog onto a pad aside), `DRC.VIA_IN_PAD` in a small part's land pattern (a via over another
+net's pad is a short anyway), `DRC.PLANE_VIAS`, `PLANE.SPLIT_CROSSING`, silkscreen.
+
+Bench (`bench/drawn.ts`, the 128-part board of `bench/board.ts`, 3 clusters):
+
+| | router | drawn, empty | helper on everything | view after it | taken over from the router |
+|---|---|---|---|---|---|
+| 2 layers | 7.9 s | 0.1 s, 282 open | 8.2 s, 0 open | 0.2 s | 0.2 s, 0 errors, 0 warnings |
+| 4 layers | 1.8 s | 0.2 s, 282 open | 1.9 s, 0 open | 0.3 s | 0.3 s, 0 errors, 0 warnings |
+
+What to find out with it: how many tool calls and tokens a board takes when the agent draws the
+critical paths and leaves the rest to the helper; whether its boards are better where the user
+cares (switching loops, drops, returns); and so whether the router's machinery (§5.1–§5.5,
+incremental routing, the copper cache, progress and stop) can go. Not done in the spike: a way to
+switch modes in the UI (the agent switches on request), progress for a long `route` helper (it
+runs in the kernel worker), and moving a part does not move the middle of its tracks.
+
+    node --experimental-transform-types packages/kernel/bench/drawn.ts 2 3

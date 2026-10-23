@@ -81,6 +81,15 @@ export interface RouteInput {
    * board.
    */
   keep?: { tracks: Track[]; vias: Via[] };
+  /**
+   * Drawn copper (the agent's own, BoardSettings.drawn): there from the start exactly as it lies,
+   * never ripped up nor checked here (the DRC judges it). With it the router lays copper only for
+   * `only`: the open connections of those nets (their pads' drops to a plane too), or those pairs
+   * of pads; without `only`, nothing (it just fills the pours and says what is connected). Open
+   * connections are then counted between the pieces of copper each net is in, whatever the
+   * connections the drawn copper made.
+   */
+  drawn?: { tracks: Track[]; vias: Via[]; only?: { nets?: string[]; pairs?: [BoardPad, BoardPad][] } };
   /** Stop routing after this many milliseconds; what is left is reported unrouted. Default 90 s. */
   budgetMs?: number;
   /** Called while routing: the copper laid so far in the current pass, a few times a second. */
@@ -158,9 +167,13 @@ export function route(input: RouteInput, passes = 40): RouteResult {
   const dedicated = new Set((input.planes ?? []).filter((pl) => !OUTER.has(pl.layer) && !pl.area).map((pl) => pl.netId));
   const areas = (input.planes ?? []).filter((pl) => !OUTER.has(pl.layer) && pl.area);
   const viaArea = (c: Conn) => areas.some((pl) => pl.netId === c.netId && inArea(pl, pads[c.a]!) && inArea(pl, pads[c.b]!));
-  const planeOnly = conns.filter((c) => dedicated.has(c.netId) || viaArea(c));
+  // drawn copper: only the connections asked for are routed (see RouteInput.drawn)
+  const scope = input.drawn ? new Set(input.drawn.only?.nets ?? []) : null;
+  const inScope = (c: Conn) => !scope || scope.has(c.netId);
+  const planeOnly = conns.filter((c) => (dedicated.has(c.netId) || viaArea(c)) && inScope(c));
   const throughPlane = new Set(planeOnly);
-  const firstOrder = conns.filter((c) => !throughPlane.has(c)).sort((x, y) => x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
+  const pairs: Conn[] = (input.drawn?.only?.pairs ?? []).map(([a, b]) => ({ netId: a.netId!, a: pads.indexOf(a), b: pads.indexOf(b), len: Math.hypot(a.x - b.x, a.y - b.y) }));
+  const firstOrder = [...pairs, ...conns.filter((c) => !throughPlane.has(c) && inScope(c) && !dedicated.has(c.netId) && !viaArea(c))].sort((x, y) => x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
   let order = firstOrder;
   const t0 = now();
   const deadline = t0 + (input.budgetMs ?? 90_000);
@@ -188,7 +201,8 @@ export function route(input: RouteInput, passes = 40): RouteResult {
   let rounds = 0;
   // fewest open since routing from scratch began (the kept passes' best does not count against it)
   let phaseBest: number | null = null;
-  const keptNow = (): KeptCopper | null => (keep && keeping ? { ...keep, pieces: keep.pieces.filter((pc) => !letGo.has(pc.netId)) } : null);
+  const drawn = input.drawn ? keptCopper(input, input.drawn, true) : null;
+  const keptNow = (): KeptCopper | null => joinKept(keep && keeping ? { ...keep, pieces: keep.pieces.filter((pc) => !letGo.has(pc.netId)) } : null, drawn);
   // before the first pass the best there is: nothing routed
   input.onBest?.(result({ tracks: [], vias: [], zones: [], failed: [...order, ...planeOnly], roots: Int32Array.from(pads, (_, i) => i), timedOut: false, blockage: new Map(), reused: undefined }, 0));
   for (let pass = 0; pass < passes; pass++) {
@@ -253,6 +267,7 @@ export function route(input: RouteInput, passes = 40): RouteResult {
   /** A pass's result as the caller sees it. */
   function result(r: ReturnType<typeof routeOnce>, ran: number): RouteResult {
     const nets = new Set(conns.map((c) => c.netId));
+    if (input.drawn) r = { ...r, failed: openBetween(r.roots, r.failed) };
     const failedNets = new Set(r.failed.map((c) => c.netId));
     return {
       tracks: r.tracks,
@@ -272,6 +287,44 @@ export function route(input: RouteInput, passes = 40): RouteResult {
       ...(r.reused ? { reused: r.reused } : {}),
     };
   }
+
+  /**
+   * Drawn copper: the connections still open, one per pair of pieces a net's copper is in (the
+   * shortest), whatever connections the copper made; one the router tried keeps its blockage.
+   */
+  function openBetween(roots: Int32Array, tried: Conn[]): Conn[] {
+    const key = (a: number, b: number) => (roots[a]! < roots[b]! ? `${roots[a]}:${roots[b]}` : `${roots[b]}:${roots[a]}`);
+    const triedAt = new Map(tried.map((t) => [key(t.a, t.b), t]));
+    const group = new Map<number, number>();
+    const find = (g: number): number => {
+      const p = group.get(g) ?? g;
+      if (p === g) return g;
+      const r = find(p);
+      group.set(g, r);
+      return r;
+    };
+    const open: Conn[] = [];
+    for (const c of [...conns].sort((x, y) => x.len - y.len)) {
+      const ga = find(roots[c.a]!);
+      const gb = find(roots[c.b]!);
+      if (ga === gb) continue;
+      group.set(gb, ga);
+      open.push(triedAt.get(key(c.a, c.b)) ?? c);
+    }
+    return open;
+  }
+}
+
+/** Two sets of kept copper as one (the pad lists stay; track and via indices shift). */
+function joinKept(a: KeptCopper | null, b: KeptCopper | null): KeptCopper | null {
+  if (!a || !b) return a ?? b;
+  const t = a.tracks.length;
+  const v = a.vias.length;
+  return {
+    tracks: [...a.tracks, ...b.tracks],
+    vias: [...a.vias, ...b.vias],
+    pieces: [...a.pieces, ...b.pieces.map((pc) => ({ ...pc, tracks: pc.tracks.map((i) => i + t), vias: pc.vias.map((i) => i + v) }))],
+  };
 }
 
 /** Minimum spanning tree edges per net (by pad centre distance). */
@@ -762,7 +815,13 @@ function routeOnce(
   }
 
   // the kept copper: its tracks and vias, each piece joining its pads (as copper just routed does)
+  // (drawn copper joining no pad is only in the way)
   for (const pc of kept?.pieces ?? []) {
+    if (!pc.pads.length) {
+      for (const i of pc.tracks) tracks.push(kept!.tracks[i]!);
+      for (const i of pc.vias) vias.push(kept!.vias[i]!);
+      continue;
+    }
     for (let q = 1; q < pc.pads.length; q++) union(pc.pads[0]!, pc.pads[q]!);
     const cells = groupCells.get(find(pc.pads[0]!))!;
     for (const i of pc.tracks) {
@@ -2128,11 +2187,13 @@ function routeOnce(
    * from every via site). Outer pours come last: they fill what the tracks leave; their drop
    * sites are reserved now (see reserveDrops).
    */
-  dropOnto(planes.filter((pl) => !OUTER.has(pl.layer)));
+  // (drawn copper: only the nets asked for drop onto their planes; the others' drops are drawn)
+  const mayDrop = (pl: Plane) => !input.drawn || !!input.drawn.only?.nets?.includes(pl.netId);
+  dropOnto(planes.filter((pl) => !OUTER.has(pl.layer) && mayDrop(pl)));
   // pours of nets without an inner plane (GND on B.Cu of a 2-layer board); a local pour (an area
   // on an outer layer) only joins what reaches it, as an area plane does
   const pours = planes.filter((pl) => OUTER.has(pl.layer) && !pl.area && !planes.some((q) => q.netId === pl.netId && !OUTER.has(q.layer)));
-  reserveDrops(pours);
+  reserveDrops(pours.filter(mayDrop));
   /*
    * A pour's net is joined through its pour, so a connection between two pads that can each
    * reach the pour without a track (a reserved drop site, or a through-hole pad) waits until
@@ -2237,7 +2298,7 @@ function routeOnce(
   if (pours.length) until = deadline - (deadline - now()) / 10;
   for (const c of order) if (!later(c)) routeConn(c);
   until = deadline;
-  dropOnto(planes.filter((pl) => OUTER.has(pl.layer)));
+  dropOnto(planes.filter((pl) => OUTER.has(pl.layer) && mayDrop(pl)));
   /*
    * The waiting connections of the pours' nets: routed unless both ends already reach the main
    * area of their pour. That is an estimate (tracks routed after it, of another pour's net, may

@@ -37,6 +37,10 @@ import {
   type UnroutedConnection,
   type BoardCutout,
   type BoardRules,
+  type DrawnCopper,
+  type DrawnTrack,
+  type DrawnVia,
+  type PadAnchor,
   type Track,
   type Via,
   type ViaGroup,
@@ -57,11 +61,11 @@ import {
 } from '@4k7/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
 import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
-import { copperDrc, edgeDrc, planeViaDrc, splitDrc } from './drc.ts';
+import { copperDrc, drawnDrc, edgeDrc, planeViaDrc, splitDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelView } from './panel.ts';
 import { stableJson } from './canonical.ts';
-import { route, type RouteProgress } from './router.ts';
+import { route, type RouteInput, type RouteProgress } from './router.ts';
 
 const SPACING = 0.3; // between courtyards
 const GRID_MM = 0.1;
@@ -1031,14 +1035,15 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const viaPlan = planVias(settings.vias ?? [], parts, w, h, rules, (id) => d.nets[id]?.attrs.maxCurrent);
   // (keys sorted: a design read back from its file has them in another order than one just edited)
   const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : [])] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
+  const drawn = settings.drawn ? drawnCopper(settings.drawn, parts) : null;
   const view: BoardView = {
     outline: { w, h },
     layers,
     rules,
     ...(settings.fab ? { fab: settings.fab } : {}),
     parts,
-    tracks: viaPlan.stubs ?? [],
-    vias: viaPlan.fixed,
+    tracks: [...(viaPlan.stubs ?? []), ...(drawn?.tracks ?? [])],
+    vias: [...viaPlan.fixed, ...(drawn?.vias ?? [])],
     zones: [],
     planes,
     viaGroups: viaPlan.groups,
@@ -1049,7 +1054,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     measures: placementMeasures(parts, new Set(planes.filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu' && !pl.area).map((pl) => pl.netId))),
     missing,
     netNames: Object.fromEntries(Object.values(d.nets).map((n) => [n.id, n.name])),
-    routing: settings.routed ? (settings.routed === placementKey ? 'done' : 'stale') : 'none',
+    routing: drawn ? 'done' : settings.routed ? (settings.routed === placementKey ? 'done' : 'stale') : 'none',
+    ...(drawn ? { drawn } : {}),
     placementKey,
     sizeBy: userSize ? 'user' : 'proposal',
     cornerRadius: cornerR,
@@ -1107,12 +1113,13 @@ const COPPER_FORMAT = 1;
 export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean; onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
   const b = placeBoard(d, sch);
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
-  const { powerNets, planes, netWidths, key, basis } = routeSetup(d, b);
+  const { powerNets, planes, key, basis } = routeSetup(d, b);
   const pads = b.parts.flatMap((p) => p.pads);
   const kept = d.board?.copper?.key === key ? d.board.copper : null;
   // routed before for another placement on the same board: the router keeps what still holds of
   // it (incremental routing), but not the copper of a net whose width, current or planes changed
-  const before = !kept && d.board?.copper?.basis?.board === basis.board ? d.board.copper : null;
+  // (drawn copper is the agent's: nothing to keep)
+  const before = !kept && !b.drawn && d.board?.copper?.basis?.board === basis.board ? d.board.copper : null;
   const same = (netId: string) => before?.basis?.nets[netId] === basis.nets[netId];
   const keep = before ? { tracks: before.tracks.filter((t) => same(t.netId)), vias: before.vias.filter((v) => same(v.netId)) } : null;
   const index = new Map(pads.map((p, i) => [p, i]));
@@ -1133,24 +1140,16 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   const copper =
     kept ??
     toCopper(
-      route({
-        outline: b.outline,
-        layers: b.layers,
-        rules: b.rules,
-        parts: b.parts,
-        powerNets,
-        netWidths,
-        planes: planes.map(({ netId, layer, area, style }) => ({ netId, layer, ...(area ? { area } : {}), ...(style ? { style } : {}) })),
-        ...(b.viaGroups.length ? { vias: planVias(d.board?.vias ?? [], b.parts, b.outline.w, b.outline.h, b.rules, (id) => d.nets[id]?.attrs.maxCurrent) } : {}),
-        cornerRadius: b.cornerRadius,
-        ...(b.shape ? { shape: b.shape } : {}),
-        cutouts: b.cutouts,
-        ...(keep ? { keep } : {}),
-        ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}),
-        ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
-        // what a stop keeps: the best pass so far, marked as stopped
-        ...(opts.onBest ? { onBest: (r: ReturnType<typeof route>) => opts.onBest!({ ...toCopper(r), stopped: true }) } : {}),
-      }),
+      route(
+        boardRouteInput(d, b, {
+          ...(keep ? { keep } : {}),
+          ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}),
+          ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
+          // what a stop keeps: the best pass so far, marked as stopped
+          ...(opts.onBest ? { onBest: (r: ReturnType<typeof route>) => opts.onBest!({ ...toCopper(r), stopped: true }) } : {}),
+        }),
+        b.drawn ? 1 : undefined,
+      ),
     );
   const connected = (netId: string, a: BoardPad, pb: BoardPad) => {
     const ia = index.get(a);
@@ -1192,7 +1191,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     ...(copper.reused ? { reused: copper.reused } : {}),
   };
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed)];
+  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...(b.drawn ? drawnDrc(routed) : [])].map((x) => (b.drawn ? softened(x) : x));
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
@@ -1208,7 +1207,9 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     diags.push({
       code: 'DRC.UNROUTED',
       severity: 'error',
-      message: `${n} connection${n > 1 ? 's' : ''} of ${name(netId)} could not be routed (${u.from} → ${u.to}${n > 1 ? ', …' : ''})${why}.`,
+      message: b.drawn
+        ? `${n} connection${n > 1 ? 's' : ''} of ${name(netId)} not drawn yet (${u.from} → ${u.to}${n > 1 ? ', …' : ''})${why}.`
+        : `${n} connection${n > 1 ? 's' : ''} of ${name(netId)} could not be routed (${u.from} → ${u.to}${n > 1 ? ', …' : ''})${why}.`,
       at: u.at ? { x: u.at.x, y: u.at.y } : midpoint(copper.open.find((o) => o.netId === netId)!),
       entities: [...new Set([u.from.split('.')[0]!, u.to.split('.')[0]!])],
     });
@@ -1234,12 +1235,61 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   return { ...routed, diagnostics: diags };
 }
 
+/**
+ * The router's input for the board as placed (`b`, from placeBoard): parts, outline, planes, the
+ * vias placed on purpose and, with drawn copper, that copper; `extra` adds to it.
+ */
+export function boardRouteInput(d: Design, b: BoardView, extra: Partial<RouteInput> = {}): RouteInput {
+  const { powerNets, planes, netWidths } = routeSetup(d, b);
+  return {
+    outline: b.outline,
+    layers: b.layers,
+    rules: b.rules,
+    parts: b.parts,
+    powerNets,
+    netWidths,
+    planes: planes.map(({ netId, layer, area, style }) => ({ netId, layer, ...(area ? { area } : {}), ...(style ? { style } : {}) })),
+    ...(b.viaGroups.length ? { vias: planVias(d.board?.vias ?? [], b.parts, b.outline.w, b.outline.h, b.rules, (id) => d.nets[id]?.attrs.maxCurrent) } : {}),
+    cornerRadius: b.cornerRadius,
+    ...(b.shape ? { shape: b.shape } : {}),
+    cutouts: b.cutouts,
+    ...(b.drawn ? { drawn: { tracks: b.drawn.tracks, vias: b.drawn.vias } } : {}),
+    ...extra,
+  };
+}
+
+/**
+ * The agent's drawn copper on the board as placed: a track end anchored on a pad lies on the pad's
+ * centre wherever the part is now (a part moved or turned stretches the track's end piece).
+ */
+export function drawnCopper(dc: DrawnCopper, parts: BoardPart[]): { tracks: DrawnTrack[]; vias: DrawnVia[] } {
+  const padAt = (a: PadAnchor | undefined) => (a ? parts.find((p) => p.componentId === a.componentId)?.pads.find((q) => q.number === a.pad) : undefined);
+  const tracks = dc.tracks.map((t) => {
+    const pts = t.pts.slice();
+    const f = padAt(t.from);
+    const e = padAt(t.to);
+    if (f) [pts[0], pts[1]] = [f.x, f.y];
+    if (e) [pts[pts.length - 2], pts[pts.length - 1]] = [e.x, e.y];
+    return { ...t, pts: pts.map((v) => Math.round(v * 1000) / 1000) };
+  });
+  return { tracks, vias: dc.vias };
+}
+
+/**
+ * Drawn copper: the hard rules stay errors (shorts, clearance, the edge, the fab's limits, open
+ * connections); the rest is the agent's judgement and only warns. A via in a small part's land
+ * pattern (no other net's pad under it: that is a short) is soft.
+ */
+function softened(x: BoardDiagnostic): BoardDiagnostic {
+  return x.code === 'DRC.VIA_IN_PAD' && x.severity === 'error' ? { ...x, severity: 'warning', message: `${x.message} (soft rule: fine where you mean it, e.g. a drop right beside a pad)` } : x;
+}
+
 /** What the router is given besides the placement, and the key copper routed with it is kept under. */
 function routeSetup(d: Design, b: BoardView) {
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const planes = b.planes;
   const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
-  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort()]));
+  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort(), ...(b.drawn ? ['drawn', b.drawn] : [])]));
   // the pads dropping through vias the agent placed (add_vias drop), per net
   const drops = (d.board?.vias ?? []).filter((g) => g.kind === 'drop');
   // what copper routed now holds under (StoredCopper.basis): the board, and per net what decides its

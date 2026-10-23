@@ -61,6 +61,7 @@ import { autoPlanes, dropOffset, padNet, placeBoard, storedPlacement } from './b
 import { underBody } from './drc.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
+import { drawTrack, drawVia, eraseCopper, routeDrawn, setCopperMode } from './copperops.ts';
 import { isDrawn, moveSymbol, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
@@ -165,7 +166,15 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent'): 
     case 'refine_placement':
       return refineStep(d, op);
     case 'route':
-      return routeStep(d);
+      return d.board?.drawn ? routeDrawn(d, op) : routeStep(d);
+    case 'set_copper_mode':
+      return setCopperMode(d, op);
+    case 'draw_track':
+      return drawTrack(d, op);
+    case 'draw_via':
+      return drawVia(d, op);
+    case 'erase_copper':
+      return eraseCopper(d, op);
     case 'set_plane':
       return setPlane(d, op);
     case 'set_plane_style':

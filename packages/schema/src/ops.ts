@@ -443,7 +443,50 @@ export const RefinePlacementOp = z.object({
 
 export const RouteOp = z.object({
   op: z.literal('route'),
-}).describe('Route the board as it is placed now (the last step), aiming at every connection: passes are repeated, pushing the nets in the way of open connections aside, which can take a minute on a big board (the user watches it fill in). get_board then lists any open connection with what blocks it and the parts near it. A later placement change shows the routing as out of date until route runs again.');
+  nets: z.array(netName).min(1).optional().describe('Drawn copper only: route just the open connections of these nets'),
+  from: pinRef.optional().describe('Drawn copper only: route just this one connection, from this pin …'),
+  to: pinRef.optional().describe('… to this pin (same net)'),
+  width_mm: z.number().positive().optional().describe('Drawn copper only: the width of the tracks laid (default: the net\'s width, power width for supplies where the pads take it, else the signal width)'),
+}).describe('Router copper: route the board as it is placed now (the last step), aiming at every connection: passes are repeated, pushing the nets in the way of open connections aside, which can take a minute on a big board (the user watches it fill in). get_board then lists any open connection with what blocks it and the parts near it. A later placement change shows the routing as out of date until route runs again. Drawn copper (set_copper_mode drawn): a helper that finds paths for the open connections you name (nets, or from/to; nothing given: every open one) round the copper already drawn, which it never moves; what it lays becomes drawn copper like your own (ids in the effect), so edit or erase it as you like. Connections it finds no way for stay open and are listed.');
+
+const mmPoint = z.tuple([z.number(), z.number()]).describe('[x, y] in mm from the board\'s top-left corner');
+const trackEnd = z.union([pinRef, mmPoint]).describe('A pad ("U1.3": the end lies on its centre and follows it when the part moves) or a point [x, y] in mm');
+
+export const SetCopperModeOp = z.object({
+  op: z.literal('set_copper_mode'),
+  mode: z.enum(['drawn', 'router']).describe('drawn: the copper is yours, drawn with draw_track and draw_via (route helps on request); router: the autorouter lays it (route)'),
+  keep: z.boolean().optional().describe('Switching to drawn: start from the router\'s copper as it is now (default true; false starts empty)'),
+}).describe('Who lays the board\'s copper. In drawn mode you draw every track and via yourself (the router lays nothing unless you ask it with route nets / from, to); pours and planes still fill round your copper; get_board lists what is not connected yet and the DRC judges the copper. Switching to router throws the drawn copper away.');
+
+export const DrawTrackOp = z.object({
+  op: z.literal('draw_track'),
+  from: trackEnd,
+  to: trackEnd,
+  via: z.array(mmPoint).max(64).optional().describe('Corners between from and to, in order. Each piece runs straight from one point to the next: give the corners of a 45° route yourself'),
+  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Default F.Cu, or the layer of an SMD pad it starts or ends on'),
+  net: netName.optional().describe('Default: the net of the pad at either end (required when both ends are points)'),
+  width_mm: z.number().positive().optional().describe('Default: the net\'s width, else power width for supplies, else the signal width'),
+}).describe('Drawn copper: draw one track (a polyline) of one net on one layer, as given: nothing is moved or rerouted. A layer change needs a via (draw_via) where two tracks meet. The DRC then checks clearances, edge and fab limits; get_board says which connections are still open. The effect gives the track\'s id (t…).');
+
+export const DrawViaOp = z.object({
+  op: z.literal('draw_via'),
+  at: mmPoint,
+  net: netName,
+  drill_mm: z.number().positive().optional().describe('Default the board\'s via drill'),
+  size_mm: z.number().positive().optional().describe('Via pad diameter; default the board\'s via pad'),
+}).describe('Drawn copper: a through via at a spot, of one net: it joins that net\'s copper on every layer it touches (tracks ending on it, a plane or pour of the net it lies in). The effect gives its id (v…).');
+
+export const EraseCopperOp = z.object({
+  op: z.literal('erase_copper'),
+  ids: z.array(z.string()).optional().describe('Tracks and vias by id (t3, v1)'),
+  nets: z.array(netName).optional().describe('All drawn copper of these nets'),
+  parts: z.array(componentRef).optional().describe('Tracks that end on these parts\' pads'),
+  rect: z
+    .object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() })
+    .optional()
+    .describe('Tracks with a point and vias inside this rectangle (top-left corner and size, mm)'),
+  all: z.boolean().optional().describe('All drawn copper'),
+}).describe('Drawn copper: take tracks and vias away (any given selector; they add up).');
 
 export const SetPlaneOp = z.object({
   op: z.literal('set_plane'),
@@ -564,6 +607,10 @@ export const EditOp = z.discriminatedUnion('op', [
   ProposePlacementOp,
   RefinePlacementOp,
   RouteOp,
+  SetCopperModeOp,
+  DrawTrackOp,
+  DrawViaOp,
+  EraseCopperOp,
   SetPlaneOp,
   SetPlaneStyleOp,
   AddHoleOp,
@@ -609,6 +656,11 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
   z.object({ op: z.literal('get_fab_profiles') }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses'),
   z.object({ op: z.literal('get_schematic') }).describe('Schematic drawing: each page (number, name, paper size in mils, drawn by the auto-layout or as you arranged it), where each symbol stands (centre and size in mils from the paper\'s top-left) and the net labels with the pins they sit on (auto: a connection your drawing does not show yet)'),
+  z.object({
+    op: z.literal('get_copper'),
+    nets: z.array(netName).optional().describe('Only these nets'),
+    rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('Only copper with a point inside this rectangle (mm)'),
+  }).describe('Drawn copper: every track (id, net, layer, width, points in mm, the pads its ends lie on) and via (id, net, at, drill, size), to edit or erase by id'),
   z.object({ op: z.literal('get_board') }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
   z.object({
     op: z.literal('try_placements'),

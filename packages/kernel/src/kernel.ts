@@ -463,9 +463,25 @@ export class Kernel {
           ),
         };
       }
+      case 'get_copper': {
+        const b = this.board();
+        if (!b.drawn) return { copper: 'the router\'s (set_copper_mode drawn makes it yours)', tracks: b.tracks.length, vias: b.vias.length };
+        const nets = q.nets ? new Set(q.nets.map((n) => findNet(d, n)?.id ?? n)) : null;
+        const r = q.rect;
+        const inRect = (x: number, y: number) => !r || (x >= r.x_mm && y >= r.y_mm && x <= r.x_mm + r.width_mm && y <= r.y_mm + r.height_mm);
+        const ref = (a?: { componentId: string; pad: string }) => (a ? `${d.components[a.componentId]?.refdes ?? a.componentId}.${a.pad}` : undefined);
+        const name = (id: string) => d.nets[id]?.name ?? id;
+        return {
+          tracks: b.drawn.tracks
+            .filter((t) => (!nets || nets.has(t.netId)) && t.pts.some((v, i) => i % 2 === 0 && inRect(v, t.pts[i + 1]!)))
+            .map((t) => ({ id: t.id, net: name(t.netId), layer: t.layer, width: t.width, pts: Array.from({ length: t.pts.length / 2 }, (_, i) => [t.pts[2 * i]!, t.pts[2 * i + 1]!]), ...(t.from ? { from: ref(t.from) } : {}), ...(t.to ? { to: ref(t.to) } : {}) })),
+          vias: b.drawn.vias.filter((v) => (!nets || nets.has(v.netId)) && inRect(v.x, v.y)).map((v) => ({ id: v.id, net: name(v.netId), at: [v.x, v.y], drill: v.drill, size: v.pad })),
+        };
+      }
       case 'get_board': {
-        // routing is expensive: use it when it has been computed, otherwise placement only
-        const routed = this.boards.get(d);
+        // routing is expensive: use it when it has been computed, otherwise placement only (drawn
+        // copper routes nothing: always computed)
+        const routed = d.board?.drawn ? this.board() : this.boards.get(d);
         const b = routed ?? this.boardPlacement();
         return { ...boardSummary(b, !!routed), plane_plan: planePlan(d, b) };
       }

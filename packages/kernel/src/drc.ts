@@ -5,6 +5,7 @@
 import { cutoutDistance, insideBoard, padCapsule, roundPadDist } from '@4k7/schema';
 import type { BoardDiagnostic, BoardPart, BoardView, CopperLayer } from '@4k7/schema';
 import { segDist } from './segments.ts';
+import { padPointDist } from './keep.ts';
 
 type Shape =
   | { kind: 'seg'; ax: number; ay: number; bx: number; by: number; r: number }
@@ -159,8 +160,8 @@ function segRect(ax: number, ay: number, bx: number, by: number, r: { x0: number
   return best;
 }
 
-/** Tracks and vias closer than the edge clearance to a cutout or to the (rounded) board edge. */
-export function edgeDrc(b: BoardView): BoardDiagnostic[] {
+/** Tracks and vias closer than the edge clearance to a cutout or to the (rounded) board edge. `straight`: the straight edges too (drawn copper; the router keeps off them). */
+export function edgeDrc(b: BoardView, straight = false): BoardDiagnostic[] {
   const e = b.rules.edgeClearance;
   const out: BoardDiagnostic[] = [];
   const seen = new Set<string>();
@@ -181,7 +182,7 @@ export function edgeDrc(b: BoardView): BoardDiagnostic[] {
     seen.add(key);
     out.push({ code: 'DRC.EDGE_CLEARANCE', severity: 'error', message: `${what} is ${Math.max(0, d).toFixed(2)} mm from ${near} (min ${e} mm).`, at: { x, y }, entities: [] });
   };
-  if (!b.cutouts.length && !b.cornerRadius && !b.shape) return out; // the router keeps off straight edges
+  if (!straight && !b.cutouts.length && !b.cornerRadius && !b.shape) return out; // the router keeps off straight edges
   for (const t of b.tracks) {
     const what = `track ${b.netNames[t.netId] ?? t.netId}`;
     for (let i = 0; i + 3 < t.pts.length; i += 2) {
@@ -336,3 +337,43 @@ export function edgeCrossings(pts: number[], x0: number, y0: number, x1: number,
   }
   return out;
 }
+
+/**
+ * Soft checks of drawn copper (warnings: the agent may mean it). A track end that lands on no
+ * copper of its net (a pad on its layer, a via, another of its tracks on its layer) is dangling;
+ * a piece that is not a multiple of 45° is off the usual directions.
+ */
+export function drawnDrc(b: BoardView): BoardDiagnostic[] {
+  const out: BoardDiagnostic[] = [];
+  const name = (id: string) => b.netNames[id] ?? id;
+  const pads = b.parts.flatMap((p) => p.pads.map((pad) => ({ p, pad })));
+  for (const t of b.drawn?.tracks ?? []) {
+    const id = t.id;
+    const lands = (x: number, y: number) =>
+      pads.some(({ pad }) => pad.netId === t.netId && (pad.drill || pad.layers.includes(t.layer)) && padPointDist(pad, x, y) <= t.width / 2 + EPS) ||
+      b.vias.some((v) => v.netId === t.netId && Math.hypot(v.x - x, v.y - y) <= (v.pad + t.width) / 2 + EPS) ||
+      b.tracks.some((o) => (o as { id?: string }).id !== id && o.netId === t.netId && o.layer === t.layer && pieces(o).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(x, y) <= (o.width + t.width) / 2 + EPS)) ||
+      b.zones.some((z) => z.netId === t.netId && z.layer === t.layer && inRects(z.rects, x, y));
+    for (const [x, y, which] of [[t.pts[0]!, t.pts[1]!, 'start'], [t.pts.at(-2)!, t.pts.at(-1)!, 'end']] as const) {
+      if (!lands(x, y)) out.push({ code: 'DRAW.DANGLING', severity: 'warning', message: `Track ${id} (${name(t.netId)}, ${t.layer}): its ${which} at ${x.toFixed(2)}, ${y.toFixed(2)} meets no copper of its net.`, at: { x, y }, entities: [] });
+    }
+    const odd = pieces(t).find(([ax, ay, bx, by]) => {
+      const a = (Math.atan2(by - ay, bx - ax) * 180) / Math.PI;
+      const r = Math.abs(a / 45 - Math.round(a / 45)) * 45;
+      return Math.hypot(bx - ax, by - ay) > 0.25 && r > 0.5; // (not the short jog onto a pad)
+    });
+    if (odd) out.push({ code: 'DRAW.ANGLE', severity: 'warning', message: `Track ${id} (${name(t.netId)}) has a piece off the 45° directions (${odd.map((v) => v.toFixed(2)).join(', ')}).`, at: { x: (odd[0] + odd[2]) / 2, y: (odd[1] + odd[3]) / 2 }, entities: [] });
+  }
+  return out;
+}
+
+function pieces(t: { pts: number[] }): [number, number, number, number][] {
+  const out: [number, number, number, number][] = [];
+  for (let q = 0; q + 3 < t.pts.length; q += 2) out.push([t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!]);
+  return out;
+}
+
+const inRects = (rects: number[], x: number, y: number) => {
+  for (let i = 0; i + 3 < rects.length; i += 4) if (x >= rects[i]! && y >= rects[i + 1]! && x <= rects[i]! + rects[i + 2]! && y <= rects[i + 1]! + rects[i + 3]!) return true;
+  return false;
+};

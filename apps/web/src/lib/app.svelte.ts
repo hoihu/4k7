@@ -1101,14 +1101,24 @@ class AppState {
             true,
           );
         }
+        // drawn copper: the hard rules (errors of the copper DRC) hold; warnings are the agent's call
+        const draftBoard = (await this.kernel.draftDesign()).board;
+        if (p.hunks.some((h) => h.id === 'board:board') && draftBoard?.drawn) {
+          const b = await this.routedBoard();
+          const hard = (b?.diagnostics ?? []).filter((x) => x.severity === 'error' && !x.waivedBy && x.code !== 'DRC.UNROUTED');
+          if (hard.length) {
+            log('propose', false, `refused: ${hard.length} hard copper rule(s)`);
+            return text(`Refused: the drawn copper breaks ${hard.length} hard rule(s). Fix them (get_board_image region shows the spot; get_copper lists the copper by id):\n` + hard.slice(0, 20).map((x) => `- ${x.code}${x.at ? ` at ${x.at.x.toFixed(2)}, ${x.at.y.toFixed(2)}` : ''}: ${x.message}`).join('\n'), true);
+          }
+        }
         // a routed board is routed completely, or the agent says why not
-        if (p.hunks.some((h) => h.id === 'board:board') && !args.data.open_connections?.trim() && (await this.kernel.draftDesign()).board?.routed) {
+        if (p.hunks.some((h) => h.id === 'board:board') && !args.data.open_connections?.trim() && (draftBoard?.routed || draftBoard?.drawn)) {
           const b = await this.routedBoard();
           if (b?.routing === 'done' && b.unrouted.length) {
             log('propose', false, `refused: ${b.unrouted.length} open connection(s)`);
             const name = (id: string) => b.netNames[id] ?? id;
             return text(
-              `Refused: the board is routed but ${b.unrouted.length} connection(s) are open, and a board with an open connection does not work. Make room and route again (get_board lists them with what blocks them; get_board_image region shows the spot):\n` +
+              `Refused: ${b.drawn ? 'the drawn copper leaves' : 'the board is routed but'} ${b.unrouted.length} connection(s) ${b.drawn ? '' : 'are '}open, and a board with an open connection does not work. ${b.drawn ? 'Draw them' : 'Make room and route again'} (get_board lists them with what blocks them; get_board_image region shows the spot):\n` +
                 b.unrouted.slice(0, 12).map((u) => `- ${name(u.netId)} ${u.from} → ${u.to}${u.blockedBy?.length ? `, blocked by ${u.blockedBy.map(name).join(', ')}` : u.enclosed ? ', closed off' : u.plane ? `, no room for the via to ${u.plane}` : ''}${u.near.length ? `, near ${u.near.join(', ')}` : ''}`).join('\n') +
                 '\nIf you cannot close them, propose with open_connections saying why and what the user could decide.',
               true,

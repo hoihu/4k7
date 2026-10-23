@@ -70,6 +70,39 @@ export interface BoardSettings {
    * change of its own: it is written when routing finishes and ignored once the key differs.
    */
   copper?: StoredCopper;
+  /**
+   * Copper drawn by the agent (set_copper_mode drawn). Present: the board's copper is this, as
+   * drawn, and the router lays nothing on its own; it routes only what the agent asks for (route
+   * nets / from, to), and what it lays is added here like any drawn copper. Pours and planes still
+   * fill round it. Absent: the router's copper (route).
+   */
+  drawn?: DrawnCopper;
+}
+
+/** The agent's own copper (BoardSettings.drawn). */
+export interface DrawnCopper {
+  tracks: DrawnTrack[];
+  vias: DrawnVia[];
+  /** The next item number (ids t1, t2, … and v1, v2, …). */
+  next: number;
+}
+
+/** A pad a drawn track ends on: the end follows the pad when its part moves or turns. */
+export interface PadAnchor {
+  /** Component id. */
+  componentId: string;
+  pad: string;
+}
+
+export interface DrawnTrack extends Track {
+  id: string;
+  /** The pad its first / last point lies on (that point follows the pad). */
+  from?: PadAnchor;
+  to?: PadAnchor;
+}
+
+export interface DrawnVia extends Via {
+  id: string;
 }
 
 /**
@@ -718,6 +751,8 @@ export interface BoardView {
   netNames: Record<string, string>;
   /** Routing: not done yet, done for an earlier placement (out of date), or done for this one. */
   routing: 'none' | 'stale' | 'done';
+  /** The copper is the agent's (BoardSettings.drawn): routing is always 'done', open connections are what is not drawn yet. */
+  drawn?: { tracks: DrawnTrack[]; vias: DrawnVia[] };
   /** Identifies this placement (parts, nets, outline, rules); the route step records it. */
   placementKey: string;
   /** The outline: proposed by the placer, or set by the user. */
@@ -747,6 +782,10 @@ const PLUGGED_FROM: Record<BoardFacing, string> = {
 /** What to do about open connections: the agent is expected to get the board to 100 %. */
 const OPEN_NEXT =
   'A board with an open connection does not work: get it to 100 %. Fix the placement first, not the copper: look at each spot (get_board_image region round at_mm), then refine_placement near the parts named there (the small parts moved and turned to untangle the ratsnest), and move or turn the main parts near it (place with rot, or try_placements with the arrangement as it is: the kernel improves on it and gives the parts to apply), so pads face the parts they connect to and the ratsnest lines stop crossing; give a crowded area more space (set_board size); route again (it keeps what holds and takes seconds). On a 2-layer board, 4 layers (set_board layers) only as the last resort, it costs more. Enclosed: pads or the edge close the pad off, move the part. Plane: no room for the via down to the plane next to the pad, move the part or what crowds it.';
+
+/** Drawn copper: what to do about the connections not drawn yet. */
+const DRAWN_NEXT =
+  'Draw each open connection: draw_track from pad to pad (corners in via, 45° pieces), draw_via where it changes layer or drops to a plane, or let route nets / from, to find a path round what is drawn and edit that. Look at the spot first (get_board_image region). Errors in drc are hard rules (shorts, clearance, the edge, the fab\'s limits): fix them; warnings are soft (your call; say why where you keep one).';
 
 function openSummary(b: BoardView, u: UnroutedConnection) {
   const name = (id: string) => b.netNames[id] ?? id;
@@ -829,6 +868,17 @@ export function boardSummary(b: BoardView, routed = true) {
     ...(userPlaced(b).length ? { user_placed: { parts: userPlaced(b), note: USER_PLACED_NOTE } } : {}),
     routing: !routed
       ? 'not computed here (see the Layout view)'
+      : b.drawn
+        ? {
+            copper: 'drawn by you (get_copper lists it by id)',
+            nets: b.stats.nets,
+            connected: b.stats.routed,
+            open_connections: b.stats.unrouted,
+            tracks: b.drawn.tracks.length,
+            vias: b.drawn.vias.length,
+            track_mm: b.stats.trackLength,
+            ...(b.unrouted.length ? { open: b.unrouted.slice(0, 40).map((u) => openSummary(b, u)), next: DRAWN_NEXT } : {}),
+          }
       : b.routing === 'done'
         ? {
             nets: b.stats.nets,
@@ -897,6 +947,7 @@ export function boardSummary(b: BoardView, routed = true) {
       : {}),
     drc: b.diagnostics.filter((x) => !x.waivedBy).map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
+    ...(b.drawn ? { copper_note: 'Drawn copper: you lay every track and via (draw_track, draw_via, erase_copper; route nets / from, to as a helper). Planes and pours still fill round your copper. A track end on a pad follows the pad when the part moves; the rest stays where you drew it, so look again after moving parts.' } : {}),
     note: 'Workflow: decide the main parts\' places and rotations (try_placements compares arrangements, propose_placement parts applies one; the placer puts the small parts round them), then fine-tune (place = a choice for a part, kept relative to its parent part, rot turns it; lock: true pins it exactly; set_board for the size; placement_measures say how the arrangement routes: shorter, fewer crossing ratsnest lines are better), then route as the last step, to 100 %. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
   };
 }
