@@ -25,6 +25,7 @@ import {
   type CopperLayer,
   type Design,
   type DrawnTrack,
+  type Keepout,
   type MountingHole,
   type PlaneArea,
   type PlaneStyle,
@@ -58,7 +59,7 @@ import {
 } from '@4k7/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
 import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
-import { copperDrc, edgeDrc, narrowTrackDrc, planeViaDrc, splitDrc } from './drc.ts';
+import { copperDrc, edgeDrc, keepoutDrc, narrowTrackDrc, planeViaDrc, splitDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelView } from './panel.ts';
 import { stableJson } from './canonical.ts';
@@ -1031,8 +1032,9 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const planes = placePlanes(settingsPlanes(d, layers.length as 2 | 4), parts, w, h);
   const viaPlan = planVias(settings.vias ?? [], parts, w, h, rules, (id) => d.nets[id]?.attrs.maxCurrent);
   const drawnPlan = planDrawn(settings.tracks ?? [], parts, d);
+  const keepouts = placeKeepouts(settings.keepouts ?? [], parts, w, h, layers);
   // (keys sorted: a design read back from its file has them in another order than one just edited)
-  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : [])] : []), ...(drawnPlan.route.length ? [drawnPlan.route] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
+  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : [])] : []), ...(drawnPlan.route.length ? [drawnPlan.route] : []), ...(keepouts.length ? [keepouts] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   const view: BoardView = {
     outline: { w, h },
     layers,
@@ -1045,6 +1047,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     planes,
     viaGroups: viaPlan.groups,
     drawn: drawnPlan.view,
+    keepouts,
     locked: (settings.locked ?? []).map((l) => ({ netId: l.netId, tracks: l.tracks.length, vias: l.vias.length })),
     ratsnest: ratsnest(parts),
     diagnostics,
@@ -1111,7 +1114,7 @@ const COPPER_FORMAT = 2;
 export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean; onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
   const b = placeBoard(d, sch);
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
-  const { powerNets, planes, netWidths, key, basis } = routeSetup(d, b);
+  const { powerNets, planes, netWidths, routeFirst, netLayers, key, basis } = routeSetup(d, b);
   const pads = b.parts.flatMap((p) => p.pads);
   const kept = d.board?.copper?.key === key ? d.board.copper : null;
   // routed before for another placement on the same board: the router keeps what still holds of
@@ -1154,6 +1157,9 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
         cutouts: b.cutouts,
         ...(keep ? { keep } : {}),
         ...(settingsDrawn.length ? { drawn: settingsDrawn } : {}),
+        ...(routeFirst.size ? { routeFirst } : {}),
+        ...(Object.keys(netLayers).length ? { netLayers } : {}),
+        ...(b.keepouts.length ? { keepouts: b.keepouts.map(({ rect, layers, allow }) => ({ rect, layers, allow })) } : {}),
         ...(d.board?.locked?.length ? { locked: { tracks: d.board.locked.flatMap((l) => l.tracks), vias: d.board.locked.flatMap((l) => l.vias) } } : {}),
         ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}),
         ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
@@ -1209,7 +1215,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     ...(copper.reused ? { reused: copper.reused } : {}),
   };
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...narrowTrackDrc(routed, (id) => (netWidths[id] ? { width: netWidths[id], why: 'set for the net' } : powerNets.has(id) ? { width: b.rules.powerTrack, why: 'the power width' } : undefined))];
+  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...keepoutDrc(routed), ...narrowTrackDrc(routed, (id) => (netWidths[id] ? { width: netWidths[id], why: 'set for the net' } : powerNets.has(id) ? { width: b.rules.powerTrack, why: 'the power width' } : undefined))];
   for (const t of routed.drawn) {
     if (t.laid !== false) continue;
     diags.push({
@@ -1237,7 +1243,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     const u = list[0]!;
     const n = list.length;
     const why = u.enclosed
-      ? `; ${u.from} is closed off by pads or the edge`
+      ? `; ${u.from} is closed off by pads, ${b.keepouts.length ? 'a keep-out ' : ''}or the edge`
       : u.plane
         ? `; no room for a via down to the ${u.plane} plane`
         : u.blockedBy?.length
@@ -1279,7 +1285,11 @@ function routeSetup(d: Design, b: BoardView) {
   const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
   // (locked copper is in the key, not in the placement's: locking re-routes without making the routing out of date)
   const locked = d.board?.locked ?? [];
-  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort(), ...(locked.length ? [locked] : [])]));
+  // nets routed first, and the layer a net should keep to (set_net route_first, layer)
+  const routeFirst = new Set(Object.values(d.nets).filter((n) => n.attrs.routeFirst).map((n) => n.id));
+  const netLayers = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.layer && b.layers.includes(n.attrs.layer)).map((n) => [n.id, n.attrs.layer!]));
+  const steer = routeFirst.size || Object.keys(netLayers).length ? [[...routeFirst].sort(), Object.entries(netLayers).sort()] : [];
+  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort(), ...(locked.length ? [locked] : []), ...steer]));
   // the pads dropping through vias the agent placed (add_vias drop), per net
   const drops = (d.board?.vias ?? []).filter((g) => g.kind === 'drop');
   const drawn = d.board?.tracks ?? [];
@@ -1287,14 +1297,15 @@ function routeSetup(d: Design, b: BoardView) {
   // copper. (Not the outline: an auto-sized board grows as parts move; the copper is checked
   // against the edge as it is now.)
   const basis = {
-    board: hash(stableJson([COPPER_FORMAT, b.layers, b.rules])),
+    // (a keep-out added or moved routes everything again: kept copper is not checked against it)
+    board: hash(stableJson([COPPER_FORMAT, b.layers, b.rules, ...(b.keepouts.length ? [b.keepouts] : [])])),
     nets: Object.fromEntries(
       Object.keys(d.nets)
         .sort()
-        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.offsets ?? g.count ?? null, g.drill ?? null, g.size ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null]), drawn.filter((t) => t.netId === id), locked.filter((l) => l.netId === id)]))]),
+        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.offsets ?? g.count ?? null, g.drill ?? null, g.size ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null]), drawn.filter((t) => t.netId === id), locked.filter((l) => l.netId === id), routeFirst.has(id), netLayers[id] ?? null]))]),
     ),
   };
-  return { powerNets, planes, netWidths, key, basis };
+  return { powerNets, planes, netWidths, routeFirst, netLayers, key, basis };
 }
 
 /** The key copper routed for this design's board now would be kept under (see BoardSettings.copper). */
@@ -1994,6 +2005,19 @@ function areaBox(area: PlaneArea, parts: BoardPart[], w: number, h: number): [nu
   }
   const r = [Math.max(0, box[0]), Math.max(0, box[1]), Math.min(w, box[2]), Math.min(h, box[3])].map(r3) as [number, number, number, number];
   return r[2] - r[0] < 1 || r[3] - r[1] < 1 ? null : r;
+}
+
+/** Keep-out areas (BoardSettings.keepouts) on this placement: one under parts lets their own nets through. */
+function placeKeepouts(keepouts: Keepout[], parts: BoardPart[], w: number, h: number, layers: CopperLayer[]): BoardView['keepouts'] {
+  const out: BoardView['keepouts'] = [];
+  for (const k of keepouts) {
+    const rect = areaBox(k.area, parts, w, h);
+    if (!rect) continue;
+    const under = k.area.under ? parts.filter((p) => k.area.under!.includes(p.componentId)) : [];
+    const allow = [...new Set([...(k.except ?? []), ...under.flatMap((p) => p.pads.flatMap((q) => (q.netId ? [q.netId] : [])))])].sort();
+    out.push({ id: k.id, rect, layers: k.layers?.filter((l) => layers.includes(l)) ?? layers, allow, ...(under.length ? { under: under.map((p) => p.refdes) } : {}) });
+  }
+  return out;
 }
 
 function placePlanes(planes: ReturnType<typeof settingsPlanes>, parts: BoardPart[], w: number, h: number): BoardView['planes'] {

@@ -337,9 +337,38 @@ The lock is in the copper key, not in the placement key: locking or unlocking re
 (incrementally: the other nets are kept) without making the routing out of date. The net's hash
 includes it, so its copper from before is not kept beside the locked copper.
 
+### 5.10 Route first, a net's layer, keep-outs
+
+Steering softer than laying copper:
+
+- **`set_net route_first`** (`NetAttrs.routeFirst`): the net's connections come first in the
+  router's order (before the shortest-first order of the rest), in every pass, so it gets the
+  short, clean ways.
+- **`set_net layer`** (`NetAttrs.layer`): each step of the net's tracks off that layer costs one
+  more grid step (`LAYER_COST`): it keeps to the layer where that is about as short, and still
+  changes layer where it must (two vias to reach B.Cu between SMD pads 2 mm apart cost more than
+  the steps on F.Cu, so such a connection stays on top). Not for tracks the agent laid (they
+  take the layers they are given).
+- **`add_keepout { under | rect, margin_mm?, layers?, except? }`** (`BoardSettings.keepouts`,
+  `Keepout`, ids K1…; `remove_keepout`): no tracks, vias or pours of other nets in the area, on
+  its layers (default all). One under parts (their box plus 0.5 mm, following them) lets their
+  own nets through, as they must reach their pads; `except` lets others through. In the router
+  (`RouteInput.keepouts`) it is a test per net and width (`koTest`: the track's copper may not
+  reach into the rectangle), in `freeFor`, the search, its flood, the corridor and the via test,
+  so straightening keeps out too; pours are cut round it (raster and exact shape); the probe
+  takes it as closed (`enclosed`: "closed off by pads, a keep-out or the edge"). Copper the
+  router does not lay itself (tracks the agent laid are kept out too; locked copper, drop stubs)
+  is checked by `DRC.KEEPOUT`. A keep-out is in the board's hash: adding one routes everything
+  again, as kept copper is not checked against it.
+
+route_first and the layer are in the copper key, not in the placement key (the board routes
+again without going out of date), and in the net's hash (its copper is routed again). Benches:
+the six `bench/board.ts` boards route to the same copper. The synthetic 2-layer board of
+`bench/route.ts` turned out to depend on timing (the probes stop at their time budget): the same
+code gave 62 and 63 of its 63 nets in two runs.
+
 ## 6. What the agent cannot do yet
 
-- Route one net first, prefer a layer for a net, or keep the router out of an area (§7 step 6d).
 - Optimize a zoomed area of the board with the scope guard the schematic has (`zoom-optimize.md`
   steps 3–4).
 - Be told the user's taste for layouts (the schematic has notes in Settings).
@@ -366,11 +395,10 @@ Each step is useful alone.
      it open, as first planned: the board keeps working while the agent fixes the track).
    - (c) **`lock_copper` and `unlock_copper`** (built 2026-10-23, §5.9): a net's routed copper
      kept exactly as it lies (whole nets; locking a single connection is left for later).
-   - (d) Softer than geometry: `route { nets }` routes those first (the clean ways go to the
-     critical nets), a preferred layer per net (`set_net layer`, a cost, not a ban), keep-outs
-     (`add_keepout { rect | under: parts, layers, except_nets }`: no signals under the inductor).
-   - (e) The guide: route, look at the board picture, then lay only the few connections that
-     matter (switching loops, the high-current path) and lock what came out right.
+   - (d) **Route first, a net's layer, keep-outs** (built 2026-10-23, §5.10): `set_net
+     route_first`, `set_net layer` (a cost, not a ban), `add_keepout` / `remove_keepout`.
+   - (e) The guide (built with each): route, look at the board picture, then lay only the few
+     connections that matter (switching loops, the high-current path) and lock what came out right.
    The DRC and the netlist check judge the result, as on the schematic.
 7. **Layout Optimize**: the ✦ Optimize button on the board ([zoom-optimize.md](zoom-optimize.md) §6
    steps 3–4): the zoomed area as a scope, `place` (move, turn) only inside it, measures before and

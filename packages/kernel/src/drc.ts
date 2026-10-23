@@ -297,6 +297,36 @@ export function planeViaDrc(b: BoardView): BoardDiagnostic[] {
   return out;
 }
 
+/**
+ * Copper of a net a keep-out does not let through, reaching into it on one of its layers (the
+ * router keeps out; tracks laid by the agent, locked copper and drop stubs may not).
+ */
+export function keepoutDrc(b: BoardView): BoardDiagnostic[] {
+  const out: BoardDiagnostic[] = [];
+  for (const k of b.keepouts) {
+    const [x0, y0, x1, y1] = k.rect;
+    const into = (x: number, y: number, r: number) => x > x0 - r + 1e-3 && x < x1 + r - 1e-3 && y > y0 - r + 1e-3 && y < y1 + r - 1e-3;
+    const nets = new Set<string>();
+    for (const t of b.tracks) {
+      if (k.allow.includes(t.netId) || !k.layers.includes(t.layer)) continue;
+      for (let i = 0; i + 3 < t.pts.length && !nets.has(t.netId); i += 2) {
+        const n = Math.max(1, Math.ceil(Math.hypot(t.pts[i + 2]! - t.pts[i]!, t.pts[i + 3]! - t.pts[i + 1]!) / 0.05));
+        for (let q = 0; q <= n; q++) if (into(t.pts[i]! + ((t.pts[i + 2]! - t.pts[i]!) * q) / n, t.pts[i + 1]! + ((t.pts[i + 3]! - t.pts[i + 1]!) * q) / n, t.width / 2)) nets.add(t.netId);
+      }
+    }
+    for (const v of b.vias) if (!k.allow.includes(v.netId) && into(v.x, v.y, v.pad / 2)) nets.add(v.netId);
+    if (!nets.size) continue;
+    out.push({
+      code: 'DRC.KEEPOUT',
+      severity: 'warning',
+      message: `Copper of ${[...nets].map((id) => b.netNames[id] ?? id).join(', ')} reaches into keep-out ${k.id}${k.under ? ` (under ${k.under.join(', ')})` : ''}: move the track you laid, lock the net again once routed round it, or let the net through (add_keepout except).`,
+      at: { x: Math.round(((x0 + x1) / 2) * 100) / 100, y: Math.round(((y0 + y1) / 2) * 100) / 100 },
+      entities: k.under ?? [],
+    });
+  }
+  return out;
+}
+
 /** A narrower track this long (mm) is more than a neck into a pad. */
 const NECK_ALLOW_MM = 3;
 

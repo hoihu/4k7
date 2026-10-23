@@ -158,6 +158,10 @@ export interface NetAttrs {
   maxCurrent?: number;
   /** Track width on the board (mm), the user's choice; absent: the signal or power width of the rules. */
   trackWidth?: number;
+  /** The router routes this net's connections before the others (the clean ways go to it). */
+  routeFirst?: boolean;
+  /** The copper layer its tracks should keep to on the board: a cost on the others, not a ban. */
+  layer?: 'F.Cu' | 'In1.Cu' | 'In2.Cu' | 'B.Cu';
 }
 
 /**

@@ -197,6 +197,18 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent'): 
       d.board = b;
       return { op: 'erase_track', effect: `erased ${before.length - keep.length} track(s); the router routes those connections its own way`, ids: ['board'] };
     }
+    case 'add_keepout':
+      return addKeepout(d, op);
+    case 'remove_keepout': {
+      const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+      const before = b.keepouts ?? [];
+      const keep = op.id.toLowerCase() === 'all' ? [] : before.filter((k) => k.id.toUpperCase() !== op.id.toUpperCase());
+      if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: `No keep-out "${op.id}".`, candidates: before.map((k) => k.id) });
+      if (keep.length) b.keepouts = keep;
+      else delete b.keepouts;
+      d.board = b;
+      return { op: 'remove_keepout', effect: `removed ${before.length - keep.length} keep-out(s)`, ids: ['board'] };
+    }
     case 'lock_copper':
       return lockCopper(d, op);
     case 'unlock_copper': {
@@ -975,6 +987,31 @@ function trackOp(d: Design, op: Extract<EditOp, { op: 'track' }>): OpResult {
   const pts = (op.through ?? []).map((p) => `(${r3(p.x_mm)}, ${r3(p.y_mm)}${p.layer ? ` → ${p.layer}` : ''})`);
   const what = `${a.label} → ${z.label} (${net.name}), ${op.layer ?? 'on the layers the router picks'}, ${op.width_mm !== undefined ? `${r3(op.width_mm)} mm` : "the net's width"}${pts.length ? `, through ${pts.join(', ')}` : ''}`;
   return { op: 'track', effect: `${id}${was >= 0 ? ' (replaced)' : ''}: ${what}; route lays it first, as asked, and never rips it up`, ids: ['board'] };
+}
+
+/** An area the router keeps its copper out of (add_keepout). */
+function addKeepout(d: Design, op: Extract<EditOp, { op: 'add_keepout' }>): OpResult {
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  if (!op.under === !op.rect) reject({ code: 'INVALID_OP', message: 'add_keepout needs its area: under (parts) or rect, one of them.' });
+  const comps = (op.under ?? []).map((r) => resolveComponent(d, r));
+  const layers = b.layers === 4 ? ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'] : ['F.Cu', 'B.Cu'];
+  for (const l of op.layers ?? []) if (!layers.includes(l)) reject({ code: 'BOARD_INVALID', message: `The board has no ${l} (${layers.length} layers).` });
+  const except = (op.except ?? []).map((n) => {
+    const net = findNet(d, n);
+    if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${n}".`, candidates: Object.values(d.nets).map((x) => x.name) });
+    return net!;
+  });
+  const keepouts = [...(b.keepouts ?? [])];
+  let id = '';
+  for (let i = 1; !id; i++) if (!keepouts.some((k) => k.id === `K${i}`)) id = `K${i}`;
+  const area: PlaneArea = op.rect
+    ? { rect: [op.rect.x_mm, op.rect.y_mm, op.rect.x_mm + op.rect.width_mm, op.rect.y_mm + op.rect.height_mm] }
+    : { under: comps.map((c) => c.id), margin: op.margin_mm ?? 0.5 };
+  keepouts.push({ id, area, ...(op.layers ? { layers: [...op.layers] } : {}), ...(except.length ? { except: except.map((n) => n.id) } : {}) });
+  b.keepouts = keepouts;
+  d.board = b;
+  const where = op.rect ? `${op.rect.width_mm} × ${op.rect.height_mm} mm at (${op.rect.x_mm}, ${op.rect.y_mm})` : `under ${comps.map((c) => c.refdes).join(', ')} (their own nets still reach their pads)`;
+  return { op: 'add_keepout', effect: `${id}: no copper ${where} on ${op.layers?.join(', ') ?? 'every layer'}${except.length ? `, but for ${except.map((n) => n.name).join(', ')}` : ''}; route keeps out of it`, ids: ['board'] };
 }
 
 /** A net's routed copper, kept as it lies (lock_copper): only from routing done for the board as it stands. */
@@ -2026,6 +2063,20 @@ function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpResult {
       a.trackWidth = Math.round(op.track_mm * 1000) / 1000;
     }
     changes.push(`track ${op.track_mm === null ? 'default' : `${a.trackWidth} mm`}`);
+  }
+  if (op.route_first !== undefined) {
+    if (op.route_first) a.routeFirst = true;
+    else delete a.routeFirst;
+    changes.push(op.route_first ? 'routed first' : 'routed as any other');
+  }
+  if (op.layer !== undefined) {
+    if (op.layer === null) delete a.layer;
+    else {
+      const layers = (d.board?.layers ?? 2) === 4 ? ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'] : ['F.Cu', 'B.Cu'];
+      if (!layers.includes(op.layer)) reject({ code: 'BOARD_INVALID', message: `The board has no ${op.layer} (${layers.length} layers).` });
+      a.layer = op.layer;
+    }
+    changes.push(op.layer ? `tracks on ${op.layer} where they can` : 'tracks on any layer');
   }
   return { op: 'set_net', effect: `net ${net.name}: ${changes.join(', ') || 'no change'}`, ids: [net.id] };
 }

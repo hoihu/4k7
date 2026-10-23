@@ -237,6 +237,63 @@ describe('copper the agent locked', () => {
   });
 });
 
+describe('steering the router', () => {
+  /** Some piece of the track's copper reaches into the rectangle. */
+  const into = (t: { width: number; pts: number[] }, [x0, y0, x1, y1]: number[]) => {
+    for (let q = 0; q + 3 < t.pts.length; q += 2) {
+      for (let s = 0; s <= 100; s++) {
+        const x = t.pts[q]! + ((t.pts[q + 2]! - t.pts[q]!) * s) / 100;
+        const y = t.pts[q + 1]! + ((t.pts[q + 3]! - t.pts[q + 1]!) * s) / 100;
+        if (x > x0! - t.width / 2 + 1e-3 && x < x1! + t.width / 2 - 1e-3 && y > y0! - t.width / 2 + 1e-3 && y < y1! + t.width / 2 - 1e-3) return true;
+      }
+    }
+    return false;
+  };
+
+  it('keeps out of a keep-out, but for the nets it lets through', () => {
+    const parts = [part('P1', [[3, 5, 'A']]), part('P2', [[17, 5, 'A']])];
+    const rect: [number, number, number, number] = [8, 3, 12, 7];
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts, powerNets: new Set(), keepouts: [{ rect, layers: ['F.Cu'], allow: [] }] });
+    expect(r.failed).toEqual([]);
+    expect(r.tracks.some((t) => into(t, rect))).toBe(false);
+    const through = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts, powerNets: new Set(), keepouts: [{ rect, layers: ['F.Cu'], allow: ['A'] }] });
+    expect(through.tracks.some((t) => into(t, rect))).toBe(true);
+  });
+
+  it('a pour keeps out of it too', () => {
+    const parts = [part('P1', [[3, 5, 'GND']]), part('P2', [[17, 5, 'GND']])];
+    parts.forEach((p) => (p.pads[0]!.layers = ['F.Cu', 'B.Cu']));
+    parts.forEach((p) => (p.pads[0]!.drill = 0.6));
+    const rect: [number, number, number, number] = [8, 3, 12, 7];
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts, powerNets: new Set(['GND']), planes: [{ netId: 'GND', layer: 'B.Cu' }], keepouts: [{ rect, layers: ['B.Cu'], allow: [] }] });
+    const z = r.zones.find((x) => x.layer === 'B.Cu')!;
+    expect(z.shape?.cuts.some((c) => c.k === 'rect' && c.x === 8 && c.y === 3 && c.w === 4 && c.h === 4)).toBe(true);
+    for (let i = 0; i + 3 < z.rects.length; i += 4) {
+      const [x, y, w, h] = [z.rects[i]!, z.rects[i + 1]!, z.rects[i + 2]!, z.rects[i + 3]!];
+      expect(x < rect[2] && x + w > rect[0] && y < rect[3] && y + h > rect[1]).toBe(false);
+    }
+  });
+
+  it('a net keeps to its layer where it can', () => {
+    const parts = [part('P1', [[3, 5, 'A']]), part('P2', [[17, 5, 'A']])];
+    parts.forEach((p) => (p.pads[0]!.layers = ['F.Cu', 'B.Cu']));
+    parts.forEach((p) => (p.pads[0]!.drill = 0.6));
+    const plain = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts, powerNets: new Set() });
+    expect(plain.tracks.map((t) => t.layer)).toEqual(['F.Cu']);
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts, powerNets: new Set(), netLayers: { A: 'B.Cu' } });
+    expect(r.tracks.map((t) => t.layer)).toEqual(['B.Cu']);
+  });
+
+  it('a net routed first gets the way the others want', () => {
+    // a wall with a gap one track wide; X (shorter) goes first unless Y is asked to
+    const wall = (ys: number[], net: string) => ys.map((y): [number, number, string] => [10, y, net]);
+    const parts = [part('W1', wall([0.5, 1.5, 2.5, 3.5], 'W')), part('W2', wall([5.4, 6.4, 7.4, 8.4, 9.4], 'W')), part('X1', [[5, 4.45, 'X']]), part('X2', [[15, 4.45, 'X']]), part('Y1', [[2, 4.45, 'Y']]), part('Y2', [[18, 4.45, 'Y']])];
+    const input = { outline: { w: 20, h: 10 }, layers: ['F.Cu'] as ['F.Cu'], rules: RULES, parts, powerNets: new Set<string>() };
+    expect(route(input).failed.map((f) => f.netId)).toEqual(['Y']);
+    expect(route({ ...input, routeFirst: new Set(['Y']) }).failed.map((f) => f.netId)).toEqual(['X']);
+  });
+});
+
 describe('the routed copper, kept with the design', () => {
   it('a routed design read back from its file is still routed (key order does not matter)', () => {
     const k = buck();

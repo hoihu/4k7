@@ -73,6 +73,8 @@ export const SetNetOp = z.object({
   power: z.boolean().optional().describe('Draw as a power rail'),
   max_current: z.number().nullable().optional().describe('Expected maximum current in amps: get_net suggests a track width for it and how many vias it needs (about 0.9 A per 0.3 mm via) where it flows through a pad: place them with add_vias drop'),
   track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise)'),
+  route_first: z.boolean().nullable().optional().describe('Board: the router routes this net before the others, so it gets the short, clean ways (a switching node, a clock, the high-current path); null = as any other'),
+  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).nullable().optional().describe('Board: the layer its tracks should keep to (a cost on the others, not a ban: it still changes layer where it must); null = any'),
 });
 
 export const AddSheetOp = z.object({
@@ -541,6 +543,20 @@ export const EraseTrackOp = z.object({
   id: z.string().describe('A track id ("T1", from get_board laid_tracks) or "all"'),
 });
 
+export const AddKeepoutOp = z.object({
+  op: z.literal('add_keepout'),
+  under: z.array(componentRef).min(1).optional().describe('The area under these parts (their box plus margin_mm; it follows them). Their own nets may still reach their pads'),
+  margin_mm: z.number().min(0).max(20).optional().describe('With under: how far the area reaches past the parts (default 0.5 mm)'),
+  rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('The area as a rectangle (top-left corner and size, mm)'),
+  layers: z.array(z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'])).min(1).optional().describe('The layers it keeps clear (default all)'),
+  except: z.array(netName).optional().describe('Nets that may still run there'),
+}).describe('Keep the router\'s copper out of an area: no tracks, vias or pours of other nets (signals under an inductor or a crystal, anything under an antenna, the space round a sensitive input). Give under (parts) or rect. Copper you laid with track or locked must keep out too (the DRC checks it). Routing is out of date until route runs again.');
+
+export const RemoveKeepoutOp = z.object({
+  op: z.literal('remove_keepout'),
+  id: z.string().describe('A keep-out id ("K1", from get_board keepouts) or "all"'),
+});
+
 export const LockCopperOp = z.object({
   op: z.literal('lock_copper'),
   nets: z.array(netName).min(1).describe('The nets whose routed copper to keep as it is, e.g. ["SW", "+5V"]'),
@@ -610,6 +626,8 @@ export const EditOp = z.discriminatedUnion('op', [
   EraseTrackOp,
   LockCopperOp,
   UnlockCopperOp,
+  AddKeepoutOp,
+  RemoveKeepoutOp,
   AddCutoutOp,
   RemoveCutoutOp,
   AddGraphicOp,

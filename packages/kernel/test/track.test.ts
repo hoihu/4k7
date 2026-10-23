@@ -153,3 +153,53 @@ describe('lock_copper', () => {
     expect(k.transact({ summary: 'unlock', ops: [{ op: 'unlock_copper', nets: ['SW'] }] }).status).toBe('rejected');
   });
 });
+
+describe('keep-outs, route first, a net\'s layer', () => {
+  it('keeps other nets out from under a part; its own nets still reach it', () => {
+    const k = buck();
+    expect(k.transact({ summary: 'ko', ops: [{ op: 'add_keepout', under: ['L1'] }] }).status).toBe('ok');
+    expect(k.board().routing).toBe('stale');
+    k.transact({ summary: 'route', ops: [{ op: 'route' }] });
+    const b = k.board();
+    const ko = b.keepouts[0]!;
+    expect(ko.under).toEqual(['L1']);
+    expect(ko.allow.map((id) => b.netNames[id]).sort()).toEqual(['+3V3', 'SW']);
+    expect(b.unrouted).toEqual([]);
+    expect(b.diagnostics.filter((x) => x.code === 'DRC.KEEPOUT')).toEqual([]);
+    const [x0, y0, x1, y1] = ko.rect;
+    for (const t of b.tracks.filter((t) => !ko.allow.includes(t.netId))) {
+      for (let q = 0; q + 1 < t.pts.length; q += 2) expect(t.pts[q]! > x0 && t.pts[q]! < x1 && t.pts[q + 1]! > y0 && t.pts[q + 1]! < y1).toBe(false);
+    }
+    const s = boardSummary(b) as { keepouts?: { id: string }[] };
+    expect(s.keepouts?.map((x) => x.id)).toEqual(['K1']);
+    expect(k.transact({ summary: 'rm', ops: [{ op: 'remove_keepout', id: 'K1' }] }).status).toBe('ok');
+    expect(k.board().keepouts).toEqual([]);
+  });
+
+  it('the DRC names copper laid into a keep-out', () => {
+    const k = buck();
+    // the switch node laid by hand straight through a keep-out that does not let it through
+    k.transact({ summary: 'ko', ops: [{ op: 'add_keepout', rect: { x_mm: 14.6, y_mm: 7.3, width_mm: 1.5, height_mm: 1.5 } }] });
+    k.transact({ summary: 'sw', ops: [{ op: 'track', from: 'U1.8', to: 'D1.1', layer: 'F.Cu', through: [{ x_mm: 15.3, y_mm: 8 }] }] });
+    k.transact({ summary: 'route', ops: [{ op: 'route' }] });
+    const b = k.board();
+    // the router keeps the track the agent laid out of it too: it is not laid, and says why
+    expect(b.drawn[0]!.laid).toBe(false);
+    expect(b.diagnostics.filter((x) => x.code === 'DRC.KEEPOUT')).toEqual([]);
+  });
+
+  it('set_net route_first and layer: kept with the net, shown by get_net, steering the route', () => {
+    const k = buck();
+    expect(k.transact({ summary: 'steer', ops: [{ op: 'set_net', net: 'FB', route_first: true, layer: 'B.Cu' }] }).status).toBe('ok');
+    expect(k.transact({ summary: 'bad', ops: [{ op: 'set_net', net: 'FB', layer: 'In1.Cu' }] }).status).toBe('rejected');
+    const net = k.query({ op: 'get_net', net: 'FB' }) as { track: { routed_first?: boolean; keeps_to?: string } };
+    expect(net.track.routed_first).toBe(true);
+    expect(net.track.keeps_to).toBe('B.Cu');
+    // routing stays done: the board routes again with the change (FB's SMD pads are 2 mm apart:
+    // two vias to B.Cu cost more than the steps on F.Cu, so it stays there: a cost, not a ban)
+    const b = k.board();
+    expect(b.routing).toBe('done');
+    expect(b.newCopper).toBeDefined();
+    expect(b.unrouted).toEqual([]);
+  });
+});

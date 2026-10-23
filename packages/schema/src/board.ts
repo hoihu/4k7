@@ -52,6 +52,8 @@ export interface BoardSettings {
    * away from) before anything else, and never rips it up.
    */
   locked?: LockedCopper[];
+  /** Areas the router keeps its copper out of (add_keepout), but for the nets let through. */
+  keepouts?: Keepout[];
   /** Rounded board corners: the radius (mm); absent or 0 = square corners. */
   cornerRadius?: number;
   /**
@@ -549,6 +551,20 @@ export interface DrawnTrack {
   through?: { end: 'from' | 'to'; dx: number; dy: number; layer?: CopperLayer }[];
 }
 
+/**
+ * An area the router keeps copper out of (add_keepout): no tracks, vias or pours, on `layers` (all
+ * when absent), but for the nets in `except`; one under parts also lets their own nets through
+ * (they must reach their pads).
+ */
+export interface Keepout {
+  /** "K1", "K2" … */
+  id: string;
+  area: PlaneArea;
+  layers?: CopperLayer[];
+  /** Net ids that may still run there. */
+  except?: string[];
+}
+
 /** One net's locked copper (BoardSettings.locked): its tracks and vias as they lay when locked. */
 export interface LockedCopper {
   netId: string;
@@ -768,6 +784,8 @@ export interface BoardView {
    * The tracks the agent laid (BoardSettings.tracks), as they stand on this placement: ends as
    * "U1.3", points in board mm; after routing, whether each could be laid as asked.
    */
+  /** Keep-out areas (BoardSettings.keepouts) on this placement: the rectangle (x0, y0, x1, y1, mm), the layers, the nets let through (ids). */
+  keepouts: { id: string; rect: [number, number, number, number]; layers: CopperLayer[]; allow: string[]; under?: string[] }[];
   /** Nets with locked copper (BoardSettings.locked): how much; after routing, how much of it still holds. */
   locked: { netId: string; tracks: number; vias: number; heldTracks?: number; heldVias?: number }[];
   drawn: { id: string; netId: string; from: string; to: string; layer?: CopperLayer; width?: number; through: { x: number; y: number; layer?: CopperLayer }[]; laid?: boolean; why?: string; at?: { x: number; y: number } }[];
@@ -953,6 +971,17 @@ export function boardSummary(b: BoardView, routed = true) {
             ...(t.width ? { width_mm: t.width } : {}),
             ...(t.through.length ? { through_mm: t.through.map((p) => (p.layer ? [p.x, p.y, p.layer] : [p.x, p.y])) } : {}),
             state: t.laid === undefined ? 'laid by the route step' : t.laid ? 'laid as asked' : `not laid: ${t.why}; the router routed this connection its own way`,
+          })),
+        }
+      : {}),
+    ...(b.keepouts.length
+      ? {
+          keepouts: b.keepouts.map((k) => ({
+            id: k.id,
+            rect_mm: k.rect,
+            ...(k.under ? { under: k.under } : {}),
+            layers: k.layers,
+            ...(k.allow.length ? { nets_let_through: k.allow.map((id) => b.netNames[id] ?? id) } : {}),
           })),
         }
       : {}),
