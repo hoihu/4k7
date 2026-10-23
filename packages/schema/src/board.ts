@@ -99,10 +99,14 @@ export interface DrawnTrack extends Track {
   /** The pad its first / last point lies on (that point follows the pad). */
   from?: PadAnchor;
   to?: PadAnchor;
+  /** Laid by the route helper, or taken over from the router: route fresh may lay it again. Absent: the agent's own (drawn or edited by it). */
+  by?: 'helper';
 }
 
 export interface DrawnVia extends Via {
   id: string;
+  /** As DrawnTrack.by. */
+  by?: 'helper';
 }
 
 /**
@@ -800,7 +804,7 @@ const OPEN_NEXT =
 
 /** Drawn copper: what to do about the connections not drawn yet. */
 const DRAWN_NEXT =
-  'Draw each open connection: draw_track from pad to pad (corners in via, 45° pieces), draw_via where it changes layer or drops to a plane, or let route nets / from, to find a path round what is drawn and edit that. Look at the spot first (get_board_image region). Errors in drc are hard rules (shorts, clearance, the edge, the fab\'s limits): fix them; warnings are soft (your call; say why where you keep one).';
+  'Draw each open connection: draw_track from pad to pad (waypoints in via, bend for the 45° corners), draw_via where it changes layer or drops to a plane, or let route nets / from, to find a path round what is drawn and edit that. Look at the spot first (get_board_image region). Errors in drc are hard rules (shorts, clearance, the edge, the fab\'s limits): fix them; warnings are soft (your call; say why where you keep one).';
 
 function openSummary(b: BoardView, u: UnroutedConnection) {
   const name = (id: string) => b.netNames[id] ?? id;
@@ -891,6 +895,7 @@ export function boardSummary(b: BoardView, routed = true) {
             open_connections: b.stats.unrouted,
             tracks: b.drawn.tracks.length,
             vias: b.drawn.vias.length,
+            ...(b.drawn.tracks.some((t) => t.by) || b.drawn.vias.some((v) => v.by) ? { laid_by_helper: { tracks: b.drawn.tracks.filter((t) => t.by).length, vias: b.drawn.vias.filter((v) => v.by).length, note: 'route fresh lays the helper\'s copper of some nets again round yours' } } : {}),
             track_mm: b.stats.trackLength,
             ...(b.unrouted.length ? { open: b.unrouted.slice(0, 40).map((u) => openSummary(b, u)), next: DRAWN_NEXT } : {}),
           }
@@ -962,7 +967,7 @@ export function boardSummary(b: BoardView, routed = true) {
       : {}),
     drc: b.diagnostics.filter((x) => !x.waivedBy).map((x) => `${x.severity}: ${x.message}`),
     missing_footprints: b.missing,
-    ...(b.drawn ? { copper_note: 'Drawn copper: you lay every track and via (draw_track, draw_via, erase_copper; route nets / from, to as a helper). Planes and pours still fill round your copper. A track end on a pad follows the pad when the part moves; the rest stays where you drew it, so look again after moving parts.' } : {}),
+    ...(b.drawn ? { copper_note: 'Drawn copper: you lay every track and via (draw_track, draw_via, edit_copper, erase_copper; route nets / from, to as a helper). Planes and pours still fill round your copper. Parts move only when moved on purpose; a part moved takes the copper by it along (its pads\' tracks as far as they stay by it, and the vias they end on), the piece beyond stretches: look at the spot after a move.' } : {}),
     note: 'Workflow: decide the main parts\' places and rotations (try_placements compares arrangements, propose_placement parts applies one; the placer puts the small parts round them), then fine-tune (place = a choice for a part, kept relative to its parent part, rot turns it; lock: true pins it exactly; set_board for the size; placement_measures say how the arrangement routes: shorter, fewer crossing ratsnest lines are better), then route as the last step, to 100 %. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
   };
 }

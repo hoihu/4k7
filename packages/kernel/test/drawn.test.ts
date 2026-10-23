@@ -307,3 +307,34 @@ describe('the route helper run elsewhere', () => {
     expect(r3.results[0]!.effect).toMatch(/stopped by the user before its first pass ended/);
   });
 });
+
+describe('the helper\'s copper', () => {
+  it('route fresh lays the helper\'s own copper again round the agent\'s, which stays', () => {
+    const k = drawnBuck();
+    ok(k, [{ op: 'route', nets: ['FB'] }]);
+    const laid = k.board().drawn!.tracks;
+    expect(laid.length).toBeGreaterThan(1);
+    expect(laid.every((t) => t.by === 'helper')).toBe(true);
+    const [mine, ...theirs] = laid.map((t) => t.id);
+    // edited, a helper track is the agent's; a track the agent draws is its own
+    ok(k, [{ op: 'edit_copper', ids: [mine!], width_mm: 0.3 }, { op: 'draw_track', from: 'U1.SS', to: 'C3.1' }]);
+    const r = ok(k, [{ op: 'route', nets: ['FB'], fresh: true }]);
+    expect(r.results[0]!.effect).toMatch(new RegExp(`fresh: ${theirs.length} of its own tracks and vias taken up first`));
+    const b = k.board();
+    expect(b.drawn!.tracks.find((t) => t.id === mine)!.by).toBeUndefined();
+    expect(theirs.every((id) => !b.drawn!.tracks.some((t) => t.id === id))).toBe(true);
+    expect(b.drawn!.tracks.filter((t) => t.netId === netId(k, 'SS')).map((t) => t.by)).toEqual([undefined]);
+    expect(openOf(b, netId(k, 'FB'))).toEqual([]);
+    expect((k.query({ op: 'get_copper', nets: ['FB'] }) as { tracks: { by?: string }[] }).tracks.some((t) => t.by === 'helper')).toBe(true);
+  });
+
+  it('the router\'s copper taken over is the helper\'s', () => {
+    const k = buck();
+    ok(k, [{ op: 'route' }]);
+    k.accept();
+    expect(k.keepCopper(k.board().newCopper!)).toBe(true);
+    ok(k, [{ op: 'set_copper_mode', mode: 'drawn' }]);
+    const d = k.board().drawn!;
+    expect([...d.tracks, ...d.vias].every((x) => x.by === 'helper')).toBe(true);
+  });
+});

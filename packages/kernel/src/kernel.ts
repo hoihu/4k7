@@ -493,8 +493,8 @@ export class Kernel {
         return {
           tracks: b.drawn.tracks
             .filter((t) => (!nets || nets.has(t.netId)) && t.pts.some((v, i) => i % 2 === 0 && inRect(v, t.pts[i + 1]!)))
-            .map((t) => ({ id: t.id, net: name(t.netId), layer: t.layer, width: t.width, pts: Array.from({ length: t.pts.length / 2 }, (_, i) => [t.pts[2 * i]!, t.pts[2 * i + 1]!]), ...(t.from ? { from: ref(t.from) } : {}), ...(t.to ? { to: ref(t.to) } : {}) })),
-          vias: b.drawn.vias.filter((v) => (!nets || nets.has(v.netId)) && inRect(v.x, v.y)).map((v) => ({ id: v.id, net: name(v.netId), at: [v.x, v.y], drill: v.drill, size: v.pad })),
+            .map((t) => ({ id: t.id, net: name(t.netId), layer: t.layer, width: t.width, pts: Array.from({ length: t.pts.length / 2 }, (_, i) => [t.pts[2 * i]!, t.pts[2 * i + 1]!]), ...(t.from ? { from: ref(t.from) } : {}), ...(t.to ? { to: ref(t.to) } : {}), ...(t.by ? { by: t.by } : {}) })),
+          vias: b.drawn.vias.filter((v) => (!nets || nets.has(v.netId)) && inRect(v.x, v.y)).map((v) => ({ id: v.id, net: name(v.netId), at: [v.x, v.y], drill: v.drill, size: v.pad, ...(v.by ? { by: v.by } : {}) })),
         };
       }
       case 'get_board': {

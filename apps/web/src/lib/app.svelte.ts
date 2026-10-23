@@ -14,12 +14,13 @@ import {
   schematicViewInfo,
   unknownTool,
   type AgentEvent,
+  type KernelPort,
   type Provider,
   type ToolOutcome,
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount, type ViewInfo } from '@4k7/schema';
+import { RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type ViewInfo } from '@4k7/schema';
 import { boardScadSummary, enclosureJob, enclosureReport, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import { server } from './server.svelte.ts';
@@ -153,6 +154,9 @@ class AppState {
   /** Routing under way (the copper laid so far is drawn over the placed board), else null. */
   routeProgress = $state.raw<RouteProgress | null>(null);
   private boards = new BoardClient();
+  /** The route helper searching in its worker (drawn copper): what for, and the copper laid so far. */
+  helperRun = $state.raw<{ what: string; progress: RouteProgress | null } | null>(null);
+  private helperStop: (() => void) | null = null;
   /** The last enclosure render (the report, its pieces, the board facts it was measured against). */
   enclosure = $state.raw<{ report: EnclosureReport; facts: EnclosureFacts } | null>(null);
   enclosureBusy = $state(false);
@@ -633,7 +637,7 @@ class AppState {
       this.flash('Review the pending changes first.');
       return false;
     }
-    const r = await this.kernel.transact({ summary, ops }, 'user');
+    const r = await this.transactEdit({ summary, ops }, 'user');
     if (r.status !== 'ok') {
       this.flash(r.rejection?.message ?? 'Rejected');
       return false;
@@ -652,6 +656,30 @@ class AppState {
   /** Bring a waived board check back. */
   restoreCheck(waiverId: string): Promise<boolean> {
     return this.userEdit(`Check back on (${waiverId})`, [{ op: 'remove_waiver', id: waiverId }]);
+  }
+
+  /**
+   * Who lays the copper: the router, or the agent (drawn copper; `keep` starts from the router's
+   * copper as it is). Back to the router drops the drawn copper (undo brings it back).
+   */
+  setCopperMode(mode: 'drawn' | 'router', keep = true): Promise<boolean> {
+    const drawn = this.board?.drawn;
+    if (mode === 'router' && drawn && !window.confirm(`Back to the router: the ${drawn.tracks.length} drawn tracks and ${drawn.vias.length} vias are dropped and the router lays the board again (Undo brings them back).`)) return Promise.resolve(false);
+    return this.userEdit(mode === 'drawn' ? (keep ? 'Drawn copper, from the routing' : 'Drawn copper, empty') : 'Copper back to the router', [{ op: 'set_copper_mode', mode, ...(mode === 'drawn' ? { keep } : {}) }]);
+  }
+
+  /** Drawn copper: the route helper on every open connection, round what is drawn (`fresh`: its own copper laid again too). */
+  routeOpen(fresh = false): Promise<boolean> {
+    return this.userEdit(fresh ? "Lay the route helper's copper again" : 'Route the open connections', [{ op: 'route', ...(fresh ? { fresh: true } : {}) }]);
+  }
+
+  /** Drawn copper: ask the agent to lay it. */
+  askToDraw() {
+    const open = this.board?.unrouted.length ?? 0;
+    void this.send(
+      `The copper is yours to draw (drawn copper)${open ? `, ${open} connection${open === 1 ? '' : 's'} open` : ''}. Lay it as an engineer would: the paths that matter first (switching loops short and wide, the drops to the planes, return paths, sensitive signals away from noisy ones), then the route helper for the connections that do not matter, and look at each step with get_board_image. Finish with no open connections and no errors; say which warnings you keep and why.`,
+      { shown: 'Draw the copper yourself' },
+    );
   }
 
   /** Put a part on the bottom or the top side of the board (a layer constraint; top is the default, so none). */
@@ -1032,7 +1060,67 @@ class AppState {
         }
       }
     }
-    return (await runKernelTool(this.kernel.port, tool, input)) ?? unknownTool(tool);
+    return (await runKernelTool(this.editPort, tool, input)) ?? unknownTool(tool);
+  }
+
+  /** The kernel as the agent's tools reach it: an edit asking the route helper runs in its worker first (transactEdit). */
+  private editPort: KernelPort = { ...this.kernel.port, transact: (tx) => this.transactEdit(tx) };
+
+  /**
+   * A transaction for the kernel. One that asks the route helper on drawn copper (route nets /
+   * from, to) searches in a worker first, so the kernel stays responsive and the user sees the
+   * copper fill in and may stop it; the kernel then applies the transaction with what the helper
+   * found (the same copper, without routing again). Everything else goes straight to the kernel.
+   */
+  private async transactEdit(tx: unknown, by?: 'user'): Promise<TransactionResult> {
+    const ops = (tx as { ops?: { op?: string; nets?: string[]; from?: string; to?: string; fresh?: boolean }[] })?.ops;
+    if (!Array.isArray(ops) || !ops.some((o) => o?.op === 'route') || this.helperRun) return this.kernel.transact(tx, by);
+    const design = await this.kernel.draftDesign();
+    if (!design.board?.drawn && !ops.some((o) => o?.op === 'set_copper_mode')) return this.kernel.transact(tx, by);
+    const what = ops.filter((o) => o?.op === 'route').map((o) => (o.nets?.length ? o.nets.join(', ') : o.from ? `${o.from} → ${o.to}` : 'every open connection') + (o.fresh ? ', its own copper again' : '')).join('; ');
+    const routed = await this.runHelper(design, tx, by ?? 'agent', ops.flatMap((o, i) => (o?.op === 'route' ? [i] : [])), what);
+    return this.kernel.transact(tx, by, routed ?? undefined);
+  }
+
+  /**
+   * The route helper of a transaction in its worker: the results by op index (null if the worker
+   * failed: the kernel then routes itself). Stop keeps the best the running op had found and
+   * nothing for the route ops not started.
+   */
+  private runHelper(design: Design, tx: unknown, by: 'user' | 'agent', routeOps: number[], what: string): Promise<Record<number, RouteHelperResult> | null> {
+    return new Promise((resolve) => {
+      const worker = new Worker(new URL('./helper.worker.ts', import.meta.url), { type: 'module' });
+      const results: Record<number, RouteHelperResult> = {};
+      let best: { op: number; result: RouteHelperResult } | null = null;
+      const end = (out: Record<number, RouteHelperResult> | null) => {
+        worker.terminate();
+        this.helperRun = null;
+        this.helperStop = null;
+        resolve(out);
+      };
+      this.helperRun = { what, progress: null };
+      this.helperStop = () => {
+        const out = { ...results };
+        for (const i of routeOps) out[i] ??= i === best?.op ? { ...best.result, stopped: true } : { tracks: [], vias: [], open: [], passes: 0, stopped: true };
+        this.flash(best?.result.passes ? `Route helper stopped: kept what it had found (${best.result.tracks.length} tracks, ${best.result.vias.length} vias)` : 'Route helper stopped before its first pass ended: nothing laid');
+        end(out);
+      };
+      worker.onmessage = (e: MessageEvent<{ progress?: RouteProgress; best?: { op: number; result: RouteHelperResult }; done?: { op: number; result: RouteHelperResult }; finished?: { results: Record<number, RouteHelperResult> }; error?: string }>) => {
+        const m = e.data;
+        if (m.progress) this.helperRun = { what, progress: m.progress };
+        else if (m.best) best = m.best;
+        else if (m.done) results[m.done.op] = m.done.result;
+        else if (m.finished) end(m.finished.results);
+        else if (m.error) end(null);
+      };
+      worker.onerror = () => end(null);
+      worker.postMessage({ design, tx, by });
+    });
+  }
+
+  /** Stop the route helper: what it found by then is laid (see runHelper). */
+  stopHelper() {
+    this.helperStop?.();
   }
 
   /** The artwork tool: the saved silkscreen graphics. */

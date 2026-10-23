@@ -452,7 +452,7 @@ Each step is useful alone.
   congestion cost (sharing allowed, priced). Our passes forbid sharing, which keeps every pass a
   legal routing (the best pass is always usable) at the price of slower convergence.
 
-## 9. Drawn copper (spike, 2026-10-23)
+## 9. Drawn copper (spike, 2026-10-23; follow-up the same day)
 
 The user, after the via work of §7 step 9: *the rules are too strict and the agent cannot shape
 the copper as it means to; what if the agent takes control of everything, with only the rules and
@@ -467,17 +467,63 @@ the board is always `routing: 'done'` and `BoardView.drawn` carries it.
 
 **The ops** (`copperops.ts`):
 
-- `draw_track { from, to, via?, layer?, net?, width_mm? }`: one polyline, exactly as given. An
-  end given as a pad (`"U1.3"`) lies on the pad's centre and is anchored (`PadAnchor`): when the
-  part moves or turns, that end follows (`drawnCopper` in board.ts) and the piece next to it
-  stretches; the rest stays where it was drawn. Refused only for what cannot be meant: an unknown
-  pad or net, a pad of another net (a short by construction), an inner layer that is a plane.
+- `draw_track { from, to, via?, bend?, layer?, net?, width_mm? }`: one polyline, exactly as
+  given. An end given as a pad (`"U1.3"`) lies on the pad's centre and is anchored (`PadAnchor`);
+  an end given as a via id (`"v4"`) lies on that via and takes its net. `bend` (`diagonal_first`,
+  `straight_first`) puts a 45° corner between two points that are not on one horizontal, vertical
+  or 45° line, so the agent gives waypoints, not corners. Refused only for what cannot be meant: an
+  unknown pad, via or net, a pad or via of another net (a short by construction), an inner layer
+  that is a plane.
 - `draw_via { at, net, drill_mm?, size_mm? }`: a through via.
+- `edit_copper { ids, move?, via?, bend?, width_mm?, layer?, drill_mm?, size_mm? }`: changes in
+  place, keeping the ids. A move shifts the tracks and vias named; the ends of other tracks on a
+  moved via go along, a track end on a pad (or on a via that stays) stays and the piece next to it
+  stretches.
 - `erase_copper { ids? | nets? | parts? | rect? | all? }`.
-- `route { nets? | from, to, width_mm? }`: the router as a helper. It routes only those
+- `route { nets? | from, to, width_mm?, fresh? }`: the router as a helper. It routes only those
   connections (nothing given: every open one), round the drawn copper, which it never moves; what
-  it lays is added as drawn copper with ids, for the agent to keep, edit or erase.
-- `design_query get_copper { nets?, rect? }` lists the drawn copper by id.
+  it lays is added as drawn copper with ids, marked as the helper's (`by: 'helper'`, as is the
+  router's copper taken over), for the agent to keep, edit (then it is the agent's) or erase.
+  `fresh` first takes up the helper's copper of those nets (nothing given: all of it) and lays it
+  again round the agent's own: for when the helper's copper is in the way, or should adapt to a
+  path the agent redrew.
+- `design_query get_copper { nets?, rect? }` lists the drawn copper by id (and `by`).
+
+**Checked at once.** What `draw_track`, `draw_via` and `edit_copper` laid, and what a move dragged
+along, is checked when the transaction is applied (`annotateChecks`: the copper DRC, edge, fab
+limits and the soft checks, focused on those ids, on the placement as it is; pours fill round the
+copper later and never clash). The op's effect ends in `check: clear` or names the findings, so the
+agent fixes a short in the next call instead of finding it in `get_board`. A track and the via it
+ends on drawn in one transaction are judged together. The board's own findings name drawn copper
+by id (`track t7 (SS)`) and carry the ids as entities: a soft rule can be waived per track.
+
+**Parts and copper.** With drawn copper the placement is frozen: from the stored placement only
+what is moved on purpose moves (the part placed, and rigidly the small parts that follow it); the
+placer's clean-up passes (nudging followers back, flipping two-pin parts, settling overlaps,
+aligning rows) do not run, so an overlap shows as a DRC error instead of moving a neighbour that
+has copper on it. Switching to drawn stores the placement as shown (the stored one is not quite a
+fixed point of those passes; without this the router's copper taken over came out with 2 errors).
+After an op that moves parts, `followParts` moves the copper by each moved part with it: the
+tracks ending on its pads, from that end as far as their points stay within 1 mm of its old
+courtyard, the vias such a track ends on and, in turn, the tracks ending on those (a pad's drop, a
+fanout). A track whose two ends go with parts moved alike moves whole. Where a piece runs between a
+point that moved and one that did not (or moved otherwise), a corner is put back next to the point
+that moved least, keeping its piece's direction, so a piece that ran at 45° does again. A part
+turned over to the other side takes nothing along (its tracks would be on the wrong layer). The
+move's effect says what followed.
+
+**The helper off the kernel.** A transaction with a `route` op on drawn copper is run first in a
+worker of its own (`helper.worker.ts`, a copy of the working design): the kernel stays responsive
+(a query answered in 9 ms while the helper searched the bench board), the Layout view shows the
+copper laid so far with a Stop, and the result per route op (`RouteHelperResult`) is then handed to
+the kernel's transaction (`HelperHooks.results`), which lays the same copper without routing again.
+Stop hands over the best the running op had found (`stopped`, the effect says so). The agent's
+`design_edit` and the app's buttons both go this way (`transactEdit` in the app).
+
+**In the Layout view.** The side panel's Copper section switches modes (the agent draws, from the
+routing as it is or from scratch; back to the router after a confirm), asks the agent to draw
+(✦), and lays the helper's copper again (route fresh). The tool bar's Route becomes Route open (the
+helper on every open connection). Hovering a drawn track or via shows its id.
 
 **The router as a fixed engine.** `RouteInput.drawn` hands the router the copper verbatim
 (`keptCopper(…, asDrawn)`: nothing checked or dropped, pieces joining no pad included, stamped as
@@ -498,16 +544,21 @@ net's pad is a short anyway), `DRC.PLANE_VIAS`, `PLANE.SPLIT_CROSSING`, silkscre
 
 Bench (`bench/drawn.ts`, the 128-part board of `bench/board.ts`, 3 clusters):
 
-| | router | drawn, empty | helper on everything | view after it | taken over from the router |
-|---|---|---|---|---|---|
-| 2 layers | 7.9 s | 0.1 s, 282 open | 8.2 s, 0 open | 0.2 s | 0.2 s, 0 errors, 0 warnings |
-| 4 layers | 1.8 s | 0.2 s, 282 open | 1.9 s, 0 open | 0.3 s | 0.3 s, 0 errors, 0 warnings |
+| | router | drawn, empty | helper on everything | view after it | taken over from the router | U10 moved 0.5, 0.5 mm |
+|---|---|---|---|---|---|---|
+| 2 layers | 7.9 s | 0.1 s, 282 open | 8.2 s, 0 open | 0.2 s | 0.2 s, 0 errors, 0 warnings | 0.2 s: 30 tracks, 14 vias followed |
+| 4 layers | 1.8 s | 0.2 s, 282 open | 1.9 s, 0 open | 0.3 s | 0.3 s, 0 errors, 0 warnings | 0.2 s: 15 tracks, 6 vias followed |
+
+The move puts U10 and the parts that follow it into their neighbours on this dense board: the
+errors after it are those overlaps and what the copper meets there, for the agent to settle.
+Before the placement was frozen, the same move nudged dozens of parts and broke 250 tracks.
 
 What to find out with it: how many tool calls and tokens a board takes when the agent draws the
 critical paths and leaves the rest to the helper; whether its boards are better where the user
 cares (switching loops, drops, returns); and so whether the router's machinery (§5.1–§5.5,
-incremental routing, the copper cache, progress and stop) can go. Not done in the spike: a way to
-switch modes in the UI (the agent switches on request), progress for a long `route` helper (it
-runs in the kernel worker), and moving a part does not move the middle of its tracks.
+incremental routing, the copper cache, progress and stop) can go. Not done yet: the user cannot
+draw or drag copper in the view (only the agent draws; the user moves parts), a track's middle is
+not pushed aside by a part moved onto it (it is only reported), and turned-over parts leave their
+copper behind.
 
     node --experimental-transform-types packages/kernel/bench/drawn.ts 2 3

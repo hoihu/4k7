@@ -245,8 +245,9 @@ export function setCopperMode(d: Design, op: Extract<EditOp, { op: 'set_copper_m
   if (current) {
     // (the stubs and vias of add_vias groups stay theirs: the groups lay them)
     const stubs = new Set(before.tracks.map((t) => JSON.stringify(t)));
-    for (const t of current.tracks) if (!stubs.has(JSON.stringify(t))) dc.tracks.push(anchored(before, { ...t, id: nextId(dc, 't') }));
-    for (const v of current.vias) if (!v.group) dc.vias.push({ ...v, id: nextId(dc, 'v') });
+    // (the router's copper counts as the helper's: route fresh may lay it again)
+    for (const t of current.tracks) if (!stubs.has(JSON.stringify(t))) dc.tracks.push(anchored(before, { ...t, id: nextId(dc, 't'), by: 'helper' }));
+    for (const v of current.vias) if (!v.group) dc.vias.push({ ...v, id: nextId(dc, 'v'), by: 'helper' });
   }
   b.drawn = dc;
   return {
@@ -402,6 +403,8 @@ export function editCopper(d: Design, op: Extract<EditOp, { op: 'edit_copper' }>
     }
     did.push(`vias ${op.drill_mm ?? '…'}/${op.size_mm ?? '…'} mm`);
   }
+  // (edited, it is yours: route fresh leaves it alone)
+  for (const x of [...tracks, ...vias]) delete x.by;
   d.board = b;
   const extra = [...new Set(along)];
   return { op: op.op, effect: `edited ${ids.join(', ')}: ${did.join(', ')}${extra.length ? `; ${extra.join(', ')} went along at the moved via${vias.length > 1 ? 's' : ''}` : ''}`, ids: ['board', ...ids, ...extra] };
@@ -454,7 +457,7 @@ export interface OpContext {
 /** The route helper on drawn copper: paths for the named open connections, added as drawn copper. */
 export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx: OpContext = { index: 0 }): OpResult {
   const { b, dc } = drawnOf(d);
-  const board = placed(d);
+  let board = placed(d);
   if (!board.parts.length) reject({ code: 'BOARD_INVALID', message: 'Nothing to route: the board has no parts.' });
   if (!!op.from !== !!op.to) reject({ code: 'INVALID_OP', message: 'route from needs to, and to needs from.' });
   const only: { nets?: string[]; pairs?: [BoardPad, BoardPad][] } = {};
@@ -476,6 +479,16 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
     what = op.nets ? op.nets.join(', ') : 'every open connection';
   }
   const scoped = only.nets ?? [only.pairs![0]![0].netId!];
+  // fresh: the helper's own copper of these nets goes first (yours stays), so it is laid again round yours
+  let takenUp = 0;
+  if (op.fresh) {
+    const mine = (x: { netId: string; by?: 'helper' }) => x.by === 'helper' && (!op.nets && !op.from ? true : scoped.includes(x.netId));
+    takenUp = dc.tracks.filter(mine).length + dc.vias.filter(mine).length;
+    dc.tracks = dc.tracks.filter((t) => !mine(t));
+    dc.vias = dc.vias.filter((v) => !mine(v));
+    board = placed(d);
+    if (op.from) only.pairs = [[padOf(d, board, op.from).pad, padOf(d, board, op.to!).pad]];
+  }
   const hooks = ctx.helper;
   let res = hooks?.results?.[ctx.index];
   if (!res) {
@@ -500,12 +513,12 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
   }
   const ids: string[] = [];
   for (const t of res.tracks) {
-    const track = anchored(board, { ...t, id: nextId(dc, 't') });
+    const track = anchored(board, { ...t, id: nextId(dc, 't'), by: 'helper' });
     dc.tracks.push(track);
     ids.push(track.id);
   }
   for (const v of res.vias) {
-    const via: DrawnVia = { ...v, id: nextId(dc, 'v') };
+    const via: DrawnVia = { ...v, id: nextId(dc, 'v'), by: 'helper' };
     dc.vias.push(via);
     ids.push(via.id);
   }
@@ -517,7 +530,7 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
   const how = res.stopped ? (res.passes ? `, stopped by the user after ${res.passes} pass${res.passes === 1 ? '' : 'es'}: the best found by then` : ', stopped by the user before its first pass ended') : res.timedOut ? ', stopped at its time budget' : '';
   return {
     op: op.op,
-    effect: `route helper (${what}): ${res.tracks.length} track(s) and ${res.vias.length} via(s) laid as drawn copper${ids.length ? ` (${ids[0]}–${ids.at(-1)})` : ''}${how}${openText}`,
+    effect: `route helper (${what}${op.fresh ? `, fresh: ${takenUp} of its own tracks and vias taken up first` : ''}): ${res.tracks.length} track(s) and ${res.vias.length} via(s) laid as drawn copper${ids.length ? ` (${ids[0]}–${ids.at(-1)})` : ''}${how}${openText}`,
     ids: ['board', ...ids],
   };
 }
