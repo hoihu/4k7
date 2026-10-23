@@ -37,6 +37,9 @@ const GRID: Style = { via: 3, offAxis: 1 };
 const FREE_STALE = 2;
 const FREE_SHARE = 0.4;
 const CENTRE_COST = 0.5; // per step and grid step off the middle of the gap between two IC pins
+const NECK_COST = 2; // a step where the track narrows to a neck (see neckAt), in grid steps
+const NECK_MIN = 5; // shortest stretch at the full width between two necks, in grid steps
+const NECK_REACH = 1; // a neck zone: this far round a pad (mm), or twice the track's width if more
 const CLIP_COST = 3; // a step whose copper runs half over one of the net's own pads, off its centre line
 const SPLIT_COST = 8; // per step on the band along a split plane's edge (signal nets), in grid steps
 const SPLIT_BAND = 0.3; // the band: this far either side of the gap, mm
@@ -813,6 +816,31 @@ function routeOnce(
     return ownCopper[st] === net && ownInset[st]! >= widths[k]! / 2 - 0.01;
   };
   /*
+   * Necks: a track wider than a pad it starts or ends on runs at its width and narrows only near
+   * that pad. While a connection is routed (see routeConn), the grid points within reach of such
+   * a pad are its neck zone (neckAt[i] === neckRun), each with the width class it may narrow to
+   * there (neckK: the widest the pad takes). Where the track's own width does not fit, a neck
+   * cell takes the narrow one; so does one where the wide copper would reach onto the pad
+   * (neckOn: it would stick out of the pad). neckRun 0: no zone (every other search).
+   */
+  const neckAt = new Int32Array(N);
+  const neckK = new Int8Array(N);
+  const neckOn = new Uint8Array(N);
+  let neckRun = 0;
+  let neckNo = 0;
+  /** freeFor(net, k), or a neck cell where its narrow width fits. */
+  const freeNeck = (net: number, k: number) => {
+    const wide = freeFor(net, k);
+    if (!neckRun) return wide;
+    const r = neckRun;
+    return (l: number, i: number) => wide(l, i) || (neckAt[i] === r && freeFor(net, neckK[i]!)(l, i));
+  };
+  /** The width class a track of class k takes at state st: its own, or the neck's where it does not fit. */
+  const classAt = (net: number, k: number, st: number) => {
+    const i = st % N;
+    return neckRun && neckAt[i] === neckRun && (neckOn[i] || !freeFor(net, k)(Math.floor(st / N), i)) ? neckK[i]! : k;
+  };
+  /*
    * Via keep-out: no via overlapping any pad (its own net's included) or within the land pattern
    * of a small part (between a resistor's pads), unless the board allows vias in pads.
    */
@@ -866,10 +894,13 @@ function routeOnce(
   const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean, corr = 0, floodFirst = false, within = Infinity): number[] | null => {
     // no new search once the time is up (its reachability flood alone can take a while)
     if (now() > until) return null;
-    const free = freeFor(net, k);
+    const free = freeNeck(net, k);
     const viaFree = viaFreeFor(net);
     const run = ++searchNo;
     const inPad = widths[k]! / 2 - 0.01;
+    // a neck cell where the track's own width does not fit: the narrow width there (see neckAt)
+    const nr = neckRun;
+    const neckOk = (l: number, c: number) => nr !== 0 && neckAt[c] === nr && freeFor(net, neckK[c]!)(l, c);
     // a track wider than a via pad may not fit where a via does (its clearance reaches farther):
     // only then must a via's landing be checked for the track as well
     const wide = widths[k]! > rules.viaPad;
@@ -888,7 +919,7 @@ function routeOnce(
     // starts and goals only where this width fits; if none does (a track wider than its pad),
     // the cells deepest inside the pad: on its centre line, not at a corner
     const usable = (st: number) => free(Math.floor(st / N), st % N);
-    const centred = (st: number) => usable(st) && !offCentre(net, k, st);
+    const centred = (st: number) => usable(st) && !offCentre(net, classAt(net, k, st), st);
     const seeds = starts.filter(centred);
     if (!seeds.length) seeds.push(...starts.filter(usable));
     const from0 = seeds.length ? seeds : deepestCells(starts);
@@ -921,7 +952,7 @@ function routeOnce(
         const lo = l * N;
         const ok = (c: number) => {
           const v = m[c]!;
-          return v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad);
+          return v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad) || neckOk(l, c);
         };
         for (let d = 0; d < 8; d++) {
           const dx = DX[d]!;
@@ -981,7 +1012,7 @@ function routeOnce(
       const i = s % N;
       // copper of the net where this width does not fit (a goal: thinner copper, e.g. a drop to a
       // pour): a way may end there, not run on along it (its copper would reach beyond the thin one)
-      if (from[s]! >= 0 && ownCopper[s] !== net && maps[k]![l]![i] !== 0 && maps[k]![l]![i] !== net) continue;
+      if (from[s]! >= 0 && ownCopper[s] !== net && maps[k]![l]![i] !== 0 && maps[k]![l]![i] !== net && !neckOk(l, i)) continue;
       const x = i % W;
       const y = (i - x) / W;
       const base = cost[s]!;
@@ -989,10 +1020,11 @@ function routeOnce(
       // free(l, ·) for this layer, inlined (the hottest test of the search)
       const m = maps[k]![l]!;
       const lo = l * N;
-      const ok = (c: number) => {
+      const wideOk = (c: number) => {
         const v = m[c]!;
         return v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad);
       };
+      const ok = (c: number) => wideOk(c) || neckOk(l, c);
       const kind = layerKind[l]!;
       const tch = k < 2 ? touch[k]! : null;
       for (let d = 0; d < 8; d++) {
@@ -1008,7 +1040,7 @@ function routeOnce(
         // diagonal steps: both orthogonal neighbours must be clear too (no corner cutting)
         if (dx !== 0 && dy !== 0 && (!ok(y * W + nx) || !ok(ny * W + x))) continue;
         const off = kind === 1 ? dy !== 0 : kind === 2 ? dx !== 0 : false;
-        const nc = base + STEP[d]! + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? style.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + (split !== null ? split[ns]! : 0) + history[ns]!;
+        const nc = base + STEP[d]! + (nr !== 0 && !wideOk(ni) ? NECK_COST : 0) + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? style.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + (split !== null ? split[ns]! : 0) + history[ns]!;
         if (nc < costOf(ns)) {
           seenAt[ns] = run;
           cost[ns] = nc;
@@ -1074,7 +1106,7 @@ function routeOnce(
       const v = mk[l]![i]!;
       if (v === 0 || v === net) return true;
       const st = l * N + i;
-      return (ownCopper[st] === net && ownInset[st]! >= inPad) || goal[st] === goalStamp || goal[st] === -goalStamp;
+      return (ownCopper[st] === net && ownInset[st]! >= inPad) || goal[st] === goalStamp || goal[st] === -goalStamp || (neckRun !== 0 && neckAt[i] === neckRun && freeFor(net, neckK[i]!)(l, i));
     };
     const viaFree = viaFreeFor(net);
     let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
@@ -1356,16 +1388,37 @@ function routeOnce(
     return changed;
   };
 
-  /** Turn a path into tracks and vias, reserve its copper; returns the cells the copper covers. */
+  /**
+   * Turn a path into tracks and vias, reserve its copper; returns the cells the copper covers.
+   * The path is laid in runs, one per layer and width: a neck (see neckAt) is a run of its own,
+   * meeting the wider run beside it on that run's last grid point (the narrow track fits wherever
+   * the wide one does).
+   */
   const commit = (netId: string, net: number, k: number, path: number[], startPad: number, endPad: number, endVia = false): number[] => {
-    const width = widths[k]!;
-    const free = freeFor(net, k);
-    const runs: { l: number; cells: number[] }[] = [];
+    const runs: { l: number; k: number; cells: number[] }[] = [];
     for (const s of path) {
       const l = Math.floor(s / N);
+      const ks = classAt(net, k, s);
       const run = runs.at(-1);
-      if (!run || run.l !== l) runs.push({ l, cells: [s % N] });
+      if (!run || run.l !== l || run.k !== ks) runs.push({ l, k: ks, cells: [s % N] });
       else run.cells.push(s % N);
+    }
+    // a short stretch at the full width between two necks on one layer: narrow too (no stubs of
+    // wide track a few grid steps long)
+    for (let ri = 1; ri + 1 < runs.length; ri++) {
+      const [a, b, c] = [runs[ri - 1]!, runs[ri]!, runs[ri + 1]!];
+      if (b.k === k && a.k !== k && a.k === c.k && a.l === b.l && c.l === b.l && b.cells.length < NECK_MIN) {
+        a.cells.push(...b.cells, ...c.cells);
+        runs.splice(ri, 2);
+        ri--;
+      }
+    }
+    // runs of one layer meet: the narrower one goes on to the wider one's grid point beside it
+    for (let ri = 1; ri < runs.length; ri++) {
+      const [a, b] = [runs[ri - 1]!, runs[ri]!];
+      if (a.l !== b.l) continue;
+      if (widths[b.k]! < widths[a.k]!) b.cells.unshift(a.cells.at(-1)!);
+      else a.cells.push(b.cells[0]!);
     }
     // a path starting or ending inside a pad runs on to (from) the pad's centre cell, so the
     // straightening can aim its last piece at the pad centre (not at some cell off to the side)
@@ -1398,7 +1451,8 @@ function routeOnce(
     }
     const covered: number[] = [];
     const lines = runs.map((run, ri) => {
-      const clip = (l: number, i: number, dx: number, dy: number) => clips(net, k, l, i, dx, dy);
+      const free = freeFor(net, run.k);
+      const clip = (l: number, i: number, dx: number, dy: number) => clips(net, run.k, l, i, dx, dy);
       let { verts, covered: cov } = straighten(run.l, run.cells, free, clip);
       // again on the result, until it stops improving: a spike in the maze path (up and back
       // down) is cut off once the pieces before and after it can see each other
@@ -1409,21 +1463,27 @@ function routeOnce(
       }
       for (const c of cov) covered.push(run.l * N + c);
       const pts = verts.flatMap((c) => [(c % W) * G, Math.floor(c / W) * G]);
-      if (ri > 0) addVia(netId, net, pts[0]!, pts[1]!);
-      return { l: run.l, pts };
+      if (ri > 0 && runs[ri - 1]!.l !== run.l) addVia(netId, net, pts[0]!, pts[1]!);
+      // (ends meeting the run before or after on this layer: those stay where they are)
+      return { l: run.l, width: widths[run.k]!, pts, joinsBefore: ri > 0 && runs[ri - 1]!.l === run.l, joinsAfter: ri + 1 < runs.length && runs[ri + 1]!.l === run.l };
     });
+    /** pts adjusted at one end, unless that moved an end where the line meets the next run on its layer. */
+    const keepJoins = (line: (typeof lines)[number], pts: number[]) => {
+      const same = (q: number, r: number) => Math.abs(pts[q]! - line.pts[r]!) < 1e-9 && Math.abs(pts[q + 1]! - line.pts[r + 1]!) < 1e-9;
+      return (!line.joinsBefore || same(0, 0)) && (!line.joinsAfter || same(pts.length - 2, line.pts.length - 2)) ? pts : line.pts;
+    };
     if (startPad >= 0 && lines[0]) {
       const sp = pads[startPad]!;
       const se = escapes[startPad];
       const pts = lines[0].pts;
-      pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y, ...entryBend(pts[0]!, pts[1]!, sp, width)]));
+      pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y, ...entryBend(pts[0]!, pts[1]!, sp, lines[0].width)]));
     }
     const last = lines.at(-1)!;
     if (endPad >= 0) {
       const ep = pads[endPad]!;
       const ee = escapes[endPad];
       const pts = last.pts;
-      pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : entryBend(pts.at(-2)!, pts.at(-1)!, ep, width)), ep.x, ep.y);
+      pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : entryBend(pts.at(-2)!, pts.at(-1)!, ep, last.width)), ep.x, ep.y);
     }
     let dropVia: Via | undefined;
     if (endVia) {
@@ -1434,20 +1494,22 @@ function routeOnce(
       if (vias.length > before) dropVia = vias.at(-1);
     }
     // exactly onto the pads' centre lines (the grid only gets within half a step)
-    if (startPad >= 0 && lines[0]) lines[0].pts = reversePts(alignEnd(reversePts(simplify(lines[0].pts)), pads[startPad]!, lines[0].l, net, width, lines.length === 1 ? dropVia : undefined));
-    if (endPad >= 0) last.pts = alignEnd(simplify(last.pts), pads[endPad]!, last.l, net, width);
+    for (const line of lines) line.pts = simplify(line.pts);
+    const first = lines[0];
+    if (startPad >= 0 && first) first.pts = keepJoins(first, reversePts(alignEnd(reversePts(first.pts), pads[startPad]!, first.l, net, first.width, lines.length === 1 ? dropVia : undefined)));
+    if (endPad >= 0) last.pts = keepJoins(last, alignEnd(last.pts, pads[endPad]!, last.l, net, last.width));
     // an end on a track of the net (a join): exactly onto that track's centre line
-    if (startPad < 0 && lines[0] && !(lines.length === 1 && endVia)) lines[0].pts = reversePts(joinTrack(reversePts(simplify(lines[0].pts)), lines[0].l, net, width));
-    if (endPad < 0 && !endVia) last.pts = joinTrack(simplify(last.pts), last.l, net, width);
-    for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, width);
+    if (startPad < 0 && first && !(lines.length === 1 && endVia)) first.pts = keepJoins(first, reversePts(joinTrack(reversePts(first.pts), first.l, net, first.width)));
+    if (endPad < 0 && !endVia) last.pts = keepJoins(last, joinTrack(last.pts, last.l, net, last.width));
+    for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, line.width);
     // the copper as it finally lies (aligned ends moved it): the cells later routes may join
     const onCopper = new Set<number>();
     for (const line of lines) {
       const pts = simplify(line.pts);
       if (pts.length < 4) continue;
-      tracks.push({ netId, layer: layers[line.l]!, width, pts: pts.map(r3) });
-      for (let q = 0; q + 3 < pts.length; q += 2) stampSeg(line.l, net, pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!, width);
-      for (const st of copperCells(line.l, pts, width)) onCopper.add(st);
+      tracks.push({ netId, layer: layers[line.l]!, width: line.width, pts: pts.map(r3) });
+      for (let q = 0; q + 3 < pts.length; q += 2) stampSeg(line.l, net, pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!, line.width);
+      for (const st of copperCells(line.l, pts, line.width)) onCopper.add(st);
     }
     return onCopper.size ? [...onCopper] : covered;
   };
@@ -2153,33 +2215,65 @@ function routeOnce(
       failed.push(c);
       return;
     }
-    const pa = pads[c.a]!;
-    const pb = pads[c.b]!;
-    // the net's own width, else power width, each only where both pads can take it
-    const takes = (w: number) => Math.min(pa.w, pa.h) >= w * 0.9 && Math.min(pb.w, pb.h) >= w * 0.9;
+    // the net's own width, else on a power net the power width; near a pad too small for it the
+    // track narrows to the widest width that pad takes (a neck, see neckAt), and runs at its
+    // width again clear of it
     const own = input.netWidths?.[c.netId];
-    const wide = input.powerNets.has(c.netId) && takes(rules.powerTrack);
-    // too wide for a pad: the widest class that still fits (never below the signal width)
-    const fitting = (w: number) => widths.reduce((best, x, i) => (i !== 2 && x <= w && takes(x) && x > widths[best]! ? i : best), 0);
-    const chosen = own ? (own <= rules.track || takes(own) ? trackClass(own) : fitting(own)) : wide ? 1 : 0;
-    // a power track that finds no way is necked down to the signal width (a width the user set
-    // for the net is not: that one is a requirement)
+    const chosen = own ? trackClass(own) : input.powerNets.has(c.netId) ? 1 : 0;
+    // a power track that finds no way is necked down to the signal width all along (a width the
+    // user set for the net is not: that one is a requirement)
     let k = chosen;
     let path = attempt(chosen);
     if (!path && chosen === 1 && !own && now() <= deadline) path = attempt((k = 0));
     if (!path) {
+      neckRun = 0;
       failed.push(c);
       return;
     }
+    /** The neck zone for width class k: round the pads of both ends' copper that cannot take it. */
+    function necks(k: number) {
+      neckRun = 0;
+      const w = widths[k]!;
+      if (w <= rules.track) return;
+      const reach = Math.max(NECK_REACH, 2 * w);
+      const r = ++neckNo;
+      for (const idx of [...groupPads(find(c.a)), ...groupPads(find(c.b))]) {
+        const p = pads[idx]!;
+        const size = Math.min(p.w, p.h);
+        if (size >= w * 0.9) continue;
+        // the widest width below this one that the pad takes (never below the signal width)
+        const nk = widths.reduce((best, x, i) => (i !== 2 && x < w && size >= x * 0.9 && x > widths[best]! ? i : best), 0);
+        const d = padDist(p);
+        for (let j = Math.max(0, Math.floor((p.y - p.h / 2 - reach) / G)); j <= Math.min(H - 1, Math.ceil((p.y + p.h / 2 + reach) / G)); j++) {
+          for (let i = Math.max(0, Math.floor((p.x - p.w / 2 - reach) / G)); i <= Math.min(W - 1, Math.ceil((p.x + p.w / 2 + reach) / G)); i++) {
+            const dist = d(i * G, j * G);
+            if (dist > reach) continue;
+            const at = j * W + i;
+            const on = dist < w / 2 ? 1 : 0;
+            if (neckAt[at] !== r) {
+              neckAt[at] = r;
+              neckK[at] = nk;
+              neckOn[at] = on;
+            } else {
+              if (widths[nk]! < widths[neckK[at]!]!) neckK[at] = nk;
+              if (on) neckOn[at] = 1;
+            }
+          }
+        }
+        neckRun = r;
+      }
+    }
     function attempt(k: number): number[] | null {
+      necks(k);
       // an escape stub is reserved at the signal width: a wider track may run along it only where
       // it keeps its clearance at that width
       const escapeOk = (st: number) => {
         const idx = escapeOf.get(st);
-        if (idx === undefined || widths[k]! <= rules.track) return true;
+        const w = widths[classAt(net, k, st)]!;
+        if (idx === undefined || w <= rules.track) return true;
         const e = escapes[idx]!;
         const p = pads[idx]!;
-        return clearOf(net, e.l, widths[k]!, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
+        return clearOf(net, e.l, w, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
       };
       epoch++;
       const goalStamp = epoch;
@@ -2187,8 +2281,8 @@ function routeOnce(
       for (const st of goalCells) goal[st] = goalStamp;
       // end where the track fits, on its pad's centre line; failing that where it fits; failing
       // that deepest inside the pad
-      const fits = (st: number) => freeFor(net, k)(Math.floor(st / N), st % N);
-      const centred = (st: number) => fits(st) && !offCentre(net, k, st);
+      const fits = (st: number) => freeNeck(net, k)(Math.floor(st / N), st % N);
+      const centred = (st: number) => fits(st) && !offCentre(net, classAt(net, k, st), st);
       const deepest = new Set(deepestCells(goalCells));
       const accept = goalCells.some(centred) ? centred : goalCells.some(fits) ? fits : (st: number) => deepest.has(st);
       // (the estimate: the box round the whole goal group, not just pad a)
@@ -2221,6 +2315,7 @@ function routeOnce(
     }
     // (a route may also start on copper laid earlier for this net: then it starts right there)
     const copper = commit(c.netId, net, k, path, padAt(find(c.b), path[0]!), padAt(find(c.a), path.at(-1)!));
+    neckRun = 0;
     union(c.a, c.b);
     groupCells.get(find(c.a))!.push(...copper);
     routedNow++;

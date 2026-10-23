@@ -297,6 +297,49 @@ export function planeViaDrc(b: BoardView): BoardDiagnostic[] {
   return out;
 }
 
+/** A narrower track this long (mm) is more than a neck into a pad. */
+const NECK_ALLOW_MM = 3;
+
+/**
+ * Tracks narrower than their net's width (`want`: the width set for it, or the power width) for
+ * longer than a neck into a pad: the router narrows a power track all along where the wide one
+ * found no way, and may neck a track at a pad too small for it. One warning per net, at its
+ * longest such piece.
+ */
+export function narrowTrackDrc(b: BoardView, want: (netId: string) => { width: number; why: string } | undefined): BoardDiagnostic[] {
+  const out: BoardDiagnostic[] = [];
+  const pads = b.parts.flatMap((p) => p.pads.map((pad) => ({ p, pad })));
+  const byNet = new Map<string, { t: (typeof b.tracks)[number]; len: number }[]>();
+  for (const t of b.tracks) {
+    const w = want(t.netId);
+    if (!w || t.width >= w.width - 1e-6) continue;
+    let len = 0;
+    for (let i = 0; i + 3 < t.pts.length; i += 2) len += Math.hypot(t.pts[i + 2]! - t.pts[i]!, t.pts[i + 3]! - t.pts[i + 1]!);
+    if (len <= NECK_ALLOW_MM) continue;
+    byNet.set(t.netId, [...(byNet.get(t.netId) ?? []), { t, len }]);
+  }
+  for (const [netId, list] of byNet) {
+    const w = want(netId)!;
+    const total = list.reduce((s, x) => s + x.len, 0);
+    const longest = list.reduce((a, x) => (x.len > a.len ? x : a));
+    const pts = longest.t.pts;
+    // the pads at its ends (of the net, under an end point), else the middle of the piece
+    const ends = [[pts[0]!, pts[1]!], [pts.at(-2)!, pts.at(-1)!]].flatMap(([x, y]) => pads.filter(({ pad }) => pad.netId === netId && Math.abs(x! - pad.x) <= pad.w / 2 + 1e-6 && Math.abs(y! - pad.y) <= pad.h / 2 + 1e-6));
+    const mid = Math.floor(pts.length / 4) * 2;
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    const name = b.netNames[netId] ?? netId;
+    const where = ends.length ? ` (${ends.map(({ p, pad }) => `${p.refdes}.${pad.number}`).join(' → ')})` : '';
+    out.push({
+      code: 'DRC.NARROW_TRACK',
+      severity: 'warning',
+      message: `${r2(total)} mm of ${name} runs at ${[...new Set(list.map((x) => x.t.width))].sort().join(' / ')} mm, below its ${w.width} mm (${w.why})${where}. The router narrows a track only where the wider one finds no way: make room there (move or turn the parts in the way) and route again.`,
+      at: { x: r2(pts[mid]!), y: r2(pts[mid + 1]!) },
+      entities: [...new Set(ends.map(({ p }) => p.refdes))],
+    });
+  }
+  return out;
+}
+
 /**
  * Where a polyline (x0, y0, x1, y1, …) crosses the outline of a rectangle: each change from
  * outside to inside or back (a point on the outline belongs to the side it came from), and a

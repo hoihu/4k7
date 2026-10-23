@@ -57,7 +57,7 @@ import {
 } from '@4k7/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
 import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
-import { copperDrc, edgeDrc, planeViaDrc, splitDrc } from './drc.ts';
+import { copperDrc, edgeDrc, narrowTrackDrc, planeViaDrc, splitDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelView } from './panel.ts';
 import { stableJson } from './canonical.ts';
@@ -1096,7 +1096,7 @@ function hash(s: string): string {
 }
 
 /** Bump when what StoredCopper holds changes meaning: copper kept by an older version is routed again. */
-const COPPER_FORMAT = 1;
+const COPPER_FORMAT = 2;
 
 /**
  * Place; route and check the copper when the route step was taken for this placement (or `route`).
@@ -1192,7 +1192,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     ...(copper.reused ? { reused: copper.reused } : {}),
   };
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed)];
+  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...narrowTrackDrc(routed, (id) => (netWidths[id] ? { width: netWidths[id], why: 'set for the net' } : powerNets.has(id) ? { width: b.rules.powerTrack, why: 'the power width' } : undefined))];
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
