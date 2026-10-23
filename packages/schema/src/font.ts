@@ -1,5 +1,5 @@
 /**
- * Minimal stroke font for silkscreen text (refdes): glyphs as polylines on a 4 × 6 grid,
+ * Minimal stroke font for silkscreen text (refdes, text graphics): glyphs as polylines on a 4 × 6 grid,
  * baseline at y = 0, y up. Lower case is drawn as upper case.
  */
 type Glyph = number[][][];
@@ -49,7 +49,23 @@ const GLYPHS: Record<string, Glyph> = {
   '.': [[[2, 0], [2, 0.5]]],
   '/': [[[0, 0], [4, 6]]],
   _: [[[0, 0], [4, 0]]],
+  ':': [[[2, 1], [2, 1.5]], [[2, 4], [2, 4.5]]],
+  ',': [[[2, 0.5], [1.5, -1]]],
+  "'": [[[2, 6], [2, 4.5]]],
+  '(': [[[3, 6], [2, 5], [2, 1], [3, 0]]],
+  ')': [[[1, 6], [2, 5], [2, 1], [1, 0]]],
+  '=': [[[1, 2], [3, 2]], [[1, 4], [3, 4]]],
+  '<': [[[4, 5], [0, 3], [4, 1]]],
+  '>': [[[0, 5], [4, 3], [0, 1]]],
+  '!': [[[2, 6], [2, 2]], [[2, 0], [2, 0.5]]],
+  '?': [[[0, 5], [1, 6], [3, 6], [4, 5], [4, 4], [2, 3], [2, 2]], [[2, 0], [2, 0.5]]],
+  '*': [[[2, 1], [2, 5]], [[0, 2], [4, 4]], [[0, 4], [4, 2]]],
 };
+
+/** Characters the font draws (lower case as upper case), besides space. */
+export function unknownGlyphs(text: string): string[] {
+  return [...new Set([...text.toUpperCase()].filter((ch) => ch !== ' ' && ch !== '\n' && !GLYPHS[ch]))];
+}
 
 const ADVANCE = 5.5;
 
@@ -71,4 +87,22 @@ export function textStrokes(text: string, cx: number, cy: number, height: number
     }
   });
   return out;
+}
+
+/**
+ * Text as silkscreen outline figures (lines centred on 0, 0, one below the other, y down): each
+ * stroke goes out and back, so drawn as a closed outline with the line width it is the stroke.
+ * Mirrored for the bottom side, so it reads from below.
+ */
+export function textFigures(text: string, height: number, mirror = false): number[][] {
+  const lines = text.split('\n');
+  const pitch = height * 1.6;
+  return lines.flatMap((line, i) =>
+    textStrokes(line, 0, (i - (lines.length - 1) / 2) * pitch, height).map((s) => {
+      const back: number[] = [];
+      for (let j = s.length - 4; j >= 0; j -= 2) back.push(s[j]!, s[j + 1]!);
+      const loop = [...s, ...back.slice(0, -2)];
+      return mirror ? loop.map((v, j) => (j % 2 === 0 ? -v : v)) : loop;
+    }),
+  );
 }

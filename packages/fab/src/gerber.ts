@@ -3,8 +3,7 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
-import { boardPolygon, cutoutPolygon, figureDepths, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type PanelView } from '@4k7/schema';
-import { textStrokes, textWidth } from './font.ts';
+import { boardPolygon, cutoutPolygon, figureDepths, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type PanelView } from '@4k7/schema';
 
 export interface FabFile {
   name: string;

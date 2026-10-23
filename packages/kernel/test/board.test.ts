@@ -1750,6 +1750,38 @@ describe('silkscreen graphics', () => {
     expect(k.board().graphics).toEqual([]);
     expect(k.transact({ summary: 'bad', ops: [{ op: 'add_graphic', svg_path: 'M 0 0 L 5 5', x_mm: 1, y_mm: 1 }] }).status).toBe('rejected');
   });
+
+  it('writes text in the stroke font: letter height, lines, mirrored on the bottom, stroked in the Gerber', async () => {
+    const k = buck();
+    const r = k.transact({ summary: 'labels', ops: [{ op: 'add_graphic', text: 'Boot', height_mm: 2.5, x_mm: 10, y_mm: 10, name: 'SW1' }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    let g = k.board().graphics[0]!;
+    expect(g).toMatchObject({ mode: 'outline', text: 'Boot' });
+    expect(g.line).toBeGreaterThanOrEqual(0.15);
+    expect(g.bounds[3] - g.bounds[1]).toBeCloseTo(2.5, 2);
+    // four letters at 5.5/6 of the height apart, the last 4/6 wide
+    expect(g.bounds[2] - g.bounds[0]).toBeCloseTo((3 * 5.5 + 4) * (2.5 / 6), 2);
+    expect((g.bounds[0] + g.bounds[2]) / 2).toBeCloseTo(10, 2);
+    const left = g.bounds[0];
+    // the B's upright is on the left; on the bottom side it is on the right
+    k.transact({ summary: 'flip', ops: [{ op: 'edit_graphic', id: 'G1', side: 'bottom' }] });
+    g = k.board().graphics[0]!;
+    expect(g.bounds[0]).toBeCloseTo(left, 2);
+    const upright = (gr: typeof g) => gr.polys[0]!.filter((_, i) => i % 2 === 0);
+    expect(Math.max(...upright(g))).toBeCloseTo(g.bounds[2], 2);
+    expect(k.transact({ summary: 'fill', ops: [{ op: 'edit_graphic', id: 'G1', mode: 'fill' }] }).status).toBe('rejected');
+    // two lines, one below the other
+    k.transact({ summary: 'pins', ops: [{ op: 'add_graphic', text: 'CLK\\nGND', height_mm: 2, x_mm: 20, y_mm: 10 }] });
+    const two = k.board().graphics[1]!;
+    expect(two.text).toBe('CLK\nGND');
+    expect(two.bounds[3] - two.bounds[1]).toBeCloseTo(2 * 1.6 + 2, 2);
+    expect(k.transact({ summary: 'bad', ops: [{ op: 'add_graphic', text: 'Ω', x_mm: 1, y_mm: 1 }] }).rejection?.message).toContain('"Ω"');
+    k.accept();
+    const { gerbers } = await import('@4k7/fab');
+    const silk = gerbers(k.board(), 't').find((f) => f.name.endsWith('F_Silkscreen.gbr'))!.content;
+    expect(silk).not.toMatch(/G36\*/);
+    expect(silk.match(/D01\*/g)!.length).toBeGreaterThan(20);
+  });
 });
 
 describe('package defaults', () => {
