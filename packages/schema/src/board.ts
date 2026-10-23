@@ -191,6 +191,8 @@ export interface SilkGraphic {
   mode: 'fill' | 'outline';
   /** outline: the line width (mm). */
   line?: number;
+  /** Text drawn in the stroke font (outline figures, each stroke out and back; mirrored on the bottom). */
+  text?: string;
   /** Closed figures, flat x, y lists in mm around 0, 0 (y down), not yet turned. */
   polys: number[][];
   /** Size of the figures' bounding box (mm). */
@@ -227,6 +229,8 @@ export interface BoardGraphic {
   side: 'top' | 'bottom';
   mode: 'fill' | 'outline';
   line: number;
+  /** A text graphic's text. */
+  text?: string;
   polys: number[][];
   /** x0, y0, x1, y1 */
   bounds: [number, number, number, number];
@@ -269,6 +273,7 @@ export function placeGraphic(g: SilkGraphic, w: number, h: number): BoardGraphic
     side: g.side,
     mode: g.mode,
     line: g.line ?? 0.2,
+    ...(g.text ? { text: g.text } : {}),
     polys,
     bounds: pointBounds(polys),
   };
@@ -829,8 +834,7 @@ export function boardSummary(b: BoardView, routed = true) {
       id: g.id,
       ...(g.name ? { name: g.name } : {}),
       side: g.side,
-      mode: g.mode,
-      figures: g.polys.length,
+      ...(g.text ? { text: g.text } : { mode: g.mode, figures: g.polys.length }),
       bounds_mm: g.bounds,
       centre_mm: [Math.round(((g.bounds[0] + g.bounds[2]) / 2) * 100) / 100, Math.round(((g.bounds[1] + g.bounds[3]) / 2) * 100) / 100],
       inside_board: g.inside ?? true,

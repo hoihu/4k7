@@ -46,6 +46,8 @@ import {
   PANEL_SIDES,
   autoTabs,
   pointBounds,
+  textFigures,
+  unknownGlyphs,
   openQuestions,
   scriptPieces,
   scriptProblems,
@@ -578,11 +580,23 @@ function addCutout(d: Design, op: Extract<EditOp, { op: 'add_cutout' }>): OpResu
 function addGraphic(d: Design, op: Extract<EditOp, { op: 'add_graphic' }>): OpResult {
   let figs: number[][];
   const art = op.artwork ? findArtwork(op.artwork) : undefined;
-  if (op.artwork) {
+  const text = op.text?.replace(/\\n/g, '\n').trim();
+  let textScale = 1;
+  if (text) {
+    const unknown = unknownGlyphs(text);
+    if (unknown.length) reject({ code: 'BOARD_INVALID', message: `The silkscreen font has no ${unknown.map((c) => `"${c}"`).join(', ')}; it draws A–Z, 0–9, space and - + . / _ : , ' ( ) = < > ! ? *.` });
+    // drawn at its letter height; width_mm alone scales it to that width
+    figs = textFigures(text, op.height_mm ?? (op.width_mm ? 1 : 1.5), (op.side ?? 'top') === 'bottom');
+    if (op.width_mm && !op.height_mm) {
+      const [x0, , x1] = pointBounds(figs);
+      textScale = op.width_mm / (x1 - x0);
+      figs = figs.map((p) => p.map((v) => v * textScale));
+    }
+  } else if (op.artwork) {
     if (!art) reject({ code: 'REF_UNKNOWN', message: `No saved artwork "${op.artwork}".`, candidates: listArtwork().map((a) => a.name) });
     figs = art!.polys;
   } else {
-    if (!op.svg_path) reject({ code: 'BOARD_INVALID', message: 'add_graphic needs svg_path or artwork.' });
+    if (!op.svg_path) reject({ code: 'BOARD_INVALID', message: 'add_graphic needs text, svg_path or artwork.' });
     const parsed = pathFigures(op.svg_path!);
     if (!parsed.ok) reject({ code: 'BOARD_INVALID', message: `The graphic's path: ${parsed.reason}.` });
     figs = parsed.figs;
@@ -590,8 +604,8 @@ function addGraphic(d: Design, op: Extract<EditOp, { op: 'add_graphic' }>): OpRe
   const [x0, y0, x1, y1] = pointBounds(figs);
   const [bw, bh] = [x1 - x0, y1 - y0];
   if (!(bw > 0) || !(bh > 0)) reject({ code: 'BOARD_INVALID', message: 'The graphic has no area.' });
-  const sx = op.width_mm ? op.width_mm / bw : op.height_mm ? op.height_mm / bh : 1;
-  const sy = op.height_mm ? op.height_mm / bh : op.width_mm ? op.width_mm / bw : 1;
+  const sx = text ? 1 : op.width_mm ? op.width_mm / bw : op.height_mm ? op.height_mm / bh : 1;
+  const sy = text ? 1 : op.height_mm ? op.height_mm / bh : op.width_mm ? op.width_mm / bw : 1;
   const r3 = (v: number) => Math.round(v * 1000) / 1000;
   const polys = figs.map((p) => p.map((v, i) => (i % 2 === 0 ? r3((v - (x0 + x1) / 2) * sx) : r3((v - (y0 + y1) / 2) * sy))));
   const [w, h] = [r3(bw * sx), r3(bh * sy)];
@@ -603,14 +617,16 @@ function addGraphic(d: Design, op: Extract<EditOp, { op: 'add_graphic' }>): OpRe
     id = `G${i}`;
     break;
   }
-  const mode = op.mode ?? art?.mode ?? 'fill';
+  const mode = text ? 'outline' : (op.mode ?? art?.mode ?? 'fill');
   const name = op.name ?? art?.name;
+  const textLine = r3(Math.max(0.15, (op.height_mm ?? (op.width_mm ? textScale : 1.5)) / 7));
   const g: SilkGraphic = {
     id,
     ...(name ? { name } : {}),
     side: op.side ?? 'top',
     mode,
-    ...(mode === 'outline' ? { line: op.line_mm ?? art?.line ?? 0.2 } : {}),
+    ...(mode === 'outline' ? { line: op.line_mm ?? (text ? textLine : (art?.line ?? 0.2)) } : {}),
+    ...(text ? { text } : {}),
     polys,
     w,
     h,
@@ -625,7 +641,7 @@ function addGraphic(d: Design, op: Extract<EditOp, { op: 'add_graphic' }>): OpRe
   const points = polys.reduce((n, p) => n + p.length / 2, 0);
   return {
     op: 'add_graphic',
-    effect: `silkscreen graphic ${id}${g.name ? ` (${g.name})` : ''}: ${g.mode === 'fill' ? 'filled' : `outlines ${g.line} mm`}, ${polys.length} figure(s), ${points} points, ${w} × ${h} mm on the ${g.side} side at (${g.x}, ${g.y}) mm from ${(g.anchor ?? 'top_left').replace('_', ' ')}`,
+    effect: `silkscreen ${text ? `text ${id} "${text.replace(/\n/g, '\\n')}"${g.name ? ` (${g.name})` : ''}: strokes ${g.line} mm` : `graphic ${id}${g.name ? ` (${g.name})` : ''}: ${g.mode === 'fill' ? 'filled' : `outlines ${g.line} mm`}, ${polys.length} figure(s), ${points} points`}, ${w} × ${h} mm on the ${g.side} side at (${g.x}, ${g.y}) mm from ${(g.anchor ?? 'top_left').replace('_', ' ')}`,
     ids: ['board'],
   };
 }
@@ -669,6 +685,7 @@ function editGraphic(d: Design, op: Extract<EditOp, { op: 'edit_graphic' }>): Op
     if (Math.max(g.w, g.h) < 0.5) reject({ code: 'BOARD_INVALID', message: 'That would make the graphic smaller than 0.5 mm.' });
     changes.push(`${g.w} × ${g.h} mm`);
   }
+  if (op.mode === 'fill' && g.text) reject({ code: 'BOARD_INVALID', message: `${g.id} is text, drawn as strokes; it cannot be filled (line_mm sets the stroke).` });
   if (op.mode) {
     g.mode = op.mode;
     changes.push(op.mode === 'fill' ? 'filled' : 'outlines');
@@ -677,6 +694,8 @@ function editGraphic(d: Design, op: Extract<EditOp, { op: 'edit_graphic' }>): Op
   if (g.mode === 'outline') g.line ??= 0.2;
   else delete g.line;
   if (op.side) {
+    // text reads from its own side: mirrored when it changes side
+    if (g.text && op.side !== g.side) g.polys = g.polys.map((p) => p.map((v, i) => (i % 2 === 0 ? -v : v)));
     g.side = op.side;
     changes.push(`${op.side} side`);
   }

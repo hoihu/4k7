@@ -296,8 +296,9 @@ export const AddCutoutOp = z.object({
 
 export const AddGraphicOp = z.object({
   op: z.literal('add_graphic'),
-  svg_path: z.string().min(1).optional().describe('SVG path data of the graphic (any units; M L H V C S Q T A Z, absolute or relative; several figures allowed). Filled: figures inside figures are holes (even-odd), as in a logo'),
+  svg_path: z.string().min(1).optional().describe('SVG path data of the graphic: a shape, logo or symbol (for words use text) (any units; M L H V C S Q T A Z, absolute or relative; several figures allowed). Filled: figures inside figures are holes (even-odd), as in a logo'),
   artwork: z.string().optional().describe('Instead of svg_path: a saved artwork by name (the artwork library); without width/height it keeps its saved size'),
+  text: z.string().min(1).optional().describe('Instead of svg_path: silkscreen text in the board\'s stroke font (A–Z, drawn in capitals, 0–9, space and - + . / _ : , \' ( ) = < > ! ? *; "\\n" starts a new line). height_mm is the letter height (default 1.5; at least 1 reads well, 2–3 for labels meant to stand out); line_mm the stroke (default height / 7, at least 0.15). Always drawn as strokes, read the right way from its side (mirrored on the bottom). Use this for any words, names or pin labels: do not draw letters as paths'),
   mode: z.enum(['fill', 'outline']).optional().describe('fill (default; an artwork: its own): the figures are filled with ink; outline: only their contours are drawn'),
   line_mm: z.number().min(0.1).optional().describe('outline: the line width (default 0.2; at least 0.15 prints reliably)'),
   width_mm: z.number().positive().optional().describe('Scale the graphic to this width (with only one of width/height the other keeps the proportions; neither: path units are mm)'),
