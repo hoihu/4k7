@@ -16,6 +16,7 @@ import {
   type PartPin,
   type PackageInfo,
   type SymbolLayout,
+  type BoardPad,
   type BoardSettings,
   type PlaneArea,
   type PlaneStyle,
@@ -54,7 +55,8 @@ import {
   viaCurrentFor,
   viasForCurrent,
 } from '@4k7/schema';
-import { autoPlanes, placeBoard, storedPlacement } from './board.ts';
+import { autoPlanes, dropOffset, placeBoard, storedPlacement } from './board.ts';
+import { underBody } from './drc.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
 import { isDrawn, moveSymbol, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
@@ -781,14 +783,44 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
     if (op.net && netOf(op.net).id !== netId) reject({ code: 'BOARD_INVALID', message: `${comp.refdes}.${pad!.number} is on ${d.nets[netId!]!.name}, not ${op.net}: vias in it are on its net.` });
     if (op.kind === 'drop') {
       const net = d.nets[netId!]!;
+      const name = `${comp.refdes}.${pad!.number}`;
+      if (!op.at) reject({ code: 'INVALID_OP', message: `add_vias kind "drop" needs at: each via's centre (mm), right beside ${name}, at least ${r3(size / 2 + b.rules.clearance)} mm off its edge (get_component gives the pad's position and size).` });
+      // the spots against the board as it stands now: beside the pad, clear of it and of every other pad
+      const board = placedNow(d);
+      const part = board.parts.find((p) => p.componentId === comp.id);
+      const here = part?.pads.find((p) => p.number === pad!.number);
+      if (!part || !here) reject({ code: 'BOARD_INVALID', message: `${comp.refdes} is not on the board yet (propose_placement first).` });
+      const off = (p: BoardPad, x: number, y: number) =>
+        p.shape === 'round' ? Math.hypot(x - p.x, y - p.y) - Math.min(p.w, p.h) / 2 : Math.hypot(Math.max(Math.abs(x - p.x) - p.w / 2, 0), Math.max(Math.abs(y - p.y) - p.h / 2, 0));
+      const gap = size / 2 + b.rules.clearance;
+      const spots = op.at!.map((p) => [r3(p.x_mm), r3(p.y_mm)] as [number, number]);
+      spots.forEach(([x, y], i) => {
+        const at = `(${x}, ${y})`;
+        const d0 = off(here!, x, y);
+        if (d0 < gap - 1e-6) reject({ code: 'BOARD_INVALID', message: `The via at ${at} is ${d0 > 0 ? `${r3(d0)} mm off` : 'on'} ${name}: keep it at least ${r3(gap)} mm off the pad's edge (half a via and the clearance), so the solder mask stays between them; its stub joins it to the pad.` });
+        if (d0 > 2 + 1e-6) reject({ code: 'BOARD_INVALID', message: `The via at ${at} is ${r3(d0)} mm from ${name}: a drop stands right beside its pad (within 2 mm).` });
+        const e = b.rules.edgeClearance + size / 2;
+        if (x < e || y < e || x > board.outline.w - e || y > board.outline.h - e) reject({ code: 'BOARD_INVALID', message: `The via at ${at} is too close to the board's edge.` });
+        for (const q of board.parts) {
+          for (const qp of q.pads) {
+            if (qp === here || qp.npth) continue;
+            const need = qp.netId === netId ? size / 2 : gap;
+            if (off(qp, x, y) < need - 1e-6) reject({ code: 'BOARD_INVALID', message: `The via at ${at} comes too close to ${q.refdes}.${qp.number}${qp.netId === netId ? '' : ` (${d.nets[qp.netId ?? '']?.name ?? 'no net'})`}: keep it ${r3(need)} mm off that pad.` });
+          }
+          // (between a small part's pads, under its body)
+          if (q.pads.length <= 3 && underBody(q, x, y, size / 2 - 1e-6)) reject({ code: 'BOARD_INVALID', message: `The via at ${at} lies under ${q.refdes}'s body (between its pads)${q === part ? `; put it on a side of ${name} facing away from the part` : ''}.` });
+        }
+        for (const [x2, y2] of spots.slice(0, i)) if (Math.hypot(x - x2, y - y2) < size + b.rules.clearance - 1e-6) reject({ code: 'BOARD_INVALID', message: `The vias at ${at} and (${x2}, ${y2}) are closer than ${r3(size + b.rules.clearance)} mm (a via and the clearance).` });
+      });
       const amps = op.amps ?? net.attrs.maxCurrent;
-      if (op.count === undefined && !amps) reject({ code: 'INVALID_OP', message: `add_vias kind "drop" needs count (how many vias) or amps (the current through ${comp.refdes}.${pad!.number}); ${net.name} has no max_current.` });
-      const n = Math.min(16, op.count ?? viasForCurrent(amps!, drill));
+      const need = amps ? viasForCurrent(amps, drill) : 0;
       // one group per pad: giving it again replaces it
       const was = groups.findIndex((g) => g.kind === 'drop' && g.pad?.componentId === comp.id && g.pad.number === pad!.number);
-      group = { id: was >= 0 ? groups[was]!.id : nextId(), netId: netId!, kind: 'drop', pad: { componentId: comp.id, number: pad!.number }, ...(op.count !== undefined ? { count: op.count } : {}), ...(op.amps !== undefined ? { amps: op.amps } : {}), ...sizes };
+      group = { id: was >= 0 ? groups[was]!.id : nextId(), netId: netId!, kind: 'drop', pad: { componentId: comp.id, number: pad!.number }, offsets: spots.map(([x, y]) => dropOffset(part!, here!, x, y)), ...(op.amps !== undefined ? { amps: op.amps } : {}), ...sizes };
       if (was >= 0) groups.splice(was, 1);
-      what = `${n} via${n > 1 ? 's' : ''} from ${comp.refdes}.${pad!.number} (${net.name}) down to its plane${op.count === undefined ? ` for ${amps} A (about ${Math.round(viaCurrentFor(drill) * 10) / 10} A each)` : ''}, in a row on a bar beside the pad (laid by the route step)`;
+      const n = spots.length;
+      const enough = !amps ? '' : n >= need ? `, enough for ${amps} A (about ${Math.round(viaCurrentFor(drill) * 10) / 10} A each)` : `; ${amps} A wants ${need} (about ${Math.round(viaCurrentFor(drill) * 10) / 10} A each): place ${need - n} more beside the pad`;
+      what = `${n} via${n > 1 ? 's' : ''} from ${name} (${net.name}) down to its plane at ${spots.map(([x, y]) => `(${x}, ${y})`).join(', ')}, each joined to the pad by its own stub, moving with ${comp.refdes}${enough}`;
       groups.push(group);
       b.vias = groups;
       d.board = b;

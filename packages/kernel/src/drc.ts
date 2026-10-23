@@ -3,8 +3,7 @@
  * between tracks, vias and pads of different nets on the same layer.
  */
 import { cutoutDistance, insideBoard } from '@4k7/schema';
-import type { BoardDiagnostic, BoardView, CopperLayer } from '@4k7/schema';
-import { padSegDist } from './keep.ts';
+import type { BoardDiagnostic, BoardPart, BoardView, CopperLayer } from '@4k7/schema';
 import { segDist } from './segments.ts';
 
 type Shape =
@@ -72,7 +71,9 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
         });
         const cy = part.courtyard;
         const r = v.pad / 2 - 1e-6;
-        const inSmall = part.pads.length <= 3 && v.x > cy.x - r && v.x < cy.x + cy.w + r && v.y > cy.y - r && v.y < cy.y + cy.h + r;
+        // (a via placed on purpose, e.g. a drop beside a capacitor's pad, may stand in the
+        // courtyard's margin: only not under the body, between the pads)
+        const inSmall = part.pads.length <= 3 && (v.group ? underBody(part, v.x, v.y, r) : v.x > cy.x - r && v.x < cy.x + cy.w + r && v.y > cy.y - r && v.y < cy.y + cy.h + r);
         if (inPad || inSmall) {
           viaIssues.push({ code: 'DRC.VIA_IN_PAD', severity: 'error', message: `Via (${b.netNames[v.netId] ?? v.netId}) inside the land pattern of ${part.refdes}; vias in pads are off for this board.`, at: { x: v.x, y: v.y }, entities: [part.refdes] });
           break;
@@ -232,10 +233,17 @@ export function splitDrc(b: BoardView, signal: (netId: string) => boolean): Boar
   return out;
 }
 
+/** Whether a via of radius r at (x, y) reaches into the box round a part's pads (under its body). */
+export function underBody(part: Pick<BoardPart, 'pads'>, x: number, y: number, r: number): boolean {
+  const xs = part.pads.flatMap((p) => [p.x - p.w / 2, p.x + p.w / 2]);
+  const ys = part.pads.flatMap((p) => [p.y - p.h / 2, p.y + p.h / 2]);
+  return x > Math.min(...xs) - r && x < Math.max(...xs) + r && y > Math.min(...ys) - r && y < Math.max(...ys) + r;
+}
+
 /**
  * Pads that asked for several vias down to their plane (add_vias drop) and reach it through
- * fewer: the pad's own vias (in it, at the end of a track of the net that starts in it, or on a
- * short track over its edge, 3 mm at most), counted on the copper as it lies. A pad in its net's
+ * fewer: the pad's own vias (in it, or at the end of a track of the net that starts in it, 3 mm
+ * at most), counted on the copper as it lies. A pad in its net's
  * pour on its own layer is left alone (the pour spreads the current).
  */
 export function planeViaDrc(b: BoardView): BoardDiagnostic[] {
@@ -274,18 +282,13 @@ export function planeViaDrc(b: BoardView): BoardDiagnostic[] {
           if (!near(ax, ay, pad, 0.01)) continue;
           for (const v of own) if (Math.hypot(v.x - bx, v.y - by) <= v.pad / 2) reached.add(v);
         }
-        // a bar beside the pad (its copper over the pad's edge): every via on it
-        const pieces: [number, number, number, number][] = [];
-        for (let i = 0; i + 3 < t.pts.length; i += 2) pieces.push([t.pts[i]!, t.pts[i + 1]!, t.pts[i + 2]!, t.pts[i + 3]!]);
-        if (!pieces.some(([ax, ay, bx, by]) => padSegDist(pad, ax, ay, bx, by) <= t.width / 2 - 0.01)) continue;
-        for (const v of own) if (pieces.some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(v.x, v.y) <= t.width / 2)) reached.add(v);
       }
       if (reached.size >= want) continue;
       const name = b.netNames[id] ?? id;
       out.push({
         code: 'DRC.PLANE_VIAS',
         severity: 'warning',
-        message: `${part.refdes}.${pad.number} (${name}) reaches the ${plane.layer} plane through ${reached.size || 'no'} via${reached.size === 1 ? '' : 's'} of its own; ${g.id} asks for ${want}${g.note ? ` (${g.note})` : ''}. Make room beside the pad (move what crowds it) and route again, or place them with add_vias points right beside the pad (the router joins them to it).`,
+        message: `${part.refdes}.${pad.number} (${name}) reaches the ${plane.layer} plane through ${reached.size || 'no'} via${reached.size === 1 ? '' : 's'} of its own; ${g.id} asks for ${want}${g.note ? ` (${g.note})` : ''}. Place them where they fit with add_vias drop at (right beside the pad, clear of other nets), or move what crowds the pad.`,
         at: { x: Math.round(pad.x * 100) / 100, y: Math.round(pad.y * 100) / 100 },
         entities: [part.refdes],
       });
