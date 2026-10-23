@@ -447,10 +447,16 @@ export const RouteOp = z.object({
   from: pinRef.optional().describe('Drawn copper only: route just this one connection, from this pin …'),
   to: pinRef.optional().describe('… to this pin (same net)'),
   width_mm: z.number().positive().optional().describe('Drawn copper only: the width of the tracks laid (default: the net\'s width, power width for supplies where the pads take it, else the signal width)'),
-}).describe('Router copper: route the board as it is placed now (the last step), aiming at every connection: passes are repeated, pushing the nets in the way of open connections aside, which can take a minute on a big board (the user watches it fill in). get_board then lists any open connection with what blocks it and the parts near it. A later placement change shows the routing as out of date until route runs again. Drawn copper (set_copper_mode drawn): a helper that finds paths for the open connections you name (nets, or from/to; nothing given: every open one) round the copper already drawn, which it never moves; what it lays becomes drawn copper like your own (ids in the effect), so edit or erase it as you like. Connections it finds no way for stay open and are listed.');
+}).describe('Router copper: route the board as it is placed now (the last step), aiming at every connection: passes are repeated, pushing the nets in the way of open connections aside, which can take a minute on a big board (the user watches it fill in). get_board then lists any open connection with what blocks it and the parts near it. A later placement change shows the routing as out of date until route runs again. Drawn copper (set_copper_mode drawn): a helper that finds paths for the open connections you name (nets, or from/to; nothing given: every open one) round the copper already drawn, which it never moves; what it lays becomes drawn copper like your own (ids in the effect), so edit or erase it as you like. Connections it finds no way for stay open and are listed. Many connections can take up to half a minute; the user watches it fill in and may stop it (what it found by then is kept, the effect says so).');
 
 const mmPoint = z.tuple([z.number(), z.number()]).describe('[x, y] in mm from the board\'s top-left corner');
-const trackEnd = z.union([pinRef, mmPoint]).describe('A pad ("U1.3": the end lies on its centre and follows it when the part moves) or a point [x, y] in mm');
+const trackEnd = z
+  .union([z.string().min(2), mmPoint])
+  .describe('A pad ("U1.3": the end lies on its centre and follows it when the part moves), one of your vias ("v4": the end lies on its centre) or a point [x, y] in mm');
+const bend = z
+  .enum(['diagonal_first', 'straight_first'])
+  .optional()
+  .describe('45° corners for you: where two points in a row are not on one horizontal, vertical or 45° line, a corner is put between them, the diagonal piece first (diagonal_first) or the straight one (straight_first). Then you only give the waypoints. Without it the pieces run exactly as given');
 
 export const SetCopperModeOp = z.object({
   op: z.literal('set_copper_mode'),
@@ -462,11 +468,12 @@ export const DrawTrackOp = z.object({
   op: z.literal('draw_track'),
   from: trackEnd,
   to: trackEnd,
-  via: z.array(mmPoint).max(64).optional().describe('Corners between from and to, in order. Each piece runs straight from one point to the next: give the corners of a 45° route yourself'),
+  via: z.array(mmPoint).max(64).optional().describe('Corners between from and to, in order. Each piece runs straight from one point to the next (with bend, the kernel adds the 45° corners)'),
+  bend,
   layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Default F.Cu, or the layer of an SMD pad it starts or ends on'),
-  net: netName.optional().describe('Default: the net of the pad at either end (required when both ends are points)'),
+  net: netName.optional().describe('Default: the net of the pad or via at either end (required when both ends are points)'),
   width_mm: z.number().positive().optional().describe('Default: the net\'s width, else power width for supplies, else the signal width'),
-}).describe('Drawn copper: draw one track (a polyline) of one net on one layer, as given: nothing is moved or rerouted. A layer change needs a via (draw_via) where two tracks meet. The DRC then checks clearances, edge and fab limits; get_board says which connections are still open. The effect gives the track\'s id (t…).');
+}).describe('Drawn copper: draw one track (a polyline) of one net on one layer, as given: nothing else is moved or rerouted. A layer change needs a via (draw_via) where two tracks meet. The effect gives the track\'s id (t…) and checks it at once, when the whole transaction is applied: other copper too close (errors) and loose ends or pieces off 45° (warnings); get_board says which connections are still open.');
 
 export const DrawViaOp = z.object({
   op: z.literal('draw_via'),
@@ -474,7 +481,19 @@ export const DrawViaOp = z.object({
   net: netName,
   drill_mm: z.number().positive().optional().describe('Default the board\'s via drill'),
   size_mm: z.number().positive().optional().describe('Via pad diameter; default the board\'s via pad'),
-}).describe('Drawn copper: a through via at a spot, of one net: it joins that net\'s copper on every layer it touches (tracks ending on it, a plane or pour of the net it lies in). The effect gives its id (v…).');
+}).describe('Drawn copper: a through via at a spot, of one net: it joins that net\'s copper on every layer it touches (tracks ending on it, a plane or pour of the net it lies in). The effect gives its id (v…) and checks it at once like draw_track.');
+
+export const EditCopperOp = z.object({
+  op: z.literal('edit_copper'),
+  ids: z.array(z.string()).min(1).describe('Your tracks and vias by id (t3, v1); they keep their ids'),
+  move: z.tuple([z.number(), z.number()]).optional().describe('Shift them by [dx, dy] mm. Track ends on a via that moves go with it; a track end on a pad stays on its pad (the piece next to it stretches)'),
+  via: z.array(mmPoint).max(64).optional().describe('One track: its new corners between its two ends, which stay'),
+  bend,
+  width_mm: z.number().positive().optional().describe('Tracks: the new width'),
+  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Tracks: move them to this layer (vias at their ends join the layers)'),
+  drill_mm: z.number().positive().optional().describe('Vias: the new drill'),
+  size_mm: z.number().positive().optional().describe('Vias: the new pad diameter'),
+}).describe('Drawn copper: change tracks and vias in place (shift, new corners, width, layer, via size), keeping their ids, instead of erasing and drawing again. Checked at once like draw_track.');
 
 export const EraseCopperOp = z.object({
   op: z.literal('erase_copper'),
@@ -610,6 +629,7 @@ export const EditOp = z.discriminatedUnion('op', [
   SetCopperModeOp,
   DrawTrackOp,
   DrawViaOp,
+  EditCopperOp,
   EraseCopperOp,
   SetPlaneOp,
   SetPlaneStyleOp,

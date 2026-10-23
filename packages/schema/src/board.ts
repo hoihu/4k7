@@ -106,6 +106,21 @@ export interface DrawnVia extends Via {
 }
 
 /**
+ * What the route helper found for one route op on drawn copper, in a form a transaction can be
+ * given instead of routing (the app routes in a worker, with progress and a stop, then applies the
+ * transaction with this): the copper it laid, and the connections of its scope still open.
+ */
+export interface RouteHelperResult {
+  tracks: Track[];
+  vias: Via[];
+  open: { netId: string; from: string; to: string; blockedBy?: string[]; enclosed?: boolean }[];
+  passes: number;
+  timedOut?: boolean;
+  /** The user stopped it: the best pass by then (nothing before the first one ended). */
+  stopped?: boolean;
+}
+
+/**
  * The part of an inner layer a plane covers (set_plane under / rect): under some parts (their
  * courtyards' box plus a margin, so it follows them when they move), or a rectangle in mm.
  */

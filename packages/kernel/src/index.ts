@@ -9,3 +9,4 @@ export { pathFigures } from './outline.ts';
 export { traceBitmap } from './trace.ts';
 export { resolveScope, measure as measureScope } from './scope.ts';
 export type { RouteProgress } from './router.ts';
+export type { HelperHooks } from './copperops.ts';

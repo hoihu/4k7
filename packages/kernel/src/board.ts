@@ -99,7 +99,7 @@ const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const snap = (v: number) => Math.round(v / GRID_MM) * GRID_MM;
 
 /** A local point rotated clockwise (y down) by a multiple of 90°. */
-function rotate(x: number, y: number, rot: number): [number, number] {
+export function rotate(x: number, y: number, rot: number): [number, number] {
   switch (((rot % 360) + 360) % 360) {
     case 90:
       return [-y, x];
@@ -683,6 +683,14 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
 
   // from a stored placement: the parts that moved (only they are flipped, see flipTwoPin)
   let flipOnly: Set<Item> | undefined;
+  /*
+   * Drawn copper (BoardSettings.drawn) lies round the parts as they stand: from a stored placement
+   * only what is moved on purpose moves (the part placed, and rigidly the small parts that follow
+   * it), and new parts find a place; nothing else is nudged, flipped, aligned or pushed apart (an
+   * overlap shows as a DRC error instead), so the copper stays where it was drawn.
+   */
+  const frozen = !!settings.drawn && !!stored;
+  let keptStill: Item[] = [];
   if (!stored) {
     /* ---- proposal: start from the schematic, scaled into the outline ---- */
     const targetW = Math.sqrt(area * 2.8 * 1.4);
@@ -827,7 +835,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
      * the way) would otherwise keep that distance for good. A short relaxation towards their
      * connections, the rest staying put, and the IC's small parts back at their pins.
      */
-    if (followers.length) {
+    if (followers.length && !frozen) {
       const still = items.filter((it) => !followers.includes(it) && !it.fixed);
       for (const it of still) it.fixed = true;
       relax(followers, 60);
@@ -855,19 +863,24 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     flipOnly = new Set(
       items.filter((it) => {
         const was = before.get(it);
-        return !was || was.x !== it.x || was.y !== it.y || was.rot !== it.rot;
+        return !was || (!frozen && (was.x !== it.x || was.y !== it.y || was.rot !== it.rot));
       }),
     );
+    if (frozen) {
+      keptStill = items.filter((it) => before.has(it) && !it.fixed);
+      for (const it of keptStill) it.fixed = true;
+    }
   }
   flipTwoPin(flipOnly);
-  settle();
+  if (!frozen) settle();
   alignSimilar(items, contain);
 
   // locked parts outside a proposed outline widen it
   let w = outline.w;
   let h = outline.h;
-  if (!userSize && items.some((it) => it.fixed)) {
-    const b = bounds(items.filter((it) => it.fixed));
+  const locked = items.filter((it) => it.fixed && !keptStill.includes(it));
+  if (!userSize && locked.length) {
+    const b = bounds(locked);
     w = Math.max(w, Math.ceil((b.x1 + margin) * 2) / 2);
     h = Math.max(h, Math.ceil((b.y1 + margin) * 2) / 2);
   }
@@ -907,7 +920,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     // a rounded corner takes a square of its radius out of the usable area
     ...(cornerR > margin && !shape ? [[0, 0], [w, 0], [0, h], [w, h]].map(([cx, cy], i) => blocker(`corner${i}`, cx === 0 ? cornerR / 2 : cx! - cornerR / 2, cy === 0 ? cornerR / 2 : cy! - cornerR / 2, cornerR, cornerR)) : []),
   ];
-  if ((holes.length || cutouts.length || cornerR > margin) && items.length) {
+  if ((holes.length || cutouts.length || cornerR > margin) && items.length && !frozen) {
     for (let round = 0; round < 20; round++) {
       const blockers = keepOuts();
       const all = [...items, ...blockers];
@@ -955,6 +968,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       }
     }
   }
+  for (const it of keptStill) it.fixed = false;
   const holeParts: BoardPart[] = holes.map((hole) => {
     const at = holeAt(hole);
     const k = keep(hole);
@@ -1280,7 +1294,7 @@ export function drawnCopper(dc: DrawnCopper, parts: BoardPart[]): { tracks: Draw
  * connections); the rest is the agent's judgement and only warns. A via in a small part's land
  * pattern (no other net's pad under it: that is a short) is soft.
  */
-function softened(x: BoardDiagnostic): BoardDiagnostic {
+export function softened(x: BoardDiagnostic): BoardDiagnostic {
   return x.code === 'DRC.VIA_IN_PAD' && x.severity === 'error' ? { ...x, severity: 'warning', message: `${x.message} (soft rule: fine where you mean it, e.g. a drop right beside a pad)` } : x;
 }
 

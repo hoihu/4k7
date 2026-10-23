@@ -122,3 +122,11 @@ const [tb, tms] = view(routed);
 line('drawn, taken over from the router', tb, tms);
 // SHOW=1: the warnings on the copper taken over
 if (process.env.SHOW) for (const x of tb.diagnostics.filter((x) => x.severity === 'warning').slice(0, 8)) console.log(`  ${x.code}: ${x.message}`);
+
+// a part moved on the copper taken over: the copper by it follows (followParts) and is checked
+const u = tb.parts.find((p) => p.refdes === 'U10')!;
+const [mv, mms] = time(() => routed.transact({ summary: 'move', ops: [{ op: 'place', ref: 'U10', x_mm: u.x + 0.5, y_mm: u.y + 0.5 }] }));
+console.log(`move U10 by 0.5, 0.5 mm: ${mms.toFixed(0)} ms: ${mv.status === 'ok' ? mv.results[0]!.effect.slice(0, 300) : JSON.stringify(mv)}`);
+const [mb, mbms] = view(routed);
+line('drawn, after the move', mb, mbms);
+if (process.env.SHOW) for (const x of mb.diagnostics.filter((x) => x.severity !== 'info').slice(0, 8)) console.log(`  ${x.code}: ${x.message}`);

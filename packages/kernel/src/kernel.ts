@@ -45,6 +45,7 @@ import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findCompone
 import { schematicView, syncDrawing } from './drawing.ts';
 import { copperKey, layoutBoard, placeBoard, planePlan } from './board.ts';
 import type { RouteProgress } from './router.ts';
+import { DRAWING_OPS, annotateChecks, followParts, movesParts, placementOf, type HelperHooks } from './copperops.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 import { MIN_FREE, circuitSignature, guardOp, measure, positions, resolveScope, ripple, widenScope, type ResolvedScope } from './scope.ts';
 import { schematicChecks } from './schcheck.ts';
@@ -158,8 +159,12 @@ export class Kernel {
 
   /* ---------------------------- transactions ------------------------------ */
 
-  /** Validate and apply a transaction to the working copy (or dry-run it). `by`: who asked for it, the agent unless the app says the user. */
-  transact(input: unknown, by: 'user' | 'agent' = 'agent'): TransactionResult {
+  /**
+   * Validate and apply a transaction to the working copy (or dry-run it). `by`: who asked for it,
+   * the agent unless the app says the user. `helper`: the route helper's results computed elsewhere
+   * (a worker), or hooks to follow it while it routes here (drawn copper, see copperops.ts).
+   */
+  transact(input: unknown, by: 'user' | 'agent' = 'agent', helper?: HelperHooks): TransactionResult {
     const parsed = Transaction.safeParse(input);
     if (!parsed.success) {
       return this.rejected({ opIndex: indexOfIssue(parsed.error.issues), code: 'INVALID_OP', message: formatZod(parsed.error.issues) }, false);
@@ -168,10 +173,23 @@ export class Kernel {
     const before = this.analyse(this.draft).diagnostics;
     const work = clone(this.draft);
     const results = [];
+    // drawn copper: what each op drew, edited or moved, checked once the transaction is applied
+    const drawn = new Map<number, string[]>();
     for (let i = 0; i < tx.ops.length; i++) {
+      const op = tx.ops[i]!;
       try {
-        if (this.scoped) guardOp(work, tx.ops[i]!, this.scoped.sc);
-        results.push(applyOp(work, tx.ops[i]!, by));
+        if (this.scoped) guardOp(work, op, this.scoped.sc);
+        // (drawn copper follows the parts an op moves)
+        const placed = work.board?.drawn && movesParts(op) ? placementOf(work) : null;
+        const r = applyOp(work, op, by, { index: i, ...(helper ? { helper } : {}) });
+        if (placed) {
+          const f = followParts(work, placed);
+          if (f) {
+            r.effect += `; ${f.note}`;
+            drawn.set(i, f.ids);
+          }
+        } else if (work.board?.drawn && DRAWING_OPS.has(op.op)) drawn.set(i, (r.ids ?? []).filter((id) => /^[tv]\d+$/.test(id)));
+        results.push(r);
       } catch (e) {
         if (e instanceof RejectError) return this.rejected({ opIndex: i, ...e.rejection }, !!tx.dry_run);
         throw e;
@@ -180,6 +198,7 @@ export class Kernel {
     gcNets(work);
     gcParts(work);
     syncDrawing(work);
+    if (drawn.size) annotateChecks(work, results, drawn);
     if (this.scoped && circuitSignature(work) !== this.scoped.circuit) {
       return this.rejected({ opIndex: tx.ops.length - 1, code: 'OUT_OF_SCOPE', message: 'This would change the circuit (parts, values or connections). Optimize only changes how an area is drawn.' }, !!tx.dry_run);
     }
