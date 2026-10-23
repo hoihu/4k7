@@ -126,6 +126,9 @@
   let checksOpen = $state(false);
   let allChecks = $state(false);
   let waivedOpen = $state(false);
+  // The check whose full message is shown; others stay clamped to two lines.
+  let shownCheck = $state<string | null>(null);
+  const showCheck = (msg: string) => (shownCheck = shownCheck === msg ? null : msg);
   const CHECKS_SHOWN = 4;
   const routeLabel = $derived(routing ? 'Routing…' : b?.routing === 'done' ? (b.stopped ? 'Routing stopped' : 'Routed') : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
 
@@ -265,7 +268,7 @@
         <ul class="diags">
           {#each allChecks ? openChecks : openChecks.slice(0, CHECKS_SHOWN) as d, i (i)}
             <li>
-              <button class="r" title={d.message} onclick={() => focus(d)}><span class="tag {d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info'}">{d.severity[0]!.toUpperCase()}</span><span class="grow clamp">{d.message}</span></button>
+              <button class="r" aria-expanded={shownCheck === d.message} onclick={() => { focus(d); showCheck(d.message); }}><span class="tag {d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info'}">{d.severity[0]!.toUpperCase()}</span><span class="grow" class:clamp={shownCheck !== d.message}>{d.message}</span></button>
               {#if d.entities.length}<button class="x" title="Not a problem: intended, so this check goes away" aria-label="Mark as not a problem" disabled={app.running} onclick={() => void app.waiveCheck(d)}>✕</button>{/if}
             </li>
           {/each}
@@ -277,7 +280,7 @@
             <ul class="diags">
               {#each waivedChecks as d, i (i)}
                 <li>
-                  <button class="r" title={d.message} onclick={() => focus(d)}><span class="tag info">{d.severity[0]!.toUpperCase()}</span><span class="grow clamp muted">{d.message}</span></button>
+                  <button class="r" aria-expanded={shownCheck === d.message} onclick={() => { focus(d); showCheck(d.message); }}><span class="tag info">{d.severity[0]!.toUpperCase()}</span><span class="grow muted" class:clamp={shownCheck !== d.message}>{d.message}</span></button>
                   <button class="x" title="Check this again" aria-label="Check this again" disabled={app.running} onclick={() => void app.restoreCheck(d.waivedBy!)}>↺</button>
                 </li>
               {/each}
