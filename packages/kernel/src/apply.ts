@@ -24,6 +24,7 @@ import {
   type HoleCorner,
   type MountingHole,
   type ViaGroup,
+  type DrawnTrack,
   VIA_PITCH,
   type Cutout,
   type SilkGraphic,
@@ -183,6 +184,18 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent'): 
       else delete b.vias;
       d.board = b;
       return { op: 'remove_vias', effect: `removed ${before.length - keep.length} via group(s)`, ids: ['board'] };
+    }
+    case 'track':
+      return trackOp(d, op);
+    case 'erase_track': {
+      const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+      const before = b.tracks ?? [];
+      const keep = op.id.toLowerCase() === 'all' ? [] : before.filter((t) => t.id.toUpperCase() !== op.id.toUpperCase());
+      if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: `No track "${op.id}".`, candidates: before.map((t) => t.id) });
+      if (keep.length) b.tracks = keep;
+      else delete b.tracks;
+      d.board = b;
+      return { op: 'erase_track', effect: `erased ${before.length - keep.length} track(s); the router routes those connections its own way`, ids: ['board'] };
     }
     case 'add_cutout':
       return addCutout(d, op);
@@ -868,6 +881,82 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
   b.vias = groups;
   d.board = b;
   return { op: 'add_vias', effect: `${group.id}: ${what}`, ids: ['board'] };
+}
+
+/** One connection laid by the agent (the track op), checked against the board as it stands now. */
+function trackOp(d: Design, op: Extract<EditOp, { op: 'track' }>): OpResult {
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const board = placedNow(d);
+  const end = (ref: string) => {
+    const pins = resolvePins(d, ref);
+    const comp = pins[0]!.comp;
+    const part = board.parts.find((p) => p.componentId === comp.id);
+    if (!part) reject({ code: 'BOARD_INVALID', message: `${comp.refdes} is not on the board yet (propose_placement first).` });
+    const pads = [...new Set(pins.flatMap((h) => part!.pads.filter((p) => p.number === h.pin.number || p.also?.includes(h.pin.number))))];
+    if (!pads.length) reject({ code: 'REF_UNKNOWN', message: `${ref} has no pad on the board.` });
+    if (pads.length > 1) reject({ code: 'INVALID_OP', message: `${ref} is ${pads.length} pads: give one by its number.`, candidates: pads.map((p) => `${comp.refdes}.${p.number}`) });
+    return { comp, part: part!, pad: pads[0]!, label: `${comp.refdes}.${pads[0]!.number}` };
+  };
+  const a = end(op.from);
+  const z = end(op.to);
+  if (a.pad === z.pad) reject({ code: 'INVALID_OP', message: `from and to are the same pad (${a.label}).` });
+  const netId = a.pad.netId;
+  if (!netId) reject({ code: 'BOARD_INVALID', message: `${a.label} is not connected: a track joins two pads of one net.` });
+  if (z.pad.netId !== netId) reject({ code: 'BOARD_INVALID', message: `${a.label} is on ${d.nets[netId!]!.name}, ${z.label} on ${d.nets[z.pad.netId ?? '']?.name ?? 'no net'}: a track joins two pads of one net.` });
+  const net = d.nets[netId!]!;
+  if (op.net && findNet(d, op.net)?.id !== netId) reject({ code: 'BOARD_INVALID', message: `${a.label} and ${z.label} are on ${net.name}, not ${op.net}.` });
+  const layerOk = (l: CopperLayer) => {
+    if (!board.layers.includes(l)) reject({ code: 'BOARD_INVALID', message: `The board has no ${l} (${board.layers.length} layers).` });
+    if (l !== 'F.Cu' && l !== 'B.Cu' && board.planes.some((pl) => pl.layer === l && !pl.area)) reject({ code: 'BOARD_INVALID', message: `${l} is a dedicated plane layer: no tracks there.` });
+  };
+  if (op.layer) layerOk(op.layer);
+  for (const p of op.through ?? []) if (p.layer) layerOk(p.layer);
+  // the layers it leaves and reaches its pads on: an SMD pad only on its own
+  const onPad = (e: typeof a, l: CopperLayer | undefined) => {
+    if (l && !e.pad.drill && !e.pad.layers.includes(l)) reject({ code: 'BOARD_INVALID', message: `${e.label} is on ${e.pad.layers.join(', ')}, the track ${e === a ? 'starts' : 'ends'} on ${l}: ${e === a ? 'start on its layer' : 'give the last point its layer'} (a via at a point changes layer).` });
+  };
+  onPad(a, op.layer);
+  onPad(z, [...(op.through ?? [])].reverse().find((p) => p.layer)?.layer ?? op.layer);
+  if (op.width_mm !== undefined) {
+    if (op.width_mm < 0.1 || op.width_mm > 10) reject({ code: 'PARAM_INVALID', message: `A track of ${op.width_mm} mm cannot be made; give 0.1–10 mm.` });
+    if (b.fab && op.width_mm < b.fab.limits.track - 1e-9) reject({ code: 'FAB_LIMIT', message: `A ${op.width_mm} mm track is below ${b.fab.house}'s limit (${b.fab.limits.track} mm, ${b.fab.tier}).` });
+  }
+  const { w, h } = board.outline;
+  const through: NonNullable<DrawnTrack['through']> = (op.through ?? []).map((p) => {
+    const [x, y] = [r3(p.x_mm), r3(p.y_mm)];
+    if (x < 0 || y < 0 || x > w || y > h) reject({ code: 'BOARD_INVALID', message: `The point (${x}, ${y}) is off the board (${w} × ${h} mm).` });
+    // relative to the end pad it is nearer: it moves with that part
+    const near = Math.hypot(x - a.pad.x, y - a.pad.y) <= Math.hypot(x - z.pad.x, y - z.pad.y) ? 'from' : 'to';
+    const pad = near === 'from' ? a.pad : z.pad;
+    return { end: near, dx: r3(x - pad.x), dy: r3(y - pad.y), ...(p.layer ? { layer: p.layer } : {}) };
+  });
+  const tracks = [...(b.tracks ?? [])];
+  const same = (t: DrawnTrack) => {
+    const [f, e] = [`${t.from.componentId} ${t.from.number}`, `${t.to.componentId} ${t.to.number}`];
+    const [x, y] = [`${a.comp.id} ${a.pad.number}`, `${z.comp.id} ${z.pad.number}`];
+    return (f === x && e === y) || (f === y && e === x);
+  };
+  // the same two pads again: replaces it
+  const was = tracks.findIndex(same);
+  let id = was >= 0 ? tracks[was]!.id : '';
+  for (let i = 1; !id; i++) if (!tracks.some((t) => t.id === `T${i}`)) id = `T${i}`;
+  const track: DrawnTrack = {
+    id,
+    netId: netId!,
+    from: { componentId: a.comp.id, number: a.pad.number },
+    to: { componentId: z.comp.id, number: z.pad.number },
+    ...(op.layer ? { layer: op.layer } : {}),
+    ...(op.width_mm !== undefined ? { width: r3(op.width_mm) } : {}),
+    ...(through.length ? { through } : {}),
+  };
+  if (was >= 0) tracks[was] = track;
+  else tracks.push(track);
+  b.tracks = tracks;
+  d.board = b;
+  const pts = (op.through ?? []).map((p) => `(${r3(p.x_mm)}, ${r3(p.y_mm)}${p.layer ? ` → ${p.layer}` : ''})`);
+  const what = `${a.label} → ${z.label} (${net.name}), ${op.layer ?? 'on the layers the router picks'}, ${op.width_mm !== undefined ? `${r3(op.width_mm)} mm` : "the net's width"}${pts.length ? `, through ${pts.join(', ')}` : ''}`;
+  return { op: 'track', effect: `${id}${was >= 0 ? ' (replaced)' : ''}: ${what}; route lays it first, as asked, and never rips it up`, ids: ['board'] };
 }
 
 /** The board as placed now (for ops that record where parts are). */

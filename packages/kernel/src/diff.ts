@@ -147,6 +147,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
             `track ${b.rules.track} / ${b.rules.powerTrack} mm`,
             ...(b.fab ? [`made by ${b.fab.house}, ${b.fab.tier}${b.fab.origin === 'imported' ? ` (limits imported from ${b.fab.source.url})` : ''}`] : []),
             ...(b.holes?.length ? [`${b.holes.length} mounting hole${b.holes.length > 1 ? 's' : ''} (${[...new Set(b.holes.map((x) => `Ø${x.d}`))].join(', ')})`] : []),
+            ...(b.tracks?.length ? [`tracks laid by the agent: ${b.tracks.map((t) => `${t.id} ${draft.components[t.from.componentId]?.refdes ?? '?'}.${t.from.number} → ${draft.components[t.to.componentId]?.refdes ?? '?'}.${t.to.number}`).join(', ')}`] : []),
             ...(b.planes ? [`planes: ${b.planes.map((p) => `${draft.nets[p.netId]?.name ?? p.netId} on ${p.layer}${p.area ? (p.area.under ? ` under ${p.area.under.map((id) => draft.components[id]?.refdes ?? id).join(', ')}` : ' (an area)') : ''}${p.style ? ` (${planeStyleText(p.style)})` : ''}`).join(', ') || 'none'}`] : []),
           ]
         : [],

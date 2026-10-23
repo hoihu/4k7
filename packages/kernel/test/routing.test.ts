@@ -161,6 +161,58 @@ describe('a net wider than its pads', () => {
   });
 });
 
+describe('tracks the agent laid', () => {
+  /** The track passes within 0.06 mm of (x, y) (on a corner or along a piece). */
+  const passes = (tracks: { pts: number[] }[], x: number, y: number) =>
+    tracks.some((t) => {
+      for (let q = 0; q + 3 < t.pts.length; q += 2) {
+        const [ax, ay, bx, by] = [t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!];
+        const l2 = (bx - ax) ** 2 + (by - ay) ** 2;
+        const u = l2 ? Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / l2)) : 0;
+        if (Math.hypot(ax + u * (bx - ax) - x, ay + u * (by - ay) - y) < 0.06) return true;
+      }
+      return false;
+    });
+
+  it('lays a connection through the points given, and routes the rest round it', () => {
+    // A1 → A2 straight across; the agent sends it round the bottom, through (10, 8)
+    const parts = [part('P1', [[3, 3, 'A']]), part('P2', [[17, 3, 'A']]), part('Q1', [[10, 1, 'B']]), part('Q2', [[10, 9.2, 'B']])];
+    const pads = parts.flatMap((p) => p.pads);
+    const r = route({ outline: { w: 20, h: 10.5 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts, powerNets: new Set(), drawn: [{ id: 'T1', netId: 'A', from: 0, to: 1, layer: 'F.Cu', points: [{ x: 10, y: 7 }] }] });
+    expect(r.drawn).toEqual([{ id: 'T1', laid: true }]);
+    const mine = r.tracks.filter((t) => t.drawn === 'T1');
+    expect(mine.length).toBe(1);
+    expect(mine.every((t) => t.layer === 'F.Cu' && t.width === RULES.track)).toBe(true);
+    expect(passes(mine, 10, 7)).toBe(true);
+    expect(r.connected('A', pads[0]!, pads[1]!)).toBe(true);
+    // B, from top to bottom, had to cross A: on the other layer
+    expect(r.failed).toEqual([]);
+    expect(r.tracks.filter((t) => t.netId === 'B').some((t) => t.layer === 'B.Cu')).toBe(true);
+    // the same way every pass: the tracks laid by hand do not change when the router tries again
+    const again = route({ outline: { w: 20, h: 10.5 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts, powerNets: new Set(), drawn: [{ id: 'T1', netId: 'A', from: 0, to: 1, layer: 'F.Cu', points: [{ x: 10, y: 7 }] }] }, 1);
+    expect(again.tracks.filter((t) => t.drawn === 'T1')).toEqual(mine);
+  });
+
+  it('changes layer at a point given a layer, with a via there', () => {
+    const parts = [part('P1', [[3, 5, 'A']]), part('P2', [[17, 5, 'A']])];
+    parts[1]!.pads[0]!.layers = ['B.Cu'];
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts, powerNets: new Set(), drawn: [{ id: 'T1', netId: 'A', from: 0, to: 1, layer: 'F.Cu', points: [{ x: 8, y: 5, layer: 'B.Cu' }] }] });
+    expect(r.drawn).toEqual([{ id: 'T1', laid: true }]);
+    expect(r.vias.filter((v) => v.drawn === 'T1').map((v) => [v.x, v.y])).toEqual([[8, 5]]);
+    expect(r.tracks.filter((t) => t.drawn === 'T1').map((t) => t.layer).sort()).toEqual(['B.Cu', 'F.Cu']);
+  });
+
+  it('one that finds no way is not laid: says why and where, and the router makes the connection', () => {
+    // the point lies on a pad of another net
+    const parts = [part('P1', [[3, 5, 'A']]), part('P2', [[17, 5, 'A']]), part('Q1', [[10, 8, 'B']]), part('Q2', [[15, 8, 'B']])];
+    const pads = parts.flatMap((p) => p.pads);
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts, powerNets: new Set(), drawn: [{ id: 'T1', netId: 'A', from: 0, to: 1, points: [{ x: 10, y: 8 }] }] });
+    expect(r.drawn).toEqual([{ id: 'T1', laid: false, why: '(10, 8) has no room for a 0.25 mm track: other copper is too close', at: { x: 10, y: 8 }, blockedBy: 'B' }]);
+    expect(r.tracks.some((t) => t.drawn)).toBe(false);
+    expect(r.connected('A', pads[0]!, pads[1]!)).toBe(true);
+  });
+});
+
 describe('the routed copper, kept with the design', () => {
   it('a routed design read back from its file is still routed (key order does not matter)', () => {
     const k = buck();

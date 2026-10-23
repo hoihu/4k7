@@ -515,6 +515,32 @@ export const RemoveViasOp = z.object({
   id: z.string().describe('Via group id ("V1", from get_board via_groups) or "all"'),
 });
 
+const copperLayer = z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']);
+export const TrackOp = z.object({
+  op: z.literal('track'),
+  from: pinRef.describe('The pad it starts on, "<refdes>.<pin>", e.g. "U1.SW" (one pad: a name shared by several pins needs the number)'),
+  to: pinRef.describe('The pad it ends on, on the same net, e.g. "D1.1"'),
+  net: netName.optional().describe('Check: the net both pads are on'),
+  layer: copperLayer.optional().describe('The layer it runs on from the start (default: the router picks, with vias where it likes); not an inner layer that is a dedicated plane'),
+  width_mm: z.number().positive().optional().describe('Track width (default the net\'s: track_mm, else the power or signal width); it narrows only in a short neck into a pad too small for it'),
+  through: z
+    .array(
+      z.object({
+        x_mm: z.number(),
+        y_mm: z.number(),
+        layer: copperLayer.optional().describe('The layer it goes on from this point: a via here where it changes'),
+      }),
+    )
+    .max(20)
+    .optional()
+    .describe('Points it must go through, in order (mm from the board\'s top-left corner, as the parts stand now; each moves with the end pad it is nearer). Between them the router finds the way, keeping the clearances; give a point where the way matters (round the side of a part, the corner of a loop, where it changes layer), not every bend'),
+}).describe('Lay one connection yourself, as you want it: the switching loop tight, the high-current path short and wide, a sensitive trace round the side away from the noise. The route step lays it first, before anything else, exactly through the points given, and never rips it up; the rest is routed round it. If it finds no way (a point too close to other copper, no room for a via, a pad on another layer) it is not laid: get_board laid_tracks and the DRC say why and where, and the router routes that connection its own way. Giving the same from and to again replaces it; erase_track takes it away. It looks like any other copper on the board.');
+
+export const EraseTrackOp = z.object({
+  op: z.literal('erase_track'),
+  id: z.string().describe('A track id ("T1", from get_board laid_tracks) or "all"'),
+});
+
 export const DescribeOp = z.object({
   op: z.literal('describe'),
   overview: z.string().min(1).optional().describe('The whole design in a few short paragraphs (Markdown): what it is for, its inputs and outputs, the supplies, how the blocks work together. Omit to keep the current one'),
@@ -570,6 +596,8 @@ export const EditOp = z.discriminatedUnion('op', [
   RemoveHoleOp,
   AddViasOp,
   RemoveViasOp,
+  TrackOp,
+  EraseTrackOp,
   AddCutoutOp,
   RemoveCutoutOp,
   AddGraphicOp,

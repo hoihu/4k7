@@ -278,9 +278,45 @@ is now 0.5 mm with necks at the pins:
 | before | 58/63 | 6 | 308 | 218 | 2850 mm | 42.6 s |
 | necks | 62/63 | 1 | 360 | 248 | 3272 mm | 50.2 s |
 
+### 5.8 Tracks the agent lays
+
+The user: *sometimes the agent knows how to wire a certain segment better, but can't convince the
+autorouter to do it.* The agent could only steer the router from afar (placement, widths, planes,
+vias), never say "this connection goes here". Now `track { from, to, layer?, width_mm?, through? }`
+lays one connection as the agent wants it.
+
+- **What is kept** (`BoardSettings.tracks`, `DrawnTrack`, part of the design, unlike the copper
+  cache): the two pads, the layer and width if given, and the points, each relative to the end
+  pad it was nearer when laid (not turned with the part: a point 10 mm out would swing round the
+  pad). A part moved moves the points near it. Giving the same two pads again replaces the track;
+  `erase_track` removes it. The op checks what it can against the board as it stands (both pads
+  on one net, the layers on the board and not a dedicated plane, an SMD pad on the layer the
+  track leaves or reaches it on, the points on the board, the width).
+- **How it is laid** (`RouteInput.drawn`, `layDrawn` in the router): before anything else in
+  every pass, each stretch from point to point is a search of its own at the track's width
+  (necks into small pads, §5.7), held to its layer where one is given (no vias), the router's
+  choice where not. A point's layer starts at that point, with a via there. The stretches ignore
+  the history costs and use the free style, so the track lies the same way in every pass.
+  `commit` lays the whole path with the points as pins: a run ends at each and the next begins,
+  so the straightening, which cuts corners wherever it can, keeps them, and runs that meet at a
+  pin are one track again. Its cells go into `fixedMap`, so no rip-up clears it and the probe
+  names it like a pad. Its tracks and vias carry the track's id (`drawn`): incremental routing
+  does not keep them as ordinary copper (they are laid afresh), and the net's hash includes the
+  track, so changing it routes that net again.
+- **When it finds no way** (a point too close to other copper, no room for a via, a pad on
+  another layer): it is not laid, the router routes the connection its own way (the board still
+  works), and `DRC.TRACK_NOT_LAID` (warning) and `get_board` `laid_tracks` say why and where,
+  with the net in the way. A pass that lays more of the agent's tracks wins over one that leaves
+  fewer connections open. With copper kept from the routing before, a track that finds no way
+  sends the router to a route from scratch (the kept copper may be what is in the way).
+- **It looks like any other copper** (the user's choice: nothing marks what the agent laid).
+
+The guide: route first and look, then lay only the few connections that matter (the switching
+loop, the high-current path, a sensitive trace), with only the points where the way matters.
+
 ## 6. What the agent cannot do yet
 
-- Draw or remove a track itself, or route one net (§7 step 6b–d).
+- Route one net, keep the router's copper for a net, or keep the router out of an area (§7 step 6c–d).
 - Optimize a zoomed area of the board with the scope guard the schematic has (`zoom-optimize.md`
   steps 3–4).
 - Be told the user's taste for layouts (the schematic has notes in Settings).
@@ -301,15 +337,10 @@ Each step is useful alone.
    certain segment better, but can't convince the autorouter to do it.* Each step is useful alone:
    - (a) **Necks** (built 2026-10-23, §5.7): a net's width all along, narrowed only into a pad too
      small for it; `DRC.NARROW_TRACK` where it is not.
-   - (b) `track { net, from: "U1.SW", to: "D1.1", layer?, width?, through?: [[x, y], …], via_at? }`:
-     one connection laid by the agent. The agent gives the intent, the kernel finds the exact path
-     through the given points (the router's own search, so the clearances hold). Kept in the design
-     (`BoardSettings.tracks`, not the copper cache): the ends by pad, the points relative to the
-     `from` part (as drop vias are, so they move with it). Laid before anything is routed, as copper
-     no rip-up clears (like `vias.fixed`). Where a move leaves no way through the points, the
-     connection is reported broken (in `get_board` and the DRC, as a broken wire on the
-     schematic), not routed some other way. `erase_track` removes it. It looks like any other
-     copper on the board (the user's choice: nothing marks what the agent laid).
+   - (b) **`track` and `erase_track`** (built 2026-10-23, §5.8): one connection laid by the agent,
+     pad to pad through the points it gives, laid first and never ripped up. Where it finds no
+     way, the router routes the connection its own way and the DRC says why (rather than leaving
+     it open, as first planned: the board keeps working while the agent fixes the track).
    - (c) `lock_copper { nets | connection }`: the router's own copper for a net, taken into
      `BoardSettings.tracks` as it lies (a pass that got a run right keeps it); after a move it is
      checked as kept copper is (`keep.ts`) and what no longer holds is reported, not dropped.

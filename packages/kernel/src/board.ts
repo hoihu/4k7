@@ -24,6 +24,7 @@ import {
   type Constraint,
   type CopperLayer,
   type Design,
+  type DrawnTrack,
   type MountingHole,
   type PlaneArea,
   type PlaneStyle,
@@ -61,7 +62,7 @@ import { copperDrc, edgeDrc, narrowTrackDrc, planeViaDrc, splitDrc } from './drc
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelView } from './panel.ts';
 import { stableJson } from './canonical.ts';
-import { route, type RouteProgress } from './router.ts';
+import { route, type RouteInput, type RouteProgress } from './router.ts';
 
 const SPACING = 0.3; // between courtyards
 const GRID_MM = 0.1;
@@ -1029,8 +1030,9 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   }
   const planes = placePlanes(settingsPlanes(d, layers.length as 2 | 4), parts, w, h);
   const viaPlan = planVias(settings.vias ?? [], parts, w, h, rules, (id) => d.nets[id]?.attrs.maxCurrent);
+  const drawnPlan = planDrawn(settings.tracks ?? [], parts, d);
   // (keys sorted: a design read back from its file has them in another order than one just edited)
-  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : [])] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
+  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : [])] : []), ...(drawnPlan.route.length ? [drawnPlan.route] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   const view: BoardView = {
     outline: { w, h },
     layers,
@@ -1042,6 +1044,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     zones: [],
     planes,
     viaGroups: viaPlan.groups,
+    drawn: drawnPlan.view,
     ratsnest: ratsnest(parts),
     diagnostics,
     stats: { nets: 0, routed: 0, unrouted: 0, trackLength: 0, vias: 0 },
@@ -1115,6 +1118,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   const before = !kept && d.board?.copper?.basis?.board === basis.board ? d.board.copper : null;
   const same = (netId: string) => before?.basis?.nets[netId] === basis.nets[netId];
   const keep = before ? { tracks: before.tracks.filter((t) => same(t.netId)), vias: before.vias.filter((v) => same(v.netId)) } : null;
+  const settingsDrawn = planDrawn(d.board?.tracks ?? [], b.parts, d).route;
   const index = new Map(pads.map((p, i) => [p, i]));
   const toCopper = (r: ReturnType<typeof route>): StoredCopper => ({
     key,
@@ -1129,6 +1133,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     passes: r.passes,
     basis,
     ...(r.reused ? { reused: r.reused } : {}),
+    ...(r.drawn ? { drawn: r.drawn } : {}),
   });
   const copper =
     kept ??
@@ -1146,6 +1151,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
         ...(b.shape ? { shape: b.shape } : {}),
         cutouts: b.cutouts,
         ...(keep ? { keep } : {}),
+        ...(settingsDrawn.length ? { drawn: settingsDrawn } : {}),
         ...(opts.budgetMs ? { budgetMs: opts.budgetMs } : {}),
         ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
         // what a stop keeps: the best pass so far, marked as stopped
@@ -1187,12 +1193,26 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
       vias: copper.vias.length,
     },
     unrouted,
+    drawn: b.drawn.map((t) => {
+      const st = copper.drawn?.find((x) => x.id === t.id);
+      return st ? { ...t, laid: st.laid, ...(st.why ? { why: st.why + (st.blockedBy ? ` (${d.nets[st.blockedBy]?.name ?? st.blockedBy} is in the way)` : '') } : {}), ...(st.at ? { at: st.at } : {}) } : t;
+    }),
     ...(kept ? {} : { newCopper: copper }),
     ...(copper.stopped ? { stopped: true } : {}),
     ...(copper.reused ? { reused: copper.reused } : {}),
   };
   const name = (id: string) => d.nets[id]?.name ?? id;
   const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...narrowTrackDrc(routed, (id) => (netWidths[id] ? { width: netWidths[id], why: 'set for the net' } : powerNets.has(id) ? { width: b.rules.powerTrack, why: 'the power width' } : undefined))];
+  for (const t of routed.drawn) {
+    if (t.laid !== false) continue;
+    diags.push({
+      code: 'DRC.TRACK_NOT_LAID',
+      severity: 'warning',
+      message: `${t.id} (${t.from} → ${t.to}, ${name(t.netId)}) is not laid as asked: ${t.why}. The router routed this connection its own way. Move the points (track with the same from and to replaces it), make room there, or erase_track ${t.id}.`,
+      ...(t.at ? { at: t.at } : {}),
+      entities: [...new Set([t.from, t.to].map((x) => x.slice(0, x.lastIndexOf('.'))))],
+    });
+  }
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
@@ -1242,6 +1262,7 @@ function routeSetup(d: Design, b: BoardView) {
   const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort()]));
   // the pads dropping through vias the agent placed (add_vias drop), per net
   const drops = (d.board?.vias ?? []).filter((g) => g.kind === 'drop');
+  const drawn = d.board?.tracks ?? [];
   // what copper routed now holds under (StoredCopper.basis): the board, and per net what decides its
   // copper. (Not the outline: an auto-sized board grows as parts move; the copper is checked
   // against the edge as it is now.)
@@ -1250,7 +1271,7 @@ function routeSetup(d: Design, b: BoardView) {
     nets: Object.fromEntries(
       Object.keys(d.nets)
         .sort()
-        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.offsets ?? g.count ?? null, g.drill ?? null, g.size ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null])]))]),
+        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.offsets ?? g.count ?? null, g.drill ?? null, g.size ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null]), drawn.filter((t) => t.netId === id)]))]),
     ),
   };
   return { powerNets, planes, netWidths, key, basis };
@@ -1777,6 +1798,35 @@ export interface ViaPlan {
 /** Ties: never fewer vias than this (one may be bad), nor more than this many. */
 const TIE_MIN = 2;
 const TIE_MAX = 16;
+
+/**
+ * The tracks the agent laid (BoardSettings.tracks) on this placement: for the router (pads by
+ * index into all parts' pads in order, points on the board) and for the board view. One whose
+ * part is not on the board is not laid (said so in the view).
+ */
+export function planDrawn(tracks: DrawnTrack[], parts: BoardPart[], d: Pick<Design, 'components'>): { route: NonNullable<RouteInput['drawn']>; view: BoardView['drawn'] } {
+  const out: { route: NonNullable<RouteInput['drawn']>; view: BoardView['drawn'] } = { route: [], view: [] };
+  const index = new Map<string, { idx: number; pad: BoardPad; label: string }>();
+  let idx = 0;
+  for (const part of parts) for (const pad of part.pads) index.set(`${part.componentId} ${pad.number}`, { idx: idx++, pad, label: `${part.refdes}.${pad.number}` });
+  for (const t of tracks) {
+    const [a, b] = [index.get(`${t.from.componentId} ${t.from.number}`), index.get(`${t.to.componentId} ${t.to.number}`)];
+    const name = (e: DrawnTrack['from']) => `${d.components[e.componentId]?.refdes ?? '?'}.${e.number}`;
+    const base = { id: t.id, netId: t.netId, from: a?.label ?? name(t.from), to: b?.label ?? name(t.to), ...(t.layer ? { layer: t.layer } : {}), ...(t.width ? { width: t.width } : {}) };
+    if (!a || !b) {
+      const gone = [!a ? t.from : null, !b ? t.to : null].filter((e) => e !== null).map((e) => d.components[e.componentId]?.refdes ?? 'its part');
+      out.view.push({ ...base, through: [], laid: false, why: `${gone.join(' and ')} ${gone.length > 1 ? 'are' : 'is'} not on the board` });
+      continue;
+    }
+    const through = (t.through ?? []).map((p) => {
+      const end = p.end === 'from' ? a.pad : b.pad;
+      return { x: r3(end.x + p.dx), y: r3(end.y + p.dy), ...(p.layer ? { layer: p.layer } : {}) };
+    });
+    out.view.push({ ...base, through });
+    out.route.push({ id: t.id, netId: t.netId, from: a.idx, to: b.idx, ...(t.width ? { width: t.width } : {}), ...(t.layer ? { layer: t.layer } : {}), points: through });
+  }
+  return out;
+}
 
 /**
  * Where each via group's vias go on this placement (a pad group follows its part). `amps`: a
