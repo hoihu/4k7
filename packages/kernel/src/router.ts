@@ -12,7 +12,7 @@
  * grid passes follow (horizontal on F.Cu, vertical on B.Cu, vias cheap; see Style): a board
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, padCapsule, roundPadDist, type PlaneStyle, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, padCapsule, roundPadDist, type DrawnStatus, type LockedStatus, type PlaneStyle, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
 import { keptCopper, type KeptCopper } from './keep.ts';
 import { segDist, segSegDist } from './segments.ts';
 
@@ -37,6 +37,10 @@ const GRID: Style = { via: 3, offAxis: 1 };
 const FREE_STALE = 2;
 const FREE_SHARE = 0.4;
 const CENTRE_COST = 0.5; // per step and grid step off the middle of the gap between two IC pins
+const LAYER_COST = 1; // a step off the layer a net should keep to (set_net layer), in grid steps
+const NECK_COST = 2; // a step where the track narrows to a neck (see neckAt), in grid steps
+const NECK_MIN = 5; // shortest stretch at the full width between two necks, in grid steps
+const NECK_REACH = 1; // a neck zone: this far round a pad (mm), or twice the track's width if more
 const CLIP_COST = 3; // a step whose copper runs half over one of the net's own pads, off its centre line
 const SPLIT_COST = 8; // per step on the band along a split plane's edge (signal nets), in grid steps
 const SPLIT_BAND = 0.3; // the band: this far either side of the gap, mm
@@ -81,6 +85,25 @@ export interface RouteInput {
    * board.
    */
   keep?: { tracks: Track[]; vias: Via[] };
+  /**
+   * Copper the agent locked (lock_copper): what still holds for this board (as for `keep`, see
+   * keep.ts) is laid as it lies before anything else, and no rip-up clears it.
+   */
+  locked?: { tracks: Track[]; vias: Via[] };
+  /**
+   * Connections laid as the agent asked (the track op), before anything else is routed: pad
+   * `from` to pad `to` (indices into all parts' pads in order) through `points`, at `width` (else
+   * the net's), on `layer` from the start and on a point's layer from that point (a via there);
+   * no layer: the router's choice. Copper no rip-up clears. One that finds no way is not laid
+   * (RouteResult.drawn says why) and its connection is routed as any other.
+   */
+  drawn?: { id: string; netId: string; from: number; to: number; width?: number; layer?: CopperLayer; points: { x: number; y: number; layer?: CopperLayer }[] }[];
+  /** Nets routed before the others: their connections first, in every pass. */
+  routeFirst?: Set<string>;
+  /** Per net, the layer its tracks should keep to: steps on the other layers cost more. */
+  netLayers?: Record<string, CopperLayer>;
+  /** Areas copper keeps out of (x0, y0, x1, y1, mm), on these layers, but for the nets in `allow`. */
+  keepouts?: { rect: [number, number, number, number]; layers: CopperLayer[]; allow: string[] }[];
   /** Stop routing after this many milliseconds; what is left is reported unrouted. Default 90 s. */
   budgetMs?: number;
   /** Called while routing: the copper laid so far in the current pass, a few times a second. */
@@ -114,6 +137,10 @@ export interface RouteResult {
   groups: number[];
   /** Copper taken over from RouteInput.keep, as it lies in the result. */
   reused?: { tracks: number; vias: number };
+  /** Per RouteInput.drawn: laid as asked, or why not. */
+  drawn?: DrawnStatus[];
+  /** Per net with RouteInput.locked copper: how much of it still holds (and is laid). */
+  locked?: LockedStatus[];
 }
 
 /** Why a connection stayed open: what its way would have to cross (see probe in routeOnce). */
@@ -160,7 +187,9 @@ export function route(input: RouteInput, passes = 40): RouteResult {
   const viaArea = (c: Conn) => areas.some((pl) => pl.netId === c.netId && inArea(pl, pads[c.a]!) && inArea(pl, pads[c.b]!));
   const planeOnly = conns.filter((c) => dedicated.has(c.netId) || viaArea(c));
   const throughPlane = new Set(planeOnly);
-  const firstOrder = conns.filter((c) => !throughPlane.has(c)).sort((x, y) => x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
+  // shortest first; the nets asked to go first before all others
+  const first = (c: Conn) => (input.routeFirst?.has(c.netId) ? 0 : 1);
+  const firstOrder = conns.filter((c) => !throughPlane.has(c)).sort((x, y) => first(x) - first(y) || x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
   let order = firstOrder;
   const t0 = now();
   const deadline = t0 + (input.budgetMs ?? 90_000);
@@ -182,6 +211,8 @@ export function route(input: RouteInput, passes = 40): RouteResult {
    * from scratch (letting go net by net can go on for many passes, each naming the next).
    */
   const keep = input.keep ? keptCopper(input, input.keep) : null;
+  // the copper the agent locked, as far as it still holds (never let go)
+  const locked = input.locked ? keptCopper(input, input.locked) : null;
   const keptNets = new Set(keep?.pieces.map((pc) => pc.netId));
   const letGo = new Set<string>();
   let keeping = keptNets.size > 0;
@@ -190,18 +221,30 @@ export function route(input: RouteInput, passes = 40): RouteResult {
   let phaseBest: number | null = null;
   const keptNow = (): KeptCopper | null => (keep && keeping ? { ...keep, pieces: keep.pieces.filter((pc) => !letGo.has(pc.netId)) } : null);
   // before the first pass the best there is: nothing routed
-  input.onBest?.(result({ tracks: [], vias: [], zones: [], failed: [...order, ...planeOnly], roots: Int32Array.from(pads, (_, i) => i), timedOut: false, blockage: new Map(), reused: undefined }, 0));
+  input.onBest?.(result({ tracks: [], vias: [], zones: [], failed: [...order, ...planeOnly], roots: Int32Array.from(pads, (_, i) => i), timedOut: false, blockage: new Map(), reused: undefined, drawn: [] }, 0));
   for (let pass = 0; pass < passes; pass++) {
     const bestOpen = best ? best.failed.length : null;
     const progress = input.onProgress ? (tracks: Track[], vias: Via[], done: number) => input.onProgress!({ pass: pass + 1, tracks, vias, connections: conns.length, done, bestOpen, elapsedMs: now() - t0, grid: style === GRID }) : undefined;
-    const r = routeOnce(input, pads, owner, order, deadline, planeOnly, early, history, style, keptNow(), progress);
+    const r = routeOnce(input, pads, owner, order, deadline, planeOnly, early, history, style, keptNow(), locked, progress);
     ran++;
     // each pass's copper, so even a quick pass shows (the next one starts from nothing)
     progress?.(r.tracks, r.vias, conns.length - r.failed.length);
-    const improved = !best || r.failed.length < best.failed.length || (r.failed.length === best.failed.length && pourOpen(r) < pourOpen(best));
+    // (a pass that lays more of the agent's tracks as asked is better whatever else it leaves open)
+    const missing = (x: { drawn: DrawnStatus[] }) => x.drawn.filter((t) => !t.laid).length;
+    const improved = !best || missing(r) < missing(best) || (missing(r) === missing(best) && (r.failed.length < best.failed.length || (r.failed.length === best.failed.length && pourOpen(r) < pourOpen(best))));
     if (improved) {
       best = r;
       if (r.failed.length) input.onBest?.(result(r, ran));
+    }
+    if (keeping && missing(r) && !r.timedOut) {
+      // a track the agent laid that found no way round the kept copper: route from scratch
+      keeping = false;
+      stale = 0;
+      phaseBest = null;
+      history.fill(0);
+      order = firstOrder;
+      early = new Set();
+      continue;
     }
     if (!r.failed.length || r.timedOut) break;
     // every open connection closed off by pads, keep-outs or the edge alone: no pass can help
@@ -248,7 +291,20 @@ export function route(input: RouteInput, passes = 40): RouteResult {
     early = failed;
     order = [...order.filter((c) => failed.has(c)), ...order.filter((c) => !failed.has(c))];
   }
-  return result(best ?? routeOnce(input, pads, owner, order, deadline, planeOnly, new Set(), history, style, keptNow()), ran);
+  return result(best ?? routeOnce(input, pads, owner, order, deadline, planeOnly, new Set(), history, style, keptNow(), locked), ran);
+
+  /** Per net with locked copper: how much there is, and how much of it holds. */
+  function lockedStatus(): LockedStatus[] {
+    const nets = [...new Set([...input.locked!.tracks, ...input.locked!.vias].map((x) => x.netId))].sort();
+    const held = locked!.pieces;
+    return nets.map((netId) => ({
+      netId,
+      tracks: input.locked!.tracks.filter((t) => t.netId === netId).length,
+      vias: input.locked!.vias.filter((v) => v.netId === netId).length,
+      heldTracks: held.filter((pc) => pc.netId === netId).reduce((n, pc) => n + pc.tracks.length, 0),
+      heldVias: held.filter((pc) => pc.netId === netId).reduce((n, pc) => n + pc.vias.length, 0),
+    }));
+  }
 
   /** A pass's result as the caller sees it. */
   function result(r: ReturnType<typeof routeOnce>, ran: number): RouteResult {
@@ -270,6 +326,8 @@ export function route(input: RouteInput, passes = 40): RouteResult {
       passes: ran,
       groups: Array.from(r.roots),
       ...(r.reused ? { reused: r.reused } : {}),
+      ...(r.drawn.length ? { drawn: r.drawn } : {}),
+      ...(input.locked ? { locked: lockedStatus() } : {}),
     };
   }
 }
@@ -315,6 +373,8 @@ function routeOnce(
   style: Style,
   /** Copper kept from the routing before (see RouteInput.keep), there from the start. */
   kept: KeptCopper | null,
+  /** Copper the agent locked that still holds (see RouteInput.locked): there from the start, never cleared. */
+  locked: KeptCopper | null,
   progress?: (tracks: Track[], vias: Via[], done: number) => void,
 ) {
   const { rules, layers } = input;
@@ -340,7 +400,7 @@ function routeOnce(
   // tracks may not
   const widths = [rules.track, rules.powerTrack, rules.viaPad];
   const trackClass = (w: number) => widths.findIndex((x, i) => i !== 2 && x === w);
-  for (const w of Object.values(input.netWidths ?? {})) if (w > 0 && trackClass(w) < 0) widths.push(w);
+  for (const w of [...Object.values(input.netWidths ?? {}), ...(input.drawn ?? []).map((t) => t.width ?? 0)]) if (w > 0 && trackClass(w) < 0) widths.push(w);
   const maps = widths.map(() => Array.from({ length: L }, () => new Int32Array(N)));
 
   // the coarse grid (see corridor): the coarse cell of grid point (i, j) is crow[j] + ccol[i]
@@ -472,6 +532,15 @@ function routeOnce(
   }
   // the signal map with pads, keep-outs and the edge only: what no rip-up can clear (for the probe)
   const fixedMap = maps[0]!.map((m) => m.slice());
+  // the copper the agent locked: there in every pass and never let go, but after fixedMap, so the
+  // probe names its net as in the way (not a pad or the edge)
+  const lockedTracks = locked ? locked.pieces.flatMap((pc) => pc.tracks.map((i) => locked.tracks[i]!)) : [];
+  const lockedVias = locked ? locked.pieces.flatMap((pc) => pc.vias.map((i) => locked.vias[i]!)) : [];
+  for (const t of lockedTracks) {
+    const l = layerIdx.get(t.layer)!;
+    for (let q = 0; q + 3 < t.pts.length; q += 2) stampSeg(l, numOf(t.netId), t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!, t.width);
+  }
+  for (const v of lockedVias) stampVia(numOf(v.netId), v.x, v.y, v.pad);
   // the copper kept from the routing before: after fixedMap (a later pass may route its nets
   // again), before the escapes (they keep clear of it)
   const keptTracks = kept ? kept.pieces.flatMap((pc) => pc.tracks.map((i) => kept.tracks[i]!)) : [];
@@ -481,11 +550,13 @@ function routeOnce(
     for (let q = 0; q + 3 < t.pts.length; q += 2) stampSeg(l, numOf(t.netId), t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!, t.width);
   }
   for (const v of keptVias) stampVia(numOf(v.netId), v.x, v.y, v.pad);
-  /** Segments of a net (width w, on layer l) keep the clearance from the kept copper of other nets. */
+  /** Segments of a net (width w, on layer l) keep the clearance from the kept and locked copper of other nets. */
+  const heldTracks = [...lockedTracks, ...keptTracks];
+  const heldVias = [...lockedVias, ...keptVias];
   const clearOfKept = (netId: string, l: number, w: number, segs: [number, number, number, number][]) =>
     segs.every(([ax, ay, bx, by]) =>
-      keptTracks.every((t) => t.netId === netId || t.layer !== layers[l] || pieceList(t.pts).every(([cx, cy, dx, dy]) => segSegDist(ax, ay, bx, by, cx, cy, dx, dy) >= rules.clearance + (w + t.width) / 2 - 1e-3)) &&
-      keptVias.every((v) => v.netId === netId || segDist(ax, ay, bx, by)(v.x, v.y) >= rules.clearance + (w + v.pad) / 2 - 1e-3),
+      heldTracks.every((t) => t.netId === netId || t.layer !== layers[l] || pieceList(t.pts).every(([cx, cy, dx, dy]) => segSegDist(ax, ay, bx, by, cx, cy, dx, dy) >= rules.clearance + (w + t.width) / 2 - 1e-3)) &&
+      heldVias.every((v) => v.netId === netId || segDist(ax, ay, bx, by)(v.x, v.y) >= rules.clearance + (w + v.pad) / 2 - 1e-3),
     );
 
   // copper cells per pad (inside the pad), for starts and goals
@@ -761,20 +832,22 @@ function routeOnce(
     }
   }
 
-  // the kept copper: its tracks and vias, each piece joining its pads (as copper just routed does)
-  for (const pc of kept?.pieces ?? []) {
-    for (let q = 1; q < pc.pads.length; q++) union(pc.pads[0]!, pc.pads[q]!);
-    const cells = groupCells.get(find(pc.pads[0]!))!;
-    for (const i of pc.tracks) {
-      const t = kept!.tracks[i]!;
-      tracks.push(t);
-      cells.push(...copperCells(layerIdx.get(t.layer)!, t.pts, t.width));
-    }
-    for (const i of pc.vias) {
-      const v = kept!.vias[i]!;
-      vias.push(v);
-      const c = Math.min(W - 1, Math.max(0, Math.round(v.x / G))) + Math.min(H - 1, Math.max(0, Math.round(v.y / G))) * W;
-      for (let l = 0; l < L; l++) cells.push(l * N + c);
+  // the locked and the kept copper: its tracks and vias, each piece joining its pads (as copper just routed does)
+  for (const [held, tag] of [[locked, true], [kept, false]] as const) {
+    for (const pc of held?.pieces ?? []) {
+      for (let q = 1; q < pc.pads.length; q++) union(pc.pads[0]!, pc.pads[q]!);
+      const cells = groupCells.get(find(pc.pads[0]!))!;
+      for (const i of pc.tracks) {
+        const t = held!.tracks[i]!;
+        tracks.push(tag ? { ...t, locked: true } : t);
+        cells.push(...copperCells(layerIdx.get(t.layer)!, t.pts, t.width));
+      }
+      for (const i of pc.vias) {
+        const v = held!.vias[i]!;
+        vias.push(tag ? { ...v, locked: true } : v);
+        const c = Math.min(W - 1, Math.max(0, Math.round(v.x / G))) + Math.min(H - 1, Math.max(0, Math.round(v.y / G))) * W;
+        for (let l = 0; l < L; l++) cells.push(l * N + c);
+      }
     }
   }
 
@@ -805,12 +878,75 @@ function routeOnce(
   const DY = [0, 1, 1, 1, 0, -1, -1, -1];
   const STEP = [1, Math.SQRT2, 1, Math.SQRT2, 1, Math.SQRT2, 1, Math.SQRT2];
 
-  const freeFor = (net: number, k: number) => (l: number, i: number) => {
+  /*
+   * Keep-outs (RouteInput.keepouts): for a net not let through, copper `w` wide may not reach into
+   * the area on its layers. koTest(net, w): whether a centre on cell i of layer l would (null: no
+   * keep-out concerns the net).
+   */
+  const keepouts = (input.keepouts ?? []).map((k) => ({ rect: k.rect, ls: k.layers.flatMap((l) => (layerIdx.has(l) ? [layerIdx.get(l)!] : [])), allow: new Set(k.allow.map(numOf)) }));
+  const koCache = new Map<number, ((l: number, i: number) => boolean) | null>();
+  const koTest = (net: number, w: number) => {
+    if (!keepouts.length) return null;
+    const key = net * 4096 + Math.round(w * 100);
+    let f = koCache.get(key);
+    if (f !== undefined) return f;
+    const g = w / 2 - 1e-3;
+    const rects: [number, number, number, number][][] = layers.map(() => []);
+    for (const k of keepouts) if (!k.allow.has(net)) for (const l of k.ls) rects[l]!.push([(k.rect[0] - g) / G, (k.rect[1] - g) / G, (k.rect[2] + g) / G, (k.rect[3] + g) / G]);
+    f = rects.some((r) => r.length)
+      ? (l: number, i: number) => {
+          const x = i % W;
+          const y = (i - x) / W;
+          for (const r of rects[l]!) if (x > r[0] && x < r[2] && y > r[1] && y < r[3]) return true;
+          return false;
+        }
+      : null;
+    koCache.set(key, f);
+    return f;
+  };
+  /** Per net (number), the layer it should keep to (set_net layer). */
+  const layerPref = new Map(Object.entries(input.netLayers ?? {}).flatMap(([id, l]) => (layerIdx.has(l) ? [[numOf(id), layerIdx.get(l)!] as const] : [])));
+  const freeFor = (net: number, k: number) => {
+    const ko = koTest(net, widths[k]!);
+    return (l: number, i: number) => {
+      if (ko && ko(l, i)) return false;
+      return freeAt(net, k, l, i);
+    };
+  };
+  const freeAt = (net: number, k: number, l: number, i: number) => {
     const v = maps[k]![l]![i]!;
     if (v === 0 || v === net) return true;
     // inside the net's own pad: only where the track stays on the pad (no copper sticking out)
     const st = l * N + i;
     return ownCopper[st] === net && ownInset[st]! >= widths[k]! / 2 - 0.01;
+  };
+  /*
+   * Necks: a track wider than a pad it starts or ends on runs at its width and narrows only near
+   * that pad. While a connection is routed (see routeConn), the grid points within reach of such
+   * a pad are its neck zone (neckAt[i] === neckRun), each with the width class it may narrow to
+   * there (neckK: the widest the pad takes). Where the track's own width does not fit, a neck
+   * cell takes the narrow one; so does one where the wide copper would reach onto the pad
+   * (neckOn: it would stick out of the pad). neckRun 0: no zone (every other search).
+   */
+  const neckAt = new Int32Array(N);
+  const neckK = new Int8Array(N);
+  const neckOn = new Uint8Array(N);
+  let neckRun = 0;
+  let neckNo = 0;
+  // laying a track the agent asked for (see layDrawn): searches ignore the history costs
+  let drawing = false;
+  let noHistory: Float32Array | null = null;
+  /** freeFor(net, k), or a neck cell where its narrow width fits. */
+  const freeNeck = (net: number, k: number) => {
+    const wide = freeFor(net, k);
+    if (!neckRun) return wide;
+    const r = neckRun;
+    return (l: number, i: number) => wide(l, i) || (neckAt[i] === r && freeFor(net, neckK[i]!)(l, i));
+  };
+  /** The width class a track of class k takes at state st: its own, or the neck's where it does not fit. */
+  const classAt = (net: number, k: number, st: number) => {
+    const i = st % N;
+    return neckRun && neckAt[i] === neckRun && (neckOn[i] || !freeFor(net, k)(Math.floor(st / N), i)) ? neckK[i]! : k;
   };
   /*
    * Via keep-out: no via overlapping any pad (its own net's included) or within the land pattern
@@ -835,10 +971,15 @@ function routeOnce(
       }
     }
   }
-  const viaFreeFor = (net: number) => (i: number) => {
+  const viaFreeFor = (net: number) => {
+    const ko = koTest(net, rules.viaPad);
+    return (i: number) => viaFreeAt(net, ko, i);
+  };
+  const viaFreeAt = (net: number, ko: ((l: number, i: number) => boolean) | null, i: number) => {
     if (viaAt[i] === net) return true; // reuse an existing via of this net
     if (viaBlocked[i] || viaNear[i]) return false;
     for (let l = 0; l < L; l++) {
+      if (ko && ko(l, i)) return false;
       const v = maps[2]![l]![i]!;
       if (v !== 0 && v !== net) return false;
     }
@@ -863,13 +1004,23 @@ function routeOnce(
    * goal cells. With a group of copper as the goal, a point (one pad of it) would overestimate
    * the way to the group's nearer parts, and the search would run past them to that pad.
    */
-  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean, corr = 0, floodFirst = false, within = Infinity): number[] | null => {
+  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean, corr = 0, floodFirst = false, within = Infinity, oneLayer = false): number[] | null => {
     // no new search once the time is up (its reachability flood alone can take a while)
     if (now() > until) return null;
-    const free = freeFor(net, k);
+    const free = freeNeck(net, k);
+    // a track the agent laid: the same way every pass (no history costs, the free style)
+    const hist = drawing ? (noHistory ??= new Float32Array(S)) : history;
+    const sty = drawing ? FREE : style;
+    const changes = L > 1 && !oneLayer; // may change layer (a via)
     const viaFree = viaFreeFor(net);
     const run = ++searchNo;
     const inPad = widths[k]! / 2 - 0.01;
+    // a neck cell where the track's own width does not fit: the narrow width there (see neckAt)
+    const nr = neckRun;
+    const neckOk = (l: number, c: number) => nr !== 0 && neckAt[c] === nr && freeFor(net, neckK[c]!)(l, c);
+    // keep-outs the net may not enter, at this width; the layer it should keep to
+    const ko = koTest(net, widths[k]!);
+    const prefL = drawing ? -1 : (layerPref.get(net) ?? -1);
     // a track wider than a via pad may not fit where a via does (its clearance reaches farther):
     // only then must a via's landing be checked for the track as well
     const wide = widths[k]! > rules.viaPad;
@@ -888,7 +1039,7 @@ function routeOnce(
     // starts and goals only where this width fits; if none does (a track wider than its pad),
     // the cells deepest inside the pad: on its centre line, not at a corner
     const usable = (st: number) => free(Math.floor(st / N), st % N);
-    const centred = (st: number) => usable(st) && !offCentre(net, k, st);
+    const centred = (st: number) => usable(st) && !offCentre(net, classAt(net, k, st), st);
     const seeds = starts.filter(centred);
     if (!seeds.length) seeds.push(...starts.filter(usable));
     const from0 = seeds.length ? seeds : deepestCells(starts);
@@ -921,7 +1072,7 @@ function routeOnce(
         const lo = l * N;
         const ok = (c: number) => {
           const v = m[c]!;
-          return v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad);
+          return ((v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad)) && !(ko && ko(l, c))) || neckOk(l, c);
         };
         for (let d = 0; d < 8; d++) {
           const dx = DX[d]!;
@@ -936,7 +1087,7 @@ function routeOnce(
           seen[ns] = run;
           queue[tail++] = ns;
         }
-        if (L > 1 && viaFree(i)) {
+        if (changes && viaFree(i)) {
           for (let l2 = 0; l2 < L; l2++) {
             const ns = l2 * N + i;
             if (seen[ns] === run || (wide && !free(l2, i) && !isGoal(ns))) continue;
@@ -981,7 +1132,7 @@ function routeOnce(
       const i = s % N;
       // copper of the net where this width does not fit (a goal: thinner copper, e.g. a drop to a
       // pour): a way may end there, not run on along it (its copper would reach beyond the thin one)
-      if (from[s]! >= 0 && ownCopper[s] !== net && maps[k]![l]![i] !== 0 && maps[k]![l]![i] !== net) continue;
+      if (from[s]! >= 0 && ownCopper[s] !== net && maps[k]![l]![i] !== 0 && maps[k]![l]![i] !== net && !neckOk(l, i)) continue;
       const x = i % W;
       const y = (i - x) / W;
       const base = cost[s]!;
@@ -989,10 +1140,11 @@ function routeOnce(
       // free(l, ·) for this layer, inlined (the hottest test of the search)
       const m = maps[k]![l]!;
       const lo = l * N;
-      const ok = (c: number) => {
+      const wideOk = (c: number) => {
         const v = m[c]!;
-        return v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad);
+        return (v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad)) && !(ko && ko(l, c));
       };
+      const ok = (c: number) => wideOk(c) || neckOk(l, c);
       const kind = layerKind[l]!;
       const tch = k < 2 ? touch[k]! : null;
       for (let d = 0; d < 8; d++) {
@@ -1008,7 +1160,7 @@ function routeOnce(
         // diagonal steps: both orthogonal neighbours must be clear too (no corner cutting)
         if (dx !== 0 && dy !== 0 && (!ok(y * W + nx) || !ok(ny * W + x))) continue;
         const off = kind === 1 ? dy !== 0 : kind === 2 ? dx !== 0 : false;
-        const nc = base + STEP[d]! + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? style.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + (split !== null ? split[ns]! : 0) + history[ns]!;
+        const nc = base + STEP[d]! + (nr !== 0 && !wideOk(ni) ? NECK_COST : 0) + (prefL >= 0 && l !== prefL ? LAYER_COST : 0) + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? sty.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + (split !== null ? split[ns]! : 0) + hist[ns]!;
         if (nc < costOf(ns)) {
           seenAt[ns] = run;
           cost[ns] = nc;
@@ -1017,13 +1169,13 @@ function routeOnce(
           heap.push(ns, nc + h(ns));
         }
       }
-      if (L > 1 && viaFree(i)) {
+      if (changes && viaFree(i)) {
         for (let l2 = 0; l2 < L; l2++) {
           if (l2 === l) continue;
           const ns = l2 * N + i;
           // the track goes on from the via: it must fit there too (see wide)
           if (wide && !free(l2, i) && !isGoal(ns)) continue;
-          const nc = base + style.via + history[ns]!;
+          const nc = base + sty.via + hist[ns]!;
           if (nc < costOf(ns)) {
             seenAt[ns] = run;
             cost[ns] = nc;
@@ -1070,11 +1222,12 @@ function routeOnce(
     const mk = maps[k]!;
     const inPad = widths[k]! / 2 - 0.01;
     /** freeFor(net, k), or a start or goal. */
+    const ko = koTest(net, widths[k]!);
     const open = (l: number, i: number) => {
       const v = mk[l]![i]!;
-      if (v === 0 || v === net) return true;
+      if ((v === 0 || v === net) && !(ko && ko(l, i))) return true;
       const st = l * N + i;
-      return (ownCopper[st] === net && ownInset[st]! >= inPad) || goal[st] === goalStamp || goal[st] === -goalStamp;
+      return (ownCopper[st] === net && ownInset[st]! >= inPad) || goal[st] === goalStamp || goal[st] === -goalStamp || (neckRun !== 0 && neckAt[i] === neckRun && freeFor(net, neckK[i]!)(l, i));
     };
     const viaFree = viaFreeFor(net);
     let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
@@ -1356,16 +1509,48 @@ function routeOnce(
     return changed;
   };
 
-  /** Turn a path into tracks and vias, reserve its copper; returns the cells the copper covers. */
-  const commit = (netId: string, net: number, k: number, path: number[], startPad: number, endPad: number, endVia = false): number[] => {
-    const width = widths[k]!;
-    const free = freeFor(net, k);
-    const runs: { l: number; cells: number[] }[] = [];
+  /**
+   * Turn a path into tracks and vias, reserve its copper; returns the cells the copper covers.
+   * The path is laid in runs, one per layer and width: a neck (see neckAt) is a run of its own,
+   * meeting the wider run beside it on that run's last grid point (the narrow track fits wherever
+   * the wide one does). `pins`: grid points the track must turn at as they are (the points of a
+   * track the agent laid): a run ends there and the next begins, so straightening cannot cut them.
+   */
+  const commit = (netId: string, net: number, k: number, path: number[], startPad: number, endPad: number, endVia = false, pins?: Set<number>): number[] => {
+    const runs: { l: number; k: number; cells: number[] }[] = [];
     for (const s of path) {
       const l = Math.floor(s / N);
+      const ks = classAt(net, k, s);
       const run = runs.at(-1);
-      if (!run || run.l !== l) runs.push({ l, cells: [s % N] });
+      if (!run || run.l !== l || run.k !== ks) runs.push({ l, k: ks, cells: [s % N] });
       else run.cells.push(s % N);
+    }
+    // a short stretch at the full width between two necks on one layer: narrow too (no stubs of
+    // wide track a few grid steps long)
+    for (let ri = 1; ri + 1 < runs.length; ri++) {
+      const [a, b, c] = [runs[ri - 1]!, runs[ri]!, runs[ri + 1]!];
+      if (b.k === k && a.k !== k && a.k === c.k && a.l === b.l && c.l === b.l && b.cells.length < NECK_MIN) {
+        a.cells.push(...b.cells, ...c.cells);
+        runs.splice(ri, 2);
+        ri--;
+      }
+    }
+    if (pins?.size) {
+      for (let ri = 0; ri < runs.length; ri++) {
+        const run = runs[ri]!;
+        const at = run.cells.findIndex((c, q) => q > 0 && pins.has(c));
+        if (at < 0) continue;
+        runs.splice(ri + 1, 0, { l: run.l, k: run.k, cells: run.cells.slice(at) });
+        run.cells = run.cells.slice(0, at);
+      }
+    }
+    // runs of one layer meet: the narrower one goes on to the wider one's grid point beside it
+    // (at a pin, of one width, the first goes on to the pin)
+    for (let ri = 1; ri < runs.length; ri++) {
+      const [a, b] = [runs[ri - 1]!, runs[ri]!];
+      if (a.l !== b.l) continue;
+      if (widths[b.k]! < widths[a.k]!) b.cells.unshift(a.cells.at(-1)!);
+      else a.cells.push(b.cells[0]!);
     }
     // a path starting or ending inside a pad runs on to (from) the pad's centre cell, so the
     // straightening can aim its last piece at the pad centre (not at some cell off to the side)
@@ -1398,7 +1583,8 @@ function routeOnce(
     }
     const covered: number[] = [];
     const lines = runs.map((run, ri) => {
-      const clip = (l: number, i: number, dx: number, dy: number) => clips(net, k, l, i, dx, dy);
+      const free = freeFor(net, run.k);
+      const clip = (l: number, i: number, dx: number, dy: number) => clips(net, run.k, l, i, dx, dy);
       let { verts, covered: cov } = straighten(run.l, run.cells, free, clip);
       // again on the result, until it stops improving: a spike in the maze path (up and back
       // down) is cut off once the pieces before and after it can see each other
@@ -1409,21 +1595,27 @@ function routeOnce(
       }
       for (const c of cov) covered.push(run.l * N + c);
       const pts = verts.flatMap((c) => [(c % W) * G, Math.floor(c / W) * G]);
-      if (ri > 0) addVia(netId, net, pts[0]!, pts[1]!);
-      return { l: run.l, pts };
+      if (ri > 0 && runs[ri - 1]!.l !== run.l) addVia(netId, net, pts[0]!, pts[1]!);
+      // (ends meeting the run before or after on this layer: those stay where they are)
+      return { l: run.l, width: widths[run.k]!, pts, joinsBefore: ri > 0 && runs[ri - 1]!.l === run.l, joinsAfter: ri + 1 < runs.length && runs[ri + 1]!.l === run.l };
     });
+    /** pts adjusted at one end, unless that moved an end where the line meets the next run on its layer. */
+    const keepJoins = (line: (typeof lines)[number], pts: number[]) => {
+      const same = (q: number, r: number) => Math.abs(pts[q]! - line.pts[r]!) < 1e-9 && Math.abs(pts[q + 1]! - line.pts[r + 1]!) < 1e-9;
+      return (!line.joinsBefore || same(0, 0)) && (!line.joinsAfter || same(pts.length - 2, line.pts.length - 2)) ? pts : line.pts;
+    };
     if (startPad >= 0 && lines[0]) {
       const sp = pads[startPad]!;
       const se = escapes[startPad];
       const pts = lines[0].pts;
-      pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y, ...entryBend(pts[0]!, pts[1]!, sp, width)]));
+      pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y, ...entryBend(pts[0]!, pts[1]!, sp, lines[0].width)]));
     }
     const last = lines.at(-1)!;
     if (endPad >= 0) {
       const ep = pads[endPad]!;
       const ee = escapes[endPad];
       const pts = last.pts;
-      pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : entryBend(pts.at(-2)!, pts.at(-1)!, ep, width)), ep.x, ep.y);
+      pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : entryBend(pts.at(-2)!, pts.at(-1)!, ep, last.width)), ep.x, ep.y);
     }
     let dropVia: Via | undefined;
     if (endVia) {
@@ -1434,20 +1626,30 @@ function routeOnce(
       if (vias.length > before) dropVia = vias.at(-1);
     }
     // exactly onto the pads' centre lines (the grid only gets within half a step)
-    if (startPad >= 0 && lines[0]) lines[0].pts = reversePts(alignEnd(reversePts(simplify(lines[0].pts)), pads[startPad]!, lines[0].l, net, width, lines.length === 1 ? dropVia : undefined));
-    if (endPad >= 0) last.pts = alignEnd(simplify(last.pts), pads[endPad]!, last.l, net, width);
+    for (const line of lines) line.pts = simplify(line.pts);
+    const first = lines[0];
+    if (startPad >= 0 && first) first.pts = keepJoins(first, reversePts(alignEnd(reversePts(first.pts), pads[startPad]!, first.l, net, first.width, lines.length === 1 ? dropVia : undefined)));
+    if (endPad >= 0) last.pts = keepJoins(last, alignEnd(last.pts, pads[endPad]!, last.l, net, last.width));
     // an end on a track of the net (a join): exactly onto that track's centre line
-    if (startPad < 0 && lines[0] && !(lines.length === 1 && endVia)) lines[0].pts = reversePts(joinTrack(reversePts(simplify(lines[0].pts)), lines[0].l, net, width));
-    if (endPad < 0 && !endVia) last.pts = joinTrack(simplify(last.pts), last.l, net, width);
-    for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, width);
+    if (startPad < 0 && first && !(lines.length === 1 && endVia)) first.pts = keepJoins(first, reversePts(joinTrack(reversePts(first.pts), first.l, net, first.width)));
+    if (endPad < 0 && !endVia) last.pts = keepJoins(last, joinTrack(last.pts, last.l, net, last.width));
+    for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, line.width);
+    // lines meeting on one layer at one width (at a pin) are one track
+    for (let li = lines.length - 1; li > 0; li--) {
+      const [a, b] = [lines[li - 1]!, lines[li]!];
+      if (!a.joinsAfter || a.width !== b.width) continue;
+      a.pts = [...a.pts, ...b.pts.slice(2)];
+      a.joinsAfter = b.joinsAfter;
+      lines.splice(li, 1);
+    }
     // the copper as it finally lies (aligned ends moved it): the cells later routes may join
     const onCopper = new Set<number>();
     for (const line of lines) {
       const pts = simplify(line.pts);
       if (pts.length < 4) continue;
-      tracks.push({ netId, layer: layers[line.l]!, width, pts: pts.map(r3) });
-      for (let q = 0; q + 3 < pts.length; q += 2) stampSeg(line.l, net, pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!, width);
-      for (const st of copperCells(line.l, pts, width)) onCopper.add(st);
+      tracks.push({ netId, layer: layers[line.l]!, width: line.width, pts: pts.map(r3) });
+      for (let q = 0; q + 3 < pts.length; q += 2) stampSeg(line.l, net, pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!, line.width);
+      for (const st of copperCells(line.l, pts, line.width)) onCopper.add(st);
     }
     return onCopper.size ? [...onCopper] : covered;
   };
@@ -1754,6 +1956,8 @@ function routeOnce(
     const ok = new Uint8Array(N);
     const look = planeLook(pl);
     const keep = look.edge + margin;
+    // keep-outs the pour's net may not enter
+    const pourKo = keepouts.filter((k) => !k.allow.has(pnet) && k.ls.includes(l));
     for (let j = 0; j < H; j++) {
       for (let i = 0; i < W; i++) {
         const x = i * G;
@@ -1765,6 +1969,12 @@ function routeOnce(
       const [x0, y0, x1, y1] = cutoutBounds(c);
       for (let j = Math.max(0, Math.floor((y0 - keep) / G)); j <= Math.min(H - 1, Math.ceil((y1 + keep) / G)); j++) {
         for (let i = Math.max(0, Math.floor((x0 - keep) / G)); i <= Math.min(W - 1, Math.ceil((x1 + keep) / G)); i++) if (cutoutDistance(c, i * G, j * G) < keep) ok[j * W + i] = 0;
+      }
+    }
+    for (const k of pourKo) {
+      const [x0, y0, x1, y1] = k.rect;
+      for (let j = Math.max(0, Math.floor((y0 - margin) / G)); j <= Math.min(H - 1, Math.ceil((y1 + margin) / G)); j++) {
+        for (let i = Math.max(0, Math.floor((x0 - margin) / G)); i <= Math.min(W - 1, Math.ceil((x1 + margin) / G)); i++) ok[j * W + i] = 0;
       }
     }
     // split planes: an area plane only inside its rectangle; the layer's other planes round each
@@ -1882,6 +2092,9 @@ function routeOnce(
       const g = areaGap(q);
       cuts.push({ k: 'rect', x: r3(q.area[0] - g), y: r3(q.area[1] - g), w: r3(q.area[2] - q.area[0] + 2 * g), h: r3(q.area[3] - q.area[1] + 2 * g) });
     }
+    // keep-outs the pour's net may not enter
+    const lp = layerIdx.get(pl.layer)!;
+    for (const k of keepouts) if (!k.allow.has(rg.pnet) && k.ls.includes(lp)) cuts.push({ k: 'rect', x: r3(k.rect[0]), y: r3(k.rect[1]), w: r3(k.rect[2] - k.rect[0]), h: r3(k.rect[3] - k.rect[1]) });
     const adds: ZoneShape['adds'] = [];
     pads.forEach((p, idx) => {
       if (padNet[idx] === rg.pnet || !(p.drill || p.layers.includes(pl.layer))) return;
@@ -2122,6 +2335,165 @@ function routeOnce(
     }
   }
   };
+  /** The neck zone (see neckAt) for a track of width class k from or to these pads: round each that cannot take it. */
+  const setNecks = (k: number, padIdx: number[]) => {
+    neckRun = 0;
+    const w = widths[k]!;
+    if (w <= rules.track) return;
+    const reach = Math.max(NECK_REACH, 2 * w);
+    const r = ++neckNo;
+    for (const idx of padIdx) {
+      const p = pads[idx]!;
+      const size = Math.min(p.w, p.h);
+      if (size >= w * 0.9) continue;
+      // the widest width below this one that the pad takes (never below the signal width)
+      const nk = widths.reduce((best, x, i) => (i !== 2 && x < w && size >= x * 0.9 && x > widths[best]! ? i : best), 0);
+      const d = padDist(p);
+      for (let j = Math.max(0, Math.floor((p.y - p.h / 2 - reach) / G)); j <= Math.min(H - 1, Math.ceil((p.y + p.h / 2 + reach) / G)); j++) {
+        for (let i = Math.max(0, Math.floor((p.x - p.w / 2 - reach) / G)); i <= Math.min(W - 1, Math.ceil((p.x + p.w / 2 + reach) / G)); i++) {
+          const dist = d(i * G, j * G);
+          if (dist > reach) continue;
+          const at = j * W + i;
+          const on = dist < w / 2 ? 1 : 0;
+          if (neckAt[at] !== r) {
+            neckAt[at] = r;
+            neckK[at] = nk;
+            neckOn[at] = on;
+          } else {
+            if (widths[nk]! < widths[neckK[at]!]!) neckK[at] = nk;
+            if (on) neckOn[at] = 1;
+          }
+        }
+      }
+      neckRun = r;
+    }
+  };
+  /**
+   * A track of class k may start or end on state st: an escape stub is reserved at the signal
+   * width, so a wider track may run along it only where it keeps its clearance at that width.
+   */
+  const escapeFits = (net: number, k: number, st: number) => {
+    const idx = escapeOf.get(st);
+    const w = widths[classAt(net, k, st)]!;
+    if (idx === undefined || w <= rules.track) return true;
+    const e = escapes[idx]!;
+    const p = pads[idx]!;
+    return clearOf(net, e.l, w, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
+  };
+  /*
+   * The tracks the agent laid (RouteInput.drawn), before anything else: each stretch from point
+   * to point a search of its own (the same way every pass: see drawing), held to its layer where
+   * one is given, the whole laid by commit turning at the points. One that finds no way is not
+   * laid, and its connection is routed as any other. What is laid is there in every pass (as the
+   * locked copper: the probe names its net where it is in the way).
+   */
+  const drawnStatus: DrawnStatus[] = [];
+  if (input.drawn?.length) {
+    drawing = true;
+    for (const t of input.drawn) drawnStatus.push(layDrawn(t));
+    drawing = false;
+    neckRun = 0;
+  }
+  function layDrawn(t: NonNullable<RouteInput['drawn']>[number]): DrawnStatus {
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    const fail = (why: string, x: number, y: number, blockedBy?: number): DrawnStatus => {
+      const id = blockedBy !== undefined ? [...netNum].find(([, n]) => n === blockedBy)?.[0] : undefined;
+      return { id: t.id, laid: false, why, at: { x: r2(x), y: r2(y) }, ...(id ? { blockedBy: id } : {}) };
+    };
+    const [a, b] = [t.from, t.to];
+    const [pa, pb] = [pads[a], pads[b]];
+    if (!pa || !pb || pa.netId !== t.netId || pb.netId !== t.netId) return { id: t.id, laid: false, why: 'its pads are not on its net' };
+    const net = numOf(t.netId);
+    const own = input.netWidths?.[t.netId];
+    const k = t.width ? trackClass(t.width) : own ? trackClass(own) : input.powerNets.has(t.netId) ? 1 : 0;
+    const w = widths[k]!;
+    setNecks(k, [a, b]);
+    const free = freeNeck(net, k);
+    const label = (idx: number) => `${owner[idx]!.refdes}.${pads[idx]!.number}`;
+    const on = (l: number | null) => (l === null ? '' : ` on ${layers[l]}`);
+    let cur: number | null = null;
+    if (t.layer) {
+      const l = layerIdx.get(t.layer);
+      if (l === undefined) return fail(`the board has no ${t.layer}`, pa.x, pa.y);
+      cur = l;
+    }
+    const onCur = (st: number) => cur === null || Math.floor(st / N) === cur;
+    let starts = padCells[a]!.filter((st) => onCur(st) && escapeFits(net, k, st));
+    if (!starts.length) return fail(`${label(a)} is not${on(cur)}`, pa.x, pa.y);
+    const full: number[] = [];
+    const pins = new Set<number>();
+    let from = label(a);
+    for (const stop of [...t.points.map((p) => ({ ...p, pad: false })), { x: pb.x, y: pb.y, layer: undefined, pad: true }]) {
+      const here = stop.pad ? label(b) : `(${r2(stop.x)}, ${r2(stop.y)})`;
+      epoch++;
+      const stamp = epoch;
+      let goals: number[];
+      let accept: ((st: number) => boolean) | undefined;
+      if (stop.pad) {
+        goals = padCells[b]!.filter((st) => onCur(st) && escapeFits(net, k, st));
+        if (!goals.length) return fail(`${here} is not${on(cur)}`, stop.x, stop.y);
+        // (as for a routed connection: on the pad's centre line where the track fits there)
+        const fits = (st: number) => free(Math.floor(st / N), st % N);
+        const centred = (st: number) => fits(st) && !offCentre(net, classAt(net, k, st), st);
+        const deepest = new Set(deepestCells(goals));
+        accept = goals.some(centred) ? centred : goals.some(fits) ? fits : (st: number) => deepest.has(st);
+      } else {
+        const i = Math.round(stop.x / G);
+        const j = Math.round(stop.y / G);
+        if (i < 0 || j < 0 || i >= W || j >= H) return fail(`${here} is off the board`, stop.x, stop.y);
+        const c = j * W + i;
+        const ls = cur === null ? layers.map((_, l) => l) : [cur];
+        goals = ls.filter((l) => free(l, c)).map((l) => l * N + c);
+        if (!goals.length) {
+          const v = maps[k]![ls[0]!]![c]!;
+          const what = v === EDGE ? 'the board edge (or a plane layer) is' : v === MULTI ? 'copper of other nets is' : 'other copper is';
+          return fail(`${here} has no room for a ${w} mm track${on(cur)}: ${what} too close`, stop.x, stop.y, v > 0 ? v : undefined);
+        }
+      }
+      for (const st of goals) goal[st] = stamp;
+      const isGoal = (st: number) => goal[st] === stamp;
+      let [gx0, gy0, gx1, gy1] = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const st of goals) {
+        const x = (st % N) % W;
+        const y = Math.floor((st % N) / W);
+        [gx0, gy0, gx1, gy1] = [Math.min(gx0, x), Math.min(gy0, y), Math.max(gx1, x), Math.max(gy1, y)];
+      }
+      const target = { x0: gx0, y0: gy0, x1: gx1, y1: gy1 };
+      const way = corridor(net, k, starts, goals, stamp);
+      let path: number[] | null = null;
+      if (way) {
+        for (const r of [CORRIDOR, 3 * CORRIDOR]) if (!path) path = search(net, k, starts, isGoal, target, accept, widen(way, r), false, Infinity, cur !== null);
+        path ??= search(net, k, starts, isGoal, target, accept, 0, true, Infinity, cur !== null);
+      }
+      if (!path) return fail(`no way for a ${w} mm track from ${from} to ${here}${on(cur)}`, stop.x, stop.y);
+      full.push(...(full.length && full.at(-1) === path[0] ? path.slice(1) : path));
+      if (stop.pad) break;
+      // a point: the track turns there as it is; a layer given goes on from there (a via)
+      const end = path.at(-1)!;
+      const c = end % N;
+      pins.add(c);
+      starts = [end];
+      if (stop.layer) {
+        const next = layerIdx.get(stop.layer);
+        if (next === undefined) return fail(`the board has no ${stop.layer}`, stop.x, stop.y);
+        if (next !== Math.floor(end / N)) {
+          if (!viaFreeFor(net)(c) || !free(next, c)) return fail(`no room for a via at ${here}`, stop.x, stop.y);
+          starts = [next * N + c];
+          full.push(starts[0]!);
+        }
+        cur = next;
+      }
+      from = here;
+    }
+    const [t0, v0] = [tracks.length, vias.length];
+    const copper = commit(t.netId, net, k, full, padCells[a]!.includes(full[0]!) ? a : -1, padCells[b]!.includes(full.at(-1)!) ? b : -1, false, pins);
+    for (let q = t0; q < tracks.length; q++) tracks[q]!.drawn = t.id;
+    for (let q = v0; q < vias.length; q++) vias[q]!.drawn = t.id;
+    union(a, b);
+    groupCells.get(find(a))!.push(...copper);
+    return { id: t.id, laid: true };
+  }
+
   /*
    * Fan-out first: pads on a net with a dedicated inner plane drop onto it before the signals are
    * routed (the signals then go round the drop vias; routed first, a signal can shut a pad off
@@ -2153,42 +2525,32 @@ function routeOnce(
       failed.push(c);
       return;
     }
-    const pa = pads[c.a]!;
-    const pb = pads[c.b]!;
-    // the net's own width, else power width, each only where both pads can take it
-    const takes = (w: number) => Math.min(pa.w, pa.h) >= w * 0.9 && Math.min(pb.w, pb.h) >= w * 0.9;
+    // the net's own width, else on a power net the power width; near a pad too small for it the
+    // track narrows to the widest width that pad takes (a neck, see neckAt), and runs at its
+    // width again clear of it
     const own = input.netWidths?.[c.netId];
-    const wide = input.powerNets.has(c.netId) && takes(rules.powerTrack);
-    // too wide for a pad: the widest class that still fits (never below the signal width)
-    const fitting = (w: number) => widths.reduce((best, x, i) => (i !== 2 && x <= w && takes(x) && x > widths[best]! ? i : best), 0);
-    const chosen = own ? (own <= rules.track || takes(own) ? trackClass(own) : fitting(own)) : wide ? 1 : 0;
-    // a power track that finds no way is necked down to the signal width (a width the user set
-    // for the net is not: that one is a requirement)
+    const chosen = own ? trackClass(own) : input.powerNets.has(c.netId) ? 1 : 0;
+    // a power track that finds no way is necked down to the signal width all along (a width the
+    // user set for the net is not: that one is a requirement)
     let k = chosen;
     let path = attempt(chosen);
     if (!path && chosen === 1 && !own && now() <= deadline) path = attempt((k = 0));
     if (!path) {
+      neckRun = 0;
       failed.push(c);
       return;
     }
     function attempt(k: number): number[] | null {
-      // an escape stub is reserved at the signal width: a wider track may run along it only where
-      // it keeps its clearance at that width
-      const escapeOk = (st: number) => {
-        const idx = escapeOf.get(st);
-        if (idx === undefined || widths[k]! <= rules.track) return true;
-        const e = escapes[idx]!;
-        const p = pads[idx]!;
-        return clearOf(net, e.l, widths[k]!, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
-      };
+      setNecks(k, [...groupPads(find(c.a)), ...groupPads(find(c.b))]);
+      const escapeOk = (st: number) => escapeFits(net, k, st);
       epoch++;
       const goalStamp = epoch;
       const goalCells = groupCells.get(find(c.a))!.filter(escapeOk);
       for (const st of goalCells) goal[st] = goalStamp;
       // end where the track fits, on its pad's centre line; failing that where it fits; failing
       // that deepest inside the pad
-      const fits = (st: number) => freeFor(net, k)(Math.floor(st / N), st % N);
-      const centred = (st: number) => fits(st) && !offCentre(net, k, st);
+      const fits = (st: number) => freeNeck(net, k)(Math.floor(st / N), st % N);
+      const centred = (st: number) => fits(st) && !offCentre(net, classAt(net, k, st), st);
       const deepest = new Set(deepestCells(goalCells));
       const accept = goalCells.some(centred) ? centred : goalCells.some(fits) ? fits : (st: number) => deepest.has(st);
       // (the estimate: the box round the whole goal group, not just pad a)
@@ -2221,6 +2583,7 @@ function routeOnce(
     }
     // (a route may also start on copper laid earlier for this net: then it starts right there)
     const copper = commit(c.netId, net, k, path, padAt(find(c.b), path[0]!), padAt(find(c.a), path.at(-1)!));
+    neckRun = 0;
     union(c.a, c.b);
     groupCells.get(find(c.a))!.push(...copper);
     routedNow++;
@@ -2229,8 +2592,8 @@ function routeOnce(
       progress(tracks.slice(), vias.slice(), routedNow);
     }
   };
-  // (connections the kept copper already makes count as done)
-  let routedNow = kept ? order.filter((c) => find(c.a) === find(c.b)).length : 0;
+  // (connections the kept copper or a track the agent laid already makes count as done)
+  let routedNow = order.filter((c) => find(c.a) === find(c.b)).length;
   let shown = now();
   // with a pour, the signals leave a tenth of the time left to its drops and tracks (they take
   // far less than the signals, and without them the pour's pads stay apart)
@@ -2361,7 +2724,7 @@ function routeOnce(
   const roots = Int32Array.from(pads, (_, i) => find(i));
   const blockage = probeFailed();
   const reused = kept ? { tracks: keptTracks.length, vias: keptVias.length } : undefined;
-  return { tracks, vias, failed, roots, zones, timedOut, blockage, reused };
+  return { tracks, vias, failed, roots, zones, timedOut, blockage, reused, drawn: drawnStatus };
 
   /**
    * Each open connection, again with the other nets' tracks and vias passable at a price (pads,
@@ -2440,9 +2803,11 @@ function routeOnce(
       const dy = Math.max(gy0 - Math.floor(i / W), 0, Math.floor(i / W) - gy1);
       return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
     };
+    const pko = koTest(net, rules.track);
     const passable = (l: number, i: number) => {
       const v = fixedMap[l]![i]!;
       const st = l * N + i;
+      if (pko && pko(l, i) && goal[st] !== gs && ownCopper[st] !== net) return false;
       return v === 0 || v === net || goal[st] === gs || ownCopper[st] === net;
     };
     const blocked = (l: number, i: number) => {

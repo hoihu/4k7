@@ -399,6 +399,8 @@ export class Kernel {
           why: n.attrs.trackWidth ? 'set for this net' : kind === 'signal' ? 'signal width (rules)' : 'power width (rules)',
           ...(n.attrs.maxCurrent ? { suggested_mm: trackWidthFor(n.attrs.maxCurrent), for_current_a: n.attrs.maxCurrent } : {}),
           rules: { signal_mm: rules.track, power_mm: rules.powerTrack },
+          ...(n.attrs.routeFirst ? { routed_first: true } : {}),
+          ...(n.attrs.layer ? { keeps_to: n.attrs.layer } : {}),
         };
         // the vias its pads drop onto its plane with: one each, those the agent placed (add_vias drop)
         const perVia = viaCurrentFor(rules.viaDrill);

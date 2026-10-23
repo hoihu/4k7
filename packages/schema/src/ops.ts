@@ -73,6 +73,8 @@ export const SetNetOp = z.object({
   power: z.boolean().optional().describe('Draw as a power rail'),
   max_current: z.number().nullable().optional().describe('Expected maximum current in amps: get_net suggests a track width for it and how many vias it needs (about 0.9 A per 0.3 mm via) where it flows through a pad: place them with add_vias drop'),
   track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise)'),
+  route_first: z.boolean().nullable().optional().describe('Board: the router routes this net before the others, so it gets the short, clean ways (a switching node, a clock, the high-current path); null = as any other'),
+  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).nullable().optional().describe('Board: the layer its tracks should keep to (a cost on the others, not a ban: it still changes layer where it must); null = any'),
 });
 
 export const AddSheetOp = z.object({
@@ -515,6 +517,56 @@ export const RemoveViasOp = z.object({
   id: z.string().describe('Via group id ("V1", from get_board via_groups) or "all"'),
 });
 
+const copperLayer = z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']);
+export const TrackOp = z.object({
+  op: z.literal('track'),
+  from: pinRef.describe('The pad it starts on, "<refdes>.<pin>", e.g. "U1.SW" (one pad: a name shared by several pins needs the number)'),
+  to: pinRef.describe('The pad it ends on, on the same net, e.g. "D1.1"'),
+  net: netName.optional().describe('Check: the net both pads are on'),
+  layer: copperLayer.optional().describe('The layer it runs on from the start (default: the router picks, with vias where it likes); not an inner layer that is a dedicated plane'),
+  width_mm: z.number().positive().optional().describe('Track width (default the net\'s: track_mm, else the power or signal width); it narrows only in a short neck into a pad too small for it'),
+  through: z
+    .array(
+      z.object({
+        x_mm: z.number(),
+        y_mm: z.number(),
+        layer: copperLayer.optional().describe('The layer it goes on from this point: a via here where it changes'),
+      }),
+    )
+    .max(20)
+    .optional()
+    .describe('Points it must go through, in order (mm from the board\'s top-left corner, as the parts stand now; each moves with the end pad it is nearer). Between them the router finds the way, keeping the clearances; give a point where the way matters (round the side of a part, the corner of a loop, where it changes layer), not every bend'),
+}).describe('Lay one connection yourself, as you want it: the switching loop tight, the high-current path short and wide, a sensitive trace round the side away from the noise. The route step lays it first, before anything else, exactly through the points given, and never rips it up; the rest is routed round it. If it finds no way (a point too close to other copper, no room for a via, a pad on another layer) it is not laid: get_board laid_tracks and the DRC say why and where, and the router routes that connection its own way. Giving the same from and to again replaces it; erase_track takes it away. It looks like any other copper on the board.');
+
+export const EraseTrackOp = z.object({
+  op: z.literal('erase_track'),
+  id: z.string().describe('A track id ("T1", from get_board laid_tracks) or "all"'),
+});
+
+export const AddKeepoutOp = z.object({
+  op: z.literal('add_keepout'),
+  under: z.array(componentRef).min(1).optional().describe('The area under these parts (their box plus margin_mm; it follows them). Their own nets may still reach their pads'),
+  margin_mm: z.number().min(0).max(20).optional().describe('With under: how far the area reaches past the parts (default 0.5 mm)'),
+  rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('The area as a rectangle (top-left corner and size, mm)'),
+  layers: z.array(z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'])).min(1).optional().describe('The layers it keeps clear (default all)'),
+  except: z.array(netName).optional().describe('Nets that may still run there'),
+}).describe('Keep the router\'s copper out of an area: no tracks, vias or pours of other nets (signals under an inductor or a crystal, anything under an antenna, the space round a sensitive input). Give under (parts) or rect. Copper you laid with track or locked must keep out too (the DRC checks it). Routing is out of date until route runs again.');
+
+export const RemoveKeepoutOp = z.object({
+  op: z.literal('remove_keepout'),
+  id: z.string().describe('A keep-out id ("K1", from get_board keepouts) or "all"'),
+});
+
+export const LockCopperOp = z.object({
+  op: z.literal('lock_copper'),
+  nets: z.array(netName).min(1).describe('The nets whose routed copper to keep as it is, e.g. ["SW", "+5V"]'),
+}).describe('Keep the router\'s copper for these nets exactly as it lies now: when a pass got a connection right (the switching loop tight, the power path short) and later routes should not change it. The board must be routed as it stands. Route then lays it before anything else and never rips it up; the rest is routed round it. A part moved off locked copper breaks the pieces it touched: those are not laid (get_board locked_copper and the DRC say so) but stay locked, and come back if the part does. Locking a net again takes its copper as it lies then; unlock_copper lets it go. Tracks you laid with track are kept anyway.');
+
+export const UnlockCopperOp = z.object({
+  op: z.literal('unlock_copper'),
+  nets: z.array(netName).min(1).describe('The nets to let go, or ["all"]'),
+});
+
 export const DescribeOp = z.object({
   op: z.literal('describe'),
   overview: z.string().min(1).optional().describe('The whole design in a few short paragraphs (Markdown): what it is for, its inputs and outputs, the supplies, how the blocks work together. Omit to keep the current one'),
@@ -570,6 +622,12 @@ export const EditOp = z.discriminatedUnion('op', [
   RemoveHoleOp,
   AddViasOp,
   RemoveViasOp,
+  TrackOp,
+  EraseTrackOp,
+  LockCopperOp,
+  UnlockCopperOp,
+  AddKeepoutOp,
+  RemoveKeepoutOp,
   AddCutoutOp,
   RemoveCutoutOp,
   AddGraphicOp,

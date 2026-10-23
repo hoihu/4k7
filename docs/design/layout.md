@@ -242,9 +242,133 @@ a part turned or moved, `try_placements`) before anything is done to the copper.
 
     node --experimental-transform-types packages/kernel/bench/board.ts 4 3 place
 
+### 5.7 Necks
+
+The user, from a conversation with the agent: *+3V3 raised from 0.15 to 0.3 mm. Caveat: the router
+still lays the long VBUS run C1→R19/Q2 and the U1 SW→D1 link at about 0.5 mm, below the net
+widths, even after a full re-route.* The agent had set the widths and could do nothing more: the
+router chose one width per connection, the widest that both end pads take (`fitting`), so a pad
+smaller than the net's width (a SOT-23 pin, a 0603 resistor, a regulator's SW pin) made the whole
+run 16 mm long as narrow as itself. A power net without a width of its own went to the signal
+width all along whenever one of its pads was smaller than the power width (every QFN pin).
+
+Now a track runs at its net's width (or the power width) and narrows only near a pad too small
+for it: a neck. While a connection is routed, the grid points round each such pad of either end's
+copper (1 mm, or twice the width if more) are its neck zone, each with the width it may narrow to
+there (the widest the pad takes). The search may use a zone point at that width where the full
+width does not fit, at a small cost per step (`NECK_COST`: the full width is preferred wherever it
+fits); a point where the full width would reach onto the pad takes the neck width too (the copper
+would stick out of the pad). `commit` lays the path in runs per layer and width, each straightened
+and checked at its own width; a narrow run meets the wide one on its last grid point (the narrow
+track fits wherever the wide one does), and a stretch of fewer than five grid steps at the full
+width between two necks is laid narrow. A power track that finds no way at its width is still
+necked to the signal width all along, and a width set for the net never is (§5.1).
+
+`DRC.NARROW_TRACK` (warning) names a net whose track runs narrower than its width for more than
+3 mm in one piece (more than a neck): the power fallback, which only a better placement fixes.
+`COPPER_FORMAT` 2: copper routed by the router before is routed again.
+
+Benches: the six `bench/board.ts` boards route to the same copper as before (their pads all take
+their nets' widths: SOIC pins are 0.6 mm wide). `bench/route.ts` (two QFP-48, 0.25 mm pins, VCC
+a supply): on 4 layers VCC is a plane, the same copper; on 2 layers VCC was 0.25 mm all along and
+is now 0.5 mm with necks at the pins:
+
+| `bench/route.ts 2` | nets | open | tracks | vias | length | time |
+|---|---|---|---|---|---|---|
+| before | 58/63 | 6 | 308 | 218 | 2850 mm | 42.6 s |
+| necks | 62/63 | 1 | 360 | 248 | 3272 mm | 50.2 s |
+
+### 5.8 Tracks the agent lays
+
+The user: *sometimes the agent knows how to wire a certain segment better, but can't convince the
+autorouter to do it.* The agent could only steer the router from afar (placement, widths, planes,
+vias), never say "this connection goes here". Now `track { from, to, layer?, width_mm?, through? }`
+lays one connection as the agent wants it.
+
+- **What is kept** (`BoardSettings.tracks`, `DrawnTrack`, part of the design, unlike the copper
+  cache): the two pads, the layer and width if given, and the points, each relative to the end
+  pad it was nearer when laid (not turned with the part: a point 10 mm out would swing round the
+  pad). A part moved moves the points near it. Giving the same two pads again replaces the track;
+  `erase_track` removes it. The op checks what it can against the board as it stands (both pads
+  on one net, the layers on the board and not a dedicated plane, an SMD pad on the layer the
+  track leaves or reaches it on, the points on the board, the width).
+- **How it is laid** (`RouteInput.drawn`, `layDrawn` in the router): before anything else in
+  every pass, each stretch from point to point is a search of its own at the track's width
+  (necks into small pads, §5.7), held to its layer where one is given (no vias), the router's
+  choice where not. A point's layer starts at that point, with a via there. The stretches ignore
+  the history costs and use the free style, so the track lies the same way in every pass.
+  `commit` lays the whole path with the points as pins: a run ends at each and the next begins,
+  so the straightening, which cuts corners wherever it can, keeps them, and runs that meet at a
+  pin are one track again. It is there in every pass and never let go, but not in `fixedMap`:
+  where it is in the way, the probe names its net (`DRC.UNROUTED` and `blocked_by` add "a track
+  you laid"), not a pad or the edge. Its tracks and vias carry the track's id (`drawn`): incremental routing
+  does not keep them as ordinary copper (they are laid afresh), and the net's hash includes the
+  track, so changing it routes that net again.
+- **When it finds no way** (a point too close to other copper, no room for a via, a pad on
+  another layer): it is not laid, the router routes the connection its own way (the board still
+  works), and `DRC.TRACK_NOT_LAID` (warning) and `get_board` `laid_tracks` say why and where,
+  with the net in the way. A pass that lays more of the agent's tracks wins over one that leaves
+  fewer connections open. With copper kept from the routing before, a track that finds no way
+  sends the router to a route from scratch (the kept copper may be what is in the way).
+- **It looks like any other copper** (the user's choice: nothing marks what the agent laid).
+
+The guide: route first and look, then lay only the few connections that matter (the switching
+loop, the high-current path, a sensitive trace), with only the points where the way matters.
+
+### 5.9 Locked copper
+
+Often the router gets a net right on one route and the next route, after some other change,
+lays it differently. `lock_copper { nets }` keeps the router's copper of those nets exactly as it
+lies (`BoardSettings.locked`, `LockedCopper`: tracks and vias in board mm; not tracks laid with
+`track` nor vias placed on purpose, which are laid as asked anyway). Only from routing done for
+the board as it stands (the copper kept with the design under the current key), never from a
+stopped one. Locking a net again takes its copper as it lies then; `unlock_copper` lets it go.
+
+The router (`RouteInput.locked`) checks it as kept copper is checked (`keep.ts`: clearance to other
+nets' pads, vias placed on purpose and the edge, then what that leaves hanging), lays what holds
+before anything else in every pass, joins the pads it joins, and never lets it go (it is not kept
+copper, which a pass may give up to route its net again). Like a track the agent laid it is not in `fixedMap`, so the
+probe names its net where it is in the way ("its copper is locked"). What does not hold (a part
+moved off it, or another net's pad now too close) is not laid, and the connections it made are
+routed as any other; `DRC.LOCKED_BROKEN` (warning) and `get_board` `locked_copper` say how much
+still holds. The lock is not changed: put the part back and it all holds again.
+
+The lock is in the copper key, not in the placement key: locking or unlocking re-routes the board
+(incrementally: the other nets are kept) without making the routing out of date. The net's hash
+includes it, so its copper from before is not kept beside the locked copper.
+
+### 5.10 Route first, a net's layer, keep-outs
+
+Steering softer than laying copper:
+
+- **`set_net route_first`** (`NetAttrs.routeFirst`): the net's connections come first in the
+  router's order (before the shortest-first order of the rest), in every pass, so it gets the
+  short, clean ways.
+- **`set_net layer`** (`NetAttrs.layer`): each step of the net's tracks off that layer costs one
+  more grid step (`LAYER_COST`): it keeps to the layer where that is about as short, and still
+  changes layer where it must (two vias to reach B.Cu between SMD pads 2 mm apart cost more than
+  the steps on F.Cu, so such a connection stays on top). Not for tracks the agent laid (they
+  take the layers they are given).
+- **`add_keepout { under | rect, margin_mm?, layers?, except? }`** (`BoardSettings.keepouts`,
+  `Keepout`, ids K1…; `remove_keepout`): no tracks, vias or pours of other nets in the area, on
+  its layers (default all). One under parts (their box plus 0.5 mm, following them) lets their
+  own nets through, as they must reach their pads; `except` lets others through. In the router
+  (`RouteInput.keepouts`) it is a test per net and width (`koTest`: the track's copper may not
+  reach into the rectangle), in `freeFor`, the search, its flood, the corridor and the via test,
+  so straightening keeps out too; pours are cut round it (raster and exact shape); the probe
+  takes it as closed (`enclosed`: "closed off by pads, a keep-out or the edge"). Copper the
+  router does not lay itself (tracks the agent laid are kept out too; locked copper, drop stubs)
+  is checked by `DRC.KEEPOUT`. A keep-out is in the board's hash: adding one routes everything
+  again, as kept copper is not checked against it.
+
+route_first and the layer are in the copper key, not in the placement key (the board routes
+again without going out of date), and in the net's hash (its copper is routed again). Benches:
+the six `bench/board.ts` boards route to the same copper. The synthetic 2-layer board of
+`bench/route.ts` turned out to depend on timing (the probes stop at their time budget): the same
+code gave 62 and 63 of its 63 nets in two runs.
+
 ## 6. What the agent cannot do yet
 
-- Draw or remove a track itself, or route one net (§7 step 6).
 - Optimize a zoomed area of the board with the scope guard the schematic has (`zoom-optimize.md`
   steps 3–4).
 - Be told the user's taste for layouts (the schematic has notes in Settings).
@@ -261,12 +385,20 @@ Each step is useful alone.
 5. **Incremental routing** (built 2026-10-17, §5.5). A placement change removes only the copper
    that no longer holds; `route` routes what is open with the rest in place. The arrange–route loop
    takes about a second on the 128-part bench, and it is the base for step 6.
-6. **Copper ops for the agent**, as `wire`/`label`/`erase` on the schematic:
-   - `route { nets?, region? }`: route only those (the rest stays as it is);
-   - `unroute { nets? | parts? | region? }`: rip up;
-   - `track { net, from: "U1.3", to: "C4.1", layer?, via? }`: one connection, the kernel finding the
-     path through the given corners;
-   - `lock_copper { nets }`: copper the router never rips up (a switching loop drawn by hand).
+6. **Telling the router how a connection goes.** The user: *sometimes the agent knows how to wire a
+   certain segment better, but can't convince the autorouter to do it.* Each step is useful alone:
+   - (a) **Necks** (built 2026-10-23, §5.7): a net's width all along, narrowed only into a pad too
+     small for it; `DRC.NARROW_TRACK` where it is not.
+   - (b) **`track` and `erase_track`** (built 2026-10-23, §5.8): one connection laid by the agent,
+     pad to pad through the points it gives, laid first and never ripped up. Where it finds no
+     way, the router routes the connection its own way and the DRC says why (rather than leaving
+     it open, as first planned: the board keeps working while the agent fixes the track).
+   - (c) **`lock_copper` and `unlock_copper`** (built 2026-10-23, §5.9): a net's routed copper
+     kept exactly as it lies (whole nets; locking a single connection is left for later).
+   - (d) **Route first, a net's layer, keep-outs** (built 2026-10-23, §5.10): `set_net
+     route_first`, `set_net layer` (a cost, not a ban), `add_keepout` / `remove_keepout`.
+   - (e) The guide (built with each): route, look at the board picture, then lay only the few
+     connections that matter (switching loops, the high-current path) and lock what came out right.
    The DRC and the netlist check judge the result, as on the schematic.
 7. **Layout Optimize**: the ✦ Optimize button on the board ([zoom-optimize.md](zoom-optimize.md) §6
    steps 3–4): the zoomed area as a scope, `place` (move, turn) only inside it, measures before and

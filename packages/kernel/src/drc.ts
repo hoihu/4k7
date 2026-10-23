@@ -298,6 +298,79 @@ export function planeViaDrc(b: BoardView): BoardDiagnostic[] {
 }
 
 /**
+ * Copper of a net a keep-out does not let through, reaching into it on one of its layers (the
+ * router keeps out; tracks laid by the agent, locked copper and drop stubs may not).
+ */
+export function keepoutDrc(b: BoardView): BoardDiagnostic[] {
+  const out: BoardDiagnostic[] = [];
+  for (const k of b.keepouts) {
+    const [x0, y0, x1, y1] = k.rect;
+    const into = (x: number, y: number, r: number) => x > x0 - r + 1e-3 && x < x1 + r - 1e-3 && y > y0 - r + 1e-3 && y < y1 + r - 1e-3;
+    const nets = new Set<string>();
+    for (const t of b.tracks) {
+      if (k.allow.includes(t.netId) || !k.layers.includes(t.layer)) continue;
+      for (let i = 0; i + 3 < t.pts.length && !nets.has(t.netId); i += 2) {
+        const n = Math.max(1, Math.ceil(Math.hypot(t.pts[i + 2]! - t.pts[i]!, t.pts[i + 3]! - t.pts[i + 1]!) / 0.05));
+        for (let q = 0; q <= n; q++) if (into(t.pts[i]! + ((t.pts[i + 2]! - t.pts[i]!) * q) / n, t.pts[i + 1]! + ((t.pts[i + 3]! - t.pts[i + 1]!) * q) / n, t.width / 2)) nets.add(t.netId);
+      }
+    }
+    for (const v of b.vias) if (!k.allow.includes(v.netId) && into(v.x, v.y, v.pad / 2)) nets.add(v.netId);
+    if (!nets.size) continue;
+    out.push({
+      code: 'DRC.KEEPOUT',
+      severity: 'warning',
+      message: `Copper of ${[...nets].map((id) => b.netNames[id] ?? id).join(', ')} reaches into keep-out ${k.id}${k.under ? ` (under ${k.under.join(', ')})` : ''}: move the track you laid, lock the net again once routed round it, or let the net through (add_keepout except).`,
+      at: { x: Math.round(((x0 + x1) / 2) * 100) / 100, y: Math.round(((y0 + y1) / 2) * 100) / 100 },
+      entities: k.under ?? [],
+    });
+  }
+  return out;
+}
+
+/** A narrower track this long (mm) is more than a neck into a pad. */
+const NECK_ALLOW_MM = 3;
+
+/**
+ * Tracks narrower than their net's width (`want`: the width set for it, or the power width) for
+ * longer than a neck into a pad: the router narrows a power track all along where the wide one
+ * found no way, and may neck a track at a pad too small for it. One warning per net, at its
+ * longest such piece.
+ */
+export function narrowTrackDrc(b: BoardView, want: (netId: string) => { width: number; why: string } | undefined): BoardDiagnostic[] {
+  const out: BoardDiagnostic[] = [];
+  const pads = b.parts.flatMap((p) => p.pads.map((pad) => ({ p, pad })));
+  const byNet = new Map<string, { t: (typeof b.tracks)[number]; len: number }[]>();
+  for (const t of b.tracks) {
+    const w = want(t.netId);
+    if (!w || t.width >= w.width - 1e-6) continue;
+    let len = 0;
+    for (let i = 0; i + 3 < t.pts.length; i += 2) len += Math.hypot(t.pts[i + 2]! - t.pts[i]!, t.pts[i + 3]! - t.pts[i + 1]!);
+    if (len <= NECK_ALLOW_MM) continue;
+    byNet.set(t.netId, [...(byNet.get(t.netId) ?? []), { t, len }]);
+  }
+  for (const [netId, list] of byNet) {
+    const w = want(netId)!;
+    const total = list.reduce((s, x) => s + x.len, 0);
+    const longest = list.reduce((a, x) => (x.len > a.len ? x : a));
+    const pts = longest.t.pts;
+    // the pads at its ends (of the net, under an end point), else the middle of the piece
+    const ends = [[pts[0]!, pts[1]!], [pts.at(-2)!, pts.at(-1)!]].flatMap(([x, y]) => pads.filter(({ pad }) => pad.netId === netId && Math.abs(x! - pad.x) <= pad.w / 2 + 1e-6 && Math.abs(y! - pad.y) <= pad.h / 2 + 1e-6));
+    const mid = Math.floor(pts.length / 4) * 2;
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    const name = b.netNames[netId] ?? netId;
+    const where = ends.length ? ` (${ends.map(({ p, pad }) => `${p.refdes}.${pad.number}`).join(' → ')})` : '';
+    out.push({
+      code: 'DRC.NARROW_TRACK',
+      severity: 'warning',
+      message: `${r2(total)} mm of ${name} runs at ${[...new Set(list.map((x) => x.t.width))].sort().join(' / ')} mm, below its ${w.width} mm (${w.why})${where}. The router narrows a track only where the wider one finds no way: make room there (move or turn the parts in the way) and route again.`,
+      at: { x: r2(pts[mid]!), y: r2(pts[mid + 1]!) },
+      entities: [...new Set(ends.map(({ p }) => p.refdes))],
+    });
+  }
+  return out;
+}
+
+/**
  * Where a polyline (x0, y0, x1, y1, …) crosses the outline of a rectangle: each change from
  * outside to inside or back (a point on the outline belongs to the side it came from), and a
  * segment that runs through the rectangle with both ends outside (twice).
