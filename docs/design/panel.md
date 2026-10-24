@@ -86,7 +86,8 @@ size of the panel and writes the same set as for one board, named `<project>-pan
 - BOM and pick-and-place: **one entry per placement on the panel**. Designators get the copy's
   number (`R1_1` … `R1_4`), so the BOM counts the whole panel.
 
-The Layout view has a **Panel files ⤓** button beside **Fab files ⤓** once a panel is set.
+The Layout view's side panel has a **Panel files ⤓** button beside **Fab files ⤓** (under Files)
+once a panel is set.
 
 ## The Panel view
 
