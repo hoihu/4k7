@@ -286,6 +286,28 @@ export function canReplace(p: SupplierPart, c: SourcedComponent, was: SupplierPa
 }
 
 /**
+ * A part is good enough for a resistor or capacitor whatever its value: the same package, a
+ * capacitor's voltage rating at least what the component asks, and no worse in grade than `was` (or
+ * than the component asks when there is none): tolerance and power, dielectric and voltage rating.
+ */
+export function gradeFits(p: SupplierPart, c: SourcedComponent, was: SupplierPart | null | undefined): boolean {
+  if (c.pkg && p.package && normPkg(p.package) !== normPkg(c.pkg)) return false;
+  if (c.category === 'capacitor' && c.params.voltage) {
+    const want = parseQuantity(c.params.voltage);
+    const have = p.attributes['Voltage Rated'] ? parseQuantity(p.attributes['Voltage Rated']) : null;
+    if (want && (!have || have.value < want.value * 0.999)) return false;
+  }
+  return noWorse(p, was, c);
+}
+
+/** A resistor's or capacitor's value as the catalogue lists it (Ω, F); null when it is not given. */
+export function partValue(p: SupplierPart, kind: 'resistor' | 'capacitor'): number | null {
+  const text = p.attributes[kind === 'resistor' ? 'Resistance' : 'Capacitance'] ?? p.attributes.Value;
+  const q = text ? parseQuantity(text) : null;
+  return q && (q.unit === '' || q.unit === (kind === 'resistor' ? 'Ω' : 'F')) ? q.value : null;
+}
+
+/**
  * A passive replacement is no worse than the part it replaces (or, when that is gone, than the
  * component asks): a resistor's tolerance and power, a capacitor's dielectric and voltage rating.
  * Where the old part states a grade the new one does not, it does not qualify.

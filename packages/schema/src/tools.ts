@@ -54,6 +54,15 @@ export const SourcingInput = z.discriminatedUnion('action', [
       'soldering by hand), and what would make it cheaper (equivalent parts, one part number for parts that are the same, every part on one side, ' +
       'soldering through-hole parts yourself), with parts for the components that have no part number yet',
   ),
+  z.object({
+    action: z.literal('values'),
+    boards: z.number().int().min(1).max(1_000_000).optional().describe('How many boards will be assembled (default: the number set in the app, else 10)'),
+  }).describe(
+    'Cheaper ways to make each resistor and capacitor value (with a part number or without): the same value without a fee, the nearest values ' +
+      'below and above, values already on the order, and two parts in series or parallel, from the parts without a fee in its package; each with ' +
+      'how far off it is and what it saves (pieces, loading fees and extra joints counted). Whether a value may move is for you to judge by what ' +
+      'the part does: read design_query get_guide topic "cost" first',
+  ),
 ]);
 export type SourcingInput = z.infer<typeof SourcingInput>;
 
@@ -255,7 +264,7 @@ export const SOURCING_TOOL: ToolDefinition = {
     `Parts for assembly at ${HOUSE.name}, from its catalogue (${HOUSE.numberName}s, stock now, prices). search: by words, or a resistor/capacitor ` +
     'by kind + value + package. lookup: one part by its number (stock, price breaks, datasheet link). check: every part of the design looked up ' +
     'before ordering, for a number of boards, with replacements for the ones out of stock or short. cost: what the order costs with every fee, ' +
-    'and what would make it cheaper. ' +
+    'and what would make it cheaper. values: cheaper ways to make each resistor and capacitor value (other values, series or parallel pairs). ' +
     `Parts say their class (${HOUSE.tiers.map((t) => `${t.name}${t.fee ? ': a fee' : ''}`).join(', ')}). ` +
     `Record a chosen part with design_edit set_param ${HOUSE.param}: "${HOUSE.example}"; a generic resistor/capacitor stays generic.`,
   input_schema: schemaOf(SourcingInput),

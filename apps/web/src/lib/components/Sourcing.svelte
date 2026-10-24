@@ -114,6 +114,13 @@
   {:else if c.service}
     <p class="small ok">Nothing found that would make it cheaper by $0.50 or more.</p>
   {/if}
+  {#if c.board.length}
+    <h5>The bare board <span class="muted">(not in the estimate)</span></h5>
+    <ul class="hints">
+      {#each c.board as h, i (i)}<li class="small">{h.what}{h.usd ? ` (≈ ${usd(h.usd)} for ${c.boards} boards)` : ''}.</li>{/each}
+    </ul>
+  {/if}
+  <button class="btn wide agent" disabled={app.running} title="The agent tries what this check cannot do alone: other values where a part may move, two parts in series or parallel for an odd value, one value for parts that do the same job, the board; it asks before a change you may care about, and you review the changes" onclick={() => app.optimizeCost()}>Optimize cost with the agent ✦</button>
   {#if c.unsourced.length || c.unmatched.length}
     <h5>No {house.numberName}: not on the order <span class="muted">(+ what a part adds to it)</span></h5>
     <ul class="lines">
@@ -205,4 +212,8 @@
   .basis { margin: 0 0 4px 22px; }
   .more { border: 0; background: none; color: var(--accent-txt); font-size: 11.5px; padding: 2px; margin-left: 20px; cursor: pointer; }
   .link { border: 0; background: none; color: var(--accent-txt); font-size: 11.5px; padding: 0; cursor: pointer; text-align: left; }
+  .hints { margin: 0 0 4px; padding-left: 16px; color: var(--txt-2); }
+  .hints li { margin: 2px 0; }
+  .wide { width: 100%; }
+  .agent { margin: 6px 0 4px; }
 </style>

@@ -206,6 +206,23 @@ describe('jlcpcb.com', () => {
     expect(parts.map((p) => p.sku)).toEqual(['C6186']);
   });
 
+  it('lists every fee-free resistor or capacitor of a package, a page of 100 at a time', async () => {
+    const full = Array.from({ length: 100 }, (_, i) => item({ componentCode: `C${1000 + i}` }));
+    const { fetchFn, bodies } = fakePost(page(full), page([item({ componentCode: 'C2000' })]), page([item({ componentCode: 'C3000' })]));
+    const src = jlcpcbSource(fetchFn);
+    expect(await src.search({ kind: 'resistor', package: '0603', noFee: true, limit: 400 })).toHaveLength(101);
+    expect(await src.search({ kind: 'capacitor', package: '0805', noFee: true })).toHaveLength(1);
+    // the search matches whole words: "Resistor" is in every chip resistor's description, "Capacitors" in every ceramic capacitor's category
+    expect(bodies.map((b) => [b.keyword, b.componentLibraryType, b.componentSpecificationList, b.currentPage, b.pageSize])).toEqual([
+      ['Resistor', 'base', ['0603'], 1, 100],
+      ['Resistor', 'base', ['0603'], 2, 100],
+      ['Capacitors', 'base', ['0805'], 1, 100],
+    ]);
+    await expect(src.search({ kind: 'capacitor', package: '0603' })).rejects.toThrow(/no_fee/);
+    await expect(src.search({ kind: 'resistor', noFee: true })).rejects.toThrow(/package/);
+    await expect(tscircuitSource(fakeFetch({}).fetchFn).search({ kind: 'resistor', package: '0603', noFee: true })).rejects.toThrow(/cannot list/);
+  });
+
   it('calls an answer it cannot read an error, never an empty catalogue', async () => {
     await expect(jlcpcbSource(fakePost(503).fetchFn).lookup('C1')).rejects.toThrow(/HTTP 503/);
     await expect(jlcpcbSource(fakePost({ code: 500, message: 'busy' }).fetchFn).lookup('C1')).rejects.toThrow(/busy/);

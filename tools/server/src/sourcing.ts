@@ -95,7 +95,7 @@ export function partQuery(raw: unknown): PartQuery {
     q.noFee = r.noFee;
   }
   if (r.limit !== undefined) {
-    if (!Number.isInteger(r.limit) || (r.limit as number) < 1 || (r.limit as number) > 100) throw bad('limit is a whole number from 1 to 100');
+    if (!Number.isInteger(r.limit) || (r.limit as number) < 1 || (r.limit as number) > 400) throw bad('limit is a whole number from 1 to 400');
     q.limit = r.limit as number;
   }
   return q;

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupplierPart } from '@4k7/schema';
-import type { CostReport, StockReport } from '@4k7/parts';
+import type { CostReport, StockReport, ValuesReport } from '@4k7/parts';
 
 /** The local server's catalogue (disk is a Svelte module; the tests only need its two calls). */
 const server = vi.hoisted(() => ({ search: vi.fn(), lookup: vi.fn() }));
@@ -10,7 +10,7 @@ const { catalogue, setCatalogue, sourcingTool } = await import('../src/lib/sourc
 
 const r10k: SupplierPart = { sku: 'C25804', mpn: '0603WAF1002T5E', package: '0603', description: '', stock: 37165617, tier: 'Basic', fee: false, price: [{ qty: 1, usd: 0.0017 }, { qty: 1000, usd: 0.0013 }], attributes: { Resistance: '10kΩ' }, url: 'https://jlcpcb.com/partdetail/C25804', datasheet: 'https://x/ds.pdf', live: true };
 const fails = () => Promise.reject(new Error('not this one'));
-const noCheck = { stock: fails, cost: fails };
+const noCheck = { stock: fails, cost: fails, values: fails };
 
 /** The mirror the browser falls back to answers through fetch. */
 function mirror(routes: Record<string, unknown>) {
@@ -93,7 +93,7 @@ describe('sourcing tool', () => {
 
   it('runs the check with the boards asked for and reports it with the order estimate; failures become tool errors', async () => {
     const asked: (number | undefined)[] = [];
-    const out = await sourcingTool({ action: 'check', boards: 25 }, { stock: async (b) => (asked.push(b), report), cost: fails });
+    const out = await sourcingTool({ action: 'check', boards: 25 }, { stock: async (b) => (asked.push(b), report), cost: fails, values: fails });
     expect(asked).toEqual([25]);
     expect(out).toMatchObject({ isError: false, label: 'stock check · 25 boards', detail: '1 part(s) stop the order' });
     expect(out.content).toContain('- R1 · C25804 0603WAF1002T5E (Basic, stock 0): out of stock (25 needed). No like-for-like replacement found');
@@ -102,12 +102,25 @@ describe('sourcing tool', () => {
     expect(failed).toMatchObject({ isError: true, content: 'JLCPCB stock check failed: not this one' });
   });
 
+  it('runs the values check and lists the cheaper ways to make each value', async () => {
+    const odd = { ...r10k, sku: 'C25967', attributes: { Resistance: '31.6kΩ' } };
+    const values: ValuesReport = {
+      house: 'JLCPCB', boards: 10, at: report.at, service: 'Economic', live: true, onOrder: [],
+      lines: [{ refs: ['R1'], sku: 'C25967', kind: 'resistor', wanted: 31600, what: '31.6kΩ 0603', now: 3.11, options: [{ how: 'single', parts: [{ ...r10k, sku: 'C4216', attributes: { Resistance: '33kΩ' } }], value: 33000, deviation: 33000 / 31600 - 1, cost: 0.04, usd: 3.07, onOrder: false }] }],
+    };
+    void odd;
+    const out = await sourcingTool({ action: 'values', boards: 10 }, { stock: fails, cost: fails, values: async () => values });
+    expect(out).toMatchObject({ isError: false, label: 'values check · 10 boards', detail: '1 value(s) cheaper, up to $3.07' });
+    expect(out.content).toContain('- R1 31.6kΩ 0603 (C25967, $3.11 on the order now):\n    · one 33kΩ (+4.4%): C4216, Basic: saves $3.07');
+  });
+
   it('runs the cost check and says the range and what could be saved', async () => {
     const cost: CostReport = {
       house: 'JLCPCB', boards: 25, at: report.at, live: true, estimates, service: 'Economic', unsourced: [], unmatched: [], unpriced: [], stock: report,
       savings: [{ kind: 'cheaper', refs: ['C3'], from: 'C1590', to: { ...r10k, sku: 'C14663' }, usd: 3.05, what: 'C3: C14663 instead of C1590 (Basic: no loading fee)' }],
+      board: [],
     };
-    const out = await sourcingTool({ action: 'cost', boards: 25 }, { stock: fails, cost: async () => cost });
+    const out = await sourcingTool({ action: 'cost', boards: 25 }, { stock: fails, cost: async () => cost, values: fails });
     expect(out).toMatchObject({ isError: false, label: 'cost check · 25 boards', detail: '≈ $10.18–$27.56, up to $3.05 less' });
     expect(out.content).toContain('- C3: C14663 instead of C1590 (Basic: no loading fee): saves $3.05');
     expect(out.content).toContain('Not included: the bare boards');

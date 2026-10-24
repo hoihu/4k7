@@ -1,7 +1,8 @@
 # Sourcing: parts from the assembly house's catalogue
 
 > Part of the [architecture](../ARCHITECTURE.md). Status: first slice 2026-10-02; live catalogue, stock check, the
-> house-neutral layer, the order's cost and the cost check 2026-10-24.
+> house-neutral layer, the order's cost and the cost check 2026-10-24; the values check, the board's surcharges and the
+> agent's cost guide 2026-10-25.
 
 The assembly house (JLCPCB so far) assembles boards from its own stock, identified by its own part numbers (at JLCPCB,
 **LCSC part numbers**: `C25804`). The catalogue has hundreds of thousands of parts, so 4k7 never imports it. Parts
@@ -148,11 +149,49 @@ by what each would add to the order (its pieces and its loading fee: a fee-free 
 pieces cost more than the fee). The BOM tool itself is JLCPCB's way to buy a whole BOM ahead into a parts inventory;
 it needs an account and has no API, so 4k7 points to it (for scarce parts) instead of calling it.
 
+## Making it cheaper
+
+The cost check takes what it can decide alone (a fee-free part of the same value, one part number for parts that are the
+same). The rest needs to know what each part does, so it is the agent's: **Optimize cost with the agent ✦** (the cost
+check's view), or asking it. The agent reads the cost guide (`design_query get_guide topic cost`,
+[cost.md](cost.md)) and works with three checks:
+
+- **The cost check** (`sourcing cost`): the order at each service, the savings, and the bare board's surcharges.
+- **The values check** (`sourcing values`): for every resistor and capacitor, with a part number or without, cheaper
+  ways to make its value: the same value without a fee; the nearest values without a fee below and above, and the
+  values already on the order (for parts whose value may move); two parts in series or in parallel (resistors within
+  1 %, capacitors in parallel within 10 %). The parts without a fee come from the house's own list for the package
+  (JLCPCB has 80 Basic resistors and 33 Basic capacitors in 0603, one request each); a pair is not made with a part
+  that is close enough alone, and a value that moves must save $0.50 more than the same value without a fee. Each way
+  is priced for the cheapest service: its pieces, any new loading fee, two more joints per extra part. Example: a
+  31.6 kΩ Extended part as 30 kΩ + 1.5 kΩ in series (−0.3 %), both Basic, saves its $3.07 loading fee less 2 cents
+  of joints; a 10.2 kΩ is 5.1 kΩ + 5.1 kΩ exactly.
+- **The stock check** after the changes.
+
+Whether a value may move is the circuit's: a pull-up has a wide range, a feedback divider keeps its ratio, a decoupling
+capacitor may grow, a soft-start capacitor sets a time, an inductor is never split in a power path. The guide's table
+says how far each kind of part may go; the datasheet wins. The agent asks before a change the user may care about
+(a brightness, a bus speed, the board's size or layers), makes the rest in one changeset and reports the total before
+and after.
+
+**The bare board** is not in the estimate, but the cost check names what makes it cost more at the house (its
+`board` rules: JLCPCB's [surcharges](https://jlcpcb.com/help/article/In-what-cases-will-there-be-charged-extra), read
+2026-10-25): holes below 0.3 mm (vias by the rules or placed, pad holes), a board just over the size where the
+cheapest offer ends (5 two-layer boards up to 100 × 100 mm, 5 4- to 8-layer boards up to 50 × 50 mm, $2), a panel that
+costs a board up to 102 × 102 mm its single-board price, the deburring fee of boards under 30 mm ($0.02 a board; under
+15 mm, $0.05), boards over 650 cm². Slots and milling cost extra only past a slot density no ordinary board reaches.
+The rest of the board's price (thickness, finish, colour, copper) is chosen at order time: the guide says the standard
+ones cost the least.
+
+**Other houses** later: every house has its entry and adapter, so the checks can run per house and the cost of an order
+be compared. One house so far; the guide tells the agent to say what would differ, not to quote.
+
 ## Agent and user
 
 - The agent has one tool, `sourcing` (in-app agent and Claude Code alike): `search` (by words, or a
   resistor/capacitor by kind + value + package; in-stock parts only), `lookup` (one part by number: stock, price
-  breaks, datasheet link), `check` (the stock check above, with the number of boards) and `cost` (the cost check). Results read from a mirror
+  breaks, datasheet link), `check` (the stock check above, with the number of boards), `cost` (the cost check) and
+  `values` (the values check). Results read from a mirror
   say so. Its prompt tells it to source only when asked, to keep passives generic, to prefer fee-free parts and stock
   of at least 5 × the need, to suggest buying a scarce part ahead into the user's JLCPCB parts inventory, that unknown
   stock is not none, and to run the check before the user orders.
@@ -163,4 +202,5 @@ it needs an account and has no API, so 4k7 points to it (for scarce parts) inste
   voltage rating and package mismatches are shown, with one click to take the part's values.
 - The Layout view's **Sourcing** section runs the stock check and shows its report (E: stops the order, W: wants a
   look, I: a fee) with the replacements and the order's estimate; and the cost check, with the estimate at each
-  service, the savings and parts for the components without a number.
+  service, the savings, the bare board's surcharges, parts for the components without a number, and **Optimize cost
+  with the agent ✦**.
