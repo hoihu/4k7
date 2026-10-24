@@ -541,8 +541,8 @@ one transaction share 40 s, well inside the server's minute for a tool call. The
 
 **In the Layout view.** The side panel's Copper section switches modes (the agent draws, from the
 routing as it is or from scratch; back to the router after a confirm), asks the agent to draw
-(✦), and lays the helper's copper again (route fresh). The tool bar's Route becomes Route open (the
-helper on every open connection). Hovering a drawn track or via shows its id.
+(✦), and lays the helper's copper again (route fresh). Its Route becomes Route open (the helper on
+every open connection). Hovering a drawn track or via shows its id.
 
 **The router as a fixed engine.** `RouteInput.drawn` hands the router the copper verbatim
 (`keptCopper(…, asDrawn)`: nothing checked or dropped, pieces joining no pad included, stamped as
