@@ -5,6 +5,7 @@
 import { cutoutDistance, insideBoard, padCapsule, roundPadDist } from '@4k7/schema';
 import type { BoardDiagnostic, BoardPart, BoardView, CopperLayer } from '@4k7/schema';
 import { segDist } from './segments.ts';
+import { padPointDist } from './keep.ts';
 
 type Shape =
   | { kind: 'seg'; ax: number; ay: number; bx: number; by: number; r: number }
@@ -19,12 +20,28 @@ interface Item {
   what: string;
   /** Pads of one part are not checked against each other (footprint spacing is by design). */
   part?: string;
+  /** Drawn copper's id (t3, v1). */
+  id?: string;
   track: boolean;
 }
 
 const EPS = 0.005;
 
-export function copperDrc(b: BoardView): BoardDiagnostic[] {
+/** A drawn track's or via's id (router copper has none). */
+const idOf = (x: object): string | undefined => (x as { id?: string }).id;
+
+/** How a track or via is named in a finding: by its id where it is drawn copper. */
+export const copperName = (b: Pick<BoardView, 'netNames'>, kind: 'track' | 'via', x: { netId: string }) => {
+  const net = b.netNames[x.netId] ?? x.netId;
+  const id = idOf(x);
+  return id ? `${kind} ${id} (${net})` : `${kind} ${net}`;
+};
+
+/**
+ * Clearance between the copper of different nets on each layer. `focus`: only findings that
+ * involve these drawn tracks and vias (by id), e.g. what an op just drew.
+ */
+export function copperDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] {
   const items: Item[] = [];
   for (const p of b.parts) {
     for (const pad of p.pads) {
@@ -42,12 +59,12 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
     for (let i = 0; i + 3 < t.pts.length; i += 2) {
       const [ax, ay, bx, by] = [t.pts[i]!, t.pts[i + 1]!, t.pts[i + 2]!, t.pts[i + 3]!];
       const r = t.width / 2;
-      items.push({ net: t.netId, layer: t.layer, shape: { kind: 'seg', ax, ay, bx, by, r }, bb: [Math.min(ax, bx) - r, Math.min(ay, by) - r, Math.max(ax, bx) + r, Math.max(ay, by) + r], what: `track ${b.netNames[t.netId] ?? t.netId}`, track: true });
+      items.push({ net: t.netId, layer: t.layer, shape: { kind: 'seg', ax, ay, bx, by, r }, bb: [Math.min(ax, bx) - r, Math.min(ay, by) - r, Math.max(ax, bx) + r, Math.max(ay, by) + r], what: copperName(b, 'track', t), ...(idOf(t) ? { id: idOf(t) } : {}), track: true });
     }
   }
   for (const v of b.vias) {
     const r = v.pad / 2;
-    for (const layer of b.layers) items.push({ net: v.netId, layer, shape: { kind: 'seg', ax: v.x, ay: v.y, bx: v.x, by: v.y, r }, bb: [v.x - r, v.y - r, v.x + r, v.y + r], what: `via ${b.netNames[v.netId] ?? v.netId}`, track: true });
+    for (const layer of b.layers) items.push({ net: v.netId, layer, shape: { kind: 'seg', ax: v.x, ay: v.y, bx: v.x, by: v.y, r }, bb: [v.x - r, v.y - r, v.x + r, v.y + r], what: copperName(b, 'via', v), ...(idOf(v) ? { id: idOf(v) } : {}), track: true });
   }
 
   for (const z of b.zones) {
@@ -61,6 +78,7 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
   if (!b.rules.viaInPad) {
     for (const v of b.vias) {
       if (v.inPad) continue; // thermal vias, placed in their pad on purpose (add_vias)
+      if (focus && !focus.has(idOf(v) ?? '')) continue;
       for (const part of b.parts) {
         const inPad = part.pads.some((p) => {
           // (a round pad as the circle or oval it is, not its box)
@@ -75,7 +93,8 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
         // courtyard's margin: only not under the body, between the pads)
         const inSmall = part.pads.length <= 3 && (v.group ? underBody(part, v.x, v.y, r) : v.x > cy.x - r && v.x < cy.x + cy.w + r && v.y > cy.y - r && v.y < cy.y + cy.h + r);
         if (inPad || inSmall) {
-          viaIssues.push({ code: 'DRC.VIA_IN_PAD', severity: 'error', message: `Via (${b.netNames[v.netId] ?? v.netId}) inside the land pattern of ${part.refdes}; vias in pads are off for this board.`, at: { x: v.x, y: v.y }, entities: [part.refdes] });
+          const id = idOf(v);
+          viaIssues.push({ code: 'DRC.VIA_IN_PAD', severity: 'error', message: `Via ${id ? `${id} ` : ''}(${b.netNames[v.netId] ?? v.netId}) inside the land pattern of ${part.refdes}; vias in pads are off for this board.`, at: { x: v.x, y: v.y }, entities: [part.refdes, ...(id ? [id] : [])] });
           break;
         }
       }
@@ -91,6 +110,7 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
       if (B.bb[0] > A.bb[2] + c) break; // sweep on x
       if (A.layer !== B.layer || A.net === B.net) continue;
       if (!A.track && !B.track) continue; // pad-to-pad spacing is the footprint's and the placer's business
+      if (focus && !(A.id && focus.has(A.id)) && !(B.id && focus.has(B.id))) continue;
       if (B.bb[1] > A.bb[3] + c || A.bb[1] > B.bb[3] + c) continue;
       const gap = distance(A.shape, B.shape);
       if (gap >= c - EPS) continue;
@@ -104,7 +124,7 @@ export function copperDrc(b: BoardView): BoardDiagnostic[] {
         severity: 'error',
         message: gap <= 0 ? `${A.what} touches ${B.what} on ${A.layer} (short).` : `${A.what} is ${gap.toFixed(2)} mm from ${B.what} on ${A.layer} (min ${c} mm).`,
         at,
-        entities: [A.part, B.part].filter((x): x is string => !!x),
+        entities: [A.part, B.part, A.id, B.id].filter((x): x is string => !!x),
       });
     }
   }
@@ -159,8 +179,12 @@ function segRect(ax: number, ay: number, bx: number, by: number, r: { x0: number
   return best;
 }
 
-/** Tracks and vias closer than the edge clearance to a cutout or to the (rounded) board edge. */
-export function edgeDrc(b: BoardView): BoardDiagnostic[] {
+/**
+ * Tracks and vias closer than the edge clearance to a cutout or to the (rounded) board edge.
+ * `straight`: the straight edges too (drawn copper; the router keeps off them). `focus`: only these
+ * drawn tracks and vias (by id).
+ */
+export function edgeDrc(b: BoardView, straight = false, focus?: Set<string>): BoardDiagnostic[] {
   const e = b.rules.edgeClearance;
   const out: BoardDiagnostic[] = [];
   const seen = new Set<string>();
@@ -173,24 +197,26 @@ export function edgeDrc(b: BoardView): BoardDiagnostic[] {
     }
     return best;
   };
-  const report = (what: string, x: number, y: number, r: number) => {
+  const report = (what: string, x: number, y: number, r: number, id?: string) => {
     const { d, what: near } = room(x, y, r);
     if (d >= e - EPS) return;
     const key = `${what}|${near}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ code: 'DRC.EDGE_CLEARANCE', severity: 'error', message: `${what} is ${Math.max(0, d).toFixed(2)} mm from ${near} (min ${e} mm).`, at: { x, y }, entities: [] });
+    out.push({ code: 'DRC.EDGE_CLEARANCE', severity: 'error', message: `${what} is ${Math.max(0, d).toFixed(2)} mm from ${near} (min ${e} mm).`, at: { x, y }, entities: id ? [id] : [] });
   };
-  if (!b.cutouts.length && !b.cornerRadius && !b.shape) return out; // the router keeps off straight edges
+  const inFocus = (x: object) => !focus || focus.has(idOf(x) ?? '');
+  if (!straight && !b.cutouts.length && !b.cornerRadius && !b.shape) return out; // the router keeps off straight edges
   for (const t of b.tracks) {
-    const what = `track ${b.netNames[t.netId] ?? t.netId}`;
+    if (!inFocus(t)) continue;
+    const what = copperName(b, 'track', t);
     for (let i = 0; i + 3 < t.pts.length; i += 2) {
       const [ax, ay, bx, by] = [t.pts[i]!, t.pts[i + 1]!, t.pts[i + 2]!, t.pts[i + 3]!];
       const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 0.05));
-      for (let k = 0; k <= n; k++) report(what, ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n, t.width / 2);
+      for (let k = 0; k <= n; k++) report(what, ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n, t.width / 2, idOf(t));
     }
   }
-  for (const v of b.vias) report(`via ${b.netNames[v.netId] ?? v.netId}`, v.x, v.y, v.pad / 2);
+  for (const v of b.vias) if (inFocus(v)) report(copperName(b, 'via', v), v.x, v.y, v.pad / 2, idOf(v));
   return out;
 }
 
@@ -336,3 +362,46 @@ export function edgeCrossings(pts: number[], x0: number, y0: number, x1: number,
   }
   return out;
 }
+
+/**
+ * Soft checks of drawn copper (warnings: the agent may mean it, and may waive one by its id). A
+ * track end that lands on no copper of its net (a pad on its layer, a via, another of its tracks on
+ * its layer) is dangling; a piece that is not a multiple of 45° is off the usual directions.
+ * `focus`: only these tracks (by id).
+ */
+export function drawnDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] {
+  const out: BoardDiagnostic[] = [];
+  const name = (id: string) => b.netNames[id] ?? id;
+  const pads = b.parts.flatMap((p) => p.pads.map((pad) => ({ p, pad })));
+  for (const t of b.drawn?.tracks ?? []) {
+    const id = t.id;
+    if (focus && !focus.has(id)) continue;
+    const lands = (x: number, y: number) =>
+      pads.some(({ pad }) => pad.netId === t.netId && (pad.drill || pad.layers.includes(t.layer)) && padPointDist(pad, x, y) <= t.width / 2 + EPS) ||
+      b.vias.some((v) => v.netId === t.netId && Math.hypot(v.x - x, v.y - y) <= (v.pad + t.width) / 2 + EPS) ||
+      b.tracks.some((o) => (o as { id?: string }).id !== id && o.netId === t.netId && o.layer === t.layer && pieces(o).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(x, y) <= (o.width + t.width) / 2 + EPS)) ||
+      // (a pour: as filled, or where it will fill when only the placement is known, as for the check of an op)
+      (b.zones.length ? b.zones.some((z) => z.netId === t.netId && z.layer === t.layer && inRects(z.rects, x, y)) : b.planes.some((pl) => pl.netId === t.netId && pl.layer === t.layer && (!pl.area || (x >= pl.area[0] && y >= pl.area[1] && x <= pl.area[2] && y <= pl.area[3]))));
+    for (const [x, y, which] of [[t.pts[0]!, t.pts[1]!, 'start'], [t.pts.at(-2)!, t.pts.at(-1)!, 'end']] as const) {
+      if (!lands(x, y)) out.push({ code: 'DRAW.DANGLING', severity: 'warning', message: `Track ${id} (${name(t.netId)}, ${t.layer}): its ${which} at ${x.toFixed(2)}, ${y.toFixed(2)} meets no copper of its net.`, at: { x, y }, entities: [id] });
+    }
+    const odd = pieces(t).find(([ax, ay, bx, by]) => {
+      const a = (Math.atan2(by - ay, bx - ax) * 180) / Math.PI;
+      const r = Math.abs(a / 45 - Math.round(a / 45)) * 45;
+      return Math.hypot(bx - ax, by - ay) > 0.25 && r > 0.5; // (not the short jog onto a pad)
+    });
+    if (odd) out.push({ code: 'DRAW.ANGLE', severity: 'warning', message: `Track ${id} (${name(t.netId)}) has a piece off the 45° directions (${odd.map((v) => v.toFixed(2)).join(', ')}); edit_copper with bend sets 45° corners.`, at: { x: (odd[0] + odd[2]) / 2, y: (odd[1] + odd[3]) / 2 }, entities: [id] });
+  }
+  return out;
+}
+
+function pieces(t: { pts: number[] }): [number, number, number, number][] {
+  const out: [number, number, number, number][] = [];
+  for (let q = 0; q + 3 < t.pts.length; q += 2) out.push([t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!]);
+  return out;
+}
+
+const inRects = (rects: number[], x: number, y: number) => {
+  for (let i = 0; i + 3 < rects.length; i += 4) if (x >= rects[i]! && y >= rects[i + 1]! && x <= rects[i]! + rects[i + 2]! && y <= rects[i + 1]! + rects[i + 3]!) return true;
+  return false;
+};
