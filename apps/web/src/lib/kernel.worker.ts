@@ -27,6 +27,8 @@ const methods = {
   hasPending: () => kernel.hasPending(),
   /** The working copy, for the board worker. */
   draftDesign: () => kernel.draftDesign(),
+  /** The working copy's board placed, not routed (fast): its parts, pads and sides, for what assembly costs. */
+  boardPlacement: () => kernel.boardPlacement(),
   /** Copper the board worker routed, kept with the design (true: the committed design took it, save it). */
   keepCopper: (copper: StoredCopper) => kernel.keepCopper(copper),
   /** The working copy's part cards (the design's own copies, e.g. with a footprint the agent gave). */

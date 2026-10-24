@@ -131,7 +131,7 @@ claude mcp add --scope user 4k7 -- node <repo>/tools/server/src/main.ts
   the configured app address, the dev server in a checkout) are closed before the key is checked, so neither websites
   nor other local pages reach the server; no call is forwarded before the key matches; one connected tab at a time.
 - **Tools**: one set for every engine (`agentTools(engine)` in `packages/schema/src/tools.ts`), run by one executor
-  in the tab (`App.runTool`): `design_query`, `design_edit`, `calc`, `jlc_search`, `import_part`, `pending_import`,
+  in the tab (`App.runTool`): `design_query`, `design_edit`, `calc`, `sourcing`, `import_part`, `pending_import`,
   `artwork`, `read_datasheet`, `get_schematic_image`. Only how a turn starts and ends differs: Claude Code gets
   `get_context` (design state + canvas selection + pending changeset), `propose` (hands the working copy to the user;
   **refused while errors are open**, commits directly in Auto mode) and, from a terminal, `wait_for_review` (blocks until

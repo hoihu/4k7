@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import { DraftPin, PackageInfo } from './ingest.ts';
 import { QueryOp, Transaction } from './ops.ts';
+import { ASSEMBLY_HOUSE, feeFreeTiers } from './sourcing.ts';
 
 export const CalcCall = z.object({
   fn: z
@@ -21,17 +22,40 @@ export const CalcCall = z.object({
 });
 export type CalcCall = z.infer<typeof CalcCall>;
 
-/** jlc_search: JLCPCB's assembly catalogue (LCSC part numbers), by text, by value or by number. */
-export const JlcSearchInput = z.object({
-  text: z.string().optional().describe('What the part is, as words that appear in a catalogue description: "passive buzzer", "AMS1117-3.3", "USB-C receptacle 16P", "NPN SOT-23". Not for resistors/capacitors: use kind + value.'),
-  kind: z.enum(['resistor', 'capacitor']).optional().describe('Parametric search for a jellybean passive: give value (and package); text is ignored'),
-  value: z.string().optional().describe('With kind: the value, e.g. "10k", "100nF"'),
-  package: z.string().optional().describe('Package filter as JLCPCB names it: "0603", "SOT-23", "SOIC-8", "LQFP-48"'),
-  lcsc: z.string().optional().describe('Look one part up by its LCSC number ("C25804"): manufacturer part, package, value, stock, price and the datasheet link'),
-  basic_only: z.boolean().optional().describe('Only Basic and Preferred parts (no extended-part fee per unique part at JLCPCB assembly). Default: all, Basic first'),
-  limit: z.number().int().min(1).max(25).default(8),
-});
-export type JlcSearchInput = z.infer<typeof JlcSearchInput>;
+const HOUSE = ASSEMBLY_HOUSE;
+
+/** sourcing: the assembly house's parts catalogue (search, one part by number) and the stock check of the design. */
+export const SourcingInput = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('search'),
+    text: z.string().optional().describe('What the part is, as words that appear in a catalogue description or its part number: "passive buzzer", "AMS1117-3.3", "USB-C receptacle 16P", "NPN SOT-23". Not for resistors/capacitors: use kind + value.'),
+    kind: z.enum(['resistor', 'capacitor']).optional().describe('Parametric search for a jellybean passive: give value (and package); text is ignored'),
+    value: z.string().optional().describe('With kind: the value, e.g. "10k", "100nF"'),
+    package: z.string().optional().describe(`Package filter as ${HOUSE.name} names it: "0603", "SOT-23", "SOIC-8", "LQFP-48"`),
+    no_fee: z.boolean().optional().describe(`Only parts without a one-off fee (${feeFreeTiers(HOUSE)}). Default: all, fee-free first`),
+    limit: z.number().int().min(1).max(25).default(8),
+  }).describe('Search the catalogue: by words, or a resistor/capacitor by kind + value + package. In-stock parts only.'),
+  z.object({
+    action: z.literal('lookup'),
+    part: z.string().min(2).describe(`The ${HOUSE.numberName}, e.g. "${HOUSE.example}"`),
+  }).describe('One part by its number: maker and part number, package, stock now, price breaks, class, datasheet link'),
+  z.object({
+    action: z.literal('check'),
+    boards: z.number().int().min(1).max(1_000_000).optional().describe('How many boards will be assembled (default: the number set in the app, else 10)'),
+  }).describe(
+    "The stock check before ordering: every component's part looked up now, with what is wrong (out of stock, too few for the boards, " +
+      'low stock, gone from the catalogue, not matching its component, a fee) and in-stock replacements for the parts in trouble',
+  ),
+  z.object({
+    action: z.literal('cost'),
+    boards: z.number().int().min(1).max(1_000_000).optional().describe('How many boards will be assembled (default: the number set in the app, else 10)'),
+  }).describe(
+    `The cost check: what the order costs at each of ${HOUSE.name}'s assembly services (parts and every fee: setup, stencil, loading, joints, ` +
+      'soldering by hand), and what would make it cheaper (equivalent parts, one part number for parts that are the same, every part on one side, ' +
+      'soldering through-hole parts yourself), with parts for the components that have no part number yet',
+  ),
+]);
+export type SourcingInput = z.infer<typeof SourcingInput>;
 
 export const AskUser = z.object({
   question: z.string().min(5),
@@ -210,7 +234,7 @@ export const TOOL_NAMES = {
   query: 'design_query',
   edit: 'design_edit',
   calc: 'calc',
-  jlc: 'jlc_search',
+  sourcing: 'sourcing',
   importPart: 'import_part',
   pendingImport: 'pending_import',
   artwork: 'artwork',
@@ -224,14 +248,17 @@ export const TOOL_NAMES = {
   waitForReview: 'wait_for_review',
 } as const;
 
-/** The jlc_search tool, shared by the in-app agent and the MCP server. */
-export const JLC_TOOL: ToolDefinition = {
-  name: TOOL_NAMES.jlc,
+/** The sourcing tool, shared by the in-app agent and the MCP server. */
+export const SOURCING_TOOL: ToolDefinition = {
+  name: TOOL_NAMES.sourcing,
   description:
-    "JLCPCB's assembly parts catalogue (LCSC part numbers): search by text, parametrically for resistors/capacitors (kind + value + package), " +
-    'or look a part up by its LCSC number (details, stock, price, datasheet link). Results say Basic/Preferred (no loading fee) or Extended. ' +
-    'Record the chosen part on a component with design_edit set_param lcsc: "C25804"; a generic resistor/capacitor stays generic.',
-  input_schema: schemaOf(JlcSearchInput),
+    `Parts for assembly at ${HOUSE.name}, from its catalogue (${HOUSE.numberName}s, stock now, prices). search: by words, or a resistor/capacitor ` +
+    'by kind + value + package. lookup: one part by its number (stock, price breaks, datasheet link). check: every part of the design looked up ' +
+    'before ordering, for a number of boards, with replacements for the ones out of stock or short. cost: what the order costs with every fee, ' +
+    'and what would make it cheaper. ' +
+    `Parts say their class (${HOUSE.tiers.map((t) => `${t.name}${t.fee ? ': a fee' : ''}`).join(', ')}). ` +
+    `Record a chosen part with design_edit set_param ${HOUSE.param}: "${HOUSE.example}"; a generic resistor/capacitor stays generic.`,
+  input_schema: schemaOf(SourcingInput),
 };
 
 /**
@@ -286,7 +313,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
         'Needs the local server.',
       input_schema: schemaOf(ImportPartInput),
     },
-    JLC_TOOL,
+    SOURCING_TOOL,
     {
       name: TOOL_NAMES.pendingImport,
       description:
@@ -339,7 +366,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
             'Look at a file the user attached to the chat (a picture or PDF of a schematic, a sketch, a screenshot): all of it, or a region ' +
             'zoomed in. To recreate a schematic from one: first read it region by region and list every part (reference, value, ' +
             'what it is), every net and what connects to it, and the blocks it is made of; then build it with design_edit ' +
-            '(parts from the library, jlc_search or import_part), and say what you could not read or did differently. ' +
+            '(parts from the library, sourcing or import_part), and say what you could not read or did differently. ' +
             'Copy the circuit first; to make it look like the original, then give its IC symbols the pin sides and order it shows ' +
             '(design_edit set_symbol layout) and arrange the parts (place_symbol, wire, label).',
           input_schema: schemaOf(AttachmentInput),

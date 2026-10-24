@@ -110,7 +110,7 @@ describe('agent loop (offline demo)', () => {
 describe('one agent, two engines', () => {
   it('gives the in-app agent and Claude Code the same design tools and guide', () => {
     const names = (e: 'app' | 'chat' | 'cli') => agentTools(e).map((t) => t.name);
-    const design = ['design_query', 'design_edit', 'calc', 'import_part', 'jlc_search', 'pending_import', 'artwork', 'read_datasheet', 'get_schematic_image', 'get_board_image', 'render_enclosure'];
+    const design = ['design_query', 'design_edit', 'calc', 'import_part', 'sourcing', 'pending_import', 'artwork', 'read_datasheet', 'get_schematic_image', 'get_board_image', 'render_enclosure'];
     expect(names('app')).toEqual([...design, 'view_attachment', 'ask_user']);
     expect(names('chat')).toEqual(['get_context', ...design, 'view_attachment', 'propose']);
     expect(names('cli')).toEqual(['get_context', ...design, 'propose', 'wait_for_review']);

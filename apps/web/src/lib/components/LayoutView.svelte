@@ -8,6 +8,8 @@
   import Chat from './Chat.svelte';
   import Splitter from './Splitter.svelte';
   import FabRules from './FabRules.svelte';
+  import Sourcing from './Sourcing.svelte';
+  import { lineBlocks } from '@4k7/parts';
   import PanelCanvas from './PanelCanvas.svelte';
   import PanelSetup from './PanelSetup.svelte';
 
@@ -148,7 +150,11 @@
     const name = projectName();
     const files = panel ? panelFabFiles(b, name) : fabFiles(b, name);
     download(new Blob([zip(files) as BlobPart], { type: 'application/zip' }), `${name.replace(/[^\w.-]+/g, '_')}-${panel ? 'panel' : 'fab'}.zip`);
-    app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}`);
+    // the parts are ordered with these files: say when their stock was not checked, or the last check found parts that stop the order
+    const stop = app.stockReport?.lines.filter(lineBlocks).length ?? 0;
+    const sourced = b.parts.some((p) => p.lcsc);
+    const stock = !sourced ? '' : !app.stockReport ? ' · stock not checked yet (Sourcing)' : stop ? ` · ${stop} part${stop > 1 ? 's' : ''} stop the order at the last stock check (Sourcing)` : '';
+    app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}${stock}`);
   }
 
   /** The board and its parts in 3D as a STEP file, for a mechanical CAD program. */
@@ -297,6 +303,7 @@
         </ul>
         {/if}
         <FabRules rules={b.rules} fab={b.fab} layers={b.layers.length as 2 | 4} />
+        {#if b.parts.length}<Sourcing />{/if}
         <button class="btn wide" onclick={() => app.designDocument()} disabled={!b.parts.length || app.docBusy} title="The functional blocks described, each with its schematic and its place on the board, then layout, assembly drawing, BOM and schematic">{app.docBusy ? 'Preparing…' : 'Design document (print / PDF)'}</button>
         <p class="small muted">
           {#if desc}{desc.blocks.length} block{desc.blocks.length === 1 ? '' : 's'} described{#if desc.undescribed.length}, <span class="stale">{desc.undescribed.length} part{desc.undescribed.length === 1 ? '' : 's'} in none</span>{/if}.

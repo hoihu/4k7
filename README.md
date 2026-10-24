@@ -12,7 +12,7 @@ geometry and checks every change.
 - **Bring your own AI**: chat in the app through the coding agent you already have (Claude Code, GitHub Copilot CLI or OpenCode, on your existing plan or company login), or with an API key (Anthropic, OpenAI, OpenRouter, Gemini, a local model, any OpenAI- or Anthropic-compatible gateway). Or let your agent drive 4k7 from its own chat through the MCP server.
 - **Bring your own tools**: attach any MCP server (distributor stock, company part DB, simulation…).
 - **Parts from datasheets**: drop a manufacturer PDF (Parts → Import from datasheet); your agent extracts the pin table and package, the app checks it, and deterministic generators build the symbol and footprint.
-- **Sourcing from JLCPCB**: parts are fetched on demand from JLCPCB's assembly catalogue (LCSC numbers, stock, price, Basic/Extended), by you in the Inspector or by the agent ("a cheap buzzer from JLC"). The BOM carries the LCSC column JLCPCB reads.
+- **Sourcing from JLCPCB**: parts are looked up on demand in JLCPCB's assembly catalogue (LCSC numbers, stock as of now, price, Basic/Extended), by you in the Inspector or by the agent ("a cheap buzzer from JLC"). Before you order, **Check stock** (Layout → Sourcing) looks every part up for the number of boards you build: out of stock, too few, low stock, gone from the catalogue, not the part the design asks for, fees; with in-stock replacements one click away. **Check cost** prices the order with every assembly fee (setup, stencil, loading, joints, hand soldering) as a range over JLCPCB's Economic and Standard assembly, and lists what would make it cheaper: fee-free or cheaper equivalents, one part number for parts that are the same, every part on one side. The BOM carries the LCSC column JLCPCB reads.
 - **Schematic to manufacturing files**: the board is placed and routed automatically from the schematic (with a ground pour), checked by DRC, shown in 2D and 3D, and exported as Gerber, drill, BOM and pick-and-place, and as a STEP model (board and part bodies) for your mechanical CAD. Steer it in words ("make the board 30 × 20 mm", "put J1 at the left edge") or drag parts to pin them.
 - **Manufacturer limits**: pick JLCPCB, PCBWay or Eurocircuits (Layout → Manufacturer) and the design rules are kept above what they can make. For another manufacturer the agent reads its capabilities page and imports the limits for you to review.
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
@@ -145,7 +145,7 @@ The server binds to `127.0.0.1` and requires the access key in `~/.4k7/server.js
 | [docs/design/ai-loop.md](docs/design/ai-loop.md) | Agent loop, verification loop, hints, BYO AI, MCP, relay |
 | [docs/design/part-ingest.md](docs/design/part-ingest.md) | Getting from a PDF datasheet to a verified part |
 | [docs/design/fab-rules.md](docs/design/fab-rules.md) | Manufacturer limits: fab profiles, presets, import by the agent, DRC |
-| [docs/design/sourcing.md](docs/design/sourcing.md) | Parts from JLCPCB's assembly catalogue; the `lcsc` parameter and the BOM |
+| [docs/design/sourcing.md](docs/design/sourcing.md) | Parts from the assembly house's catalogue (JLCPCB); the `lcsc` parameter, the stock check, the BOM |
 | [docs/design/ui.md](docs/design/ui.md) | UI concept: workspaces, density rules |
 | [docs/distribution.md](docs/distribution.md) | How the app is run and shared: downloads, `npx github:hoihu/4k7`, the package, the port |
 

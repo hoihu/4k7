@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeJlcPart, fromEasyEda, normalizeEasyEdaPackage, parsePriceBreaks, rankParts, sourcingMismatch, tscircuitSource, type JlcPart } from '../src/index.ts';
+import { fromEasyEda, fromJlcpcb, jlcpcbSource, JLCPCB_SEARCH, normalizeEasyEdaPackage, parsePriceBreaks, tscircuitSource } from '../src/index.ts';
 
 /** A fetch that answers from a table of path → body (404 for the rest) and records what was asked. */
 function fakeFetch(routes: Record<string, unknown>) {
@@ -41,21 +41,28 @@ const easyeda = {
   },
 };
 
-describe('tscircuit source', () => {
+describe('tscircuit mirror', () => {
   it('searches resistors parametrically in ohms and ranks Basic, Preferred, Extended', async () => {
     const { fetchFn, calls } = fakeFetch({ '/resistors/list.json': resistors });
     const parts = await tscircuitSource(fetchFn).search({ kind: 'resistor', value: '10k', package: '0603' });
     expect(calls[0]).toBe('/resistors/list.json?resistance=10000&package=0603');
-    expect(parts.map((p) => p.lcsc)).toEqual(['C25804', 'C99', 'C2906982']);
-    expect(parts[0]).toMatchObject({ mpn: '0603WAF1002T5E', tier: 'basic', price: [{ qty: 1, usd: 0.0017 }], attributes: { Resistance: '10kΩ', Tolerance: '±1%' }, url: 'https://jlcpcb.com/partdetail/C25804' });
+    expect(parts.map((p) => p.sku)).toEqual(['C25804', 'C99', 'C2906982']);
+    expect(parts[0]).toMatchObject({ mpn: '0603WAF1002T5E', tier: 'Basic', fee: false, live: false, price: [{ qty: 1, usd: 0.0017 }], attributes: { Resistance: '10kΩ', Tolerance: '±1%' }, url: 'https://jlcpcb.com/partdetail/C25804' });
+    expect(parts[2]).toMatchObject({ tier: 'Extended', fee: true });
     // attributes that are not JSON fall back to the numeric columns
     expect(parts[1]!.attributes).toEqual({ Resistance: '10kΩ' });
+  });
+
+  it('says stock unknown, not none, where the mirror has no number (most resistors and capacitors)', async () => {
+    const rows = { resistors: [{ lcsc: 25804, mfr: '0603WAF1002T5E', package: '0603', stock: null, price1: 0.0012, resistance: 10000, is_basic: true }] };
+    const [p] = await tscircuitSource(fakeFetch({ '/resistors/list.json': rows }).fetchFn).search({ kind: 'resistor', value: '10k' });
+    expect(p!.stock).toBeNull();
   });
 
   it('searches capacitors in farads and can keep only fee-free parts', async () => {
     const caps = { capacitors: [{ lcsc: 14663, mfr: 'CC0603KRX7R9BB104', package: '0603', stock: 1, price1: 0.0022, capacitance_farads: 1e-7, voltage_rating: 50, is_basic: true }, { lcsc: 1591, mfr: 'CL10B104KB8NNNC', package: '0603', stock: 2, price1: 0.0024, capacitance_farads: 1e-7, voltage_rating: 50, is_basic: false }] };
     const { fetchFn, calls } = fakeFetch({ '/capacitors/list.json': caps });
-    const parts = await tscircuitSource(fetchFn).search({ kind: 'capacitor', value: '100nF', basicOnly: true });
+    const parts = await tscircuitSource(fetchFn).search({ kind: 'capacitor', value: '100nF', noFee: true });
     expect(calls[0]).toBe('/capacitors/list.json?capacitance=1.000000e-7');
     expect(parts).toHaveLength(1);
     expect(parts[0]!.attributes).toEqual({ Capacitance: '100nF', 'Voltage Rated': '50V' });
@@ -66,7 +73,7 @@ describe('tscircuit source', () => {
     const parts = await tscircuitSource(fetchFn).search({ text: 'passive buzzer', package: 'SMD,5x5mm', limit: 1 });
     expect(calls[0]).toBe('/components/list.json?search=passive%20buzzer&package=SMD%2C5x5mm');
     expect(parts).toHaveLength(1);
-    expect(parts[0]).toMatchObject({ lcsc: 'C96256', price: [{ qty: 1, usd: 0.1 }, { qty: 10, usd: 0.08 }, { qty: 100, usd: 0.06 }], category: 'Buzzers' });
+    expect(parts[0]).toMatchObject({ sku: 'C96256', price: [{ qty: 1, usd: 0.1 }, { qty: 10, usd: 0.08 }, { qty: 100, usd: 0.06 }], category: 'Buzzers' });
   });
 
   it('refuses a parametric search without a value, and a text search without text', async () => {
@@ -75,21 +82,135 @@ describe('tscircuit source', () => {
     await expect(src.search({})).rejects.toThrow(/text/);
   });
 
-  it('looks a part up by number through the EasyEDA record, with the datasheet link and live stock', async () => {
-    const live = { components: [{ lcsc: 25804, mfr: '0603WAF1002T5E', package: '0603', description: '10kΩ 100mW ±1% 0603 Chip Resistor', stock: 37165617, price: '1-999:0.0038', is_basic: true }] };
-    const { fetchFn, calls } = fakeFetch({ '/api/easyeda_components/C25804': easyeda, '/components/list.json': live });
+  it("looks a part up by number through the EasyEDA record, with the datasheet link and the mirror's stock", async () => {
+    const listed = { components: [{ lcsc: 25804, mfr: '0603WAF1002T5E', package: '0603', description: '10kΩ 100mW ±1% 0603 Chip Resistor', stock: 37165617, price: '1-999:0.0038', is_basic: true }] };
+    const { fetchFn, calls } = fakeFetch({ '/api/easyeda_components/C25804': easyeda, '/components/list.json': listed });
     const src = tscircuitSource(fetchFn);
     const p = await src.lookup('c25804');
     expect(calls).toEqual(['/api/easyeda_components/C25804', '/components/list.json?search=0603WAF1002T5E']);
-    expect(p).toMatchObject({ lcsc: 'C25804', mpn: '0603WAF1002T5E', manufacturer: 'UNI-ROYAL', package: '0603', tier: 'basic', stock: 37165617, price: [{ qty: 1, usd: 0.0038 }], description: '10kΩ 100mW ±1% 0603 Chip Resistor', datasheet: 'https://www.mouser.in/datasheet/2/447/PYu_RT_1_to_0_01_RoHS_L_11-1669912.pdf', attributes: { Value: '10kΩ' } });
+    expect(p).toMatchObject({ sku: 'C25804', mpn: '0603WAF1002T5E', manufacturer: 'UNI-ROYAL', package: '0603', tier: 'Basic', stock: 37165617, price: [{ qty: 1, usd: 0.0038 }], description: '10kΩ 100mW ±1% 0603 Chip Resistor', datasheet: 'https://www.mouser.in/datasheet/2/447/PYu_RT_1_to_0_01_RoHS_L_11-1669912.pdf', attributes: { Value: '10kΩ' }, live: false });
     expect(await src.lookup('C1')).toBeNull();
     expect(await src.lookup('nonsense')).toBeNull();
   });
 
-  it('keeps the record when the live search has nothing', async () => {
+  it("does not pass LCSC's stock off as JLCPCB's when the mirror's search has nothing", async () => {
     const { fetchFn } = fakeFetch({ '/api/easyeda_components/C25804': easyeda });
     const p = await tscircuitSource(fetchFn).lookup('C25804');
-    expect(p).toMatchObject({ stock: 8999650, price: [{ qty: 1, usd: 0.0017 }] });
+    expect(p).toMatchObject({ stock: null, price: [{ qty: 1, usd: 0.0017 }] });
+  });
+});
+
+/* ---------------------------------- jlcpcb.com ---------------------------------- */
+
+/** One part as jlcpcb.com's search lists it (fields trimmed to the ones read; values from a real answer). */
+const item = (o: Record<string, unknown> = {}) => ({
+  componentCode: 'C25804',
+  componentModelEn: '0603WAF1002T5E',
+  componentBrandEn: 'UNI-ROYAL(Uniroyal Elec)',
+  componentSpecificationEn: '0603',
+  describe: '-55℃~+155℃ 100mW 10kΩ 75V Thick Film Resistor ±1% ±100ppm/℃ 0603 Chip Resistor - Surface Mount ROHS',
+  stockCount: 40773871,
+  componentLibraryType: 'base',
+  preferredComponentFlag: false,
+  componentPrices: [
+    { startNumber: 1000, endNumber: 4999, productPrice: 0.0018 },
+    { startNumber: 1, endNumber: 999, productPrice: 0.0022 },
+  ],
+  attributes: [
+    { attribute_name_en: 'Resistance', attribute_value_name: '10kΩ' },
+    { attribute_name_en: 'Tolerance', attribute_value_name: '±1%' },
+    { attribute_name_en: 'Power(Watts)', attribute_value_name: '100mW' },
+    { attribute_name_en: 'Overload Voltage (Max)', attribute_value_name: '-' },
+  ],
+  componentTypeEn: 'Chip Resistor - Surface Mount',
+  dataManualUrl: 'https://www.lcsc.com/datasheet/lcsc_datasheet_2206010045_UNI-ROYAL-Uniroyal-Elec-0603WAF1002T5E_C25804.pdf',
+  lossNumber: 10,
+  leastPatchNumber: 20,
+  ...o,
+});
+const page = (list: unknown[] | null) => ({ code: 200, data: { componentPageInfo: { total: list?.length ?? 0, list } }, message: null });
+
+/** A POST fetch that answers each request with the next of `answers` and records the bodies. */
+function fakePost(...answers: unknown[]) {
+  const bodies: Record<string, unknown>[] = [];
+  const urls: string[] = [];
+  const fetchFn = async (url: string, init: { body: string }) => {
+    urls.push(url);
+    bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+    const a = answers.shift();
+    return typeof a === 'number' ? { ok: false, status: a, json: async () => ({}) } : { ok: true, status: 200, json: async () => a };
+  };
+  return { fetchFn, bodies, urls };
+}
+
+describe('jlcpcb.com', () => {
+  it('reads a part: maker, package, live stock, price breaks, class, attributes under the names the checks read', () => {
+    expect(fromJlcpcb(item())).toEqual({
+      sku: 'C25804',
+      mpn: '0603WAF1002T5E',
+      manufacturer: 'UNI-ROYAL',
+      package: '0603',
+      description: '-55℃~+155℃ 100mW 10kΩ 75V Thick Film Resistor ±1% ±100ppm/℃ 0603 Chip Resistor - Surface Mount ROHS',
+      stock: 40773871,
+      tier: 'Basic',
+      fee: false,
+      price: [{ qty: 1, usd: 0.0022 }, { qty: 1000, usd: 0.0018 }],
+      attributes: { Resistance: '10kΩ', Tolerance: '±1%', 'Power(Watts)': '100mW' },
+      category: 'Chip Resistor - Surface Mount',
+      datasheet: 'https://www.lcsc.com/datasheet/lcsc_datasheet_2206010045_UNI-ROYAL-Uniroyal-Elec-0603WAF1002T5E_C25804.pdf',
+      url: 'https://jlcpcb.com/partdetail/C25804',
+      live: true,
+      attrition: 10,
+      minQty: 20,
+    });
+    expect(fromJlcpcb(item({ componentLibraryType: 'expand', preferredComponentFlag: true }))).toMatchObject({ tier: 'Preferred', fee: false });
+    expect(fromJlcpcb(item({ componentLibraryType: 'expand', stockCount: undefined }))).toMatchObject({ tier: 'Extended', fee: true, stock: null });
+    // an IC with no losses and no minimum says neither
+    expect(fromJlcpcb(item({ lossNumber: 0, leastPatchNumber: 0 }))).not.toHaveProperty('attrition');
+    // a capacitor's rating goes by the name the checks read
+    expect(fromJlcpcb(item({ attributes: [{ attribute_name_en: 'Voltage Rating', attribute_value_name: '50V' }] })).attributes).toEqual({ 'Voltage Rated': '50V' });
+  });
+
+  it('looks a number up and keeps only the exact match (the search also finds similar numbers)', async () => {
+    const { fetchFn, bodies, urls } = fakePost(page([item({ componentCode: 'C258041' }), item()]), page([item({ componentCode: 'C1396897' })]));
+    const src = jlcpcbSource(fetchFn);
+    expect((await src.lookup('c25804'))?.sku).toBe('C25804');
+    expect(urls[0]).toBe(`https://jlcpcb.com${JLCPCB_SEARCH}`);
+    expect(bodies[0]).toEqual({ currentPage: 1, pageSize: 10, keyword: 'C25804' });
+    expect(await src.lookup('C999999999')).toBeNull();
+    expect(await src.lookup('not a number')).toBeNull();
+  });
+
+  it('searches a passive by its catalogue value in stock, with the package as a filter and its Basic parts asked for, and ranks Basic first', async () => {
+    const ext = item({ componentCode: 'C98220', componentModelEn: 'RC0603FR-0710KL', componentLibraryType: 'expand', stockCount: 10159239 });
+    const { fetchFn, bodies } = fakePost(page([ext]), page([item()]));
+    const parts = await jlcpcbSource(fetchFn).search({ kind: 'resistor', value: '4k7', package: '0603' });
+    expect(bodies).toEqual([
+      { currentPage: 1, pageSize: 50, keyword: '4.7kΩ', stockFlag: true, componentSpecificationList: ['0603'] },
+      { currentPage: 1, pageSize: 50, keyword: '4.7kΩ', stockFlag: true, componentSpecificationList: ['0603'], componentLibraryType: 'base' },
+    ]);
+    expect(parts.map((p) => p.sku)).toEqual(['C25804', 'C98220']);
+    await expect(jlcpcbSource(fetchFn).search({ kind: 'capacitor' })).rejects.toThrow(/value/);
+  });
+
+  it("joins the package to the words when JLCPCB names it otherwise, and adds Basic parts for a fee-free search", async () => {
+    const ldo = item({ componentCode: 'C6186', componentModelEn: 'AMS1117-3.3', componentSpecificationEn: 'SOT-223-3', componentLibraryType: 'base' });
+    const clone = item({ componentCode: 'C347222', componentModelEn: 'AMS1117-3.3', componentSpecificationEn: 'SOT-223-3', componentLibraryType: 'expand' });
+    const { fetchFn, bodies } = fakePost(page(null), page([clone]), page([ldo]));
+    const parts = await jlcpcbSource(fetchFn).search({ text: 'AMS1117-3.3', package: 'SOT223-3', noFee: true });
+    expect(bodies.map((b) => [b.keyword, b.componentSpecificationList, b.componentLibraryType])).toEqual([
+      ['AMS1117-3.3', ['SOT223-3'], undefined],
+      ['AMS1117-3.3 SOT223-3', undefined, undefined],
+      ['AMS1117-3.3 SOT223-3', undefined, 'base'],
+    ]);
+    expect(parts.map((p) => p.sku)).toEqual(['C6186']);
+  });
+
+  it('calls an answer it cannot read an error, never an empty catalogue', async () => {
+    await expect(jlcpcbSource(fakePost(503).fetchFn).lookup('C1')).rejects.toThrow(/HTTP 503/);
+    await expect(jlcpcbSource(fakePost({ code: 500, message: 'busy' }).fetchFn).lookup('C1')).rejects.toThrow(/busy/);
+    await expect(jlcpcbSource(fakePost({ code: 200, data: { somethingElse: [] } }).fetchFn).lookup('C1')).rejects.toThrow(/does not read/);
+    await expect(jlcpcbSource(fakePost(page(null)).fetchFn).search({ text: 'zzqqxx' })).resolves.toEqual([]);
   });
 });
 
@@ -108,41 +229,8 @@ describe('mapping helpers', () => {
     expect(normalizeEasyEdaPackage('SOT-23')).toBe('SOT-23');
   });
 
-  it('reads the tier from the part class and tolerates a bare record', () => {
-    expect(fromEasyEda({ dataStr: { head: { c_para: { 'JLCPCB Part Class': 'Extended Part' } } } }, 'C7').tier).toBe('extended');
-    expect(fromEasyEda({}, 'C7')).toMatchObject({ lcsc: 'C7', mpn: '', package: '', tier: 'extended', price: [] });
-  });
-
-  it('ranks by tier, then stock', () => {
-    const mk = (lcsc: string, tier: JlcPart['tier'], stock: number): JlcPart => ({ lcsc, mpn: '', package: '', description: '', stock, tier, price: [], attributes: {}, url: '' });
-    expect(rankParts([mk('C1', 'extended', 9), mk('C2', 'basic', 1), mk('C3', 'basic', 5), mk('C4', 'preferred', 2)]).map((p) => p.lcsc)).toEqual(['C3', 'C2', 'C4', 'C1']);
-  });
-
-  it('describes a part in one line', () => {
-    const line = describeJlcPart({ lcsc: 'C25804', mpn: '0603WAF1002T5E', package: '0603', description: '', stock: 37165617, tier: 'basic', price: [{ qty: 1, usd: 0.0017 }], attributes: { Resistance: '10kΩ', Tolerance: '±1%' }, url: '' });
-    expect(line).toBe('C25804 · 0603WAF1002T5E · 0603 · Basic · stock 37,165,617 · $0.0017@1 · Resistance 10kΩ, Tolerance ±1%');
-  });
-});
-
-describe('sourcing mismatch', () => {
-  const part = (attributes: Record<string, string>, pkg = '0603'): JlcPart => ({ lcsc: 'C1', mpn: 'X', package: pkg, description: '', stock: 1, tier: 'basic', price: [], attributes, url: '' });
-
-  it('accepts a matching resistor whatever the spelling', () => {
-    expect(sourcingMismatch({ category: 'resistor' }, { resistance: '10k' }, '0603', part({ Resistance: '10kΩ' }))).toEqual([]);
-    expect(sourcingMismatch({ category: 'resistor' }, { resistance: '4k7' }, '0603', part({ Value: '4.7kΩ' }))).toEqual([]);
-  });
-
-  it('names a wrong value, a low voltage rating and a different package', () => {
-    const out = sourcingMismatch({ category: 'capacitor' }, { capacitance: '100nF', voltage: '25V' }, '0805', part({ Capacitance: '10nF', 'Voltage Rated': '16V' }));
-    expect(out).toEqual(['capacitance: the part is 10nF, the component 100nF', 'voltage: the part is rated 16V, the component asks for 25V', 'package: the part is 0603, the component 0805']);
-  });
-
-  it('calls a capacitor on a resistor a mismatch even when the numbers could not be compared', () => {
-    expect(sourcingMismatch({ category: 'resistor' }, { resistance: '100' }, '0603', part({ Value: '100nF' }))).toEqual(['resistance: the part is 100nF, the component 100']);
-  });
-
-  it('compares packages loosely and ignores values it cannot read', () => {
-    expect(sourcingMismatch({ category: 'ic' }, { mpn: 'AMS1117' }, 'SOT-223', part({}, 'SOT223'))).toEqual([]);
-    expect(sourcingMismatch({ category: 'resistor' }, { resistance: '10k' }, undefined, part({}))).toEqual([]);
+  it('reads the class from the EasyEDA part class and tolerates a bare record', () => {
+    expect(fromEasyEda({ dataStr: { head: { c_para: { 'JLCPCB Part Class': 'Extended Part' } } } }, 'C7')).toMatchObject({ tier: 'Extended', fee: true });
+    expect(fromEasyEda({}, 'C7')).toMatchObject({ sku: 'C7', mpn: '', package: '', tier: 'Extended', price: [], stock: null });
   });
 });

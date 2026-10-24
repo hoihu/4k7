@@ -27,10 +27,10 @@ import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
-import { describeDatasheetPages, findDesignSections, getBuiltinPart } from '@4k7/parts';
+import { assemblyFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
-import { jlcTool } from './jlc.ts';
+import { checkDesignCost, checkDesignStock, house, sourcingTool, type BoardFacts, type CostReport, type StockReport, type SupplierPart } from './sourcing.ts';
 import { fabRefreshPrompt } from './fabRefresh.ts';
 import {
   DEFAULT_SETTINGS,
@@ -156,6 +156,11 @@ class AppState {
   /** The last enclosure render (the report, its pieces, the board facts it was measured against). */
   enclosure = $state.raw<{ report: EnclosureReport; facts: EnclosureFacts } | null>(null);
   enclosureBusy = $state(false);
+  /** The last stock check and cost check (the Layout view shows them; the agent's land here too), and which one it shows. */
+  stockReport = $state.raw<StockReport | null>(null);
+  costReport = $state.raw<CostReport | null>(null);
+  sourcingShown = $state<'stock' | 'cost'>('stock');
+  stockBusy = $state(false);
   /** OpenSCAD on this computer, as the server last said (null: not asked yet, or no server). */
   scad = $state.raw<ScadStatus | null>(null);
   /** The working copy's enclosure (brief and script), kept while the Enclosure view is open. */
@@ -835,6 +840,98 @@ class AppState {
     return this.kernel.query({ op: 'get_component', ref });
   }
 
+  /* -------------------------------- sourcing ------------------------------- */
+
+  /** The working copy's components as the stock check sees them: what each is, its values, its package. */
+  private async sourcedComponents(): Promise<SourcedComponent[]> {
+    type Info = { refdes: string; part: string; category?: SourcedComponent['category']; params: Record<string, string>; package?: { name: string } };
+    const refs = this.k?.summary.components.map((c) => c.refdes) ?? [];
+    const infos = (await Promise.all(refs.map((ref) => this.kernel.query({ op: 'get_component', ref })))) as (Info | { error: string })[];
+    return infos.flatMap((c) => {
+      if (!('refdes' in c)) return [];
+      const card = this.designParts[c.part];
+      const pkg = c.package?.name ?? c.params.package ?? card?.package;
+      const mpn = c.params.mpn ?? card?.mpn;
+      return [{ refdes: c.refdes, ...(c.category ? { category: c.category } : {}), params: c.params, ...(pkg ? { pkg } : {}), ...(mpn ? { mpn } : {}) }];
+    });
+  }
+
+  /** What the assembly fees depend on, read off the working copy's placed board (joints, sides, size); null when it cannot be placed. */
+  private async boardFacts(): Promise<BoardFacts | null> {
+    try {
+      const b = await this.kernel.boardPlacement();
+      return (assembled) => assemblyFacts(b, assembled);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Check the stock of every part for `boards` boards (default: the number set in the Layout view), with the order's estimate; the Layout view shows the report. */
+  async checkStock(boards?: number): Promise<StockReport> {
+    this.stockBusy = true;
+    try {
+      const [components, facts] = await Promise.all([this.sourcedComponents(), this.boardFacts()]);
+      const report = await checkDesignStock(components, boards ?? this.settings.buildBoards, facts ?? undefined);
+      this.stockReport = report;
+      this.sourcingShown = 'stock';
+      return report;
+    } finally {
+      this.stockBusy = false;
+    }
+  }
+
+  /** The cost check for `boards` boards: the estimate at each service and what would make the order cheaper; the Layout view shows it. */
+  async checkCost(boards?: number): Promise<CostReport> {
+    this.stockBusy = true;
+    try {
+      const [components, facts] = await Promise.all([this.sourcedComponents(), this.boardFacts()]);
+      if (!facts) throw new Error('the board could not be placed, so the assembly fees cannot be counted');
+      const report = await checkDesignCost(components, boards ?? this.settings.buildBoards, facts);
+      this.costReport = report;
+      this.stockReport = report.stock;
+      this.sourcingShown = 'cost';
+      return report;
+    } finally {
+      this.stockBusy = false;
+    }
+  }
+
+  /** Make a sourcing change (the user's), then run the check shown again. */
+  private async sourcingEdit(summary: string, ops: unknown[]): Promise<boolean> {
+    const ok = ops.length > 0 && (await this.userEdit(summary, ops));
+    if (ok) {
+      const again = this.sourcingShown === 'cost' ? this.checkCost(this.costReport?.boards) : this.checkStock(this.stockReport?.boards);
+      void again.catch((e: Error) => this.flash(`The check failed: ${e.message}`));
+    }
+    return ok;
+  }
+
+  /** The ops that set the house's part number on components (null: take it off them). */
+  private partOps(refs: string[], sku: string | null) {
+    return refs.map((ref) => ({ op: 'set_param', ref, params: { [house.param]: sku } }));
+  }
+
+  /** Take a replacement on every component of a stock check line. */
+  useReplacement(line: StockLine, p: SupplierPart): Promise<boolean> {
+    return this.sourcingEdit(`${line.refs.join(', ')}: ${p.sku} (${p.mpn}) instead of ${line.sku}`, this.partOps(line.refs, p.sku));
+  }
+
+  /** Take a saving of the cost check: its part; every part on the top side; or the hand-soldered parts off the order. */
+  applySaving(s: Saving): Promise<boolean> {
+    const saves = `saves $${s.usd.toFixed(2)}`;
+    if (s.to) return this.sourcingEdit(`${s.refs.join(', ')}: ${s.to.sku} (${s.to.mpn}) instead of ${s.from}, ${saves}`, this.partOps(s.refs, s.to.sku));
+    if (s.kind === 'side') {
+      const ops = (this.k?.ledger ?? []).filter((x) => s.refs.some((ref) => x.text.startsWith(`layer(${ref}) =`))).map((x) => ({ op: 'remove_constraint', id: x.id }));
+      return this.sourcingEdit(`${s.refs.join(', ')} on the top side, ${saves}`, ops);
+    }
+    return this.sourcingEdit(`${s.refs.join(', ')} off the assembly order (soldered by hand), ${saves}`, this.partOps(s.refs, null));
+  }
+
+  /** Give components that had no part number one of the cost check's candidates. */
+  useCandidate(g: UnsourcedGroup, p: SupplierPart): Promise<boolean> {
+    return this.sourcingEdit(`${g.refs.join(', ')}: ${p.sku} (${p.mpn})`, this.partOps(g.refs, p.sku));
+  }
+
   private markChangeset(state: 'accepted' | 'rejected', note: string) {
     const item = [...this.chat].reverse().find((c) => c.changeset?.state === 'pending');
     if (item) item.changeset = { state, note };
@@ -901,8 +998,8 @@ class AppState {
         if (!b) return fail('query · get_board', 'The board could not be computed.');
         return { content: JSON.stringify(boardSummary(b)), isError: false, label: 'query · get_board', detail: `${b.stats.routed}/${b.stats.nets} nets routed` };
       }
-      case 'jlc_search':
-        return jlcTool(input);
+      case 'sourcing':
+        return sourcingTool(input, { stock: (boards) => this.checkStock(boards), cost: (boards) => this.checkCost(boards) });
       case 'import_part': {
         const args = ImportPartInput.safeParse(input);
         if (!args.success) return fail('import', args.error.message);

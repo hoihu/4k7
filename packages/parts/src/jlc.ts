@@ -1,59 +1,148 @@
 /**
- * JLCPCB sourcing: parts of JLCPCB's assembly catalogue (LCSC part numbers) for a design.
+ * JLCPCB's catalogue of assembly parts (LCSC part numbers), as PartSources for the sourcing in
+ * sourcing.ts. JLCPCB's own facts (the `lcsc` parameter, Basic/Preferred/Extended, the loading fee)
+ * are its AssemblyHouse entry in packages/schema/src/sourcing.ts.
  *
- * Nothing is imported in bulk. A resistor or capacitor stays the generic part and gets the chosen
- * LCSC number as its `lcsc` parameter; a part with pins is imported from the datasheet the catalogue
- * links to. Search and lookup go through a pluggable source so the data provider can change; the
- * default is the tscircuit jlcsearch mirror (CORS-enabled, so the browser calls it directly).
- * Stock and prices are a snapshot at the time of the call.
+ * - `jlcpcbSource`: jlcpcb.com itself, the search its parts library runs (live stock, price breaks,
+ *   class, datasheet link). It sends no CORS headers, so the local server calls it, not the browser.
+ * - `tscircuitSource`: the jlcsearch.tscircuit.com mirror (CORS-enabled), when jlcpcb.com cannot be
+ *   reached. It lags, and has no stock for most resistors and capacitors.
+ *
+ * Neither is an official API: an answer in an unexpected form is an error, never an empty catalogue.
  */
-import { normalizeLcsc, parseQuantity, type PartCard } from '@4k7/schema';
+import { JLCPCB_ASSEMBLY, normalizeLcsc, parseQuantity, type PartQuery, type SupplierPart } from '@4k7/schema';
+import { formatFarads, formatOhms, rankParts, type PartSource } from './sourcing.ts';
 
-/** Basic and Preferred parts have no loading fee at JLCPCB assembly; Extended parts cost one per unique part. */
-export type JlcTier = 'basic' | 'preferred' | 'extended';
+const TIERS = JLCPCB_ASSEMBLY.tiers.map((t) => t.name);
+const tierOf = (basic: boolean | undefined, preferred: boolean | undefined) => (basic ? 'Basic' : preferred ? 'Preferred' : 'Extended');
+const feeOf = (tier: string) => JLCPCB_ASSEMBLY.tiers.find((t) => t.name === tier)?.fee ?? true;
 
-export interface JlcPart {
-  /** "C25804" */
-  lcsc: string;
-  /** Manufacturer part number. */
-  mpn: string;
-  manufacturer?: string;
-  /** Package as JLCPCB names it ("0603", "SOT-23", "SMD,5x5mm"). */
-  package: string;
-  description: string;
-  stock: number;
-  tier: JlcTier;
-  /** Price breaks in USD per piece, smallest quantity first (may be empty). */
-  price: { qty: number; usd: number }[];
-  /** Catalogue attributes as listed ("Resistance": "10kΩ", "Voltage Rated": "50V"). */
-  attributes: Record<string, string>;
-  category?: string;
-  /** Datasheet PDF link when the catalogue has one. */
-  datasheet?: string;
-  /** The part's page at JLCPCB. */
-  url: string;
+/** A parametric search's value as the catalogue writes it ("10kΩ", "100nF"); throws when it is not one. */
+function passiveWords(q: PartQuery): string {
+  const v = q.value ? parseQuantity(q.value) : null;
+  if (!v) throw new Error(`Give the ${q.kind} value, e.g. ${q.kind === 'resistor' ? '"10k"' : '"100nF"'}.`);
+  return q.kind === 'resistor' ? formatOhms(v.value) : formatFarads(v.value);
 }
 
-export interface JlcQuery {
-  /** Words of the catalogue description ("passive buzzer", "AMS1117-3.3"). */
-  text?: string;
-  /** Parametric search for a jellybean passive (value in `value`); text is ignored. */
-  kind?: 'resistor' | 'capacitor';
-  value?: string;
-  package?: string;
-  basicOnly?: boolean;
-  limit?: number;
+/* ------------------------------ jlcpcb.com (live) ------------------------------ */
+
+type Post = (url: string, init: { method: 'POST'; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+
+/** The search behind jlcpcb.com/parts (a C-number finds that part among similar ones). */
+export const JLCPCB_SEARCH = '/api/overseas-pcb-order/v1/shoppingCart/smtGood/selectSmtComponentList';
+
+interface JlcpcbItem {
+  componentCode?: string;
+  componentModelEn?: string;
+  componentBrandEn?: string;
+  componentSpecificationEn?: string;
+  describe?: string;
+  stockCount?: number;
+  /** "base" (Basic) or "expand" (Extended) */
+  componentLibraryType?: string;
+  preferredComponentFlag?: boolean;
+  componentPrices?: { startNumber?: number; productPrice?: number }[];
+  attributes?: { attribute_name_en?: string; attribute_value_name?: string }[];
+  componentTypeEn?: string;
+  dataManualUrl?: string;
+  /** Pieces added for losses in assembly ("loss"), and the fewest it places ("least patch": SMT placement) */
+  lossNumber?: number;
+  leastPatchNumber?: number;
 }
 
-export interface JlcSource {
-  search(q: JlcQuery): Promise<JlcPart[]>;
-  /** One part by LCSC number; null when the catalogue does not know it. */
-  lookup(lcsc: string): Promise<JlcPart | null>;
+/** JLCPCB's names for what the checks read under other names (see SupplierPart.attributes). */
+const ATTRIBUTE_NAMES: Record<string, string> = { 'Voltage Rating': 'Voltage Rated' };
+
+/**
+ * jlcpcb.com's own parts search: what its parts library shows, stock as of the call. A search asks
+ * for 50 in-stock parts (a page and a half of the parts library) and ranks them here (Basic,
+ * Preferred, Extended, then stock); a lookup searches for the number and keeps the exact match.
+ */
+export function jlcpcbSource(fetchFn: Post = (u, i) => fetch(u, i), base = 'https://jlcpcb.com'): PartSource {
+  const call = async (body: Record<string, unknown>): Promise<JlcpcbItem[]> => {
+    const res = await fetchFn(`${base}${JLCPCB_SEARCH}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ currentPage: 1, pageSize: 50, ...body }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) throw new Error(`jlcpcb.com answered HTTP ${res.status}`);
+    const out = (await res.json().catch(() => null)) as { code?: number; message?: string; data?: { componentPageInfo?: { list?: unknown } } } | null;
+    if (out?.code !== 200) throw new Error(`jlcpcb.com: ${out?.message || 'an answer this version does not read'}`);
+    const page = out.data?.componentPageInfo;
+    // a search that finds nothing has a page with list: null
+    if (page && typeof page === 'object' && page.list === null) return [];
+    if (!page || !Array.isArray(page.list)) throw new Error('jlcpcb.com: an answer this version does not read');
+    return page.list as JlcpcbItem[];
+  };
+
+  return {
+    async search(q) {
+      const pkg = q.package?.trim();
+      const words = q.kind === 'resistor' || q.kind === 'capacitor' ? passiveWords(q) : q.text?.trim();
+      if (!words) throw new Error('Give text to search for, or kind + value for a resistor/capacitor.');
+      let ask: Record<string, unknown> = { keyword: words, stockFlag: true, ...(pkg ? { componentSpecificationList: [pkg] } : {}) };
+      let items = await call(ask);
+      // JLCPCB names a package several ways ("SOT-223", "SOT-223-3"): with none under the exact name, it joins the words
+      if (!items.length && pkg && !q.kind) items = await call((ask = { keyword: `${words} ${pkg}`, stockFlag: true }));
+      // Basic parts can sit beyond the first page of a popular search: a fee-free or a passive's search asks for them too
+      if (q.noFee || q.kind) items = [...(await call({ ...ask, componentLibraryType: 'base' })), ...items];
+      const seen = new Set<string>();
+      let parts = items.map(fromJlcpcb).filter((p) => {
+        if (!p.sku || seen.has(p.sku)) return false;
+        seen.add(p.sku);
+        return true;
+      });
+      if (q.noFee) parts = parts.filter((p) => !p.fee);
+      return rankParts(parts, TIERS).slice(0, q.limit ?? 8);
+    },
+
+    async lookup(id) {
+      const sku = normalizeLcsc(id);
+      if (!sku) return null;
+      const hit = (await call({ keyword: sku, pageSize: 10 })).find((c) => c.componentCode === sku);
+      return hit ? fromJlcpcb(hit) : null;
+    },
+  };
 }
 
-export const JLC_PART_URL = (lcsc: string) => `https://jlcpcb.com/partdetail/${lcsc}`;
+/** One part of jlcpcb.com's search. */
+export function fromJlcpcb(c: JlcpcbItem): SupplierPart {
+  const sku = normalizeLcsc(c.componentCode ?? '') ?? '';
+  const tier = tierOf(c.componentLibraryType === 'base', c.preferredComponentFlag);
+  const attributes: Record<string, string> = {};
+  for (const a of c.attributes ?? []) {
+    const name = a.attribute_name_en?.trim();
+    const value = a.attribute_value_name?.trim();
+    if (name && value && value !== '-') attributes[ATTRIBUTE_NAMES[name] ?? name] = value;
+  }
+  const price = (c.componentPrices ?? [])
+    .filter((b) => typeof b.startNumber === 'number' && typeof b.productPrice === 'number')
+    .map((b) => ({ qty: b.startNumber!, usd: b.productPrice! }))
+    .sort((a, b) => a.qty - b.qty);
+  const manufacturer = c.componentBrandEn?.replace(/\(.*\)$/, '').trim();
+  const datasheet = c.dataManualUrl && /^https?:\/\//i.test(c.dataManualUrl) ? c.dataManualUrl : undefined;
+  return {
+    sku,
+    mpn: c.componentModelEn?.trim() ?? '',
+    ...(manufacturer ? { manufacturer } : {}),
+    package: c.componentSpecificationEn?.trim() ?? '',
+    description: c.describe?.trim() ?? '',
+    stock: typeof c.stockCount === 'number' ? c.stockCount : null,
+    tier,
+    fee: feeOf(tier),
+    price,
+    attributes,
+    ...(c.componentTypeEn ? { category: c.componentTypeEn } : {}),
+    ...(datasheet ? { datasheet } : {}),
+    url: JLCPCB_ASSEMBLY.partUrl(sku),
+    live: true,
+    ...(typeof c.lossNumber === 'number' && c.lossNumber > 0 ? { attrition: c.lossNumber } : {}),
+    ...(typeof c.leastPatchNumber === 'number' && c.leastPatchNumber > 0 ? { minQty: c.leastPatchNumber } : {}),
+  };
+}
 
-/* ------------------------------ tscircuit source ------------------------------ */
+/* ------------------------------ tscircuit mirror ------------------------------ */
 
 type Fetch = (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
@@ -62,7 +151,8 @@ interface TsComponent {
   mfr: string;
   package?: string;
   description?: string;
-  stock?: number;
+  /** null on most resistor and capacitor rows */
+  stock?: number | null;
   /** components endpoint: "1-499:0.0176,500-1499:0.0135,48000-:0.0095" */
   price?: string;
   /** category endpoints: price at quantity 1 */
@@ -79,15 +169,15 @@ interface TsComponent {
 }
 
 /**
- * jlcsearch.tscircuit.com: an in-stock JLCPCB parts search with a JSON API (`/components/list.json`,
+ * jlcsearch.tscircuit.com: a copy of JLCPCB's catalogue with a JSON API (`/components/list.json`,
  * `/resistors/list.json`, `/capacitors/list.json`) and a cached copy of EasyEDA's per-part record
- * (`/api/easyeda_components/C…`), which carries the datasheet link.
+ * (`/api/easyeda_components/C…`), which carries the datasheet link. Its parts are not `live`.
  */
-export function tscircuitSource(fetchFn: Fetch = (u) => fetch(u), base = 'https://jlcsearch.tscircuit.com'): JlcSource {
+export function tscircuitSource(fetchFn: Fetch = (u) => fetch(u), base = 'https://jlcsearch.tscircuit.com'): PartSource {
   const get = async (path: string): Promise<unknown> => {
     const res = await fetchFn(`${base}${path}`);
     if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`JLCPCB catalogue: HTTP ${res.status} for ${path}`);
+    if (!res.ok) throw new Error(`JLCPCB catalogue mirror: HTTP ${res.status} for ${path}`);
     return res.json();
   };
   const list = async (path: string, key: string): Promise<TsComponent[]> => {
@@ -113,8 +203,8 @@ export function tscircuitSource(fetchFn: Fetch = (u) => fetch(u), base = 'https:
         items = await list(`/components/list.json?search=${encodeURIComponent(text)}${pkg}`, 'components');
       }
       let parts = items.map(fromTs);
-      if (q.basicOnly) parts = parts.filter((p) => p.tier !== 'extended');
-      return rankParts(parts).slice(0, q.limit ?? 8);
+      if (q.noFee) parts = parts.filter((p) => !p.fee);
+      return rankParts(parts, TIERS).slice(0, q.limit ?? 8);
     },
 
     async lookup(id) {
@@ -124,11 +214,11 @@ export function tscircuitSource(fetchFn: Fetch = (u) => fetch(u), base = 'https:
       const json = out?.easyeda_component_details?.easyeda_json;
       if (!json) return null;
       const part = fromEasyEda(json, lcsc);
-      // the EasyEDA record's stock and price lag; the live search knows the current ones
+      // the record's stock is LCSC's, not JLCPCB's: the mirror's search has JLCPCB's (when it has any)
       if (part.mpn) {
         try {
-          const live = (await list(`/components/list.json?search=${encodeURIComponent(part.mpn)}`, 'components')).map(fromTs).find((p) => p.lcsc === lcsc);
-          if (live) Object.assign(part, { stock: live.stock, price: live.price.length ? live.price : part.price, tier: live.tier, ...(live.description ? { description: live.description } : {}), ...(live.category ? { category: live.category } : {}) });
+          const listed = (await list(`/components/list.json?search=${encodeURIComponent(part.mpn)}`, 'components')).map(fromTs).find((p) => p.sku === lcsc);
+          if (listed) Object.assign(part, { stock: listed.stock, price: listed.price.length ? listed.price : part.price, tier: listed.tier, fee: listed.fee, ...(listed.description ? { description: listed.description } : {}), ...(listed.category ? { category: listed.category } : {}) });
         } catch {
           /* the record alone will do */
         }
@@ -138,18 +228,12 @@ export function tscircuitSource(fetchFn: Fetch = (u) => fetch(u), base = 'https:
   };
 }
 
-/** Basic, then Preferred, then Extended; within a tier the deepest stock first. */
-export function rankParts(parts: JlcPart[]): JlcPart[] {
-  const rank: Record<JlcTier, number> = { basic: 0, preferred: 1, extended: 2 };
-  return [...parts].sort((a, b) => rank[a.tier] - rank[b.tier] || b.stock - a.stock || a.lcsc.localeCompare(b.lcsc));
-}
-
-function fromTs(c: TsComponent): JlcPart {
+function fromTs(c: TsComponent): SupplierPart {
   let attributes: Record<string, string> = {};
   if (c.attributes) {
     try {
       const a = JSON.parse(c.attributes) as Record<string, unknown>;
-      attributes = Object.fromEntries(Object.entries(a).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => [k, String(v)]));
+      attributes = Object.fromEntries(Object.entries(a).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => [ATTRIBUTE_NAMES[k] ?? k, String(v)]));
     } catch {
       /* not JSON: ignore */
     }
@@ -157,18 +241,21 @@ function fromTs(c: TsComponent): JlcPart {
   if (c.resistance !== undefined && !attributes.Resistance) attributes.Resistance = formatOhms(c.resistance);
   if (c.capacitance_farads !== undefined && !attributes.Capacitance) attributes.Capacitance = formatFarads(c.capacitance_farads);
   if (c.voltage_rating !== undefined && !attributes['Voltage Rated']) attributes['Voltage Rated'] = `${c.voltage_rating}V`;
-  const lcsc = `C${c.lcsc}`;
+  const sku = `C${c.lcsc}`;
+  const tier = tierOf(c.is_basic, c.is_preferred);
   return {
-    lcsc,
+    sku,
     mpn: c.mfr?.trim() ?? '',
     package: c.package?.trim() ?? '',
     description: c.description?.trim() ?? '',
-    stock: c.stock ?? 0,
-    tier: c.is_basic ? 'basic' : c.is_preferred ? 'preferred' : 'extended',
+    stock: typeof c.stock === 'number' ? c.stock : null,
+    tier,
+    fee: feeOf(tier),
     price: c.price ? parsePriceBreaks(c.price) : typeof c.price1 === 'number' ? [{ qty: 1, usd: c.price1 }] : [],
     attributes,
     ...(c.subcategory || c.category ? { category: c.subcategory || c.category } : {}),
-    url: JLC_PART_URL(lcsc),
+    url: JLCPCB_ASSEMBLY.partUrl(sku),
+    live: false,
   };
 }
 
@@ -190,32 +277,37 @@ interface EasyEdaJson {
   packageDetail?: { dataStr?: { head?: { c_para?: Record<string, string> } } };
 }
 
-/** The EasyEDA record of a part: who makes it, its package and value, the JLCPCB part class and the datasheet link. */
-export function fromEasyEda(raw: unknown, fallbackLcsc: string): JlcPart {
+/**
+ * The EasyEDA record of a part: who makes it, its package and value, the JLCPCB part class and the
+ * datasheet link. Its stock is LCSC's (another warehouse), so the part's stock is unknown.
+ */
+export function fromEasyEda(raw: unknown, fallbackLcsc: string): SupplierPart {
   const j = (raw ?? {}) as EasyEdaJson;
   const para = j.dataStr?.head?.c_para ?? {};
   const pkgPara = j.packageDetail?.dataStr?.head?.c_para ?? {};
-  const lcsc = normalizeLcsc(j.lcsc?.number ?? para['Supplier Part'] ?? '') ?? fallbackLcsc;
+  const sku = normalizeLcsc(j.lcsc?.number ?? para['Supplier Part'] ?? '') ?? fallbackLcsc;
   const cls = (para['JLCPCB Part Class'] ?? '').toLowerCase();
-  const tier: JlcTier = cls.includes('basic') ? 'basic' : cls.includes('preferred') ? 'preferred' : 'extended';
+  const tier = tierOf(cls.includes('basic'), cls.includes('preferred'));
   const attributes: Record<string, string> = {};
   if (para.Value) attributes.Value = para.Value;
   const link = pkgPara.link ?? para.link;
   const datasheet = link && /^https?:\/\//i.test(link) ? link : undefined;
   const manufacturer = para.Manufacturer?.replace(/\(.*\)$/, '').trim();
   return {
-    lcsc,
+    sku,
     mpn: (para['Manufacturer Part'] ?? para.name ?? '').trim(),
     ...(manufacturer ? { manufacturer } : {}),
     package: normalizeEasyEdaPackage(para.package ?? ''),
     description: (j.description ?? '').trim(),
-    stock: j.lcsc?.stock ?? 0,
+    stock: null,
     tier,
+    fee: feeOf(tier),
     price: typeof j.lcsc?.price === 'number' ? [{ qty: 1, usd: j.lcsc.price }] : [],
     attributes,
     ...(j.tags?.[0] ? { category: j.tags[0] } : {}),
     ...(datasheet ? { datasheet } : {}),
-    url: JLC_PART_URL(lcsc),
+    url: JLCPCB_ASSEMBLY.partUrl(sku),
+    live: false,
   };
 }
 
@@ -223,54 +315,4 @@ export function fromEasyEda(raw: unknown, fallbackLcsc: string): JlcPart {
 export function normalizeEasyEdaPackage(name: string): string {
   const m = /^[RCLD](\d{4})$/i.exec(name.trim());
   return m ? m[1]! : name.trim();
-}
-
-/* ------------------------------ checks and text ------------------------------ */
-
-/**
- * Why a catalogue part does not fit a component: value (resistance, capacitance, inductance),
- * a capacitor's voltage rating below what the design asks, or the package. Empty = it fits.
- */
-export function sourcingMismatch(card: Pick<PartCard, 'category'>, params: Record<string, string>, effectivePackage: string | undefined, part: JlcPart): string[] {
-  const out: string[] = [];
-  const valueKey = card.category === 'resistor' ? 'resistance' : card.category === 'capacitor' ? 'capacitance' : card.category === 'inductor' ? 'inductance' : null;
-  const attrKey = valueKey === 'resistance' ? 'Resistance' : valueKey === 'capacitance' ? 'Capacitance' : 'Inductance';
-  if (valueKey && params[valueKey]) {
-    const want = parseQuantity(params[valueKey]);
-    const haveText = part.attributes[attrKey] ?? part.attributes.Value;
-    const have = haveText ? parseQuantity(haveText) : null;
-    const unitsDiffer = !!(want?.unit && have?.unit && want.unit !== have.unit);
-    if (want && have && (unitsDiffer || !closeTo(want.value, have.value))) out.push(`${valueKey}: the part is ${haveText}, the component ${params[valueKey]}`);
-  }
-  if (card.category === 'capacitor' && params.voltage && part.attributes['Voltage Rated']) {
-    const want = parseQuantity(params.voltage);
-    const have = parseQuantity(part.attributes['Voltage Rated']);
-    if (want && have && have.value < want.value * 0.999) out.push(`voltage: the part is rated ${part.attributes['Voltage Rated']}, the component asks for ${params.voltage}`);
-  }
-  if (effectivePackage && part.package && normPkg(effectivePackage) !== normPkg(part.package)) out.push(`package: the part is ${part.package}, the component ${effectivePackage}`);
-  return out;
-}
-
-const closeTo = (a: number, b: number) => Math.abs(a - b) <= 0.005 * Math.max(Math.abs(a), Math.abs(b));
-const normPkg = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
-
-/** One line per part, for the agent and for logs. */
-export function describeJlcPart(p: JlcPart): string {
-  const tier = p.tier === 'basic' ? 'Basic' : p.tier === 'preferred' ? 'Preferred' : 'Extended';
-  const price = p.price[0] ? `$${trimNum(p.price[0].usd)}@${p.price[0].qty}` : '';
-  const facts = p.description || Object.entries(p.attributes).map(([k, v]) => (k === 'Value' ? v : `${k} ${v}`)).join(', ');
-  return [p.lcsc, p.mpn, p.package, tier, `stock ${p.stock.toLocaleString('en-US')}`, price, facts.slice(0, 140)].filter(Boolean).join(' · ');
-}
-
-/** Prices: cents need the digits ("$0.0017"), dollars two decimals. */
-const trimNum = (n: number) => (n >= 1 ? n.toFixed(2) : n.toPrecision(3).replace(/0+$/, '').replace(/\.$/, ''));
-/** Engineering values: four significant digits at most, no trailing zeros ("4.7", "10", "100"). */
-const sig = (n: number) => String(Number(n.toPrecision(4)));
-
-export function formatOhms(v: number): string {
-  return v >= 1e6 ? `${sig(v / 1e6)}MΩ` : v >= 1e3 ? `${sig(v / 1e3)}kΩ` : `${sig(v)}Ω`;
-}
-
-export function formatFarads(v: number): string {
-  return v >= 1e-3 ? `${sig(v * 1e3)}mF` : v >= 1e-6 ? `${sig(v * 1e6)}uF` : v >= 1e-9 ? `${sig(v * 1e9)}nF` : `${sig(v * 1e12)}pF`;
 }
