@@ -5,13 +5,19 @@
  */
 import { Kernel, registerArtwork, unregisterArtwork } from '@4k7/kernel';
 import { registerUserParts, unregisterUserPart } from '@4k7/parts';
-import type { Artwork, CheckSettings, Design, OptimizeScope, PartCard, StoredCopper } from '@4k7/schema';
+import type { Artwork, CheckSettings, Design, OptimizeScope, PartCard, RouteHelperResult, StoredCopper } from '@4k7/schema';
 
 const kernel = new Kernel();
 
 const methods = {
-  /** `by`: the user for the app's own edits (drags, buttons); the agent's tool calls leave it out. */
-  transact: (tx: unknown, by?: 'user' | 'agent') => kernel.transact(tx, by),
+  /**
+   * `by`: the user for the app's own edits (drags, buttons); the agent's tool calls leave it out.
+   * `routed`: what the route helper found for the transaction's route ops on drawn copper, in the
+   * helper worker (by op index): laid as found, without routing here.
+   */
+  transact: (tx: unknown, by?: 'user' | 'agent', routed?: Record<number, RouteHelperResult>, rev?: number) => kernel.transact(tx, by, routed ? { results: routed, ...(rev !== undefined ? { rev } : {}) } : undefined),
+  /** The working copy with its revision (the route helper's worker routes it; transact refuses its results if it changed). */
+  draftSnapshot: () => kernel.draftSnapshot(),
   query: (q: unknown) => kernel.query(q),
   state: () => kernel.state(),
   setScope: (s: OptimizeScope | null) => kernel.setScope(s),

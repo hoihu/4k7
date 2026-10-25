@@ -2,7 +2,7 @@
  * Changesets: entity-level diff between the committed design and the agent's working
  * copy, and merging of a user-selected subset of hunks.
  */
-import { openQuestions, planeStyleText, scriptPieces, type Component, type Design, type Hunk } from '@4k7/schema';
+import { openQuestions, planeStyleText, scriptPieces, type Component, type Design, type DrawnCopper, type Hunk } from '@4k7/schema';
 import { layoutText } from '@4k7/parts';
 import { describeConstraint } from './apply.ts';
 import { clone, gcNets, gcParts, natCmp, valueOf } from './doc.ts';
@@ -148,6 +148,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
             ...(b.fab ? [`made by ${b.fab.house}, ${b.fab.tier}${b.fab.origin === 'imported' ? ` (limits imported from ${b.fab.source.url})` : ''}`] : []),
             ...(b.holes?.length ? [`${b.holes.length} mounting hole${b.holes.length > 1 ? 's' : ''} (${[...new Set(b.holes.map((x) => `Ø${x.d}`))].join(', ')})`] : []),
             ...(b.planes ? [`planes: ${b.planes.map((p) => `${draft.nets[p.netId]?.name ?? p.netId} on ${p.layer}${p.area ? (p.area.under ? ` under ${p.area.under.map((id) => draft.components[id]?.refdes ?? id).join(', ')}` : ' (an area)') : ''}${p.style ? ` (${planeStyleText(p.style)})` : ''}`).join(', ') || 'none'}`] : []),
+            ...(b.drawn ? [drawnDetail(base.board?.drawn, b.drawn)] : base.board?.drawn ? ['copper back to the router (the drawn copper dropped)'] : []),
           ]
         : [],
     });
@@ -392,4 +393,17 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
   gcNets(d);
   gcParts(d);
   return { design: d, notes };
+}
+
+/** The drawn copper in a board hunk: how much there is, and what changed since the committed design. */
+function drawnDetail(a: DrawnCopper | undefined, b: DrawnCopper): string {
+  const head = `copper drawn by the agent: ${b.tracks.length} track${b.tracks.length === 1 ? '' : 's'}, ${b.vias.length} via${b.vias.length === 1 ? '' : 's'}`;
+  if (!a) return `${head} (drawn copper on)`;
+  const before = new Map([...a.tracks, ...a.vias].map((x) => [x.id, JSON.stringify(x)]));
+  const after = new Map([...b.tracks, ...b.vias].map((x) => [x.id, JSON.stringify(x)]));
+  const added = [...after.keys()].filter((id) => !before.has(id)).length;
+  const removed = [...before.keys()].filter((id) => !after.has(id)).length;
+  const changed = [...after].filter(([id, j]) => before.has(id) && before.get(id) !== j).length;
+  const what = [added && `${added} new`, changed && `${changed} changed`, removed && `${removed} erased`].filter(Boolean);
+  return what.length ? `${head} (${what.join(', ')})` : head;
 }

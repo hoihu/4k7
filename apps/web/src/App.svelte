@@ -139,6 +139,8 @@
       {/if}
       {#if app.routeProgress && app.view !== 'lay'}
         <button class="chipbtn" onclick={() => (app.view = 'lay')} title="The board is being routed (pass {app.routeProgress.pass}). Open the layout to watch it.">routing {Math.round((100 * app.routeProgress.done) / Math.max(1, app.routeProgress.connections))}%</button>
+      {:else if app.helperRun && app.view !== 'lay'}
+        <button class="chipbtn" onclick={() => (app.view = 'lay')} title="The route helper is finding paths ({app.helperRun.what}). Open the layout to watch it or stop it.">route helper{app.helperRun.progress ? ` ${Math.round((100 * app.helperRun.progress.done) / Math.max(1, app.helperRun.progress.connections))}%` : '…'}</button>
       {/if}
       {#if app.unsaved}
         <button class="chipbtn unsaved" onclick={() => (app.view = 'set')} title="Changes are not saved: the 4k7 server that writes the project file is not reachable. They are saved once it is back.">not saved</button>

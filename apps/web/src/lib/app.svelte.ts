@@ -14,12 +14,13 @@ import {
   schematicViewInfo,
   unknownTool,
   type AgentEvent,
+  type KernelPort,
   type Provider,
   type ToolOutcome,
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type ScopeInfo, type TokenCount, type ViewInfo } from '@4k7/schema';
+import { RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type ViewInfo } from '@4k7/schema';
 import { boardScadSummary, enclosureJob, enclosureReport, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import costGuide from '../../../../docs/design/cost.md?raw';
@@ -107,6 +108,9 @@ export function tokenCost(t: TokenCount, fallbackModel: string): number {
   return costUsd(t.model ?? fallbackModel, { input: t.input, output: t.output, cacheRead: t.cacheRead, cacheWrite: t.cacheWrite });
 }
 
+/** An op of a transaction, as far as the route helper's worker needs to know it (see transactEdit). */
+type RouteAsk = { op?: string; nets?: string[]; from?: string; to?: string; fresh?: boolean };
+
 class AppState {
   view = $state<View>('sch');
   tab = $state<InspectorTab>('issues');
@@ -154,6 +158,9 @@ class AppState {
   /** Routing under way (the copper laid so far is drawn over the placed board), else null. */
   routeProgress = $state.raw<RouteProgress | null>(null);
   private boards = new BoardClient();
+  /** The route helper searching in its worker (drawn copper): what for, and the copper laid so far. */
+  helperRun = $state.raw<{ what: string; progress: RouteProgress | null } | null>(null);
+  private helperStop: (() => void) | null = null;
   /** The last enclosure render (the report, its pieces, the board facts it was measured against). */
   enclosure = $state.raw<{ report: EnclosureReport; facts: EnclosureFacts } | null>(null);
   enclosureBusy = $state(false);
@@ -639,7 +646,7 @@ class AppState {
       this.flash('Review the pending changes first.');
       return false;
     }
-    const r = await this.kernel.transact({ summary, ops }, 'user');
+    const r = await this.transactEdit({ summary, ops }, 'user');
     if (r.status !== 'ok') {
       this.flash(r.rejection?.message ?? 'Rejected');
       return false;
@@ -658,6 +665,30 @@ class AppState {
   /** Bring a waived board check back. */
   restoreCheck(waiverId: string): Promise<boolean> {
     return this.userEdit(`Check back on (${waiverId})`, [{ op: 'remove_waiver', id: waiverId }]);
+  }
+
+  /**
+   * Who lays the copper: the router, or the agent (drawn copper; `keep` starts from the router's
+   * copper as it is). Back to the router drops the drawn copper (undo brings it back).
+   */
+  setCopperMode(mode: 'drawn' | 'router', keep = true): Promise<boolean> {
+    const drawn = this.board?.drawn;
+    if (mode === 'router' && drawn && !window.confirm(`Back to the router: the ${drawn.tracks.length} drawn tracks and ${drawn.vias.length} vias are dropped and the router lays the board again (Undo brings them back).`)) return Promise.resolve(false);
+    return this.userEdit(mode === 'drawn' ? (keep ? 'Drawn copper, from the routing' : 'Drawn copper, empty') : 'Copper back to the router', [{ op: 'set_copper_mode', mode, ...(mode === 'drawn' ? { keep } : {}) }]);
+  }
+
+  /** Drawn copper: the route helper on every open connection, round what is drawn (`fresh`: its own copper laid again too). */
+  routeOpen(fresh = false): Promise<boolean> {
+    return this.userEdit(fresh ? "Lay the route helper's copper again" : 'Route the open connections', [{ op: 'route', ...(fresh ? { fresh: true } : {}) }]);
+  }
+
+  /** Drawn copper: ask the agent to lay it. */
+  askToDraw() {
+    const open = this.board?.unrouted.length ?? 0;
+    void this.send(
+      `The copper is yours to draw (drawn copper)${open ? `, ${open} connection${open === 1 ? '' : 's'} open` : ''}. Lay it as an engineer would: the paths that matter first (switching loops short and wide, the drops to the planes, return paths, sensitive signals away from noisy ones), then the route helper for the connections that do not matter, and look at each step with get_board_image. Finish with no open connections and no errors; say which warnings you keep and why.`,
+      { shown: 'Draw the copper yourself' },
+    );
   }
 
   /** Put a part on the bottom or the top side of the board (a layer constraint; top is the default, so none). */
@@ -1001,6 +1032,17 @@ class AppState {
             return fail('query · try_placements', (e as Error).message);
           }
         }
+        // (it routes each try for a moment: off the kernel worker too)
+        if ((input as { op?: string })?.op === 'suggest_moves') {
+          try {
+            const out = (await this.trialQuery(input)) as { error?: string; suggestions?: { change: string; closes: number }[]; tried?: number };
+            if (out.error) return fail('query · suggest_moves', out.error);
+            const best = out.suggestions?.[0];
+            return { content: JSON.stringify(out), isError: false, label: 'query · suggest_moves', detail: best ? `${out.suggestions!.length} suggestion(s), best: ${best.change} (closes ${best.closes})` : `none of ${out.tried ?? 0} tries closes a connection` };
+          } catch (e) {
+            return fail('query · suggest_moves', (e as Error).message);
+          }
+        }
         if ((input as { op?: string })?.op === 'get_enclosure') {
           const out = await this.enclosureQuery();
           return { content: JSON.stringify(out), isError: false, label: 'query · get_enclosure', detail: (out as { open_questions: string[] }).open_questions.length ? 'questions open' : 'ok' };
@@ -1149,7 +1191,83 @@ class AppState {
         }
       }
     }
-    return (await runKernelTool(this.kernel.port, tool, input)) ?? unknownTool(tool);
+    return (await runKernelTool(this.editPort, tool, input)) ?? unknownTool(tool);
+  }
+
+  /** The kernel as the agent's tools reach it: an edit asking the route helper runs in its worker first (transactEdit). */
+  private editPort: KernelPort = { ...this.kernel.port, transact: (tx) => this.transactEdit(tx) };
+
+  /**
+   * A transaction for the kernel. One that asks the route helper on drawn copper (route nets /
+   * from, to) searches in a worker first, so the kernel stays responsive and the user sees the
+   * copper fill in and may stop it; the kernel then applies the transaction with what the helper
+   * found (the same copper, without routing again). Everything else goes straight to the kernel.
+   */
+  private transactEdit(tx: unknown, by?: 'user'): Promise<TransactionResult> {
+    const ops = (tx as { ops?: RouteAsk[] })?.ops;
+    if (!Array.isArray(ops) || !ops.some((o) => o?.op === 'route')) return this.kernel.transact(tx, by);
+    // one at a time (the agent may send two at once): each starts from the design the one before left
+    const run = this.helperQueue.then(() => this.transactHelped(tx, by, ops));
+    this.helperQueue = run.catch(() => {});
+    return run;
+  }
+  private helperQueue: Promise<unknown> = Promise.resolve();
+
+  private async transactHelped(tx: unknown, by: 'user' | undefined, ops: RouteAsk[]): Promise<TransactionResult> {
+    const what = ops.filter((o) => o?.op === 'route').map((o) => (o.nets?.length ? o.nets.join(', ') : o.from ? `${o.from} → ${o.to}` : 'every open connection') + (o.fresh ? ', its own copper again' : '')).join('; ');
+    // the results are laid only on the working copy they were found for; changed meanwhile (a drag,
+    // an undo), the helper searches again on it, a few times, then the kernel routes itself
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { design, rev } = await this.kernel.draftSnapshot();
+      if (!design.board?.drawn && !ops.some((o) => o?.op === 'set_copper_mode')) return this.kernel.transact(tx, by);
+      const run = await this.runHelper(design, tx, by ?? 'agent', ops.flatMap((o, i) => (o?.op === 'route' ? [i] : [])), what);
+      if (!run) return this.kernel.transact(tx, by);
+      const r = await this.kernel.transact(tx, by, run.results, rev);
+      if (r.rejection?.code !== 'STALE') return r;
+      if (run.stopped) return { ...r, rejection: { ...r.rejection, message: 'The route helper was stopped, and the design changed while it searched: nothing was laid. Route again.' } };
+    }
+    return this.kernel.transact(tx, by);
+  }
+
+  /**
+   * The route helper of a transaction in its worker: the results by op index (null if the worker
+   * failed: the kernel then routes itself). Stop keeps the best the running op had found and
+   * nothing for the route ops not started.
+   */
+  private runHelper(design: Design, tx: unknown, by: 'user' | 'agent', routeOps: number[], what: string): Promise<{ results: Record<number, RouteHelperResult>; stopped: boolean } | null> {
+    return new Promise((resolve) => {
+      const worker = new Worker(new URL('./helper.worker.ts', import.meta.url), { type: 'module' });
+      const results: Record<number, RouteHelperResult> = {};
+      let best: { op: number; result: RouteHelperResult } | null = null;
+      const end = (out: Record<number, RouteHelperResult> | null, stopped = false) => {
+        worker.terminate();
+        this.helperRun = null;
+        this.helperStop = null;
+        resolve(out ? { results: out, stopped } : null);
+      };
+      this.helperRun = { what, progress: null };
+      this.helperStop = () => {
+        const out = { ...results };
+        for (const i of routeOps) out[i] ??= i === best?.op ? { ...best.result, stopped: true } : { tracks: [], vias: [], open: [], passes: 0, stopped: true };
+        this.flash(best?.result.passes ? `Route helper stopped: kept what it had found (${best.result.tracks.length} tracks, ${best.result.vias.length} vias)` : 'Route helper stopped before its first pass ended: nothing laid');
+        end(out, true);
+      };
+      worker.onmessage = (e: MessageEvent<{ progress?: RouteProgress; best?: { op: number; result: RouteHelperResult }; done?: { op: number; result: RouteHelperResult }; finished?: { results: Record<number, RouteHelperResult> }; error?: string }>) => {
+        const m = e.data;
+        if (m.progress) this.helperRun = { what, progress: m.progress };
+        else if (m.best) best = m.best;
+        else if (m.done) results[m.done.op] = m.done.result;
+        else if (m.finished) end(m.finished.results);
+        else if (m.error) end(null);
+      };
+      worker.onerror = () => end(null);
+      worker.postMessage({ design, tx, by });
+    });
+  }
+
+  /** Stop the route helper: what it found by then is laid (see runHelper). */
+  stopHelper() {
+    this.helperStop?.();
   }
 
   /** The artwork tool: the saved silkscreen graphics. */
@@ -1218,14 +1336,24 @@ class AppState {
             true,
           );
         }
+        // drawn copper: the hard rules (errors of the copper DRC) hold; warnings are the agent's call
+        const draftBoard = (await this.kernel.draftDesign()).board;
+        if (p.hunks.some((h) => h.id === 'board:board') && draftBoard?.drawn) {
+          const b = await this.routedBoard();
+          const hard = (b?.diagnostics ?? []).filter((x) => x.severity === 'error' && !x.waivedBy && x.code !== 'DRC.UNROUTED');
+          if (hard.length) {
+            log('propose', false, `refused: ${hard.length} hard copper rule(s)`);
+            return text(`Refused: the drawn copper breaks ${hard.length} hard rule(s). Fix them (get_board_image region shows the spot; get_copper lists the copper by id):\n` + hard.slice(0, 20).map((x) => `- ${x.code}${x.at ? ` at ${x.at.x.toFixed(2)}, ${x.at.y.toFixed(2)}` : ''}: ${x.message}`).join('\n'), true);
+          }
+        }
         // a routed board is routed completely, or the agent says why not
-        if (p.hunks.some((h) => h.id === 'board:board') && !args.data.open_connections?.trim() && (await this.kernel.draftDesign()).board?.routed) {
+        if (p.hunks.some((h) => h.id === 'board:board') && !args.data.open_connections?.trim() && (draftBoard?.routed || draftBoard?.drawn)) {
           const b = await this.routedBoard();
           if (b?.routing === 'done' && b.unrouted.length) {
             log('propose', false, `refused: ${b.unrouted.length} open connection(s)`);
             const name = (id: string) => b.netNames[id] ?? id;
             return text(
-              `Refused: the board is routed but ${b.unrouted.length} connection(s) are open, and a board with an open connection does not work. Make room and route again (get_board lists them with what blocks them; get_board_image region shows the spot):\n` +
+              `Refused: ${b.drawn ? 'the drawn copper leaves' : 'the board is routed but'} ${b.unrouted.length} connection(s) ${b.drawn ? '' : 'are '}open, and a board with an open connection does not work. ${b.drawn ? 'Draw them' : 'Make room and route again'} (get_board lists them with what blocks them; get_board_image region shows the spot):\n` +
                 b.unrouted.slice(0, 12).map((u) => `- ${name(u.netId)} ${u.from} → ${u.to}${u.blockedBy?.length ? `, blocked by ${u.blockedBy.map(name).join(', ')}` : u.enclosed ? ', closed off' : u.plane ? `, no room for the via to ${u.plane}` : ''}${u.near.length ? `, near ${u.near.join(', ')}` : ''}`).join('\n') +
                 '\nIf you cannot close them, propose with open_connections saying why and what the user could decide.',
               true,

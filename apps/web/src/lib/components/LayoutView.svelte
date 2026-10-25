@@ -19,8 +19,9 @@
   });
 
   const b = $derived(app.board);
-  // while it routes: the placed board with the copper laid so far
-  const prog = $derived(app.routeProgress);
+  // while it routes (or the route helper searches, drawn copper): the board with the copper laid so far
+  const helper = $derived(app.helperRun);
+  const prog = $derived(app.routeProgress ?? helper?.progress ?? null);
   const shown = $derived(b && prog ? { ...b, tracks: prog.tracks, vias: prog.vias } : b);
   const secs = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`);
   let show = $state<Record<string, boolean>>({ board: true, 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true, placement: false, dims: true });
@@ -132,7 +133,12 @@
   let shownCheck = $state<string | null>(null);
   const showCheck = (msg: string) => (shownCheck = shownCheck === msg ? null : msg);
   const CHECKS_SHOWN = 4;
-  const routeLabel = $derived(routing ? 'Routing…' : b?.routing === 'done' ? (b.stopped ? 'Routing stopped' : 'Routed') : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
+  const routeLabel = $derived(b?.drawn ? 'Drawn copper' : routing ? 'Routing…' : b?.routing === 'done' ? (b.stopped ? 'Routing stopped' : 'Routed') : b?.routing === 'stale' ? 'Routing out of date' : 'Not routed');
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  /** The router's copper as it is now can be taken over (routed for this placement, not stopped half way). */
+  const routedNow = $derived(!!b && !b.drawn && b.routing === 'done' && !b.stopped && !routing);
+  /** Drawn copper the route helper laid (or that came from the router): route fresh may lay it again. */
+  const helperCopper = $derived(b?.drawn ? b.drawn.tracks.filter((t) => t.by).length + b.drawn.vias.filter((v) => v.by).length : 0);
 
   const projectName = () => (app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : '4k7-board');
   function download(blob: Blob, file: string) {
@@ -197,21 +203,24 @@
     </div>
     <!-- one row: the pending bar goes on a line of its own when the tools leave no room, never under them -->
     <div class="top">
+    <!-- only the view on the canvas; the actions are in the side panel -->
     <div class="tools">
       {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
       <div class="seg"><button aria-pressed={mode === '2d'} onclick={to2d}>2D</button><button aria-pressed={mode === '3d'} onclick={to3d}>3D</button><button aria-pressed={mode === 'panel'} title="The fabrication panel: copies in a frame, tabs with mouse bites" onclick={toPanel}>Panel</button></div>
-      {#if b?.parts.length}
-        <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose placement', [{ op: 'propose_placement' }])}>Propose placement</button>
-        {#if choices.length}<button class="btn" disabled={app.running} title="Your {choices.length} placement choice{choices.length > 1 ? 's' : ''} go back to the placer; locked parts stay" onclick={releaseAll}>Release choices ({choices.length})</button>{/if}
-        {#if mine.length}<button class="btn" disabled={app.running || !!app.k?.proposal} title="Hand the board back to the agent: it keeps the {mine.length} part{mine.length > 1 ? 's' : ''} you placed, arranges the rest round them, decides the planes and routes" onclick={continueLayout}>Continue layout ✦</button>{/if}
-        <button class="btn" class:pri={b.routing !== 'done' || b.stopped} disabled={app.running || !!prog || (b.routing === 'done' && !b.stopped)} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' || b.stopped ? 'Route again' : 'Route'}</button>
-        <button class="btn" disabled={!b.parts.length} title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
-        {#if b.panel}<button class="btn" title="The {b.panel.settings.cols} × {b.panel.settings.rows} panel ({b.panel.w} × {b.panel.h} mm): Gerber, drill with the mouse bites and tooling holes, BOM and pick-and-place of every copy, as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}` : ''}" onclick={() => exportFab(true)}>Panel files ⤓</button>{/if}
-        <button class="btn" title="The board and its parts in 3D as a STEP file (.step), for a mechanical CAD program: the outline with its holes and cutouts, and every part body, named by designator" onclick={exportStep}>STEP ⤓</button>
-      {/if}
       {#if app.boardBusy && !prog}<span class="busy">updating…</span>{/if}
     </div>
-    {#if prog && mode === '2d'}
+    {#if helper && mode === '2d'}
+      <!-- the route helper on drawn copper: the copper it lays shows as it goes; a stop keeps what it found -->
+      <div class="routing" role="status" aria-live="polite">
+        <div class="rl">
+          <b>Route helper</b>
+          <span class="trunc">{helper.what}{#if prog} · pass {prog.pass}{prog.grid ? ' · on the grid' : ''} · {prog.done}/{prog.connections} connected · {secs(prog.elapsedMs)}{:else} · starting…{/if}</span>
+          <button class="btn stop" onclick={() => app.stopHelper()} title={prog?.bestOpen == null ? 'Stop the route helper. Its first pass has not finished: nothing will be laid.' : 'Stop the route helper and keep the best it has found so far'}>Stop</button>
+        </div>
+        <div class="bar"><div style="width: {prog ? Math.round((100 * prog.done) / Math.max(1, prog.connections)) : 0}%"></div></div>
+        <div class="rs">it goes round the drawn copper and moves none of it; what it lays becomes drawn copper, for the agent to keep or redraw</div>
+      </div>
+    {:else if prog && mode === '2d'}
       <div class="routing" role="status" aria-live="polite">
         <div class="rl">
           <b>Routing</b>
@@ -240,7 +249,7 @@
         {:else if b}{b.outline.w} × {b.outline.h} mm · {b.layers.length} layers<span class="dot">·</span>{/if}
         {#if b?.parts.length}
           <span class:stale={b.routing === 'stale' || b.stopped} class:ok={b.routing === 'done' && !routing && !b.stopped}>{routeLabel}</span>
-          {#if b.routing === 'done' && !routing}<span> {b.stats.routed}/{b.stats.nets} nets · {b.stats.vias} vias</span>{#if b.ratsnest.length}<span class="stale"> · {b.ratsnest.length} unrouted</span>{/if}{/if}
+          {#if b.routing === 'done' && !routing}<span> {b.stats.routed}/{b.stats.nets} nets · {b.stats.vias} vias</span>{#if b.drawn ? b.unrouted.length : b.ratsnest.length}<span class="stale"> · {b.drawn ? `${b.unrouted.length} open` : `${b.ratsnest.length} unrouted`}</span>{/if}{/if}
           <span class="dot">·</span>{nParts} parts<span class="dot">·</span>
         {/if}
         {hotNet ? netName(hotNet) : app.selection.join(' ') || '—'}
@@ -294,6 +303,32 @@
           {/if}
         {/if}
         {/if}
+        {#if mode !== 'panel' && b.parts.length}
+          <h4>Placement</h4>
+          <div class="row2">
+            <button class="btn" disabled={app.running} title="A fresh board size (unless you set one) and placement; your placement choices and locked parts stay" onclick={() => void app.userEdit('Propose placement', [{ op: 'propose_placement' }])}>Propose placement</button>
+            {#if choices.length}<button class="btn" disabled={app.running} title="Your {choices.length} placement choice{choices.length > 1 ? 's' : ''} go back to the placer; locked parts stay" onclick={releaseAll}>Release choices ({choices.length})</button>{/if}
+            {#if mine.length}<button class="btn" disabled={app.running || !!app.k?.proposal} title="Hand the board back to the agent: it keeps the {mine.length} part{mine.length > 1 ? 's' : ''} you placed, arranges the rest round them, decides the planes and routes" onclick={continueLayout}>Continue layout ✦</button>{/if}
+          </div>
+          <!-- who lays the copper: the router, or the agent (drawn copper, docs/design/layout.md §9) -->
+          <h4>Copper</h4>
+          {#if b.drawn}
+            <p class="small">Drawn copper, the agent's: {plural(b.drawn.tracks.length, 'track')}, {plural(b.drawn.vias.length, 'via')}{#if helperCopper} ({helperCopper} laid by the route helper){/if}{#if b.unrouted.length}, <span class="stale">{plural(b.unrouted.length, 'connection')} open</span>{/if}. The router lays nothing unless asked (Route open). A part you move takes the copper by it along; nothing else moves.</p>
+            <div class="row2">
+              <button class="btn" class:pri={!!b.unrouted.length} disabled={app.running || !!prog || !!helper || !b.unrouted.length || !!app.k?.proposal} title={b.unrouted.length ? `The route helper finds paths for the ${plural(b.unrouted.length, 'open connection')} round the drawn copper (it moves none of it) and adds them as drawn copper` : 'Every connection is drawn'} onclick={() => void app.routeOpen()}>Route open{b.unrouted.length ? ` (${b.unrouted.length})` : ''}</button>
+              {#if b.unrouted.length && app.chatOpen}<button class="btn" disabled={app.running || !!helper} title="Ask the agent to lay the copper: the paths that matter first, the route helper for the rest" onclick={() => app.askToDraw()}>Draw it ✦</button>{/if}
+              {#if helperCopper}<button class="btn" disabled={app.running || !!prog || !!helper || !!app.k?.proposal} title="Take up the {helperCopper} tracks and vias the route helper laid (or that came from the router) and lay them again round the agent's own copper, which stays: when the helper's copper is in the way of the open connections" onclick={() => void app.routeOpen(true)}>Redo the helper's copper</button>{/if}
+              <button class="btn" disabled={app.running || !!helper || !!app.k?.proposal} title="The router lays the copper again; the drawn copper is dropped (Undo brings it back)" onclick={() => void app.setCopperMode('router')}>Back to the router</button>
+            </div>
+          {:else}
+            <p class="small">Laid by the router{b.routing === 'done' ? '' : ' (Route)'}. Or the agent draws every track and via itself, with the router as a helper on request.</p>
+            <div class="row2">
+              <button class="btn" class:pri={b.routing !== 'done' || b.stopped} disabled={app.running || !!prog || (b.routing === 'done' && !b.stopped)} title="Route the board as it is placed now (the last step)" onclick={() => void app.userEdit('Route', [{ op: 'route' }])}>{b.routing === 'stale' || b.stopped ? 'Route again' : 'Route'}</button>
+              {#if routedNow}<button class="btn" disabled={app.running || !!prog || !!app.k?.proposal} title="The agent's copper from now on, starting from this routing: it reworks what it wants" onclick={() => void app.setCopperMode('drawn', true)}>Agent draws: from this routing</button>{/if}
+              <button class="btn" disabled={app.running || !!prog || !!app.k?.proposal} title="The agent's copper from now on, starting from an empty board" onclick={() => void app.setCopperMode('drawn', false)}>Agent draws{routedNow ? ': from scratch' : ''}</button>
+            </div>
+          {/if}
+        {/if}
         {#if mode !== 'panel'}
         <h4>Layers</h4>
         <ul class="layers">
@@ -304,6 +339,15 @@
         {/if}
         <FabRules rules={b.rules} fab={b.fab} layers={b.layers.length as 2 | 4} />
         {#if b.parts.length}<Sourcing />{/if}
+        <h4>Files</h4>
+        {#if b.parts.length}
+          <div class="row2">
+            <button class="btn" title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
+            <!-- (the panel view has its own Panel files button) -->
+            {#if b.panel && mode !== 'panel'}<button class="btn" title="The {b.panel.settings.cols} × {b.panel.settings.rows} panel ({b.panel.w} × {b.panel.h} mm): Gerber, drill with the mouse bites and tooling holes, BOM and pick-and-place of every copy, as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}` : ''}" onclick={() => exportFab(true)}>Panel files ⤓</button>{/if}
+            <button class="btn" title="The board and its parts in 3D as a STEP file (.step), for a mechanical CAD program: the outline with its holes and cutouts, and every part body, named by designator" onclick={exportStep}>STEP ⤓</button>
+          </div>
+        {/if}
         <button class="btn wide" onclick={() => app.designDocument()} disabled={!b.parts.length || app.docBusy} title="The functional blocks described, each with its schematic and its place on the board, then layout, assembly drawing, BOM and schematic">{app.docBusy ? 'Preparing…' : 'Design document (print / PDF)'}</button>
         <p class="small muted">
           {#if desc}{desc.blocks.length} block{desc.blocks.length === 1 ? '' : 's'} described{#if desc.undescribed.length}, <span class="stale">{desc.undescribed.length} part{desc.undescribed.length === 1 ? '' : 's'} in none</span>{/if}.
@@ -352,6 +396,7 @@
   h4 { margin: 12px 0 4px; font-size: 12px; display: flex; gap: 4px; align-items: center; }
   .small { font-size: 11.5px; margin: 2px 0 6px; }
   .wide { width: 100%; margin: 2px 0 4px; }
+  .row2 + .wide { margin-top: 6px; }
   .clamp { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .fold { display: flex; gap: 4px; align-items: center; border: 0; background: none; padding: 0; font: inherit; font-weight: inherit; color: inherit; cursor: pointer; }
   .chev { width: 10px; color: var(--txt-3); }

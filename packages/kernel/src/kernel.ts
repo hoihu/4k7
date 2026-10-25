@@ -45,10 +45,12 @@ import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findCompone
 import { schematicView, syncDrawing } from './drawing.ts';
 import { copperKey, layoutBoard, placeBoard, planePlan } from './board.ts';
 import type { RouteProgress } from './router.ts';
+import { DRAWING_OPS, HELPER_TX_MS, annotateChecks, followParts, movesParts, placementOf, type HelperHooks } from './copperops.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 import { MIN_FREE, circuitSignature, guardOp, measure, positions, resolveScope, ripple, widenScope, type ResolvedScope } from './scope.ts';
 import { schematicChecks } from './schcheck.ts';
 import { tryPlacements } from './trial.ts';
+import { suggestMoves } from './suggest.ts';
 
 interface Analysis {
   view: SchematicView;
@@ -77,6 +79,8 @@ export class Kernel {
   private draft: Design;
   private cache = new WeakMap<Design, Analysis>();
   private boards = new WeakMap<Design, BoardView>();
+  /** Bumped whenever the working copy changes (not by copper kept as a cache): what the route helper's results are for. */
+  private rev = 0;
   private undoStack: { design: Design; entry: HistoryEntry }[] = [];
   /** Commits taken back by undo, newest last; any new commit clears it. */
   private redoStack: { design: Design; entry: HistoryEntry }[] = [];
@@ -124,6 +128,11 @@ export class Kernel {
     return clone(this.draft);
   }
 
+  /** The working copy and its revision, together (for the route helper's worker: see HelperHooks.rev). */
+  draftSnapshot(): { design: Design; rev: number } {
+    return { design: clone(this.draft), rev: this.rev };
+  }
+
   /** Placement only (fast): parts, outline, ratsnest and placement checks. */
   boardPlacement(): BoardView {
     return placeBoard(this.draft, this.analyse(this.draft).view);
@@ -158,20 +167,45 @@ export class Kernel {
 
   /* ---------------------------- transactions ------------------------------ */
 
-  /** Validate and apply a transaction to the working copy (or dry-run it). `by`: who asked for it, the agent unless the app says the user. */
-  transact(input: unknown, by: 'user' | 'agent' = 'agent'): TransactionResult {
+  /**
+   * Validate and apply a transaction to the working copy (or dry-run it). `by`: who asked for it,
+   * the agent unless the app says the user. `helper`: the route helper's results computed elsewhere
+   * (a worker), or hooks to follow it while it routes here (drawn copper, see copperops.ts).
+   */
+  transact(input: unknown, by: 'user' | 'agent' = 'agent', helper?: HelperHooks): TransactionResult {
     const parsed = Transaction.safeParse(input);
     if (!parsed.success) {
       return this.rejected({ opIndex: indexOfIssue(parsed.error.issues), code: 'INVALID_OP', message: formatZod(parsed.error.issues) }, false);
     }
     const tx = parsed.data;
+    if (helper?.rev !== undefined && helper.rev !== this.rev) {
+      return this.rejected({ opIndex: 0, code: 'STALE', message: 'The design changed while the route helper searched; search again on it as it is now.' }, !!tx.dry_run);
+    }
     const before = this.analyse(this.draft).diagnostics;
     const work = clone(this.draft);
     const results = [];
+    // drawn copper: what each op drew, edited or moved, checked once the transaction is applied
+    const drawn = new Map<number, string[]>();
+    const deadline = Date.now() + HELPER_TX_MS;
+    // the placement after the last op that may move parts (copper ops in between do not move any)
+    let placedNow: BoardView | null = null;
     for (let i = 0; i < tx.ops.length; i++) {
+      const op = tx.ops[i]!;
       try {
-        if (this.scoped) guardOp(work, tx.ops[i]!, this.scoped.sc);
-        results.push(applyOp(work, tx.ops[i]!, by));
+        if (this.scoped) guardOp(work, op, this.scoped.sc);
+        // (drawn copper follows the parts an op moves)
+        const placed = work.board?.drawn && movesParts(op) ? (placedNow ?? placementOf(work)) : null;
+        if (!work.board?.drawn) placedNow = null;
+        const r = applyOp(work, op, by, { index: i, deadline, ...(helper ? { helper } : {}) });
+        if (placed) {
+          placedNow = placementOf(work);
+          const f = followParts(work, placed, placedNow);
+          if (f) {
+            if (f.note) r.effect += `; ${f.note}`;
+            drawn.set(i, f.ids);
+          }
+        } else if (work.board?.drawn && DRAWING_OPS.has(op.op)) drawn.set(i, (r.ids ?? []).filter((id) => /^[tv]\d+$/.test(id)));
+        results.push(r);
       } catch (e) {
         if (e instanceof RejectError) return this.rejected({ opIndex: i, ...e.rejection }, !!tx.dry_run);
         throw e;
@@ -180,6 +214,7 @@ export class Kernel {
     gcNets(work);
     gcParts(work);
     syncDrawing(work);
+    if (drawn.size) annotateChecks(work, results, drawn);
     if (this.scoped && circuitSignature(work) !== this.scoped.circuit) {
       return this.rejected({ opIndex: tx.ops.length - 1, code: 'OUT_OF_SCOPE', message: 'This would change the circuit (parts, values or connections). Optimize only changes how an area is drawn.' }, !!tx.dry_run);
     }
@@ -187,6 +222,7 @@ export class Kernel {
     const after = analysed.diagnostics;
     if (!tx.dry_run) {
       this.draft = work;
+      this.rev++;
       this.pendingSummaries.push(tx.summary);
     }
     const beforeKeys = new Set(before.filter((x) => !x.waivedBy).map(diagKey));
@@ -304,12 +340,14 @@ export class Kernel {
     this.history.push(entry);
     this.committed = next;
     this.draft = clone(next);
+    this.rev++;
     this.pendingSummaries = [];
     return { entry, notes };
   }
 
   reject(): void {
     this.draft = clone(this.committed);
+    this.rev++;
     this.pendingSummaries = [];
   }
 
@@ -319,6 +357,7 @@ export class Kernel {
     this.redoStack.push({ design: this.committed, entry: last.entry });
     this.committed = last.design;
     this.draft = clone(last.design);
+    this.rev++;
     this.pendingSummaries = [];
     this.history = this.history.filter((h) => h.id !== last.entry.id);
     return last.entry;
@@ -330,6 +369,7 @@ export class Kernel {
     this.undoStack.push({ design: this.committed, entry: next.entry });
     this.committed = next.design;
     this.draft = clone(next.design);
+    this.rev++;
     this.pendingSummaries = [];
     this.history.push(next.entry);
     return next.entry;
@@ -463,14 +503,32 @@ export class Kernel {
           ),
         };
       }
+      case 'get_copper': {
+        const b = this.board();
+        if (!b.drawn) return { copper: 'the router\'s (set_copper_mode drawn makes it yours)', tracks: b.tracks.length, vias: b.vias.length };
+        const nets = q.nets ? new Set(q.nets.map((n) => findNet(d, n)?.id ?? n)) : null;
+        const r = q.rect;
+        const inRect = (x: number, y: number) => !r || (x >= r.x_mm && y >= r.y_mm && x <= r.x_mm + r.width_mm && y <= r.y_mm + r.height_mm);
+        const ref = (a?: { componentId: string; pad: string }) => (a ? `${d.components[a.componentId]?.refdes ?? a.componentId}.${a.pad}` : undefined);
+        const name = (id: string) => d.nets[id]?.name ?? id;
+        return {
+          tracks: b.drawn.tracks
+            .filter((t) => (!nets || nets.has(t.netId)) && t.pts.some((v, i) => i % 2 === 0 && inRect(v, t.pts[i + 1]!)))
+            .map((t) => ({ id: t.id, net: name(t.netId), layer: t.layer, width: t.width, pts: Array.from({ length: t.pts.length / 2 }, (_, i) => [t.pts[2 * i]!, t.pts[2 * i + 1]!]), ...(t.from ? { from: ref(t.from) } : {}), ...(t.to ? { to: ref(t.to) } : {}), ...(t.by ? { by: t.by } : {}) })),
+          vias: b.drawn.vias.filter((v) => (!nets || nets.has(v.netId)) && inRect(v.x, v.y)).map((v) => ({ id: v.id, net: name(v.netId), at: [v.x, v.y], drill: v.drill, size: v.pad, ...(v.by ? { by: v.by } : {}) })),
+        };
+      }
       case 'get_board': {
-        // routing is expensive: use it when it has been computed, otherwise placement only
-        const routed = this.boards.get(d);
+        // routing is expensive: use it when it has been computed, otherwise placement only (drawn
+        // copper routes nothing: always computed)
+        const routed = d.board?.drawn ? this.board() : this.boards.get(d);
         const b = routed ?? this.boardPlacement();
         return { ...boardSummary(b, !!routed), plane_plan: planePlan(d, b) };
       }
       case 'try_placements':
         return tryPlacements(d, this.analyse(d).view, q.candidates, !!q.route, this.boards.get(d), q.explore !== false);
+      case 'suggest_moves':
+        return suggestMoves(d, this.analyse(d).view, this.board(), q);
       case 'get_description':
         return descriptionView(d) ?? { description: null, hint: 'No description yet: write one with design_edit describe (overview and blocks).', parts: componentsSorted(d).map((c) => c.refdes) };
       case 'get_ledger':
@@ -558,6 +616,7 @@ export class Kernel {
     this.committed = migrate(clone(design));
     syncDrawing(this.committed);
     this.draft = clone(this.committed);
+    this.rev++;
     this.undoStack = [];
     this.redoStack = [];
     this.history = [];
@@ -568,6 +627,7 @@ export class Kernel {
   rename(name: string): void {
     this.committed.name = name;
     this.draft.name = name;
+    this.rev++;
     this.invalidate(this.committed);
     this.invalidate(this.draft);
   }

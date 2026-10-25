@@ -59,9 +59,10 @@ function pieces(t: Track): [number, number, number, number][] {
 /**
  * The copper of `before` that still holds on the board `input` describes (its parts, planes,
  * rules and vias placed on purpose), grouped by the pads it joins. Vias of a group (add_vias) are
- * not taken over: the router lays them afresh.
+ * not taken over: the router lays them afresh. `asDrawn`: all of it, as it lies (the agent's drawn
+ * copper: nothing is checked or dropped, a piece joining no pad included).
  */
-export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: Via[] }): KeptCopper {
+export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: Via[] }, asDrawn = false): KeptCopper {
   const { rules } = input;
   const pads = input.parts.flatMap((p) => p.pads);
   const planes = input.planes ?? [];
@@ -149,10 +150,10 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
 
   // (a drop via's stub is laid afresh with its via)
   const stubs = new Set((input.vias?.stubs ?? []).map((t) => `${t.netId} ${t.layer} ${t.pts.join(' ')}`));
-  let tracks = before.tracks.filter((t) => nets.has(t.netId) && input.layers.includes(t.layer) && !closed.has(t.layer) && t.pts.length >= 4 && !stubs.has(`${t.netId} ${t.layer} ${t.pts.join(' ')}`) && trackClear(t));
+  let tracks = asDrawn ? before.tracks.filter((t) => nets.has(t.netId) && input.layers.includes(t.layer) && t.pts.length >= 4) : before.tracks.filter((t) => nets.has(t.netId) && input.layers.includes(t.layer) && !closed.has(t.layer) && t.pts.length >= 4 && !stubs.has(`${t.netId} ${t.layer} ${t.pts.join(' ')}`) && trackClear(t));
   // (vias of a group the router lays afresh are not taken over: placed on purpose or stitching)
   const afresh = new Set([...fixed, ...(input.vias?.fill ?? [])].map((v) => v.group));
-  let vias = before.vias.filter((v) => (!v.group || !afresh.has(v.group)) && nets.has(v.netId) && viaClear(v));
+  let vias = asDrawn ? before.vias.filter((v) => nets.has(v.netId)) : before.vias.filter((v) => (!v.group || !afresh.has(v.group)) && nets.has(v.netId) && viaClear(v));
 
   // a net with a plane: a via joined to one pad may be its drop (inside the plane's area, if it has one)
   const dropOk = (v: Via) => {
@@ -167,7 +168,7 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
    * of its net on its layer, a via of its net, or another track of its net on its layer; a via
    * must join two things (a drop to a plane: one).
    */
-  for (;;) {
+  for (; !asDrawn; ) {
     const n = tracks.length + vias.length;
     const tracksOf = new Map<string, Track[]>();
     for (const t of tracks) tracksOf.set(t.netId, [...(tracksOf.get(t.netId) ?? []), t]);
@@ -239,7 +240,7 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
       const gv = members.filter((i) => i >= P + T && i < P + T + V).map((i) => i - P - T);
       const hasVia = members.some((i) => i >= P + T);
       if (!gt.length && !gv.length) continue;
-      if (!gp.length || (gp.length === 1 && !(hasVia && planes.some((pl) => pl.netId === netId)))) continue;
+      if (!asDrawn && (!gp.length || (gp.length === 1 && !(hasVia && planes.some((pl) => pl.netId === netId))))) continue;
       const t0 = kept.tracks.length;
       const v0 = kept.vias.length;
       kept.tracks.push(...gt.map((i) => ts[i]!));
