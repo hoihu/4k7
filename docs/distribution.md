@@ -55,10 +55,19 @@ Developer ID (99 USD/year) and a `notarytool` step in the workflow. Linux needs 
 
 **Release.** `.github/workflows/release.yml` runs on a `v*` tag: typecheck, tests, the bundles
 (on a macOS runner, for `hdiutil`), then a GitHub release with the four files attached
-(`gh release create`; a tag with a `-` is a pre-release). The site links to
-`https://github.com/hoihu/4k7/releases/latest/download/<file>`, which always resolves to the
-newest release, so the file names must not change. To release: set `version` in `package.json`
-(the workflow checks it matches), then `git tag v0.2.0 && git push origin v0.2.0`.
+(`gh release create`; a tag with a `-` is a pre-release). The release's notes are the version's
+section of `CHANGELOG.md`, followed by GitHub's list of the pull requests since the last release. The
+site links to `https://github.com/hoihu/4k7/releases/latest/download/<file>`, which always resolves
+to the newest release, so the file names must not change. To release:
+
+1. Write the version's section at the top of `CHANGELOG.md` (`## 0.3.0 — 2026-11-08`): what changed
+   for the user, from the pull requests merged since the last tag. `npm run changelog`
+   (`node scripts/changelog.mjs`) writes it into the site's changelog page, `site/changelog.html`
+   (4k7.dev/changelog).
+2. Set `version` in `package.json` and `package-lock.json`. CI checks that `CHANGELOG.md` has a
+   section for it and that the site's page is up to date; the release workflow checks that the tag
+   matches the version.
+3. Merge to `main` (which also deploys the site), then `git tag v0.3.0 && git push origin v0.3.0`.
 
 ## What npm does (`npx github:hoihu/4k7`)
 

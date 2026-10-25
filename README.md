@@ -1,8 +1,8 @@
 # 4k7
 
-> **Alpha.** 4k7 is in alpha (0.1.x). The schematic side works end to end; board placement, routing and
+> **Alpha.** 4k7 is in alpha (0.x). The schematic side works end to end; board placement, routing and
 > fabrication output work for small boards. Expect rough edges, missing parts and breaking changes to the
-> project file. See the [roadmap](docs/ARCHITECTURE.md#7-roadmap).
+> project file. See the [changelog](CHANGELOG.md) and the [roadmap](docs/ARCHITECTURE.md#7-roadmap).
 
 An **AI-first, browser-based PCB schematic and layout tool**. It has no pencil, wire or trace tools.
 You describe what you want, give hints ("put V1 on the left", "make C1 100 µF"), and an AI you

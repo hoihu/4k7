@@ -58,6 +58,8 @@
   .brand svg { width: 40px; height: 20px; }
   nav a { margin-left: 22px; font-size: 14px; color: var(--muted); text-decoration: none; }
   nav a:hover { color: var(--text); }
+  /* phones: room for the brand, Changelog and GitHub; the page's own sections are a scroll away */
+  @media (max-width: 520px) { nav a[href^="#"] { display: none; } }
 
   /* ---------- hero ---------- */
   .hero { padding: 56px 0 40px; text-align: center; }
@@ -188,6 +190,7 @@
     <nav>
       <a href="#how">How it works</a>
       <a href="#why">Why</a>
+      <a href="/changelog">Changelog</a>
       <a href="https://github.com/hoihu/4k7">GitHub</a>
     </nav>
   </header>
@@ -363,6 +366,7 @@
     </div>
     <div>
       <a href="https://github.com/hoihu/4k7">GitHub</a>
+      <a href="/changelog">Changelog</a>
       <a href="https://github.com/hoihu/4k7/releases">Releases</a>
     </div>
   </footer>

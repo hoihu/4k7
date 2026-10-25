@@ -16,6 +16,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      # CHANGELOG.md has a section for package.json's version, and the site's changelog page shows it
+      - run: node scripts/changelog.mjs --check
       # the package as `npx github:hoihu/4k7` builds it (npm ci ran prepare): no sourcemaps, no local paths, and it starts
       - run: "! find dist -name '*.map' | grep -q . && ! grep -rq 'tools/server/src/main.ts' dist/app"
       - run: node dist/4k7pcb.js --version
