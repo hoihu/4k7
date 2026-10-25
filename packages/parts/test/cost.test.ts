@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { JLCPCB_ASSEMBLY, type BoardPad, type PartQuery, type SupplierPart } from '@4k7/schema';
-import { assemblyFacts, checkCost, costReportText, estimateLine, estimateOrder, lineBuy, type AssemblyFacts, type PartSource, type SourcedComponent, type StockLine } from '../src/index.ts';
+import { assemblyFacts, boardHints, checkCost, costReportText, estimateLine, estimateOrder, lineBuy, type AssemblyFacts, type PartSource, type SourcedComponent, type StockLine } from '../src/index.ts';
 
 const H = JLCPCB_ASSEMBLY;
 const part = (sku: string, o: Partial<SupplierPart> = {}): SupplierPart => ({ sku, mpn: 'X', package: '0603', description: '', stock: 1_000_000, tier: 'Basic', fee: false, price: [{ qty: 1, usd: 0.01 }], attributes: {}, url: '', live: true, ...o });
@@ -32,9 +32,49 @@ describe('the board', () => {
   });
 
   it('counts the joints of the parts the house assembles, by machine and by hand, and finds those on the bottom', () => {
-    expect(assemblyFacts(board(), new Set(['R1', 'J1', 'C9']))).toEqual({ smtJoints: 4, handJoints: 2, handRefs: ['J1'], bottomRefs: ['C9'], layers: 2, size: [50, 40], chips: ['0603', '0402'] });
-    // in a panel the board's own size does not decide
-    expect(assemblyFacts(board({ w: 100 }), new Set(['R1'])).size).toBeUndefined();
+    expect(assemblyFacts(board(), new Set(['R1', 'J1', 'C9']))).toEqual({
+      smtJoints: 4,
+      handJoints: 2,
+      handRefs: ['J1'],
+      bottomRefs: ['C9'],
+      layers: 2,
+      size: [50, 40],
+      chips: ['0603', '0402'],
+      boardSize: [50, 40],
+      panelled: false,
+      smallestHole: { mm: 1, what: "J1's holes" },
+    });
+    // in a panel the board's own size does not decide the service
+    const panelled = assemblyFacts(board({ w: 100 }), new Set(['R1']));
+    expect(panelled.size).toBeUndefined();
+    expect(panelled).toMatchObject({ boardSize: [50, 40], panelled: true });
+  });
+
+  it('finds the smallest hole: the vias the rules make, the vias placed, the pads', () => {
+    expect(assemblyFacts({ ...board(), rules: { viaDrill: 0.25 }, vias: [{ drill: 0.2 }] }, new Set()).smallestHole).toEqual({ mm: 0.2, what: 'vias' });
+    expect(assemblyFacts({ ...board(), rules: { viaDrill: 0.3 } }, new Set()).smallestHole).toEqual({ mm: 0.3, what: 'vias' });
+  });
+});
+
+describe('the bare board', () => {
+  const hints = (o: Partial<AssemblyFacts>) => boardHints(facts({ boardSize: [80, 80], ...o }), H, 10).map((h) => h.what);
+
+  it('names holes below the size where the extra charge starts', () => {
+    expect(hints({ smallestHole: { mm: 0.2, what: 'vias' } })).toEqual(['vias have 0.2 mm holes: JLCPCB charges extra for holes below 0.3 mm (for vias: set_board via_drill_mm 0.3 where the layout has room)']);
+    expect(hints({ smallestHole: { mm: 0.3, what: 'vias' } })).toEqual([]);
+  });
+
+  it('names a board just over the cheapest offer of its layers, not one far over it', () => {
+    expect(hints({ boardSize: [110, 90] })).toEqual(["the board is 110 × 90 mm, just over 100 × 100 mm: JLCPCB's cheapest offer (5 1–2-layer boards for $2) ends there"]);
+    expect(hints({ layers: 4, boardSize: [55, 50] })).toEqual(["the board is 55 × 50 mm, just over 50 × 50 mm: JLCPCB's cheapest offer (5 4–8-layer boards for $2) ends there"]);
+    expect(hints({ boardSize: [200, 150] })).toEqual([]);
+  });
+
+  it('names a panel that costs a small board its price, the fees of small boards, and large boards', () => {
+    expect(hints({ panelled: true })).toEqual(["in a panel, a board up to 102 × 102 mm loses JLCPCB's single-board price: order single boards unless the assembly needs the panel"]);
+    expect(boardHints(facts({ boardSize: [24, 22] }), H, 10)).toEqual([{ what: 'the board is under 30 mm on a side: JLCPCB adds $0.02 a board for deburring and rounding its corners', usd: 0.2 }]);
+    expect(boardHints(facts({ boardSize: [12, 40] }), H, 10)[0]).toMatchObject({ usd: 0.5 });
+    expect(hints({ boardSize: [300, 250] })).toEqual(['the board is over 650 cm²: JLCPCB charges extra for every 50 cm² above']);
   });
 });
 

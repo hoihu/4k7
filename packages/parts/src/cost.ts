@@ -30,14 +30,32 @@ export interface AssemblyFacts {
   size?: [number, number];
   /** The chip sizes among the assembled parts ("0402"). */
   chips: string[];
+  /** The single board's size (mm) whether or not it is in a panel, and whether it is. */
+  boardSize?: [number, number];
+  panelled?: boolean;
+  /** The smallest hole on the board (vias by the rules or placed, pad and mounting holes) and what has it. */
+  smallestHole?: { mm: number; what: string };
 }
 
 /** The facts of a board for the components the house assembles (`assembled`, by designator). */
 export function assemblyFacts(
-  board: { parts: Pick<BoardPart, 'refdes' | 'side' | 'pads' | 'pkg'>[]; layers: readonly unknown[]; outline: { w: number; h: number }; panel?: unknown },
+  board: {
+    parts: Pick<BoardPart, 'refdes' | 'side' | 'pads' | 'pkg'>[];
+    layers: readonly unknown[];
+    outline: { w: number; h: number };
+    panel?: unknown;
+    rules?: { viaDrill: number };
+    vias?: readonly { drill: number }[];
+  },
   assembled: Set<string>,
 ): AssemblyFacts {
-  const f: AssemblyFacts = { smtJoints: 0, handJoints: 0, handRefs: [], bottomRefs: [], layers: board.layers.length, chips: [] };
+  const f: AssemblyFacts = { smtJoints: 0, handJoints: 0, handRefs: [], bottomRefs: [], layers: board.layers.length, chips: [], boardSize: [board.outline.w, board.outline.h], panelled: !!board.panel };
+  const hole = (mm: number | undefined, what: string) => {
+    if (mm !== undefined && mm > 0 && (!f.smallestHole || mm < f.smallestHole.mm - 1e-9)) f.smallestHole = { mm, what };
+  };
+  hole(board.rules?.viaDrill, 'vias');
+  for (const v of board.vias ?? []) hole(v.drill, 'vias');
+  for (const p of board.parts) for (const d of p.pads) hole(d.drill, `${p.refdes}'s holes`);
   for (const p of board.parts) {
     if (!assembled.has(p.refdes)) continue;
     const plated = p.pads.filter((d) => !d.npth);
@@ -59,6 +77,40 @@ export function assemblyFacts(
 /** Chip sizes, smallest first. */
 const CHIPS = ['01005', '0201', '0402', '0603', '0805', '1206', '1210', '1812', '2010', '2512'];
 
+/** Something about the bare board that makes it cost more at the house, and what it would cost (when the house says). */
+export interface BoardHint {
+  what: string;
+  usd?: number;
+}
+
+/** What makes this board cost more at the house: small holes, its size against the cheapest offers, a panel, a small or a large board. */
+export function boardHints(facts: AssemblyFacts, house: AssemblyHouse, boards: number): BoardHint[] {
+  const b = house.board;
+  const size = facts.boardSize;
+  if (!b) return [];
+  const out: BoardHint[] = [];
+  const mm = (s: readonly [number, number]) => `${s[0]} × ${s[1]} mm`;
+  if (b.smallHoleBelow && facts.smallestHole && facts.smallestHole.mm < b.smallHoleBelow - 1e-9) {
+    out.push({ what: `${facts.smallestHole.what} have ${facts.smallestHole.mm} mm holes: ${house.name} charges extra for holes below ${b.smallHoleBelow} mm (for vias: set_board via_drill_mm ${b.smallHoleBelow} where the layout has room)` });
+  }
+  if (size) {
+    const fits = (max: readonly [number, number]) => !outside(size, max, 'above');
+    for (const o of b.offers ?? []) {
+      if (!o.layers.includes(facts.layers) || fits(o.maxSize)) continue;
+      // just over the offer: worth a look at the outline
+      if (Math.max(...size) <= Math.max(...o.maxSize) * 1.25 && Math.min(...size) <= Math.min(...o.maxSize) * 1.25)
+        out.push({ what: `the board is ${mm(size)}, just over ${mm(o.maxSize)}: ${house.name}'s cheapest offer (${o.boards} ${o.layers[0]}–${o.layers[o.layers.length - 1]}-layer boards for $${o.usd}) ends there` });
+    }
+    if (facts.panelled && b.panelLosesPriceUpTo && fits(b.panelLosesPriceUpTo)) {
+      out.push({ what: `in a panel, a board up to ${mm(b.panelLosesPriceUpTo)} loses ${house.name}'s single-board price: order single boards unless the assembly needs the panel` });
+    }
+    const small = [...(b.smallBoard ?? [])].sort((x, y) => x.below - y.below).find((x) => Math.min(...size) < x.below);
+    if (small) out.push({ what: `the board is under ${small.below} mm on a side: ${house.name} adds $${small.usd} a board for deburring and rounding its corners`, usd: cents(small.usd * boards) });
+    if (b.largeAbove && (size[0] * size[1]) / 100 > b.largeAbove) out.push({ what: `the board is over ${b.largeAbove} cm²: ${house.name} charges extra for every 50 cm² above` });
+  }
+  return out;
+}
+
 /* -------------------------------------- the estimate -------------------------------------- */
 
 /** One service's price for the order; a service that cannot take it says why instead. */
@@ -76,7 +128,8 @@ export interface CostEstimate {
 }
 
 /** The rate of the tier the count falls in (the last one beyond them all). */
-const rate = (tiers: readonly PriceTier[], n: number) => (tiers.find((t) => n <= t.upTo) ?? tiers[tiers.length - 1])?.usd ?? 0;
+export const tierRate = (tiers: readonly PriceTier[], n: number) => (tiers.find((t) => n <= t.upTo) ?? tiers[tiers.length - 1])?.usd ?? 0;
+const rate = tierRate;
 const cents = (v: number) => Math.round(v * 100) / 100;
 
 /** Why a service cannot take the order, or null when it can (perhaps with what it needs: serviceNeeds). */
@@ -182,6 +235,8 @@ export interface CostReport {
   unmatched: string[];
   /** Part numbers left out of the estimate: no record (or no price). */
   unpriced: string[];
+  /** What makes the bare board cost more (not in the estimate either). */
+  board: BoardHint[];
   /** The stock check it ran on. */
   stock: StockReport;
 }
@@ -329,6 +384,7 @@ export async function checkCost(
     unsourced,
     unmatched,
     unpriced: stock.unpriced,
+    board: boardHints(facts, house, boards),
     stock,
   };
 }
@@ -371,6 +427,10 @@ export function costReportText(r: CostReport, house: AssemblyHouse): string {
     );
     for (const s of r.savings) out.push(`- ${s.what}: saves ${usd(s.usd)}${s.to ? `. ${describePart(s.to)}` : ''}`);
   } else if (r.service) out.push('Nothing found that would make it cheaper by $0.50 or more.');
+  if (r.board.length) {
+    out.push(`The bare board (not in the estimate; ${house.name}'s surcharges as of ${house.board?.source.checked}):`);
+    for (const h of r.board) out.push(`- ${h.what}${h.usd ? ` (≈ ${usd(h.usd)} for ${r.boards} boards)` : ''}`);
+  }
   if (r.unsourced.length || r.unmatched.length) {
     out.push(`No ${house.numberName} (not on the order; ${house.name} does not assemble them from its stock):`);
     for (const g of r.unsourced) out.push(`- ${g.refs.join(', ')} (${g.what}): ${g.candidates.length ? g.candidates.map((p) => `${p.sku} ${p.mpn} (${p.tier || 'no class'}, ${stockText(p)}${g.adds[p.sku] !== undefined ? `, adds ${usd(g.adds[p.sku]!)} to the order` : ''})`).join(' | ') : 'no part found in stock'}`);

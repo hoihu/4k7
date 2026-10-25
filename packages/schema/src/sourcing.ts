@@ -95,6 +95,21 @@ export interface AssemblyService {
   notCounted?: string;
 }
 
+/** What makes the bare board cost more at the house (it makes the boards it assembles), as its pages give it. */
+export interface BoardPrices {
+  /** Holes (vias, drills) below this diameter (mm) cost extra. */
+  smallHoleBelow?: number;
+  /** Its cheapest offers: so many boards up to a size, with these layer counts, for a price. */
+  offers?: readonly { layers: readonly number[]; maxSize: readonly [number, number]; boards: number; usd: number }[];
+  /** In a panel, single boards up to this size (mm) lose their special price. */
+  panelLosesPriceUpTo?: readonly [number, number];
+  /** A fee per board for a small board: below `below` mm on a side (the smallest that applies). */
+  smallBoard?: readonly { below: number; usd: number }[];
+  /** Boards larger than this (cm²) cost extra. */
+  largeAbove?: number;
+  source: { url: string; offersUrl?: string; checked: string };
+}
+
 /** What is particular to an assembly house. */
 export interface AssemblyHouse {
   /** "jlcpcb": the catalogue adapter's key (the server's /api/sourcing/<id>/…). */
@@ -117,6 +132,8 @@ export interface AssemblyHouse {
   prices: { url: string; limitsUrl?: string; checked: string };
   /** What an estimate of an order leaves out, for people ("the bare boards, shipping …"). */
   notInEstimate: string;
+  /** What makes its bare boards cost more. */
+  board?: BoardPrices;
   partUrl(sku: string): string;
   /** The house's part number in its usual form; null when `s` is not one. */
   normalize(s: string): string | null;
@@ -174,7 +191,22 @@ export const JLCPCB_ASSEMBLY: AssemblyHouse = {
     },
   ],
   prices: { url: 'https://jlcpcb.com/help/article/pcb-assembly-price', limitsUrl: 'https://jlcpcb.com/capabilities/pcb-assembly-capabilities', checked: '2026-10-24' },
-  notInEstimate: 'the bare boards (JLCPCB quotes them by size, layers and options; 5 two-layer boards up to 100 × 100 mm are $2), shipping, taxes and duties',
+  notInEstimate:
+    "the bare boards (JLCPCB quotes them by size, layers and options; 5 two-layer boards up to 100 × 100 mm are $2), shipping, taxes and duties, and coupons and offers (JLCPCB's monthly assembly coupons can cover the setup fee)",
+  board: {
+    smallHoleBelow: 0.3,
+    offers: [
+      { layers: [1, 2], maxSize: [100, 100], boards: 5, usd: 2 },
+      { layers: [4, 6, 8], maxSize: [50, 50], boards: 5, usd: 2 },
+    ],
+    panelLosesPriceUpTo: [102, 102],
+    smallBoard: [
+      { below: 15, usd: 0.05 },
+      { below: 30, usd: 0.02 },
+    ],
+    largeAbove: 650,
+    source: { url: 'https://jlcpcb.com/help/article/In-what-cases-will-there-be-charged-extra', offersUrl: 'https://jlcpcb.com/blog/4-free', checked: '2026-10-25' },
+  },
   partUrl: (sku) => `https://jlcpcb.com/partdetail/${sku}`,
   normalize: normalizeLcsc,
 };

@@ -79,6 +79,7 @@ export function jlcpcbSource(fetchFn: Post = (u, i) => fetch(u, i), base = 'http
   return {
     async search(q) {
       const pkg = q.package?.trim();
+      if ((q.kind === 'resistor' || q.kind === 'capacitor') && !q.value?.trim()) return feeFreeList(q.kind, pkg, q);
       const words = q.kind === 'resistor' || q.kind === 'capacitor' ? passiveWords(q) : q.text?.trim();
       if (!words) throw new Error('Give text to search for, or kind + value for a resistor/capacitor.');
       let ask: Record<string, unknown> = { keyword: words, stockFlag: true, ...(pkg ? { componentSpecificationList: [pkg] } : {}) };
@@ -104,6 +105,22 @@ export function jlcpcbSource(fetchFn: Post = (u, i) => fetch(u, i), base = 'http
       return hit ? fromJlcpcb(hit) : null;
     },
   };
+
+  /**
+   * Every Basic resistor or capacitor of a package in stock (80 resistors and 33 capacitors in 0603):
+   * the values that cost no loading fee. The search matches whole words: "Resistor" is in every chip
+   * resistor's description, "Capacitors" in every ceramic capacitor's category.
+   */
+  async function feeFreeList(kind: 'resistor' | 'capacitor', pkg: string | undefined, q: PartQuery): Promise<SupplierPart[]> {
+    if (!q.noFee || !pkg) throw new Error(`A list of ${kind}s needs a package and no_fee; give a value to search for one.`);
+    const items: JlcpcbItem[] = [];
+    for (let page = 1; page <= 4; page++) {
+      const got = await call({ keyword: kind === 'resistor' ? 'Resistor' : 'Capacitors', stockFlag: true, componentLibraryType: 'base', componentSpecificationList: [pkg], currentPage: page, pageSize: 100 });
+      items.push(...got);
+      if (got.length < 100) break;
+    }
+    return rankParts(items.map(fromJlcpcb), TIERS).slice(0, q.limit ?? 400);
+  }
 }
 
 /** One part of jlcpcb.com's search. */
@@ -190,6 +207,7 @@ export function tscircuitSource(fetchFn: Fetch = (u) => fetch(u), base = 'https:
     async search(q) {
       const pkg = q.package?.trim() ? `&package=${encodeURIComponent(q.package.trim())}` : '';
       let items: TsComponent[];
+      if ((q.kind === 'resistor' || q.kind === 'capacitor') && !q.value?.trim() && q.noFee && q.package) throw new Error(`the catalogue mirror cannot list every ${q.kind} of a package`);
       if (q.kind === 'resistor' || q.kind === 'capacitor') {
         const v = q.value ? parseQuantity(q.value) : null;
         if (!v) throw new Error(`Give the ${q.kind} value, e.g. ${q.kind === 'resistor' ? '"10k"' : '"100nF"'}.`);

@@ -10,6 +10,7 @@ import { ASSEMBLY_HOUSE, feeFreeTiers, SourcingInput, type PartQuery, type Suppl
 import {
   checkCost,
   checkStock,
+  checkValues,
   costReportText,
   describePart,
   estimateLine,
@@ -17,12 +18,14 @@ import {
   lineBlocks,
   stockReportText,
   tscircuitSource,
+  valuesReportText,
   withFallback,
   type AssemblyFacts,
   type CostReport,
   type PartSource,
   type SourcedComponent,
   type StockReport,
+  type ValuesReport,
 } from '@4k7/parts';
 import { disk } from './disk.svelte.ts';
 
@@ -118,10 +121,16 @@ const mirrorNote = (parts: SupplierPart[]) => {
   return `\n(Not live: ${why ? `${house.name}'s own catalogue could not be read (${why}); ` : ''}these come from a mirror whose stock may be a day old or unknown. Check again before ordering.)`;
 };
 
-/** The checks the app runs for the tool (they show in the Layout view too). */
+/** The values check of these components for `boards` boards: cheaper ways to make each resistor and capacitor value. */
+export function checkDesignValues(components: SourcedComponent[], boards: number, facts: BoardFacts): Promise<ValuesReport> {
+  return checkValues(components, catalogue, { house, boards, facts });
+}
+
+/** The checks the app runs for the tool (the stock and cost checks show in the Layout view too). */
 export interface DesignChecks {
   stock(boards?: number): Promise<StockReport>;
   cost(boards?: number): Promise<CostReport>;
+  values(boards?: number): Promise<ValuesReport>;
 }
 
 /** The sourcing tool: search the catalogue, look one part up, or check the whole design (`check`, `cost`: run by the app). */
@@ -135,6 +144,11 @@ export async function sourcingTool(input: unknown, checks: DesignChecks): Promis
       const trouble = r.lines.filter(lineBlocks).length;
       const order = r.estimates ? `\nThe order: ${estimateLine(r.estimates, r.boards)}, fees included (not the bare boards, shipping or taxes); sourcing cost has the breakdown and what would make it cheaper.` : '';
       return { content: stockReportText(r, house) + order, isError: false, label: `stock check · ${r.boards} boards`, detail: trouble ? `${trouble} part(s) stop the order` : `${r.lines.length} part number(s) fine to order` };
+    }
+    if (a.action === 'values') {
+      const r = await checks.values(a.boards);
+      const most = r.lines.reduce((n, l) => n + Math.max(0, ...l.options.map((o) => o.usd ?? 0)), 0);
+      return { content: valuesReportText(r, house), isError: false, label: `values check · ${r.boards} boards`, detail: r.lines.length ? `${r.lines.length} value(s) cheaper, up to $${most.toFixed(2)}` : 'none cheaper' };
     }
     if (a.action === 'cost') {
       const r = await checks.cost(a.boards);

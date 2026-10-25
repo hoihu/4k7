@@ -6,5 +6,6 @@ export * from './body3d.ts';
 export * from './packages.ts';
 export * from './sourcing.ts';
 export * from './cost.ts';
+export * from './values.ts';
 export * from './jlc.ts';
 export * from './datasheet.ts';

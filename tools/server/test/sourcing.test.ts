@@ -48,7 +48,7 @@ describe('sourcing service', () => {
   it('takes a search only in the form it knows', () => {
     expect(partQuery({ text: 'buzzer', package: 'SMD', noFee: true, limit: 8 })).toEqual({ text: 'buzzer', package: 'SMD', noFee: true, limit: 8 });
     expect(partQuery({ kind: 'capacitor', value: '100nF', extra: 'ignored' })).toEqual({ kind: 'capacitor', value: '100nF' });
-    for (const bad of [null, [], 'x', { text: 5 }, { kind: 'diode' }, { noFee: 'yes' }, { limit: 0 }, { limit: 1.5 }, { text: 'x'.repeat(201) }]) {
+    for (const bad of [null, [], 'x', { text: 5 }, { kind: 'diode' }, { noFee: 'yes' }, { limit: 0 }, { limit: 401 }, { limit: 1.5 }, { text: 'x'.repeat(201) }]) {
       expect(() => partQuery(bad)).toThrow(expect.objectContaining({ status: 400 }));
     }
   });
