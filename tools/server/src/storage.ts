@@ -5,6 +5,7 @@
  *   default), written as the design changes. The file's name is the project's id.
  * - Imported parts and artwork: one JSON file per record in ~/.4k7/library and ~/.4k7/artwork.
  * - Datasheets: ~/.4k7/datasheets/<sha256>.pdf with the file's original name (and link) next to it.
+ * - Not files: the assembly houses' parts catalogues (/api/sourcing, see sourcing.ts), and OpenSCAD (/api/scad).
  *
  * Every request needs the access key (`authorization: Bearer <key>`). Requests from a page carry
  * its origin, which must be one of the app's (the server's own pages, the dev server); a website
@@ -21,6 +22,7 @@ import type { ScadJob } from '@4k7/schema';
 import type { HttpHandler } from './server.ts';
 import type { OpenScad } from './scad.ts';
 import { download as fetchPdf, isPdf, MAX_PDF_BYTES, pdfName } from './download.ts';
+import { partQuery, type Sourcing } from './sourcing.ts';
 
 export const PROJECT_EXT = '.twd.json';
 const RECORD_STORES = ['library', 'artwork'] as const;
@@ -43,6 +45,8 @@ export interface StorageOptions {
   reveal?: (dir: string) => void;
   /** OpenSCAD for the enclosure (/api/scad). */
   scad?: OpenScad;
+  /** Parts catalogues of assembly houses (/api/sourcing). */
+  sourcing?: Sourcing;
   log?: (msg: string) => void;
   /** Downloads a datasheet link (tests replace it). */
   download?: (url: string) => Promise<Uint8Array>;
@@ -202,6 +206,18 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
           const { bin } = JSON.parse((await readBody(req)).toString('utf8')) as { bin?: string | null };
           return json(200, scad.setBin(bin ?? null));
         }
+        return res.writeHead(405).end();
+      }
+
+      // a house's parts catalogue: POST sourcing/<house>/search (a PartQuery), GET sourcing/<house>/part/<number>
+      if (kind === 'sourcing' && opts.sourcing) {
+        const house = id ?? '';
+        if (!opts.sourcing.houses.includes(house)) return notFound();
+        if (action === 'search' && parts.length === 3 && m === 'POST') {
+          const q = partQuery(JSON.parse((await readBody(req)).toString('utf8')));
+          return json(200, { parts: await opts.sourcing.search(house, q) });
+        }
+        if (action === 'part' && parts.length === 4 && parts[3] && m === 'GET') return json(200, { part: await opts.sourcing.lookup(house, parts[3]) });
         return res.writeHead(405).end();
       }
 

@@ -712,6 +712,6 @@ export const QueryOp = z.discriminatedUnion('op', [
   }),
   z.object({ op: z.literal('get_part'), id: z.string() }),
   z.object({ op: z.literal('get_enclosure') }).describe('The enclosure: the brief, the script, the board as an OpenSCAD library (board.scad: its variables and modules, the parts with where they are and which way they are plugged), OpenSCAD on this computer, the last render\'s report'),
-  z.object({ op: z.literal('get_guide'), topic: z.enum(['mechanics']) }).describe('A guide: mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script). Read it before the first brief'),
+  z.object({ op: z.literal('get_guide'), topic: z.enum(['mechanics', 'cost']) }).describe('A guide: cost = how to make a design cheaper to make (what costs money at the assembly house, how far each kind of part may move its value, series and parallel pairs, the board), read before optimising cost; mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script). Read it before the first brief'),
 ]);
 export type QueryOp = z.infer<typeof QueryOp>;

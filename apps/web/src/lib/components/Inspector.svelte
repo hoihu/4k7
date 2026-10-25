@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { ParamSpec } from '@4k7/schema';
-  import { describeJlcPart, sourcingMismatch, type JlcPart } from '@4k7/parts';
+  import { feeFreeTiers, type ParamSpec, type SupplierPart } from '@4k7/schema';
+  import { describePart, sourcingMismatch, stockState } from '@4k7/parts';
   import { app, type InspectorTab } from '../app.svelte.ts';
-  import { jlc } from '../jlc.ts';
+  import { catalogue, house } from '../sourcing.ts';
 
   interface ComponentInfo {
     refdes: string;
@@ -12,7 +12,7 @@
     params: Record<string, string>;
     /** The board side the part is mounted on. */
     side?: 'top' | 'bottom';
-    /** Every parameter the component may carry (the card's, then the universal lcsc). */
+    /** Every parameter the component may carry (the card's, then the universal ones such as lcsc). */
     specs: Record<string, ParamSpec>;
     /** Generic parts: the package in use, why, and the ones to pick from. */
     package?: { name: string; why: 'set' | 'default' | 'auto' | 'library'; reason?: string; options: string[] };
@@ -56,11 +56,12 @@
     p.why === 'set' ? 'chosen for this part' : p.why === 'default' ? 'design default' : p.why === 'auto' ? `sized up: ${p.reason}` : 'library default';
 
   /* ---- parameters, edited in place (the same set_param op the agent uses) ---- */
-  /** Parameter rows: the card's specs in order (package has its own picker, lcsc its own section), then stray params. */
+  /** Parameter rows: the card's specs in order (package has its own picker, the house's part number its own section), then stray params. */
   const paramKeys = $derived.by(() => {
     if (!info) return [] as string[];
-    const keys = Object.keys(info.specs ?? {}).filter((k) => k !== 'lcsc' && !(info!.package && k === 'package'));
-    for (const k of Object.keys(info.params)) if (!keys.includes(k) && k !== 'lcsc' && !(info!.package && k === 'package')) keys.push(k);
+    const own = (k: string) => k === house.param || (!!info!.package && k === 'package');
+    const keys = Object.keys(info.specs ?? {}).filter((k) => !own(k));
+    for (const k of Object.keys(info.params)) if (!keys.includes(k) && !own(k)) keys.push(k);
     return keys;
   });
   const EXAMPLES: Record<string, string> = { F: '100nF', 'Ω': '10k', H: '10uH', V: '25V', A: '2A', W: '0.25W' };
@@ -77,105 +78,109 @@
     if (!ok) info = (await app.queryComponent(ref)) as ComponentInfo; // put the old value back in the field
   }
 
-  /* ---- sourcing: the LCSC part behind this component ---- */
+  /* ---- sourcing: the assembly house's part behind this component ---- */
   /** The package the component really has: its pick or default for generics, the card's for imported parts. */
   const effPkg = $derived(info ? (info.package?.name ?? info.params.package ?? app.designParts[info.part]?.package) : undefined);
-  let lcscPart = $state<JlcPart | null>(null);
-  let lcscState = $state<'idle' | 'loading' | 'missing' | 'failed'>('idle');
+  let sourcePart = $state<SupplierPart | null>(null);
+  let sourceState = $state<'idle' | 'loading' | 'missing' | 'failed'>('idle');
   $effect(() => {
-    const id = info?.params.lcsc;
-    lcscPart = null;
+    const id = info?.params[house.param];
+    sourcePart = null;
     if (!id) {
-      lcscState = 'idle';
+      sourceState = 'idle';
       return;
     }
-    lcscState = 'loading';
-    jlc
+    sourceState = 'loading';
+    catalogue
       .lookup(id)
       .then((p) => {
-        if (info?.params.lcsc !== id) return;
-        lcscPart = p;
-        lcscState = p ? 'idle' : 'missing';
+        if (info?.params[house.param] !== id) return;
+        sourcePart = p;
+        sourceState = p ? 'idle' : 'missing';
       })
-      .catch(() => info?.params.lcsc === id && (lcscState = 'failed'));
+      .catch(() => info?.params[house.param] === id && (sourceState = 'failed'));
   });
-  const mismatches = $derived(info && lcscPart ? sourcingMismatch({ category: (info.category ?? 'other') as never }, info.params, effPkg, lcscPart) : []);
+  const mismatches = $derived(info && sourcePart ? sourcingMismatch({ category: (info.category ?? 'other') as never }, info.params, effPkg, sourcePart) : []);
+  /** How the chosen part's stock stands against the boards the stock check counts for (this component alone). */
+  const sourceStock = $derived(sourcePart ? stockState(sourcePart.stock, app.settings.buildBoards) : null);
 
   /** Text and package the catalogue search starts from: value + package for passives, the part number otherwise. */
-  let jlcOpen = $state(false);
-  let jlcText = $state('');
-  let jlcPkg = $state('');
-  let jlcBasic = $state(true);
-  let jlcBusy = $state(false);
-  let jlcError = $state<string | null>(null);
-  let jlcResults = $state<JlcPart[] | null>(null);
+  let findOpen = $state(false);
+  let findText = $state('');
+  let findPkg = $state('');
+  let findNoFee = $state(true);
+  let findBusy = $state(false);
+  let findError = $state<string | null>(null);
+  let findResults = $state<SupplierPart[] | null>(null);
   const passiveKind = $derived(info?.category === 'resistor' ? 'resistor' : info?.category === 'capacitor' ? 'capacitor' : null);
   /** Counts searches, so an answer overtaken by a newer search (or a new selection) is dropped. */
-  let jlcSeq = 0;
+  let findSeq = 0;
   $effect(() => {
     void sel; // the search belongs to one component: another selection closes it
-    jlcSeq++;
-    jlcOpen = false;
-    jlcResults = null;
-    jlcError = null;
-    jlcBusy = false;
+    findSeq++;
+    findOpen = false;
+    findResults = null;
+    findError = null;
+    findBusy = false;
   });
-  function openJlc() {
+  function openFind() {
     if (!info) return;
     const card = app.designParts[info.part];
-    jlcText = passiveKind ? (info.params[passiveKind === 'resistor' ? 'resistance' : 'capacitance'] ?? '') : (info.params.mpn ?? card?.mpn ?? card?.title ?? info.description ?? '');
-    jlcPkg = effPkg ?? '';
-    jlcResults = null;
-    jlcError = null;
-    jlcOpen = true;
-    void searchJlc();
+    findText = passiveKind ? (info.params[passiveKind === 'resistor' ? 'resistance' : 'capacitance'] ?? '') : (info.params.mpn ?? card?.mpn ?? card?.title ?? info.description ?? '');
+    findPkg = effPkg ?? '';
+    findResults = null;
+    findError = null;
+    findOpen = true;
+    void search();
   }
-  async function searchJlc() {
-    if (!info || !jlcText.trim()) return;
-    const seq = ++jlcSeq;
-    jlcBusy = true;
-    jlcError = null;
+  async function search() {
+    if (!info || !findText.trim()) return;
+    const seq = ++findSeq;
+    findBusy = true;
+    findError = null;
     try {
-      const found = await jlc.search({
-        ...(passiveKind ? { kind: passiveKind, value: jlcText.trim() } : { text: jlcText.trim() }),
-        ...(jlcPkg.trim() ? { package: jlcPkg.trim() } : {}),
-        basicOnly: jlcBasic,
+      const found = await catalogue.search({
+        ...(passiveKind ? { kind: passiveKind, value: findText.trim() } : { text: findText.trim() }),
+        ...(findPkg.trim() ? { package: findPkg.trim() } : {}),
+        noFee: findNoFee,
         limit: 10,
       });
-      if (seq === jlcSeq) jlcResults = found;
+      if (seq === findSeq) findResults = found;
     } catch (e) {
-      if (seq !== jlcSeq) return;
-      jlcResults = null;
-      jlcError = (e as Error).message;
+      if (seq !== findSeq) return;
+      findResults = null;
+      findError = (e as Error).message;
     } finally {
-      if (seq === jlcSeq) jlcBusy = false;
+      if (seq === findSeq) findBusy = false;
     }
   }
   /** Take a search result: its number, and its package when the component's differs. */
-  async function pickJlc(p: JlcPart) {
+  async function pick(p: SupplierPart) {
     if (!info) return;
     const ref = info.refdes;
     const pkgDiffers = !!p.package && !!info.package && (effPkg ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '') !== p.package.toUpperCase().replace(/[^A-Z0-9]/g, '');
     let ok = false;
-    if (pkgDiffers) ok = await app.userEdit(`${ref}: ${p.lcsc} (${p.mpn}), package ${p.package}`, [{ op: 'set_param', ref, params: { lcsc: p.lcsc, package: p.package } }]);
-    if (!ok) ok = await app.userEdit(`${ref}: ${p.lcsc} (${p.mpn})`, [{ op: 'set_param', ref, params: { lcsc: p.lcsc } }]);
-    if (ok) jlcOpen = false;
+    if (pkgDiffers) ok = await app.userEdit(`${ref}: ${p.sku} (${p.mpn}), package ${p.package}`, [{ op: 'set_param', ref, params: { [house.param]: p.sku, package: p.package } }]);
+    if (!ok) ok = await app.userEdit(`${ref}: ${p.sku} (${p.mpn})`, [{ op: 'set_param', ref, params: { [house.param]: p.sku } }]);
+    if (ok) findOpen = false;
   }
   /** Make the component say what the chosen part is (value, voltage, package). */
   function takePartValues() {
-    if (!info || !lcscPart) return;
-    const a = lcscPart.attributes;
+    if (!info || !sourcePart) return;
+    const a = sourcePart.attributes;
     const params: Record<string, string> = {};
     if (passiveKind === 'resistor' && (a.Resistance ?? a.Value)) params.resistance = (a.Resistance ?? a.Value)!.replace(/Ω$/, '');
     if (passiveKind === 'capacitor' && (a.Capacitance ?? a.Value)) params.capacitance = (a.Capacitance ?? a.Value)!;
     if (passiveKind === 'capacitor' && a['Voltage Rated']) params.voltage = a['Voltage Rated'];
-    if (lcscPart.package && info.package) params.package = lcscPart.package;
+    if (sourcePart.package && info.package) params.package = sourcePart.package;
     if (!Object.keys(params).length) return;
-    void app.userEdit(`${info.refdes}: values of ${lcscPart.lcsc}`, [{ op: 'set_param', ref: info.refdes, params }]);
+    void app.userEdit(`${info.refdes}: values of ${sourcePart.sku}`, [{ op: 'set_param', ref: info.refdes, params }]);
   }
-  const tierLabel = (t: JlcPart['tier']) => (t === 'basic' ? 'Basic' : t === 'preferred' ? 'Preferred' : 'Extended');
-  const priceLabel = (p: JlcPart) => (p.price[0] ? `$${p.price[0].usd < 1 ? p.price[0].usd.toPrecision(2) : p.price[0].usd.toFixed(2)}` : '');
-  const factsLabel = (p: JlcPart) => p.description || Object.entries(p.attributes).map(([k, v]) => (k === 'Value' ? v : `${k} ${v}`)).join(', ');
+  const priceLabel = (p: SupplierPart) => (p.price[0] ? `$${p.price[0].usd < 1 ? p.price[0].usd.toPrecision(2) : p.price[0].usd.toFixed(2)}` : '');
+  const factsLabel = (p: SupplierPart) => p.description || Object.entries(p.attributes).map(([k, v]) => (k === 'Value' ? v : `${k} ${v}`)).join(', ');
+  const stockLabel = (p: SupplierPart) => `${p.stock === null ? 'stock unknown' : `${p.stock.toLocaleString('en-US')} in stock`}${p.live ? '' : ' (mirror)'}`;
+  /** Fewer than the stock check's margin for the boards counted (this component alone). */
+  const scarce = (p: SupplierPart) => p.stock !== null && stockState(p.stock, app.settings.buildBoards) !== 'ok';
 
   /* a selected net: what it is, what it connects, and its track width on the board */
   interface NetInfo {
@@ -385,50 +390,55 @@
             </select>
           </dd>
         </dl>
-        <div class="sect">Sourcing · JLCPCB</div>
+        <div class="sect">Sourcing · {house.name}</div>
         <dl class="kv">
-          <dt title="LCSC / JLCPCB part number of the exact part to assemble">LCSC</dt>
+          <dt title="{house.name}'s part number ({house.numberName}) of the exact part to assemble">{house.numberLabel}</dt>
           <dd class="src">
-            <input class="pv mono" value={info.params.lcsc ?? ''} placeholder="C25804" disabled={!!app.k?.proposal} onchange={(e) => void setParam('lcsc', (e.currentTarget as HTMLInputElement).value)} />
-            <button class="btn" disabled={!!app.k?.proposal} title="Search JLCPCB's catalogue for this part" onclick={() => (jlcOpen ? (jlcOpen = false) : openJlc())}>{jlcOpen ? 'Close' : 'Find on JLCPCB'}</button>
+            <input class="pv mono" value={info.params[house.param] ?? ''} placeholder={house.example} disabled={!!app.k?.proposal} onchange={(e) => void setParam(house.param, (e.currentTarget as HTMLInputElement).value)} />
+            <button class="btn" disabled={!!app.k?.proposal} title="Search {house.name}'s catalogue for this part" onclick={() => (findOpen ? (findOpen = false) : openFind())}>{findOpen ? 'Close' : `Find on ${house.name}`}</button>
           </dd>
         </dl>
-        {#if lcscState === 'loading'}
-          <p class="note">Looking up {info.params.lcsc}…</p>
-        {:else if lcscState === 'missing'}
-          <p class="note warn">{info.params.lcsc} is not in JLCPCB's catalogue. Check the number.</p>
-        {:else if lcscState === 'failed'}
+        {#if sourceState === 'loading'}
+          <p class="note">Looking up {info.params[house.param]}…</p>
+        {:else if sourceState === 'missing'}
+          <p class="note warn">{info.params[house.param]} is not in {house.name}'s catalogue (gone, or a wrong number).
+            <button class="link" disabled={!!app.k?.proposal} onclick={openFind}>Find another part</button></p>
+        {:else if sourceState === 'failed'}
           <p class="note warn">The catalogue could not be reached; the number is kept as typed.</p>
-        {:else if lcscPart}
-          <p class="note">{describeJlcPart(lcscPart)} <a href={lcscPart.url} target="_blank" rel="noopener">page</a>{#if lcscPart.datasheet} · <a href={lcscPart.datasheet} target="_blank" rel="noopener">datasheet</a>{/if}</p>
+        {:else if sourcePart}
+          <p class="note">{describePart(sourcePart)} <a href={sourcePart.url} target="_blank" rel="noopener">page</a>{#if sourcePart.datasheet} · <a href={sourcePart.datasheet} target="_blank" rel="noopener">datasheet</a>{/if}</p>
+          {#if sourceStock === 'out' || sourceStock === 'short' || sourceStock === 'low'}
+            <p class="note warn">{sourceStock === 'out' ? `Out of stock at ${house.name} now.` : `Only ${sourcePart.stock?.toLocaleString('en-US')} in stock: ${sourceStock === 'short' ? 'too few' : 'tight'} for ${app.settings.buildBoards} boards.`}
+              <button class="link" disabled={!!app.k?.proposal} onclick={openFind}>Find another part</button></p>
+          {/if}
           {#if mismatches.length}
             <p class="note warn">This part does not match {info.refdes}: {mismatches.join('; ')}.
               <button class="link" disabled={!!app.k?.proposal} onclick={takePartValues}>Take the part's values</button></p>
           {/if}
         {/if}
-        {#if jlcOpen}
-          <div class="jlc">
+        {#if findOpen}
+          <div class="find">
             <div class="q">
-              <input class="pv" bind:value={jlcText} placeholder={passiveKind ? (passiveKind === 'resistor' ? '10k' : '100nF') : 'words of the catalogue description'} onkeydown={(e) => e.key === 'Enter' && void searchJlc()} />
-              <input class="pv pk mono" bind:value={jlcPkg} placeholder="package" onkeydown={(e) => e.key === 'Enter' && void searchJlc()} />
-              <button class="btn" disabled={jlcBusy || !jlcText.trim()} onclick={() => void searchJlc()}>Search</button>
+              <input class="pv" bind:value={findText} placeholder={passiveKind ? (passiveKind === 'resistor' ? '10k' : '100nF') : 'words of the catalogue description'} onkeydown={(e) => e.key === 'Enter' && void search()} />
+              <input class="pv pk mono" bind:value={findPkg} placeholder="package" onkeydown={(e) => e.key === 'Enter' && void search()} />
+              <button class="btn" disabled={findBusy || !findText.trim()} onclick={() => void search()}>Search</button>
             </div>
-            <label class="opt"><input type="checkbox" bind:checked={jlcBasic} onchange={() => void searchJlc()} /> Basic and Preferred only (no loading fee)</label>
-            {#if jlcBusy}
+            <label class="opt"><input type="checkbox" bind:checked={findNoFee} onchange={() => void search()} /> {feeFreeTiers(house)} only (no fee)</label>
+            {#if findBusy}
               <p class="note">Searching…</p>
-            {:else if jlcError}
-              <p class="note warn">{jlcError}</p>
-            {:else if jlcResults && !jlcResults.length}
-              <p class="note">Nothing found. Try other words, or without the package.</p>
-            {:else if jlcResults}
+            {:else if findError}
+              <p class="note warn">{findError}</p>
+            {:else if findResults && !findResults.length}
+              <p class="note">Nothing in stock found. Try other words, or without the package.</p>
+            {:else if findResults}
               <ul class="rows">
-                {#each jlcResults as p (p.lcsc)}
+                {#each findResults as p (p.sku)}
                   <li class="r jl" title={factsLabel(p)}>
                     <div class="grow">
-                      <div class="l1"><b class="mono">{p.lcsc}</b> <span class="mono">{p.mpn}</span> <span class="tag" class:ok={p.tier !== 'extended'}>{tierLabel(p.tier)}</span></div>
-                      <div class="l2 muted">{p.package}{p.package ? ' · ' : ''}{priceLabel(p)} · {p.stock.toLocaleString('en-US')} in stock{factsLabel(p) ? ` · ${factsLabel(p)}` : ''}</div>
+                      <div class="l1"><b class="mono">{p.sku}</b> <span class="mono">{p.mpn}</span> {#if p.tier}<span class="tag" class:ok={!p.fee}>{p.tier}</span>{/if}{#if scarce(p)} <span class="tag warn" title="Fewer than {app.settings.buildBoards * 5} in stock: it may be gone before the order goes in">few left</span>{/if}</div>
+                      <div class="l2 muted">{p.package}{p.package ? ' · ' : ''}{priceLabel(p)} · {stockLabel(p)}{factsLabel(p) ? ` · ${factsLabel(p)}` : ''}</div>
                     </div>
-                    <button class="btn pri" disabled={!!app.k?.proposal} onclick={() => void pickJlc(p)}>Use</button>
+                    <button class="btn pri" disabled={!!app.k?.proposal} onclick={() => void pick(p)}>Use</button>
                   </li>
                 {/each}
               </ul>
@@ -481,12 +491,12 @@
   .kv dd.src { display: flex; gap: 4px; align-items: center; white-space: normal; }
   .kv dd.src .btn { flex: none; font-size: 11px; padding: 1px 6px; }
   .note a { color: var(--accent-txt); }
-  .jlc { padding: 2px 10px 8px; }
-  .jlc .q { display: flex; gap: 4px; align-items: center; }
-  .jlc .pk { width: 72px; flex: none; }
-  .jlc .btn { flex: none; font-size: 11px; padding: 1px 6px; }
-  .jlc .opt { display: flex; gap: 4px; align-items: center; font-size: 11px; color: var(--txt-3); margin: 4px 0; }
-  .jlc .rows { margin: 0 -10px; }
+  .find { padding: 2px 10px 8px; }
+  .find .q { display: flex; gap: 4px; align-items: center; }
+  .find .pk { width: 72px; flex: none; }
+  .find .btn { flex: none; font-size: 11px; padding: 1px 6px; }
+  .find .opt { display: flex; gap: 4px; align-items: center; font-size: 11px; color: var(--txt-3); margin: 4px 0; }
+  .find .rows { margin: 0 -10px; }
   .jl .l1 { font-size: 11.5px; display: flex; gap: 6px; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .jl .l2 { font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .jl .grow { min-width: 0; }

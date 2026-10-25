@@ -8,6 +8,8 @@
   import Chat from './Chat.svelte';
   import Splitter from './Splitter.svelte';
   import FabRules from './FabRules.svelte';
+  import Sourcing from './Sourcing.svelte';
+  import { lineBlocks } from '@4k7/parts';
   import PanelCanvas from './PanelCanvas.svelte';
   import PanelSetup from './PanelSetup.svelte';
 
@@ -154,7 +156,11 @@
     const name = projectName();
     const files = panel ? panelFabFiles(b, name) : fabFiles(b, name);
     download(new Blob([zip(files) as BlobPart], { type: 'application/zip' }), `${name.replace(/[^\w.-]+/g, '_')}-${panel ? 'panel' : 'fab'}.zip`);
-    app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}`);
+    // the parts are ordered with these files: say when their stock was not checked, or the last check found parts that stop the order
+    const stop = app.stockReport?.lines.filter(lineBlocks).length ?? 0;
+    const sourced = b.parts.some((p) => p.lcsc);
+    const stock = !sourced ? '' : !app.stockReport ? ' · stock not checked yet (Sourcing)' : stop ? ` · ${stop} part${stop > 1 ? 's' : ''} stop the order at the last stock check (Sourcing)` : '';
+    app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}${stock}`);
   }
 
   /** The board and its parts in 3D as a STEP file, for a mechanical CAD program. */
@@ -332,6 +338,7 @@
         </ul>
         {/if}
         <FabRules rules={b.rules} fab={b.fab} layers={b.layers.length as 2 | 4} />
+        {#if b.parts.length}<Sourcing />{/if}
         <h4>Files</h4>
         {#if b.parts.length}
           <div class="row2">

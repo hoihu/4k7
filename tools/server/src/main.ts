@@ -35,6 +35,7 @@ import { createMcpServer, mcpHttpHandler, VERSION } from './mcp.ts';
 import { checkForUpdate } from './update.ts';
 import { storageHandler } from './storage.ts';
 import { OpenScad } from './scad.ts';
+import { sourcing } from './sourcing.ts';
 
 const serve = process.argv.includes('--serve');
 /** Open the app link in the browser (what `npx 4k7pcb` does). */
@@ -106,6 +107,7 @@ async function main() {
     allowedOrigin: (o) => server.allowedOrigin(o),
     reveal: (d) => openBrowser(d, log),
     scad,
+    sourcing: sourcing({ log }),
     log,
   });
   server.setHttpHandler((req, res) => {

@@ -284,6 +284,8 @@ export interface Settings {
   layoutNotes: string;
   /** The user's notes for enclosures (printer, material, fasteners, fits), sent to the agent with every request; '' = none. */
   enclosureNotes: string;
+  /** How many boards the stock check counts the parts for. */
+  buildBoards: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -307,6 +309,7 @@ export const DEFAULT_SETTINGS: Settings = {
   schematicChecks: {},
   layoutNotes: '',
   enclosureNotes: '',
+  buildBoards: 10,
 };
 
 /** Bumped when a default changes in a way existing users should get (v2: dark blue theme). */

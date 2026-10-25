@@ -2,7 +2,7 @@
  * Projects, imported parts, artwork and datasheets are kept on this computer by the local server
  * (tools/server/src/storage.ts), over HTTP with the access key. Nothing is saved without it.
  */
-import { SERVER_PORTS, type ScadJob, type ScadRunResult, type ScadStatus } from '@4k7/schema';
+import { SERVER_PORTS, type PartQuery, type ScadJob, type ScadRunResult, type ScadStatus, type SupplierPart } from '@4k7/schema';
 
 export type DiskStatus = 'off' | 'connecting' | 'ok' | 'unreachable';
 
@@ -149,6 +149,20 @@ class Disk {
 
   async deleteDatasheet(hash: string): Promise<void> {
     await this.#req('DELETE', `datasheets/${hash}`);
+  }
+
+  /* ------------------------ parts catalogues (sourcing) ------------------------ */
+
+  /** Search an assembly house's own catalogue, read by the server. Null: the server has no catalogue for it (an older server). */
+  async sourcingSearch(house: string, q: PartQuery): Promise<SupplierPart[] | null> {
+    const r = await this.#req('POST', `sourcing/${encodeURIComponent(house)}/search`, JSON.stringify(q), { 'content-type': 'application/json' });
+    return r ? ((await r.json()) as { parts: SupplierPart[] }).parts : null;
+  }
+
+  /** One part of an assembly house's catalogue (null inside: not listed). Null: the server has no catalogue for the house. */
+  async sourcingLookup(house: string, sku: string): Promise<{ part: SupplierPart | null } | null> {
+    const r = await this.#req('GET', `sourcing/${encodeURIComponent(house)}/part/${encodeURIComponent(sku)}`);
+    return r ? ((await r.json()) as { part: SupplierPart | null }) : null;
   }
 
   /* -------------------------- OpenSCAD (the enclosure) ------------------------ */

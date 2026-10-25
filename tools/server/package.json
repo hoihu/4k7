@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",
+    "@4k7/parts": "0.1.0",
     "@4k7/schema": "0.1.0",
     "pdfjs-dist": "^6.3.289",
     "ws": "^8.21.3"
