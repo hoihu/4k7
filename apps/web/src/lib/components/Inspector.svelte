@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { feeFreeTiers, type ParamSpec, type SupplierPart } from '@4k7/schema';
-  import { describePart, sourcingMismatch, stockState } from '@4k7/parts';
+  import { ASSEMBLY_HOUSES, currencySymbol, feeFreeTiers, whose, type ParamSpec, type SupplierPart } from '@4k7/schema';
+  import { describePart, lifecycleWarning, sourcingMismatch, stockState } from '@4k7/parts';
   import { app, type InspectorTab } from '../app.svelte.ts';
-  import { catalogue, house } from '../sourcing.ts';
+  import { catalogueOf } from '../sourcing.ts';
 
   interface ComponentInfo {
     refdes: string;
@@ -20,7 +20,13 @@
     constraints: { id: string; text: string; strength: string }[];
   }
 
+  /** The parameters that hold a house's part number. */
+  const SOURCING_PARAMS = new Set(ASSEMBLY_HOUSES.flatMap((h) => (h.param ? [h.param] : [])));
+
   const sel = $derived(app.selection[0]);
+  /** The assembly house chosen in Layout → Sourcing: whose part number and catalogue this section shows. */
+  const house = $derived(app.house);
+  const catalogue = $derived(catalogueOf(house));
   let info = $state<ComponentInfo | null>(null);
   /** Why the selected part could not be read (shown instead of a blank pane). */
   let infoError = $state<string | null>(null);
@@ -59,7 +65,8 @@
   /** Parameter rows: the card's specs in order (package has its own picker, the house's part number its own section), then stray params. */
   const paramKeys = $derived.by(() => {
     if (!info) return [] as string[];
-    const own = (k: string) => k === house.param || (!!info!.package && k === 'package');
+    // every house's number belongs to the Sourcing section: the chosen house's there, another's here only when it has one
+    const own = (k: string) => k === house.param || (SOURCING_PARAMS.has(k) && !info!.params[k]) || (!!info!.package && k === 'package');
     const keys = Object.keys(info.specs ?? {}).filter((k) => !own(k));
     for (const k of Object.keys(info.params)) if (!keys.includes(k) && !own(k)) keys.push(k);
     return keys;
@@ -81,28 +88,35 @@
   /* ---- sourcing: the assembly house's part behind this component ---- */
   /** The package the component really has: its pick or default for generics, the card's for imported parts. */
   const effPkg = $derived(info ? (info.package?.name ?? info.params.package ?? app.designParts[info.part]?.package) : undefined);
+  /** The component's manufacturer part number (its own, else its part's). */
+  const mpnOf = $derived(info ? (info.params.mpn ?? app.designParts[info.part]?.mpn) : undefined);
+  /** The number the house orders it by: the house's parameter, else (at a house that buys by the maker's number) the MPN. */
+  const ownNumber = $derived(info && house.param ? info.params[house.param] : undefined);
+  const orderNumber = $derived(ownNumber || (house.byMpn ? mpnOf : undefined));
   let sourcePart = $state<SupplierPart | null>(null);
   let sourceState = $state<'idle' | 'loading' | 'missing' | 'failed'>('idle');
   $effect(() => {
-    const id = info?.params[house.param];
+    const id = house.noCatalogue ? undefined : orderNumber;
+    const cat = catalogue;
     sourcePart = null;
     if (!id) {
       sourceState = 'idle';
       return;
     }
     sourceState = 'loading';
-    catalogue
+    cat
       .lookup(id)
       .then((p) => {
-        if (info?.params[house.param] !== id) return;
+        if (orderNumber !== id || catalogue !== cat) return;
         sourcePart = p;
         sourceState = p ? 'idle' : 'missing';
       })
-      .catch(() => info?.params[house.param] === id && (sourceState = 'failed'));
+      .catch(() => orderNumber === id && catalogue === cat && (sourceState = 'failed'));
   });
   const mismatches = $derived(info && sourcePart ? sourcingMismatch({ category: (info.category ?? 'other') as never }, info.params, effPkg, sourcePart) : []);
   /** How the chosen part's stock stands against the boards the stock check counts for (this component alone). */
-  const sourceStock = $derived(sourcePart ? stockState(sourcePart.stock, app.settings.buildBoards) : null);
+  const sourceStock = $derived(sourcePart ? stockState(sourcePart.stock, app.settings.buildBoards, sourcePart.supply) : null);
+  const sourceLife = $derived(sourcePart ? lifecycleWarning(sourcePart.lifecycle) : null);
 
   /** Text and package the catalogue search starts from: value + package for passives, the part number otherwise. */
   let findOpen = $state(false);
@@ -156,12 +170,14 @@
   }
   /** Take a search result: its number, and its package when the component's differs. */
   async function pick(p: SupplierPart) {
-    if (!info) return;
+    const param = house.param;
+    if (!info || !param) return;
     const ref = info.refdes;
     const pkgDiffers = !!p.package && !!info.package && (effPkg ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '') !== p.package.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const what = p.mpn !== p.sku ? `${p.sku} (${p.mpn})` : p.sku;
     let ok = false;
-    if (pkgDiffers) ok = await app.userEdit(`${ref}: ${p.sku} (${p.mpn}), package ${p.package}`, [{ op: 'set_param', ref, params: { [house.param]: p.sku, package: p.package } }]);
-    if (!ok) ok = await app.userEdit(`${ref}: ${p.sku} (${p.mpn})`, [{ op: 'set_param', ref, params: { [house.param]: p.sku } }]);
+    if (pkgDiffers) ok = await app.userEdit(`${ref}: ${what}, package ${p.package}`, [{ op: 'set_param', ref, params: { [param]: p.sku, package: p.package } }]);
+    if (!ok) ok = await app.userEdit(`${ref}: ${what}`, [{ op: 'set_param', ref, params: { [param]: p.sku } }]);
     if (ok) findOpen = false;
   }
   /** Make the component say what the chosen part is (value, voltage, package). */
@@ -176,9 +192,14 @@
     if (!Object.keys(params).length) return;
     void app.userEdit(`${info.refdes}: values of ${sourcePart.sku}`, [{ op: 'set_param', ref: info.refdes, params }]);
   }
-  const priceLabel = (p: SupplierPart) => (p.price[0] ? `$${p.price[0].usd < 1 ? p.price[0].usd.toPrecision(2) : p.price[0].usd.toFixed(2)}` : '');
+  const priceLabel = (p: SupplierPart) => {
+    const each = p.price[0]?.each;
+    if (each === undefined) return 'no price';
+    return p.price.every((b) => b.each === 0) ? 'free' : `${currencySymbol(house)}${each < 1 ? each.toPrecision(2) : each.toFixed(2)}`;
+  };
   const factsLabel = (p: SupplierPart) => p.description || Object.entries(p.attributes).map(([k, v]) => (k === 'Value' ? v : `${k} ${v}`)).join(', ');
-  const stockLabel = (p: SupplierPart) => `${p.stock === null ? 'stock unknown' : `${p.stock.toLocaleString('en-US')} in stock`}${p.live ? '' : ' (mirror)'}`;
+  const stockLabel = (p: SupplierPart) =>
+    `${p.stock !== null ? `${p.stock.toLocaleString('en-US')} in stock` : p.supply === 'stock' ? 'kept in stock' : p.supply === 'order' ? 'bought for the order' : 'stock unknown'}${p.live ? '' : ' (mirror)'}`;
   /** Fewer than the stock check's margin for the boards counted (this component alone). */
   const scarce = (p: SupplierPart) => p.stock !== null && stockState(p.stock, app.settings.buildBoards) !== 'ok';
 
@@ -391,24 +412,33 @@
           </dd>
         </dl>
         <div class="sect">Sourcing · {house.name}</div>
-        <dl class="kv">
-          <dt title="{house.name}'s part number ({house.numberName}) of the exact part to assemble">{house.numberLabel}</dt>
-          <dd class="src">
-            <input class="pv mono" value={info.params[house.param] ?? ''} placeholder={house.example} disabled={!!app.k?.proposal} onchange={(e) => void setParam(house.param, (e.currentTarget as HTMLInputElement).value)} />
-            <button class="btn" disabled={!!app.k?.proposal} title="Search {house.name}'s catalogue for this part" onclick={() => (findOpen ? (findOpen = false) : openFind())}>{findOpen ? 'Close' : `Find on ${house.name}`}</button>
-          </dd>
-        </dl>
+        {#if house.param}
+          {@const param = house.param}
+          <dl class="kv">
+            <dt title="{whose(house)} part number ({house.numberName}) of the exact part to assemble">{house.numberLabel}</dt>
+            <dd class="src">
+              <input class="pv mono" value={info.params[param] ?? ''} placeholder={house.byMpn && mpnOf ? mpnOf : house.example} disabled={!!app.k?.proposal} onchange={(e) => void setParam(param, (e.currentTarget as HTMLInputElement).value)} />
+              <button class="btn" disabled={!!app.k?.proposal} title="Search {whose(house)} catalogue for this part" onclick={() => (findOpen ? (findOpen = false) : openFind())}>{findOpen ? 'Close' : 'Find…'}</button>
+            </dd>
+          </dl>
+          {#if !ownNumber && orderNumber}<p class="note">Without its own number, {house.name} orders it by the manufacturer part number.</p>{/if}
+        {:else}
+          <p class="note">{orderNumber ? `${house.name} buys it for the order by its manufacturer part number, ${orderNumber}` : passiveKind ? `${house.name} buys resistors and capacitors by value and package` : `No manufacturer part number: ${house.name} needs one to buy it`}. {house.noCatalogue ? `${house.noCatalogue[0]!.toUpperCase()}${house.noCatalogue.slice(1)}.` : ''}</p>
+        {/if}
         {#if sourceState === 'loading'}
-          <p class="note">Looking up {info.params[house.param]}…</p>
+          <p class="note">Looking up {orderNumber}…</p>
         {:else if sourceState === 'missing'}
-          <p class="note warn">{info.params[house.param]} is not in {house.name}'s catalogue (gone, or a wrong number).
+          <p class="note warn">{orderNumber} is not in {whose(house)} catalogue (gone, or a wrong number).
             <button class="link" disabled={!!app.k?.proposal} onclick={openFind}>Find another part</button></p>
         {:else if sourceState === 'failed'}
           <p class="note warn">The catalogue could not be reached; the number is kept as typed.</p>
         {:else if sourcePart}
-          <p class="note">{describePart(sourcePart)} <a href={sourcePart.url} target="_blank" rel="noopener">page</a>{#if sourcePart.datasheet} · <a href={sourcePart.datasheet} target="_blank" rel="noopener">datasheet</a>{/if}</p>
+          <p class="note">{describePart(sourcePart, house)} <a href={sourcePart.url} target="_blank" rel="noopener">page</a>{#if sourcePart.datasheet} · <a href={sourcePart.datasheet} target="_blank" rel="noopener">datasheet</a>{/if}</p>
           {#if sourceStock === 'out' || sourceStock === 'short' || sourceStock === 'low'}
             <p class="note warn">{sourceStock === 'out' ? `Out of stock at ${house.name} now.` : `Only ${sourcePart.stock?.toLocaleString('en-US')} in stock: ${sourceStock === 'short' ? 'too few' : 'tight'} for ${app.settings.buildBoards} boards.`}
+              <button class="link" disabled={!!app.k?.proposal} onclick={openFind}>Find another part</button></p>
+          {:else if sourceLife}
+            <p class="note warn">The part is {sourceLife}.
               <button class="link" disabled={!!app.k?.proposal} onclick={openFind}>Find another part</button></p>
           {/if}
           {#if mismatches.length}
@@ -435,7 +465,7 @@
                 {#each findResults as p (p.sku)}
                   <li class="r jl" title={factsLabel(p)}>
                     <div class="grow">
-                      <div class="l1"><b class="mono">{p.sku}</b> <span class="mono">{p.mpn}</span> {#if p.tier}<span class="tag" class:ok={!p.fee}>{p.tier}</span>{/if}{#if scarce(p)} <span class="tag warn" title="Fewer than {app.settings.buildBoards * 5} in stock: it may be gone before the order goes in">few left</span>{/if}</div>
+                      <div class="l1"><b class="mono">{p.sku}</b> {#if p.mpn !== p.sku}<span class="mono">{p.mpn}</span> {/if}{#if p.tier}<span class="tag" class:ok={!p.fee}>{p.tier}</span>{/if}{#if scarce(p)} <span class="tag warn" title="Fewer than {app.settings.buildBoards * 5} in stock: it may be gone before the order goes in">few left</span>{/if}</div>
                       <div class="l2 muted">{p.package}{p.package ? ' · ' : ''}{priceLabel(p)} · {stockLabel(p)}{factsLabel(p) ? ` · ${factsLabel(p)}` : ''}</div>
                     </div>
                     <button class="btn pri" disabled={!!app.k?.proposal} onclick={() => void pick(p)}>Use</button>
@@ -490,6 +520,7 @@
   .pv::placeholder { color: var(--txt-3); opacity: .7; }
   .kv dd.src { display: flex; gap: 4px; align-items: center; white-space: normal; }
   .kv dd.src .btn { flex: none; font-size: 11px; padding: 1px 6px; }
+  .kv dd.src .pv { min-width: 7em; }
   .note a { color: var(--accent-txt); }
   .find { padding: 2px 10px 8px; }
   .find .q { display: flex; gap: 4px; align-items: center; }

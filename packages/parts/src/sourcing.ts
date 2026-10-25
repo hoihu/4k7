@@ -4,14 +4,16 @@
  * replacements for the ones in trouble). What is particular to a house comes from its AssemblyHouse
  * entry (packages/schema/src/sourcing.ts) and its catalogue, a PartSource (JLCPCB: jlc.ts).
  */
-import { parseQuantity, STOCK_MARGIN, type AssemblyHouse, type PartCard, type PartCategory, type PartQuery, type SupplierPart } from '@4k7/schema';
-import type { CostEstimate } from './cost.ts';
+import { currencySymbol, money, parseQuantity, STOCK_MARGIN, type AssemblyHouse, type PartCard, type PartCategory, type PartQuery, type SupplierPart } from '@4k7/schema';
+import type { AssemblyQuote, CostEstimate, QuoteOrder } from './cost.ts';
 
 /** A house's catalogue. */
 export interface PartSource {
   search(q: PartQuery): Promise<SupplierPart[]>;
   /** One part by the house's number; null when the catalogue does not know it. */
   lookup(sku: string): Promise<SupplierPart | null>;
+  /** The house's online quote for assembling an order, at a house that publishes no fees (PCBWay). */
+  quote?(order: QuoteOrder): Promise<AssemblyQuote>;
 }
 
 /**
@@ -33,6 +35,7 @@ export function withFallback(first: PartSource, second: PartSource, note?: (why:
   return {
     search: (q) => run(() => first.search(q), () => second.search(q)),
     lookup: (sku) => run(() => first.lookup(sku), () => second.lookup(sku)),
+    ...(first.quote ? { quote: first.quote.bind(first) } : {}),
   };
 }
 
@@ -46,18 +49,23 @@ export function rankParts(parts: SupplierPart[], tiers: readonly string[] = []):
  * The pieces the house buys for `need` (the need and its losses in assembly, at least the fewest it
  * assembles from) and what they cost at their price break; null without a price.
  */
-export function lineBuy(p: SupplierPart, need: number): { pieces: number; usd: number } | null {
+export function lineBuy(p: SupplierPart, need: number): { pieces: number; cost: number } | null {
   const pieces = Math.max(need + (p.attrition ?? 0), p.minQty ?? 0);
   const unit = unitPrice(p, pieces);
-  return unit === undefined ? null : { pieces, usd: unit * pieces };
+  return unit === undefined ? null : { pieces, cost: unit * pieces };
 }
 
 /** The price per piece when buying `qty` (the break for that quantity; below the first break, its price). */
 export function unitPrice(p: SupplierPart, qty: number): number | undefined {
-  let usd: number | undefined;
-  for (const b of p.price) if (usd === undefined || b.qty <= qty) usd = b.usd;
-  return usd;
+  let each: number | undefined;
+  for (const b of p.price) if (each === undefined || b.qty <= qty) each = b.each;
+  return each;
 }
+
+/** The house has `need` pieces for the order: counted in stock, or kept in its own stock (no count published). */
+export const hasFor = (p: SupplierPart, need: number) => (p.stock !== null ? p.stock >= need : p.supply === 'stock');
+/** … with room to spare: STOCK_MARGIN × the need, or kept in stock. */
+export const plentyFor = (p: SupplierPart, need: number) => (p.stock !== null ? p.stock >= need * STOCK_MARGIN : p.supply === 'stock');
 
 /* ------------------------------ part against component ------------------------------ */
 
@@ -81,13 +89,22 @@ export function sourcingMismatch(card: Pick<PartCard, 'category'>, params: Recor
     const have = parseQuantity(part.attributes['Voltage Rated']);
     if (want && have && have.value < want.value * 0.999) out.push(`voltage: the part is rated ${part.attributes['Voltage Rated']}, the component asks for ${params.voltage}`);
   }
-  if (effectivePackage && part.package && normPkg(effectivePackage) !== normPkg(part.package)) out.push(`package: the part is ${part.package}, the component ${effectivePackage}`);
+  if (effectivePackage && part.package && !samePackage(effectivePackage, part.package)) out.push(`package: the part is ${part.package}, the component ${effectivePackage}`);
   return out;
 }
 
 const passiveValueKey = (c: PartCategory | undefined) => (c === 'resistor' ? 'resistance' : c === 'capacitor' ? 'capacitance' : c === 'inductor' ? 'inductance' : null);
 const closeTo = (a: number, b: number) => Math.abs(a - b) <= 0.005 * Math.max(Math.abs(a), Math.abs(b));
 const normPkg = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+/**
+ * Two names for the same package: the same letters and digits, or a family named alone ("SOIC", as
+ * Eurocircuits lists many parts) and a name of that family ("SOIC-8"). "SOT-23" and "SOT-23-5" differ.
+ */
+export function samePackage(a: string, b: string): boolean {
+  const [x, y] = [normPkg(a), normPkg(b)];
+  const family = (s: string) => /^[A-Z]+$/.test(s);
+  return x === y || (family(x) && y.startsWith(x)) || (family(y) && x.startsWith(y));
+}
 const normMpn = (s: string) => s.toUpperCase().replace(/\s+/g, '');
 
 /* ----------------------------------- the stock check ----------------------------------- */
@@ -102,11 +119,15 @@ export interface SourcedComponent {
   mpn?: string;
 }
 
-/** How a part stands against what the boards need: `low` is enough now but under STOCK_MARGIN × the need. */
-export type StockState = 'ok' | 'low' | 'short' | 'out' | 'unknown';
+/**
+ * How a part stands against what the boards need: `low` is enough now but under STOCK_MARGIN × the
+ * need; `ordered`, the house buys it for the order (it checks the supply then); a part the house keeps
+ * in its own stock without a count is `ok`.
+ */
+export type StockState = 'ok' | 'low' | 'short' | 'out' | 'unknown' | 'ordered';
 
-export function stockState(stock: number | null, need: number): StockState {
-  if (stock === null) return 'unknown';
+export function stockState(stock: number | null, need: number, supply?: SupplierPart['supply']): StockState {
+  if (stock === null) return supply === 'stock' ? 'ok' : supply === 'order' ? 'ordered' : 'unknown';
   if (stock <= 0) return 'out';
   if (stock < need) return 'short';
   return stock < need * STOCK_MARGIN ? 'low' : 'ok';
@@ -125,6 +146,8 @@ export interface StockLine {
   state: StockState | 'missing' | 'failed';
   /** Why the part does not fit its components (value, voltage, package), with the refs when only some. */
   mismatch: string[];
+  /** What else wants a look: the maker has made the part obsolete, or no longer recommends it. */
+  warnings?: string[];
   /** In-stock parts that could take its place, best first. */
   replacements: SupplierPart[];
   /** What the replacements have in common with the part ("same resistance and package"). */
@@ -143,7 +166,7 @@ export interface StockReport {
   live: boolean;
   /** Why the house's own catalogue could not be read, when it could not (the app fills it in). */
   note?: string;
-  /** The parts for all the boards at today's prices (USD, without fees: the pieces the house buys, see lineBuy), of the lines with a price; absent when none has one. */
+  /** The parts for all the boards at today's prices (in the house's currency, without fees: the pieces the house buys, see lineBuy), of the lines with a price; absent when none has one. */
   cost?: number;
   /** The part numbers the cost leaves out: no price (or no record). */
   unpriced: string[];
@@ -151,17 +174,35 @@ export interface StockReport {
   estimates?: CostEstimate[];
 }
 
-/** Lines that need a look: anything but plenty in stock, fitting, fee-free. */
-export const lineNeedsAttention = (l: StockLine) => l.state !== 'ok' || l.mismatch.length > 0 || !!l.part?.fee;
+/** Lines that need a look: anything but plenty in stock (or bought for the order), fitting, fee-free, current. */
+export const lineNeedsAttention = (l: StockLine) => (l.state !== 'ok' && l.state !== 'ordered') || l.mismatch.length > 0 || !!l.part?.fee || !!l.warnings?.length;
+/** Lines that go on the house's order: a part it lists, or one it buys for the order without a record (an MPN outside Eurocircuits' database, any part at PCBWay). */
+export const lineOnOrder = (l: StockLine) => !!l.part || l.state === 'ordered';
 /** Lines that stop an order as they are: the part cannot be had, or it is not the part the design asks for (the house assembles what the number says). */
 export const lineBlocks = (l: StockLine) => l.state === 'out' || l.state === 'short' || l.state === 'missing' || l.mismatch.length > 0;
+
+/**
+ * The number the house orders a component by: its own (the house's parameter), else, at a house that
+ * buys by the maker's number, the component's manufacturer part number, else, at a house that buys
+ * resistors and capacitors by value, the value with its grade and package ("10k 1% 0603"); null when
+ * there is none of these.
+ */
+export function houseNumber(c: SourcedComponent, house: AssemblyHouse): string | null {
+  const own = house.param ? house.normalize(c.params[house.param] ?? '') : null;
+  if (own || !house.byMpn) return own;
+  const mpn = (c.params.mpn ?? c.mpn ?? '').trim();
+  if (mpn) return house.normalize(mpn);
+  const value = c.category === 'resistor' ? c.params.resistance : c.category === 'capacitor' ? c.params.capacitance : undefined;
+  if (!house.byValue || !value || !c.pkg) return null;
+  return house.normalize([value, c.params.tolerance, c.params.voltage, c.params.dielectric, c.params.power, c.pkg].filter(Boolean).join(' '));
+}
 
 /** Group the components by the house's part number; those without one are `unsourced`. */
 export function stockLines(components: SourcedComponent[], house: AssemblyHouse, boards: number): { lines: StockLine[]; unsourced: string[] } {
   const by = new Map<string, StockLine>();
   const unsourced: string[] = [];
   for (const c of components) {
-    const sku = house.normalize(c.params[house.param] ?? '');
+    const sku = houseNumber(c, house);
     if (!sku) {
       unsourced.push(c.refdes);
       continue;
@@ -190,21 +231,24 @@ export async function checkStock(
   const { house, boards } = opts;
   const { lines, unsourced } = stockLines(components, house, boards);
   const byRef = new Map(components.map((c) => [c.refdes, c]));
-  await pool(lines, opts.concurrency ?? 4, async (l) => {
-    try {
-      l.part = await source.lookup(l.sku);
-    } catch (e) {
-      l.error = (e as Error).message;
-    }
-    settle(l, l.refs.map((r) => byRef.get(r)!));
-  });
+  // a house without a catalogue the app can read buys every part for the order: nothing to look up
+  if (house.noCatalogue) for (const l of lines) l.state = 'ordered';
+  else
+    await pool(lines, opts.concurrency ?? 4, async (l) => {
+      try {
+        l.part = await source.lookup(l.sku);
+      } catch (e) {
+        l.error = (e as Error).message;
+      }
+      settle(l, l.refs.map((r) => byRef.get(r)!), house);
+    });
   await pool(lines.filter(wantsReplacement), opts.concurrency ?? 4, (l) => findReplacements(l, byRef.get(l.refs[0]!)!, source, house, opts.replacements ?? 3));
   let cost = 0;
   const unpriced: string[] = [];
   for (const l of lines) {
     const buy = l.part ? lineBuy(l.part, l.need) : null;
     if (!buy) unpriced.push(l.sku);
-    else cost += buy.usd;
+    else cost += buy.cost;
   }
   return {
     house: house.name,
@@ -218,20 +262,31 @@ export async function checkStock(
   };
 }
 
-/** The line's state and mismatches once its part was looked up. */
-function settle(l: StockLine, comps: SourcedComponent[]) {
+/** The line's state, mismatches and warnings once its part was looked up. */
+function settle(l: StockLine, comps: SourcedComponent[], house: AssemblyHouse) {
+  const unlisted = l.part === null ? house.unlisted?.(l.sku) : null;
   if (l.error !== undefined) l.state = 'failed';
-  else if (!l.part) l.state = 'missing';
-  else l.state = stockState(l.part.stock, l.need);
+  else if (unlisted) {
+    // the house looks for it when the order goes in
+    l.state = 'ordered';
+    l.warnings = [unlisted];
+  } else if (!l.part) l.state = 'missing';
+  else l.state = stockState(l.part.stock, l.need, l.part.supply);
   if (!l.part) return;
+  const life = lifecycleWarning(l.part.lifecycle);
+  if (life) l.warnings = [life];
   const found = new Map<string, string[]>();
-  for (const c of comps) for (const m of sourcingMismatch({ category: c.category ?? 'other' }, c.params, c.pkg, l.part)) found.set(m, [...(found.get(m) ?? []), c.refdes]);
+  for (const c of comps) {
+    // the component's own MPN is the same part, whatever the catalogue calls its package
+    const own = !!l.part.mpn && normMpn(l.part.mpn) === normMpn(c.params.mpn ?? c.mpn ?? '');
+    for (const m of sourcingMismatch({ category: c.category ?? 'other' }, c.params, own ? undefined : c.pkg, l.part)) found.set(m, [...(found.get(m) ?? []), c.refdes]);
+  }
   l.mismatch = [...found].map(([m, refs]) => (refs.length === comps.length ? m : `${refs.join(', ')}: ${m}`));
 }
 
 const isPassive = (c: SourcedComponent) => c.category === 'resistor' || c.category === 'capacitor';
 
-const wantsReplacement = (l: StockLine) => lineBlocks(l) || l.state === 'low' || !!l.part?.fee;
+const wantsReplacement = (l: StockLine) => lineBlocks(l) || l.state === 'low' || !!l.part?.fee || !!l.warnings?.length;
 
 /**
  * What a like-for-like replacement is searched by: a resistor or capacitor by its value and package,
@@ -256,10 +311,10 @@ async function findReplacements(l: StockLine, c: SourcedComponent, source: PartS
   const passive = isPassive(c);
   const fits = (p: SupplierPart) => p.sku !== l.sku && canReplace(p, c, l.part, l.need);
   // better than the part it replaces in what is wrong with it: no fee where only the fee is, more stock where it is low
-  const onlyFee = l.state === 'ok' && !l.mismatch.length;
-  const better = (p: SupplierPart) => (onlyFee ? !p.fee : l.state === 'low' ? p.stock! > (l.part?.stock ?? 0) : true);
+  const onlyFee = (l.state === 'ok' || l.state === 'ordered') && !l.mismatch.length && !l.warnings?.length;
+  const better = (p: SupplierPart) => (onlyFee ? !p.fee : l.state === 'low' ? (p.stock === null ? p.supply === 'stock' : p.stock > (l.part?.stock ?? 0)) : true);
   // plenty of stock (STOCK_MARGIN × the need) before the house's class: a part that will still be there when the order goes in
-  const short = (p: SupplierPart) => Number(p.stock! < l.need * STOCK_MARGIN);
+  const short = (p: SupplierPart) => Number(!plentyFor(p, l.need));
   l.replacements = rankParts(found.filter((p) => fits(p) && better(p)), house.tiers.map((t) => t.name))
     .sort((a, b) => Number(a.fee) - Number(b.fee) || short(a) - short(b))
     .slice(0, n);
@@ -278,11 +333,12 @@ async function findReplacements(l: StockLine, c: SourcedComponent, source: PartS
  * and package, fitting the component and no worse in grade; for anything else the same part number
  * in the same package (another maker or listing).
  */
-export function canReplace(p: SupplierPart, c: SourcedComponent, was: SupplierPart | null | undefined, need: number): boolean {
-  if (p.stock === null || p.stock < need) return false;
+export function canReplace(p: SupplierPart, c: SourcedComponent, was: SupplierPart | null | undefined, need: number, opts: { ordered?: boolean } = {}): boolean {
+  // (`ordered`: a part the house buys for the order counts too, for a component that has no part yet)
+  if (!(hasFor(p, need) || (opts.ordered && p.supply === 'order')) || lifecycleWarning(p.lifecycle)) return false;
   if (isPassive(c)) return sourcingMismatch({ category: c.category! }, c.params, c.pkg, p).length === 0 && noWorse(p, was, c);
   const mpn = normMpn(c.params.mpn ?? c.mpn ?? '');
-  return !!mpn && normMpn(p.mpn) === mpn && (!c.pkg || !p.package || normPkg(p.package) === normPkg(c.pkg));
+  return !!mpn && normMpn(p.mpn) === mpn && (!c.pkg || !p.package || samePackage(p.package, c.pkg));
 }
 
 /**
@@ -291,7 +347,7 @@ export function canReplace(p: SupplierPart, c: SourcedComponent, was: SupplierPa
  * than the component asks when there is none): tolerance and power, dielectric and voltage rating.
  */
 export function gradeFits(p: SupplierPart, c: SourcedComponent, was: SupplierPart | null | undefined): boolean {
-  if (c.pkg && p.package && normPkg(p.package) !== normPkg(c.pkg)) return false;
+  if (c.pkg && p.package && !samePackage(p.package, c.pkg)) return false;
   if (c.category === 'capacitor' && c.params.voltage) {
     const want = parseQuantity(c.params.voltage);
     const have = p.attributes['Voltage Rated'] ? parseQuantity(p.attributes['Voltage Rated']) : null;
@@ -345,20 +401,31 @@ export async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>
 
 /* -------------------------------------- text -------------------------------------- */
 
-/** One line per part, for the agent and for logs. */
-export function describePart(p: SupplierPart): string {
-  const price = p.price[0] ? `$${trimNum(p.price[0].usd)}@${p.price[0].qty}` : '';
+/** One line per part, for the agent and for logs (prices in the house's currency). */
+export function describePart(p: SupplierPart, house: Pick<AssemblyHouse, 'currency'> = { currency: 'USD' }): string {
+  const price = p.price[0] ? (p.price.every((b) => b.each === 0) ? 'free' : `${currencySymbol(house)}${trimNum(p.price[0].each)}@${p.price[0].qty}`) : '';
   const facts = p.description || Object.entries(p.attributes).map(([k, v]) => (k === 'Value' ? v : `${k} ${v}`)).join(', ');
-  return [p.sku, p.mpn, p.package, p.tier, stockText(p), price, facts.slice(0, 140)].filter(Boolean).join(' · ');
+  return [p.sku, p.mpn !== p.sku ? p.mpn : '', p.package, p.tier, stockText(p), lifecycleWarning(p.lifecycle) ?? '', price, facts.slice(0, 140)].filter(Boolean).join(' · ');
 }
 
-/** "stock 1,234", "stock unknown", with "(mirror)" when it was not read from the house just now. */
-export function stockText(p: Pick<SupplierPart, 'stock' | 'live'>): string {
-  return `${p.stock === null ? 'stock unknown' : `stock ${p.stock.toLocaleString('en-US')}`}${p.live ? '' : ' (mirror)'}`;
+/** "stock 1,234", "kept in stock", "bought for the order", "stock unknown", with "(mirror)" when it was not read from the house just now. */
+export function stockText(p: Pick<SupplierPart, 'stock' | 'live' | 'supply'>): string {
+  const what = p.stock !== null ? `stock ${p.stock.toLocaleString('en-US')}` : p.supply === 'stock' ? 'kept in stock' : p.supply === 'order' ? 'bought for the order' : 'stock unknown';
+  return `${what}${p.live ? '' : ' (mirror)'}`;
+}
+
+/** What a part's lifecycle says to look at ("obsolete at the maker"); null when nothing. */
+export function lifecycleWarning(lifecycle: string | undefined): string | null {
+  const l = (lifecycle ?? '').toLowerCase();
+  if (/obsolete|discontinued|end of life|^eol$/.test(l)) return 'obsolete at the maker';
+  if (/nrnd|not recommended/.test(l)) return 'not recommended for new designs';
+  if (/last time buy|^ltb$/.test(l)) return 'last time buy at the maker';
+  return null;
 }
 
 const STATE_TEXT: Record<StockLine['state'], string> = {
   ok: 'in stock',
+  ordered: 'bought for the order',
   low: 'low stock',
   short: 'too few in stock',
   out: 'out of stock',
@@ -378,7 +445,9 @@ export function lineProblem(l: StockLine): string {
 export function lineIssues(l: StockLine): string[] {
   return [
     ...(l.mismatch.length ? [`not the part the design asks for (${l.mismatch.join('; ')})`] : []),
-    ...(l.state !== 'ok' || !l.mismatch.length ? [lineProblem(l)] : []),
+    // (bought for the order is no problem: the part says so, and its fee follows)
+    ...(l.state === 'ordered' ? (l.mismatch.length || l.warnings?.length || l.part?.fee ? [] : [lineProblem(l)]) : l.state !== 'ok' || !l.mismatch.length ? [lineProblem(l)] : []),
+    ...(l.warnings ?? []),
     ...(l.part?.fee ? [`${l.part.tier}: a fee`] : []),
   ];
 }
@@ -387,30 +456,45 @@ export function lineIssues(l: StockLine): string[] {
 export function stockReportText(r: StockReport, house: AssemblyHouse): string {
   const out: string[] = [];
   const parts = r.lines.reduce((n, l) => n + l.refs.length, 0);
+  if (house.noCatalogue) {
+    // nothing to look up: what goes on the BOM, and what the house needs to buy the rest
+    out.push(
+      `Parts at ${r.house} for ${r.boards} board${r.boards === 1 ? '' : 's'}: ${house.noCatalogue}. So there is no stock to check here: ` +
+        `${r.lines.length} part number${r.lines.length === 1 ? '' : 's'} for ${parts} component${parts === 1 ? '' : 's'} go on the BOM.`,
+    );
+    out.push(...r.lines.map((l) => `- ${l.refs.join(', ')} · ${l.sku}`));
+    if (r.unsourced.length) out.push(`Without what ${house.name} needs to buy them (a manufacturer part number; resistors and capacitors may go by value and package): ${r.unsourced.join(', ')}. An imported part carries its MPN; a generic diode, transistor or inductor takes set_param mpn.`);
+    return out.join('\n');
+  }
   out.push(
     `Stock check at ${r.house} for ${r.boards} board${r.boards === 1 ? '' : 's'} (${r.at.slice(0, 16).replace('T', ' ')} UTC${r.live ? ', read just now' : `, NOT all live${r.note ? `: ${r.note}` : ''}; mirror stock may be a day old or unknown`}): ` +
       `${r.lines.length} part number${r.lines.length === 1 ? '' : 's'} for ${parts} component${parts === 1 ? '' : 's'}.`,
   );
   const line = (l: StockLine) => {
-    const what = l.part ? `${l.sku} ${l.part.mpn} (${l.part.tier || 'no class'}, ${stockText(l.part)})` : l.sku;
+    const what = l.part ? `${l.sku}${l.part.mpn !== l.sku ? ` ${l.part.mpn}` : ''} (${l.part.tier || 'no class'}, ${stockText(l.part)})` : l.sku;
     const bits = [`- ${l.refs.join(', ')} · ${what}: ${lineIssues(l).join('; ')}`];
-    if (l.replacements.length) bits.push(`. Replacements (${l.replacementBasis}): ${l.replacements.map(describePart).join(' | ')}`);
-    else if (lineBlocks(l)) bits.push('. No like-for-like replacement found: search for another part (sourcing search) or import one (import_part)');
+    if (l.replacements.length) bits.push(`. Replacements (${l.replacementBasis}): ${l.replacements.map((p) => describePart(p, house)).join(' | ')}`);
+    else if (lineBlocks(l) || l.warnings?.length) bits.push('. No like-for-like replacement found: search for another part (sourcing search) or import one (import_part)');
     return bits.join('');
   };
+  const settled = (l: StockLine) => l.state === 'ok' || l.state === 'ordered';
   const blocking = r.lines.filter(lineBlocks);
-  const warn = r.lines.filter((l) => !lineBlocks(l) && l.state !== 'ok');
-  const fees = r.lines.filter((l) => !lineBlocks(l) && l.state === 'ok' && l.part?.fee);
+  const warn = r.lines.filter((l) => !lineBlocks(l) && (!settled(l) || !!l.warnings?.length));
+  const fees = r.lines.filter((l) => !lineBlocks(l) && settled(l) && !l.warnings?.length && l.part?.fee);
   const fine = r.lines.filter((l) => !lineNeedsAttention(l));
   if (blocking.length) out.push(`Stop the order (${blocking.length}):`, ...blocking.map(line));
   if (warn.length) out.push(`Look at (${warn.length}):`, ...warn.map(line));
   if (fees.length) out.push(`With a fee (${fees.length}): ${house.feeNote}.`, ...fees.map(line));
   const scarce = r.lines.filter((l) => (l.state === 'low' || l.state === 'short') && !l.replacements.length);
   if (scarce.length) out.push(`Scarce with no replacement (${scarce.map((l) => l.sku).join(', ')}): suggest the user ${house.reserveNote}.`);
-  if (fine.length) out.push(`Fine (stock ≥ ${STOCK_MARGIN} × the need, no fee): ${fine.map((l) => `${l.sku} (${l.refs.join(', ')})`).join(', ')}.`);
-  if (r.unsourced.length) out.push(`No ${house.numberName} (${house.name} does not assemble them from its stock; fine for parts soldered by hand): ${r.unsourced.join(', ')}.`);
-  if (r.cost !== undefined) out.push(`Parts ≈ $${r.cost.toFixed(2)} for ${r.boards} board${r.boards === 1 ? '' : 's'} at today's prices, without fees${r.unpriced.length ? ` (no price for ${r.unpriced.join(', ')})` : ''}.`);
-  if (r.lines.some((l) => l.replacements.length)) out.push(`To take a replacement: design_edit set_param ${house.param} on every component of its line.`);
+  const kept = fine.some((l) => l.part?.stock === null);
+  if (fine.length) out.push(`Fine (${kept ? `kept in stock by ${house.name}, or ` : ''}stock ≥ ${STOCK_MARGIN} × the need, no fee): ${fine.map((l) => `${l.sku} (${l.refs.join(', ')})`).join(', ')}.`);
+  if (r.unsourced.length) {
+    const none = house.byMpn && house.param ? `No ${house.numberName} and no manufacturer part number` : `No ${house.numberName}`;
+    out.push(`${none} (${house.name} does not assemble them${house.byMpn ? '' : ' from its stock'}; fine for parts soldered by hand): ${r.unsourced.join(', ')}.`);
+  }
+  if (r.cost !== undefined) out.push(`Parts ≈ ${money(r.cost, house)} for ${r.boards} board${r.boards === 1 ? '' : 's'} at today's prices, without fees${r.unpriced.length ? ` (no price for ${r.unpriced.join(', ')})` : ''}.`);
+  if (house.param && r.lines.some((l) => l.replacements.length)) out.push(`To take a replacement: design_edit set_param ${house.param} on every component of its line.`);
   return out.join('\n');
 }
 

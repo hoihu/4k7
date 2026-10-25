@@ -290,6 +290,11 @@ export interface BomLine {
   mpn: string;
   mfr: string;
   lcsc: string;
+  /** The part Eurocircuits assembles (a generic number or an MPN), when the components name one. */
+  eurocircuits: string;
+  /** What kind of part it is ("resistor"), and whether it is soldered through holes. */
+  category: string;
+  tht: boolean;
   /** Designators, in natural order. */
   refs: string[];
 }
@@ -299,8 +304,19 @@ export function bomLines(b: BoardView): BomLine[] {
   const groups = new Map<string, BomLine>();
   for (const p of b.parts) {
     if (p.componentId.startsWith('hole:')) continue; // board features, not parts to buy
-    const key = `${p.part}|${p.value}|${p.pkg}|${p.mpn ?? ''}|${p.lcsc ?? ''}`;
-    const g = groups.get(key) ?? { value: p.value, pkg: p.pkg, mpn: p.mpn ?? '', mfr: p.manufacturer ?? '', lcsc: p.lcsc ?? '', refs: [] };
+    const key = `${p.part}|${p.value}|${p.pkg}|${p.mpn ?? ''}|${p.lcsc ?? ''}|${p.eurocircuits ?? ''}`;
+    const plated = p.pads.filter((d) => !d.npth);
+    const g = groups.get(key) ?? {
+      value: p.value,
+      pkg: p.pkg,
+      mpn: p.mpn ?? '',
+      mfr: p.manufacturer ?? '',
+      lcsc: p.lcsc ?? '',
+      eurocircuits: p.eurocircuits ?? '',
+      category: p.category ?? '',
+      tht: plated.length > 0 && plated.every((d) => d.drill !== undefined),
+      refs: [],
+    };
     g.refs.push(p.refdes);
     groups.set(key, g);
   }
@@ -309,9 +325,23 @@ export function bomLines(b: BoardView): BomLine[] {
   return [...groups.values()].sort((a, c) => natural(a.refs[0]!, c.refs[0]!));
 }
 
-export function bom(b: BoardView): string {
+/** A part's kind in a BOM's description. */
+const KINDS: Record<string, string> = { resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', diode: 'Diode', led: 'LED', ic: 'IC', connector: 'Connector', transistor: 'Transistor', crystal: 'Crystal' };
+
+/** The BOM in the form an assembly house's upload reads ("jlcpcb", the default; "eurocircuits"; "pcbway"). */
+export function bom(b: BoardView, house = 'jlcpcb'): string {
+  const lines = bomLines(b);
+  const what = (g: BomLine) => [KINDS[g.category] ?? '', g.value].filter(Boolean).join(' ');
+  if (house === 'eurocircuits') {
+    // Eurocircuits reads the MPN column (its generic numbers go there too), the designators and quantity, a description, value and package
+    return csv([['Reference Designators', 'Quantity', 'MPN', 'Manufacturer', 'Description', 'Value', 'Package'], ...lines.map((g) => [g.refs.join(','), g.refs.length, g.eurocircuits || g.mpn, g.eurocircuits && g.eurocircuits !== g.mpn ? '' : g.mfr, what(g), g.value, g.pkg])]);
+  }
+  if (house === 'pcbway') {
+    // PCBWay's BOM template; resistors and capacitors may go by value and package without a part number
+    return csv([['Item #', 'Designator', 'Qty', 'Manufacturer', 'Mfg Part #', 'Description / Value', 'Package/Footprint', 'Type'], ...lines.map((g, i) => [i + 1, g.refs.join(','), g.refs.length, g.mfr, g.mpn, what(g), g.pkg, g.tht ? 'Thru-hole' : 'SMD'])]);
+  }
   // "LCSC Part #" is the column JLCPCB's assembly upload reads
-  return csv([['Comment', 'Designator', 'Footprint', 'Quantity', 'MPN', 'Manufacturer', 'LCSC Part #'], ...bomLines(b).map((g) => [g.value, g.refs.join(','), g.pkg, g.refs.length, g.mpn, g.mfr, g.lcsc])]);
+  return csv([['Comment', 'Designator', 'Footprint', 'Quantity', 'MPN', 'Manufacturer', 'LCSC Part #'], ...lines.map((g) => [g.value, g.refs.join(','), g.pkg, g.refs.length, g.mpn, g.mfr, g.lcsc])]);
 }
 
 /** Pick-and-place: centre, counter-clockwise rotation, y up from the bottom-left corner. */
@@ -324,7 +354,8 @@ export function pickAndPlace(b: BoardView): string {
   ]);
 }
 
-export function fabFiles(b: BoardView, project: string): FabFile[] {
+/** Gerbers, drill, BOM (in the assembly house's form, see bom) and pick-and-place. */
+export function fabFiles(b: BoardView, project: string, house?: string): FabFile[] {
   const base = project.replace(/[^\w.-]+/g, '_') || 'board';
-  return [...gerbers(b, project), { name: `${base}-BOM.csv`, content: bom(b) }, { name: `${base}-PnP.csv`, content: pickAndPlace(b) }];
+  return [...gerbers(b, project), { name: `${base}-BOM.csv`, content: bom(b, house) }, { name: `${base}-PnP.csv`, content: pickAndPlace(b) }];
 }

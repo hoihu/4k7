@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { JLCPCB_ASSEMBLY, type PartQuery, type SupplierPart } from '@4k7/schema';
-import { checkStock, describePart, lineBlocks, rankParts, replacementQuery, sourcingMismatch, stockLines, stockReportText, stockState, unitPrice, withFallback, type PartSource, type SourcedComponent } from '../src/index.ts';
+import { EUROCIRCUITS_ASSEMBLY, JLCPCB_ASSEMBLY, PCBWAY_ASSEMBLY, type PartQuery, type SupplierPart } from '@4k7/schema';
+import { checkStock, describePart, houseNumber, lineBlocks, rankParts, replacementQuery, samePackage, sourcingMismatch, stockLines, stockReportText, stockState, unitPrice, withFallback, type PartSource, type SourcedComponent } from '../src/index.ts';
 
 const TIERS = ['Basic', 'Preferred', 'Extended'];
 /** A catalogue part; JLCPCB-like classes, live, plenty in stock unless told. */
@@ -32,13 +32,13 @@ describe('ranking and stock', () => {
   });
 
   it('prices a quantity at its break', () => {
-    const p = part('C1', { price: [{ qty: 1, usd: 0.01 }, { qty: 100, usd: 0.008 }, { qty: 1000, usd: 0.005 }] });
+    const p = part('C1', { price: [{ qty: 1, each: 0.01 }, { qty: 100, each: 0.008 }, { qty: 1000, each: 0.005 }] });
     expect([1, 99, 100, 5000].map((q) => unitPrice(p, q))).toEqual([0.01, 0.01, 0.008, 0.005]);
     expect(unitPrice(part('C2'), 10)).toBeUndefined();
   });
 
   it('describes a part in one line, saying when the stock is unknown or from a mirror', () => {
-    const p = part('C25804', { mpn: '0603WAF1002T5E', stock: 37165617, price: [{ qty: 1, usd: 0.0017 }], attributes: { Resistance: '10kΩ', Tolerance: '±1%' } });
+    const p = part('C25804', { mpn: '0603WAF1002T5E', stock: 37165617, price: [{ qty: 1, each: 0.0017 }], attributes: { Resistance: '10kΩ', Tolerance: '±1%' } });
     expect(describePart(p)).toBe('C25804 · 0603WAF1002T5E · 0603 · Basic · stock 37,165,617 · $0.0017@1 · Resistance 10kΩ, Tolerance ±1%');
     expect(describePart({ ...p, stock: null, live: false })).toContain('Basic · stock unknown (mirror) · $0.0017@1');
   });
@@ -118,12 +118,12 @@ describe('stock check', () => {
   });
 
   it('looks every part up once and says what stops the order, what to look at and what is fine', async () => {
-    const plenty = part('C25804', { mpn: '0603WAF1002T5E', attributes: { Resistance: '10kΩ' }, price: [{ qty: 1, usd: 0.002 }] });
+    const plenty = part('C25804', { mpn: '0603WAF1002T5E', attributes: { Resistance: '10kΩ' }, price: [{ qty: 1, each: 0.002 }] });
     const { src, asked } = catalogue({
       C25804: plenty,
-      C11: part('C11', { attributes: { Resistance: '10kΩ' }, stock: 0, price: [{ qty: 1, usd: 0.01 }] }),
-      C12: part('C12', { attributes: { Resistance: '10kΩ' }, stock: 15, price: [{ qty: 1, usd: 0.01 }] }),
-      C13: part('C13', { attributes: { Resistance: '22kΩ' }, price: [{ qty: 1, usd: 0.01 }] }),
+      C11: part('C11', { attributes: { Resistance: '10kΩ' }, stock: 0, price: [{ qty: 1, each: 0.01 }] }),
+      C12: part('C12', { attributes: { Resistance: '10kΩ' }, stock: 15, price: [{ qty: 1, each: 0.01 }] }),
+      C13: part('C13', { attributes: { Resistance: '22kΩ' }, price: [{ qty: 1, each: 0.01 }] }),
       C14: new Error('timeout'),
     });
     const r = await checkStock([res('R1', 'C25804'), res('R2', 'C25804'), res('R3', 'C11'), res('R4', 'C12'), res('R5', 'C13'), res('R6', 'C14'), res('R7', 'C15'), { refdes: 'J1', params: {} }], src, { house: H, boards: 10, now: () => new Date('2026-10-24T12:00:00Z') });
@@ -140,7 +140,7 @@ describe('stock check', () => {
   });
 
   it('prices the order at the price break of the pieces needed, and is live when every part was read live', async () => {
-    const { src } = catalogue({ C25804: part('C25804', { attributes: { Resistance: '10kΩ' }, price: [{ qty: 1, usd: 0.01 }, { qty: 20, usd: 0.005 }] }) });
+    const { src } = catalogue({ C25804: part('C25804', { attributes: { Resistance: '10kΩ' }, price: [{ qty: 1, each: 0.01 }, { qty: 20, each: 0.005 }] }) });
     const r = await checkStock([res('R1', 'C25804'), res('R2', 'C25804'), res('R3', 'C404')], src, { house: H, boards: 10 });
     // a number the catalogue does not list is still a live answer
     expect(r).toMatchObject({ live: true, cost: 0.1, unpriced: ['C404'] });
@@ -201,7 +201,7 @@ describe('stock check', () => {
   it('writes the report for the agent', async () => {
     const { src } = catalogue(
       {
-        C25804: part('C25804', { mpn: '0603WAF1002T5E', attributes: { Resistance: '10kΩ' }, price: [{ qty: 1, usd: 0.002 }] }),
+        C25804: part('C25804', { mpn: '0603WAF1002T5E', attributes: { Resistance: '10kΩ' }, price: [{ qty: 1, each: 0.002 }] }),
         C11: part('C11', { mpn: 'OLD', attributes: { Resistance: '10kΩ' }, stock: 0 }),
         C12: part('C12', { mpn: 'SCARCE', attributes: { Resistance: '10kΩ' }, stock: 30 }),
         C13: part('C13', { mpn: 'FEE', attributes: { Resistance: '10kΩ' }, ...ext }),
@@ -219,5 +219,93 @@ describe('stock check', () => {
     expect(text).toContain('Fine (stock ≥ 5 × the need, no fee): C25804 (R1).');
     expect(text).toContain('No LCSC number (JLCPCB does not assemble them from its stock; fine for parts soldered by hand): J1.');
     expect(text).toContain('To take a replacement: design_edit set_param lcsc on every component of its line.');
+  });
+});
+
+/* ------------------------------ houses that order otherwise ------------------------------ */
+
+describe('a house that keeps parts without counting them, or buys them for the order', () => {
+  const EC = EUROCIRCUITS_ASSEMBLY;
+  const ec = (sku: string, o: Partial<SupplierPart>): SupplierPart => part(sku, { mpn: sku, stock: null, ...o });
+  const kept = { tier: 'Generic', fee: false, supply: 'stock' as const, price: [{ qty: 1, each: 0 }] };
+  const bought = { tier: 'On Demand', fee: true, supply: 'order' as const };
+
+  it('calls a kept part in stock and a part bought for the order neither short nor unknown', () => {
+    expect(stockState(null, 10, 'stock')).toBe('ok');
+    expect(stockState(null, 10, 'order')).toBe('ordered');
+    expect(stockState(null, 10)).toBe('unknown');
+  });
+
+  it("orders by its own number, else by the component's MPN; at a house that buys by value, a resistor or capacitor by value and package", () => {
+    const comps: SourcedComponent[] = [
+      { refdes: 'R1', category: 'resistor', params: { resistance: '10k', eurocircuits: 'gpr060310k' }, pkg: '0603' },
+      { refdes: 'U1', category: 'ic', params: {}, mpn: 'AMS1117-3.3', pkg: 'SOT-223' },
+      { refdes: 'R2', category: 'resistor', params: { resistance: '4k7', tolerance: '1%' }, pkg: '0603' },
+      { refdes: 'J1', category: 'connector', params: {} },
+    ];
+    expect(comps.map((c) => houseNumber(c, EC))).toEqual(['GPR060310K', 'AMS1117-3.3', null, null]);
+    expect(comps.map((c) => houseNumber(c, PCBWAY_ASSEMBLY))).toEqual(['10k 0603', 'AMS1117-3.3', '4k7 1% 0603', null]);
+    // JLCPCB orders nothing without its own number
+    expect(comps.map((c) => houseNumber({ ...c, params: { ...c.params, lcsc: c.refdes === 'U1' ? 'C6186' : '' } }, H))).toEqual([null, 'C6186', null, null]);
+  });
+
+  it('flags a part the maker made obsolete, offers a kept part instead, and lists parts bought for the order with their fee', async () => {
+    const obsolete = ec('GRM188R71H104KA93D', { ...bought, lifecycle: 'obsolete', attributes: { Capacitance: '100nF', 'Voltage Rated': '50V', 'Temperature Coefficient': 'X7R' } });
+    const generic = ec('GPC0603104', { ...kept, attributes: { Capacitance: '100nF', 'Voltage Rated': '50V', 'Temperature Coefficient': 'X7R' } });
+    const regulator = ec('AMS1117-3.3', { ...bought, package: 'SOT-223' });
+    const { src } = catalogue({ GRM188R71H104KA93D: obsolete, 'AMS1117-3.3': regulator, GPC0603104: generic }, (q) => (q.kind ? [generic, obsolete] : [regulator]));
+    const comps: SourcedComponent[] = [
+      { refdes: 'C1', category: 'capacitor', params: { capacitance: '100nF', voltage: '25V', eurocircuits: 'GRM188R71H104KA93D' }, pkg: '0603' },
+      { refdes: 'C2', category: 'capacitor', params: { capacitance: '100nF', eurocircuits: 'GPC0603104' }, pkg: '0603' },
+      { refdes: 'U1', category: 'ic', params: {}, mpn: 'AMS1117-3.3', pkg: 'SOT-223' },
+    ];
+    const r = await checkStock(comps, src, { house: EC, boards: 10 });
+    const by = Object.fromEntries(r.lines.map((l) => [l.sku, l]));
+    expect(by.GRM188R71H104KA93D).toMatchObject({ state: 'ordered', warnings: ['obsolete at the maker'] });
+    expect(by.GRM188R71H104KA93D!.replacements.map((p) => p.sku)).toEqual(['GPC0603104']);
+    expect(by.GPC0603104).toMatchObject({ state: 'ok', replacements: [] });
+    expect(by['AMS1117-3.3']).toMatchObject({ state: 'ordered', replacements: [] });
+    expect(r.lines.filter(lineBlocks)).toEqual([]);
+    const text = stockReportText(r, EC);
+    expect(text).toContain('Look at (1):\n- C1 · GRM188R71H104KA93D (On Demand, bought for the order): obsolete at the maker; On Demand: a fee. Replacements');
+    expect(text).toContain('With a fee (1): Eurocircuits charges €1.93 per BOM line');
+    expect(text).toContain('- U1 · AMS1117-3.3 (On Demand, bought for the order): On Demand: a fee');
+    expect(text).toContain('Fine (kept in stock by Eurocircuits, or stock ≥ 5 × the need, no fee): GPC0603104 (C2).');
+    expect(text).toContain('To take a replacement: design_edit set_param eurocircuits');
+  });
+
+  it("takes a package family as the house lists it for the part of the component's own MPN", async () => {
+    expect([samePackage('SOIC', 'SOIC-8'), samePackage('SOT-23', 'SOT-23-5'), samePackage('0603', '0603'), samePackage('QFN', 'SOIC-8')]).toEqual([true, false, true, false]);
+    // Eurocircuits lists TPS54331DR as "SOIC"; a package of another name with the same MPN is still the part
+    const { src } = catalogue({ TPS54331DR: ec('TPS54331DR', { ...bought, package: 'SOIC' }), 'AMS1117-3.3': ec('AMS1117-3.3', { ...bought, package: 'SOT-89' }) });
+    const r = await checkStock([{ refdes: 'U1', category: 'ic', params: {}, mpn: 'TPS54331DR', pkg: 'SOIC-8' }, { refdes: 'U2', category: 'ic', params: { eurocircuits: 'AMS1117-3.3' }, mpn: 'LM1117', pkg: 'SOT-223' }], src, { house: EC, boards: 10 });
+    expect(r.lines.map((l) => [l.sku, l.mismatch])).toEqual([
+      ['TPS54331DR', []],
+      ['AMS1117-3.3', ['package: the part is SOT-89, the component SOT-223']],
+    ]);
+  });
+
+  it("warns of a manufacturer's number its database does not list (it looks for it), but stops at a Generic number it does not know", async () => {
+    const { src } = catalogue({});
+    const r = await checkStock([{ refdes: 'U1', category: 'ic', params: {}, mpn: 'RARE-123' }, { refdes: 'R1', category: 'resistor', params: { resistance: '10k', eurocircuits: 'GPR0603XYZ' }, pkg: '0603' }], src, { house: EC, boards: 10 });
+    const by = Object.fromEntries(r.lines.map((l) => [l.sku, l]));
+    expect(by['RARE-123']).toMatchObject({ part: null, state: 'ordered', warnings: [expect.stringMatching(/^not in Eurocircuits' database: check the number/)] });
+    expect(lineBlocks(by['RARE-123']!)).toBe(false);
+    expect(by.GPR0603XYZ).toMatchObject({ state: 'missing' });
+    expect(lineBlocks(by.GPR0603XYZ!)).toBe(true);
+  });
+
+  it('looks nothing up at a house without a catalogue: what goes on its BOM, and what it could not buy', async () => {
+    const { src, asked } = catalogue({});
+    const r = await checkStock([{ refdes: 'R1', category: 'resistor', params: { resistance: '10k' }, pkg: '0603' }, { refdes: 'U1', category: 'ic', params: {}, mpn: 'AMS1117-3.3' }, { refdes: 'J1', category: 'connector', params: {} }], src, { house: PCBWAY_ASSEMBLY, boards: 10 });
+    expect(asked).toEqual([]);
+    expect(r).toMatchObject({ live: true, unsourced: ['J1'] });
+    expect(r.lines.map((l) => [l.sku, l.state])).toEqual([
+      ['10k 0603', 'ordered'],
+      ['AMS1117-3.3', 'ordered'],
+    ]);
+    const text = stockReportText(r, PCBWAY_ASSEMBLY);
+    expect(text).toMatch(/^Parts at PCBWay for 10 boards: PCBWay keeps no parts catalogue the app can read: .*So there is no stock to check here: 2 part numbers for 2 components go on the BOM\./);
+    expect(text).toContain('Without what PCBWay needs to buy them (a manufacturer part number; resistors and capacitors may go by value and package): J1.');
   });
 });

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { boardStep, fabFiles, panelFabFiles, zip } from '@4k7/fab';
-  import { planeNames, userPlaced, type BoardDiagnostic, type CopperLayer } from '@4k7/schema';
+  import { planeNames, userPlaced, whose, type BoardDiagnostic, type CopperLayer } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
   import BoardCanvas from './BoardCanvas.svelte';
@@ -154,11 +154,14 @@
   function exportFab(panel = false) {
     if (!b) return;
     const name = projectName();
-    const files = panel ? panelFabFiles(b, name) : fabFiles(b, name);
+    // the BOM in the form the house the parts are sourced for reads
+    const files = panel ? panelFabFiles(b, name, app.house.id) : fabFiles(b, name, app.house.id);
     download(new Blob([zip(files) as BlobPart], { type: 'application/zip' }), `${name.replace(/[^\w.-]+/g, '_')}-${panel ? 'panel' : 'fab'}.zip`);
     // the parts are ordered with these files: say when their stock was not checked, or the last check found parts that stop the order
     const stop = app.stockReport?.lines.filter(lineBlocks).length ?? 0;
-    const sourced = b.parts.some((p) => p.lcsc);
+    // (a board part carries each house's number under its parameter's name)
+    const param = app.house.param as 'lcsc' | 'eurocircuits' | undefined;
+    const sourced = !!param && b.parts.some((p) => !!p[param]);
     const stock = !sourced ? '' : !app.stockReport ? ' · stock not checked yet (Sourcing)' : stop ? ` · ${stop} part${stop > 1 ? 's' : ''} stop the order at the last stock check (Sourcing)` : '';
     app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}${stock}`);
   }
@@ -342,7 +345,7 @@
         <h4>Files</h4>
         {#if b.parts.length}
           <div class="row2">
-            <button class="btn" title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
+            <button class="btn" title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM (in {whose(app.house)} form) and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
             <!-- (the panel view has its own Panel files button) -->
             {#if b.panel && mode !== 'panel'}<button class="btn" title="The {b.panel.settings.cols} × {b.panel.settings.rows} panel ({b.panel.w} × {b.panel.h} mm): Gerber, drill with the mouse bites and tooling holes, BOM and pick-and-place of every copy, as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}` : ''}" onclick={() => exportFab(true)}>Panel files ⤓</button>{/if}
             <button class="btn" title="The board and its parts in 3D as a STEP file (.step), for a mechanical CAD program: the outline with its holes and cutouts, and every part body, named by designator" onclick={exportStep}>STEP ⤓</button>

@@ -12,7 +12,7 @@ describe('lcsc parameter', () => {
     const r3 = k.query({ op: 'get_component', ref: 'R3' }) as { params: Record<string, string>; specs: Record<string, unknown>; category: string };
     expect(r3.params.lcsc).toBe('C25804');
     expect(r3.category).toBe('resistor');
-    expect(Object.keys(r3.specs)).toEqual(['resistance', 'tolerance', 'power', 'package', 'lcsc']);
+    expect(Object.keys(r3.specs)).toEqual(['resistance', 'tolerance', 'power', 'package', 'lcsc', 'eurocircuits']);
     expect((k.query({ op: 'get_component', ref: 'U1' }) as { params: Record<string, string> }).params.lcsc).toBe('C9865');
   });
 
@@ -35,5 +35,20 @@ describe('lcsc parameter', () => {
     const parts = k.boardPlacement().parts;
     expect(parts.find((p) => p.refdes === 'R3')?.lcsc).toBe('C25804');
     expect(parts.find((p) => p.refdes === 'R2')?.lcsc).toBeUndefined();
+  });
+});
+
+/** The eurocircuits parameter: the part Eurocircuits assembles, a Generic number or an MPN. */
+describe('eurocircuits parameter', () => {
+  it('takes a Generic number (in capitals) or a manufacturer part number, and reaches the board parts', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    const r = k.transact({ summary: 'source', ops: [{ op: 'set_param', ref: 'R3', params: { eurocircuits: ' gpr06034k7 ' } }, { op: 'set_param', ref: 'C1', params: { eurocircuits: 'GRM188R71H104KA93D' } }] });
+    expect(r.status).toBe('ok');
+    const parts = k.boardPlacement().parts;
+    expect(parts.find((p) => p.refdes === 'R3')?.eurocircuits).toBe('GPR06034K7');
+    expect(parts.find((p) => p.refdes === 'C1')?.eurocircuits).toBe('GRM188R71H104KA93D');
+    const bad = k.transact({ summary: 'bad', ops: [{ op: 'set_param', ref: 'R3', params: { eurocircuits: 'x' } }] });
+    expect(bad.rejection).toMatchObject({ code: 'PARAM_INVALID', message: 'R3.eurocircuits = "x" is not a Eurocircuits part number (e.g. GPR06034K7).' });
   });
 });
