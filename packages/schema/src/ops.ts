@@ -270,6 +270,54 @@ export const SetFabProfileOp = z.object({
   keep_rules: z.boolean().optional().describe('true: leave the design rules alone even where they are below the new limits (the DRC then reports the rules as violations). Default: raise rules up to the limits, never lower them'),
 }).describe('Choose the manufacturer the board is made by. Its limits are kept apart from the design rules: rules are raised to the limits where they are below (never lowered), set_board refuses rules below them, and the DRC checks tracks, vias, holes, rings, edge distance and board size against them. Give one of: preset, none, or an import (house, tier, source_url, limits).');
 
+const stackupDielectric = z.object({
+  mm: z.number().positive().describe('Thickness (mm); plies in one gap added up'),
+  er: z.number().describe('Relative permittivity εr (Dk) as the page states it, at about 1 GHz (FR-4: 3.9–4.8)'),
+  what: z.string().optional().describe('What it is: "7628 prepreg", "core"'),
+});
+
+export const SetStackupOp = z.object({
+  op: z.literal('set_stackup'),
+  preset: z.string().optional().describe('A built-in stack-up: "JLC04161H-7628" (JLCPCB\'s standard 4 layers, 0.21 mm to the plane), "JLC04161H-3313", "JLC04161H-2116", "JLC04161H-1080" (thinner prepreg: narrower lines for the same impedance), "jlcpcb/2l-1.6", "pcbway/4l-1.6", "generic/2l-1.6", "generic/4l-1.6"'),
+  none: z.boolean().optional().describe('true: back to the default for the board\'s fab and layer count (JLCPCB: JLC04161H-7628 on 4 layers)'),
+  house: z.string().min(1).optional().describe('Import: the manufacturer, with name, copper_mm, dielectric and source_url read off its stack-up page. Never guess a number'),
+  name: z.string().min(1).optional().describe('Import: what the manufacturer calls the build-up'),
+  copper_mm: z.array(z.number().positive()).optional().describe('Import: finished copper per layer, top to bottom (1 oz = 0.035 mm; 0.5 oz inner layers often 0.0152 mm)'),
+  dielectric: z.array(stackupDielectric).optional().describe('Import: the dielectric between each two copper layers, top to bottom: one entry on 2 layers, three on 4'),
+  mask: z
+    .object({
+      over_laminate_mm: z.number().min(0).describe('Mask thickness over bare laminate'),
+      over_copper_mm: z.number().min(0).describe('Mask thickness over copper'),
+      er: z.number().describe('Its εr (typically 3.5–4)'),
+    })
+    .nullable()
+    .optional()
+    .describe('Import: the solder mask, when the page states it'),
+  source_url: z.string().url().optional().describe('Import: the page the numbers come from (required)'),
+  checked: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Import: the date the page was read, YYYY-MM-DD'),
+  notes: z.array(z.string()).max(8).optional().describe('Import: caveats the page gives'),
+}).describe('The board\'s layer build-up as ordered: copper thickness per layer, the dielectric between them (thickness, εr) and the solder mask. Impedances depend on it: set it to the manufacturer\'s stack-up the board is ordered with before routing controlled-impedance lines (set_impedance works its widths out from it). Give one of: preset, none, or an import (house, name, copper_mm, dielectric, source_url).');
+
+export const SetImpedanceOp = z.object({
+  op: z.literal('set_impedance'),
+  nets: z.array(netName).min(1).max(2).describe('One net (a single-ended line: an RF feed to an antenna or a connector, a fast clock), or a differential pair\'s two nets, positive first (["USB_DP", "USB_DN"])'),
+  ohms: z.number().min(20).max(200).describe('Target: a single line\'s impedance (RF: 50 Ω), or the pair\'s differential impedance (USB 90 Ω; Ethernet, LVDS, HDMI, MIPI 100 Ω; PCIe 85 Ω); the interface\'s spec or the part\'s datasheet says'),
+  style: z.enum(['microstrip', 'coplanar']).optional().describe('microstrip: over its plane alone, other copper kept back; coplanar: with ground copper beside it on its own layer at coplanar_gap_mm too (narrower for the same impedance: the way on 2 layers and for RF lines, with a via fence). Default: microstrip on 4 layers, coplanar on 2'),
+  width_mm: z.number().positive().optional().describe('Fix the track width (e.g. a connector\'s or a matching part\'s pad): a pair\'s gap, or a coplanar line\'s gap to the ground, is then found for it'),
+  gap_mm: z.number().positive().optional().describe('A pair: the gap between its two tracks, edge to edge (default: the board\'s clearance, at least 0.1 mm; not below the clearance); the width is found for it'),
+  coplanar_gap_mm: z.number().positive().optional().describe('Coplanar: the gap from the line to the ground copper beside it (default: the board\'s clearance, at least 0.15 mm; not below the clearance); the pour keeps exactly this gap from the net. Given without style, the line is coplanar'),
+  tolerance_pct: z.number().min(1).max(30).optional().describe('How far the impedance may stray, ± % (default 10, what fabs hold)'),
+  max_skew_mm: z.number().positive().optional().describe('A pair: the most its two tracks\' lengths may differ (USB 2.0: about 1.25 mm; USB 3, PCIe, HDMI: 0.13 mm; default 0.5 mm)'),
+  max_length_mm: z.number().positive().optional().describe('The longest the line may run on the board'),
+  keep_mm: z.number().positive().optional().describe('Other signals keep at least this far from it, edge to edge (default: twice its width, the 3W rule; a coplanar line: twice its gap, room for the ground beside it; TI asks 0.76 mm for USB 3, PCIe and HDMI pairs)'),
+  label: z.string().optional().describe('What it is: "USB 2.0", "2.4 GHz antenna feed"'),
+}).describe('Route a net or a differential pair at a set impedance. The kernel works out from the stack-up, for each layer it can run on, the width (and a pair\'s gap, a coplanar line\'s gap to the ground) that gives it, and the effect says it; the router and draw_track take that width, draw_pair draws a pair, and the checks (IMP.*) hold the copper to it: width, the plane under it unbroken, a pair kept together and matched in length, a ground via beside each via, no sharp corners, other copper kept away. Setting it again for the same nets replaces it.');
+
+export const RemoveImpedanceOp = z.object({
+  op: z.literal('remove_impedance'),
+  id: z.string().describe('Rule id ("Z1", from get_board impedance) or "all"'),
+});
+
 export const SetOutlineOp = z.object({
   op: z.literal('set_outline'),
   svg_path: z.string().optional().describe('The outline as an SVG path (M L H V C S Q T A Z, absolute or relative, y down), in any units: it is scaled to width_mm / height_mm. One closed figure; cutouts are separate (add_cutout). E.g. a Christmas tree, a circle, a shield shape.'),
@@ -476,6 +524,17 @@ export const DrawTrackOp = z.object({
   width_mm: z.number().positive().optional().describe('Default: the net\'s width, else power width for supplies, else the signal width'),
 }).describe('Drawn copper: draw one track (a polyline) of one net on one layer, as given: nothing else is moved or rerouted. A layer change needs a via (draw_via) where two tracks meet. The effect gives the track\'s id (t…) and checks it at once, when the whole transaction is applied: other copper too close (errors) and loose ends or pieces off 45° (warnings); get_board says which connections are still open.');
 
+export const DrawPairOp = z.object({
+  op: z.literal('draw_pair'),
+  from: z.tuple([trackEnd, trackEnd]).describe('Where the pair starts: its two pads (or your vias, or points), positive first, e.g. ["J1.D+", "J1.D-"]'),
+  to: z.tuple([trackEnd, trackEnd]).describe('Where it ends: the two pads (vias, points), positive first, e.g. ["U1.DP", "U1.DM"]'),
+  via: z.array(mmPoint).max(64).optional().describe('The pair\'s centre line between the two ends: its corners, in order. Leave room at each end for the tracks to come together from the pads (a few times the pads\' pitch)'),
+  bend,
+  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Default F.Cu, or the layer of the SMD pads it starts on'),
+  width_mm: z.number().positive().optional().describe('Default: the width its impedance rule (set_impedance) gives on this layer'),
+  gap_mm: z.number().positive().optional().describe('Gap between the two tracks, edge to edge. Default: the rule\'s on this layer'),
+}).describe('Drawn copper: a differential pair as two tracks side by side, the gap kept along a centre line you give. Each track leaves its pad, comes in to the pair at 45°, runs along the centre line at the gap and goes out to its pad at the far end; the two stay on their sides (the positive track on the side of the positive pad at both ends). The effect gives both tracks\' ids (t…) and their lengths, and checks them like draw_track. A layer change: draw_pair to two points, a draw_via at each (with ground vias beside them), draw_pair on from those vias.');
+
 export const DrawViaOp = z.object({
   op: z.literal('draw_via'),
   at: mmPoint,
@@ -568,6 +627,7 @@ export const AddViasOp = z.object({
   at: z.array(z.object({ x_mm: z.number(), y_mm: z.number() })).min(1).optional().describe('points, drop: via centres (mm from the board\'s top-left corner; drop: as the part stands now, each within 2 mm of its pad and at least half a via plus the clearance off it); tie: the spot, one point (on the net\'s copper on both layers: inside its pour or on its wide track, over its plane)'),
   amps: z.number().positive().max(100).optional().describe('tie: the current it carries (A), sets how many vias; drop: the current through the pad, to check the vias given carry it; default the net\'s max_current'),
   ...viaArea,
+  along: netName.optional().describe('fence: instead of an area, run along both sides of this net\'s tracks (a coplanar RF line or a pair, stitching the ground beside it to the plane below), at its gap to the ground plus half a via; pitch_mm under a twentieth of the wavelength (calc impedance with f gives it)'),
   pitch_mm: z.number().positive().optional().describe('Centre to centre (default: pad 1.0, grid 3.0, fence 2.0 mm); the datasheet\'s layout example gives it for thermal vias, a fence wants under a tenth of the wavelength'),
   drill_mm: z.number().positive().optional().describe('Drill (default the board\'s via drill)'),
   size_mm: z.number().positive().optional().describe('Via pad diameter (default the board\'s via pad)'),
@@ -617,6 +677,9 @@ export const EditOp = z.discriminatedUnion('op', [
   SetPaperOp,
   SetBoardOp,
   SetFabProfileOp,
+  SetStackupOp,
+  SetImpedanceOp,
+  RemoveImpedanceOp,
   PlaceOp,
   AttachOp,
   PlaceSymbolOp,
@@ -629,6 +692,7 @@ export const EditOp = z.discriminatedUnion('op', [
   RouteOp,
   SetCopperModeOp,
   DrawTrackOp,
+  DrawPairOp,
   DrawViaOp,
   EditCopperOp,
   EraseCopperOp,
@@ -712,6 +776,6 @@ export const QueryOp = z.discriminatedUnion('op', [
   }),
   z.object({ op: z.literal('get_part'), id: z.string() }),
   z.object({ op: z.literal('get_enclosure') }).describe('The enclosure: the brief, the script, the board as an OpenSCAD library (board.scad: its variables and modules, the parts with where they are and which way they are plugged), OpenSCAD on this computer, the last render\'s report'),
-  z.object({ op: z.literal('get_guide'), topic: z.enum(['mechanics', 'cost']) }).describe('A guide: cost = how to make a design cheaper to make (what costs money at the assembly house, how far each kind of part may move its value, series and parallel pairs, the board), read before optimising cost; mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script). Read it before the first brief'),
+  z.object({ op: z.literal('get_guide'), topic: z.enum(['mechanics', 'cost', 'high_speed']) }).describe('A guide: cost = how to make a design cheaper to make (what costs money at the assembly house, how far each kind of part may move its value, series and parallel pairs, the board), read before optimising cost; mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script), read before the first brief; high_speed = how to lay out lines at a set impedance (fast interfaces such as USB, Ethernet, HDMI, LVDS, and RF lines to antennas and connectors): which lines need it, the stack-up, widths and gaps, planes and return paths, pairs, vias, antennas. Read it before routing such lines'),
 ]);
 export type QueryOp = z.infer<typeof QueryOp>;

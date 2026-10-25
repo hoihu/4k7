@@ -3,6 +3,7 @@ import type { PartCategory } from './part.ts';
 import { fabSummary, type FabProfile } from './fab.ts';
 import type { PanelSettings, PanelView } from './panel.ts';
 import { boardFacing, matingOf, type BoardFacing } from './enclosure.ts';
+import { stackupPresets, stackupText, type ImpedanceRule, type ImpedanceView, type Stackup } from './stackup.ts';
 
 /**
  * The board: settings stored in the design, and the derived board view (placement, routing,
@@ -33,6 +34,10 @@ export interface BoardSettings {
   rules: BoardRules;
   /** The manufacturer the board is made by: its limits, checked by the DRC (set_fab_profile). Absent = none chosen. */
   fab?: FabProfile;
+  /** The layer build-up as ordered (set_stackup): what impedances depend on. Absent: the default for the fab and layer count. */
+  stackup?: Stackup;
+  /** Nets and differential pairs routed at a set impedance (set_impedance). */
+  impedance?: ImpedanceRule[];
   /**
    * Copper planes: inner layers are dedicated planes, outer layers get a pour. One net fills a
    * layer; on an inner layer, planes with an area cover only that part of it (+3V3 under the MCU)
@@ -538,6 +543,8 @@ export interface ViaGroup {
   pad?: { componentId: string; number: string };
   /** grid, fence: the area, as for an area plane (under parts, or a rectangle). */
   area?: PlaneArea;
+  /** fence: along both sides of this net's tracks instead of round an area (a coplanar line, net id). */
+  along?: string;
   /** points: centres, mm; tie: the spot (one point). */
   points?: [number, number][];
   /**
@@ -741,6 +748,10 @@ export interface BoardView {
   rules: BoardRules;
   /** The fab profile the board is checked against, if one is chosen. */
   fab?: FabProfile;
+  /** The stack-up in effect (set, or the default for the fab and layer count). */
+  stackup?: Stackup;
+  /** The impedance rules worked out for this board: each layer's width and gaps. */
+  impedance?: ImpedanceView[];
   parts: BoardPart[];
   tracks: Track[];
   vias: Via[];
@@ -748,7 +759,7 @@ export interface BoardView {
   /** Planes in effect (net, layer; automatic or set with set_plane), an area plane with its rectangle (x0, y0, x1, y1, mm) and the parts it lies under. */
   planes: { netId: string; layer: CopperLayer; auto: boolean; area?: [number, number, number, number]; under?: string[]; style?: PlaneStyle }[];
   /** The vias placed on purpose (add_vias), per group: how many it asks for (grid, fence: the spots it may use; tie: the vias its current wants). */
-  viaGroups: { id: string; netId: string; kind: ViaKind; wanted: number; note?: string; pad?: string }[];
+  viaGroups: { id: string; netId: string; kind: ViaKind; wanted: number; note?: string; pad?: string; along?: string }[];
   /** Connections not (yet) made by copper. */
   ratsnest: RatsLine[];
   diagnostics: BoardDiagnostic[];
@@ -862,12 +873,61 @@ export const userPlaced = (b: Pick<BoardView, 'parts'>) => b.parts.filter((p) =>
 const USER_PLACED_NOTE =
   'The user put these parts where they are: their decisions. Arrange, plan the planes and route round them; propose_placement and try_placements refuse them. Move one only where routing cannot do without it (place, a small step), and tell the user which and why.';
 
+/** A polyline's length (mm). */
+const lineLength = (pts: number[]) => pts.reduce((s, _, i) => (i >= 2 && i % 2 === 0 ? s + Math.hypot(pts[i]! - pts[i - 2]!, pts[i + 1]! - pts[i - 1]!) : s), 0);
+
+/** The impedance rules as get_board says them: target, each layer's geometry, and on routed copper the lengths. */
+function impedanceSummary(b: BoardView, routed: boolean) {
+  const name = (id: string) => b.netNames[id] ?? id;
+  const copper = routed && (b.routing === 'done' || !!b.drawn);
+  return (b.impedance ?? []).map((v) => {
+    const lengths = Object.fromEntries(v.nets.map((id) => [name(id), Math.round(b.tracks.filter((t) => t.netId === id).reduce((s, t) => s + lineLength(t.pts), 0) * 100) / 100]));
+    const vias = Object.fromEntries(v.nets.map((id) => [name(id), b.vias.filter((x) => x.netId === id).length]));
+    const ls = Object.values(lengths);
+    return {
+      id: v.id,
+      nets: v.nets.map(name),
+      target: `${v.ohms} Ω${v.pair ? ' differential' : ''} ±${v.tolerance} %`,
+      style: v.style,
+      ...(v.label ? { label: v.label } : {}),
+      layers: v.layers.map((l) => ({
+        layer: l.layer,
+        over: `${l.over}, ${l.h} mm, εr ${l.er}`,
+        width_mm: l.width,
+        ...(l.gap !== undefined ? { gap_mm: l.gap } : {}),
+        ...(l.side !== undefined ? { coplanar_gap_mm: l.side } : {}),
+        ohms: l.ohms,
+        delay_ps_per_mm: l.delay,
+        ...(l.pourGap !== undefined ? { pour_keeps_mm: l.pourGap } : {}),
+      })),
+      ...(v.unusable.length ? { not_on: v.unusable.map((u) => `${u.layer}: ${u.why}`) } : {}),
+      ...(copper ? { lengths_mm: lengths, vias, ...(v.pair && ls.length === 2 ? { skew_mm: Math.round(Math.abs(ls[0]! - ls[1]!) * 100) / 100, max_skew_mm: v.skew } : {}) } : {}),
+      ...(v.maxLength !== undefined ? { max_length_mm: v.maxLength } : {}),
+      keep_others_mm: v.keep ?? (v.style === 'coplanar' ? `room for the ground beside it: twice its gap (${v.layers.map((l) => `${l.layer} ${Math.max(2 * (l.side ?? 0), 0.5)}`).join(', ')})` : `twice the width (${v.layers.map((l) => `${l.layer} ${Math.round(2 * l.width * 1000) / 1000}`).join(', ')})`),
+    };
+  });
+}
+
 /** Compact board description for agents (design_query get_board). */
 export function boardSummary(b: BoardView, routed = true) {
   return {
     outline_mm: b.outline,
     layers: b.layers.length,
     rules: b.rules,
+    ...(b.stackup
+      ? {
+          stackup: {
+            name: b.stackup.name,
+            id: b.stackup.id,
+            build: stackupText(b.stackup),
+            origin: b.stackup.origin,
+            ...(b.stackup.source ? { source: b.stackup.source.url } : {}),
+            ...(b.stackup.notes?.length ? { notes: b.stackup.notes } : {}),
+            others: stackupPresets().filter((x) => x.copper.length === b.layers.length && x.id !== b.stackup!.id).map((x) => x.id),
+          },
+        }
+      : {}),
+    ...(b.impedance?.length ? { impedance: impedanceSummary(b, routed) } : {}),
     fab: b.fab
       ? { id: b.fab.id, summary: fabSummary(b.fab), limits: b.fab.limits, source: b.fab.source, ...(b.fab.notes?.length ? { notes: b.fab.notes } : {}) }
       : 'none chosen: set_fab_profile (a preset such as "jlcpcb" or "eurocircuits/6C", or limits read from the manufacturer\'s page) makes the DRC check the board against the manufacturer\'s limits',
@@ -923,7 +983,9 @@ export function boardSummary(b: BoardView, routed = true) {
             const placed = b.vias.filter((v) => v.group === g.id).length;
             const filled = g.kind === 'grid' || g.kind === 'fence' || g.kind === 'tie';
             const later = filled && b.routing !== 'done';
-            const vias = later
+            const vias = g.along
+              ? `${later ? 'laid by the route step' : placed} along both sides of ${b.netNames[g.along] ?? g.along}${later ? ', where they fit' : ''}`
+              : later
               ? `${g.kind === 'tie' || g.kind === 'drop' ? '' : 'up to '}${g.wanted}, laid by the route step where they fit`
               : g.kind === 'drop'
                 ? `${placed} beside ${g.pad}, each on its own stub from the pad`

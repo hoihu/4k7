@@ -141,6 +141,8 @@ export function mergeNet(d: Design, from: Net, to: Net): void {
     for (const [pin, net] of Object.entries(c.pins)) if (net === from.id) c.pins[pin] = to.id;
   }
   to.attrs = { ...from.attrs, ...to.attrs };
+  // (an impedance rule of the net goes with it)
+  for (const r of d.board?.impedance ?? []) r.nets = r.nets.map((id) => (id === from.id ? to.id : id));
   delete d.nets[from.id];
 }
 

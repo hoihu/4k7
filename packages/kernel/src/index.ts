@@ -10,3 +10,4 @@ export { traceBitmap } from './trace.ts';
 export { resolveScope, measure as measureScope } from './scope.ts';
 export type { RouteProgress } from './router.ts';
 export type { HelperHooks } from './copperops.ts';
+export { analyse as analyseLine, widthFor as widthForLine, gapFor as gapForLine, sideGapFor as sideGapForLine, microstripHJ, type Section as LineSection, type LineResult } from './impedance.ts';

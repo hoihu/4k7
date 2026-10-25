@@ -59,6 +59,19 @@ export interface RouteInput {
   /** Track width per net (the user's choice, mm), where its pads allow it; else the class width. */
   netWidths?: Record<string, number>;
   /**
+   * How far the pours keep from a net's copper, where it is more than their own clearance: a line
+   * at a set impedance (a coplanar line's gap to the ground beside it, or a microstrip's distance
+   * so the ground does not change it).
+   */
+  pourGaps?: Record<string, number>;
+  /**
+   * Lines at a set impedance: on a layer, the plane under them (`over`, its net `plane`, `h` below).
+   * Under their tracks that are there before the routing (drawn, or kept from the routing before),
+   * a band on the plane's layer, half the track's width plus `h` either side of it, takes only the
+   * plane's net, so other tracks and vias do not cut the plane under a line (its return path).
+   */
+  lines?: { netId: string; layer: CopperLayer; over: CopperLayer; plane: string; h: number }[];
+  /**
    * Planes: an inner layer dedicated to one net (no tracks there), or a pour on an outer layer
    * filling what the tracks leave. Pads of the net drop onto their plane with a via. An inner
    * plane with an area (x0, y0, x1, y1) covers only that part of its layer, and the layer's full
@@ -73,7 +86,15 @@ export interface RouteInput {
    * drop onto their plane through vias the agent placed (add_vias drop; among `fixed`), each
    * joined to its pad by one of `stubs` (every other pad gets one via of the router's).
    */
-  vias?: { fixed: Via[]; fill: Via[]; limits?: Record<string, number>; drops?: { group: string; componentId: string; number: string; vias: { x: number; y: number }[] }[]; stubs?: Track[] };
+  vias?: {
+    fixed: Via[];
+    fill: Via[];
+    limits?: Record<string, number>;
+    drops?: { group: string; componentId: string; number: string; vias: { x: number; y: number }[] }[];
+    stubs?: Track[];
+    /** Fences along a line: spots on both sides of the `line` net's tracks once routed, every `pitch`, `gap` (its gap to the ground; default the clearance) plus half a via off each track's edge. */
+    along?: { group: string; netId: string; line: string; pitch: number; drill: number; pad: number; gap?: number }[];
+  };
   /**
    * Copper of the routing before (incremental routing): what still holds for this board (see
    * keep.ts) is kept as it lies, and only the connections it leaves open are routed. Where it is
@@ -534,6 +555,33 @@ function routeOnce(
     for (let q = 0; q + 3 < t.pts.length; q += 2) stampSeg(l, numOf(t.netId), t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!, t.width);
   }
   for (const v of keptVias) stampVia(numOf(v.netId), v.x, v.y, v.pad);
+  // the plane under a line at a set impedance stays whole: under its tracks laid before (drawn or
+  // kept), only the plane's net. (On a dedicated plane layer only vias matter: tracks never go there.)
+  const planeLayers = new Set((input.planes ?? []).filter((pl) => !OUTER.has(pl.layer)).map((pl) => layerIdx.get(pl.layer)));
+  for (const t of keptTracks) {
+    const ln = input.lines?.find((x) => x.netId === t.netId && x.layer === t.layer);
+    const l = ln && layerIdx.get(ln.over);
+    if (!ln || l === undefined) continue;
+    const net = numOf(ln.plane);
+    for (let q = 0; q + 3 < t.pts.length; q += 2) {
+      const [ax, ay, bx, by] = [t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!];
+      const dist = segDist(ax, ay, bx, by);
+      for (let k = 0; k < widths.length; k++) {
+        if (planeLayers.has(l) && k !== 2) continue;
+        const reach = rules.clearance + t.width / 2 + ln.h + widths[k]! / 2 + G * 0.1;
+        const m = maps[k]![l]!;
+        for (let j = Math.max(0, Math.floor((Math.min(ay, by) - reach) / G)); j <= Math.min(H - 1, Math.ceil((Math.max(ay, by) + reach) / G)); j++) {
+          for (let i = Math.max(0, Math.floor((Math.min(ax, bx) - reach) / G)); i <= Math.min(W - 1, Math.ceil((Math.max(ax, bx) + reach) / G)); i++) {
+            const c = j * W + i;
+            const v = m[c]!;
+            if (v === EDGE || dist(i * G, j * G) >= reach) continue;
+            if (v === 0) m[c] = net;
+            else if (v !== net) m[c] = MULTI;
+          }
+        }
+      }
+    }
+  }
   /** Segments of a net (width w, on layer l) keep the clearance from the kept copper of other nets. */
   const clearOfKept = (netId: string, l: number, w: number, segs: [number, number, number, number][]) =>
     segs.every(([ax, ay, bx, by]) =>
@@ -1499,16 +1547,68 @@ function routeOnce(
     if (startPad < 0 && lines[0] && !(lines.length === 1 && endVia)) lines[0].pts = reversePts(joinTrack(reversePts(simplify(lines[0].pts)), lines[0].l, net, width));
     if (endPad < 0 && !endVia) last.pts = joinTrack(simplify(last.pts), last.l, net, width);
     for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, width);
+    // a net whose width is set, routed narrower for a pad too small for it: narrow only where it
+    // goes into that pad, the full width elsewhere where that keeps its clearance
+    const own = input.netWidths?.[netId];
+    const laid: { l: number; pts: number[]; width: number }[] = [];
+    lines.forEach((line, li) => {
+      const pts = simplify(line.pts);
+      // (the pads at its ends too small for the full width: a neck into each)
+      const small = (q: number) => (q >= 0 && own !== undefined && Math.min(pads[q]!.w, pads[q]!.h) < own * 0.9 ? pads[q]! : null);
+      const into = (end: boolean) => (end ? (li === lines.length - 1 ? small(endPad) : null) : li === 0 ? small(startPad) : null);
+      const wide = own !== undefined && own > width + 1e-9 && pts.length >= 4 ? widened(net, line.l, pts, width, own, into(false), into(true)) : null;
+      laid.push(...(wide ?? [{ l: line.l, pts, width }]));
+    });
     // the copper as it finally lies (aligned ends moved it): the cells later routes may join
     const onCopper = new Set<number>();
-    for (const line of lines) {
+    for (const line of laid) {
       const pts = simplify(line.pts);
       if (pts.length < 4) continue;
-      tracks.push({ netId, layer: layers[line.l]!, width, pts: pts.map(r3) });
-      for (let q = 0; q + 3 < pts.length; q += 2) stampSeg(line.l, net, pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!, width);
-      for (const st of copperCells(line.l, pts, width)) onCopper.add(st);
+      tracks.push({ netId, layer: layers[line.l]!, width: line.width, pts: pts.map(r3) });
+      for (let q = 0; q + 3 < pts.length; q += 2) stampSeg(line.l, net, pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!, line.width);
+      for (const st of copperCells(line.l, pts, line.width)) onCopper.add(st);
     }
     return onCopper.size ? [...onCopper] : covered;
+  };
+  /**
+   * A track laid at `narrow` for a pad too small for `wide` (the net's set width), as a narrow neck
+   * into each such pad (`a` at its start, `b` at its end) and the rest at `wide`: the wide piece
+   * starts where its round end stays off the pad and its copper clears everything of other nets
+   * (the grid's map for that width, which knows the edge, and exactly). Null where it does not fit
+   * (the track stays narrow).
+   */
+  const widened = (net: number, l: number, pts: number[], narrow: number, wide: number, a: BoardPad | null, b: BoardPad | null): { l: number; pts: number[]; width: number }[] | null => {
+    const kw = trackClass(wide);
+    if (kw < 0) return null;
+    const free = freeFor(net, kw);
+    // points along the track every 0.05 mm, with how far along it they are
+    const at: { x: number; y: number; s: number }[] = [];
+    let s0 = 0;
+    for (const [ax, ay, bx, by] of pieceList(pts)) {
+      const len = Math.hypot(bx - ax, by - ay);
+      const n = Math.max(1, Math.ceil(len / 0.05));
+      for (let i = at.length ? 1 : 0; i <= n; i++) at.push({ x: ax + ((bx - ax) * i) / n, y: ay + ((by - ay) * i) / n, s: s0 + (len * i) / n });
+      s0 += len;
+    }
+    const cellOk = (p: { x: number; y: number }) => {
+      const i = Math.round(p.x / G);
+      const j = Math.round(p.y / G);
+      return i >= 0 && j >= 0 && i < W && j < H && free(l, j * W + i);
+    };
+    const off = (p: BoardPad | null, q: { x: number; y: number }) => !p || Math.max(Math.abs(q.x - p.x) - p.w / 2, Math.abs(q.y - p.y) - p.h / 2) >= wide / 2;
+    let i0 = 0;
+    if (a) while (i0 < at.length && !(off(a, at[i0]!) && cellOk(at[i0]!))) i0++;
+    let i1 = at.length - 1;
+    if (b) while (i1 > i0 && !(off(b, at[i1]!) && cellOk(at[i1]!))) i1--;
+    if (i1 - i0 < 2 || !at.slice(i0, i1 + 1).every(cellOk)) return null;
+    const [d0, d1] = [at[i0]!.s, at[i1]!.s];
+    const mid = cutPts(pts, d0, d1);
+    if (!clearOf(net, l, wide, pieceList(mid))) return null;
+    return [
+      ...(d0 > 1e-6 ? [{ l, pts: cutPts(pts, 0, d0), width: narrow }] : []),
+      { l, pts: mid, width: wide },
+      ...(d1 < s0 - 1e-6 ? [{ l, pts: cutPts(pts, d1, s0), width: narrow }] : []),
+    ];
   };
   /*
    * The run into a pad (pts ends at the pad centre), moved so that its line goes exactly through
@@ -1846,19 +1946,21 @@ function routeOnce(
         for (let i = Math.max(0, Math.floor((x0 - reach) / G)); i <= Math.min(W - 1, Math.ceil((x1 + reach) / G)); i++) if (dist(i * G, j * G) < reach) ok[j * W + i] = 0;
       }
     };
+    // (a line at a set impedance keeps its own gap, on the layers it runs on)
+    const more = (netId: string | undefined) => (netId && input.pourGaps?.[netId] !== undefined && tracks.some((t) => t.netId === netId && t.layer === pl.layer) ? Math.max(0, input.pourGaps[netId] - look.clear) : 0);
     pads.forEach((p, idx) => {
       if (padNet[idx] === pnet) return;
       if (!p.drill && !p.layers.includes(pl.layer)) return;
-      clearAround(p.x - p.w / 2, p.y - p.h / 2, p.x + p.w / 2, p.y + p.h / 2, 0, padDist(p));
+      clearAround(p.x - p.w / 2, p.y - p.h / 2, p.x + p.w / 2, p.y + p.h / 2, more(p.netId), padDist(p));
     });
     for (const t of tracks) {
       if (t.netId === pl.netId || t.layer !== pl.layer) continue;
       for (let q = 0; q + 3 < t.pts.length; q += 2) {
         const [ax, ay, bx, by] = [t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!];
-        clearAround(Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by), t.width / 2, segDist(ax, ay, bx, by));
+        clearAround(Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by), t.width / 2 + more(t.netId), segDist(ax, ay, bx, by));
       }
     }
-    for (const v of vias) if (v.netId !== pl.netId) clearAround(v.x, v.y, v.x, v.y, v.pad / 2, (x, y) => Math.hypot(x - v.x, y - v.y));
+    for (const v of vias) if (v.netId !== pl.netId) clearAround(v.x, v.y, v.x, v.y, v.pad / 2 + more(v.netId), (x, y) => Math.hypot(x - v.x, y - v.y));
     /*
      * Thermal reliefs where the plane meets its own vias and pins: a clearance ring with four
      * spokes (easier to solder and to rework than a solid connection).
@@ -1942,13 +2044,16 @@ function routeOnce(
       cuts.push({ k: 'rect', x: r3(q.area[0] - g), y: r3(q.area[1] - g), w: r3(q.area[2] - q.area[0] + 2 * g), h: r3(q.area[3] - q.area[1] + 2 * g) });
     }
     const adds: ZoneShape['adds'] = [];
+    // (a line at a set impedance keeps its own gap, on the layers it runs on)
+    const gapOf = (netId: string | undefined) => (netId && input.pourGaps?.[netId] !== undefined && tracks.some((t) => t.netId === netId && t.layer === pl.layer) ? Math.max(c, input.pourGaps[netId]) : c);
     pads.forEach((p, idx) => {
       if (padNet[idx] === rg.pnet || !(p.drill || p.layers.includes(pl.layer))) return;
-      if (p.shape === 'round') cuts.push({ k: 'circle', x: p.x, y: p.y, d: r3(Math.min(p.w, p.h) + 2 * c) });
-      else cuts.push({ k: 'rect', x: r3(p.x - p.w / 2 - c), y: r3(p.y - p.h / 2 - c), w: r3(p.w + 2 * c), h: r3(p.h + 2 * c) });
+      const g = gapOf(p.netId);
+      if (p.shape === 'round') cuts.push({ k: 'circle', x: p.x, y: p.y, d: r3(Math.min(p.w, p.h) + 2 * g) });
+      else cuts.push({ k: 'rect', x: r3(p.x - p.w / 2 - g), y: r3(p.y - p.h / 2 - g), w: r3(p.w + 2 * g), h: r3(p.h + 2 * g) });
     });
-    for (const t of tracks) if (t.netId !== pl.netId && t.layer === pl.layer) cuts.push({ k: 'stroke', pts: t.pts, w: r3(t.width + 2 * c) });
-    for (const v of vias) if (v.netId !== pl.netId) cuts.push({ k: 'circle', x: v.x, y: v.y, d: r3(v.pad + 2 * c) });
+    for (const t of tracks) if (t.netId !== pl.netId && t.layer === pl.layer) cuts.push({ k: 'stroke', pts: t.pts, w: r3(t.width + 2 * gapOf(t.netId)) });
+    for (const v of vias) if (v.netId !== pl.netId) cuts.push({ k: 'circle', x: v.x, y: v.y, d: r3(v.pad + 2 * gapOf(v.netId)) });
     // thermal reliefs: a ring cut, spokes back where no other net is in the way
     const gap = look.ring;
     const spokeW = look.spoke;
@@ -2323,11 +2428,34 @@ function routeOnce(
    * Stitching vias (add_vias over an area or round one): each spot that takes a via clear of other
    * nets and of pads, inside the net's planes on two layers or more (else it would join nothing).
    */
-  if (input.vias?.fill.length) {
+  // fences along a line: spots beside its tracks as they are now routed, both sides, every pitch
+  const alongSpots: Via[] = [];
+  for (const a of input.vias?.along ?? []) {
+    for (const t of tracks) {
+      if (t.netId !== a.line) continue;
+      // (just inside the pour beside the line: its edge, the grid's margin round it, and a little)
+      const off = t.width / 2 + Math.max(rules.clearance, a.gap ?? 0) + a.pad / 2 + 0.15;
+      // (the distance along the track to the next spot, and to where the piece starts)
+      let next = 0;
+      let at = 0;
+      for (const [ax, ay, bx, by] of pieceList(t.pts)) {
+        const len = Math.hypot(bx - ax, by - ay);
+        if (len < 1e-6) continue;
+        const [ux, uy] = [(bx - ax) / len, (by - ay) / len];
+        for (; next <= at + len + 1e-9; next += a.pitch) {
+          const [x, y] = [ax + ux * (next - at), ay + uy * (next - at)];
+          for (const sgn of [1, -1]) alongSpots.push({ netId: a.netId, x: r3(x - sgn * uy * off), y: r3(y + sgn * ux * off), drill: a.drill, pad: a.pad, group: a.group });
+        }
+        at += len;
+      }
+    }
+  }
+  const fillSpots = [...(input.vias?.fill ?? []), ...alongSpots];
+  if (fillSpots.length) {
     const regions = new Map<string, ReturnType<typeof region>[]>();
     const laid = new Map<string, number>();
-    const limits = input.vias.limits ?? {};
-    for (const v of input.vias.fill) {
+    const limits = input.vias?.limits ?? {};
+    for (const v of fillSpots) {
       if (v.group && limits[v.group] !== undefined && (laid.get(v.group) ?? 0) >= limits[v.group]!) continue;
       const net = numOf(v.netId);
       const i = Math.round(v.x / G);
@@ -2575,6 +2703,23 @@ function routeOnce(
 }
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/** The part of a polyline (flat x, y list) between distances d0 and d1 along it. */
+function cutPts(pts: number[], d0: number, d1: number): number[] {
+  const out: number[] = [];
+  let s = 0;
+  for (let q = 0; q + 3 < pts.length; q += 2) {
+    const [ax, ay, bx, by] = [pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!];
+    const len = Math.hypot(bx - ax, by - ay);
+    const at = (d: number) => [ax + ((bx - ax) * (d - s)) / (len || 1), ay + ((by - ay) * (d - s)) / (len || 1)] as const;
+    if (s + len >= d0 && s <= d1) {
+      if (!out.length) out.push(...at(Math.max(d0, s)));
+      out.push(...at(Math.min(d1, s + len)));
+    }
+    s += len;
+  }
+  return out;
+}
 const PROGRESS_MS = 200;
 const OUTER = new Set<CopperLayer>(['F.Cu', 'B.Cu']);
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());

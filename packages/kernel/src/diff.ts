@@ -146,6 +146,8 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
             `clearance ${b.rules.clearance} mm`,
             `track ${b.rules.track} / ${b.rules.powerTrack} mm`,
             ...(b.fab ? [`made by ${b.fab.house}, ${b.fab.tier}${b.fab.origin === 'imported' ? ` (limits imported from ${b.fab.source.url})` : ''}`] : []),
+            ...(b.stackup ? [`stack-up ${b.stackup.name}${b.stackup.origin === 'imported' && b.stackup.source ? ` (imported from ${b.stackup.source.url})` : ''}`] : []),
+            ...(b.impedance?.length ? [`impedance: ${b.impedance.map((r) => `${r.id} ${r.nets.map((id) => draft.nets[id]?.name ?? id).join('/')} ${r.ohms} Ω${r.nets.length > 1 ? ' differential' : ''}`).join(', ')}`] : []),
             ...(b.holes?.length ? [`${b.holes.length} mounting hole${b.holes.length > 1 ? 's' : ''} (${[...new Set(b.holes.map((x) => `Ø${x.d}`))].join(', ')})`] : []),
             ...(b.planes ? [`planes: ${b.planes.map((p) => `${draft.nets[p.netId]?.name ?? p.netId} on ${p.layer}${p.area ? (p.area.under ? ` under ${p.area.under.map((id) => draft.components[id]?.refdes ?? id).join(', ')}` : ' (an area)') : ''}${p.style ? ` (${planeStyleText(p.style)})` : ''}`).join(', ') || 'none'}`] : []),
             ...(b.drawn ? [drawnDetail(base.board?.drawn, b.drawn)] : base.board?.drawn ? ['copper back to the router (the drawn copper dropped)'] : []),

@@ -58,6 +58,7 @@ import {
   padCapsule,
   padHasPin,
   padPins,
+  boardStackup,
 } from '@4k7/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
 import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
@@ -66,6 +67,7 @@ import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelView } from './panel.ts';
 import { stableJson } from './canonical.ts';
 import { route, type RouteInput, type RouteProgress } from './router.ts';
+import { impedanceDrc, pourGaps, resolveImpedance } from './lines.ts';
 
 const SPACING = 0.3; // between courtyards
 const GRID_MM = 0.1;
@@ -1049,14 +1051,19 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   }
   const planes = placePlanes(settingsPlanes(d, layers.length as 2 | 4), parts, w, h);
   const viaPlan = planVias(settings.vias ?? [], parts, w, h, rules, (id) => d.nets[id]?.attrs.maxCurrent);
+  // the stack-up, and the impedance rules worked out for it (each layer's width and gaps)
+  const stackup = boardStackup(settings);
+  const impedance = resolveImpedance(d, { layers, planes, rules, ...(settings.fab ? { fab: settings.fab } : {}), stackup });
   // (keys sorted: a design read back from its file has them in another order than one just edited)
-  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : [])] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
+  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : []), ...(viaPlan.along ? [viaPlan.along] : [])] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   const drawn = settings.drawn ? drawnCopper(settings.drawn, parts) : null;
   const view: BoardView = {
     outline: { w, h },
     layers,
     rules,
     ...(settings.fab ? { fab: settings.fab } : {}),
+    stackup,
+    ...(impedance.length ? { impedance } : {}),
     parts,
     tracks: [...(viaPlan.stubs ?? []), ...(drawn?.tracks ?? [])],
     vias: [...viaPlan.fixed, ...(drawn?.vias ?? [])],
@@ -1212,7 +1219,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     ...(copper.reused ? { reused: copper.reused } : {}),
   };
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...(b.drawn ? drawnDrc(routed) : [])].map((x) => (b.drawn ? softened(x) : x));
+  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
@@ -1261,7 +1268,15 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
  * vias placed on purpose and, with drawn copper, that copper; `extra` adds to it.
  */
 export function boardRouteInput(d: Design, b: BoardView, extra: Partial<RouteInput> = {}): RouteInput {
-  const { powerNets, planes, netWidths } = routeSetup(d, b);
+  const { powerNets, planes, netWidths, gaps } = routeSetup(d, b);
+  // the lines at a set impedance and the planes under them (the router keeps those planes whole)
+  const lines: NonNullable<RouteInput['lines']> = [];
+  for (const v of b.impedance ?? []) {
+    for (const lay of v.layers) {
+      const plane = b.planes.find((p) => p.layer === lay.over && !p.area) ?? b.planes.find((p) => p.layer === lay.over);
+      if (plane) for (const netId of v.nets) lines.push({ netId, layer: lay.layer, over: lay.over, plane: plane.netId, h: lay.h });
+    }
+  }
   return {
     outline: b.outline,
     layers: b.layers,
@@ -1269,14 +1284,22 @@ export function boardRouteInput(d: Design, b: BoardView, extra: Partial<RouteInp
     parts: b.parts,
     powerNets,
     netWidths,
+    ...(Object.keys(gaps).length ? { pourGaps: gaps } : {}),
+    ...(lines.length ? { lines } : {}),
     planes: planes.map(({ netId, layer, area, style }) => ({ netId, layer, ...(area ? { area } : {}), ...(style ? { style } : {}) })),
-    ...(b.viaGroups.length ? { vias: planVias(d.board?.vias ?? [], b.parts, b.outline.w, b.outline.h, b.rules, (id) => d.nets[id]?.attrs.maxCurrent) } : {}),
+    ...(b.viaGroups.length ? { vias: withGaps(planVias(d.board?.vias ?? [], b.parts, b.outline.w, b.outline.h, b.rules, (id) => d.nets[id]?.attrs.maxCurrent), gaps, b.rules.clearance) } : {}),
     cornerRadius: b.cornerRadius,
     ...(b.shape ? { shape: b.shape } : {}),
     cutouts: b.cutouts,
     ...(b.drawn ? { drawn: { tracks: b.drawn.tracks, vias: b.drawn.vias } } : {}),
     ...extra,
   };
+}
+
+/** The router's via plan, a fence along a line told the line's gap to the ground (its pour gap, else the clearance). */
+function withGaps(plan: ViaPlan, gaps: Record<string, number>, clearance: number): NonNullable<RouteInput['vias']> {
+  const { groups: _g, along, ...rest } = plan;
+  return { ...rest, ...(along?.length ? { along: along.map((a) => ({ ...a, gap: Math.max(clearance, gaps[a.line] ?? 0) })) } : {}) };
 }
 
 /**
@@ -1309,8 +1332,12 @@ export function softened(x: BoardDiagnostic): BoardDiagnostic {
 function routeSetup(d: Design, b: BoardView) {
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const planes = b.planes;
-  const netWidths = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
-  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort(), ...(b.drawn ? ['drawn', b.drawn] : [])]));
+  // a net's own width, or the one its impedance rule gives (on its first layer)
+  const netWidths: Record<string, number> = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
+  for (const v of b.impedance ?? []) if (v.layers[0]) for (const id of v.nets) netWidths[id] = v.layers[0].width;
+  // how far the pours keep from a line at a set impedance
+  const gaps = pourGaps(b.impedance);
+  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort(), ...(b.drawn ? ['drawn', b.drawn] : []), ...(Object.keys(gaps).length ? ['gaps', Object.entries(gaps).sort()] : [])]));
   // the pads dropping through vias the agent placed (add_vias drop), per net
   const drops = (d.board?.vias ?? []).filter((g) => g.kind === 'drop');
   // what copper routed now holds under (StoredCopper.basis): the board, and per net what decides its
@@ -1321,10 +1348,10 @@ function routeSetup(d: Design, b: BoardView) {
     nets: Object.fromEntries(
       Object.keys(d.nets)
         .sort()
-        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.offsets ?? g.count ?? null, g.drill ?? null, g.size ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null])]))]),
+        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.offsets ?? g.count ?? null, g.drill ?? null, g.size ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null]), ...(gaps[id] !== undefined ? [gaps[id]] : [])]))]),
     ),
   };
-  return { powerNets, planes, netWidths, key, basis };
+  return { powerNets, planes, netWidths, gaps, key, basis };
 }
 
 /** The key copper routed for this design's board now would be kept under (see BoardSettings.copper). */
@@ -1815,7 +1842,7 @@ export function autoPlanes(d: Design, layers: 2 | 4): { netId: string; layer: Co
 }
 
 /** Planes in effect: the explicit ones from set_plane, else automatic. */
-function settingsPlanes(d: Design, layers: 2 | 4): { netId: string; layer: CopperLayer; auto: boolean; area?: PlaneArea; style?: PlaneStyle }[] {
+export function settingsPlanes(d: Design, layers: 2 | 4): { netId: string; layer: CopperLayer; auto: boolean; area?: PlaneArea; style?: PlaneStyle }[] {
   const explicit = d.board?.planes;
   if (!explicit) return autoPlanes(d, layers);
   const valid = new Set<CopperLayer>(layers === 4 ? ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'] : ['F.Cu', 'B.Cu']);
@@ -1843,6 +1870,8 @@ export interface ViaPlan {
   drops?: { group: string; componentId: string; number: string; vias: { x: number; y: number }[] }[];
   /** A drop via's stub: a short track from inside its pad to the via, power width (narrower where the via or the pad is). */
   stubs?: Track[];
+  /** Fences along a line (a net's tracks), laid by the router along both sides of them once they are routed. */
+  along?: { group: string; netId: string; line: string; pitch: number; drill: number; pad: number }[];
   groups: BoardView['viaGroups'];
 }
 
@@ -1950,6 +1979,9 @@ export function planVias(groups: ViaGroup[], parts: BoardPart[], w: number, h: n
       (out.limits ??= {})[g.id] = n;
       const why = current ? `${n} for ${r3(current)} A (about ${Math.round(per * 10) / 10} A per ${g.drill ?? rules.viaDrill} mm via)` : `${n}: no current known (give amps, or the net's max_current)`;
       entry(n, why);
+    } else if (g.kind === 'fence' && g.along) {
+      (out.along ??= []).push({ group: g.id, netId: g.netId, line: g.along, pitch, drill: g.drill ?? rules.viaDrill, pad: size });
+      out.groups.push({ id: g.id, netId: g.netId, kind: 'fence', wanted: 0, along: g.along });
     } else {
       const box = areaBox(g.area ?? {}, parts, w, h);
       if (!box) {

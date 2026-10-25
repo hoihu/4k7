@@ -1,3 +1,4 @@
+import type { Stackup } from './stackup.ts';
 import type { EditOp } from './ops.ts';
 import type { ScopeOutcome } from './scope.ts';
 import type { ValueSeries } from './model.ts';
@@ -58,6 +59,10 @@ export type RejectionCode =
   | 'SHEET_UNKNOWN'
   | 'WAIVER_UNKNOWN'
   | 'ENCLOSURE_INVALID'
+  | 'STACKUP_INVALID'
+  | 'STACKUP_UNKNOWN'
+  /** No layer of the board can carry a line at that impedance (set_impedance). */
+  | 'IMPEDANCE_IMPOSSIBLE'
   /** The route helper's results were computed for an earlier working copy (it changed meanwhile). */
   | 'STALE';
 
@@ -305,4 +310,6 @@ export interface DesignSummary {
   description?: { blocks: number; undescribed: string[] };
   /** Present when generic passives are held to standard-value series (set_value_series). */
   valueSeries?: ValueSeries;
+  /** The board's stack-up in effect (what calc impedance works on by default). */
+  stackup?: Pick<Stackup, 'name' | 'copper' | 'dielectric' | 'mask'>;
 }

@@ -36,6 +36,7 @@ import {
   viaCurrentFor,
   viasForCurrent,
   enclosureGraphicsInfo,
+  boardStackup,
 } from '@4k7/schema';
 import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
 import { applyOp, describeConstraint, descriptionView } from './apply.ts';
@@ -51,6 +52,8 @@ import { MIN_FREE, circuitSignature, guardOp, measure, positions, resolveScope, 
 import { schematicChecks } from './schcheck.ts';
 import { tryPlacements } from './trial.ts';
 import { suggestMoves } from './suggest.ts';
+import { impedanceText, resolveRule } from './lines.ts';
+import { lineBoard } from './lineops.ts';
 
 interface Analysis {
   view: SchematicView;
@@ -457,7 +460,10 @@ export class Kernel {
             note: 'Each pad drops onto its plane with one via of the router\'s. On the pads the current flows through (trace the path: where it comes in, the regulator or switch, the inductor, the bulk and output caps, where it goes out, and the ground return of each), place as many as that current needs yourself: add_vias kind drop (ref, pad, at: each via\'s centre, in a row right beside the pad on the side facing away from the part, half a via plus the clearance off its edge; each gets its own short stub to the pad), then look at them (get_board_image region round the pad). Not on pads no current to speak of flows through (a switch, an LED, a pull-up, an IC\'s logic pins).',
           },
         };
-        return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, track, ...vias };
+        // a line at a set impedance: its rule worked out for the board
+        const rule = d.board?.impedance?.find((r) => r.nets.includes(n.id));
+        const impedance = rule ? { impedance: impedanceText(resolveRule(rule, lineBoard(d)), (id) => d.nets[id]?.name ?? id) } : {};
+        return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, track, ...impedance, ...vias };
       }
       case 'get_diagnostics':
         return this.analyse(d).diagnostics;
@@ -572,6 +578,7 @@ export class Kernel {
       waivers: Object.keys(d.waivers).length,
       ...(d.description ? { description: { blocks: d.description.blocks.length, undescribed: descriptionView(d)!.undescribed } } : {}),
       ...(d.valueSeries ? { valueSeries: { ...d.valueSeries } } : {}),
+      stackup: (({ name, copper, dielectric, mask }) => ({ name, copper, dielectric, ...(mask ? { mask } : {}) }))(boardStackup(d.board ?? DEFAULT_BOARD)),
     };
   }
 
