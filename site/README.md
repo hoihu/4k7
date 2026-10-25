@@ -19,6 +19,7 @@ By hand: `cd site && npx wrangler deploy` (after `npx wrangler login`).
 | File | Use |
 |---|---|
 | `index.html` | The page. Dark theme. |
+| `changelog.html` | 4k7.dev/changelog. The releases in it are written from `CHANGELOG.md` by `node scripts/changelog.mjs` (CI checks that it is up to date); the rest of the page is edited by hand. |
 | `favicon.svg` | Browser tab icon. |
 | `brand/mark.svg` | The resistor alone, transparent. |
 | `brand/logo.svg`, `brand/logo-light.svg` | Resistor + "4k7" wordmark, for light / dark backgrounds. |

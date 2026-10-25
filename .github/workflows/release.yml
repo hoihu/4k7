@@ -1,5 +1,6 @@
 # When a version tag (v0.1.0) is pushed: builds the downloadable app (scripts/bundle.mjs) and attaches
-# it to a GitHub release, which 4k7.dev links to (…/releases/latest/download/<file>). See docs/distribution.md.
+# it to a GitHub release, which 4k7.dev links to (…/releases/latest/download/<file>). The release's notes are
+# the version's section of CHANGELOG.md, then GitHub's list of pull requests. See docs/distribution.md.
 #
 # The npm job is inert until the package is published: "private": true in package.json makes npm refuse
 # to publish, and npm must trust this workflow (npmjs.com → package settings → Trusted publishing:
@@ -24,10 +25,11 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
-      - name: The tag matches the version in package.json
+      - name: The tag matches the version in package.json, and CHANGELOG.md has its notes
         run: |
           v="$(node -p 'require("./package.json").version')"
           [ "$GITHUB_REF_NAME" = "v$v" ] || { echo "tag $GITHUB_REF_NAME, package.json $v"; exit 1; }
+          node scripts/changelog.mjs --check
       - run: npm run typecheck
       - run: npm test
       - run: node scripts/bundle.mjs
@@ -40,7 +42,9 @@ jobs:
             gh release upload --clobber "$GITHUB_REF_NAME" $files
           else
             case "$GITHUB_REF_NAME" in *-*) pre=--prerelease;; *) pre=;; esac
-            gh release create "$GITHUB_REF_NAME" --generate-notes $pre $files
+            # CHANGELOG.md's notes (a pre-release may have none), followed by GitHub's list of pull requests
+            node scripts/changelog.mjs notes "$GITHUB_REF_NAME" > build/notes.md || [ -n "$pre" ]
+            gh release create "$GITHUB_REF_NAME" --notes-file build/notes.md --generate-notes $pre $files
           fi
 
   publish:

@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#121211">
+<title>Changelog — 4k7</title>
+<meta name="description" content="What changed in each release of 4k7, the AI-first PCB schematic and layout tool.">
+<meta property="og:title" content="Changelog — 4k7">
+<meta property="og:description" content="What changed in each release of 4k7, the AI-first PCB schematic and layout tool.">
+<meta property="og:url" content="https://4k7.dev/changelog">
+<meta property="og:image" content="https://4k7.dev/brand/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  /* the page's frame as in index.html */
+  :root {
+    color-scheme: dark;
+    --text: #ecebe6;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    /* 4k7 = yellow · violet · red · gold */
+    --yellow: #f2c230;
+    --violet: #7a3fb0;
+    --red: #d6382f;
+    --gold: #d7a63a;
+    --bg: #121211;
+    --panel: #1b1a18;
+    --line: #2e2c28;
+    --muted: #9b958a;
+    --body: #d9c69f;
+    --lead: #8f887d;
+    --accent: #e08a4f;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font: 16px/1.55 var(--sans);
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  code { font-family: var(--mono); }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+
+  header.top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 0;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; letter-spacing: .02em; }
+  .brand svg { width: 40px; height: 20px; }
+  nav a { margin-left: 22px; font-size: 14px; color: var(--muted); text-decoration: none; }
+  nav a:hover, nav a[aria-current] { color: var(--text); }
+
+  .kicker {
+    margin: 0 0 8px; font-size: 13px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .kicker::before { content: ""; width: 6px; height: 18px; border-radius: 2px; background: var(--gold); }
+
+  footer { border-top: 1px solid var(--line); padding: 28px 0 44px; font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  footer a { text-decoration: none; margin-right: 18px; }
+  footer a:hover { color: var(--text); }
+  .bands-mini { display: inline-flex; gap: 3px; vertical-align: middle; margin-right: 8px; }
+  .bands-mini i { width: 4px; height: 12px; border-radius: 1px; display: inline-block; }
+
+  /* ---------- the changelog ---------- */
+  .intro { padding: 56px 0 36px; }
+  h1 { margin: 0 0 12px; font-size: clamp(30px, 5vw, 42px); line-height: 1.1; font-weight: 650; letter-spacing: -.02em; }
+  .intro p { margin: 0; max-width: 620px; color: var(--muted); }
+  .intro p a { text-underline-offset: 3px; text-decoration-color: var(--lead); }
+  .intro p a:hover { color: var(--text); }
+
+  .release {
+    display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 0 40px;
+    padding: 40px 0 44px; border-top: 1px solid var(--line);
+  }
+  .release > header { align-self: start; position: sticky; top: 24px; display: flex; flex-direction: column; gap: 4px; }
+  .release h2 { margin: 0; font-size: 28px; line-height: 1.15; font-weight: 650; letter-spacing: -.015em; }
+  .release h2 a { text-decoration: none; }
+  .release:first-of-type h2::after {
+    content: "latest"; margin-left: 10px; padding: 3px 7px 2px; border-radius: 6px; vertical-align: 5px;
+    font: 600 10.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: #1a1408; background: var(--gold);
+  }
+  .release time { font-size: 14px; color: var(--muted); }
+  .release .gh { font-size: 13px; color: var(--muted); text-underline-offset: 3px; text-decoration-color: var(--line); }
+  .release .gh:hover { color: var(--text); text-decoration-color: currentColor; }
+
+  .notes { min-width: 0; font-size: 15px; line-height: 1.6; color: #d4d1c9; }
+  .notes > p { margin: 0 0 8px; max-width: 680px; }
+  .notes > p:first-child { font-size: 17px; line-height: 1.55; color: var(--text); }
+  .notes h3 {
+    margin: 30px 0 10px; font-size: 12.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .notes h3::before { content: ""; width: 5px; height: 15px; border-radius: 2px; background: var(--band, var(--accent)); }
+  .notes h3:nth-of-type(4n + 1) { --band: var(--yellow); }
+  .notes h3:nth-of-type(4n + 2) { --band: var(--violet); }
+  .notes h3:nth-of-type(4n + 3) { --band: var(--red); }
+  .notes h3:nth-of-type(4n + 4) { --band: var(--gold); }
+  .notes ul { margin: 0; padding-left: 18px; }
+  .notes > p + ul { margin-top: 16px; }
+  .notes li { margin: 0 0 7px; padding-left: 4px; max-width: 680px; }
+  .notes li::marker { color: var(--lead); }
+  .notes b { color: var(--text); font-weight: 650; }
+  .notes code { font-size: .86em; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; overflow-wrap: anywhere; }
+  .notes a { text-underline-offset: 3px; text-decoration-color: var(--lead); }
+  .notes a:hover { color: var(--text); }
+
+  @media (max-width: 760px) {
+    .release { grid-template-columns: 1fr; padding-top: 32px; }
+    .release > header { position: static; flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 16px; }
+  }
+  /* phones: as in index.html, only Changelog and GitHub */
+  @media (max-width: 520px) { nav a[href^="/#"] { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 80 40" aria-hidden="true">
+        <rect x="0" y="18" width="80" height="4" fill="var(--lead)"/>
+        <rect x="14" y="7" width="52" height="26" rx="9" fill="var(--body)"/>
+        <rect x="22" y="7" width="6" height="26" fill="var(--yellow)"/>
+        <rect x="32" y="7" width="6" height="26" fill="var(--violet)"/>
+        <rect x="42" y="7" width="6" height="26" fill="var(--red)"/>
+        <rect x="54" y="7" width="6" height="26" fill="var(--gold)"/>
+      </svg>
+      4k7
+    </a>
+    <nav>
+      <a href="/#how">How it works</a>
+      <a href="/#why">Why</a>
+      <a href="/changelog" aria-current="page">Changelog</a>
+      <a href="https://github.com/hoihu/4k7">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="intro">
+      <p class="kicker">Changelog</p>
+      <h1>What’s new in 4k7</h1>
+      <p>Every release, newest first. <a href="/#download">Download</a> the latest; older downloads and every
+        pull request of a release are on its page on <a href="https://github.com/hoihu/4k7/releases">GitHub</a>.</p>
+    </div>
+
+    <!-- releases: written by scripts/changelog.mjs from CHANGELOG.md, do not edit -->
+    <article class="release" id="v0.2.0">
+      <header>
+        <h2><a href="#v0.2.0">0.2.0</a></h2>
+        <time datetime="2026-10-25">25 October 2026</time>
+        <a class="gh" href="https://github.com/hoihu/4k7/releases/tag/v0.2.0">Release on GitHub</a>
+      </header>
+      <div class="notes">
+        <p>The chat runs on the coding agent you already use, projects are files on your computer, and the agent now takes a board from placement to the last routed connection, designs an enclosure for it, checks stock and cost at three assembly houses and lays lines at a set impedance.</p>
+        <h3>Chat and agents</h3>
+        <ul>
+          <li><b>Chat through your coding agent</b>: Claude Code, GitHub Copilot CLI or OpenCode, run by the local server on your own plan or company login, with only the 4k7 tools. Each of them can also import datasheets.</li>
+          <li><b>API keys for more services</b>: OpenAI, OpenRouter, Google Gemini, a local model (Ollama, LM Studio) or any OpenAI- or Anthropic-compatible address, beside Anthropic; one key per service (Settings → API keys).</li>
+          <li><b>The model button</b> under the chat box picks the agent or service and its model, with favourites (★), the effort level and web lookups. Switch in the middle of a conversation: the design stays.</li>
+          <li><b>Settings → Coding agents</b> shows the program each agent runs and its version, takes the path of another one, and <b>Look again</b> finds an agent installed after the server started.</li>
+          <li><b>Rebuild a schematic from a picture</b>: drop, paste or attach a picture or PDF of a schematic, and the agent reads it, zooming in on values and pin numbers, and rebuilds the circuit.</li>
+          <li><b>The agent sees your view</b>: each message says which sheet or board you are looking at and, zoomed in, the area and the parts in it, so “improve this area” needs no coordinates.</li>
+          <li><b>Keep the conversation in the project file</b> (opt-in, Settings → General → Conversation): every message, tool call and decision, with the attached pictures and PDFs. Earlier sessions show read-only at the top of the chat.</li>
+          <li>Drag the edge of the chat or of the side panel to resize it.</li>
+          <li>The chat box starts five lines tall, an empty chat just asks “What do you want to build today?”, and the suggestion chips are gone.</li>
+          <li>The offline demo is gone; a new chat starts on Claude Code.</li>
+        </ul>
+        <h3>Projects and settings</h3>
+        <ul>
+          <li><b>Projects are files on your computer</b>: one <code>&lt;name&gt;.twd.json</code> per project in <code>~/Documents/4k7</code> (or the folder set as <code>"projectsDir"</code> in <code>~/.4k7/server.json</code>), saved as you work; imported parts, artwork and datasheets go to <code>~/.4k7</code>. What 0.1 kept in the browser becomes files the first time each browser opens this version. Without the server the header says “not saved”, and the changes are written once it is back.</li>
+          <li><b>Settings shows one section at a time.</b> General holds the project (its file, Show folder, Save copy as…), Open… and New.</li>
+          <li><b>Notes for the agent</b> in your own words, sent with every request: for the schematic drawing, the board layout and the enclosure (in Settings).</li>
+          <li>The resistor logo in the app, and browsers now show its icon.</li>
+        </ul>
+        <h3>Schematic</h3>
+        <ul>
+          <li><b>The agent places parts and draws the sheet</b>: it puts symbols where it wants them (<code>place_symbol</code>), chooses a wire or a net label for each connection (<code>wire</code>, <code>label</code>, <code>erase</code>), or hands a sheet back to the automatic layout (<code>auto_draw</code>). Once it arranges a sheet, the drawing is kept and follows the netlist: removed parts leave, renamed nets follow, new parts go to a free spot, and a connection the drawing does not show gets a label, so none is ever left out.</li>
+          <li><b>The agent arranges a symbol’s pins</b> as the datasheet draws them (<code>set_symbol</code>), and the arrangement goes back to the library part.</li>
+          <li>Supplies point up and ground points down, always; a divider on an IC pin is one column; pull-ups stand and pull-downs hang.</li>
+          <li>Wires stay tidy as the agent draws: no loops, no runs drawn twice, no humps beside lying parts (a 21-part buck: 144 wire segments down to 87).</li>
+          <li><b>Drawing checks</b> (<code>SCH.*</code>: crossings, jogs, detours, overlapping text, dangling wires…), each set to Must fix, Warn, Note or Off in Settings → Schematic drawing. ✦ Optimize judges how a drawing reads, and the agent looks once more at the drawing warnings its change brought before it finishes.</li>
+        </ul>
+        <h3>Board</h3>
+        <ul>
+          <li><b>The agent places the board</b>: it decides where the main parts go and the placer arranges the small parts round them (Propose placement). <code>try_placements</code> measures 2–8 arrangements against each other (ratsnest length, crossings, board size, a trial routing) without changing the design and explores round the best one; <code>refine_placement</code> untangles the small parts.</li>
+          <li><b>Who placed what</b>: the parts you place are your decisions and stay where you put them; the agent’s choices show dashed, yours solid. <b>Continue layout ✦</b> hands the board back to the agent.</li>
+          <li><b>Routing to completion</b>: the router keeps going until nothing is open (a 128-part, 2-layer board: 8 open connections down to 0), and every open connection says why (the nets in the way, the parts nearby). The agent does not hand over a board with open connections without saying why. Routing is drawn live, <b>Stop</b> keeps the best pass so far, and a routed board is saved with the project, so it opens routed.</li>
+          <li><b>Incremental routing</b>: after a change the copper that still holds stays, and only what is open is routed again (most small moves in 0.3–1.5 s instead of 2–7 s).</li>
+          <li><b>Drawn copper</b> (opt-in per project, Layout → Copper): the agent lays the tracks and vias itself, each checked as it is drawn, and a part that moves takes its tracks along. The router becomes a helper that routes the connections the agent names around its copper, and <code>suggest_moves</code> finds small part moves that close open connections.</li>
+          <li><b>Planes and vias</b>: split planes on inner layers (+5V across a layer, +3V3 under the MCU), local pours on the outer layers (GND only round a regulator), plane styles (gaps, thermal reliefs or solid joints), and vias placed on purpose: thermal vias in an exposed pad, stitching grids and fences, and drop vias for high-current pads, each on its own stub.</li>
+          <li><b>Lines at a set impedance</b>: a stack-up per board (JLCPCB and PCBWay presets, or imported from your fab’s page) and impedance rules per net or differential pair; a 2D field solver works out each layer’s track width and gap. The agent draws pairs side by side and fences RF lines with ground vias, and the <code>IMP.*</code> checks hold the copper to it: width, an unbroken reference plane, pair gap and skew, a ground via beside each signal via. It follows a guide for fast interfaces and RF lines.</li>
+          <li><b>STEP export</b> (Layout → Files): the assembled board for your mechanical CAD, with its outline, holes and the part bodies as solids, each part a component named by its designator.</li>
+          <li>Silkscreen text from a stroke font, mirrored on the bottom side so it reads from below.</li>
+          <li>Slotted holes and pads with several pins, in the Gerbers, the drill file, the 3D view and the STEP model.</li>
+          <li>A part you or the agent place may go right up to the board edge, such as a USB-C connector flush with it.</li>
+          <li>A <b>Dimensions</b> layer: the board’s size and the mounting holes’ positions and diameters, also drawn in the design document.</li>
+          <li>Pads and planes follow their copper layer’s colour and checkbox.</li>
+          <li>Smooth zoom and pan in Safari (zooming a 252-part board: about 130 ms a frame down to 17 ms).</li>
+          <li>The board actions moved from the tool bar to the side panel (Placement, Copper, Files); click a check to read its whole message.</li>
+        </ul>
+        <h3>Enclosure (new)</h3>
+        <ul>
+          <li><b>A box for the board</b>, a new step after Layout: the agent agrees a brief with you, writes the box as an OpenSCAD script around the board, renders it with the OpenSCAD on your computer and fixes what the checks find (a part in the way, a blocked opening, no room under the lid, the board not held on its holes) until it is clean. Connectors know which way they are plugged from.</li>
+          <li><b>Ready to print</b>: one 3MF plate with every piece turned onto the bed, or an STL per piece; warnings for steep overhangs, wide ceilings, thin walls and pieces that may warp.</li>
+          <li><b>Labels and logos</b> on the box: engraved, raised or inlaid in a second colour, from your artwork library.</li>
+          <li><b>A cut you move through the box</b>, along x, y or z or across an opening, with the slider or by dragging it. The agent knows where the cut is, so “this wall is too thin” needs no coordinates.</li>
+          <li>Enclosure notes for your printer, material and fasteners (Settings → Enclosure); hide the board to see how the box holds it; plug paths in the Layout’s 3D view.</li>
+        </ul>
+        <h3>Sourcing and cost</h3>
+        <ul>
+          <li><b>Pick the assembly house</b> (Layout → Sourcing): JLCPCB, Eurocircuits or PCBWay. The checks, the Inspector, the agent and the BOM in the fab files follow it.</li>
+          <li><b>Live stock from JLCPCB</b> itself, read by the local server; stock that is not known shows as unknown, never as 0.</li>
+          <li><b>Check stock</b> for the number of boards you build: what stops the order (out of stock, too few, gone, not the part the design asks for), what wants a look, the fees, and in-stock replacements one click away. At PCBWay, which buys every part for the order, <b>Check BOM</b> says what it could not buy.</li>
+          <li><b>Check cost</b>: the order with every assembly fee (JLCPCB’s Economic and Standard assembly as a range, Eurocircuits’ fees from the price table its calculator runs on, PCBWay’s live quote) and the bare board’s surcharges, with savings one click away.</li>
+          <li><b>Values check</b>: cheaper ways to make each resistor and capacitor value, such as 31.6 kΩ as 30 kΩ + 1.5 kΩ in series, both Basic parts at JLCPCB.</li>
+          <li><b>Optimize cost with the agent ✦</b> goes through the design part by part, following a cost guide, and asks before a change you may care about.</li>
+        </ul>
+        <h3>Parts and datasheets</h3>
+        <ul>
+          <li><b>Design with the datasheet</b>: an import notes the pages with the typical application, the design procedure and the layout guidelines. The agent starts from them and cites the page each choice comes from; the Parts view links to them.</li>
+          <li>A part with only a link to its datasheet gets the PDF downloaded on the first read.</li>
+          <li>Imports catch a package family that contradicts the package name, and AGND, PGND, AVSS and DVSS count as grounds.</li>
+        </ul>
+        <h3>Fixes</h3>
+        <ul>
+          <li>GitHub Copilot in VS Code left out the <code>design_edit</code> and <code>read_datasheet</code> tools.</li>
+          <li>Saving an imported part failed with “The object can not be cloned” once a second-pass value was picked.</li>
+          <li>Accept and Reject could end up under the layout’s tool bar.</li>
+          <li>Datasheet text could not be read in Safari (search, page text, the pin-row highlight).</li>
+          <li>Pours were drawn wrong: only their thermal spokes showed on free-form outlines, and on rectangular boards the clearances round tracks were filled in.</li>
+          <li>A graphic made of many dots failed with “Maximum call stack size exceeded”.</li>
+          <li>The chat box was clipped and showed a scrollbar.</li>
+        </ul>
+      </div>
+    </article>
+    <article class="release" id="v0.1.0">
+      <header>
+        <h2><a href="#v0.1.0">0.1.0</a></h2>
+        <time datetime="2026-10-11">11 October 2026</time>
+        <a class="gh" href="https://github.com/hoihu/4k7/releases/tag/v0.1.0">Release on GitHub</a>
+      </header>
+      <div class="notes">
+        <p>The first release you can download: a Mac app and Linux archives from 4k7.dev, with Node inside, so there is nothing else to install.</p>
+        <ul>
+          <li>Describe the circuit in the chat and the agent designs it through a typed operation API; every change is a checked changeset to accept or reject, with Undo and Redo.</li>
+          <li>The schematic draws itself onto A4, A3 or A2 pages, never splitting a functional block, with net labels that show the signal’s direction and a standard title block.</li>
+          <li>The board is placed and routed from the schematic, with a ground pour, parts on both sides, DRC, 2D and 3D views and fabrication panels with mouse bites, and exported as Gerber, drill, BOM and pick-and-place.</li>
+          <li>Manufacturer limits for JLCPCB, PCBWay and Eurocircuits; parts from JLCPCB’s catalogue with their LCSC numbers in the BOM.</li>
+          <li>Parts from datasheet PDFs: the symbol and footprint are generated from the pin table and package the agent reads.</li>
+          <li>A design document from the design: the functional blocks, the board in 3D, an assembly drawing, the BOM and the schematic pages.</li>
+          <li>Chat in the app through Claude Code or with an Anthropic API key, or drive 4k7 from your agent over MCP.</li>
+        </ul>
+      </div>
+    </article>
+    <!-- /releases -->
+  </main>
+
+  <footer>
+    <div>
+      <span class="bands-mini"><i style="background:var(--yellow)"></i><i style="background:var(--violet)"></i><i style="background:var(--red)"></i><i style="background:var(--gold)"></i></span>
+      4k7 · MIT licensed.
+    </div>
+    <div>
+      <a href="https://github.com/hoihu/4k7">GitHub</a>
+      <a href="/changelog">Changelog</a>
+      <a href="https://github.com/hoihu/4k7/releases">Releases</a>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
