@@ -2,7 +2,7 @@
  * The user's view: what they had on screen when they sent a message, so "improve this area" or
  * "the parts here" can be resolved without asking. Unlike an Optimize scope it restricts nothing.
  */
-import type { BoardView, Rect, SheetView, ViewInfo } from '@4k7/schema';
+import type { AreaViewInfo, BoardView, EnclosureViewInfo, Rect, SheetView, ViewInfo } from '@4k7/schema';
 
 const inside = (r: Rect, b: Rect) => b.x >= r.x && b.y >= r.y && b.x + b.w <= r.x + r.w && b.y + b.h <= r.y + r.h;
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
@@ -28,7 +28,7 @@ function classify(r: Rect, items: { ref: string; box: Rect }[]): { parts: string
 }
 
 /** The schematic area `rect` (sheet mils) shown of `sheet`. */
-export function schematicViewInfo(sheet: SheetView, rect: Rect): ViewInfo {
+export function schematicViewInfo(sheet: SheetView, rect: Rect): AreaViewInfo {
   const r = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h) };
   return {
     view: 'schematic',
@@ -44,7 +44,7 @@ export function schematicViewInfo(sheet: SheetView, rect: Rect): ViewInfo {
 }
 
 /** The board area `rect` (mm) shown of `board`. */
-export function boardViewInfo(board: BoardView, rect: Rect): ViewInfo {
+export function boardViewInfo(board: BoardView, rect: Rect): AreaViewInfo {
   const mm = (v: number) => Math.round(v * 10) / 10;
   const r = { x: mm(rect.x), y: mm(rect.y), w: mm(rect.w), h: mm(rect.h) };
   return {
@@ -61,8 +61,25 @@ export function boardViewInfo(board: BoardView, rect: Rect): ViewInfo {
 const MAX_LISTED = 60;
 const list = (refs: string[]) => (refs.length > MAX_LISTED ? `${refs.slice(0, MAX_LISTED).join(' ')} … ${refs.length - MAX_LISTED} more` : refs.join(' '));
 
+/** The cut the user looks at in the Enclosure view. */
+function formatCut(v: EnclosureViewInfo): string {
+  const lines = ['<view kind="enclosure">'];
+  const off = v.offset_mm ? `${Math.abs(v.offset_mm)} mm off ${v.through}'s centre` : `through ${v.through}'s centre`;
+  const opened = v.opened ? '; the pieces lifted apart' : '';
+  if (v.axis) {
+    lines.push(`the box cut open across ${v.axis}: the plane ${v.axis} = ${v.at_mm} mm (board.scad)${v.through ? `, ${off}` : ''}; the ${v.removed === '+' ? '+' : '−'}${v.axis} half cut away${opened}`);
+    lines.push(`render_enclosure section: { axis: "${v.axis}", at_mm: ${v.at_mm} } shows this plane`);
+  } else {
+    lines.push(`the box cut open ${v.through ? `across the wall along ${v.through}'s plug's way, ${off}` : 'askew'}: the plane n · p = ${v.at_mm} mm, n = (${v.normal.join(', ')}) (board.scad); the half n points ${v.removed === '+' ? 'to' : 'away from'} cut away${opened}`);
+    if (v.through) lines.push(`render_enclosure views: ["sections"] shows the cut through ${v.through}'s centre`);
+  }
+  lines.push('</view>');
+  return lines.join('\n');
+}
+
 /** The <view> block of the design context. */
 export function formatView(v: ViewInfo): string {
+  if (v.view === 'enclosure') return formatCut(v);
   const lines: string[] = [];
   if (v.view === 'schematic') {
     const pages = v.pages ?? [];

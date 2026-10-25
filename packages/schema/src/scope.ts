@@ -64,7 +64,10 @@ export interface ScopeOutcome {
  * that is open and the area of it they zoomed into, so "this area", "here" and "what I see" can be
  * resolved. Read-only: unlike a scope it restricts nothing.
  */
-export interface ViewInfo {
+export type ViewInfo = AreaViewInfo | EnclosureViewInfo;
+
+/** The schematic sheet or the 2D board, and the area of it on screen. */
+export interface AreaViewInfo {
   view: 'schematic' | 'board';
   /** Schematic: the sheet shown. */
   sheetName?: string;
@@ -78,4 +81,21 @@ export interface ViewInfo {
   parts: string[];
   /** Parts cut by the edge of the view. */
   partly: string[];
+}
+
+/** The Enclosure view with the box cut open: the plane the user looks at (board.scad, mm). */
+export interface EnclosureViewInfo {
+  view: 'enclosure';
+  /** The plane is across this axis, at `at_mm` along it (absent: askew, through an opening). */
+  axis?: 'x' | 'y' | 'z';
+  /** The plane n · p = at_mm. */
+  normal: [number, number, number];
+  at_mm: number;
+  /** The cut went through this part's opening (across the wall along its plug's way), `offset_mm` from its centre. */
+  through?: string;
+  offset_mm?: number;
+  /** The half cut away: the one the normal (the axis) points to, or the other. */
+  removed: '+' | '-';
+  /** The pieces lifted apart (the open view). */
+  opened: boolean;
 }

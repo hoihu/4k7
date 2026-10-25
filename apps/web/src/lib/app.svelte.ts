@@ -20,7 +20,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type ViewInfo } from '@4k7/schema';
+import { RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
 import { boardScadSummary, enclosureJob, enclosureReport, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import { server } from './server.svelte.ts';
@@ -129,6 +129,8 @@ class AppState {
   scope = $state.raw<ScopeInfo | null>(null);
   /** The canvases on screen say which area they show (schematic: sheet mils, board: mm); null when closed. */
   visibleArea: { sch: (() => Rect | null) | null; board: (() => Rect | null) | null } = { sch: null, board: null };
+  /** The Enclosure view says which cut through the box it shows (null: none, or closed). */
+  enclosureCut: (() => EnclosureViewInfo | null) | null = null;
   /** What the user had on screen when they sent the message being answered (the agent may switch views meanwhile). */
   private turnView: ViewInfo | null = null;
   sheet = $state(0);
@@ -1059,7 +1061,7 @@ class AppState {
         const m = Math.max(b.outline.w, b.outline.h) * 0.04 + 1;
         const region = args.region ? { x: Math.min(args.region[0], args.region[2]), y: Math.min(args.region[1], args.region[3]), w: Math.abs(args.region[2] - args.region[0]), h: Math.abs(args.region[3] - args.region[1]) } : null;
         if (region && (region.w < 0.5 || region.h < 0.5)) return fail('board image', 'The region is too small: give x0, y0, x1, y1 in mm at least 0.5 mm apart.');
-        const frame = args.area && seen ? seen.rect : (region ?? { x: -m, y: -m, w: b.outline.w + 2 * m, h: b.outline.h + 2 * m });
+        const frame = args.area && seen?.view === 'board' ? seen.rect : (region ?? { x: -m, y: -m, w: b.outline.w + 2 * m, h: b.outline.h + 2 * m });
         try {
           const img = await renderBoardPng(args.width, frame);
           return {
@@ -1463,8 +1465,9 @@ class AppState {
     return this.settings.provider === 'api' && !!this.apiProblem;
   }
 
-  /** What the user has on screen: the schematic sheet or the 2D board, and the area of it shown. */
+  /** What the user has on screen: the schematic sheet or the 2D board, and the area of it shown; the box cut open. */
   currentView(): ViewInfo | null {
+    if (this.view === 'enc') return this.enclosureCut?.() ?? null;
     if (this.view === 'sch') {
       const sheet = this.k?.view.sheets[this.sheet];
       const rect = this.visibleArea.sch?.();

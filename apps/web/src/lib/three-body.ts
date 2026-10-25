@@ -98,7 +98,18 @@ export function viewerCore(canvas: HTMLCanvasElement, opts: { pixelRatio?: numbe
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = false;
   controls.maxPolarAngle = Math.PI * 0.95;
-  const render = () => renderer.render(scene, camera);
+  /** Drawn after the content, unlit and never cut by the clipping planes (a section's frame). */
+  const overlay = new THREE.Scene();
+  const render = () => {
+    renderer.render(scene, camera);
+    if (!overlay.children.some((o) => o.visible)) return;
+    const planes = renderer.clippingPlanes;
+    renderer.clippingPlanes = [];
+    renderer.autoClear = false;
+    renderer.render(overlay, camera);
+    renderer.autoClear = true;
+    renderer.clippingPlanes = planes;
+  };
   controls.addEventListener('change', render);
   const res = resources();
   let group = new THREE.Group();
@@ -188,6 +199,12 @@ export function viewerCore(canvas: HTMLCanvasElement, opts: { pixelRatio?: numbe
 
   return {
     res,
+    camera,
+    overlay,
+    /** Let the controls orbit, or not (while something in the view is dragged). */
+    orbit(on: boolean) {
+      controls.enabled = on;
+    },
     /** Replace the content; refit the camera unless `keepView`. */
     setContent(next: THREE.Group, keepView = false) {
       scene.remove(group);
