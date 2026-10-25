@@ -2,7 +2,8 @@
  * Deterministic engineering calculators exposed to the agent as the `calc` tool.
  * The model decides *what* to compute; arithmetic and standard-value snapping happen here.
  */
-import { E_SERIES, eSeriesValues, formatQuantity, nearestInSeries, parseQuantity, type CalcCall, type ESeries, type ValueSeries } from '@4k7/schema';
+import { E_SERIES, eSeriesValues, formatQuantity, nearestInSeries, parseQuantity, type CalcCall, type DesignSummary, type ESeries, type ValueSeries } from '@4k7/schema';
+import { analyseLine, gapForLine, widthForLine, type LineSection } from '@4k7/kernel';
 
 export function seriesValues(name: string): number[] {
   const s = eSeriesValues(name);
@@ -33,11 +34,15 @@ function num(args: CalcCall['args'], key: string, unit?: string, fallback?: numb
   return q.value;
 }
 
+/** The board's stack-up as the design summary gives it (calc impedance works on it by default). */
+export type CalcStackup = NonNullable<DesignSummary['stackup']>;
+
 /**
  * `design` is the design's value series (set_value_series): it replaces each calculator's own
- * default series for that kind of part; a `series` argument wins over both.
+ * default series for that kind of part; a `series` argument wins over both. `stackup`: the board's,
+ * what impedance works on unless given h and er.
  */
-export function runCalc(call: CalcCall, design: ValueSeries = {}): Record<string, string | number> {
+export function runCalc(call: CalcCall, design: ValueSeries = {}, stackup?: CalcStackup): Record<string, string | number> {
   const a = call.args;
   const given = a.series !== undefined ? String(a.series).toUpperCase() : undefined;
   const pick = (kind: keyof ValueSeries, fallback: ESeries): string => given ?? design[kind] ?? fallback;
@@ -126,5 +131,83 @@ export function runCalc(call: CalcCall, design: ValueSeries = {}): Record<string
       const mode = a.round === 'up' || a.round === 'down' ? a.round : 'nearest';
       return { value: formatQuantity(nearestE(v, s, mode)), series: s };
     }
+    case 'impedance':
+      return impedance(a, stackup);
   }
+}
+
+const mm = (v: number) => Number(v.toFixed(4));
+
+/**
+ * A track's impedance with the field solver: the width that gives `ohms`, or what `width` gives;
+ * with `gap` a differential pair (`diff` with `width` and `ohms`: the gap that gives it), with
+ * `coplanar_gap` ground beside it on its layer. On the board's stack-up (the layer over the plane
+ * next to it, with its solder mask) unless h and er are given.
+ */
+function impedance(a: CalcCall['args'], stackup?: CalcStackup): Record<string, string | number> {
+  const has = (k: string) => a[k] !== undefined;
+  const len = (k: string) => {
+    const v = num(a, k);
+    if (!(v > 0)) throw new CalcError(`${k} must be a positive length in mm`);
+    return v;
+  };
+  const layer = has('layer') ? String(a.layer) : 'F.Cu';
+  if (layer !== 'F.Cu' && layer !== 'B.Cu') throw new CalcError('layer is F.Cu or B.Cu (the inner layers are planes)');
+  let over: string;
+  let base: Omit<LineSection, 'w'>;
+  if (has('h') || has('er')) {
+    if (!has('h') || !has('er')) throw new CalcError('give h (mm to the plane) and er together');
+    const er = num(a, 'er');
+    if (!(er >= 1)) throw new CalcError('er must be ≥ 1');
+    base = { t: has('t') ? len('t') : 0.035, below: [{ h: len('h'), er }] };
+    over = `${base.below[0]!.h} mm to the plane, εr ${er}`;
+  } else {
+    if (!stackup) throw new CalcError('no stack-up known: give h (mm to the plane) and er');
+    const top = layer === 'F.Cu';
+    const d = stackup.dielectric[top ? 0 : stackup.dielectric.length - 1]!;
+    base = { t: has('t') ? len('t') : stackup.copper[top ? 0 : stackup.copper.length - 1]!, below: [{ h: d.mm, er: d.er }] };
+    if (stackup.mask && !(has('mask') && Number(a.mask) === 0)) base.mask = { base: stackup.mask.overLaminate, copper: stackup.mask.overCopper, er: stackup.mask.er };
+    over = `${stackup.name}: ${layer}, ${d.mm} mm to the plane, εr ${d.er}`;
+  }
+  if (has('coplanar_gap')) base.g = len('coplanar_gap');
+  const pair = has('gap') || has('diff');
+  let w: number;
+  if (has('width')) {
+    w = len('width');
+    if (has('gap')) base.s = len('gap');
+    else if (pair) {
+      if (!has('ohms')) throw new CalcError('a pair needs gap, or ohms to find the gap for the width');
+      const s = gapForLine(num(a, 'ohms'), { ...base, w });
+      if (s === null) throw new CalcError(`no gap makes ${num(a, 'ohms')} Ω differential with ${w} mm tracks`);
+      base.s = s;
+    }
+  } else {
+    if (!has('ohms')) throw new CalcError('give ohms (for the width) or width (for the impedance)');
+    if (pair && !has('gap')) throw new CalcError('a pair needs gap (to find the width) or width (to find the gap)');
+    if (has('gap')) base.s = len('gap');
+    const z = num(a, 'ohms');
+    const found = widthForLine(z, base);
+    if (found === null) throw new CalcError(`no width makes ${z} Ω${pair ? ' differential' : ''} here`);
+    w = found;
+  }
+  const r = analyseLine({ ...base, w });
+  const out: Record<string, string | number> = {
+    width_mm: mm(w),
+    ...(base.s !== undefined ? { gap_mm: mm(base.s) } : {}),
+    ...(base.g !== undefined ? { coplanar_gap_mm: mm(base.g) } : {}),
+    [pair ? 'differential_ohm' : 'impedance_ohm']: Number(r.z.toFixed(2)),
+    ...(pair ? { odd_ohm: Number(r.odd!.toFixed(2)), even_ohm: Number(r.even!.toFixed(2)), common_ohm: Number(r.common!.toFixed(2)) } : {}),
+    eeff: Number(r.eeff.toFixed(3)),
+    delay_ps_per_mm: Number(r.delay.toFixed(3)),
+    over,
+    mask: base.mask ? `${base.mask.copper} mm over copper, εr ${base.mask.er}` : 'none',
+  };
+  if (has('f')) {
+    // the wavelength on this line: v / f, v = 1 / delay
+    const lambda = 1e12 / (r.delay * num(a, 'f', 'Hz'));
+    out.wavelength_mm = Number(lambda.toFixed(2));
+    out.tenth_wavelength_mm = Number((lambda / 10).toFixed(2));
+  }
+  out.note = 'Quasi-static field solver, solder mask included; within about 1 % of the stack-up as given (the fab holds ±10 %).' + (pair ? ' A pair: its differential impedance (2 × odd mode); keep the gap all the way.' : '');
+  return out;
 }

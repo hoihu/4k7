@@ -9,6 +9,7 @@ export * from './server.ts';
 export * from './ingest.ts';
 export * from './board.ts';
 export * from './fab.ts';
+export * from './stackup.ts';
 export * from './sourcing.ts';
 export * from './scope.ts';
 export * from './panel.ts';

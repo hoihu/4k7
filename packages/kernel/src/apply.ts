@@ -61,7 +61,8 @@ import { autoPlanes, dropOffset, padNet, placeBoard, storedPlacement } from './b
 import { underBody } from './drc.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
-import { drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
+import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
+import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
 import { isDrawn, moveSymbol, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
@@ -173,6 +174,14 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return d.board?.drawn ? routeDrawn(d, op, ctx) : routeStep(d);
     case 'set_copper_mode':
       return setCopperMode(d, op);
+    case 'set_stackup':
+      return setStackup(d, op);
+    case 'set_impedance':
+      return setImpedance(d, op);
+    case 'remove_impedance':
+      return removeImpedance(d, op);
+    case 'draw_pair':
+      return drawPair(d, op);
     case 'draw_track':
       return drawTrack(d, op);
     case 'draw_via':
@@ -278,6 +287,11 @@ function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): OpResult
   if (op.layers) {
     b.layers = op.layers;
     out.push(`${op.layers} layers`);
+    // a stack-up is for one layer count
+    if (b.stackup && b.stackup.copper.length !== op.layers) {
+      out.push(`stack-up ${b.stackup.name} dropped (it is for ${b.stackup.copper.length} layers; the default for ${op.layers} applies until set_stackup)`);
+      delete b.stackup;
+    }
   }
   const rule = (key: RuleKey, v: number | undefined, label: string) => {
     if (v === undefined) return;
@@ -867,8 +881,20 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
     const net = netOf(op.net!);
     group = { id: nextId(), netId: net.id, kind: 'points', points: op.at!.map((p) => [r3(p.x_mm), r3(p.y_mm)]), ...sizes };
     what = `${op.at!.length} ${net.name} via${op.at!.length > 1 ? 's' : ''} at ${op.at!.map((p) => `(${p.x_mm}, ${p.y_mm})`).join(', ')}`;
+  } else if (op.kind === 'fence' && op.along) {
+    if (!op.net) reject({ code: 'INVALID_OP', message: 'add_vias needs the vias\' net (net: "GND").' });
+    if (op.under || op.rect) reject({ code: 'INVALID_OP', message: 'A fence runs along a net (along) or round an area (under, rect), not both.' });
+    const net = netOf(op.net!);
+    const line = netOf(op.along);
+    if (line.id === net.id) reject({ code: 'INVALID_OP', message: `A fence of ${net.name} along ${line.name} itself stitches nothing.` });
+    // one fence per line: giving it again replaces it
+    const was = groups.findIndex((g) => g.kind === 'fence' && g.along === line.id);
+    group = { id: was >= 0 ? groups[was]!.id : nextId(), netId: net.id, kind: 'fence', along: line.id, pitch, ...sizes };
+    if (was >= 0) groups.splice(was, 1);
+    what = `${net.name} via fence along both sides of ${line.name}, ${pitch} mm apart, at its gap to the ground plus half a via (laid by the route step where they fit and join ${net.name} on two layers)`;
   } else {
     if (!op.net) reject({ code: 'INVALID_OP', message: 'add_vias needs the vias\' net (net: "GND").' });
+    if (op.along) reject({ code: 'INVALID_OP', message: 'along is for a fence (kind "fence").' });
     if (!op.under === !op.rect) reject({ code: 'INVALID_OP', message: `add_vias kind "${op.kind}" needs its area: under (parts) or rect, one of them.` });
     const net = netOf(op.net!);
     const comps = (op.under ?? []).map((r) => resolveComponent(d, r));

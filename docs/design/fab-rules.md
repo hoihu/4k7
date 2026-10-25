@@ -126,7 +126,7 @@ source and date, and the Manufacturer panel shows them.
 ## Not yet
 
 - Per-net-class rules (a profile only sets the floor; per-net widths still come from `set_net`).
-- Impedance and stack-up from a profile; layer counts beyond 2 and 4.
+- Layer counts beyond 2 and 4. (The stack-up and impedance rules: [impedance](impedance.md); a board without a stack-up takes its fab's standard one.)
 - Checking mask web and silk text height.
 - Import from KiCad `.kicad_dru` or manufacturers' rule files.
 - Per-house naming and packaging of the fab export, and price or lead-time tiers.

@@ -24,6 +24,7 @@ import { RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInf
 import { boardScadSummary, enclosureJob, enclosureReport, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import costGuide from '../../../../docs/design/cost.md?raw';
+import highSpeedGuide from '../../../../docs/design/high-speed.md?raw';
 import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
@@ -1051,8 +1052,8 @@ class AppState {
         }
         if ((input as { op?: string })?.op === 'get_guide') {
           const topic = (input as { topic?: string }).topic;
-          const guide = topic === 'mechanics' ? mechanicsGuide : topic === 'cost' ? costGuide : null;
-          if (!guide) return fail('query · get_guide', 'Guides: mechanics, cost.');
+          const guide = topic === 'mechanics' ? mechanicsGuide : topic === 'cost' ? costGuide : topic === 'high_speed' ? highSpeedGuide : null;
+          if (!guide) return fail('query · get_guide', 'Guides: mechanics, cost, high_speed.');
           // the guide is its docs/design file as it is, without its header for people
           return { content: guide.replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''), isError: false, label: 'query · get_guide', detail: topic! };
         }

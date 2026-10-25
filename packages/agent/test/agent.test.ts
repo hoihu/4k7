@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Kernel } from '@4k7/kernel';
-import { MCP_INSTRUCTIONS, DESIGN_GUIDE, agentTools } from '@4k7/schema';
-import { Agent, SYSTEM_PROMPT, ScriptedProvider, runCalc, nearestE, type AgentEvent, type KernelPort, type Script } from '../src/index.ts';
+import { MCP_INSTRUCTIONS, DESIGN_GUIDE, agentTools, findStackupPreset } from '@4k7/schema';
+import { Agent, SYSTEM_PROMPT, ScriptedProvider, runCalc, runKernelTool, nearestE, type AgentEvent, type KernelPort, type Script } from '../src/index.ts';
 import { DEMO_FALLBACK, DEMO_SCRIPTS } from './scripts.ts';
 
 function port(k: Kernel): KernelPort {
@@ -178,5 +178,37 @@ describe('calc', () => {
     expect(runCalc({ fn: 'nearest_e', args: { value: 5300, kind: 'resistor' } }, { resistor: 'E12' }).value).toBe('5.6k');
     expect(runCalc({ fn: 'nearest_e', args: { value: 5300, kind: 'resistor', series: 'E24' } }, { resistor: 'E12' }).value).toBe('5.1k');
     expect(runCalc({ fn: 'nearest_e', args: { value: 5300, kind: 'resistor', round: 'down' } }, { resistor: 'E6' }).value).toBe('4.7k');
+  });
+
+  it('impedance on the board\'s stack-up, or on a dielectric given', () => {
+    const { name, copper, dielectric, mask } = findStackupPreset('JLC04161H-7628')!;
+    const jlc = { name, copper, dielectric, ...(mask ? { mask } : {}) };
+    const line = runCalc({ fn: 'impedance', args: { ohms: 50 } }, {}, jlc);
+    expect(Number(line.width_mm)).toBeGreaterThan(0.33);
+    expect(Number(line.width_mm)).toBeLessThan(0.37);
+    expect(Number(line.impedance_ohm)).toBeCloseTo(50, 0);
+    expect(line.over).toMatch(/JLC04161H-7628: F\.Cu, 0\.2104 mm to the plane, εr 4\.4/);
+    // a pair: the width for its gap, or the gap for its width
+    const pair = runCalc({ fn: 'impedance', args: { ohms: 90, gap: 0.2 } }, {}, jlc);
+    expect(Number(pair.differential_ohm)).toBeCloseTo(90, 0);
+    expect(Number(pair.even_ohm)).toBeGreaterThan(Number(pair.odd_ohm));
+    const gap = runCalc({ fn: 'impedance', args: { ohms: 90, width: 0.2, diff: 1 } }, {}, jlc);
+    expect(Number(gap.differential_ohm)).toBeCloseTo(90, 0);
+    // a 2-layer board's microstrip, without a stack-up: 3 mm over 1.5 mm of FR-4 is about 48 Ω
+    const wide = runCalc({ fn: 'impedance', args: { width: 3, h: 1.5, er: 4.5, f: '2.4GHz' } });
+    expect(Number(wide.impedance_ohm)).toBeGreaterThan(47);
+    expect(Number(wide.impedance_ohm)).toBeLessThan(49);
+    expect(Number(wide.wavelength_mm)).toBeGreaterThan(65);
+    expect(Number(wide.wavelength_mm)).toBeLessThan(75);
+    expect(() => runCalc({ fn: 'impedance', args: { ohms: 50 } })).toThrow(/no stack-up known/);
+    expect(() => runCalc({ fn: 'impedance', args: { ohms: 90, diff: 1 } }, {}, jlc)).toThrow(/needs gap/);
+  });
+
+  it('impedance works on the design\'s own stack-up through the tool', async () => {
+    const k = new Kernel();
+    k.transact({ summary: 'board', ops: [{ op: 'set_board', layers: 4 }, { op: 'set_stackup', preset: 'JLC04161H-3313' }] });
+    const out = await runKernelTool(port(k), 'calc', { fn: 'impedance', args: { ohms: 50 } });
+    expect(out?.isError).toBe(false);
+    expect(JSON.parse(out!.content).over).toMatch(/^JLC04161H-3313: F\.Cu, 0\.0994 mm to the plane/);
   });
 });

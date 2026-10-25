@@ -23,9 +23,9 @@ agents (through MCP), scripts, tests and the UI all use it.
 | Library | `search_parts`, `ingest_datasheet`, `get_part_card`, `generate_footprint(params)`, `generate_symbol(params)` |
 | Schematic | `add_part`, `remove`, `set_param`, `connect`, `disconnect`, `rename_net`, `set_net_class`, `create_sheet`, `move_to_sheet`, `add_port`, `annotate` |
 | Constraints | `constrain`, `update_constraint`, `disable_constraint`, `remove_constraint` |
-| Board | `set_outline`, `set_stackup`, `set_fab_profile` (implemented, see [fab-rules](fab-rules.md)), `add_mounting_hole`, `add_keepout` |
+| Board | `set_outline`, `set_stackup` (implemented, see [impedance](impedance.md)), `set_fab_profile` (implemented, see [fab-rules](fab-rules.md)), `add_mounting_hole`, `add_keepout` |
 | Solvers | `layout_schematic(scope)`, `place(scope, strategy)`, `route(scope, strategy)`, `pour(zone)`, `tune_length(group)` |
-| Rules | `set_rule`, `add_net_class`, `define_diff_pair`, `define_length_group` |
+| Rules | `set_rule`, `add_net_class`, `set_impedance` (nets and differential pairs at a set impedance; implemented, see [impedance](impedance.md)), `define_length_group` |
 | Verify | `run_checks(scope, kinds)`, `add_waiver`, `remove_waiver` |
 | Output | `export_fab(profile)`, `export_bom`, `export_pdf`, `export_native` |
 | History | `begin_changeset`, `commit_changeset`, `revert`, `branch`, `compare(branch_a, branch_b)` |

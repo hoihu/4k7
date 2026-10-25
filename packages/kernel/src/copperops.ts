@@ -16,6 +16,7 @@ import { schematicView } from './drawing.ts';
 import { copperDrc, drawnDrc, edgeDrc } from './drc.ts';
 import { padPointDist } from './keep.ts';
 import { route, type RouteProgress, type RouteResult } from './router.ts';
+import { impedanceDrc, ruleWidth } from './lines.ts';
 
 /** How long the route helper may search, ms (the user would rather wait than get less). */
 const HELPER_BUDGET_MS = 30_000;
@@ -86,11 +87,14 @@ function endOf(d: Design, board: BoardView, dc: DrawnCopper, e: string | [number
 
 const netName = (d: Design, id: string) => d.nets[id]?.name ?? id;
 
-/** The width a net's track gets unless given: its own, power width for a supply, else the signal width. */
-function defaultWidth(d: Design, netId: string): number {
+/**
+ * The width a net's track gets unless given: what its impedance rule gives on that layer, else its
+ * own, power width for a supply, else the signal width.
+ */
+function defaultWidth(d: Design, netId: string, board?: BoardView, layer?: string): number {
   const rules = (d.board ?? DEFAULT_BOARD).rules;
   const net = d.nets[netId];
-  return net?.attrs.trackWidth ?? (net && isPowerNet(net) ? rules.powerTrack : rules.track);
+  return ruleWidth(board?.impedance, netId, layer as BoardView['layers'][number]) ?? net?.attrs.trackWidth ?? (net && isPowerNet(net) ? rules.powerTrack : rules.track);
 }
 
 /** Inner layers with a plane take no tracks (the router closes them, the plane fills them). */
@@ -334,12 +338,124 @@ export function drawTrack(d: Design, op: Extract<EditOp, { op: 'draw_track' }>):
   trackLayer(board, layer);
   const pts = polyline([ends[0]!, ...(op.via ?? []).map(([x, y]) => ({ x, y })), ends[1]!], op.bend);
   if (pts.length < 4) reject({ code: 'INVALID_OP', message: 'The track starts and ends at the same point.' });
-  const width = op.width_mm ?? defaultWidth(d, netId!);
+  const width = op.width_mm ?? defaultWidth(d, netId!, board, layer);
   const [f, t] = ends.map((e) => e.anchor);
   const track: DrawnTrack = { id: nextId(dc, 't'), netId: netId!, layer, width, pts, ...(f ? { from: f } : {}), ...(t ? { to: t } : {}) };
   dc.tracks.push(track);
   d.board = b;
   return { op: op.op, effect: `track ${track.id}: ${netName(d, netId!)} on ${layer}, ${width} mm, ${pts.length / 2 - 1} piece(s), ${r3(trackLength(pts))} mm`, ids: ['board', track.id] };
+}
+
+/**
+ * A differential pair: two tracks either side of a centre line (from the midpoint of the two
+ * starts, through the corners given, to the midpoint of the two ends), their centres (width + gap)
+ * / 2 off it with mitred corners, so the gap holds round every bend. Each track comes in from its
+ * pad with a 45° jog, both joining the pair at one point, and goes out to its pad the same way at
+ * the far end. The positive track keeps to the side its pad is on.
+ */
+export function drawPair(d: Design, op: Extract<EditOp, { op: 'draw_pair' }>): OpResult {
+  const { b, dc } = drawnOf(d);
+  const board = placed(d);
+  const from = op.from.map((e) => endOf(d, board, dc, e)) as [End, End];
+  const to = op.to.map((e) => endOf(d, board, dc, e)) as [End, End];
+  for (const e of [...from, ...to]) if (e.pad && !e.pad.netId) reject({ code: 'PIN_UNCONNECTED', message: `${e.ref} is not connected in the netlist; a track there would join nothing.` });
+  const netOf = (e: End) => e.pad?.netId ?? e.via?.netId;
+  const nets = [0, 1].map((k) => netOf(from[k]!) ?? netOf(to[k]!));
+  if (!nets[0] || !nets[1]) reject({ code: 'INVALID_OP', message: 'Each track of a pair needs a pad or a via of its net at one of its ends.' });
+  if (nets[0] === nets[1]) reject({ code: 'NET_MISMATCH', message: `Both ends are on ${netName(d, nets[0]!)}: a pair is two nets, positive first at each end.` });
+  for (const [k, e] of [[0, from[0]], [1, from[1]], [0, to[0]], [1, to[1]]] as const) {
+    const n = netOf(e);
+    if (n && n !== nets[k]) reject({ code: 'NET_MISMATCH', message: `${e.ref} is on ${netName(d, n)}, but the ${k === 0 ? 'first' : 'second'} track is ${netName(d, nets[k]!)}: give the two ends in the same order at both ends (positive first).` });
+  }
+  const smd = [...from, ...to].flatMap((e) => (e.pad && !e.pad.drill ? e.pad.layers : []));
+  const layer = op.layer ?? smd[0] ?? 'F.Cu';
+  trackLayer(board, layer);
+  const rule = board.impedance?.find((v) => v.pair && v.nets.includes(nets[0]!) && v.nets.includes(nets[1]!));
+  const lay = rule?.layers.find((l) => l.layer === layer);
+  const w = op.width_mm ?? lay?.width ?? defaultWidth(d, nets[0]!, board, layer);
+  const gap = op.gap_mm ?? lay?.gap ?? b.rules.clearance;
+  const half = (w + gap) / 2;
+  // the centre line, with the 45° corners asked for
+  const mid = (p: End, q: End) => ({ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 });
+  const c = pointsOf(polyline([mid(from[0], from[1]), ...(op.via ?? []).map(([x, y]) => ({ x, y })), mid(to[0], to[1])], op.bend));
+  if (c.length < 2) reject({ code: 'INVALID_OP', message: 'The pair starts and ends at the same place.' });
+  const dirs = c.slice(1).map((q, i) => {
+    const l = Math.hypot(q.x - c[i]!.x, q.y - c[i]!.y);
+    return { ux: (q.x - c[i]!.x) / l, uy: (q.y - c[i]!.y) / l, len: l };
+  });
+  // (the normal: the side a positive offset lies on)
+  const nrm = (u: { ux: number; uy: number }) => ({ nx: -u.uy, ny: u.ux });
+  for (let i = 1; i < dirs.length; i++) {
+    if (dirs[i - 1]!.ux * dirs[i]!.ux + dirs[i - 1]!.uy * dirs[i]!.uy < -1e-6) reject({ code: 'INVALID_OP', message: `The centre line turns back on itself at ${r3(c[i]!.x)}, ${r3(c[i]!.y)}: a pair bends by 90° at most at a corner (45° is better).` });
+  }
+  const first = { ...dirs[0]!, ...nrm(dirs[0]!) };
+  const last = { ...dirs.at(-1)!, ...nrm(dirs.at(-1)!) };
+  // which side each track keeps to: the side its start lies on, and its end must agree
+  const lat = (e: End, o: { x: number; y: number }, u: { nx: number; ny: number }) => (e.x - o.x) * u.nx + (e.y - o.y) * u.ny;
+  const sideStart = Math.sign(lat(from[0], c[0]!, first) - lat(from[1], c[0]!, first));
+  const sideEnd = Math.sign(lat(to[0], c.at(-1)!, last) - lat(to[1], c.at(-1)!, last));
+  if (!sideStart || !sideEnd) reject({ code: 'INVALID_OP', message: `The two ${!sideStart ? 'starts' : 'ends'} lie one behind the other along the centre line: let the centre line leave them across, between the two.` });
+  if (sideStart !== sideEnd) {
+    reject({ code: 'INVALID_OP', message: `The positive track starts on the ${sideStart > 0 ? 'one' : 'other'} side of the centre line and would end on the other: the two tracks would cross. Lead the centre line round so each end stays on its side (or check the order of the ends).` });
+  }
+  const offs = [sideStart * half, -sideStart * half];
+  // how far along the first (last) piece the tracks need to come in from their pads at 45°
+  const reach = (ends: [End, End], o: { x: number; y: number }, u: { ux: number; uy: number; nx: number; ny: number }, sign: number) =>
+    Math.max(...ends.map((e, k) => sign * ((e.x - o.x) * u.ux + (e.y - o.y) * u.uy) + Math.abs(offs[k]! - lat(e, o, u))));
+  const inAt = Math.max(0, reach(from, c[0]!, first, 1));
+  const outAt = Math.max(0, reach(to, c.at(-1)!, last, -1));
+  // each piece of the centre line holds what its ends need: the tracks coming together at the
+  // start and going apart at the end, and at a corner the inner track's corner standing back by
+  // half the pair's pitch × tan(half the turn) (else it would fold back on itself)
+  const setback = (j: number) => {
+    if (j <= 0 || j >= c.length - 1) return 0;
+    const [p, q] = [dirs[j - 1]!, dirs[j]!];
+    return half * Math.tan(Math.acos(Math.max(-1, Math.min(1, p.ux * q.ux + p.uy * q.uy))) / 2);
+  };
+  dirs.forEach((d, i) => {
+    const [a, b] = [i === 0 ? inAt : setback(i), i === dirs.length - 1 ? outAt : setback(i + 1)];
+    if (d.len + 1e-6 >= a + b) return;
+    const where = `${r3(c[i]!.x)}, ${r3(c[i]!.y)} → ${r3(c[i + 1]!.x)}, ${r3(c[i + 1]!.y)}`;
+    reject({
+      code: 'INVALID_OP',
+      message:
+        i === 0 || i === dirs.length - 1
+          ? `The tracks need ${r3(a + b)} mm on the centre line's ${dirs.length === 1 ? 'one piece' : i === 0 ? 'first piece' : 'last piece'} (${where}, ${r3(d.len)} mm) to come together from their pads at 45°${(i === 0 ? b : a) > 0 ? ' and turn at its corner' : ''}. Put its ${i === 0 ? 'first' : 'last'} corner further from the pads.`
+          : `The centre line's piece ${where} is ${r3(d.len)} mm; the pair needs ${r3(a + b)} mm there to turn at both of its corners (the inner track's corners stand back). Put those corners further apart.`,
+    });
+  });
+  const tracks: DrawnTrack[] = [0, 1].map((k) => {
+    const o = offs[k]!;
+    const e0 = from[k]!;
+    const e1 = to[k]!;
+    // in: a 45° jog from the pad onto the pair's side, straight on to where the pair begins
+    const d0 = o - lat(e0, c[0]!, first);
+    const a0 = { x: e0.x + first.ux * Math.abs(d0) + first.nx * d0, y: e0.y + first.uy * Math.abs(d0) + first.ny * d0 };
+    const j0 = { x: c[0]!.x + first.ux * inAt + first.nx * o, y: c[0]!.y + first.uy * inAt + first.ny * o };
+    // the corners, mitred: the gap holds round each bend
+    const corners = c.slice(1, -1).map((q, i) => {
+      const [n1, n2] = [nrm(dirs[i]!), nrm(dirs[i + 1]!)];
+      const k2 = 1 + n1.nx * n2.nx + n1.ny * n2.ny;
+      return { x: q.x + (o * (n1.nx + n2.nx)) / k2, y: q.y + (o * (n1.ny + n2.ny)) / k2 };
+    });
+    // out: the same at the far end
+    const cl = c.at(-1)!;
+    const d1 = o - lat(e1, cl, last);
+    const j1 = { x: cl.x - last.ux * outAt + last.nx * o, y: cl.y - last.uy * outAt + last.ny * o };
+    const a1 = { x: e1.x - last.ux * Math.abs(d1) + last.nx * d1, y: e1.y - last.uy * Math.abs(d1) + last.ny * d1 };
+    const pts = simplify(polyline([e0, a0, j0, ...corners, j1, a1, e1]));
+    if (pts.length < 4) reject({ code: 'INVALID_OP', message: 'A track of the pair starts and ends at the same point.' });
+    const net = nets[k]!;
+    return { id: nextId(dc, 't'), netId: net, layer, width: w, pts, ...(e0.anchor ? { from: e0.anchor } : {}), ...(e1.anchor ? { to: e1.anchor } : {}) };
+  });
+  dc.tracks.push(...tracks);
+  d.board = b;
+  const [lp, ln] = tracks.map((t) => r3(trackLength(t.pts)));
+  return {
+    op: op.op,
+    effect: `pair ${netName(d, nets[0]!)}/${netName(d, nets[1]!)} on ${layer}: ${tracks[0]!.id} ${lp} mm, ${tracks[1]!.id} ${ln} mm (${r3(Math.abs(lp! - ln!))} mm apart in length), ${w} mm wide, ${gap} mm apart${lay ? ` (${rule!.id}: ${lay.ohms} Ω)` : rule ? '' : '; no impedance rule for these nets (set_impedance)'}`,
+    ids: ['board', ...tracks.map((t) => t.id)],
+  };
 }
 
 export function drawVia(d: Design, op: Extract<EditOp, { op: 'draw_via' }>): OpResult {
@@ -599,7 +715,7 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
 /* --------------------------- copper that follows -------------------------- */
 
 /** Ops that never move a part: the copper needs no following after them. */
-const STILL = new Set(['route', 'set_copper_mode', 'draw_track', 'draw_via', 'edit_copper', 'erase_copper', 'add_waiver', 'remove_waiver', 'set_mating', 'set_enclosure_brief', 'set_enclosure_script', 'set_enclosure_graphic', 'set_value_series', 'set_paper', 'add_graphic', 'edit_graphic', 'remove_graphic', 'set_panel', 'place_symbol', 'wire', 'label', 'erase', 'auto_draw', 'describe', 'set_plane', 'set_plane_style', 'add_vias', 'remove_vias', 'rename', 'set_net']);
+const STILL = new Set(['route', 'set_copper_mode', 'draw_track', 'draw_pair', 'draw_via', 'set_stackup', 'set_impedance', 'remove_impedance', 'edit_copper', 'erase_copper', 'add_waiver', 'remove_waiver', 'set_mating', 'set_enclosure_brief', 'set_enclosure_script', 'set_enclosure_graphic', 'set_value_series', 'set_paper', 'add_graphic', 'edit_graphic', 'remove_graphic', 'set_panel', 'place_symbol', 'wire', 'label', 'erase', 'auto_draw', 'describe', 'set_plane', 'set_plane_style', 'add_vias', 'remove_vias', 'rename', 'set_net']);
 
 /** Whether an op may move parts (then drawn copper follows them, see followParts). */
 export const movesParts = (op: EditOp) => !STILL.has(op.op);
@@ -891,7 +1007,7 @@ export function followParts(d: Design, before: BoardView, after: BoardView = pla
 /* ----------------------------- checked at once ----------------------------- */
 
 /** Ops whose copper is checked when their transaction is applied (the helper's copper keeps the rules by construction). */
-export const DRAWING_OPS = new Set(['draw_track', 'draw_via', 'edit_copper']);
+export const DRAWING_OPS = new Set(['draw_track', 'draw_pair', 'draw_via', 'edit_copper']);
 
 /**
  * The rules on the drawn copper with these ids, on the board as it is now (placement only: pours
@@ -902,7 +1018,8 @@ export const DRAWING_OPS = new Set(['draw_track', 'draw_via', 'edit_copper']);
 export function checkCopper(d: Design, ids: Set<string>): BoardDiagnostic[] {
   if (!d.board?.drawn || !ids.size) return [];
   const b = placed(d);
-  const out = [...copperDrc(b, ids), ...edgeDrc(b, true, ids), ...drawnDrc(b, ids)];
+  const supplies = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
+  const out = [...copperDrc(b, ids), ...edgeDrc(b, true, ids), ...drawnDrc(b, ids), ...impedanceDrc(b, ids, supplies)];
   const fab = b.fab?.limits;
   if (fab) {
     for (const t of b.drawn?.tracks ?? []) if (ids.has(t.id) && t.width < fab.track - 0.005) out.push({ code: 'DRC.FAB_TRACK', severity: 'error', message: `Track ${t.id} is ${t.width} mm wide; ${b.fab!.house} makes ${fab.track} mm at the narrowest.`, at: { x: t.pts[0]!, y: t.pts[1]! }, entities: [t.id] });
