@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { JLCPCB_ASSEMBLY, type PartQuery, type SupplierPart } from '@4k7/schema';
+import { EUROCIRCUITS_ASSEMBLY, JLCPCB_ASSEMBLY, PCBWAY_ASSEMBLY, type PartQuery, type SupplierPart } from '@4k7/schema';
 import { checkValues, optionText, valuesReportText, type AssemblyFacts, type PartSource, type SourcedComponent } from '../src/index.ts';
 
 const H = JLCPCB_ASSEMBLY;
-const part = (sku: string, o: Partial<SupplierPart> = {}): SupplierPart => ({ sku, mpn: sku, package: '0603', description: '', stock: 1_000_000, tier: 'Basic', fee: false, price: [{ qty: 1, usd: 0.002 }], attributes: {}, url: '', live: true, ...o });
+const part = (sku: string, o: Partial<SupplierPart> = {}): SupplierPart => ({ sku, mpn: sku, package: '0603', description: '', stock: 1_000_000, tier: 'Basic', fee: false, price: [{ qty: 1, each: 0.002 }], attributes: {}, url: '', live: true, ...o });
 const ext = { tier: 'Extended', fee: true };
 const r = (sku: string, value: string, o: Partial<SupplierPart> = {}) => part(sku, { attributes: { Resistance: value, Tolerance: '±1%' }, ...o });
 const c = (sku: string, value: string, o: Partial<SupplierPart> = {}, a: Record<string, string> = {}) => part(sku, { attributes: { Capacitance: value, 'Voltage Rated': '25V', 'Temperature Coefficient': 'X5R', ...a }, ...o });
@@ -36,7 +36,7 @@ describe('values check', () => {
     ]);
     // the Extended part's $3.07 loading fee goes; the pair adds 10 pieces each and 20 joints
     const pair = l.options[0]!;
-    expect(pair.usd).toBe(Math.round((10 * 0.002 + 3.07 - (10 * 0.002 + 10 * 0.002 + 20 * 0.0016)) * 100) / 100);
+    expect(pair.saves).toBe(Math.round((10 * 0.002 + 3.07 - (10 * 0.002 + 10 * 0.002 + 20 * 0.0016)) * 100) / 100);
   });
 
   it('takes the same value without a fee before any other, and drops other values that do not save $0.50 more', async () => {
@@ -46,13 +46,13 @@ describe('values check', () => {
   });
 
   it('puts capacitors in parallel only, held to the voltage and dielectric, and prices components that have no number yet', async () => {
-    const list = [c('C15850', '10uF', { attrition: 10, minQty: 20, price: [{ qty: 1, usd: 0.0426 }] }), c('C45783', '22uF', { attrition: 4, minQty: 2, price: [{ qty: 1, usd: 0.1912 }] }), c('C16', '10uF', {}, { 'Voltage Rated': '6.3V' }), c('C17', '10uF', {}, { 'Temperature Coefficient': 'Y5V' })];
+    const list = [c('C15850', '10uF', { attrition: 10, minQty: 20, price: [{ qty: 1, each: 0.0426 }] }), c('C45783', '22uF', { attrition: 4, minQty: 2, price: [{ qty: 1, each: 0.1912 }] }), c('C16', '10uF', {}, { 'Voltage Rated': '6.3V' }), c('C17', '10uF', {}, { 'Temperature Coefficient': 'Y5V' })];
     const comp: SourcedComponent = { refdes: 'C6', category: 'capacitor', params: { capacitance: '22uF', voltage: '10V', dielectric: 'X5R' }, pkg: '0805' };
     const v = await run([comp], catalogue({ 'capacitor 0805': list.map((p) => ({ ...p, package: '0805' })) }, [], (q) => (q.value === '22uF' ? [{ ...list[1]!, package: '0805' }] : [])));
     const l = v.lines[0]!;
     // the 22 µF itself is what it would add ($2.68 = 14 pieces × $0.1912)
     expect(l).toMatchObject({ refs: ['C6'], now: 2.68 });
-    expect(l.options.map((o) => [o.how, o.parts.map((p) => p.sku), o.usd])).toEqual([
+    expect(l.options.map((o) => [o.how, o.parts.map((p) => p.sku), o.saves])).toEqual([
       // 30 pieces (20 + 10 losses) × $0.0426 + 20 joints: saves $1.37
       ['parallel', ['C15850', 'C15850'], 1.37],
       // 20 pieces (its minimum) × $0.0426, against $2.6768 unrounded
@@ -61,11 +61,11 @@ describe('values check', () => {
   });
 
   it('brings a part onto a value already on the order where every part number costs a fee (Standard)', async () => {
-    const other = r('C2', '10kΩ', { price: [{ qty: 1, usd: 0.003 }] });
+    const other = r('C2', '10kΩ', { price: [{ qty: 1, each: 0.003 }] });
     const v = await run([res('R6', '10k', 'C25804'), res('R7', '10k', 'C2')], catalogue({ 'resistor 0603': [] }, [r('C25804', '10kΩ'), other]), facts({ bottomRefs: ['R7'] }));
     expect(v.service).toBe('Standard');
     const l = v.lines.find((x) => x.sku === 'C2')!;
-    expect(l.options[0]).toMatchObject({ how: 'single', onOrder: true, usd: Math.round((10 * 0.003 + 1.53 - 10 * 0.002) * 100) / 100 });
+    expect(l.options[0]).toMatchObject({ how: 'single', onOrder: true, saves: Math.round((10 * 0.003 + 1.53 - 10 * 0.002) * 100) / 100 });
     expect(v.onOrder).toEqual([{ kind: 'resistor', pkg: '0603', parts: [{ part: expect.objectContaining({ sku: 'C25804' }), refs: ['R6'] }, { part: expect.objectContaining({ sku: 'C2' }), refs: ['R7'] }] }]);
   });
 
@@ -84,5 +84,31 @@ describe('values check', () => {
     expect(text).toContain('- 0603 resistors: 31.6kΩ (R1, C25967, Extended), 10kΩ (R4, C25804)');
     expect(text).toContain('A pair is two parts where one was');
     expect(text).toContain('design_query get_guide topic "cost"');
+  });
+});
+
+describe('values check at Eurocircuits', () => {
+  const EC = EUROCIRCUITS_ASSEMBLY;
+  const generic = (sku: string, value: string) => r(sku, value, { mpn: sku, tier: 'Generic', stock: null, supply: 'stock', price: [{ qty: 1, each: 0 }] });
+  const GENERIC_R = [generic('GPR060330K', '30kΩ'), generic('GPR060333K', '33kΩ'), generic('GPR06031K6', '1.6kΩ'), generic('GPR060310K', '10kΩ')];
+
+  it('offers Generic values for an On Demand part, saving its fee and its own price; a pair adds a line and is no saving there', async () => {
+    const odd = r('CR0603-FX-3162ELF', '31.6kΩ', { mpn: 'CR0603-FX-3162ELF', tier: 'On Demand', fee: true, stock: null, supply: 'order', price: [] });
+    const v = await checkValues([res('R3', '31.6k', undefined, { params: { resistance: '31.6k', eurocircuits: 'CR0603-FX-3162ELF' } })], catalogue({ 'resistor 0603': GENERIC_R }, [odd]), { house: EC, boards: 10, facts: () => facts({ placements: { smd: 1 } }) });
+    const l = v.lines[0]!;
+    // the line's fees now: €1.925 + €3.85 + €1.65 On Demand
+    expect(l).toMatchObject({ sku: 'CR0603-FX-3162ELF', now: 7.43, feesOnly: true });
+    expect(l.options.map((o) => optionText(o, 'resistor', EC, l.feesOnly))).toEqual([
+      "one 33kΩ (+4.4%): GPR060333K, Generic: saves €1.65 and the part's own price",
+      "one 30kΩ (−5.1%): GPR060330K, Generic: saves €1.65 and the part's own price",
+    ]);
+    expect(valuesReportText(v, EC)).toContain('- R3 31.6kΩ 0603 (CR0603-FX-3162ELF, €7.43 in fees on the order now, and its price):');
+  });
+
+  it('has nothing to say at a house without a catalogue', async () => {
+    const quoting: PartSource = { lookup: async () => null, search: async () => [], quote: async () => ({ price: 100 }) };
+    const v = await checkValues([res('R1', '10k')], quoting, { house: PCBWAY_ASSEMBLY, boards: 10, facts: () => facts() });
+    expect(v.lines).toEqual([]);
+    expect(valuesReportText(v, PCBWAY_ASSEMBLY)).toMatch(/^No values check at PCBWay: PCBWay keeps no parts catalogue/);
   });
 });

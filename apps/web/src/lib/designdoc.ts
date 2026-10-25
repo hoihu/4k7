@@ -498,13 +498,21 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
     section('Assembly', assembly.join(''), twoSided ? 'both sides' : '');
 
     /* 5 BOM */
+    // the assembly houses' numbers the design has (JLCPCB's LCSC, Eurocircuits' parts), a column each
+    const houses = (
+      [
+        ['LCSC', (g: (typeof lines)[number]) => g.lcsc],
+        ['Eurocircuits', (g: (typeof lines)[number]) => g.eurocircuits],
+      ] as const
+    ).filter(([, of]) => lines.some((g) => of(g)));
     const rows = lines.map(
-      (g, i) => `<tr><td class="n">${i + 1}</td><td class="n">${g.refs.length}</td><td class="refs">${esc(g.refs.join(' '))}</td><td>${esc(g.value)}</td><td>${esc(g.pkg)}</td><td>${esc(g.mpn)}</td><td>${esc(g.mfr)}</td><td class="mono">${esc(g.lcsc)}</td></tr>`,
+      (g, i) =>
+        `<tr><td class="n">${i + 1}</td><td class="n">${g.refs.length}</td><td class="refs">${esc(g.refs.join(' '))}</td><td>${esc(g.value)}</td><td>${esc(g.pkg)}</td><td>${esc(g.mpn)}</td><td>${esc(g.mfr)}</td>${houses.map(([, of]) => `<td class="mono">${esc(of(g))}</td>`).join('')}</tr>`,
     );
     const total = lines.reduce((n, g) => n + g.refs.length, 0);
     section(
       'Bill of materials',
-      `<table><thead><tr><th class="n">#</th><th class="n">Qty</th><th>Designators</th><th>Value</th><th>Package</th><th>Part number</th><th>Manufacturer</th><th>LCSC</th></tr></thead><tbody>${rows.join('')}</tbody></table>` +
+      `<table><thead><tr><th class="n">#</th><th class="n">Qty</th><th>Designators</th><th>Value</th><th>Package</th><th>Part number</th><th>Manufacturer</th>${houses.map(([name]) => `<th>${name}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>` +
         `<p class="muted">${plural(total, 'part')} in ${plural(lines.length, 'line')}.${b.missing.length ? ` Not listed (no footprint): ${esc(b.missing.join(', '))}.` : ''}</p>`,
       plural(lines.length, 'line'),
     );

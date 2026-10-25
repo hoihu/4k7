@@ -71,6 +71,14 @@ describe('fab outputs', () => {
     const rows = bom(b).trim().split('\n');
     expect(rows[0]).toBe('Comment,Designator,Footprint,Quantity,MPN,Manufacturer,LCSC Part #');
     expect(rows).toContain('TPS54331DR,U1,SOIC-8,1,TPS54331DR,Texas Instruments,');
+    // the BOM each other house's upload reads: Eurocircuits' MPN column, PCBWay's template
+    const ec = bom(b, 'eurocircuits').trim().split('\n');
+    expect(ec[0]).toBe('Reference Designators,Quantity,MPN,Manufacturer,Description,Value,Package');
+    expect(ec).toContain('U1,1,TPS54331DR,Texas Instruments,IC TPS54331DR,TPS54331DR,SOIC-8');
+    const pw = bom(b, 'pcbway').trim().split('\n');
+    expect(pw[0]).toBe('Item #,Designator,Qty,Manufacturer,Mfg Part #,Description / Value,Package/Footprint,Type');
+    expect(pw.find((l) => l.includes(',J1,'))).toMatch(/,Thru-hole$/);
+    expect(pw.find((l) => l.includes(',U1,'))).toMatch(/^\d+,U1,1,Texas Instruments,TPS54331DR,IC TPS54331DR,SOIC-8,SMD$/);
     const pnp = pickAndPlace(b).trim().split('\n');
     expect(pnp).toHaveLength(1 + 11); // SMD parts only (J1 is through-hole)
     const u1 = b.parts.find((p) => p.refdes === 'U1')!;

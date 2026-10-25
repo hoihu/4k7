@@ -14,6 +14,7 @@ import { JLCPCB_ASSEMBLY, normalizeLcsc, parseQuantity, type PartQuery, type Sup
 import { formatFarads, formatOhms, rankParts, type PartSource } from './sourcing.ts';
 
 const TIERS = JLCPCB_ASSEMBLY.tiers.map((t) => t.name);
+const partUrl = (sku: string) => JLCPCB_ASSEMBLY.partUrl!(sku);
 const tierOf = (basic: boolean | undefined, preferred: boolean | undefined) => (basic ? 'Basic' : preferred ? 'Preferred' : 'Extended');
 const feeOf = (tier: string) => JLCPCB_ASSEMBLY.tiers.find((t) => t.name === tier)?.fee ?? true;
 
@@ -135,7 +136,7 @@ export function fromJlcpcb(c: JlcpcbItem): SupplierPart {
   }
   const price = (c.componentPrices ?? [])
     .filter((b) => typeof b.startNumber === 'number' && typeof b.productPrice === 'number')
-    .map((b) => ({ qty: b.startNumber!, usd: b.productPrice! }))
+    .map((b) => ({ qty: b.startNumber!, each: b.productPrice! }))
     .sort((a, b) => a.qty - b.qty);
   const manufacturer = c.componentBrandEn?.replace(/\(.*\)$/, '').trim();
   const datasheet = c.dataManualUrl && /^https?:\/\//i.test(c.dataManualUrl) ? c.dataManualUrl : undefined;
@@ -152,7 +153,7 @@ export function fromJlcpcb(c: JlcpcbItem): SupplierPart {
     attributes,
     ...(c.componentTypeEn ? { category: c.componentTypeEn } : {}),
     ...(datasheet ? { datasheet } : {}),
-    url: JLCPCB_ASSEMBLY.partUrl(sku),
+    url: partUrl(sku),
     live: true,
     ...(typeof c.lossNumber === 'number' && c.lossNumber > 0 ? { attrition: c.lossNumber } : {}),
     ...(typeof c.leastPatchNumber === 'number' && c.leastPatchNumber > 0 ? { minQty: c.leastPatchNumber } : {}),
@@ -269,20 +270,20 @@ function fromTs(c: TsComponent): SupplierPart {
     stock: typeof c.stock === 'number' ? c.stock : null,
     tier,
     fee: feeOf(tier),
-    price: c.price ? parsePriceBreaks(c.price) : typeof c.price1 === 'number' ? [{ qty: 1, usd: c.price1 }] : [],
+    price: c.price ? parsePriceBreaks(c.price) : typeof c.price1 === 'number' ? [{ qty: 1, each: c.price1 }] : [],
     attributes,
     ...(c.subcategory || c.category ? { category: c.subcategory || c.category } : {}),
-    url: JLCPCB_ASSEMBLY.partUrl(sku),
+    url: partUrl(sku),
     live: false,
   };
 }
 
 /** "1-499:0.0176,500-1499:0.0135,48000-:0.0095" → breaks. Malformed pieces are skipped. */
-export function parsePriceBreaks(s: string): { qty: number; usd: number }[] {
-  const out: { qty: number; usd: number }[] = [];
+export function parsePriceBreaks(s: string): { qty: number; each: number }[] {
+  const out: { qty: number; each: number }[] = [];
   for (const piece of s.split(',')) {
     const m = /^\s*(\d+)\s*-\s*\d*\s*:\s*(\d*\.?\d+)\s*$/.exec(piece);
-    if (m) out.push({ qty: Number(m[1]), usd: Number(m[2]) });
+    if (m) out.push({ qty: Number(m[1]), each: Number(m[2]) });
   }
   return out.sort((a, b) => a.qty - b.qty);
 }
@@ -320,11 +321,11 @@ export function fromEasyEda(raw: unknown, fallbackLcsc: string): SupplierPart {
     stock: null,
     tier,
     fee: feeOf(tier),
-    price: typeof j.lcsc?.price === 'number' ? [{ qty: 1, usd: j.lcsc.price }] : [],
+    price: typeof j.lcsc?.price === 'number' ? [{ qty: 1, each: j.lcsc.price }] : [],
     attributes,
     ...(j.tags?.[0] ? { category: j.tags[0] } : {}),
     ...(datasheet ? { datasheet } : {}),
-    url: JLCPCB_ASSEMBLY.partUrl(sku),
+    url: partUrl(sku),
     live: false,
   };
 }

@@ -3,6 +3,7 @@
  * (tools/server/src/storage.ts), over HTTP with the access key. Nothing is saved without it.
  */
 import { SERVER_PORTS, type PartQuery, type ScadJob, type ScadRunResult, type ScadStatus, type SupplierPart } from '@4k7/schema';
+import type { AssemblyQuote, QuoteOrder } from '@4k7/parts';
 
 export type DiskStatus = 'off' | 'connecting' | 'ok' | 'unreachable';
 
@@ -163,6 +164,12 @@ class Disk {
   async sourcingLookup(house: string, sku: string): Promise<{ part: SupplierPart | null } | null> {
     const r = await this.#req('GET', `sourcing/${encodeURIComponent(house)}/part/${encodeURIComponent(sku)}`);
     return r ? ((await r.json()) as { part: SupplierPart | null }) : null;
+  }
+
+  /** An assembly house's online quote for an order (PCBWay), read by the server. Null: the server cannot ask it (an older server). */
+  async sourcingQuote(house: string, order: QuoteOrder): Promise<AssemblyQuote | null> {
+    const r = await this.#req('POST', `sourcing/${encodeURIComponent(house)}/quote`, JSON.stringify(order), { 'content-type': 'application/json' });
+    return r ? ((await r.json()) as { quote: AssemblyQuote }).quote : null;
   }
 
   /* -------------------------- OpenSCAD (the enclosure) ------------------------ */

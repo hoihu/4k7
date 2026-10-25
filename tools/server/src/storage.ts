@@ -22,7 +22,7 @@ import type { ScadJob } from '@4k7/schema';
 import type { HttpHandler } from './server.ts';
 import type { OpenScad } from './scad.ts';
 import { download as fetchPdf, isPdf, MAX_PDF_BYTES, pdfName } from './download.ts';
-import { partQuery, type Sourcing } from './sourcing.ts';
+import { partQuery, quoteRequest, type Sourcing } from './sourcing.ts';
 
 export const PROJECT_EXT = '.twd.json';
 const RECORD_STORES = ['library', 'artwork'] as const;
@@ -209,7 +209,8 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
         return res.writeHead(405).end();
       }
 
-      // a house's parts catalogue: POST sourcing/<house>/search (a PartQuery), GET sourcing/<house>/part/<number>
+      // a house's parts catalogue: POST sourcing/<house>/search (a PartQuery), GET sourcing/<house>/part/<number>;
+      // its assembly quote: POST sourcing/<house>/quote (a QuoteOrder)
       if (kind === 'sourcing' && opts.sourcing) {
         const house = id ?? '';
         if (!opts.sourcing.houses.includes(house)) return notFound();
@@ -218,6 +219,10 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
           return json(200, { parts: await opts.sourcing.search(house, q) });
         }
         if (action === 'part' && parts.length === 4 && parts[3] && m === 'GET') return json(200, { part: await opts.sourcing.lookup(house, parts[3]) });
+        if (action === 'quote' && parts.length === 3 && m === 'POST') {
+          const order = quoteRequest(JSON.parse((await readBody(req)).toString('utf8')));
+          return json(200, { quote: await opts.sourcing.quote(house, order) });
+        }
         return res.writeHead(405).end();
       }
 

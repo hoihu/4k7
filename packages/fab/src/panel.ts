@@ -99,11 +99,11 @@ export function panelBoard(b: BoardView, panel: PanelView): BoardView {
   };
 }
 
-/** Gerbers, drill, BOM and pick-and-place of the panel ("<project>-panel-…"). */
-export function panelFabFiles(b: BoardView, project: string): FabFile[] {
+/** Gerbers, drill, BOM (in the assembly house's form) and pick-and-place of the panel ("<project>-panel-…"). */
+export function panelFabFiles(b: BoardView, project: string, house?: string): FabFile[] {
   if (!b.panel) throw new Error('The board has no panel (set_panel).');
   const p = panelBoard(b, b.panel);
   const name = `${project}-panel`;
   const base = name.replace(/[^\w.-]+/g, '_');
-  return [...gerbers(p, name, b.panel), { name: `${base}-BOM.csv`, content: bom(p) }, { name: `${base}-PnP.csv`, content: pickAndPlace(p) }];
+  return [...gerbers(p, name, b.panel), { name: `${base}-BOM.csv`, content: bom(p, house) }, { name: `${base}-PnP.csv`, content: pickAndPlace(p) }];
 }
