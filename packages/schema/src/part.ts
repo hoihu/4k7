@@ -53,13 +53,16 @@ export interface ParamSpec {
 }
 
 /**
- * Parameters every component has, whatever its card: sourcing. `lcsc` is the LCSC / JLCPCB part
- * number ("C25804") of the exact part to assemble (the parameter of JLCPCB's entry in sourcing.ts);
- * for a generic resistor or capacitor it is the whole sourcing decision (the symbol stays generic),
- * for an imported IC it names the stocked variant.
+ * Parameters every component has, whatever its card: sourcing, one per assembly house with its own
+ * numbers (the `param` of its entry in sourcing.ts). `lcsc` is the LCSC / JLCPCB part number
+ * ("C25804") of the exact part to assemble; `eurocircuits` the part Eurocircuits assembles, its
+ * generic number ("GPR06034K7") or a manufacturer part number from its database. For a generic
+ * resistor or capacitor it is the whole sourcing decision (the symbol stays generic), for an imported
+ * IC it names the stocked variant.
  */
 export const UNIVERSAL_PARAMS: Record<string, ParamSpec> = {
   lcsc: { description: 'LCSC / JLCPCB part number of the exact part to assemble, e.g. "C25804" (the sourcing tool finds one)' },
+  eurocircuits: { description: 'Eurocircuits part to assemble: its generic number, e.g. "GPR06034K7", or a manufacturer part number (the sourcing tool finds one; without it Eurocircuits orders the MPN)' },
 };
 
 /** The parameters a component of this card may carry: the card's own plus the universal ones. */

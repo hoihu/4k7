@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PartSource } from '@4k7/parts';
 import type { SupplierPart } from '@4k7/schema';
-import { partQuery, sourcing } from '../src/sourcing.ts';
+import { partQuery, quoteRequest, sourcing } from '../src/sourcing.ts';
 import { storageHandler } from '../src/storage.ts';
 
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
@@ -45,6 +45,25 @@ describe('sourcing service', () => {
     expect(() => s.lookup('pcbway', 'C1')).toThrow(/no parts catalogue/);
   });
 
+  it('reads JLCPCB, Eurocircuits and PCBWay unless told otherwise, and keeps quotes like answers', async () => {
+    expect(sourcing().houses).toEqual(['jlcpcb', 'eurocircuits', 'pcbway']);
+    let asked = 0;
+    const s = sourcing({ sources: { pcbway: { search: async () => [], lookup: async () => null, quote: async () => (asked++, { price: 29, list: 101.5 }) } } });
+    const order = { boards: 10, sides: 1 as const, uniqueParts: 5, smdParts: 20, largeParts: 0, thParts: 1 };
+    expect(await s.quote('pcbway', order)).toEqual({ price: 29, list: 101.5 });
+    await s.quote('pcbway', { ...order });
+    expect(asked).toBe(1);
+    expect(() => sourcing({ sources: { jlcpcb: { search: async () => [], lookup: async () => null } } }).quote('jlcpcb', order)).toThrow(/no assembly quote/);
+  });
+
+  it('takes an order to quote only in the form it knows', () => {
+    const order = { boards: 10, sides: 2, uniqueParts: 5, smdParts: 20, largeParts: 1, thParts: 0 };
+    expect(quoteRequest({ ...order, extra: 1 })).toEqual(order);
+    for (const bad of [null, [], { ...order, sides: 3 }, { ...order, boards: 0 }, { ...order, smdParts: 1.5 }, { ...order, thParts: '1' }]) {
+      expect(() => quoteRequest(bad)).toThrow(expect.objectContaining({ status: 400 }));
+    }
+  });
+
   it('takes a search only in the form it knows', () => {
     expect(partQuery({ text: 'buzzer', package: 'SMD', noFee: true, limit: 8 })).toEqual({ text: 'buzzer', package: 'SMD', noFee: true, limit: 8 });
     expect(partQuery({ kind: 'capacitor', value: '100nF', extra: 'ignored' })).toEqual({ kind: 'capacitor', value: '100nF' });
@@ -62,7 +81,8 @@ describe('sourcing routes', () => {
       search: async (q) => (asked.push(q), [part('C25804')]),
       lookup: async (sku) => (sku === 'C404' ? null : sku === 'C500' ? Promise.reject(new Error('down')) : part(sku)),
     };
-    const handler = storageHandler({ accessKey: KEY, projectsDir: join(root, 'p'), dataDir: join(root, 'd'), allowedOrigin: (o) => o === 'http://localhost:5173', sourcing: sourcing({ sources: { jlcpcb: src } }) });
+    const quoting: PartSource = { search: async () => [], lookup: async () => null, quote: async (o) => ({ price: o.boards * 10, days: '5-6 days' }) };
+    const handler = storageHandler({ accessKey: KEY, projectsDir: join(root, 'p'), dataDir: join(root, 'd'), allowedOrigin: (o) => o === 'http://localhost:5173', sourcing: sourcing({ sources: { jlcpcb: src, pcbway: quoting } }) });
     const http: Server = createServer((req, res) => void handler(req, res));
     await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
     cleanups.push(() => rmSync(root, { recursive: true, force: true }));
@@ -83,9 +103,20 @@ describe('sourcing routes', () => {
     expect(asked).toEqual([{ text: 'buzzer', limit: 3 }]);
   });
 
+  it("asks a house's online quote for an order", async () => {
+    const { api } = await start();
+    const order = { boards: 3, sides: 1, uniqueParts: 5, smdParts: 20, largeParts: 0, thParts: 0 };
+    expect(await (await api('sourcing/pcbway/quote', { method: 'POST', body: JSON.stringify(order) })).json()).toEqual({ quote: { price: 30, days: '5-6 days' } });
+    const bad = await api('sourcing/pcbway/quote', { method: 'POST', body: JSON.stringify({ ...order, sides: 0 }) });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toBe('quote: sides is 1 or 2');
+    expect((await api('sourcing/jlcpcb/quote', { method: 'POST', body: JSON.stringify(order) })).status).toBe(404);
+    expect((await api('sourcing/pcbway/quote')).status).toBe(405);
+  });
+
   it('says what went wrong: an unknown house, a bad search, the house failing, the wrong method', async () => {
     const { api } = await start();
-    expect((await api('sourcing/pcbway/part/C1')).status).toBe(404);
+    expect((await api('sourcing/acme/part/C1')).status).toBe(404);
     const bad = await api('sourcing/jlcpcb/search', { method: 'POST', body: JSON.stringify({ kind: 'diode' }) });
     expect(bad.status).toBe(400);
     expect(await bad.text()).toBe('search: kind is resistor or capacitor');

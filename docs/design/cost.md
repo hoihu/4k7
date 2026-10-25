@@ -1,11 +1,13 @@
 # Cost: a guide for the agent making a design cheaper to make
 
-> Part of [sourcing.md](sourcing.md). Status: 2026-10-25. Written to the agent: this text is what it
-> reads (`get_guide cost`) before it changes a design to make it cheaper. What the user asks wins over it.
+> Part of [sourcing.md](sourcing.md). Status: 2026-10-25; Eurocircuits and PCBWay 2026-10-25. Written to
+> the agent: this text is what it reads (`get_guide cost`) before it changes a design to make it cheaper. What
+> the user asks wins over it.
 
 The aim is the same circuit for less money. A change that alters what the circuit does is no saving
 unless the user agrees to it. The numbers (fees, which parts cost one, what the board's surcharges
-are) come from the tools, for the house the design is made at; this guide says how to use them.
+are) come from the tools, for the house the design is made at (the one the user chose; the sourcing
+tool's house names another); this guide says how to use them.
 
 ## 1. Measure first
 
@@ -18,18 +20,28 @@ are) come from the tools, for the house the design is made at; this guide says h
 
 ## 2. What costs money, the most first (small runs)
 
-1. **The service.** A cheaper service may take only boards with every part on one side, a number of
-   boards, some layer counts (the cost check says why a service cannot take the order). Moving the
-   few parts on the bottom to the top is often the biggest saving of all (tens of dollars at
-   JLCPCB). Only when the top has room, and the user did not put them there on purpose: ask.
-2. **Loading fees, per unique part number.** At JLCPCB, Economic assembly charges one for every
-   unique Extended part and Standard for every unique part. So: parts without a fee, and fewer part
-   numbers (§4).
-3. **Hand soldering.** Through-hole parts cost labour per order and per joint. An SMD equivalent
-   avoids it, or the user solders them: their time, so ask.
-4. **The parts.** They matter on large orders; the cost check finds cheaper equivalents.
+1. **The service, and the second side.** A cheaper service may take only boards with every part on
+   one side, a number of boards, some layer counts (the cost check says why a service cannot take the
+   order); a house that has one service charges the second side (Eurocircuits €55). Moving the few
+   parts on the bottom to the top is often the biggest saving of all (tens of dollars at JLCPCB).
+   Only when the top has room, and the user did not put them there on purpose: ask.
+2. **Fees per unique part number.** At JLCPCB, Economic assembly charges a loading fee for every
+   unique Extended part and Standard for every unique part. At Eurocircuits every part number costs
+   a BOM line and a part fee (€5.78), an On Demand part €1.65 more than a Generic or eC-stock one.
+   So: parts without a fee, and fewer part numbers (§4).
+3. **Hand soldering.** Through-hole parts cost labour per order and per joint (JLCPCB), or a placement
+   per board and a fee for the kind (Eurocircuits). An SMD equivalent avoids it, or the user solders
+   them: their time, so ask.
+4. **The parts.** They matter on large orders; the cost check finds cheaper equivalents. Eurocircuits'
+   Generic resistors and capacitors are free.
 5. **The bare board** (not in the estimate): its size against the cheapest offers, its layers, holes
-   below a size, a panel. The cost check lists what applies (§5).
+   below a size, fine tracks, a panel. The cost check lists what applies (§5).
+
+At PCBWay its online quote prices the assembly as a whole, by the boards, the sides, the unique
+parts and the parts per board (large ICs and through-hole parts apart), with a special price for
+small orders (up to 20 boards, 100 kinds of part, no BGA or QFP part …): fewer part numbers, one
+side and fewer through-hole parts still count, and keeping an order within the special price most of
+all. The cost check asks the quote for the variants it can (one side, no through-hole parts).
 
 ## 3. Parts: how far each may move
 
@@ -72,7 +84,9 @@ A pair:
 - Two 1 % resistors in series or parallel stay within 1 %, and the power splits between them.
   Capacitors in parallel add up: keep both of the same dielectric and voltage rating.
 - It pays only where it removes a fee: a value with no part without a fee, or a pair whose parts are
-  on the order already.
+  on the order already. At Eurocircuits a second part costs a BOM line and a part fee, more than the
+  On Demand fee it saves: there a pair pays only with parts on the order already, and a Generic part
+  of a nearby value (where the part may move) saves the On Demand part's price too.
 
 Fewer part numbers: where several values may move (pull-ups, LED resistors, decoupling capacitors),
 bring them to one value. Where one value comes in several packages, one package for all where the
@@ -86,7 +100,8 @@ footprints have room.
 - Layers: 2 cost less than 4, at every house. Only where the routing fits on 2: ask, it changes the
   layout.
 - Holes: vias and drills at or above the size where the extra charge starts (the cost check says
-  which); `set_board via_drill_mm`.
+  which); `set_board via_drill_mm`. Tracks and gaps likewise where the house charges for fine ones
+  (Eurocircuits below 0.125 mm); `set_board track_mm clearance_mm`, where the routing has room.
 - A panel only where the assembly needs one: single boards keep their special price.
 - At order time, not in the design (say so): the standard thickness (1.6 mm), finish (HASL), colour
   (green) and copper (1 oz) cost the least.
@@ -102,6 +117,11 @@ footprints have room.
 
 ## 7. Other houses
 
-The checks price one house: its fees, its parts without a fee, its board surcharges. Another house
-prices differently (its fees per order and per part, which parts it stocks without a fee, its board
-offers). The app does not quote other houses yet: if the user asks, say what would differ, not a price.
+The checks price one house at a time: its fees, its parts without a fee, its board surcharges. The
+app knows JLCPCB, Eurocircuits and PCBWay; give the sourcing tool's house to price another than the
+user's (`sourcing cost house "eurocircuits"`). To compare, run the cost check for each with the same
+number of boards and compare the totals, saying what each leaves out: the bare boards at JLCPCB and
+Eurocircuits, the parts at PCBWay (it prices them after the BOM upload), and that Eurocircuits' are
+in euros without VAT. Part numbers belong to a house: a design sourced at one needs the numbers of
+the other (Eurocircuits orders by MPN where it has no number; PCBWay always does). For a house the
+app does not know, say what would differ, not a price.

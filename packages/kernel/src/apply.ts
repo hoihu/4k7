@@ -4,7 +4,7 @@
  */
 import {
   approxEqual,
-  normalizeLcsc,
+  ASSEMBLY_HOUSES,
   paramSpecs,
   parseQuantity,
   type Component,
@@ -1669,9 +1669,11 @@ function validateParams(card: PartCard, params: Record<string, string | null>, r
         candidates: Object.keys(specs),
       });
     }
-    if (key === 'lcsc' && value !== null) {
-      const n = normalizeLcsc(value);
-      if (!n) reject({ code: 'PARAM_INVALID', message: `${refdes}.lcsc = "${value}" is not an LCSC part number (a C followed by digits, e.g. C25804).` });
+    // an assembly house's part number, in the house's form
+    const house = value !== null ? ASSEMBLY_HOUSES.find((h) => h.param === key) : undefined;
+    if (house) {
+      const n = house.normalize(value!);
+      if (!n) reject({ code: 'PARAM_INVALID', message: `${refdes}.${key} = "${value}" is not ${key === 'lcsc' ? 'an LCSC part number (a C followed by digits, ' : `a ${house.numberName} (`}e.g. ${house.example}).` });
       params[key] = n;
     }
     if (key === 'package' && value && !card.packageInfo && !standardPackage(value, card.pins.length)) {

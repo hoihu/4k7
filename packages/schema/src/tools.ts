@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { DraftPin, PackageInfo } from './ingest.ts';
 import { QueryOp, Transaction } from './ops.ts';
-import { ASSEMBLY_HOUSE, feeFreeTiers } from './sourcing.ts';
+import { ASSEMBLY_HOUSES, feeFreeTiers } from './sourcing.ts';
 
 export const CalcCall = z.object({
   fn: z
@@ -23,45 +23,59 @@ export const CalcCall = z.object({
 });
 export type CalcCall = z.infer<typeof CalcCall>;
 
-const HOUSE = ASSEMBLY_HOUSE;
+/** "Basic and Preferred at JLCPCB, Generic and eC-stock at Eurocircuits": each house's classes without a fee. */
+const FEE_FREE = ASSEMBLY_HOUSES.filter((h) => h.tiers.length).map((h) => `${feeFreeTiers(h)} at ${h.name}`).join(', ');
+/** "an LCSC number at JLCPCB ("C25804"), …": what each house's part numbers are. */
+const NUMBERS = ASSEMBLY_HOUSES.map((h) => `${/^(LCSC|[aio])/i.test(h.numberName) ? 'an' : 'a'} ${h.numberName} at ${h.name} ("${h.example}")`).join(', ');
+/** Every action may name the house; without one it runs for the house the user chose. */
+const house = z
+  .string()
+  .optional()
+  .describe(`The assembly house: ${ASSEMBLY_HOUSES.map((h) => `"${h.id}"`).join(', ')}. Default: the one the user chose (Layout → Sourcing); give it to compare houses or when the user names one`);
 
 /** sourcing: the assembly house's parts catalogue (search, one part by number) and the stock check of the design. */
 export const SourcingInput = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('search'),
+    house,
     text: z.string().optional().describe('What the part is, as words that appear in a catalogue description or its part number: "passive buzzer", "AMS1117-3.3", "USB-C receptacle 16P", "NPN SOT-23". Not for resistors/capacitors: use kind + value.'),
     kind: z.enum(['resistor', 'capacitor']).optional().describe('Parametric search for a jellybean passive: give value (and package); text is ignored'),
     value: z.string().optional().describe('With kind: the value, e.g. "10k", "100nF"'),
-    package: z.string().optional().describe(`Package filter as ${HOUSE.name} names it: "0603", "SOT-23", "SOIC-8", "LQFP-48"`),
-    no_fee: z.boolean().optional().describe(`Only parts without a one-off fee (${feeFreeTiers(HOUSE)}). Default: all, fee-free first`),
+    package: z.string().optional().describe('Package filter as the house names it: "0603", "SOT-23", "SOIC-8", "LQFP-48"'),
+    no_fee: z.boolean().optional().describe(`Only parts without a fee (${FEE_FREE}). Default: all, fee-free first`),
     limit: z.number().int().min(1).max(25).default(8),
-  }).describe('Search the catalogue: by words, or a resistor/capacitor by kind + value + package. In-stock parts only.'),
+  }).describe("Search the house's catalogue: by words, or a resistor/capacitor by kind + value + package. Parts it can supply only."),
   z.object({
     action: z.literal('lookup'),
-    part: z.string().min(2).describe(`The ${HOUSE.numberName}, e.g. "${HOUSE.example}"`),
-  }).describe('One part by its number: maker and part number, package, stock now, price breaks, class, datasheet link'),
+    house,
+    part: z.string().min(2).describe(`The house's part number: ${NUMBERS}`),
+  }).describe('One part by its number: maker and part number, package, stock now (or how the house gets it), price breaks, class, lifecycle, datasheet link'),
   z.object({
     action: z.literal('check'),
+    house,
     boards: z.number().int().min(1).max(1_000_000).optional().describe('How many boards will be assembled (default: the number set in the app, else 10)'),
   }).describe(
     "The stock check before ordering: every component's part looked up now, with what is wrong (out of stock, too few for the boards, " +
-      'low stock, gone from the catalogue, not matching its component, a fee) and in-stock replacements for the parts in trouble',
+      'low stock, gone from the catalogue, not matching its component, obsolete at the maker, a fee) and in-stock replacements for the parts in trouble. ' +
+      'At a house without a catalogue (PCBWay): what goes on its BOM, and the parts it could not buy',
   ),
   z.object({
     action: z.literal('cost'),
+    house,
     boards: z.number().int().min(1).max(1_000_000).optional().describe('How many boards will be assembled (default: the number set in the app, else 10)'),
   }).describe(
-    `The cost check: what the order costs at each of ${HOUSE.name}'s assembly services (parts and every fee: setup, stencil, loading, joints, ` +
-      'soldering by hand), and what would make it cheaper (equivalent parts, one part number for parts that are the same, every part on one side, ' +
-      'soldering through-hole parts yourself), with parts for the components that have no part number yet',
+    "The cost check: what the order costs at each of the house's assembly services (parts and every fee: setup, stencil, loading or BOM lines, " +
+      'joints or placements, soldering by hand; at PCBWay its online quote), and what would make it cheaper (equivalent parts, one part number for ' +
+      'parts that are the same, every part on one side, soldering through-hole parts yourself), with parts for the components that have no part number yet',
   ),
   z.object({
     action: z.literal('values'),
+    house,
     boards: z.number().int().min(1).max(1_000_000).optional().describe('How many boards will be assembled (default: the number set in the app, else 10)'),
   }).describe(
     'Cheaper ways to make each resistor and capacitor value (with a part number or without): the same value without a fee, the nearest values ' +
       'below and above, values already on the order, and two parts in series or parallel, from the parts without a fee in its package; each with ' +
-      'how far off it is and what it saves (pieces, loading fees and extra joints counted). Whether a value may move is for you to judge by what ' +
+      'how far off it is and what it saves (pieces, loading or line fees and extra joints or placements counted). Whether a value may move is for you to judge by what ' +
       'the part does: read design_query get_guide topic "cost" first',
   ),
 ]);
@@ -262,12 +276,15 @@ export const TOOL_NAMES = {
 export const SOURCING_TOOL: ToolDefinition = {
   name: TOOL_NAMES.sourcing,
   description:
-    `Parts for assembly at ${HOUSE.name}, from its catalogue (${HOUSE.numberName}s, stock now, prices). search: by words, or a resistor/capacitor ` +
-    'by kind + value + package. lookup: one part by its number (stock, price breaks, datasheet link). check: every part of the design looked up ' +
-    'before ordering, for a number of boards, with replacements for the ones out of stock or short. cost: what the order costs with every fee, ' +
-    'and what would make it cheaper. values: cheaper ways to make each resistor and capacitor value (other values, series or parallel pairs). ' +
-    `Parts say their class (${HOUSE.tiers.map((t) => `${t.name}${t.fee ? ': a fee' : ''}`).join(', ')}). ` +
-    `Record a chosen part with design_edit set_param ${HOUSE.param}: "${HOUSE.example}"; a generic resistor/capacitor stays generic.`,
+    `Parts for assembly at ${ASSEMBLY_HOUSES.map((h) => h.name).join(', ').replace(/, ([^,]*)$/, ' or $1')} (house; default: the one the user chose), from the house's catalogue. ` +
+    'search: by words, or a resistor/capacitor by kind + value + package. lookup: one part by its number (stock, price breaks, datasheet link). ' +
+    'check: every part of the design looked up before ordering, for a number of boards, with replacements for the ones out of stock, short or ' +
+    'obsolete. cost: what the order costs with every fee, and what would make it cheaper. values: cheaper ways to make each resistor and ' +
+    'capacitor value (other values, series or parallel pairs). Parts say their class (' +
+    ASSEMBLY_HOUSES.filter((h) => h.tiers.length).map((h) => `${h.name}: ${h.tiers.map((t) => `${t.name}${t.fee ? ', a fee' : ''}`).join('; ')}`).join(' · ') +
+    '). Record a chosen part with design_edit set_param and the house\'s parameter (' +
+    ASSEMBLY_HOUSES.filter((h) => h.param).map((h) => `${h.name}: ${h.param} "${h.example}"`).join(', ') +
+    '); a generic resistor/capacitor stays generic.',
   input_schema: schemaOf(SourcingInput),
 };
 

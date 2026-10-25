@@ -20,7 +20,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { ASSEMBLY_HOUSE, assemblyHouse, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
 import { boardScadSummary, enclosureJob, enclosureReport, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import costGuide from '../../../../docs/design/cost.md?raw';
@@ -33,7 +33,7 @@ import { IngestState } from './ingest.svelte.ts';
 import { assemblyFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
-import { checkDesignCost, checkDesignStock, checkDesignValues, house, sourcingTool, type BoardFacts, type CostReport, type StockReport, type SupplierPart } from './sourcing.ts';
+import { checkDesignCost, checkDesignStock, checkDesignValues, sourcingTool, type BoardFacts, type CostReport, type StockReport, type SupplierPart } from './sourcing.ts';
 import { fabRefreshPrompt } from './fabRefresh.ts';
 import {
   DEFAULT_SETTINGS,
@@ -167,9 +167,15 @@ class AppState {
   /** The last enclosure render (the report, its pieces, the board facts it was measured against). */
   enclosure = $state.raw<{ report: EnclosureReport; facts: EnclosureFacts } | null>(null);
   enclosureBusy = $state(false);
-  /** The last stock check and cost check (the Layout view shows them; the agent's land here too), and which one it shows. */
-  stockReport = $state.raw<StockReport | null>(null);
-  costReport = $state.raw<CostReport | null>(null);
+  /** The last stock check and cost check of the chosen house (the Layout view shows them; the agent's land here too), and which one it shows. */
+  private lastStock = $state.raw<StockReport | null>(null);
+  private lastCost = $state.raw<CostReport | null>(null);
+  get stockReport(): StockReport | null {
+    return this.lastStock?.house === this.house.name ? this.lastStock : null;
+  }
+  get costReport(): CostReport | null {
+    return this.lastCost?.house === this.house.name ? this.lastCost : null;
+  }
   sourcingShown = $state<'stock' | 'cost'>('stock');
   stockBusy = $state(false);
   /** OpenSCAD on this computer, as the server last said (null: not asked yet, or no server). */
@@ -895,54 +901,68 @@ class AppState {
   private async boardFacts(): Promise<BoardFacts | null> {
     try {
       const b = await this.kernel.boardPlacement();
-      return (assembled) => assemblyFacts(b, assembled);
+      return (assembled, kinds) => assemblyFacts(b, assembled, kinds);
     } catch {
       return null;
     }
   }
 
-  /** Check the stock of every part for `boards` boards (default: the number set in the Layout view), with the order's estimate; the Layout view shows the report. */
-  async checkStock(boards?: number): Promise<StockReport> {
+  /** The assembly house the checks run for: the user's pick (Layout → Sourcing), else the board's manufacturer when it assembles, else the default. */
+  get house(): AssemblyHouse {
+    return assemblyHouse(this.settings.assemblyHouse) ?? assemblyHouse(this.board?.fab?.house) ?? ASSEMBLY_HOUSE;
+  }
+
+  /** Source at another house (the Layout view shows a report only for the house it was made for). */
+  chooseHouse(id: string) {
+    return this.updateSettings({ assemblyHouse: id });
+  }
+
+  /** Check the stock of every part for `boards` boards (default: the number set in the Layout view) at a house, with the order's estimate; the Layout view shows the chosen house's report. */
+  async checkStock(boards?: number, house: AssemblyHouse = this.house): Promise<StockReport> {
     this.stockBusy = true;
     try {
       const [components, facts] = await Promise.all([this.sourcedComponents(), this.boardFacts()]);
-      const report = await checkDesignStock(components, boards ?? this.settings.buildBoards, facts ?? undefined);
-      this.stockReport = report;
-      this.sourcingShown = 'stock';
+      const report = await checkDesignStock(components, boards ?? this.settings.buildBoards, facts ?? undefined, house);
+      if (house.id === this.house.id) {
+        this.lastStock = report;
+        this.sourcingShown = 'stock';
+      }
       return report;
     } finally {
       this.stockBusy = false;
     }
   }
 
-  /** The cost check for `boards` boards: the estimate at each service and what would make the order cheaper; the Layout view shows it. */
-  async checkCost(boards?: number): Promise<CostReport> {
+  /** The cost check for `boards` boards at a house: the estimate at each service and what would make the order cheaper; the Layout view shows the chosen house's. */
+  async checkCost(boards?: number, house: AssemblyHouse = this.house): Promise<CostReport> {
     this.stockBusy = true;
     try {
       const [components, facts] = await Promise.all([this.sourcedComponents(), this.boardFacts()]);
       if (!facts) throw new Error('the board could not be placed, so the assembly fees cannot be counted');
-      const report = await checkDesignCost(components, boards ?? this.settings.buildBoards, facts);
-      this.costReport = report;
-      this.stockReport = report.stock;
-      this.sourcingShown = 'cost';
+      const report = await checkDesignCost(components, boards ?? this.settings.buildBoards, facts, house);
+      if (house.id === this.house.id) {
+        this.lastCost = report;
+        this.lastStock = report.stock;
+        this.sourcingShown = 'cost';
+      }
       return report;
     } finally {
       this.stockBusy = false;
     }
   }
 
-  /** The values check for `boards` boards (for the agent): cheaper ways to make each resistor and capacitor value. */
-  async checkValues(boards?: number) {
+  /** The values check for `boards` boards at a house (for the agent): cheaper ways to make each resistor and capacitor value. */
+  async checkValues(boards?: number, house: AssemblyHouse = this.house) {
     const [components, facts] = await Promise.all([this.sourcedComponents(), this.boardFacts()]);
     if (!facts) throw new Error('the board could not be placed, so the assembly fees cannot be counted');
-    return checkDesignValues(components, boards ?? this.settings.buildBoards, facts);
+    return checkDesignValues(components, boards ?? this.settings.buildBoards, facts, house);
   }
 
   /** Hand the design to the agent to make it cheaper to make, for the boards set in the Layout view (it follows the cost guide). */
   optimizeCost() {
     const n = this.costReport?.boards ?? this.settings.buildBoards;
     void this.send(
-      `Make this design cheaper to make at ${house.name} for ${n} boards, without changing what it does. Read design_query get_guide topic "cost" first and follow it: ` +
+      `Make this design cheaper to make at ${this.house.name} for ${n} boards, without changing what it does. Read design_query get_guide topic "cost" first and follow it: ` +
         'measure with sourcing cost and sourcing values, decide part by part by what each does in the circuit, ask me before a change I may care about, ' +
         'make the rest in one changeset, check again with sourcing cost and sourcing check, and tell me the total before and after, what each change saves, and what you left as it was and why.',
       { shown: `Optimize the cost for ${n} boards` },
@@ -959,9 +979,10 @@ class AppState {
     return ok;
   }
 
-  /** The ops that set the house's part number on components (null: take it off them). */
+  /** The ops that set the chosen house's part number on components (null: take it off them); none at a house without its own numbers. */
   private partOps(refs: string[], sku: string | null) {
-    return refs.map((ref) => ({ op: 'set_param', ref, params: { [house.param]: sku } }));
+    const param = this.house.param;
+    return param ? refs.map((ref) => ({ op: 'set_param', ref, params: { [param]: sku } })) : [];
   }
 
   /** Take a replacement on every component of a stock check line. */
@@ -971,7 +992,7 @@ class AppState {
 
   /** Take a saving of the cost check: its part; every part on the top side; or the hand-soldered parts off the order. */
   applySaving(s: Saving): Promise<boolean> {
-    const saves = `saves $${s.usd.toFixed(2)}`;
+    const saves = `saves ${money(s.saves, this.house)}`;
     if (s.to) return this.sourcingEdit(`${s.refs.join(', ')}: ${s.to.sku} (${s.to.mpn}) instead of ${s.from}, ${saves}`, this.partOps(s.refs, s.to.sku));
     if (s.kind === 'side') {
       const ops = (this.k?.ledger ?? []).filter((x) => s.refs.some((ref) => x.text.startsWith(`layer(${ref}) =`))).map((x) => ({ op: 'remove_constraint', id: x.id }));
@@ -1064,7 +1085,7 @@ class AppState {
         return { content: JSON.stringify(boardSummary(b)), isError: false, label: 'query · get_board', detail: `${b.stats.routed}/${b.stats.nets} nets routed` };
       }
       case 'sourcing':
-        return sourcingTool(input, { stock: (boards) => this.checkStock(boards), cost: (boards) => this.checkCost(boards), values: (boards) => this.checkValues(boards) });
+        return sourcingTool(input, { stock: (boards, h) => this.checkStock(boards, h), cost: (boards, h) => this.checkCost(boards, h), values: (boards, h) => this.checkValues(boards, h) }, this.house);
       case 'import_part': {
         const args = ImportPartInput.safeParse(input);
         if (!args.success) return fail('import', args.error.message);

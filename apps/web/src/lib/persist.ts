@@ -286,6 +286,8 @@ export interface Settings {
   enclosureNotes: string;
   /** How many boards the stock check counts the parts for. */
   buildBoards: number;
+  /** The assembly house the checks run for (its id, "jlcpcb"); '' = the board's manufacturer when it assembles, else the default. */
+  assemblyHouse: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -310,6 +312,7 @@ export const DEFAULT_SETTINGS: Settings = {
   layoutNotes: '',
   enclosureNotes: '',
   buildBoards: 10,
+  assemblyHouse: '',
 };
 
 /** Bumped when a default changes in a way existing users should get (v2: dark blue theme). */

@@ -47,7 +47,7 @@ describe('tscircuit mirror', () => {
     const parts = await tscircuitSource(fetchFn).search({ kind: 'resistor', value: '10k', package: '0603' });
     expect(calls[0]).toBe('/resistors/list.json?resistance=10000&package=0603');
     expect(parts.map((p) => p.sku)).toEqual(['C25804', 'C99', 'C2906982']);
-    expect(parts[0]).toMatchObject({ mpn: '0603WAF1002T5E', tier: 'Basic', fee: false, live: false, price: [{ qty: 1, usd: 0.0017 }], attributes: { Resistance: '10kΩ', Tolerance: '±1%' }, url: 'https://jlcpcb.com/partdetail/C25804' });
+    expect(parts[0]).toMatchObject({ mpn: '0603WAF1002T5E', tier: 'Basic', fee: false, live: false, price: [{ qty: 1, each: 0.0017 }], attributes: { Resistance: '10kΩ', Tolerance: '±1%' }, url: 'https://jlcpcb.com/partdetail/C25804' });
     expect(parts[2]).toMatchObject({ tier: 'Extended', fee: true });
     // attributes that are not JSON fall back to the numeric columns
     expect(parts[1]!.attributes).toEqual({ Resistance: '10kΩ' });
@@ -73,7 +73,7 @@ describe('tscircuit mirror', () => {
     const parts = await tscircuitSource(fetchFn).search({ text: 'passive buzzer', package: 'SMD,5x5mm', limit: 1 });
     expect(calls[0]).toBe('/components/list.json?search=passive%20buzzer&package=SMD%2C5x5mm');
     expect(parts).toHaveLength(1);
-    expect(parts[0]).toMatchObject({ sku: 'C96256', price: [{ qty: 1, usd: 0.1 }, { qty: 10, usd: 0.08 }, { qty: 100, usd: 0.06 }], category: 'Buzzers' });
+    expect(parts[0]).toMatchObject({ sku: 'C96256', price: [{ qty: 1, each: 0.1 }, { qty: 10, each: 0.08 }, { qty: 100, each: 0.06 }], category: 'Buzzers' });
   });
 
   it('refuses a parametric search without a value, and a text search without text', async () => {
@@ -88,7 +88,7 @@ describe('tscircuit mirror', () => {
     const src = tscircuitSource(fetchFn);
     const p = await src.lookup('c25804');
     expect(calls).toEqual(['/api/easyeda_components/C25804', '/components/list.json?search=0603WAF1002T5E']);
-    expect(p).toMatchObject({ sku: 'C25804', mpn: '0603WAF1002T5E', manufacturer: 'UNI-ROYAL', package: '0603', tier: 'Basic', stock: 37165617, price: [{ qty: 1, usd: 0.0038 }], description: '10kΩ 100mW ±1% 0603 Chip Resistor', datasheet: 'https://www.mouser.in/datasheet/2/447/PYu_RT_1_to_0_01_RoHS_L_11-1669912.pdf', attributes: { Value: '10kΩ' }, live: false });
+    expect(p).toMatchObject({ sku: 'C25804', mpn: '0603WAF1002T5E', manufacturer: 'UNI-ROYAL', package: '0603', tier: 'Basic', stock: 37165617, price: [{ qty: 1, each: 0.0038 }], description: '10kΩ 100mW ±1% 0603 Chip Resistor', datasheet: 'https://www.mouser.in/datasheet/2/447/PYu_RT_1_to_0_01_RoHS_L_11-1669912.pdf', attributes: { Value: '10kΩ' }, live: false });
     expect(await src.lookup('C1')).toBeNull();
     expect(await src.lookup('nonsense')).toBeNull();
   });
@@ -96,7 +96,7 @@ describe('tscircuit mirror', () => {
   it("does not pass LCSC's stock off as JLCPCB's when the mirror's search has nothing", async () => {
     const { fetchFn } = fakeFetch({ '/api/easyeda_components/C25804': easyeda });
     const p = await tscircuitSource(fetchFn).lookup('C25804');
-    expect(p).toMatchObject({ stock: null, price: [{ qty: 1, usd: 0.0017 }] });
+    expect(p).toMatchObject({ stock: null, price: [{ qty: 1, each: 0.0017 }] });
   });
 });
 
@@ -154,7 +154,7 @@ describe('jlcpcb.com', () => {
       stock: 40773871,
       tier: 'Basic',
       fee: false,
-      price: [{ qty: 1, usd: 0.0022 }, { qty: 1000, usd: 0.0018 }],
+      price: [{ qty: 1, each: 0.0022 }, { qty: 1000, each: 0.0018 }],
       attributes: { Resistance: '10kΩ', Tolerance: '±1%', 'Power(Watts)': '100mW' },
       category: 'Chip Resistor - Surface Mount',
       datasheet: 'https://www.lcsc.com/datasheet/lcsc_datasheet_2206010045_UNI-ROYAL-Uniroyal-Elec-0603WAF1002T5E_C25804.pdf',
@@ -234,9 +234,9 @@ describe('jlcpcb.com', () => {
 describe('mapping helpers', () => {
   it('parses price breaks and skips malformed pieces', () => {
     expect(parsePriceBreaks('500-1499:0.0135,1-499:0.0176,48000-:0.0095,junk')).toEqual([
-      { qty: 1, usd: 0.0176 },
-      { qty: 500, usd: 0.0135 },
-      { qty: 48000, usd: 0.0095 },
+      { qty: 1, each: 0.0176 },
+      { qty: 500, each: 0.0135 },
+      { qty: 48000, each: 0.0095 },
     ]);
   });
 

@@ -9,3 +9,5 @@ export * from './cost.ts';
 export * from './values.ts';
 export * from './jlc.ts';
 export * from './datasheet.ts';
+export * from './eurocircuits.ts';
+export * from './pcbway.ts';
