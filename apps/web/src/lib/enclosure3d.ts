@@ -14,6 +14,7 @@ import { boardBodies } from '@4k7/parts';
 import type { BoardView } from '@4k7/schema';
 import type { EnclosureFacts, EnclosureFinding, EnclosurePiece } from '@4k7/fab';
 import { boardGroup, viewerCore, type Res } from './three-body.ts';
+import { extent, liftStep, type Box } from './section.ts';
 
 const T = 1.6;
 type V3 = readonly [number, number, number] | readonly number[];
@@ -84,18 +85,12 @@ function hosts(s: EnclosureScene): EnclosurePiece[] {
   return s.pieces.filter((p) => !s.inlays?.[p.name] || !s.pieces.some((h) => h.name === s.inlays![p.name]!.host));
 }
 
-/** How far the open view lifts each piece after the first. */
-function liftStep(s: EnclosureScene) {
-  const zs = s.pieces.flatMap((p) => [p.bbox.min[2], p.bbox.max[2]]);
-  return zs.length ? Math.max(...zs) - Math.min(...zs) + 10 : 20;
-}
-
 /** The board, the pieces and the marks, as one group for the viewer core. */
 export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}, redraw?: () => void): THREE.Group {
   const h = s.board.outline.h;
   const group = o.board === false ? new THREE.Group() : boardGroup(s.board, boardBodies(s.board), res, redraw);
   const owned: { dispose(): void }[] = [];
-  const lift = liftStep(s) * (o.open ?? 0);
+  const lift = liftStep(s.pieces) * (o.open ?? 0);
   const order = hosts(s).map((p) => p.name);
   /** The piece a piece moves and shows with: an inlay's host, else itself. */
   const hostOf = (name: string) => {
@@ -173,19 +168,235 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
   return group;
 }
 
+/** A cut for the viewer (board.scad): the plane n · p = at through `box` (what it may move through; its frame goes round it). */
+export interface ViewerSection {
+  normal: [number, number, number];
+  at: number;
+  /** Cut away the half the normal points away from (else the one it points to). */
+  flip?: boolean;
+  box: Box;
+}
+
 export interface EnclosureViewer {
   setScene(s: EnclosureScene, o: SceneOptions): void;
-  /** A section: the plane through `at` (board.scad), its `normal` side cut away; null: whole. */
-  section(cut: { at: V3; normal: V3 } | null): void;
+  /** A section with a frame round it, to drag it by; null: whole. */
+  section(cut: ViewerSection | null): void;
+  /** Where the camera is (board.scad). */
+  eye(): [number, number, number];
   view(preset: 'iso' | 'top' | 'bottom' | 'front'): void;
   resize(width: number, height: number): void;
   dispose(): void;
 }
 
-export function createEnclosureViewer(canvas: HTMLCanvasElement): EnclosureViewer {
+/** The frame round a cut and its grip: brighter while the pointer is on them. */
+const FRAME = 0xe0703a;
+const FRAME_HOT = 0xffb37a;
+/** How close (CSS pixels) the pointer must come to the frame to take it. */
+const REACH = 7;
+
+/** 2D distance from (x, y) to the segment a–b. */
+function segmentDistance(x: number, y: number, a: { x: number; y: number }, b: { x: number; y: number }) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const t = dx || dy ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy))) : 0;
+  return Math.hypot(x - a.x - t * dx, y - a.y - t * dy);
+}
+
+/** `moved`: the user dragged the cut's frame to `at` (mm along its normal, within its box). */
+export function createEnclosureViewer(canvas: HTMLCanvasElement, moved?: (at: number) => void): EnclosureViewer {
   const core = viewerCore(canvas);
   let key = '';
   let h = 0;
+  let cut: ViewerSection | null = null;
+
+  /*
+   * The frame: a band on the plane round the box's cross-section (a line along its outer edge, for
+   * when it is seen edge on) and a grip in the middle of its top edge (a horizontal cut: its back
+   * edge), arrows both ways along the normal. Drawn in the core's overlay, so the cut never hides it.
+   */
+  const lineMat = new THREE.LineBasicMaterial({ color: FRAME, transparent: true, opacity: 0.9 });
+  const bandMat = new THREE.MeshBasicMaterial({ color: FRAME, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false });
+  const gripMat = new THREE.MeshBasicMaterial({ color: FRAME });
+  const line = new THREE.LineLoop(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(12), 3)), lineMat);
+  const bandGeo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(24), 3));
+  // the ring between the outer corners (0–3) and the inner ones (4–7)
+  bandGeo.setIndex([0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7]);
+  const band = new THREE.Mesh(bandGeo, bandMat);
+  const shaftGeo = new THREE.CylinderGeometry(0.35, 0.35, 5, 12);
+  const coneGeo = new THREE.ConeGeometry(1, 2.2, 20);
+  const grip = new THREE.Group();
+  grip.add(new THREE.Mesh(shaftGeo, gripMat));
+  for (const s of [1, -1]) {
+    const cone = new THREE.Mesh(coneGeo, gripMat);
+    cone.position.y = s * 3.6;
+    if (s < 0) cone.rotation.x = Math.PI;
+    grip.add(cone);
+  }
+  const frame = new THREE.Group();
+  frame.add(band, line, grip);
+  frame.traverse((o) => (o.frustumCulled = false));
+  frame.visible = false;
+  core.overlay.add(frame);
+  /** The frame's outer corners and the grip's ends (viewer coordinates), for picking. */
+  let corners: THREE.Vector3[] = [];
+  let gripEnds: [THREE.Vector3, THREE.Vector3] | null = null;
+  let gripR = 1;
+
+  function placeFrame(c: ViewerSection) {
+    const n = c.normal;
+    // two directions in the plane: across it and up it (a horizontal cut: x and y)
+    const pick = Math.abs(n[2]) > 0.9 ? [1, 0, 0] : [0, 0, 1];
+    const k = pick[0]! * n[0] + pick[1]! * n[1] + pick[2]! * n[2];
+    const up = new THREE.Vector3(pick[0]! - k * n[0], pick[1]! - k * n[1], pick[2]! - k * n[2]).normalize();
+    const nb = new THREE.Vector3(...n);
+    let across = new THREE.Vector3().crossVectors(up, nb).normalize();
+    let along = up;
+    if (Math.abs(n[2]) > 0.9) [across, along] = [up, new THREE.Vector3().crossVectors(nb, up).normalize()];
+    // the box's corners on the plane, as far across and up as they reach
+    let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      const p = new THREE.Vector3((i & 1 ? c.box.max : c.box.min)[0], (i & 2 ? c.box.max : c.box.min)[1], (i & 4 ? c.box.max : c.box.min)[2]);
+      a0 = Math.min(a0, p.dot(across));
+      a1 = Math.max(a1, p.dot(across));
+      b0 = Math.min(b0, p.dot(along));
+      b1 = Math.max(b1, p.dot(along));
+    }
+    const size = Math.max(a1 - a0, b1 - b0, 1);
+    const margin = Math.max(2, size * 0.04);
+    const width = Math.max(0.3, size * 0.008);
+    const on = nb.clone().multiplyScalar(c.at);
+    /** The point of the plane `s` across and `t` up (viewer coordinates). */
+    const point = (s: number, t: number) => {
+      const p = on.clone().addScaledVector(across, s).addScaledVector(along, t);
+      return toPoint([p.x, p.y, p.z], h);
+    };
+    const outer = [point(a0 - margin, b0 - margin), point(a1 + margin, b0 - margin), point(a1 + margin, b1 + margin), point(a0 - margin, b1 + margin)];
+    const inner = [point(a0 - margin + width, b0 - margin + width), point(a1 + margin - width, b0 - margin + width), point(a1 + margin - width, b1 + margin - width), point(a0 - margin + width, b1 + margin - width)];
+    const lp = line.geometry.getAttribute('position') as THREE.BufferAttribute;
+    outer.forEach((p, i) => lp.setXYZ(i, p.x, p.y, p.z));
+    lp.needsUpdate = true;
+    const bp = bandGeo.getAttribute('position') as THREE.BufferAttribute;
+    [...outer, ...inner].forEach((p, i) => bp.setXYZ(i, p.x, p.y, p.z));
+    bp.needsUpdate = true;
+    // the grip: scaled with the box, its arrows along the normal
+    gripR = Math.min(2.5, Math.max(0.7, size * 0.018));
+    const nv = toDir(n).normalize();
+    grip.position.copy(point((a0 + a1) / 2, b1 + margin));
+    grip.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), nv);
+    grip.scale.setScalar(gripR);
+    gripEnds = [grip.position.clone().addScaledVector(nv, -4.7 * gripR), grip.position.clone().addScaledVector(nv, 4.7 * gripR)];
+    corners = outer;
+  }
+
+  /** A point in the viewer on the canvas (CSS pixels from its top left); null behind the camera. */
+  function screen(p: THREE.Vector3) {
+    const v = p.clone().project(core.camera);
+    return v.z > 1 ? null : { x: ((v.x + 1) / 2) * canvas.clientWidth, y: ((1 - v.y) / 2) * canvas.clientHeight };
+  }
+  /** The pointer is on the frame or its grip. */
+  function onFrame(x: number, y: number): boolean {
+    if (!cut || !frame.visible) return false;
+    const s = corners.map(screen);
+    for (let i = 0; i < 4; i++) {
+      const a = s[i];
+      const b = s[(i + 1) % 4];
+      if (a && b && segmentDistance(x, y, a, b) < REACH) return true;
+    }
+    const g = gripEnds?.map(screen);
+    const centre = screen(grip.position);
+    const side = centre && screen(grip.position.clone().add(new THREE.Vector3(gripR, 0, 0).applyQuaternion(core.camera.quaternion)));
+    const r = centre && side ? Math.hypot(side.x - centre.x, side.y - centre.y) : 0;
+    return !!(g?.[0] && g[1] && segmentDistance(x, y, g[0], g[1]) < Math.max(REACH + 2, r + 4));
+  }
+
+  let hot = false;
+  function heat(on: boolean) {
+    if (on === hot) return;
+    hot = on;
+    for (const m of [lineMat, bandMat, gripMat]) m.color.setHex(on ? FRAME_HOT : FRAME);
+    core.redraw();
+  }
+  /** Which way the normal runs on screen: the cursor to show over the frame. */
+  function cursor(): string {
+    if (!cut || !gripEnds) return '';
+    const a = screen(gripEnds[0]);
+    const b = screen(gripEnds[1]);
+    if (!a || !b || Math.hypot(b.x - a.x, b.y - a.y) < 4) return 'move';
+    const angle = ((Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI + 180) % 180;
+    return ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'][Math.round(angle / 45) % 4]!;
+  }
+
+  /*
+   * Dragging the frame moves the cut along its normal: the pointer's travel along the normal as it
+   * runs on screen. Seen nearly straight on (the normal pointing at the camera), up and down push the
+   * cut away and pull it nearer. OrbitControls sees the same pointer down; it is held meanwhile.
+   */
+  let drag: { id: number; x: number; y: number; at: number; dir: { x: number; y: number }; px: number; towards: boolean } | null = null;
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  function down(e: PointerEvent) {
+    if (e.button !== 0 || !cut) return;
+    const p = local(e);
+    if (!onFrame(p.x, p.y)) return;
+    e.preventDefault();
+    core.orbit(false);
+    canvas.setPointerCapture(e.pointerId);
+    const centre = grip.position.clone();
+    const nv = toDir(cut.normal).normalize();
+    const reach = Math.max(1, corners[0]!.distanceTo(corners[2]!) * 0.1);
+    const a = screen(centre);
+    const b = screen(centre.clone().addScaledVector(nv, reach));
+    const px = canvas.clientHeight / (2 * core.camera.position.distanceTo(centre) * Math.tan(THREE.MathUtils.degToRad(core.camera.fov / 2)));
+    drag = {
+      id: e.pointerId,
+      ...p,
+      at: cut.at,
+      dir: a && b ? { x: (b.x - a.x) / reach, y: (b.y - a.y) / reach } : { x: 0, y: 0 },
+      px,
+      towards: nv.dot(core.camera.position.clone().sub(centre)) > 0,
+    };
+    heat(true);
+  }
+  function move(e: PointerEvent) {
+    const p = local(e);
+    if (!drag) {
+      // (not while the controls orbit)
+      if (e.buttons) return;
+      const on = onFrame(p.x, p.y);
+      heat(on);
+      canvas.style.cursor = on ? cursor() : '';
+      return;
+    }
+    if (e.pointerId !== drag.id || !cut) return;
+    const dx = p.x - drag.x;
+    const dy = p.y - drag.y;
+    const len2 = drag.dir.x ** 2 + drag.dir.y ** 2;
+    const mm = len2 > (0.2 * drag.px) ** 2 ? (dx * drag.dir.x + dy * drag.dir.y) / len2 : (-dy / drag.px) * (drag.towards ? -1 : 1);
+    const [lo, hi] = extent(cut.normal, cut.box);
+    const at = Math.round(Math.min(hi, Math.max(lo, drag.at + mm)) * 10) / 10;
+    if (at !== cut.at) moved?.(at);
+  }
+  function up(e: PointerEvent) {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag = null;
+    core.orbit(true);
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+    const p = local(e);
+    heat(onFrame(p.x, p.y));
+  }
+  const leave = () => {
+    if (drag) return;
+    heat(false);
+    canvas.style.cursor = '';
+  };
+  canvas.addEventListener('pointerdown', down);
+  canvas.addEventListener('pointermove', move);
+  canvas.addEventListener('pointerup', up);
+  canvas.addEventListener('pointercancel', up);
+  canvas.addEventListener('pointerleave', leave);
+
   return {
     setScene(s, o) {
       h = s.board.outline.h;
@@ -194,14 +405,35 @@ export function createEnclosureViewer(canvas: HTMLCanvasElement): EnclosureViewe
       core.setContent(enclosureGroup(s, core.res, o, core.redraw), k === key);
       key = k;
     },
-    section(cut) {
-      if (!cut) return core.clip([]);
-      const n = toDir(cut.normal).normalize();
-      core.clip([new THREE.Plane(n.clone().negate(), n.dot(toPoint(cut.at, h)))]);
+    section(c) {
+      cut = c;
+      frame.visible = !!c;
+      if (!c) {
+        heat(false);
+        canvas.style.cursor = '';
+        return core.clip([]);
+      }
+      placeFrame(c);
+      const n = toDir(c.normal).normalize();
+      const d = n.dot(toPoint(c.normal.map((v) => v * c.at), h));
+      core.clip([c.flip ? new THREE.Plane(n, -d) : new THREE.Plane(n.clone().negate(), d)]);
+    },
+    eye() {
+      const p = core.camera.position;
+      // (toPoint the other way round)
+      return [p.x, h - p.z, p.y + T];
     },
     view: (p) => core.view(p),
     resize: core.resize,
-    dispose: core.dispose,
+    dispose() {
+      canvas.removeEventListener('pointerdown', down);
+      canvas.removeEventListener('pointermove', move);
+      canvas.removeEventListener('pointerup', up);
+      canvas.removeEventListener('pointercancel', up);
+      canvas.removeEventListener('pointerleave', leave);
+      for (const x of [line.geometry, bandGeo, shaftGeo, coneGeo, lineMat, bandMat, gripMat]) x.dispose();
+      core.dispose();
+    },
   };
 }
 

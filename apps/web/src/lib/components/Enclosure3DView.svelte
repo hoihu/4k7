@@ -1,11 +1,16 @@
 <script lang="ts">
-  import type { EnclosureScene, EnclosureViewer, SceneOptions } from '../enclosure3d.ts';
+  import type { EnclosureScene, EnclosureViewer, SceneOptions, ViewerSection } from '../enclosure3d.ts';
 
   /**
    * The enclosure in 3D: the board with the pieces OpenSCAD rendered (three.js, loaded when first
-   * shown). `cut`: a section through a part's opening (the plane across the wall along its plug's way).
+   * shown). `cut`: a section, with a frame round it the user drags to move it (`onmove`: to where).
    */
-  let { scene, options, cut = null }: { scene: EnclosureScene; options: SceneOptions; cut?: string | null } = $props();
+  let { scene, options, cut = null, onmove }: { scene: EnclosureScene; options: SceneOptions; cut?: ViewerSection | null; onmove?: (at: number) => void } = $props();
+
+  /** Where the camera is (board.scad): a new cut takes away the half it looks from. */
+  export function eye(): [number, number, number] | null {
+    return viewer?.eye() ?? null;
+  }
 
   let host: HTMLDivElement | undefined = $state();
   let canvas: HTMLCanvasElement | undefined = $state();
@@ -20,7 +25,7 @@
     void import('../enclosure3d.ts')
       .then(({ createEnclosureViewer }) => {
         if (gone) return;
-        v = createEnclosureViewer(c);
+        v = createEnclosureViewer(c, (at) => onmove?.(at));
         viewer = v;
       })
       .catch((e: Error) => (error = `3D view unavailable: ${e.message}`));
@@ -36,9 +41,7 @@
   });
 
   $effect(() => {
-    if (!viewer) return;
-    const m = cut ? scene.facts.parts.find((p) => p.ref === cut)?.mating : null;
-    viewer.section(m ? { at: m.origin, normal: m.u } : null);
+    viewer?.section(cut ? $state.snapshot(cut) : null);
   });
 
   $effect(() => {

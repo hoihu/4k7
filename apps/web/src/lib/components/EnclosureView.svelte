@@ -5,6 +5,7 @@
   import Chat from './Chat.svelte';
   import Splitter from './Splitter.svelte';
   import Enclosure3DView from './Enclosure3DView.svelte';
+  import { AXES, contentBox, extent, firstCut, liftStep, newSection, sectionLabel, sectionView, type Section } from '../section.ts';
 
   /**
    * Enclosure workspace (docs/design/enclosure.md §6): the agent's chat, the box in 3D with the
@@ -48,7 +49,6 @@
   let hidden = $state<Record<string, boolean>>({});
   /** The board with its parts, shown in the box (off: how the box holds it). */
   let pcb = $state(true);
-  let cut = $state<string | null>(null);
   const pieces = $derived(report?.pieces ?? []);
   const printTurns = $derived(script ? scriptPrintRotations(script) : {});
   const inlays = $derived(script ? scriptInlays(script) : {});
@@ -57,6 +57,49 @@
   const openings = $derived(brief?.openings ?? []);
   const scene = $derived(b && last ? { board: b, facts: last.facts, pieces, findings: last.report.findings, openings, inlays } : null);
   const options = $derived({ open: open ? 1 : 0, show: hosts.filter((p) => !hidden[p.name]).map((p) => p.name), marks: true, board: pcb });
+
+  /*
+   * The cut: a plane through the box, across x, y or z, or through an opening along its plug's way.
+   * It starts in the middle (an opening: at the part's centre), the half the camera looks from cut
+   * away; the slider or its frame in the view moves it, Flip shows the other half.
+   */
+  const AXIS_TIPS: Record<string, string> = {
+    x: "Across x: a cut parallel to the left and right walls (x from the board's left edge)",
+    y: "Across y: a cut parallel to the front and back walls (y from the board's bottom edge)",
+    z: "Across z: a level cut, parallel to the floor and the lid (z from the board's underside)",
+  };
+  let cut = $state<Section | null>(null);
+  /** The cut before Whole: Cut brings it back. */
+  let lastCut: Section | null = null;
+  let view3d: Enclosure3DView | undefined = $state();
+  /** What the cut goes through: the board and the pieces as shown (opened: the lifted ones too). */
+  const cutBox = $derived(last ? contentBox(last.facts, pieces, open ? liftStep(pieces) * (hosts.length - 1) : 0) : null);
+  /** Where the cut can go, on the slider's 0.1 mm steps. */
+  const cutRange = $derived.by(() => {
+    if (!cut || !cutBox) return null;
+    const [lo, hi] = extent(cut.normal, cutBox);
+    return [Math.floor(lo * 10) / 10, Math.ceil(hi * 10) / 10] as const;
+  });
+  const shownCut = $derived(cut && cutBox && cutRange ? { normal: cut.normal, at: Math.min(cutRange[1], Math.max(cutRange[0], cut.at)), flip: cut.flip, box: cutBox } : null);
+  /** Openings a cut can go through (where they are plugged from is known). */
+  const cutOpenings = $derived(openings.filter((r) => last?.facts.parts.some((p) => p.ref === r && p.mating)));
+  function cutBy(by: string) {
+    if (last && cutBox) cut = newSection(by, last.facts, cutBox, view3d?.eye());
+  }
+  function cutOpen() {
+    if (cut) return;
+    if (lastCut) cut = lastCut;
+    else if (cutBox) cutBy(firstCut(cutBox));
+  }
+  function whole() {
+    lastCut = cut ?? lastCut;
+    cut = null;
+  }
+  // a message sent while the box is cut open tells the agent where (so "this wall" resolves)
+  $effect(() => {
+    app.enclosureCut = () => (cut && shownCut && last ? sectionView({ ...cut, at: shownCut.at }, last.facts, open) : null);
+    return () => (app.enclosureCut = null);
+  });
 
   /* the brief's questions: the user's answers, sent to the agent as the next message */
   let picks = $state<Record<string, string>>({});
@@ -157,7 +200,7 @@
   <div class="col chatcol">{#if app.chatOpen}<Chat /><Splitter pane="chat" />{/if}</div>
   <div class="col canvas">
     {#if scene}
-      <Enclosure3DView {scene} {options} {cut} />
+      <Enclosure3DView bind:this={view3d} {scene} {options} cut={shownCut} onmove={(at) => cut && (cut.at = at)} />
     {:else if b}
       <Enclosure3DView scene={{ board: b, facts: { thickness: 1.6, size: [b.outline.w, b.outline.h], outline: [], cutouts: [], holes: [], tallestTop: 0, lowestBottom: 0, parts: [] }, pieces: [], findings: [], openings: [] }} options={{ marks: false }} />
     {/if}
@@ -170,12 +213,10 @@
             <button aria-pressed={pcb} title="Show or hide the board with its parts (hide it to see how the box holds it)" onclick={() => (pcb = !pcb)}>PCB</button>
             {#each hosts as p (p.name)}<button aria-pressed={!hidden[p.name]} title="Show or hide the {p.name}" onclick={() => (hidden = { ...hidden, [p.name]: !hidden[p.name] })}>{p.name}</button>{/each}
           </div>
-          {#if openings.length}
-            <div class="seg">
-              <button aria-pressed={!cut} onclick={() => (cut = null)}>Whole</button>
-              {#each openings as ref (ref)}<button aria-pressed={cut === ref} title="A section across the wall through {ref}'s opening" onclick={() => (cut = ref)}>Cut {ref}</button>{/each}
-            </div>
-          {/if}
+          <div class="seg">
+            <button aria-pressed={!cut} title="The whole box" onclick={whole}>Whole</button>
+            <button aria-pressed={!!cut} title="Cut the box open to see inside: a plane through its middle; move it with the slider or drag its frame in the view" onclick={cutOpen}>Cut</button>
+          </div>
         {/if}
         {#if script}<button class="btn" disabled={app.enclosureBusy || !app.scad?.available} onclick={render}>{app.enclosureBusy ? 'Rendering…' : 'Render'}</button>{/if}
       </div>
@@ -185,6 +226,23 @@
           <span class="trunc"><b>{app.acceptedCount}</b> of {app.pendingCount} changes pending</span>
           <button class="btn pri" disabled={app.running || app.acceptedCount === 0} onclick={() => app.accept()}>Accept</button>
           <button class="btn" disabled={app.running} onclick={() => app.reject()}>Reject</button>
+        </div>
+      {/if}
+      {#if pieces.length && cut && cutRange && last}
+        <div class="cutbar">
+          <div class="seg">
+            {#each AXES as a (a)}<button aria-pressed={cut.by === a} title={AXIS_TIPS[a]} onclick={() => cutBy(a)}>{a}</button>{/each}
+          </div>
+          {#if cutOpenings.length}
+            <div class="seg">
+              {#each cutOpenings as ref (ref)}<button aria-pressed={cut.by === ref} title="Through {ref}'s opening: across the wall along its plug's way, from the part's centre" onclick={() => cutBy(ref)}>at {ref}</button>{/each}
+            </div>
+          {/if}
+          <label class="slide" title="Where the cut is (board.scad: x from the board's left edge, y from its bottom edge, z from its underside)">
+            <input type="range" min={cutRange[0]} max={cutRange[1]} step="0.1" bind:value={cut.at} />
+            <span class="mono">{sectionLabel(cut, last.facts)}</span>
+          </label>
+          <div class="seg"><button title="Show the other half: cut away the side kept now" onclick={() => cut && (cut.flip = !cut.flip)}>Flip</button></div>
         </div>
       {/if}
     </div>
@@ -323,6 +381,12 @@
   .seg button:last-child { border-radius: 0 6px 6px 0; }
   .seg button:only-child { border-radius: 6px; }
   .seg button[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent-txt); }
+  /* the cut's own controls, on a row of their own (only they take the pointer, not the row) */
+  .cutbar { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; pointer-events: none; }
+  .cutbar > * { pointer-events: auto; }
+  .slide { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel); color: var(--txt-2); padding: 0 8px; height: 22px; box-sizing: border-box; }
+  .slide input { width: 140px; margin: 0; accent-color: var(--accent); }
+  .slide .mono { white-space: nowrap; }
   .pend { display: flex; gap: 6px; align-items: center; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px 4px 10px; box-shadow: var(--shadow); font-size: 12px; max-width: calc(100% - 24px); }
   .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex: none; }
   .blank { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
