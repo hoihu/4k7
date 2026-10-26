@@ -3,10 +3,10 @@ import { EUROCIRCUITS_ASSEMBLY, PCBWAY_ASSEMBLY, type SupplierPart } from '@4k7/
 import type { CostReport, StockReport, ValuesReport } from '@4k7/parts';
 
 /** The local server's catalogue (disk is a Svelte module; the tests only need its two calls). */
-const server = vi.hoisted(() => ({ search: vi.fn(), lookup: vi.fn(), quote: vi.fn() }));
-vi.mock('../src/lib/disk.svelte.ts', () => ({ disk: { sourcingSearch: server.search, sourcingLookup: server.lookup, sourcingQuote: server.quote } }));
+const server = vi.hoisted(() => ({ search: vi.fn(), lookup: vi.fn(), quote: vi.fn(), footprint: vi.fn() }));
+vi.mock('../src/lib/disk.svelte.ts', () => ({ disk: { sourcingSearch: server.search, sourcingLookup: server.lookup, sourcingQuote: server.quote, sourcingFootprint: server.footprint } }));
 
-const { catalogue, setCatalogue, sourcingTool } = await import('../src/lib/sourcing.ts');
+const { catalogue, catalogueOf, setCatalogue, sourcingTool } = await import('../src/lib/sourcing.ts');
 
 const r10k: SupplierPart = { sku: 'C25804', mpn: '0603WAF1002T5E', package: '0603', description: '', stock: 37165617, tier: 'Basic', fee: false, price: [{ qty: 1, each: 0.0017 }, { qty: 1000, each: 0.0013 }], attributes: { Resistance: '10kΩ' }, url: 'https://jlcpcb.com/partdetail/C25804', datasheet: 'https://x/ds.pdf', live: true };
 const fails = () => Promise.reject(new Error('not this one'));
@@ -26,6 +26,7 @@ function mirror(routes: Record<string, unknown>) {
 beforeEach(() => {
   server.search.mockReset();
   server.lookup.mockReset();
+  server.footprint.mockReset();
   setCatalogue();
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -83,6 +84,25 @@ describe('sourcing tool', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reads a part's footprint through the server, else from the mirror's copy of its EasyEDA record", async () => {
+    const land = { name: 'R0603', pads: [{ number: '1', x: -0.8, y: 0, w: 0.9, h: 0.95 }, { number: '2', x: 0.8, y: 0, w: 0.9, h: 0.95 }] };
+    server.footprint.mockResolvedValue({ footprint: land });
+    expect(await catalogue.footprint!('C25804')).toEqual(land);
+    await catalogue.footprint!('c25804');
+    expect(server.footprint).toHaveBeenCalledTimes(1);
+    expect(server.footprint).toHaveBeenCalledWith('jlcpcb', 'C25804');
+    // EasyEDA stops answering: the mirror's copy of the part's record (pads in 10 mil from the origin, names from the symbol)
+    server.footprint.mockRejectedValue(new Error('easyeda.com answered HTTP 403'));
+    const pin = (n: string, name: string) => `P~show~0~${n}~0~0~0~p${n}^^0~0^^M 0 0 h 1~#000^^1~0~0~0~${name}~start~~~#000^^1~0~0~0~${n}~end~~~#000`;
+    const record = { title: 'KT-0805G', dataStr: { shape: [pin('2', 'K'), pin('1', 'A')] }, packageDetail: { title: 'LED0805-R-RD', dataStr: { head: { x: 4000, y: 3000 }, shape: ['PAD~RECT~3995.87~3000~3.94~5.51~1~~2~0~~0~g1', 'PAD~RECT~4004.13~3000~3.94~5.51~1~~1~0~~0~g2'] } } };
+    const asked = mirror({ '/api/easyeda_components/C2297': { easyeda_component_details: { easyeda_json: record } } });
+    const led = await catalogue.footprint!('C2297');
+    expect(asked).toEqual(['https://jlcsearch.tscircuit.com/api/easyeda_components/C2297']);
+    expect(led).toEqual({ name: 'LED0805-R-RD', pads: [{ number: '2', name: 'K', x: -1.049, y: 0, w: 1.001, h: 1.4 }, { number: '1', name: 'A', x: 1.049, y: 0, w: 1.001, h: 1.4 }] });
+    // a house whose library has no footprints is not asked for them
+    expect(catalogueOf(EUROCIRCUITS_ASSEMBLY).footprint).toBeUndefined();
   });
 
   const estimates = [

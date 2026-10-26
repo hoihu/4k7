@@ -1,6 +1,6 @@
 # Assembly: what the assembly house sees
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: polarity marks 2026-10-26.
+> Part of the [architecture](../ARCHITECTURE.md). Status: polarity marks, the land check and SMD electrolytics 2026-10-26.
 
 An assembly house places every part from the BOM and the pick-and-place file, and checks the result
 against the board before it solders: its engineers draw their own model of each part over our pads
@@ -12,7 +12,11 @@ The case that started this (spiral2 at JLCPCB, October 2026): the only mark the 
 0.4 mm dash beside pad 1, clipped down to 0.2–0.4 mm by the pads. It read as a minus sign, and it
 sat beside the plus pad of both electrolytic capacitors and beside VDD of the 48 WS2812B LEDs, where
 JLCPCB's own footprint prints a "+". JLCPCB asked about the LEDs, the MCU, the USB-PD controller and
-the two indicator LEDs. The app's 2D view drew a dot there instead, so nobody saw what JLCPCB saw.
+the two indicator LEDs. The app's 2D view drew a dot there instead, so nobody saw what JLCPCB saw. And
+it could not place the two electrolytics at all: their pads were chip-style strips as tall as the can
+(an SMD electrolytic sits on two narrow pads under its leads), and C11's part was a 6.3 mm can on pads
+made for an 8 mm one. The stock check had said so, by the packages' names, among names that differed
+only in spelling.
 
 ## 1. Which way round a part goes
 
@@ -58,3 +62,65 @@ The marks are geometry in the board view (strokes and dots, board coordinates), 
 the board draws the same ink: the Gerber silkscreen (`packages/fab/src/gerber.ts`, refdes texts keep
 off the marks), the 2D view, the agent's `get_board_image` and the design document (all three
 `BoardCanvas.svelte`), and each copy on a panel. The chamfered outline is `bodyOutline(body)`.
+
+## 3. The land against the part the house buys
+
+The stock check (Layout → Sourcing, the agent's `sourcing check`, and the export, §5) asks the house
+for its own footprint of each part (`PartSource.footprint`) and holds the component's land as it lies
+on the board against it (`fitLand`, `packages/parts/src/land.ts`):
+
+- The house's footprint is turned onto ours (0°, 90°, 180°, 270°; mirrored for a part on the bottom)
+  and its pads are paired with ours: by function for a two-pin part that goes one way round (the
+  cathode, the plus terminal: pin numbers say nothing there), else by number, else by the pins'
+  names, a word of them or a contact ("CC1_A5" pairs with JLCPCB's pad A5 named CC1, a SOT-223 tab
+  numbered 2 here with its pin 4), whichever pairs more pins and lines them up better. Pads left over
+  (a connector's shield legs) pair by where they are. An SMD pad never pairs with a drilled one.
+- It does not fit when a soldered pad has no pin, a pin has no pad, a pin lands more than 1 mm off
+  its pad (a third of that for a drilled one), or a pad of the house's shares less than a fifth of its
+  area with ours (spiral2's C1: 0.16; every part that fits on spiral2: 0.25 or more). The message
+  says how: "its pads are 3.5 × 1.2 mm, 5.34 mm apart; the pads of CAP-6.3x5.4 2.2 × 6.8 mm,
+  5.1 mm apart".
+- The package's name still counts where it says a size, an electrolytic's can or a chip size: a
+  6.3 mm can lies on an 8 mm can's pads well enough to pass the land check, but it is the wrong
+  part. A catalogue's can ("SMD,D6.3xL7.7mm") is read as the package that fits it (`canPackage`:
+  CAP-6.3x7.7), so the same can no longer reads as a mismatch, and the message names the package
+  that would fit.
+- A land that does not fit stops the order, like a part out of stock. The report says how many lands
+  were compared, and which footprints could not be read and why.
+
+JLCPCB's footprints are its parts library's, EasyEDA's: the server reads them from EasyEDA's
+component API by LCSC number (`easyedaFootprint`, `packages/parts/src/jlc.ts`), keeps each a day in
+memory and a month on disk (`~/.4k7/footprints`), and asks for them 150 ms apart (EasyEDA's CDN stops
+answering an address that asks too fast). When it cannot, the tab reads the copy of the same record
+on the jlcsearch mirror. A house without footprints (Eurocircuits, PCBWay) keeps the check by name.
+
+## 4. SMD electrolytics
+
+`CAP-4x5.4`, `CAP-5x5.4`, `CAP-6.3x5.4`, `CAP-6.3x7.7`, `CAP-8x6.5`, `CAP-8x10` and `CAP-10x10`
+(`packages/parts/src/packages.ts`) are V-chip lands, a pad under each lead as the makers recommend
+(Panasonic, Nichicon, Rubycon: the lands of KiCad's CP_Elec footprints), pin 1 (+) on the left. The
+body is the base plate (diameter + 0.3 mm square), its corners chamfered on the + side as on the part
+(`body_chamfer` in the package data, turned and mirrored with the part like pin 1), with the "+" of
+§2 beside the + pad; the 3D body is the plate with the can on it. Until 2026-10-26 these packages
+went through the chip generator, which drew pads as tall as the can: no SMD electrolytic fits that.
+
+| Can | Pads | Centres |
+|---|---|---|
+| 4 × 5.4 | 2.6 × 1.6 | ±1.8 |
+| 5 × 5.4 | 3.0 × 1.6 | ±2.2 |
+| 6.3 × 5.4 | 3.5 × 1.6 | ±2.8 |
+| 6.3 × 7.7 | 3.5 × 1.6 | ±2.7 |
+| 8 × 6.5 | 4.0 × 2.5 | ±3.05 |
+| 8 × 10 | 3.5 × 2.5 | ±3.25 |
+| 10 × 10 | 4.0 × 2.5 | ±4.0 |
+
+Choosing a part in the Inspector sets the component's package to the part's can, and so does taking
+its values.
+
+## 5. Before the order
+
+Exporting the fab files runs the stock check first when the parts carry the house's numbers (stock,
+each part against its component, each land against the house's footprint), then writes the zip and
+names the parts that stop the order; the Sourcing section says why. The files are written either way:
+they are what a quote is made from.
+
