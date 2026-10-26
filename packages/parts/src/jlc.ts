@@ -10,7 +10,7 @@
  *
  * Neither is an official API: an answer in an unexpected form is an error, never an empty catalogue.
  */
-import { JLCPCB_ASSEMBLY, normalizeLcsc, parseQuantity, type PartQuery, type SupplierPart } from '@4k7/schema';
+import { JLCPCB_ASSEMBLY, normalizeLcsc, parseQuantity, type HouseFootprint, type PartQuery, type SupplierPart } from '@4k7/schema';
 import { formatFarads, formatOhms, rankParts, type PartSource } from './sourcing.ts';
 
 const TIERS = JLCPCB_ASSEMBLY.tiers.map((t) => t.name);
@@ -59,7 +59,7 @@ const ATTRIBUTE_NAMES: Record<string, string> = { 'Voltage Rating': 'Voltage Rat
  * for 50 in-stock parts (a page and a half of the parts library) and ranks them here (Basic,
  * Preferred, Extended, then stock); a lookup searches for the number and keeps the exact match.
  */
-export function jlcpcbSource(fetchFn: Post = (u, i) => fetch(u, i), base = 'https://jlcpcb.com'): PartSource {
+export function jlcpcbSource(fetchFn: Post = (u, i) => fetch(u, i), base = 'https://jlcpcb.com', getFn: Get = (u, i) => fetch(u, i)): PartSource {
   const call = async (body: Record<string, unknown>): Promise<JlcpcbItem[]> => {
     const res = await fetchFn(`${base}${JLCPCB_SEARCH}`, {
       method: 'POST',
@@ -105,6 +105,15 @@ export function jlcpcbSource(fetchFn: Post = (u, i) => fetch(u, i), base = 'http
       const hit = (await call({ keyword: sku, pageSize: 10 })).find((c) => c.componentCode === sku);
       return hit ? fromJlcpcb(hit) : null;
     },
+
+    /** The part's footprint in JLCPCB's parts library (EasyEDA's, the one its placement uses). */
+    async footprint(id) {
+      const sku = normalizeLcsc(id);
+      if (!sku) return null;
+      const res = await getFn(easyedaComponentUrl(sku), { signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) throw new Error(`easyeda.com answered HTTP ${res.status}`);
+      return easyedaFootprint(await res.json().catch(() => null));
+    },
   };
 
   /**
@@ -122,6 +131,64 @@ export function jlcpcbSource(fetchFn: Post = (u, i) => fetch(u, i), base = 'http
     }
     return rankParts(items.map(fromJlcpcb), TIERS).slice(0, q.limit ?? 400);
   }
+}
+
+/* ------------------------------ footprints (EasyEDA) ------------------------------ */
+
+type Get = (url: string, init: { signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+
+/** Where JLCPCB's parts library keeps an LCSC part's symbol and footprint: EasyEDA's component API. */
+export const easyedaComponentUrl = (lcsc: string) => `https://easyeda.com/api/products/${encodeURIComponent(lcsc)}/components?version=6.4.19.5`;
+
+/** EasyEDA's canvas unit, 10 mil, in mm. */
+const EASYEDA_UNIT = 0.254;
+const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/**
+ * A part's footprint from EasyEDA's component API: every pad with its number, its size and where it
+ * is from the footprint's origin (top view, y down, mm), and each pin's name from the symbol. Null
+ * when EasyEDA does not know the part; an error for an answer in a form this version does not read.
+ */
+export function easyedaFootprint(raw: unknown): HouseFootprint | null {
+  if (!raw || typeof raw !== 'object') throw new Error('easyeda.com: an answer this version does not read');
+  const r = raw as { success?: boolean; result?: { dataStr?: { shape?: unknown }; packageDetail?: { title?: string; dataStr?: { head?: { x?: unknown; y?: unknown }; shape?: unknown } } } | null };
+  if (r.success === false || !r.result) return null;
+  const pkg = r.result.packageDetail;
+  const shapes = pkg?.dataStr?.shape;
+  if (!pkg || !Array.isArray(shapes)) throw new Error('easyeda.com: a part without a footprint this version can read');
+  const ox = Number(pkg.dataStr?.head?.x ?? 0);
+  const oy = Number(pkg.dataStr?.head?.y ?? 0);
+  // the pins' names, from the symbol's pins ("P~show~type~number~x~y…^^…^^…^^…~name~…")
+  const names = new Map<string, string>();
+  const sym = r.result.dataStr?.shape;
+  for (const s of Array.isArray(sym) ? sym : []) {
+    if (typeof s !== 'string' || !s.startsWith('P~')) continue;
+    const seg = s.split('^^');
+    const num = seg[0]!.split('~')[3];
+    const name = seg[3]?.split('~')[4]?.trim();
+    if (num && name) names.set(num, name);
+  }
+  // the pads: "PAD~shape~x~y~width~height~layer~net~number~hole radius~outline points~rotation~…"
+  const pads: HouseFootprint['pads'] = [];
+  for (const s of shapes) {
+    if (typeof s !== 'string' || !s.startsWith('PAD~')) continue;
+    const f = s.split('~');
+    const [x, y, w, h] = [f[2], f[3], f[4], f[5]].map(Number);
+    const number = (f[8] ?? '').trim();
+    const pts = (f[10] ?? '').trim().split(/\s+/).filter(Boolean).map(Number);
+    let [pw, ph] = [w!, h!];
+    if (pts.length >= 6 && pts.every(Number.isFinite)) {
+      // its outline: the pad's extent whatever it is turned by
+      const xs = pts.filter((_, i) => i % 2 === 0);
+      const ys = pts.filter((_, i) => i % 2 === 1);
+      [pw, ph] = [Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)];
+    } else if (Math.round(Number(f[11] ?? 0) / 90) % 2 !== 0) [pw, ph] = [h!, w!];
+    if (![x, y, pw, ph].every((v) => Number.isFinite(v)) || !number) throw new Error('easyeda.com: a pad this version does not read');
+    const name = names.get(number);
+    pads.push({ number, ...(name ? { name } : {}), x: r3((x! - ox) * EASYEDA_UNIT), y: r3((y! - oy) * EASYEDA_UNIT), w: r3(pw * EASYEDA_UNIT), h: r3(ph * EASYEDA_UNIT), ...(Number(f[9]) > 0 ? { drill: true } : {}) });
+  }
+  if (!pads.length) throw new Error('easyeda.com: a footprint without pads');
+  return { name: pkg.title ?? '', pads };
 }
 
 /** One part of jlcpcb.com's search. */
@@ -243,6 +310,15 @@ export function tscircuitSource(fetchFn: Fetch = (u) => fetch(u), base = 'https:
         }
       }
       return part;
+    },
+
+    /** The part's footprint from the mirror's copy of its EasyEDA record (the same library JLCPCB places from). */
+    async footprint(id) {
+      const lcsc = normalizeLcsc(id);
+      if (!lcsc) return null;
+      const out = (await get(`/api/easyeda_components/${lcsc}`)) as { easyeda_component_details?: { easyeda_json?: unknown } } | null;
+      const json = out?.easyeda_component_details?.easyeda_json;
+      return json ? easyedaFootprint({ success: true, result: json }) : null;
     },
   };
 }

@@ -56,7 +56,7 @@ export const SourcingInput = z.discriminatedUnion('action', [
     boards: z.number().int().min(1).max(1_000_000).optional().describe('How many boards will be assembled (default: the number set in the app, else 10)'),
   }).describe(
     "The stock check before ordering: every component's part looked up now, with what is wrong (out of stock, too few for the boards, " +
-      'low stock, gone from the catalogue, not matching its component, obsolete at the maker, a fee) and in-stock replacements for the parts in trouble. ' +
+      "low stock, gone from the catalogue, not matching its component, its land not fitting the part (the board's pads held against the house's own footprint for the part), obsolete at the maker, a fee) and in-stock replacements for the parts in trouble. " +
       'At a house without a catalogue (PCBWay): what goes on its BOM, and the parts it could not buy',
   ),
   z.object({

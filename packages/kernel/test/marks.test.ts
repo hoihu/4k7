@@ -229,3 +229,31 @@ describe('set_polarity', () => {
     expect(r.rejection?.message).toContain('generic:D');
   });
 });
+
+describe('an electrolytic on its V-chip land', () => {
+  it('chamfers the base on the + side however the part is turned, on either side of the board, and marks it "+"', () => {
+    const k = new Kernel();
+    k.transact({ summary: 'cap', ops: [
+      { op: 'add_part', part: 'generic:CP', refdes: 'C1', params: { capacitance: '22uF', voltage: '50V' } },
+      { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J1' },
+      { op: 'connect', pins: ['J1.1', 'C1.1'], net: 'VIN' },
+      { op: 'connect', pins: ['J1.2', 'C1.2'], net: 'GND' },
+    ] });
+    const dir = { tl: [-1, -1], tr: [1, -1], br: [1, 1], bl: [-1, 1] } as const;
+    for (const side of ['top', 'bottom']) {
+      if (side === 'bottom') k.transact({ summary: 'under', ops: [{ op: 'constrain', kind: 'layer', a: 'C1', value: 'bottom' }] });
+      for (const rot of [0, 90, 180, 270]) {
+        k.transact({ summary: 'turn', ops: [{ op: 'place', ref: 'C1', x_mm: 20, y_mm: 20, rot }] });
+        const c1 = k.board().parts.find((p) => p.refdes === 'C1')!;
+        expect(c1.pkg).toBe('CAP-6.3x5.4');
+        const plus = c1.pads.find((q) => q.number === '1')!;
+        const corners = c1.body.chamfer!.corners;
+        expect(corners, `${side} ${rot}`).toHaveLength(2);
+        // both chamfered corners lie on the side of the + pad
+        for (const c of corners) expect(dir[c][0] * (plus.x - c1.x) + dir[c][1] * (plus.y - c1.y), `${side} ${rot} ${c}`).toBeGreaterThan(0);
+        expect(c1.mark).toMatchObject({ kind: 'plus', pad: '1' });
+        expect(c1.mark!.strokes).toHaveLength(2);
+      }
+    }
+  });
+});

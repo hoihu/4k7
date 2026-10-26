@@ -61,6 +61,10 @@ export const PackageInfo = z.object({
   ball_mm: mm.optional().describe('BGA ball diameter'),
   page: z.number().int().optional().describe('Datasheet page with the package drawing'),
   body_shape: z.enum(['rect', 'round']).optional().describe('round: a cylindrical body (buzzers, electrolytic caps), body_mm = diameter × diameter'),
+  body_chamfer: z
+    .object({ mm: mm.describe('How much each corner is cut back along both edges'), corners: z.array(z.enum(['tl', 'tr', 'br', 'bl'])).min(1).describe('Top view as drawn: top left, top right, bottom right, bottom left') })
+    .optional()
+    .describe("Corners cut off the body's outline: an SMD electrolytic's base plate is chamfered on its + side (tl and bl with pin 1 on the left)"),
   pads: z
     .array(LandPad)
     .optional()

@@ -70,6 +70,15 @@ function houseCatalogue(h: AssemblyHouse): HouseCatalogue {
       if (!q) throw outdated();
       return q;
     },
+    ...(h.footprints
+      ? {
+          async footprint(sku: string) {
+            const r = await disk.sourcingFootprint(h.id, sku);
+            if (!r) throw outdated();
+            return r.footprint;
+          },
+        }
+      : {}),
   };
   // a house without a mirror says itself why it could not be read
   const mirror = MIRRORS[h.id];
@@ -118,6 +127,16 @@ export function catalogueOf(h: AssemblyHouse): PartSource {
       if (!source.quote) return Promise.reject(new Error(`${h.name} has no online quote`));
       return memo(`q:${h.id}:${JSON.stringify(order)}`, () => source.quote!(order), () => true);
     },
+    // only at a house whose library has footprints: elsewhere the check keeps to the packages' names
+    ...(h.footprints
+      ? {
+          footprint: (sku: string) => {
+            const source = c().source;
+            if (!source.footprint) return Promise.resolve(null);
+            return memo(`f:${h.id}:${sku.trim().toUpperCase()}`, () => source.footprint!(sku), () => true);
+          },
+        }
+      : {}),
   };
 }
 

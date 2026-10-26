@@ -135,7 +135,12 @@ it needs are its components × the boards.
 | `failed` | It could not be looked up |
 
 A part that is not what its component asks for (value, a capacitor's voltage rating, the package: the check the
-Inspector makes) **stops the order** like one that cannot be had: the house assembles what the number says. So do
+Inspector makes) **stops the order** like one that cannot be had: the house assembles what the number says. So does a
+part whose **land** does not fit it: where the house has a footprint for the part in its own library (JLCPCB: the
+part's EasyEDA footprint), the check holds the component's pads as they lie on the board against it, and a part the
+house cannot place there stops the order ([assembly](assembly.md) §3). The package's name still counts where it says
+a size (an electrolytic's can, a chip size); an electrolytic's can as the catalogue lists it ("SMD,D6.3xL7.7mm") is
+read as the package that fits it (CAP-6.3x7.7). So do
 `out`, `short` and `missing`; `low`, `unknown` and `failed` want a look, and so does a part the maker made obsolete or
 no longer recommends (Eurocircuits says so); a part with a fee is listed with the fee. Components without a number are
 listed too (fine for parts soldered by hand), and what the parts cost at today's prices, without fees.
@@ -151,8 +156,8 @@ listed too (fine for parts soldered by hand), and what the parts cost at today's
 
 They are ranked fee-free first, then those with 5 × the need in stock (or kept in stock), then by class and stock.
 **Use** sets the number on every component of the line and checks again; the agent does the same with `set_param` and
-the house's parameter. Exporting the fab files says when the stock was not checked, or when the last check found parts
-that stop the order.
+the house's parameter. Exporting the fab files runs the check first when the parts carry the house's numbers, and the
+export's message names the parts that stop the order (the Sourcing section says why).
 
 At PCBWay there is nothing to look up: the check (**Check BOM**) lists what goes on its BOM, by MPN or by value, and the
 components it could not buy (no MPN, and not a resistor or capacitor).
