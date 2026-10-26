@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#121211">
 <title>Changelog — 4k7</title>
-<meta name="description" content="What changed in each release of 4k7, the AI-first PCB schematic and layout tool.">
+<meta name="description" content="What changed in each release of 4k7, AI-assisted PCB and enclosure design for makers.">
 <meta property="og:title" content="Changelog — 4k7">
-<meta property="og:description" content="What changed in each release of 4k7, the AI-first PCB schematic and layout tool.">
+<meta property="og:description" content="What changed in each release of 4k7, AI-assisted PCB and enclosure design for makers.">
 <meta property="og:url" content="https://4k7.dev/changelog">
 <meta property="og:image" content="https://4k7.dev/brand/og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -53,6 +53,10 @@
   }
   .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; letter-spacing: .02em; }
   .brand svg { width: 40px; height: 20px; }
+  .pill {
+    display: inline-block; margin-left: 2px; padding: 3px 7px 2px; border-radius: 5px;
+    font: 700 10.5px/1.1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: #1a1408; background: var(--gold);
+  }
   nav a { margin-left: 22px; font-size: 14px; color: var(--muted); text-decoration: none; }
   nav a:hover, nav a[aria-current] { color: var(--text); }
 
@@ -115,7 +119,7 @@
     .release { grid-template-columns: 1fr; padding-top: 32px; }
     .release > header { position: static; flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 16px; }
   }
-  /* phones: as in index.html, only Changelog and GitHub */
+  /* phones: only Changelog and GitHub */
   @media (max-width: 520px) { nav a[href^="/#"] { display: none; } }
 </style>
 </head>
@@ -132,11 +136,11 @@
         <rect x="42" y="7" width="6" height="26" fill="var(--red)"/>
         <rect x="54" y="7" width="6" height="26" fill="var(--gold)"/>
       </svg>
-      4k7
+      4k7 <span class="pill">alpha</span>
     </a>
     <nav>
-      <a href="/#how">How it works</a>
-      <a href="/#why">Why</a>
+      <a href="/#schematic">Features</a>
+      <a href="/#download">Download</a>
       <a href="/changelog" aria-current="page">Changelog</a>
       <a href="https://github.com/hoihu/4k7">GitHub</a>
     </nav>
