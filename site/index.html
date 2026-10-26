@@ -255,21 +255,11 @@
     box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 44px 90px -44px rgba(0, 0, 0, .9);
   }
   .frame::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--band); }
-  .frame img { display: block; width: 100%; height: auto; }
+  .frame img, .frame video { display: block; width: 100%; height: auto; }
+  .frame video { aspect-ratio: 8 / 5; }
   .frame:focus-visible { outline: 2px solid var(--band); outline-offset: 3px; }
   .shot figcaption { margin: 12px auto 0; max-width: 760px; text-align: center; font-size: 14px; color: var(--muted); }
   .shot figcaption b { color: var(--text); font-weight: 600; }
-
-  .with-inset { position: relative; }
-  .with-inset .inset {
-    position: absolute; left: -5%; bottom: -10%; width: 34%; height: auto; pointer-events: none;
-    filter: drop-shadow(0 26px 30px rgba(0, 0, 0, .7));
-  }
-  .with-inset figcaption { padding-left: 26%; }
-  @media (max-width: 1000px) {
-    .with-inset .inset { position: static; display: block; width: min(80%, 420px); margin: 18px auto 0; }
-    .with-inset figcaption { padding-left: 0; }
-  }
 
   .enc-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 290px) minmax(0, 290px); gap: 32px 34px; align-items: center; margin-top: 44px; }
   .enc-grid .shot { margin: 0; }
@@ -323,6 +313,7 @@
   dialog.lightbox { max-width: none; max-height: none; width: 100vw; height: 100vh; margin: 0; padding: 0; border: 0; background: transparent; cursor: zoom-out; }
   dialog.lightbox::backdrop { background: rgba(8, 8, 8, .9); }
   dialog.lightbox img { position: absolute; inset: 0; margin: auto; max-width: 96vw; max-height: 94vh; border-radius: 8px; }
+  dialog.lightbox video { position: absolute; inset: 0; margin: auto; width: min(96vw, 150.4vh); height: auto; aspect-ratio: 8 / 5; border-radius: 8px; }
 </style>
 </head>
 <body>
@@ -516,10 +507,9 @@
         <li>Gerber, drill, BOM, pick-and-place and STEP</li>
       </ul>
     </div>
-    <figure class="shot with-inset">
-      <button class="frame" type="button" title="Enlarge"><img src="/shots/board.webp" width="2880" height="1800" loading="lazy" decoding="async" alt="The Layout view: 48 LEDs on a spiral above the power supply and the RP2040, all nets routed; the chat shows the agent laying out the regulator as its datasheet's page 39 shows."></button>
-      <img class="inset" src="/shots/board-3d.webp" width="1433" height="966" loading="lazy" decoding="async" alt="The same board in 3D.">
-      <figcaption><b>Layout:</b> 124 parts on 4 layers, every net routed; the regulator as on p. 39 of its datasheet. And the same board in 3D.</figcaption>
+    <figure class="shot">
+      <button class="frame" type="button" title="Enlarge"><video muted loop playsinline preload="none" poster="/shots/board.webp" width="2208" height="1380" aria-label="The Layout view: 48 LEDs on a spiral above the power supply and the RP2040, all nets routed; the chat shows the agent laying out the regulator as its datasheet's page 39 shows. A click on 3D flies into the assembled board, which is turned by hand; a click on 2D flies back to the drawing."><source src="/shots/board.mp4" type="video/mp4"></video></button>
+      <figcaption><b>Layout:</b> 124 parts on 4 layers, every net routed; the regulator as on p. 39 of its datasheet. One click turns the drawing into the board in 3D, and back.</figcaption>
     </figure>
   </section>
 
@@ -619,7 +609,7 @@
   </footer>
 </main>
 
-<dialog class="lightbox" aria-label="Screenshot"><img alt=""></dialog>
+<dialog class="lightbox" aria-label="Screenshot"><img alt=""><video muted loop playsinline hidden></video></dialog>
 
 <script>
   // the main buttons offer the file for this computer (Apple silicon Macs cannot be told from Intel ones by the browser; the default stands)
@@ -636,17 +626,41 @@
     });
   })();
 
-  // screenshots open full size
+  // screenshots open full size, and so does the layout clip (with controls, for reduced motion)
+  var still = window.matchMedia('(prefers-reduced-motion: reduce)');
   (function () {
-    var box = document.querySelector('dialog.lightbox'), big = box.querySelector('img');
+    var box = document.querySelector('dialog.lightbox'), big = box.querySelector('img'), clip = box.querySelector('video');
     document.querySelectorAll('.frame').forEach(function (b) {
       b.addEventListener('click', function () {
-        var img = b.querySelector('img');
-        big.src = img.currentSrc || img.src; big.alt = img.alt;
+        var v = b.querySelector('video'), img = b.querySelector('img');
+        big.hidden = !!v; clip.hidden = !v;
+        if (v) {
+          clip.poster = v.poster; clip.src = v.querySelector('source').src; clip.controls = still.matches;
+          if (!still.matches) clip.play().catch(function () {});
+        } else {
+          big.src = img.currentSrc || img.src; big.alt = img.alt;
+        }
         box.showModal();
       });
     });
-    box.addEventListener('click', function () { box.close(); });
+    box.addEventListener('click', function (e) { if (!(e.target === clip && clip.controls)) box.close(); });
+    box.addEventListener('close', function () { clip.pause(); clip.removeAttribute('src'); clip.load(); });
+  })();
+
+  // the layout clip plays while it is in view, not behind the lightbox, not with reduced motion
+  (function () {
+    var box = document.querySelector('dialog.lightbox'), clips = [].slice.call(document.querySelectorAll('.frame video'));
+    if (!clips.length || !('IntersectionObserver' in window)) return;
+    function sync() {
+      clips.forEach(function (v) {
+        if (v.inView && !box.open && !still.matches) v.play().catch(function () {});
+        else v.pause();
+      });
+    }
+    var io = new IntersectionObserver(function (es) { es.forEach(function (e) { e.target.inView = e.intersectionRatio >= 0.3; }); sync(); }, { threshold: [0, 0.3] });
+    clips.forEach(function (v) { io.observe(v); });
+    new MutationObserver(sync).observe(box, { attributes: true, attributeFilter: ['open'] });
+    if (still.addEventListener) still.addEventListener('change', sync);
   })();
 
   // a word of the prompt points at its piece of the lamp; a band of the resistor at its step

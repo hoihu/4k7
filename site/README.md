@@ -19,7 +19,8 @@ By hand: `cd site && npx wrangler deploy` (after `npx wrangler login`).
 | File | Use |
 |---|---|
 | `index.html` | The page. Dark theme. Four sections, one per band of the resistor: Schematic (yellow, 4), Board (violet, 7), Enclosure (red, ×100), Order (gold, ±5 %). |
-| `shots/*.webp` | The screenshots and renders on the page, taken from the real app with a real design (the Sunflower lamp) at 1440 × 900, 2× (WebP, quality ~85). The renders (`exploded`, `lamp`, `board-3d`) are the 3D views on a transparent background. The cost panels show live prices of 26 Oct 2026: retake them, or say when they are from, when they get old. |
+| `shots/*.webp` | The screenshots and renders on the page, taken from the real app with a real design (the Sunflower lamp) at 1440 × 900, 2× (WebP, quality ~85). The renders (`exploded`, `lamp`) are the 3D views on a transparent background. The cost panels show live prices of 26 Oct 2026: retake them, or say when they are from, when they get old. |
+| `shots/board.mp4` | The Layout view going 2D → 3D → 2D, as the app does it, with a drawn cursor: recorded frame by frame at 60 fps with the page's `requestAnimationFrame` and `performance.now` stepped by hand, so the camera flights run at their real speed (the moment the 3D view takes to build is left out). 2208 × 1380 H.264; `shots/board.webp` is its first frame, the poster. It loops without a seam because the 2D view comes back to the framing it starts from. It plays only while in view, and not with reduced motion. |
 | `changelog.html` | 4k7.dev/changelog. The releases in it are written from `CHANGELOG.md` by `node scripts/changelog.mjs` (CI checks that it is up to date); the rest of the page is edited by hand. |
 | `favicon.svg` | Browser tab icon. |
 | `brand/mark.svg` | The resistor alone, transparent. |
