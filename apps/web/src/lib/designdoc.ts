@@ -215,10 +215,19 @@ function boardSvg(inner: string, b: BoardView, cls: string, maxW: number, maxH: 
   };
 }
 
-/** The frame around a block's symbols on one sheet (with room for their texts and supply symbols). */
-function frameOf(view: SchematicView, refs: Set<string>): { sheetId: string; sheetName: string; rect: Rect }[] {
+/**
+ * The frame around a block's symbols on one sheet (with room for their texts and supply symbols):
+ * the block's own frame where the schematic draws one (each piece of a block that continues on
+ * another page), else a box round its symbols.
+ */
+function frameOf(view: SchematicView, refs: Set<string>, title: string): { sheetId: string; sheetName: string; rect: Rect }[] {
   const out: { sheetId: string; sheetName: string; rect: Rect }[] = [];
   for (const sheet of view.sheets) {
+    const own = (sheet.blocks ?? []).filter((b) => b.title === title || b.title === `${title} (continued)`);
+    if (own.length) {
+      for (const b of own) out.push({ sheetId: sheet.id, sheetName: sheet.name, rect: { x: b.rect.x - 100, y: b.rect.y - 100, w: b.rect.w + 200, h: b.rect.h + 200 } });
+      continue;
+    }
     // (a text runs about 50 mil per character from its anchor)
     const textBox = (p: { x: number; y: number; anchor: 'start' | 'middle' | 'end' }, text: string): Rect => {
       const w = text.length * 50;
@@ -420,7 +429,7 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
         const here = blk.refs.map((r) => `#${id} .part[data-ref="${attr(r)}"] .silk`).join(', ');
         locator = figure(boardSvg(assemblyInner, b, 'asm loc', 50, 50, id).svg, `On the board${sides.some((x) => x.side === 'bottom') ? ' (bottom side dashed)' : ''}`, `<style>${here} { fill: ${colorOf(i)}; stroke: #000; }</style>`);
       }
-      const excerpts = frameOf(view, refs).map((f, j) => {
+      const excerpts = frameOf(view, refs, blk.title).map((f, j) => {
         const id = `ex${i}_${j}`;
         const mm = (mil: number) => mil * 0.0254;
         const k = Math.min(1, TEXT_W / mm(f.rect.w), 125 / mm(f.rect.h));

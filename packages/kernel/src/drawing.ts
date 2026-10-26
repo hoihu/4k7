@@ -7,12 +7,13 @@
  * completes it on the way to the canvas: a connection the drawing does not show gets a net label of
  * its own (`auto`), so the picture never leaves a connection out.
  */
-import { DEFAULT_PAPER, PAGE, paperOf, type Component, type Design, type DrawnSymbol, type LabelView, type PageView, type PinView, type Rect, type SchematicView, type SheetDrawing, type SheetView, type SymbolView, type WireView } from '@4k7/schema';
+import { DEFAULT_PAPER, PAGE, paperOf, type BlockView, type Component, type Design, type DrawnSymbol, type LabelView, type PageView, type PinView, type Rect, type SchematicView, type SheetDrawing, type SheetView, type SymbolView, type WireView } from '@4k7/schema';
 import { GRID, isTwoPin, symbolFor, symbolFromSpec, unitCount, uprightSymbol } from '@4k7/parts';
 import { cardOf, componentsSorted, natCmp } from './doc.ts';
-import { PAGE_GAP, drawnWith, evaluateConstraints, layoutSheetOf, pageName, pagesBBox, symbolKey } from './layout.ts';
+import { PAGE_GAP, blockAssignment, drawnWith, evaluateConstraints, layoutSheetOf, pageName, pagesBBox, symbolKey } from './layout.ts';
+import { FRAME_PAD, frameAround, pieces } from './blocks.ts';
 import { cleanWires } from './wireclean.ts';
-import { addJunctions, deco, labelRect, leadEnd, makeSymbol, rotateSymbol, symbolMaking, textRect, type Dir, type Scene } from './scene.ts';
+import { addJunctions, crowding, deco, labelForPin, labelRect, leadEnd, makeSymbol, rotateSymbol, symbolMaking, textRect, type Dir, type Scene } from './scene.ts';
 
 /* ---------------------------------- view ----------------------------------- */
 
@@ -69,6 +70,8 @@ function renderSheet(d: Design, id: string, name: string, sd: SheetDrawing): She
   }
   autoLabels(d, scene);
   addJunctions(scene);
+  const frames = storedFrames(d, id, scene, sd.pages);
+  if (frames.length) scene.blocks = frames;
   const paper = paperOf(d.paper);
   const pages: PageView[] = sd.pages.map((rect, i) => ({
     number: i + 1,
@@ -77,6 +80,51 @@ function renderSheet(d: Design, id: string, name: string, sd: SheetDrawing): She
     ...(rect.w > paper.w || rect.h > paper.h ? { oversized: true } : {}),
   }));
   return { id, name, bbox: pagesBBox(pages), pages, ...scene };
+}
+
+/**
+ * The frames of the functional blocks on a stored drawing: round each block whose parts stand
+ * together on one page, with what is drawn at them (the labels at their pins, and the wires and
+ * labels of a net's drawn piece that joins parts of the block alone: a supply's lead and symbol,
+ * a wire between two of its parts), as long as the frame takes in no part of another block and
+ * runs no deeper into another frame than the air round their drawings. A block scattered over
+ * the sheet has none.
+ */
+function storedFrames(d: Design, sheetId: string, scene: Scene, pages: Rect[]): BlockView[] {
+  const groups = blockAssignment(d, sheetId);
+  if (!groups) return [];
+  const blockOf = new Map<string, string>();
+  for (const b of groups.blocks) for (const id of b.ids) blockOf.set(id, b.title);
+  const around = new Map<string, Rect[]>();
+  for (const net of new Set(scene.symbols.flatMap((s) => Object.values(d.components[s.componentId]?.pins ?? {})))) {
+    for (const p of pieces(d, scene, net)) {
+      const titles = new Set(p.pins.map((q) => blockOf.get(scene.symbols[q.sym]!.componentId)));
+      const [title] = titles;
+      if (titles.size !== 1 || !title || !p.wires.length) continue;
+      const wires = p.wires.map((i) => scene.wires[i]!.pts);
+      const labels = scene.labels.filter((l) => l.netId === net && wires.some((pts) => onWire(l.x, l.y, pts)));
+      around.set(title, [...(around.get(title) ?? []), ...wires.map(wireBox), ...labels.map(labelRect)]);
+    }
+  }
+  const out: BlockView[] = [];
+  for (const b of groups.blocks) {
+    const syms = scene.symbols.filter((s) => blockOf.get(s.componentId) === b.title);
+    if (!syms.length || new Set(syms.map((s) => pageAt(pages, centre(s.bbox)))).size > 1) continue;
+    const pinsAt = new Set(syms.flatMap((s) => s.pins.map((p) => `${p.x},${p.y}`)));
+    const rects = [
+      ...syms.flatMap((s) => [s.bbox, textRect(s.refPos, [s.refdes]), textRect(s.valuePos, s.valueLines ?? [s.value])]),
+      ...scene.labels.filter((l) => pinsAt.has(`${l.x},${l.y}`)).map(labelRect),
+      ...(around.get(b.title) ?? []),
+    ];
+    const x = Math.min(...rects.map((r) => r.x));
+    const y = Math.min(...rects.map((r) => r.y));
+    const rect = frameAround({ x, y, w: Math.max(...rects.map((r) => r.x + r.w)) - x, h: Math.max(...rects.map((r) => r.y + r.h)) - y });
+    const intruder = scene.symbols.some((s) => blockOf.get(s.componentId) !== b.title && inside(rect, centre(s.bbox)));
+    if (!intruder) out.push({ title: b.title, rect });
+  }
+  // two frames may share the air round their drawings, not more
+  const deep = (a: Rect, b: Rect) => Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 2 * FRAME_PAD && Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 2 * FRAME_PAD;
+  return out.filter((f) => !out.some((o) => o !== f && deep(o.rect, f.rect)));
 }
 
 /** The ICs and connectors standing on a page, which it is named after. */
@@ -233,28 +281,7 @@ function autoLabels(d: Design, scene: Scene): void {
 
 /** The label (and the lead to it, for a supply that must turn aside) a pin's net gets at that pin. */
 function labelAt(d: Design, net: NonNullable<Design['nets'][string]>, p: PinAt): { label: LabelView; wires: WireView[] } {
-  const dir: Dir = p.pin.side === 'left' ? 'left' : p.pin.side === 'right' ? 'right' : p.pin.side === 'top' ? 'up' : 'down';
-  if (dir === 'up' || dir === 'down') return leadEnd(net, p.pin.x, p.pin.y, dir);
-  const type = cardOf(d, p.comp.part)?.pins.find((x) => x.number === p.pin.number)?.type;
-  return { label: deco(net, p.pin.x, p.pin.y, dir, 100, 0, type), wires: [] };
-}
-
-/** How much a label would run into: other symbols, labels, and wires of other nets crossing its box. */
-function crowding(scene: Scene, label: LabelView, own: number): number {
-  const r = labelRect(label);
-  let n = 0;
-  scene.symbols.forEach((s, i) => {
-    if (i !== own && hits(r, s.bbox)) n++;
-  });
-  for (const l of scene.labels) if (hits(r, labelRect(l))) n++;
-  for (const w of scene.wires) {
-    if (w.netId === label.netId) continue;
-    for (let i = 0; i + 3 < w.pts.length; i += 2) {
-      const [x1, y1, x2, y2] = [w.pts[i]!, w.pts[i + 1]!, w.pts[i + 2]!, w.pts[i + 3]!];
-      if (hits(r, { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1) || 1, h: Math.abs(y2 - y1) || 1 })) n++;
-    }
-  }
-  return n;
+  return labelForPin(net, p.pin, cardOf(d, p.comp.part)?.pins.find((x) => x.number === p.pin.number)?.type);
 }
 
 /* --------------------------------- storing --------------------------------- */
@@ -472,7 +499,34 @@ const CLEAR = 200;
  * connections to the parts already drawn show as labels (autoLabels) until the agent wires them.
  */
 function placeFresh(d: Design, sheetId: string, sd: SheetDrawing, ids: string[]): void {
-  const view = layoutSheetOf(d, sheetId, new Set(ids));
+  // a part of a functional block goes next to the parts of its block already drawn, drawn with
+  // the others of its block that are new
+  const groups = blockAssignment(d, sheetId);
+  const loose: string[] = [];
+  const byBlock = new Map<string, string[]>();
+  for (const id of ids) {
+    const b = groups?.blocks.find((x) => x.ids.includes(id));
+    if (b) byBlock.set(b.title, [...(byBlock.get(b.title) ?? []), id]);
+    else loose.push(id);
+  }
+  for (const [title, fresh] of byBlock) {
+    const mine = new Set(groups!.blocks.find((b) => b.title === title)!.ids);
+    const old = sd.symbols.filter((s) => mine.has(s.comp) && !fresh.includes(s.comp));
+    const view = layoutSheetOf(d, sheetId, new Set(fresh));
+    const scene: Scene = { symbols: view.symbols, wires: view.wires, labels: view.labels, junctions: [], noConnects: [] };
+    autoLabels(d, scene);
+    for (const x of [...scene.labels, ...scene.wires]) delete x.auto;
+    const frozen = freeze(d, { pages: [], ...scene });
+    const bb = extent(d, frozen);
+    const near = old.length ? old.map((s) => s.bbox).reduce((a, b) => ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.max(a.x + a.w, b.x + b.w) - Math.min(a.x, b.x), h: Math.max(a.y + a.h, b.y + b.h) - Math.min(a.y, b.y) })) : undefined;
+    const spot = (near && freeSpotNear(d, sd, bb, near)) || freeSpot(d, sd, bb);
+    translate(frozen, spot.dx, spot.dy);
+    sd.symbols.push(...frozen.symbols);
+    sd.wires.push(...frozen.wires);
+    sd.labels.push(...frozen.labels);
+  }
+  if (!loose.length) return;
+  const view = layoutSheetOf(d, sheetId, new Set(loose));
   for (const page of view.pages) {
     const block = {
       symbols: view.symbols.filter((s) => inside(page.rect, centre(s.bbox))),
@@ -516,6 +570,28 @@ function freeSpot(d: Design, sd: SheetDrawing, bb: Rect): { dx: number; dy: numb
   return { dx: Math.round((rect.x + PAGE.margin - bb.x) / GRID) * GRID, dy: Math.round((rect.y + PAGE.margin - bb.y) / GRID) * GRID };
 }
 
+/**
+ * The clear spot for a block of this extent nearest to `near` (the parts of its functional block),
+ * on the page `near` is on; undefined when that page has no room.
+ */
+function freeSpotNear(d: Design, sd: SheetDrawing, bb: Rect, near: Rect): { dx: number; dy: number } | undefined {
+  const taken = boxes(d, sd).map((r) => grow(r, CLEAR));
+  const area = drawingArea(sd.pages[pageAt(sd.pages, centre(near))]!);
+  const dx0 = Math.ceil((area.x - bb.x) / GRID) * GRID;
+  const dy0 = Math.ceil((area.y - bb.y) / GRID) * GRID;
+  const gapTo = (r: Rect) => Math.max(0, near.x - (r.x + r.w), r.x - (near.x + near.w)) + Math.max(0, near.y - (r.y + r.h), r.y - (near.y + near.h));
+  let best: { dx: number; dy: number; gap: number } | undefined;
+  for (let dy = dy0; bb.y + dy + bb.h <= area.y + area.h; dy += GRID) {
+    for (let dx = dx0; bb.x + dx + bb.w <= area.x + area.w; dx += GRID) {
+      const r = { x: bb.x + dx, y: bb.y + dy, w: bb.w, h: bb.h };
+      const g = gapTo(r);
+      if (best && g >= best.gap) continue;
+      if (!taken.some((t) => hits(t, r))) best = { dx, dy, gap: g };
+    }
+  }
+  return best && { dx: best.dx, dy: best.dy };
+}
+
 const grid = (v: number) => Math.ceil(v / GRID) * GRID;
 export const drawingArea = (p: Rect): Rect => ({ x: p.x + PAGE.margin, y: p.y + PAGE.margin, w: p.w - 2 * PAGE.margin, h: p.h - 2 * PAGE.margin - PAGE.title });
 const centre = (r: Rect) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
@@ -532,13 +608,15 @@ function boxes(d: Design, sd: Pick<SheetDrawing, 'symbols' | 'wires' | 'labels'>
     if (c) out.push(textRect(s.ref, [c.refdes]), textRect(s.value, [c.refdes]));
   }
   for (const l of sd.labels) out.push(labelRect({ ...l, text: d.nets[l.netId]?.name ?? '' }));
-  for (const w of sd.wires) {
-    const xs = w.pts.filter((_, i) => i % 2 === 0);
-    const ys = w.pts.filter((_, i) => i % 2 === 1);
-    out.push({ x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) });
-  }
+  for (const w of sd.wires) out.push(wireBox(w.pts));
   return out;
 }
+
+const wireBox = (pts: number[]): Rect => {
+  const xs = pts.filter((_, i) => i % 2 === 0);
+  const ys = pts.filter((_, i) => i % 2 === 1);
+  return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+};
 
 function extent(d: Design, sd: Pick<SheetDrawing, 'symbols' | 'wires' | 'labels'>): Rect {
   const bs = boxes(d, sd);
@@ -771,6 +849,38 @@ function made(d: Design, comp: Component, base: Omit<DrawnSymbol, 'spec' | 'x' |
   const oy = cy - Math.round((def.bbox.y + def.bbox.h / 2) / GRID) * GRID;
   const sym = makeSymbol(d, comp, def, ox, oy);
   return { ...base, spec: def.spec!, x: ox, y: oy, bbox: sym.bbox, ref: sym.refPos, value: sym.valuePos };
+}
+
+/**
+ * Draw a functional block afresh on a stored drawing (place_block): its parts leave where they
+ * stood, the layout draws them together and wired (blocks.ts), and the drawing goes in with its
+ * frame's centre at (x, y) on that page of the sheet. Wires to the rest are cut back; those
+ * connections show as labels. Returns where the centre ended up (page coordinates), the frame and
+ * its page (canvas coordinates), and the part of another block it lies on, if any.
+ */
+export function redrawBlock(d: Design, sheetId: string, title: string, page: number, x: number, y: number): { x: number; y: number; frame: Rect; page: Rect; under?: string } {
+  const sd = ownSheet(d, sheetId);
+  const ids = new Set(blockAssignment(d, sheetId)?.blocks.find((b) => b.title === title)?.ids ?? []);
+  addPages(d, sd, page);
+  sd.symbols = sd.symbols.filter((s) => !ids.has(s.comp));
+  const view = layoutSheetOf(d, sheetId, ids);
+  const scene: Scene = { symbols: view.symbols, wires: view.wires, labels: view.labels, junctions: [], noConnects: [] };
+  autoLabels(d, scene);
+  for (const v of [...scene.labels, ...scene.wires]) delete v.auto;
+  const frozen = freeze(d, { pages: [], ...scene });
+  const frame = frameAround(extent(d, frozen));
+  const rect = sd.pages[page - 1]!;
+  const dx = Math.round((rect.x + x - (frame.x + frame.w / 2)) / GRID) * GRID;
+  const dy = Math.round((rect.y + y - (frame.y + frame.h / 2)) / GRID) * GRID;
+  translate(frozen, dx, dy);
+  sd.symbols.push(...frozen.symbols);
+  sd.wires.push(...frozen.wires);
+  sd.labels.push(...frozen.labels);
+  syncSheet(d, sheetId);
+  const area = { ...frame, x: frame.x + dx, y: frame.y + dy };
+  const under = sd.symbols.find((s) => !ids.has(s.comp) && hits(s.bbox, area));
+  const pg = sd.pages[pageAt(sd.pages, centre(area))]!;
+  return { x: Math.round(area.x + area.w / 2 - pg.x), y: Math.round(area.y + area.h / 2 - pg.y), frame: area, page: pg, ...(under ? { under: `${d.components[under.comp]!.refdes}${under.unit ?? ''}` } : {}) };
 }
 
 /**

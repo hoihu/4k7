@@ -32,6 +32,8 @@ export const SCHEMATIC_STYLE = `
 .sch-p .net-t { font-size: 72px; font-weight: 600; }
 .sch-p .flag { fill: #fff; stroke: #000; stroke-width: 10; }
 .sch-p .nc line { stroke: #000; stroke-width: 12; }
+.sch-p .blk rect { fill: none; stroke: #888; stroke-width: 10; stroke-dasharray: 60 40; }
+.sch-p .blk text { font-size: 100px; font-weight: 600; letter-spacing: 6px; fill: #555; }
 `;
 
 const style = (paper: SchematicView['paper']) => `

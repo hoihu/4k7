@@ -17,6 +17,7 @@
 import { DEFAULT_PAPER, PAGE, paperOf, parseAs, type Component, type Constraint, type Design, type Net, type PageView, type PartCard, type Point, type Rect, type SchematicView, type SheetView, type SymbolView } from '@4k7/schema';
 import { GRID, isTwoPin, symbolFor, unitCount, uprightSymbol } from '@4k7/parts';
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, valueOf, type NetPin } from './doc.ts';
+import { drawBlock, FRAME_PAD, FRAME_TITLE, type BlockNode } from './blocks.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
 import { tidyWires } from './tidy.ts';
 import {
@@ -86,6 +87,36 @@ const anchorSymbol = (plan: AnchorPlan) => symbolFor(plan.card, false, { mirror:
 interface Ctx {
   d: Design;
   members: Map<string, NetPin[]>;
+  /**
+   * The functional blocks of the sheet being drawn and their parts (blockAssignment); null: the
+   * sheet has none, it is drawn the classic way; undefined: work them out. `frames: false` draws
+   * the blocks without frames (parts added to a stored drawing).
+   */
+  blocks?: SheetBlocks | null;
+  frames?: boolean;
+}
+
+/** What planOf decides for a set of parts. */
+interface Planned {
+  comps: Component[];
+  flows: Map<string, FlowPlan>;
+  bridges: BridgeRect[];
+  unitPlans: Map<string, AnchorPlan[]>;
+  free: Component[];
+  pinned: Map<string, Pin>;
+  placedTwoPins: Component[];
+  outputConn: Set<string>;
+  nodes: LayoutNode[];
+  ordering: Constraint[];
+  ordered: Set<string>;
+  /** The IC or connector each small part is drawn with (by component id). */
+  owners: Map<string, string>;
+}
+
+/** The agent's mirror choice for an IC or connector (constrain arrangement mirrored / unmirrored). */
+function mirrorAsked(d: Design, compId: string): boolean | undefined {
+  const k = Object.values(d.ledger).find((x) => x.kind === 'arrangement' && x.a === compId && (x.value === 'mirrored' || x.value === 'unmirrored'));
+  return k ? k.value === 'mirrored' : undefined;
 }
 
 /**
@@ -94,12 +125,18 @@ interface Ctx {
  */
 export function layoutSheetOf(d: Design, sheetId: string, only?: ReadonlySet<string>): SheetView {
   let dd = d;
+  // the blocks are those of the whole sheet, so parts drawn on their own stay with their block
+  let blocks = blockAssignment(d, sheetId);
   if (only) {
     const components = Object.fromEntries(Object.entries(d.components).filter(([id]) => only.has(id)));
     const ledger = Object.fromEntries(Object.entries(d.ledger).filter(([, k]) => (!k.a || only.has(k.a)) && (!k.b || only.has(k.b))));
     dd = { ...d, components, ledger };
+    if (blocks) {
+      const kept = blocks.blocks.map((b) => ({ ...b, ids: b.ids.filter((id) => only.has(id)), guessed: b.guessed.filter((id) => only.has(id)) })).filter((b) => b.ids.length);
+      blocks = { blocks: kept, loose: blocks.loose.filter((id) => only.has(id)) };
+    }
   }
-  return layoutSheet({ d: dd, members: netMembers(dd) }, sheetId, d.sheets[sheetId]?.name ?? '');
+  return layoutSheet({ d: dd, members: netMembers(dd), blocks, ...(only ? { frames: false } : {}) }, sheetId, d.sheets[sheetId]?.name ?? '');
 }
 
 export function layoutSchematic(d: Design): SchematicView {
@@ -113,13 +150,19 @@ export function layoutSchematic(d: Design): SchematicView {
   return { paper: d.paper ?? DEFAULT_PAPER, sheets: views, constraintStatus: status, ...(Object.keys(why).length ? { constraintWhy: why } : {}) };
 }
 
-function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
+/**
+ * How the layout draws these parts (a sheet, or one functional block of it): the ICs and
+ * connectors with the small parts each takes (satellites, decoupling, a transistor's load), the
+ * regulators drawn in datasheet style, the bridges, and the parts attached to nothing.
+ * `opts.mirrors`: whether a symbol (node key) is drawn mirrored, over the layout's own choice;
+ * `opts.unpinned`: the old sch_position entries are ignored (a block arranges its own parts).
+ */
+function planOf(ctx: Ctx, comps: Component[], opts: { mirrors?: ReadonlyMap<string, boolean>; unpinned?: boolean } = {}): Planned {
   const { d } = ctx;
-  const comps = componentsSorted(d).filter((c) => c.sheet === sheetId && cardOf(d, c.part));
   const cardFor = (c: Component) => cardOf(d, c.part)!;
   let anchors = comps.filter((c) => !isTwoPin(cardFor(c)));
   // where the agent put parts (place_symbol): they stand exactly there, the rest flows around them
-  const pinned = placementsOf(d, comps);
+  const pinned = opts.unpinned ? new Map<string, Pin>() : placementsOf(d, comps);
   const placedTwoPins = comps.filter((c) => isTwoPin(cardFor(c)) && pinned.has(c.id));
   const bridges = findBridges(ctx, comps.filter((c) => isTwoPin(cardFor(c)) && !pinned.has(c.id)));
   const inBridge = new Set(bridges.flatMap((b) => b.diodes.map((x) => x.comp.id)));
@@ -164,8 +207,9 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
       const n = unitCount(card);
       const make = (unit?: number): AnchorPlan => {
         // placed: as the agent said, else a connector in the right half of its page faces left, like an output
-        const at = pinned.get(nodeKey(c.id, n > 1 ? unit ?? 0 : undefined));
-        const mirror = at ? at.mirror ?? (card.category === 'connector' && at.x > paperOf(d.paper).w / 2) : outputConn.has(c.id);
+        const key = nodeKey(c.id, n > 1 ? unit ?? 0 : undefined);
+        const at = pinned.get(key);
+        const mirror = opts.mirrors?.get(key) ?? mirrorAsked(d, c.id) ?? (at ? at.mirror ?? (card.category === 'connector' && at.x > paperOf(d.paper).w / 2) : outputConn.has(c.id));
         return { comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror, ...(unit !== undefined ? { unit } : {}), ...(stacks.has(c.id) ? { stack: stacks.get(c.id)! } : {}) };
       };
       return [c.id, n > 1 ? Array.from({ length: n }, (_, u) => make(u)) : [make()]];
@@ -311,6 +355,26 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   });
   // connectors ordered by a constraint keep their place in the row instead of joining a column
   const ordered = new Set(ordering.filter((k) => k.kind === 'left_of' || k.kind === 'right_of').flatMap((k) => [k.a!, k.b!]));
+  // who each part is drawn with: the IC or connector (satellites, decoupling, a load, a regulator's parts)
+  const drawnBy = new Map<string, string>();
+  for (const plan of allPlans()) {
+    const parts = [...plan.left, ...plan.right].flatMap((x) => [x.comp, ...x.chain]).concat(plan.decaps, plan.extraLeft, plan.extraRight, ...(plan.stack?.items.flatMap((i) => [i.comp, ...i.parallel]) ?? []));
+    for (const x of parts) drawnBy.set(x.id, plan.comp.id);
+  }
+  for (const [id, f] of flows) for (const x of f.consumed) if (x !== id) drawnBy.set(x, id);
+  return { comps, flows, bridges, unitPlans, free, pinned, placedTwoPins, outputConn, nodes, ordering, ordered, owners: drawnBy };
+}
+
+/**
+ * The classic drawing of planned parts: the ICs and connectors in rows (above/below constraints),
+ * ordered by left_of/right_of and signal flow, connectors in a column, the bridges after the
+ * connectors, the parts attached to nothing in a row of their own; the placed ones stand apart.
+ */
+function classicRows(ctx: Ctx, p: Planned): { cellRows: CellRow[]; placed: Placed[] } {
+  const { d } = ctx;
+  const { flows, bridges, free, pinned, placedTwoPins, outputConn, nodes, ordering, ordered } = p;
+  const cardFor = (c: Component) => cardOf(d, c.part)!;
+
   const rows = arrangeAnchors(d, nodes.filter((n) => !pinned.has(n.key)), ordering);
   if (bridges.length && !rows.length) rows.push([]);
 
@@ -351,12 +415,320 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
     placed.push({ cell: { scene, heads: [n.comp] }, at, comp: n.comp.id, ...(unit ? { unit } : {}) });
   }
   for (const c of placedTwoPins) placed.push({ cell: { scene: verticalPart(ctx, c, 0, 0, pinned.get(c.id)!.orient === 'lying'), heads: [] }, at: pinned.get(c.id)!, comp: c.id });
+  return { cellRows, placed };
+}
 
-  const { scene, pages } = paginate(d, cellRows, placed);
+function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
+  const { d } = ctx;
+  const comps = componentsSorted(d).filter((c) => c.sheet === sheetId && cardOf(d, c.part));
+  // the functional blocks on the sheet (the description's, with the parts in none put where they connect)
+  const groups = ctx.blocks !== undefined ? ctx.blocks : blockAssignment(d, sheetId);
+  let laid: { scene: Scene; pages: PageView[] };
+  if (groups) {
+    const { cellRows, placed } = blockRows(ctx, comps, groups, sheetId);
+    laid = packPages(d, cellRows.flatMap((r) => r.cells), placed);
+  } else {
+    const { cellRows, placed } = classicRows(ctx, planOf(ctx, comps));
+    laid = paginate(d, cellRows, placed);
+  }
+  const { scene, pages } = laid;
   tidyWires(scene);
   addJunctions(scene);
   const bb = pagesBBox(pages);
   return { id: sheetId, name: sheetName, bbox: bb, pages, ...scene };
+}
+
+/* --------------------------------- blocks ---------------------------------- */
+
+/** The functional blocks of a sheet and their parts (component ids, in the sheet's order). */
+export interface SheetBlocks {
+  /** In the description's order; `ids` includes the `guessed` parts (in no block, put with this one). */
+  blocks: { title: string; ids: string[]; guessed: string[] }[];
+  /** Parts in no block that could not be put with one: drawn the classic way after the blocks. */
+  loose: string[];
+}
+
+/**
+ * Which block each part of a sheet is drawn in (docs/design/schematic-drawing.md §2b): the
+ * description's blocks; a part in none goes with the IC it would be drawn with (its pull-up, its
+ * decoupling), else with the block it shares the most signal connections with (supplies count a
+ * little, ground not at all). Null when no block has a part on the sheet: it is drawn the classic way.
+ */
+export function blockAssignment(d: Design, sheetId: string): SheetBlocks | null {
+  const blocks = d.description?.blocks ?? [];
+  const comps = componentsSorted(d).filter((c) => c.sheet === sheetId && cardOf(d, c.part));
+  const explicit = new Map<string, number>();
+  blocks.forEach((b, i) => {
+    for (const id of b.components) if (d.components[id]?.sheet === sheetId && cardOf(d, d.components[id]!.part)) explicit.set(id, i);
+  });
+  if (!explicit.size) return null;
+  const guess = new Map<string, number>();
+  const open = comps.filter((c) => !explicit.has(c.id));
+  if (open.length) {
+    const ctx: Ctx = { d, members: netMembers(d) };
+    const owners = planOf(ctx, comps).owners;
+    const blockOf = (id: string) => explicit.get(id) ?? guess.get(id);
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const c of open) {
+        if (guess.has(c.id)) continue;
+        const o = owners.get(c.id);
+        const viaOwner = o !== undefined ? blockOf(o) : undefined;
+        if (viaOwner !== undefined) {
+          guess.set(c.id, viaOwner);
+          changed = true;
+        }
+      }
+      for (const c of open) {
+        if (guess.has(c.id) || owners.has(c.id)) continue;
+        const score = new Map<number, number>();
+        for (const net of Object.values(c.pins)) {
+          const nn = d.nets[net];
+          if (!nn || isGroundNet(nn)) continue;
+          const w = isPowerNet(nn) ? 1 : 3;
+          for (const m of ctx.members.get(net) ?? []) {
+            const b = m.comp.id !== c.id && m.comp.sheet === sheetId ? blockOf(m.comp.id) : undefined;
+            if (b !== undefined) score.set(b, (score.get(b) ?? 0) + w);
+          }
+        }
+        const best = [...score].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+        if (best) {
+          guess.set(c.id, best[0]);
+          changed = true;
+        }
+      }
+    }
+  }
+  const out = blocks.map((b) => ({ title: b.title, ids: [] as string[], guessed: [] as string[] }));
+  const loose: string[] = [];
+  for (const c of comps) {
+    const i = explicit.get(c.id) ?? guess.get(c.id);
+    if (i === undefined) {
+      loose.push(c.id);
+      continue;
+    }
+    out[i]!.ids.push(c.id);
+    if (!explicit.has(c.id)) out[i]!.guessed.push(c.id);
+  }
+  return { blocks: out.filter((b) => b.ids.length), loose };
+}
+
+/** Space between blocks in a row (their frames carry their own air). */
+const BLOCK_GAP = 300;
+
+/** Where the agent put a block on a sheet (place_block), the page counted within the sheet; `seq`: the entry's number, the order the blocks were placed in. */
+function blockSpot(d: Design, sheetId: string, title: string): { at: Pin; seq: number } | undefined {
+  const k = Object.values(d.ledger).find((x) => x.kind === 'sch_block' && x.sheet === sheetId && x.key === title && x.x !== undefined && x.y !== undefined);
+  return k ? { at: { page: k.page ?? 1, x: k.x!, y: k.y! }, seq: parseInt(k.id.slice(k.id.lastIndexOf('_') + 1), 36) || 0 } : undefined;
+}
+
+/** The width a block's drawing should keep within: the paper's drawing area, less the frame. */
+const blockWidth = (d: Design) => paperOf(d.paper).w - 2 * PAGE.margin - 2 * FRAME_PAD - 200;
+
+/** The blocks of a sheet as cells in description order (placed ones stand where the agent put them), then the parts in no block. */
+function blockRows(ctx: Ctx, comps: Component[], groups: SheetBlocks, sheetId: string): { cellRows: CellRow[]; placed: Placed[] } {
+  const { d } = ctx;
+  const cells: Cell[] = [];
+  const spots: { cell: Cell; at: Pin; seq: number }[] = [];
+  for (const b of groups.blocks) {
+    const ids = new Set(b.ids);
+    const members = comps.filter((c) => ids.has(c.id));
+    if (!members.length) continue;
+    // (a block taller than a page comes in pieces: the first stands where it was put, the rest flow)
+    const [first, ...more] = blockCells(ctx, members, b.title);
+    const spot = blockSpot(d, sheetId, b.title);
+    if (spot) spots.push({ cell: first!, ...spot });
+    else cells.push(first!);
+    cells.push(...more);
+  }
+  // in the order they were placed: a block placed later moves aside from the ones before it
+  const placed: Placed[] = spots.sort((a, b) => a.seq - b.seq).map((s) => ({ cell: s.cell, at: s.at, comp: '', centre: true }));
+  const cellRows: CellRow[] = cells.length ? [{ cells, gap: BLOCK_GAP }] : [];
+  const loose = new Set(groups.loose);
+  const rest = comps.filter((c) => loose.has(c.id));
+  if (rest.length) {
+    const r = classicRows(ctx, planOf(ctx, rest));
+    cellRows.push(...r.cellRows);
+    placed.push(...r.placed);
+  }
+  return { cellRows, placed };
+}
+
+/** One functional block drawn as a unit (blocks.ts): its pieces from the layout's plan, arranged and wired; a block taller than a page in page-sized cells. */
+function blockCells(ctx: Ctx, members: Component[], title: string): Cell[] {
+  const { d } = ctx;
+  const p = planOf(ctx, members, { unpinned: true });
+  const nodes: BlockNode[] = [];
+  for (const n of p.nodes) {
+    const flow = p.flows.get(n.comp.id);
+    nodes.push({
+      key: n.key,
+      heads: [n.comp],
+      canMirror: !flow && n.plan.card.category !== 'transistor' && !n.plan.stack,
+      ...(mirrorAsked(d, n.comp.id) !== undefined ? { mirror: mirrorAsked(d, n.comp.id)! } : {}),
+      build: (mirror) => {
+        if (flow) return flowCell(ctx, flow);
+        n.plan.mirror = mirror;
+        return stamp(buildCell(ctx, n.plan), n.plan);
+      },
+    });
+  }
+  p.bridges.forEach((b, i) => nodes.push({ key: `bridge#${i}`, heads: b.diodes.map((x) => x.comp), canMirror: false, build: () => bridgeCell(ctx, b) }));
+  for (const chain of chainsOf(ctx, p.free)) {
+    const one = chain.parts.length === 1 && !chain.shunts.size ? chain.parts[0]! : undefined;
+    nodes.push({ key: `chain#${chain.parts[0]!.id}`, heads: one && !isTwoPin(cardOf(d, one.part)!) ? [one] : [], canMirror: false, build: () => (one ? freePart(ctx, one) : chainCell(ctx, chain)) });
+  }
+  // the agent's left_of / right_of between two ICs or connectors of the block
+  const keyOf = (id: string, unit?: string) => p.nodes.find((x) => x.comp.id === id && (!unit || (x.plan.unit !== undefined && x.plan.card.units?.[x.plan.unit]?.name === unit)))?.key;
+  const order = p.ordering.flatMap((k) => {
+    const a = keyOf(k.a!, k.aUnit);
+    const b = keyOf(k.b!, k.bUnit);
+    return a && b && (k.kind === 'left_of' || k.kind === 'right_of') ? [{ left: k.kind === 'left_of' ? a : b, right: k.kind === 'left_of' ? b : a }] : [];
+  });
+  const paper = paperOf(d.paper);
+  const maxH = paper.h - 2 * PAGE.margin - PAGE.title - 2 * FRAME_PAD - FRAME_TITLE - 100;
+  return drawBlock(d, ctx.members, nodes, { title, maxW: blockWidth(d), maxH, frame: ctx.frames !== false, order });
+}
+
+/** A chain of two-pin parts in series, top to bottom once drawn, and the caps tapped off its joints (by joint net). */
+interface Chain {
+  parts: Component[];
+  shunts: Map<string, Component[]>;
+}
+
+/**
+ * Parts attached to nothing, in series: two-pin parts joined by a signal net form a chain (an LED
+ * and its resistor, a divider), as long as the net joins just the two of them besides caps to a
+ * supply, which are drawn tapped off the joint (a divider's filter cap); a resistor into a cap to
+ * ground is a chain of two. The net may go on beyond the block (a label names it). The rest stand
+ * alone. In the sheet's order.
+ */
+function chainsOf(ctx: Ctx, free: Component[]): Chain[] {
+  const { d, members } = ctx;
+  const card = (c: Component) => cardOf(d, c.part)!;
+  const two = free.filter((c) => isTwoPin(card(c)));
+  const ids = new Set(two.map((c) => c.id));
+  const otherNet = (c: Component, net: string) => Object.values(c.pins).find((n) => n !== net);
+  const toSupply = (c: Component, net: string) => {
+    const o = otherNet(c, net);
+    return !!o && !!d.nets[o] && isPowerNet(d.nets[o]!);
+  };
+  const next = new Map<string, string[]>();
+  const shuntsAt = new Map<string, Component[]>();
+  const shunt = new Set<string>();
+  const nets = [...new Set(two.flatMap((c) => Object.values(c.pins)))].sort(natCmp);
+  for (const net of nets) {
+    const nn = d.nets[net];
+    if (!nn || isPowerNet(nn)) continue;
+    const on = [...new Map((members.get(net) ?? []).filter((m) => ids.has(m.comp.id)).map((m) => [m.comp.id, m.comp])).values()];
+    if (on.length < 2) continue;
+    const caps = on.filter((c) => card(c).category === 'capacitor' && toSupply(c, net));
+    let series = on.filter((c) => !caps.includes(c));
+    let taps = caps;
+    // a resistor into a cap to ground: the cap ends the chain
+    if (series.length === 1 && caps.length) {
+      series = [series[0]!, caps[0]!];
+      taps = caps.slice(1);
+    }
+    if (series.length !== 2 || series.some((c) => shunt.has(c.id)) || taps.some((c) => next.has(c.id))) continue;
+    next.set(series[0]!.id, [...(next.get(series[0]!.id) ?? []), series[1]!.id]);
+    next.set(series[1]!.id, [...(next.get(series[1]!.id) ?? []), series[0]!.id]);
+    if (taps.length) shuntsAt.set(net, taps);
+    for (const t of taps) shunt.add(t.id);
+  }
+  const used = new Set<string>(shunt);
+  const out: Chain[] = [];
+  for (const c of free) {
+    if (used.has(c.id)) continue;
+    if (!ids.has(c.id)) {
+      used.add(c.id);
+      out.push({ parts: [c], shunts: new Map() });
+      continue;
+    }
+    // walk to one end, then collect to the other
+    let end = c.id;
+    let prev: string | undefined;
+    for (let guard = 0; guard < two.length; guard++) {
+      const o = (next.get(end) ?? []).find((x) => x !== prev && !used.has(x));
+      if (!o || o === c.id) break;
+      prev = end;
+      end = o;
+    }
+    const chain: string[] = [];
+    prev = undefined;
+    for (let at: string | undefined = end; at && !used.has(at); ) {
+      used.add(at);
+      chain.push(at);
+      const o: string | undefined = (next.get(at) ?? []).find((x) => x !== prev && !used.has(x));
+      prev = at;
+      at = o;
+    }
+    const parts = chain.map((id) => d.components[id]!);
+    const joints = parts.slice(1).map((p, i) => Object.values(p.pins).find((n) => Object.values(parts[i]!.pins).includes(n))!);
+    out.push({ parts, shunts: new Map(joints.filter((j) => shuntsAt.has(j)).map((j) => [j, shuntsAt.get(j)!])) });
+  }
+  // a cap whose joint went to no chain stands alone
+  for (const id of shunt) if (!out.some((ch) => [...ch.shunts.values()].flat().some((x) => x.id === id))) out.push({ parts: [d.components[id]!], shunts: new Map() });
+  return out;
+}
+
+/**
+ * A chain of two-pin parts standing in one column, wired: the end with the higher potential on top
+ * (a rail, then a signal, then ground), its decorations at both ends, the caps tapped off a joint
+ * hanging beside it on the left.
+ */
+function chainCell(ctx: Ctx, chain: Chain): Scene {
+  const { d } = ctx;
+  const netsOf = (c: Component) => cardOf(d, c.part)!.pins.map((p) => c.pins[p.number]);
+  const shared = (a: Component, b: Component) => netsOf(a).find((n) => n && netsOf(b).includes(n));
+  const outer = (c: Component, inner?: string) => netsOf(c).find((n) => n !== inner);
+  let parts = [...chain.parts];
+  const topNet = (ps: Component[]) => outer(ps[0]!, ps.length > 1 ? shared(ps[0]!, ps[1]!) : undefined);
+  const bottomNet = (ps: Component[]) => outer(ps.at(-1)!, ps.length > 1 ? shared(ps.at(-1)!, ps.at(-2)!) : undefined);
+  const pot = (id?: string) => potential(id ? d.nets[id] : undefined);
+  if (pot(topNet(parts)) > pot(bottomNet(parts))) parts = parts.reverse();
+  const scene = emptyScene();
+  let upper = topNet(parts);
+  let y = 0;
+  parts.forEach((c, i) => {
+    const card = cardOf(d, c.part)!;
+    const top = card.pins.find((p) => c.pins[p.number] === upper) ?? card.pins[0]!;
+    if (i > 0 && upper) {
+      scene.wires.push({ netId: upper, pts: [0, y, 0, y + CHAIN_GAP] });
+      // caps tapped off this joint, hanging to their supply on the left
+      let x = 0;
+      for (const s of chain.shunts.get(upper) ?? []) {
+        x -= grid(satWidth(d, s) + 100);
+        const sc = cardOf(d, s.part)!;
+        const sp = sc.pins.find((p) => s.pins[p.number] === upper) ?? sc.pins[0]!;
+        const tap = y + CHAIN_GAP / 2;
+        scene.wires.push({ netId: upper, pts: [0, tap, x, tap] });
+        const sym = makeSymbol(d, s, symbolFor(sc, sp.number !== sc.pins[0]!.number), x, tap + 200);
+        scene.symbols.push(sym);
+        const bp = sym.pins.find((p) => p.side === 'bottom')!;
+        const far = s.pins[bp.number];
+        if (s.noConnect.includes(bp.number)) scene.noConnects.push({ x: bp.x, y: bp.y });
+        else if (far && d.nets[far]) endLead(scene, d.nets[far]!, bp.x, bp.y, 'down');
+      }
+      y += CHAIN_GAP;
+    }
+    const sym = makeSymbol(d, c, symbolFor(card, top.number !== card.pins[0]!.number), 0, y + 200);
+    scene.symbols.push(sym);
+    const tp = sym.pins.find((p) => p.side === 'top')!;
+    const bp = sym.pins.find((p) => p.side === 'bottom')!;
+    if (i === 0) {
+      if (c.noConnect.includes(tp.number)) scene.noConnects.push({ x: tp.x, y: tp.y });
+      else if (upper && d.nets[upper]) endLead(scene, d.nets[upper]!, tp.x, tp.y, 'up');
+    }
+    const lower = c.pins[bp.number];
+    if (i === parts.length - 1) {
+      if (c.noConnect.includes(bp.number)) scene.noConnects.push({ x: bp.x, y: bp.y });
+      else if (lower && d.nets[lower]) endLead(scene, d.nets[lower]!, bp.x, bp.y, 'down');
+    }
+    upper = lower;
+    y = bp.y;
+  });
+  return scene;
 }
 
 /** The symbol each small part was drawn with: its cell's IC or connector (drawnWith). */
@@ -392,12 +764,13 @@ interface CellRow {
 /** Space between pages on the canvas. */
 export const PAGE_GAP = 600;
 
-/** A cell whose part the agent placed: its symbol's centre goes to `at` on that page. */
+/** A cell whose part the agent placed: its symbol's centre goes to `at` on that page (`centre`: the cell's own centre, a block's frame). */
 interface Placed {
   cell: Cell;
   at: Pin;
   comp: string;
   unit?: string;
+  centre?: boolean;
 }
 
 /**
@@ -452,15 +825,7 @@ function paginate(d: Design, rows: CellRow[], placed: Placed[] = []): { scene: S
 
   // placed cells: how far each moves so its part's symbol is centred where it was put, and the box
   // it then takes on its page (paper coordinates)
-  const fixed = placed.map((p) => {
-    const sym = p.cell.scene.symbols.find((s) => s.componentId === p.comp && (p.unit === undefined || s.unit === p.unit)) ?? p.cell.scene.symbols[0];
-    const cx = sym ? sym.bbox.x + sym.bbox.w / 2 : 0;
-    const cy = sym ? sym.bbox.y + sym.bbox.h / 2 : 0;
-    const dx = Math.round((p.at.x - cx) / GRID) * GRID;
-    const dy = Math.round((p.at.y - cy) / GRID) * GRID;
-    const bb = sceneBBox(p.cell.scene);
-    return { cell: p.cell, page: p.at.page - 1, dx, dy, box: { x: bb.x + dx, y: bb.y + dy, w: bb.w, h: bb.h } };
-  });
+  const { fixed } = fixPlaced(placed, { x: PAGE.margin, y: PAGE.margin, w: DRAW_W, h: DRAW_H });
   const boxesOn = (page: number) => fixed.filter((f) => f.page === page).map((f) => f.box);
 
   // lines → pages
@@ -512,17 +877,13 @@ function paginate(d: Design, rows: CellRow[], placed: Placed[] = []): { scene: S
     const h = Math.max(paper.h, p.used + 2 * PAGE.margin + PAGE.title, bottom);
     return { w, h, oversized: w > paper.w || h > paper.h };
   });
-  const cols = Math.ceil(Math.sqrt(sets.length));
-  const colW = Array.from({ length: cols }, (_, c) => Math.max(0, ...sizes.filter((_, i) => i % cols === c).map((z) => z.w)));
-  const rowH = Array.from({ length: Math.ceil(sets.length / cols) }, (_, r) => Math.max(0, ...sizes.slice(r * cols, (r + 1) * cols).map((z) => z.h)));
-  const colX = colW.map((_, c) => colW.slice(0, c).reduce((x, w) => x + w + PAGE_GAP, 0));
-  const rowY = rowH.map((_, r) => rowH.slice(0, r).reduce((y, h) => y + h + PAGE_GAP, 0));
+  const at = pageGrid(sizes);
 
   const scene = emptyScene();
   const pages: PageView[] = [];
   sets.forEach((p, i) => {
     const { w, h, oversized } = sizes[i]!;
-    const rect: Rect = { x: colX[i % cols]!, y: rowY[Math.floor(i / cols)]!, w, h };
+    const rect: Rect = { ...at[i]!, w, h };
     const mine = fixed.filter((f) => f.page === i);
     if (mine.length) {
       for (const [j, line] of p.lines.entries()) {
@@ -550,6 +911,168 @@ function paginate(d: Design, rows: CellRow[], placed: Placed[] = []): { scene: S
   return { scene, pages };
 }
 
+/** A placed cell where it ends up: on which page, the move that puts it there, the box it then takes (paper coordinates). */
+interface Fixed {
+  cell: Cell;
+  page: number;
+  dx: number;
+  dy: number;
+  box: Rect;
+}
+
+/**
+ * Where placed cells go: a part's symbol centred where the agent put it, a block's frame
+ * (`centre`) centred there, a block moved aside to the nearest clear spot of the drawing area
+ * when it would lie on one placed before it; `flow`: the blocks that found no such spot on their
+ * page (they flow with the others).
+ */
+function fixPlaced(placed: Placed[], area: Rect): { fixed: Fixed[]; flow: Cell[] } {
+  const fixed: Fixed[] = [];
+  const flow: Cell[] = [];
+  for (const p of placed) {
+    const bb = sceneBBox(p.cell.scene);
+    const sym = p.centre ? undefined : p.cell.scene.symbols.find((s) => s.componentId === p.comp && (p.unit === undefined || s.unit === p.unit)) ?? p.cell.scene.symbols[0];
+    const c = sym ? sym.bbox : p.centre ? bb : undefined;
+    const cx = c ? c.x + c.w / 2 : 0;
+    const cy = c ? c.y + c.h / 2 : 0;
+    let dx = Math.round((p.at.x - cx) / GRID) * GRID;
+    let dy = Math.round((p.at.y - cy) / GRID) * GRID;
+    const page = p.at.page - 1;
+    if (p.centre) {
+      // a block never lies on one placed before it: it moves aside to the nearest clear spot
+      // within the drawing area, or flows with the others when the page has none
+      const others = fixed.filter((f) => f.page === page).map((f) => f.box);
+      // (where the kernel picks the spot, it keeps the room between blocks)
+      const clear = (ox: number, oy: number, gap = 0) => !others.some((o) => hits({ x: o.x - gap, y: o.y - gap, w: o.w + 2 * gap, h: o.h + 2 * gap }, { x: bb.x + ox, y: bb.y + oy, w: bb.w, h: bb.h }));
+      const within = (ox: number, oy: number) => bb.x + ox >= area.x && bb.y + oy >= area.y && bb.x + ox + bb.w <= area.x + area.w && bb.y + oy + bb.h <= area.y + area.h;
+      if (!clear(dx, dy)) {
+        let found: [number, number] | undefined;
+        const reach = Math.ceil(Math.max(area.x + area.w, area.y + area.h) / GRID);
+        for (let r = 1; r <= reach && !found; r++) {
+          const ring: [number, number][] = [];
+          for (let k = -r; k <= r; k++) ring.push([k, -r], [k, r], [-r, k], [r, k]);
+          ring.sort((a, b) => Math.abs(a[0]) + Math.abs(a[1]) - (Math.abs(b[0]) + Math.abs(b[1])) || a[1] - b[1] || a[0] - b[0]);
+          found = ring.find(([i, j]) => clear(dx + i * GRID, dy + j * GRID, BLOCK_GAP) && within(dx + i * GRID, dy + j * GRID));
+        }
+        if (!found) {
+          flow.push(p.cell);
+          continue;
+        }
+        dx += found[0] * GRID;
+        dy += found[1] * GRID;
+      }
+    }
+    fixed.push({ cell: p.cell, page, dx, dy, box: { x: bb.x + dx, y: bb.y + dy, w: bb.w, h: bb.h } });
+  }
+  return { fixed, flow };
+}
+
+/** Where pages of these sizes stand on the canvas: a near-square grid read left to right, top to bottom; a big page widens its column and deepens its row. */
+function pageGrid(sizes: { w: number; h: number }[]): Point[] {
+  const cols = Math.ceil(Math.sqrt(sizes.length));
+  const colW = Array.from({ length: cols }, (_, c) => Math.max(0, ...sizes.filter((_, i) => i % cols === c).map((z) => z.w)));
+  const rowH = Array.from({ length: Math.ceil(sizes.length / cols) }, (_, r) => Math.max(0, ...sizes.slice(r * cols, (r + 1) * cols).map((z) => z.h)));
+  const colX = colW.map((_, c) => colW.slice(0, c).reduce((x, w) => x + w + PAGE_GAP, 0));
+  const rowY = rowH.map((_, r) => rowH.slice(0, r).reduce((y, h) => y + h + PAGE_GAP, 0));
+  return sizes.map((_, i) => ({ x: colX[i % cols]!, y: rowY[Math.floor(i / cols)]! }));
+}
+
+/**
+ * Pages of a sheet drawn in blocks: each block (never split) goes to the highest, then leftmost,
+ * clear spot of the page's drawing area, around the blocks placed there; one that fits nowhere
+ * starts the next page (blocks never go back to an earlier page, so the pages read in order), one
+ * bigger than the paper gets a page of its own, grown to fit. On a page without placed blocks the
+ * blocks are centred in the drawing area.
+ */
+function packPages(d: Design, cells: Cell[], placed: Placed[]): { scene: Scene; pages: PageView[] } {
+  const paper = paperOf(d.paper);
+  const area: Rect = { x: PAGE.margin, y: PAGE.margin, w: paper.w - 2 * PAGE.margin, h: paper.h - 2 * PAGE.margin - PAGE.title };
+  const { fixed, flow } = fixPlaced(placed, area);
+  interface Packed {
+    cell: Cell;
+    box: Rect;
+    dx: number;
+    dy: number;
+  }
+  const sets: { packed: Packed[]; big?: { w: number; h: number } }[] = [];
+  const setAt = (i: number) => (sets[i] ??= { packed: [] });
+  for (const f of fixed) setAt(f.page);
+  const taken = (i: number) => [...fixed.filter((f) => f.page === i).map((f) => f.box), ...setAt(i).packed.map((p) => p.box)];
+  const snapTo = (v: number) => Math.round(v / GRID) * GRID;
+  let page = 0;
+  // (a placed block that found no room on its page first)
+  for (const cell of [...flow, ...cells]) {
+    const bb = sceneBBox(cell.scene);
+    const big = bb.w > area.w || bb.h > area.h;
+    for (; ; page++) {
+      const set = setAt(page);
+      if (set.big) continue;
+      const obstacles = taken(page);
+      if (big) {
+        if (obstacles.length) continue;
+        set.big = { w: grid(bb.w) + 2 * PAGE.margin, h: grid(bb.h) + 2 * PAGE.margin + PAGE.title };
+        const dx = snapTo(area.x - bb.x);
+        const dy = snapTo(area.y - bb.y);
+        set.packed.push({ cell, dx, dy, box: { x: bb.x + dx, y: bb.y + dy, w: bb.w, h: bb.h } });
+        break;
+      }
+      // candidate corners: the area's, and right of / below each block already there
+      const xs = [area.x, ...obstacles.map((o) => o.x + o.w + BLOCK_GAP)];
+      const ys = [area.y, ...obstacles.map((o) => o.y + o.h + BLOCK_GAP)];
+      const spots = ys.flatMap((y) => xs.map((x) => ({ x, y }))).sort((a, b) => a.y - b.y || a.x - b.x);
+      const fits = spots.find(({ x, y }) => {
+        const r = { x, y, w: bb.w, h: bb.h };
+        return x + bb.w <= area.x + area.w && y + bb.h <= area.y + area.h && !obstacles.some((o) => hits({ x: o.x - BLOCK_GAP + 1, y: o.y - BLOCK_GAP + 1, w: o.w + 2 * BLOCK_GAP - 2, h: o.h + 2 * BLOCK_GAP - 2 }, r));
+      });
+      if (!fits) continue;
+      const dx = snapTo(fits.x - bb.x);
+      const dy = snapTo(fits.y - bb.y);
+      set.packed.push({ cell, dx, dy, box: { x: bb.x + dx, y: bb.y + dy, w: bb.w, h: bb.h } });
+      break;
+    }
+  }
+  if (!sets.length) setAt(0);
+  for (let i = 0; i < sets.length; i++) setAt(i);
+  const sizes = sets.map((s, i) => {
+    const boxes = fixed.filter((f) => f.page === i).map((f) => f.box);
+    const right = Math.max(0, ...boxes.map((b) => b.x + b.w + PAGE.margin));
+    const bottom = Math.max(0, ...boxes.map((b) => b.y + b.h + PAGE.margin + PAGE.title));
+    const w = Math.max(paper.w, s.big?.w ?? 0, right);
+    const h = Math.max(paper.h, s.big?.h ?? 0, bottom);
+    return { w, h, oversized: w > paper.w || h > paper.h };
+  });
+  const at = pageGrid(sizes);
+  const scene = emptyScene();
+  const pages: PageView[] = [];
+  sets.forEach((s, i) => {
+    const { w, h, oversized } = sizes[i]!;
+    const rect: Rect = { ...at[i]!, w, h };
+    const mine = fixed.filter((f) => f.page === i);
+    // a page of flowing blocks only: their group centred in the drawing area
+    let cx = 0;
+    let cy = 0;
+    if (!mine.length && s.packed.length && !s.big) {
+      const x0 = Math.min(...s.packed.map((p) => p.box.x));
+      const y0 = Math.min(...s.packed.map((p) => p.box.y));
+      const x1 = Math.max(...s.packed.map((p) => p.box.x + p.box.w));
+      const y1 = Math.max(...s.packed.map((p) => p.box.y + p.box.h));
+      cx = area.x + centred(area.w, x1 - x0) - x0;
+      cy = area.y + centred(area.h, y1 - y0) - y0;
+    }
+    for (const p of s.packed) {
+      translateScene(p.cell.scene, rect.x + p.dx + cx, rect.y + p.dy + cy);
+      mergeScene(scene, p.cell.scene);
+    }
+    for (const f of mine) {
+      translateScene(f.cell.scene, rect.x + f.dx, rect.y + f.dy);
+      mergeScene(scene, f.cell.scene);
+    }
+    const heads = [...s.packed.flatMap((p) => p.cell.heads), ...mine.flatMap((f) => f.cell.heads)];
+    pages.push({ number: i + 1, name: pageName(d, heads), rect, ...(oversized ? { oversized: true } : {}) });
+  });
+  return { scene, pages };
+}
+
 /** Offset that centres `size` in `room`, rounded down to the grid; never negative. */
 const centred = (room: number, size: number) => Math.max(0, Math.floor((room - size) / 2 / GRID) * GRID);
 
@@ -562,9 +1085,14 @@ export function pageName(d: Design, heads: Component[]): string {
   const seen = new Set<string>();
   const conn = (c: Component) => Number(cardOf(d, c.part)!.category === 'connector');
   const blockOf = (c: Component) => d.description?.blocks.find((b) => b.components.includes(c.id))?.title;
+  // functional blocks in the description's order, then the parts in none
+  const blockIndex = (c: Component) => {
+    const i = d.description?.blocks.findIndex((b) => b.components.includes(c.id)) ?? -1;
+    return i < 0 ? Infinity : i;
+  };
   const functions = heads
     .filter((c) => !seen.has(c.id) && seen.add(c.id))
-    .sort((a, b) => conn(a) - conn(b) || natCmp(a.refdes, b.refdes))
+    .sort((a, b) => blockIndex(a) - blockIndex(b) || conn(a) - conn(b) || natCmp(a.refdes, b.refdes))
     .map((c) => {
       const card = cardOf(d, c.part)!;
       const generic = card.id.startsWith('generic:');
@@ -1617,6 +2145,25 @@ export function evaluateConstraints(d: Design, sheets: SheetView[]): { status: S
   const why: Record<string, string> = {};
   const ref = (id?: string, unit?: string) => `${d.components[id ?? '']?.refdes ?? id}${unit ?? ''}`;
   for (const k of Object.values(d.ledger)) {
+    if (k.kind === 'sch_block') {
+      // the centre of the block's frame within a grid step of where it was put, on that page of its sheet
+      const s = sheets.find((v) => v.id === k.sheet);
+      const pg = s?.pages[(k.page ?? 1) - 1];
+      const frame = s?.blocks?.find((b) => b.title === k.key);
+      if (!s || !pg || !frame) {
+        status[k.id] = 'not_applicable';
+        continue;
+      }
+      const dx = frame.rect.x + frame.rect.w / 2 - (pg.rect.x + (k.x ?? 0));
+      const dy = frame.rect.y + frame.rect.h / 2 - (pg.rect.y + (k.y ?? 0));
+      status[k.id] = Math.abs(dx) <= GRID && Math.abs(dy) <= GRID ? 'ok' : 'violated';
+      if (status[k.id] === 'violated') {
+        const asked = { x: pg.rect.x + (k.x ?? 0) - frame.rect.w / 2, y: pg.rect.y + (k.y ?? 0) - frame.rect.h / 2, w: frame.rect.w, h: frame.rect.h };
+        const on = s.blocks!.find((b) => b !== frame && hits(b.rect, asked));
+        why[k.id] = on ? `there it would lie on block "${on.title}", so it moved aside; put one of them elsewhere` : `it does not fit there`;
+      }
+      continue;
+    }
     if (k.kind === 'sch_position') {
       // the symbol's centre within half a grid step of where it was put, on that page of its sheet
       const s = sheets.find((v) => v.id === d.components[k.a ?? '']?.sheet);

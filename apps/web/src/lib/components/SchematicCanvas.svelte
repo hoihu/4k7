@@ -209,6 +209,14 @@
       </g>
     {/each}
 
+    <!-- functional blocks: a light frame with the block's title, behind the circuit -->
+    {#each sheet.blocks ?? [] as b, i (i)}
+      <g class="blk">
+        <rect x={b.rect.x} y={b.rect.y} width={b.rect.w} height={b.rect.h} rx="40" />
+        <text x={b.rect.x + 80} y={b.rect.y + 150}>{b.title.toUpperCase()}</text>
+      </g>
+    {/each}
+
     <!-- wires -->
     {#each sheet.wires as w, i (i)}
       <!-- (a wide invisible stroke makes the thin wire easy to click) -->
@@ -332,6 +340,8 @@
   .page .title { fill: var(--sch-txt); font-size: 170px; }
   .page .tb-label { fill: var(--pin-txt); font-size: 80px; letter-spacing: 8px; }
   .page .tb-val { fill: var(--pin-txt); font-size: 140px; }
+  .blk rect { fill: none; stroke: var(--pin-txt); stroke-opacity: 0.55; stroke-width: 12; stroke-dasharray: 60 40; }
+  .blk text { fill: var(--pin-txt); font-size: 100px; font-weight: 600; letter-spacing: 6px; }
   .wire { stroke: var(--wire); stroke-width: 14; fill: none; stroke-linecap: round; stroke-linejoin: round; }
   .wire-hit { stroke: transparent; stroke-width: 70; fill: none; pointer-events: stroke; cursor: pointer; }
   .net:hover .wire { stroke-width: 20; }

@@ -145,11 +145,13 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, came?: [number, number]): Poi
   for (const s of A.segs) for (const n of nodesOn(s)) start[n] = 1;
   for (const p of B.pts) if (nodeAt(p) >= 0) goal[nodeAt(p)] = 1;
   for (const s of B.segs) for (const n of nodesOn(s)) goal[n] = 1;
+  // (a pin its piece's wires already run to takes a wire from any side: the lead out of it is drawn)
+  const wired = (p: Point) => [...A.segs, ...B.segs].some(([x1, y1, x2, y2]) => p.x >= Math.min(x1, x2) && p.x <= Math.max(x1, x2) && p.y >= Math.min(y1, y2) && p.y <= Math.max(y1, y2));
   const pinWay = new Map<number, [number, number]>();
   for (const s of r.symbols) {
     for (const p of s.pins) {
       const n = nodeAt(p);
-      if (n >= 0 && (start[n] || goal[n])) pinWay.set(n, OUT[p.side]);
+      if (n >= 0 && (start[n] || goal[n]) && !wired(p)) pinWay.set(n, OUT[p.side]);
     }
   }
 

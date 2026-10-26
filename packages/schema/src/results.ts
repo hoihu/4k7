@@ -261,6 +261,12 @@ export interface PageView {
   oversized?: boolean;
 }
 
+/** A functional block as drawn: its frame and title (the description's block, on this sheet). */
+export interface BlockView {
+  title: string;
+  rect: Rect;
+}
+
 export interface SheetView {
   id: string;
   name: string;
@@ -272,6 +278,8 @@ export interface SheetView {
   junctions: Point[];
   labels: LabelView[];
   noConnects: Point[];
+  /** The functional blocks drawn on the sheet, framed (docs/design/schematic-drawing.md §2b). */
+  blocks?: BlockView[];
 }
 
 export interface SchematicView {

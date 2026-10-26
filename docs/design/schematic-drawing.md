@@ -1,6 +1,6 @@
 # Drawing the schematic: the agent owns the drawing
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3).
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; the agent's guide is [schematic.md](schematic.md).
 > Notes and checks are in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
@@ -83,6 +83,63 @@ which already stores its own geometry (`board.tracks`):
 
 This supersedes "the kernel decides where every line goes" in §2 and the hint-based steps of §4–5;
 the router of §5 becomes the `wire` op's path finder.
+
+## 2b. Decision 2026-10-25: functional blocks, the board's split
+
+A user's design (USB-C in, a buck, an RP2040, 48 addressable LEDs, three sheets) drew with 97 net
+labels on the LED sheet and 57 on the MCU sheet: every part an island of labels, spread over the
+pages, the big picture gone. The connections were right; the drawing hid them. The agent had taken
+the MCU sheet over (§2a) and placed every part by hand, and it read worse than the auto-layout:
+exact positions are too fine a lever to draw a good schematic with, and the auto-layout's rows of
+cells know nothing of what belongs together.
+
+The user's decision: **the same split as on the board.** The agent says what belongs together and
+roughly where it goes, as it places the main parts on the board; the kernel draws the inside, as the
+placer puts the small parts round them.
+
+- **Blocks** are the description's blocks (`describe`; the text is optional, so the drawing can be
+  grouped before the document is written, and a block given again without one keeps its text). Each
+  is drawn as one framed unit with its title (`SheetView.blocks`). A part in no block goes with the
+  block of the IC the layout would draw it with (its pull-up, its decoupling), else with the block it
+  shares the most signal connections with (supplies count a little, ground not at all); the rest are
+  drawn the classic way after the blocks. `get_schematic` lists the blocks with page, frame centre
+  and size, their parts, the `guessed` ones and those `not_in_a_block`. A sheet with no part in a
+  block is drawn as before.
+- **Inside a block** (`kernel/blocks.ts`) the layout's pieces (an IC or connector with the small parts
+  at its pins, a regulator in its datasheet style, a bridge, a chain of two-pin parts in series such
+  as an LED and its resistor or a divider with its filter cap tapped off the joint) are arranged out
+  from the most connected one: each goes to the side of its neighbour where the neighbour's pins for
+  it are, mirrored when that turns its own pins toward the neighbour, level with the pin it connects
+  to (a straight wire); columns wider than the page wrap into rows. Pieces are spaced without the
+  flags of the nets about to become wires. The connections between them are drawn by the `wire`
+  op's path finder; one that would cross more than three wires, wander (longer than three times
+  the gap plus 2500 mils) or go round a part and turn back (a U with a leg of 500 mils or more, as
+  SCH.DETOUR sees it; a shallow step to enter a pin stays a wire) stays a pair of labels. A piece is
+  set level with its neighbour on the shift that puts the most of their nets in line. A net keeps one label per drawn piece only where it
+  leaves the block. Supply symbols standing on a row of pins of one net become one bar with one symbol.
+- **Pages**: blocks flow in the description's order, each to the highest, then leftmost, free spot
+  (never back to an earlier page, so the pages read in order). A block is never split unless it is
+  taller than a page: then it is cut between its rows, the nets across the cut labelled on both
+  sides, the pieces after the first framed "(continued)".
+- **`place_block`** (page, centre of the frame) on a sheet the layout draws stores a `sch_block`
+  ledger entry; the other blocks flow round it. A block placed onto one placed earlier moves aside
+  to the nearest clear spot within the page, or flows with the others when the page has none; the
+  result says where it went. `auto: true` lets it flow again, and a block that leaves the
+  description takes its entry with it. On a sheet the agent arranged (§2a) it draws the block afresh
+  where it is put, together and wired, and says what it runs into; frames are drawn round the blocks
+  whose parts stand together, and parts added later go next to their block.
+- **Levers inside a block**: `left_of` / `right_of` between two of its ICs or connectors,
+  `arrangement` `mirrored` / `unmirrored` on an IC or connector (kept beside a regulator's
+  `power_flow` / `compact`), `up` / `down` on a small part at a pin, `set_symbol layout` to order an
+  IC's pins like those they connect to.
+
+On a copy of that design, grouped into 11 blocks (against the plain auto-layout of it): LEDs 97 → 3
+net labels (the chain wired, a bar per row), MCU 36 → 31 (57 as the agent had arranged it), Main
+12 → 8; 15 drawing warnings against 14 (text overlaps 11 → 5; new: four jogs on the QSPI lines and
+two shallow steps); about 300 ms for the transaction and the view. Left as labels: the QSPI
+flash's DI and CLK, whose pins run in another order than the MCU's (`set_symbol layout` on the flash
+wires them; the path finder does not reorder pins). The flash also stands below the crystal in its
+column, so its other lines jog.
 
 ## 3. Notes and checks
 
@@ -324,7 +381,8 @@ The first plan, steps 1–3 built 2026-10-12:
 4. **Orientation and supply hints** (`orient` for parts the layout places, `supply_side`,
    `net_style`): small changes in the layout, big effect on readability.
 5. **Blocks drive placement** (`block`, `block_order`, from `describe`). The agent's arrangement
-   step after it builds a circuit.
+   step after it builds a circuit. *Built 2026-10-26 as §2b:* the description's blocks and
+   `place_block` instead of hints.
 6. **Schematic router** and the `route` / `bus` hints. The three-step run as one agent workflow.
 
 ## 7. Open questions

@@ -102,10 +102,15 @@ export interface Description {
   blocks: DescriptionBlock[];
 }
 
+/**
+ * A functional block: the design document describes it, and the schematic draws its parts together
+ * as one framed unit, wired inside (docs/design/schematic-drawing.md §2b).
+ */
 export interface DescriptionBlock {
   title: string;
   /** Component ids of the block's parts. */
   components: string[];
+  /** How it works, for the design document; empty while the block only groups the drawing. */
   text: string;
 }
 
@@ -207,6 +212,7 @@ export type ConstraintKind =
   | 'arrangement'
   | 'position'
   | 'sch_position'
+  | 'sch_block'
   | 'belongs'
   | 'note';
 
@@ -247,6 +253,13 @@ export interface Constraint {
   page?: number;
   x?: number;
   y?: number;
+  /**
+   * For `sch_block`: where a functional block (`key`, its title in the description) stands on its
+   * sheet `sheet`: the page of that sheet (`page`) and the centre of the block's frame (`x`, `y`,
+   * mils from the paper's top-left corner). The layout puts the block there and flows the rest
+   * around it.
+   */
+  sheet?: string;
   /** For `sch_position` of a two-pin part: standing (the layout's default) or lying. */
   orient?: 'upright' | 'lying';
   /** For `sch_position` of an IC or connector: drawn mirrored, the left side's pins on the right. */
