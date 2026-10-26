@@ -5,7 +5,7 @@
   import Chat from './Chat.svelte';
   import Splitter from './Splitter.svelte';
   import Enclosure3DView from './Enclosure3DView.svelte';
-  import { AXES, contentBox, extent, firstCut, liftStep, newSection, sectionLabel, sectionView, type Section } from '../section.ts';
+  import { AXES, contentBox, extent, firstCut, liftStep, newSection, sectionLabel, sectionView, type Axis, type Section } from '../section.ts';
 
   /**
    * Enclosure workspace (docs/design/enclosure.md §6): the agent's chat, the box in 3D with the
@@ -59,9 +59,9 @@
   const options = $derived({ open: open ? 1 : 0, show: hosts.filter((p) => !hidden[p.name]).map((p) => p.name), marks: true, board: pcb });
 
   /*
-   * The cut: a plane through the box, across x, y or z, or through an opening along its plug's way.
-   * It starts in the middle (an opening: at the part's centre), the half the camera looks from cut
-   * away; the slider or its frame in the view moves it, Flip shows the other half.
+   * The cut: a plane through the box, across x, y or z. It starts in the middle, the half the
+   * camera looks from cut away; the slider or its frame in the view moves it, Flip shows the other
+   * half.
    */
   const AXIS_TIPS: Record<string, string> = {
     x: "Across x: a cut parallel to the left and right walls (x from the board's left edge)",
@@ -81,10 +81,8 @@
     return [Math.floor(lo * 10) / 10, Math.ceil(hi * 10) / 10] as const;
   });
   const shownCut = $derived(cut && cutBox && cutRange ? { normal: cut.normal, at: Math.min(cutRange[1], Math.max(cutRange[0], cut.at)), flip: cut.flip, box: cutBox } : null);
-  /** Openings a cut can go through (where they are plugged from is known). */
-  const cutOpenings = $derived(openings.filter((r) => last?.facts.parts.some((p) => p.ref === r && p.mating)));
-  function cutBy(by: string) {
-    if (last && cutBox) cut = newSection(by, last.facts, cutBox, view3d?.eye());
+  function cutBy(by: Axis) {
+    if (cutBox) cut = newSection(by, cutBox, view3d?.eye());
   }
   function cutOpen() {
     if (cut) return;
@@ -97,7 +95,7 @@
   }
   // a message sent while the box is cut open tells the agent where (so "this wall" resolves)
   $effect(() => {
-    app.enclosureCut = () => (cut && shownCut && last ? sectionView({ ...cut, at: shownCut.at }, last.facts, open) : null);
+    app.enclosureCut = () => (cut && shownCut ? sectionView({ ...cut, at: shownCut.at }, open) : null);
     return () => (app.enclosureCut = null);
   });
 
@@ -228,19 +226,14 @@
           <button class="btn" disabled={app.running} onclick={() => app.reject()}>Reject</button>
         </div>
       {/if}
-      {#if pieces.length && cut && cutRange && last}
+      {#if pieces.length && cut && cutRange}
         <div class="cutbar">
           <div class="seg">
             {#each AXES as a (a)}<button aria-pressed={cut.by === a} title={AXIS_TIPS[a]} onclick={() => cutBy(a)}>{a}</button>{/each}
           </div>
-          {#if cutOpenings.length}
-            <div class="seg">
-              {#each cutOpenings as ref (ref)}<button aria-pressed={cut.by === ref} title="Through {ref}'s opening: across the wall along its plug's way, from the part's centre" onclick={() => cutBy(ref)}>at {ref}</button>{/each}
-            </div>
-          {/if}
           <label class="slide" title="Where the cut is (board.scad: x from the board's left edge, y from its bottom edge, z from its underside)">
             <input type="range" min={cutRange[0]} max={cutRange[1]} step="0.1" bind:value={cut.at} />
-            <span class="mono">{sectionLabel(cut, last.facts)}</span>
+            <span class="mono">{sectionLabel(cut)}</span>
           </label>
           <div class="seg"><button title="Show the other half: cut away the side kept now" onclick={() => cut && (cut.flip = !cut.flip)}>Flip</button></div>
         </div>

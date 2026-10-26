@@ -65,16 +65,10 @@ describe('the user\'s view', () => {
   });
 
   it('gives the cut through the box the user looks at, and the render that shows it', () => {
-    const t = formatView({ view: 'enclosure', axis: 'y', normal: [0, 1, 0], at_mm: 13.7, through: 'J1', offset_mm: 0, removed: '-', opened: false });
-    expect(t).toContain('<view kind="enclosure">');
-    expect(t).toContain("the plane y = 13.7 mm (board.scad), through J1's centre; the −y half cut away");
-    expect(t).toContain('render_enclosure section: { axis: "y", at_mm: 13.7 } shows this plane');
-    const moved = formatView({ view: 'enclosure', axis: 'x', normal: [1, 0, 0], at_mm: 4, removed: '+', opened: true });
+    const t = formatView({ view: 'enclosure', axis: 'y', at_mm: 13.7, removed: '-', opened: false });
+    expect(t).toBe('<view kind="enclosure">\nthe box cut open across y: the plane y = 13.7 mm (board.scad); the −y half cut away\nrender_enclosure section: { axis: "y", at_mm: 13.7 } shows this plane\n</view>');
+    const moved = formatView({ view: 'enclosure', axis: 'x', at_mm: 4, removed: '+', opened: true });
     expect(moved).toContain('the plane x = 4 mm (board.scad); the +x half cut away; the pieces lifted apart');
-    // askew, through a turned part's opening: no section reproduces it, the opening's picture does
-    const askew = formatView({ view: 'enclosure', normal: [0.707, 0.707, 0], at_mm: 12, through: 'J2', offset_mm: -2, removed: '+', opened: false });
-    expect(askew).toContain("across the wall along J2's plug's way, 2 mm off J2's centre: the plane n · p = 12 mm, n = (0.707, 0.707, 0)");
-    expect(askew).toContain('views: ["sections"]');
   });
 
   it('travels in the design context after the selection; an Optimize scope replaces it', () => {

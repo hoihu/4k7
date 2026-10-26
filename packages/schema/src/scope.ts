@@ -86,15 +86,10 @@ export interface AreaViewInfo {
 /** The Enclosure view with the box cut open: the plane the user looks at (board.scad, mm). */
 export interface EnclosureViewInfo {
   view: 'enclosure';
-  /** The plane is across this axis, at `at_mm` along it (absent: askew, through an opening). */
-  axis?: 'x' | 'y' | 'z';
-  /** The plane n · p = at_mm. */
-  normal: [number, number, number];
+  /** The plane is across this axis, at `at_mm` along it. */
+  axis: 'x' | 'y' | 'z';
   at_mm: number;
-  /** The cut went through this part's opening (across the wall along its plug's way), `offset_mm` from its centre. */
-  through?: string;
-  offset_mm?: number;
-  /** The half cut away: the one the normal (the axis) points to, or the other. */
+  /** The half cut away: the one the axis points to, or the other. */
   removed: '+' | '-';
   /** The pieces lifted apart (the open view). */
   opened: boolean;

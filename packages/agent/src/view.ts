@@ -63,18 +63,13 @@ const list = (refs: string[]) => (refs.length > MAX_LISTED ? `${refs.slice(0, MA
 
 /** The cut the user looks at in the Enclosure view. */
 function formatCut(v: EnclosureViewInfo): string {
-  const lines = ['<view kind="enclosure">'];
-  const off = v.offset_mm ? `${Math.abs(v.offset_mm)} mm off ${v.through}'s centre` : `through ${v.through}'s centre`;
   const opened = v.opened ? '; the pieces lifted apart' : '';
-  if (v.axis) {
-    lines.push(`the box cut open across ${v.axis}: the plane ${v.axis} = ${v.at_mm} mm (board.scad)${v.through ? `, ${off}` : ''}; the ${v.removed === '+' ? '+' : '−'}${v.axis} half cut away${opened}`);
-    lines.push(`render_enclosure section: { axis: "${v.axis}", at_mm: ${v.at_mm} } shows this plane`);
-  } else {
-    lines.push(`the box cut open ${v.through ? `across the wall along ${v.through}'s plug's way, ${off}` : 'askew'}: the plane n · p = ${v.at_mm} mm, n = (${v.normal.join(', ')}) (board.scad); the half n points ${v.removed === '+' ? 'to' : 'away from'} cut away${opened}`);
-    if (v.through) lines.push(`render_enclosure views: ["sections"] shows the cut through ${v.through}'s centre`);
-  }
-  lines.push('</view>');
-  return lines.join('\n');
+  return [
+    '<view kind="enclosure">',
+    `the box cut open across ${v.axis}: the plane ${v.axis} = ${v.at_mm} mm (board.scad); the ${v.removed === '+' ? '+' : '−'}${v.axis} half cut away${opened}`,
+    `render_enclosure section: { axis: "${v.axis}", at_mm: ${v.at_mm} } shows this plane`,
+    '</view>',
+  ].join('\n');
 }
 
 /** The <view> block of the design context. */
