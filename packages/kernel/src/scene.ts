@@ -2,7 +2,7 @@
  * Scene building blocks shared by the schematic layouts: geometry containers, symbol
  * placement, net decorations and extent estimates.
  */
-import type { Component, Design, LabelView, Net, PinType, PinView, Point, Prim, Rect, SymbolSpec, SymbolView, WireView } from '@4k7/schema';
+import type { BlockView, Component, Design, LabelView, Net, PinType, PinView, Point, Prim, Rect, SymbolSpec, SymbolView, WireView } from '@4k7/schema';
 import { CHAR_W, GRID, type SymbolDef } from '@4k7/parts';
 import { isGroundNet, isPowerNet, valueLinesOf, valueOf } from './doc.ts';
 
@@ -14,11 +14,15 @@ export interface Scene {
   junctions: Point[];
   labels: LabelView[];
   noConnects: Point[];
+  /** Frames of functional blocks (a block's drawing carries its own). */
+  blocks?: BlockView[];
 }
 
 export const emptyScene = (): Scene => ({ symbols: [], wires: [], junctions: [], labels: [], noConnects: [] });
 export const grid = (v: number) => Math.ceil(v / GRID) * GRID;
 export const tw = (s: string) => s.length * CHAR_W;
+/** A wire's U-turn whose leg runs this far is a return along a row (a wrapped chain), not a hump (SCH.DETOUR). */
+export const RETURN_LEG = 3000;
 
 export function translatePrim(p: Prim, dx: number, dy: number): Prim {
   switch (p.t) {
@@ -64,6 +68,7 @@ export function translateScene(s: Scene, dx: number, dy: number): void {
     n.x += dx;
     n.y += dy;
   }
+  for (const b of s.blocks ?? []) b.rect = { ...b.rect, x: b.rect.x + dx, y: b.rect.y + dy };
 }
 
 export function mergeScene(into: Scene, s: Scene): void {
@@ -72,6 +77,7 @@ export function mergeScene(into: Scene, s: Scene): void {
   into.junctions.push(...s.junctions);
   into.labels.push(...s.labels);
   into.noConnects.push(...s.noConnects);
+  if (s.blocks?.length) (into.blocks ??= []).push(...s.blocks);
 }
 
 /** Rough extent of a label decoration, for spacing and bounding boxes. */
@@ -125,6 +131,7 @@ export function sceneBBox(s: Scene): Rect {
     add(textRect(sym.valuePos, sym.valueLines ?? [sym.value]));
   }
   for (const l of s.labels) add(labelRect(l));
+  for (const b of s.blocks ?? []) add(b.rect);
   if (minX === Infinity) return { x: 0, y: 0, w: 0, h: 0 };
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
@@ -262,6 +269,33 @@ export function leadEnd(net: Net, x: number, y: number, dir: 'up' | 'down', side
   if (!want || want === dir) return { wires: [], label: deco(net, x, y, dir) };
   const ey = y + (dir === 'down' ? TURN_DROP : -TURN_DROP);
   return { wires: [{ netId: net.id, pts: [x, y, x, ey] }], label: deco(net, x, ey, side, turnStub(net)) };
+}
+
+/** The label a pin's net gets at that pin, pointing out of the part (and the lead to it, for a supply that must turn aside). */
+export function labelForPin(net: Net, pin: PinView, type?: PinType): { label: LabelView; wires: WireView[] } {
+  const dir: Dir = pin.side === 'left' ? 'left' : pin.side === 'right' ? 'right' : pin.side === 'top' ? 'up' : 'down';
+  if (dir === 'up' || dir === 'down') return leadEnd(net, pin.x, pin.y, dir);
+  return { label: deco(net, pin.x, pin.y, dir, 100, 0, type), wires: [] };
+}
+
+const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/** How much a label would run into: other symbols (than the one at index `own`), labels, and wires of other nets crossing its box. */
+export function crowding(scene: Scene, label: LabelView, own: number): number {
+  const r = labelRect(label);
+  let n = 0;
+  scene.symbols.forEach((s, i) => {
+    if (i !== own && overlap(r, s.bbox)) n++;
+  });
+  for (const l of scene.labels) if (overlap(r, labelRect(l))) n++;
+  for (const w of scene.wires) {
+    if (w.netId === label.netId) continue;
+    for (let i = 0; i + 3 < w.pts.length; i += 2) {
+      const [x1, y1, x2, y2] = [w.pts[i]!, w.pts[i + 1]!, w.pts[i + 2]!, w.pts[i + 3]!];
+      if (overlap(r, { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1) || 1, h: Math.abs(y2 - y1) || 1 })) n++;
+    }
+  }
+  return n;
 }
 
 /** Horizontal room a decoration at a left/right pin end needs. */

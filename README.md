@@ -17,7 +17,7 @@ geometry and checks every change.
 - **Manufacturer limits**: pick JLCPCB, PCBWay or Eurocircuits (Layout → Manufacturer) and the design rules are kept above what they can make. For another manufacturer the agent reads its capabilities page and imports the limits for you to review.
 - **Lines at a set impedance**: ask for "USB at 90 Ω" or "a 50 Ω feed to the antenna" and the agent works out each layer's track width and gap from the board's stack-up (JLCPCB's and PCBWay's, or one it imports from your fab's page) with a field solver, draws differential pairs side by side at their gap, fences RF lines with ground vias, and the checks hold the copper to it: width, an unbroken plane under the line, a pair kept together and matched in length, a ground via beside each via. It follows a layout guide for fast interfaces and antennas ([high-speed](docs/design/high-speed.md)).
 - **Correctness first**: every AI change is a transaction that gets validated, ERC/DRC-checked and shown as a reviewable changeset.
-- **Printable by construction**: the schematic flows onto pages by itself (A4, A3 or A2), never splitting a functional block. **Document** writes a design document with the functional blocks, layout, assembly drawing, BOM and schematic pages.
+- **Printable by construction**: the schematic flows onto pages by itself (A4, A3 or A2). The agent groups the parts into functional blocks and says roughly where each goes; each block is drawn as one framed unit, wired inside, with net labels only for what leaves it, and is never split unless it is taller than a page. **Document** writes a design document with the functional blocks, layout, assembly drawing, BOM and schematic pages.
 - **Local-first**: runs on your computer, in your browser (download from [4k7.dev](https://4k7.dev), or `npx github:hoihu/4k7`). Every project is a file on your computer (`~/Documents/4k7/<name>.twd.json`), saved as you work; your API keys stay in your browser. Opt in per project (Settings → General → **Conversation**) and the file also keeps the whole AI conversation that led to the design, attachments included.
 
 ## Running it
@@ -150,6 +150,7 @@ The server binds to `127.0.0.1` and requires the access key in `~/.4k7/server.js
 | [docs/design/cost.md](docs/design/cost.md) | The agent's guide to making a design cheaper to make |
 | [docs/design/impedance.md](docs/design/impedance.md) | Lines at a set impedance: the stack-up, the field solver, impedance rules, pairs, the IMP.* checks |
 | [docs/design/high-speed.md](docs/design/high-speed.md) | The agent's guide to laying out fast interfaces and RF lines |
+| [docs/design/schematic.md](docs/design/schematic.md) | The agent's guide to arranging a schematic: functional blocks, their place on the pages, what goes inside a block |
 | [docs/design/ui.md](docs/design/ui.md) | UI concept: workspaces, density rules |
 | [docs/distribution.md](docs/distribution.md) | How the app is run and shared: downloads, `npx github:hoihu/4k7`, the package, the port |
 

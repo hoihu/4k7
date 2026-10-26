@@ -5,7 +5,8 @@
 import type { Component, Design, EditOp, LabelView, OptimizeScope, Rect, SchematicView, ScopeInfo, ScopeMeasures, SheetView, SymbolView } from '@4k7/schema';
 import { resolveUnitRef } from './apply.ts';
 import { RejectError, componentsSorted, natCmp, netMembers, reject } from './doc.ts';
-import { textRect, tw } from './scene.ts';
+import { RETURN_LEG, textRect, tw } from './scene.ts';
+import { blockAssignment } from './layout.ts';
 
 export interface ResolvedScope {
   scope: OptimizeScope;
@@ -148,7 +149,7 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
       const k = d.ledger[op.id];
       if (!k) return; // the op itself reports the unknown id
       if (k.strength === 'hard') out(`${op.id} is a hard constraint; only the user removes those.`);
-      if (!PLACEMENT_KINDS.has(k.kind) && k.kind !== 'arrangement' && k.kind !== 'sch_position') out(`${op.id} is not a placement constraint.`);
+      if (!PLACEMENT_KINDS.has(k.kind) && k.kind !== 'arrangement' && k.kind !== 'sch_position' && k.kind !== 'sch_block') out(`${op.id} is not a placement constraint.`);
       const a = k.a ? d.components[k.a] : undefined;
       if (a) mustBeFree(a, `remove ${op.id}`);
       return;
@@ -173,8 +174,15 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
       for (const u of componentsSorted(d).filter((x) => x.part === c.part)) mustBeFree(u, 'set_symbol (it redraws every component of the part)');
       return;
     }
+    case 'place_block': {
+      // a block moves with all its parts on the sheet (those put with it too): every one of them inside the area
+      const want = op.block.trim().toLowerCase();
+      const ids = blockAssignment(d, sc.scope.sheet ?? '')?.blocks.find((b) => b.title.toLowerCase() === want)?.ids ?? [];
+      for (const id of ids) mustBeFree(d.components[id]!, `place_block "${op.block}"`);
+      return;
+    }
     default:
-      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol, wire, label, erase at pins, auto_draw with refs and set_symbol on parts inside the area.`);
+      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol, place_block, wire, label, erase at pins, auto_draw with refs and set_symbol on parts inside the area.`);
   }
 }
 
@@ -372,7 +380,7 @@ export interface Jog {
  * How one net's wires are drawn, apart from where they go:
  * - bends: corners, where exactly two wires meet at a right angle (no pin, no T);
  * - detours: a wire that turns, steps sideways and turns back the way it came (a U), with nothing
- *   attached to the sideways step; each is that sideways segment;
+ *   attached to the sideways step, and no leg as long as a row (RETURN_LEG); each is that sideways segment;
  * - jogs: a pin facing down (or right) at pins facing it on the same wire, none of them in line,
  *   so the wire has to step across (two resistors of a divider side by side instead of stacked).
  */
@@ -416,13 +424,16 @@ export function wireShape(sheet: SheetView, net: string): { bends: number; jogs:
   }
   // a run with nothing attached along it (a bus with taps that turns up at both ends is no detour)
   const bare = (g: Seg) => ![...pinAt].some((k) => within(g, ...(k.split(',').map(Number) as [number, number]))) && !segs.some(([x1, y1, x2, y2]) => within(g, x1, y1) || within(g, x2, y2));
+  // (a wire running back along a whole row, like the return from the end of a row of a wrapped
+  // chain to the start of the next, is no hump: one of its legs is long)
+  const legOf = (x: number, y: number, g: Seg) => Math.max(0, ...segs.filter((o) => o !== g && touches(o, x, y)).map(([a, b, c, e]) => Math.abs(c - a) + Math.abs(e - b)));
   const detours: Seg[] = [];
   for (const g of segs) {
     const [x1, y1, x2, y2] = g;
     if (!bend(x1, y1) || !bend(x2, y2) || !bare(g)) continue;
     const out1 = ends.get(key(x1, y1))!.find((w) => w !== wayFrom(x1, y1, x2, y2));
     const out2 = ends.get(key(x2, y2))!.find((w) => w !== wayFrom(x2, y2, x1, y1));
-    if (out1 && out1 === out2) detours.push(g);
+    if (out1 && out1 === out2 && Math.max(legOf(x1, y1, g), legOf(x2, y2, g)) < RETURN_LEG) detours.push(g);
   }
 
   // pins on these wires, with the way each faces and the drawing it is on

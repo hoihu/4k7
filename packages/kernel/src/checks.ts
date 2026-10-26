@@ -381,7 +381,7 @@ function ledgerChecks(ctx: Ctx, placement?: SchematicView['constraintStatus'], w
       }
     } else if (placement?.[k.id] === 'violated') {
       push(ctx, k.strength === 'hard' ? 'error' : 'warning', 'LEDGER.PLACEMENT', [k.id],
-        `Schematic placement does not satisfy ${describeConstraint(d, k)}${why?.[k.id] ? `: ${why[k.id]}` : ''}.${k.kind === 'sch_position' ? '' : ' To put a part exactly where it belongs, use place_symbol (design_query get_schematic shows the pages and where everything is).'}`);
+        `Schematic placement does not satisfy ${describeConstraint(d, k)}${why?.[k.id] ? `: ${why[k.id]}` : ''}.${k.kind === 'sch_position' || k.kind === 'sch_block' ? '' : ' To put a part exactly where it belongs, use place_symbol (design_query get_schematic shows the pages and where everything is).'}`);
     }
   }
 }

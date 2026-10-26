@@ -90,7 +90,7 @@ export const ConstrainOp = z.object({
   op: z.literal('constrain'),
   kind: z
     .enum(['left_of', 'right_of', 'above', 'below', 'near', 'param', 'layer', 'arrangement', 'note'])
-    .describe('layer: the board side a part is mounted on, a = the part, value "top" (the default) | "bottom"; SMD parts on opposite sides may share the same area (a cap under its IC). arrangement: how a recognised sub-circuit is drawn; a = one of its parts. Bridge rectifier diode: "diamond" (default) | "inline". Regulator IC: "power_flow" (default, datasheet style) | "compact". A two-pin part at an IC\'s or connector\'s pin (a pull-up, a series resistor, a filter cap): "up" (standing above the pin\'s wire, its far end on top) | "down" (hanging below it); the layout\'s guess otherwise, which stands a pull-up up unless a part below another pin is in the way'),
+    .describe('layer: the board side a part is mounted on, a = the part, value "top" (the default) | "bottom"; SMD parts on opposite sides may share the same area (a cap under its IC). arrangement: how a recognised sub-circuit is drawn; a = one of its parts. Bridge rectifier diode: "diamond" (default) | "inline". Regulator IC: "power_flow" (default, datasheet style) | "compact". A two-pin part at an IC\'s or connector\'s pin (a pull-up, a series resistor, a filter cap): "up" (standing above the pin\'s wire, its far end on top) | "down" (hanging below it); the layout\'s guess otherwise, which stands a pull-up up unless a part below another pin is in the way. An IC or connector in a block: "mirrored" (its left pins on the right) | "unmirrored", over the layout\'s choice (it mirrors a part so its pins face the part they connect to)'),
   a: componentRef.optional().describe('Subject component; for left_of/right_of/above/below also one unit of a split symbol, e.g. "U3B"'),
   b: componentRef.optional().describe('Reference component (left_of/right_of/above/below/near), or a unit such as "U3A"'),
   key: z.string().optional().describe('param: parameter name; layer: omit'),
@@ -456,6 +456,15 @@ export const EraseOp = z.object({
   net: netName.optional().describe('Erase every wire and label of this net'),
 }).describe('Take wires and labels out of the drawing (the netlist does not change). Connections no longer drawn show as automatic labels until you draw them again (wire, label).');
 
+export const PlaceBlockOp = z.object({
+  op: z.literal('place_block'),
+  block: z.string().min(1).describe('The block\'s title, as in the description (describe) and get_schematic'),
+  page: z.number().int().min(1).optional().describe('Page number as get_schematic and get_schematic_image count them; omit it to keep the page the block is on now'),
+  x: z.number().optional().describe('Centre of the block\'s frame, mils from the left edge of the paper'),
+  y: z.number().optional().describe('Centre of the block\'s frame, mils from the top edge of the paper'),
+  auto: z.boolean().optional().describe('true: forget where you put it; the block flows with the others again'),
+}).describe('Put a functional block roughly where it belongs on its page: the centre of its frame goes there (on the grid), the kernel draws the block\'s parts inside it and flows the other blocks around it; a block that would overlap one placed earlier moves aside to the nearest clear spot on its page, or flows with the others when the page has none (the result says where it ended up). On a sheet drawn as you arranged it (place_symbol), the block is drawn afresh there: its parts together and wired, labels for the nets that leave it (the result says what it runs into).');
+
 export const AutoDrawOp = z.object({
   op: z.literal('auto_draw'),
   sheet: z.string().optional().describe('Sheet name; omit it for every sheet (or the sheet of the parts in refs)'),
@@ -646,13 +655,13 @@ export const DescribeOp = z.object({
       z.object({
         title: z.string().min(1).describe('Name of the block, e.g. "3.3 V buck regulator", "USB-C input and protection"'),
         refs: z.array(componentRef).min(1).describe('The parts of the block; every part of the design belongs to exactly one block'),
-        text: z.string().min(1).describe('How the block works (Markdown): its job, the key parts and why they have their values, the nets it takes and gives, anything to know when bringing it up'),
+        text: z.string().min(1).optional().describe('How the block works (Markdown): its job, the key parts and why they have their values, the nets it takes and gives, anything to know when bringing it up. Omit it to keep the text of the block with this title, or to group the schematic before writing the document'),
       }),
     )
     .min(1)
     .optional()
-    .describe('The functional blocks, in the order a reader should meet them (power first, then along the signal path). Replaces all blocks; omit to keep the current ones'),
-}).describe('Write the design description: the text of the design document, printed with each block\'s schematic, its place on the board, the layout, the assembly drawing and the BOM.');
+    .describe('The functional blocks, in the order a reader should meet them (power first, then along the signal path). The schematic draws each block as one framed unit in this order: its parts together, the connections inside it as wires, labels only for nets that leave it. Replaces all blocks; omit to keep the current ones'),
+}).describe('Write the design description: the functional blocks (which also group and order the schematic) and the text of the design document, printed with each block\'s schematic, its place on the board, the layout, the assembly drawing and the BOM.');
 
 export const EditOp = z.discriminatedUnion('op', [
   AddPartOp,
@@ -687,6 +696,7 @@ export const EditOp = z.discriminatedUnion('op', [
   LabelOp,
   EraseOp,
   AutoDrawOp,
+  PlaceBlockOp,
   ProposePlacementOp,
   RefinePlacementOp,
   RouteOp,
@@ -740,7 +750,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_ledger') }),
   z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
   z.object({ op: z.literal('get_fab_profiles') }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses'),
-  z.object({ op: z.literal('get_schematic') }).describe('Schematic drawing: each page (number, name, paper size in mils, drawn by the auto-layout or as you arranged it), where each symbol stands (centre and size in mils from the paper\'s top-left) and the net labels with the pins they sit on (auto: a connection your drawing does not show yet)'),
+  z.object({ op: z.literal('get_schematic') }).describe('Schematic drawing: each page (number, name, paper size in mils, drawn by the auto-layout or as you arranged it), the functional blocks (title, page, centre and size of the frame, their parts; guessed: parts in no block that the layout drew with it), where each symbol stands (centre and size in mils from the paper\'s top-left) and the net labels with the pins they sit on (auto: a connection your drawing does not show yet)'),
   z.object({
     op: z.literal('get_copper'),
     nets: z.array(netName).optional().describe('Only these nets'),
@@ -776,6 +786,6 @@ export const QueryOp = z.discriminatedUnion('op', [
   }),
   z.object({ op: z.literal('get_part'), id: z.string() }),
   z.object({ op: z.literal('get_enclosure') }).describe('The enclosure: the brief, the script, the board as an OpenSCAD library (board.scad: its variables and modules, the parts with where they are and which way they are plugged), OpenSCAD on this computer, the last render\'s report'),
-  z.object({ op: z.literal('get_guide'), topic: z.enum(['mechanics', 'cost', 'high_speed']) }).describe('A guide: cost = how to make a design cheaper to make (what costs money at the assembly house, how far each kind of part may move its value, series and parallel pairs, the board), read before optimising cost; mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script), read before the first brief; high_speed = how to lay out lines at a set impedance (fast interfaces such as USB, Ethernet, HDMI, LVDS, and RF lines to antennas and connectors): which lines need it, the stack-up, widths and gaps, planes and return paths, pairs, vias, antennas. Read it before routing such lines'),
+  z.object({ op: z.literal('get_guide'), topic: z.enum(['mechanics', 'cost', 'high_speed', 'schematic']) }).describe('A guide: schematic = how to arrange a schematic that reads well (functional blocks, their order and place on the pages, what goes inside a block, wire or label), read before you arrange or tidy a sheet; cost = how to make a design cheaper to make (what costs money at the assembly house, how far each kind of part may move its value, series and parallel pairs, the board), read before optimising cost; mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script), read before the first brief; high_speed = how to lay out lines at a set impedance (fast interfaces such as USB, Ethernet, HDMI, LVDS, and RF lines to antennas and connectors): which lines need it, the stack-up, widths and gaps, planes and return paths, pairs, vias, antennas. Read it before routing such lines'),
 ]);
 export type QueryOp = z.infer<typeof QueryOp>;

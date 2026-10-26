@@ -15,6 +15,7 @@ import {
   type PartCard,
   type PartPin,
   type PackageInfo,
+  type Rect,
   type SymbolLayout,
   type BoardPad,
   type BoardSettings,
@@ -35,6 +36,7 @@ import {
   type ValueSeries,
   DEFAULT_BOARD,
   DEFAULT_PAPER,
+  PAGE,
   PAPERS,
   fabPresets,
   findFabPreset,
@@ -63,10 +65,11 @@ import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
 import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
-import { isDrawn, moveSymbol, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
+import { isDrawn, moveSymbol, redrawBlock, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
+import { blockAssignment } from './layout.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
-import { footprintFor, packageOf, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOptions, planUnits, searchParts, standardPackage, unitCount } from '@4k7/parts';
+import { GRID, footprintFor, packageOf, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOptions, planUnits, searchParts, standardPackage, unitCount } from '@4k7/parts';
 import {
   allocRefdes,
   cardOf,
@@ -160,6 +163,8 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return placeSymbol(d, op);
     case 'auto_draw':
       return autoDraw(d, op);
+    case 'place_block':
+      return placeBlock(d, op, by);
     case 'wire':
       return wireOp(d, op);
     case 'label':
@@ -992,6 +997,105 @@ function autoDraw(d: Design, op: Extract<EditOp, { op: 'auto_draw' }>): OpResult
   return { op: op.op, effect: released.length ? `${released.join(', ')}: drawn by the auto-layout again, afresh after every change` : `${targets.map((s) => s.name).join(', ')}: drawn by the auto-layout already`, ids: targets.map((s) => s.id) };
 }
 
+/**
+ * Put a functional block roughly where it belongs (docs/design/schematic-drawing.md §2b): on a
+ * sheet the layout draws, a sch_block ledger entry the layout puts the block's frame at, flowing
+ * the other blocks around it; on a sheet drawn as the agent arranged it, the block drawn afresh
+ * there (drawing.ts redrawBlock). The page is given as the design counts pages.
+ */
+function placeBlock(d: Design, op: Extract<EditOp, { op: 'place_block' }>, by: 'user' | 'agent'): OpResult {
+  const blocks = d.description?.blocks ?? [];
+  const want = op.block.trim();
+  const block = blocks.find((b) => b.title === want) ?? blocks.find((b) => b.title.toLowerCase() === want.toLowerCase());
+  if (!block) {
+    reject({
+      code: 'REF_UNKNOWN',
+      message: blocks.length ? `No block "${op.block}".` : 'The design has no functional blocks yet: group its parts first (describe blocks: a title and the parts of each).',
+      candidates: closest(want, blocks.map((b) => b.title)),
+    });
+  }
+  const title = block!.title;
+  if (op.auto) {
+    const gone = Object.values(d.ledger).filter((k) => k.kind === 'sch_block' && k.key === title);
+    for (const k of gone) delete d.ledger[k.id];
+    return { op: 'place_block', effect: gone.length ? `block "${title}" flows with the others again` : `block "${title}" was not placed; it flows with the others`, ids: gone.map((k) => k.id) };
+  }
+  if (op.x === undefined || op.y === undefined) {
+    reject({ code: 'INVALID_OP', message: `place_block needs x and y (the centre of the block's frame, mils from the paper's top-left corner), or auto: true. design_query get_schematic shows the blocks, their frames and the pages.` });
+  }
+  syncDrawing(d); // parts added earlier in this transaction are drawn first
+  const view = schematicView(d);
+  // the sheets the block has parts on (the ones put with it included)
+  const on = view.sheets.filter((s) => blockAssignment(d, s.id)?.blocks.some((b) => b.title === title));
+  if (!on.length) reject({ code: 'INVALID_OP', message: `Block "${title}" has no parts drawn on any sheet.` });
+  let sheet = on[0]!;
+  let page: number;
+  if (op.page !== undefined) {
+    const s = view.sheets.find((v) => v.pages.some((p) => p.number === op.page)) ?? (op.page > view.sheets.at(-1)!.pages.at(-1)!.number ? view.sheets.at(-1) : undefined);
+    if (!s || !on.includes(s)) {
+      reject({ code: 'INVALID_OP', message: `Page ${op.page} is ${s ? `on sheet ${s.name}` : 'not in the design'}; block "${title}" has its parts on ${on.map((x) => `sheet ${x.name} (pages ${x.pages[0]!.number}–${x.pages.at(-1)!.number})`).join(', ')}. Move its parts to that sheet first (move_to_sheet).` });
+    }
+    sheet = s!;
+    page = op.page - sheet.pages[0]!.number + 1;
+  } else {
+    const frame = sheet.blocks?.find((b) => b.title === title);
+    const cx = frame ? frame.rect.x + frame.rect.w / 2 : 0;
+    const cy = frame ? frame.rect.y + frame.rect.h / 2 : 0;
+    page = Math.max(1, sheet.pages.findIndex((p) => cx >= p.rect.x && cx <= p.rect.x + p.rect.w && cy >= p.rect.y && cy <= p.rect.y + p.rect.h) + 1);
+  }
+  const first = sheet.pages[0]!.number;
+  const x = Math.round(op.x! / GRID) * GRID;
+  const y = Math.round(op.y! / GRID) * GRID;
+  if (isDrawn(d, sheet.id)) {
+    const at = redrawBlock(d, sheet.id, title, page, x, y);
+    // what it runs into: the agent's sheet stays as the agent puts it
+    const frames = schematicView(d).sheets.find((s) => s.id === sheet.id)?.blocks ?? [];
+    const mine = frames.find((b) => b.title === title);
+    const into = mine ? frames.filter((b) => b !== mine && overlaps(b.rect, mine.rect)).map((b) => `"${b.title}"`) : [];
+    const clash = at.under
+      ? `; it lies on ${at.under}: move one of them`
+      : !mine
+        ? '; it is not clear of the other blocks, so no frame is drawn round it: move it clear'
+        : into.length
+          ? `; its frame runs into the frame of ${into.join(' and ')}: move it clear`
+          : '';
+    return {
+      op: 'place_block',
+      effect: `block "${title}" drawn afresh on page ${first + page - 1} at (${at.x}, ${at.y}) mils, its parts together and wired${clash}${pastArea(at.frame, at.page) ? PAST_AREA : ''}`,
+      ids: [sheet.id],
+    };
+  }
+  for (const k of Object.values(d.ledger)) if (k.kind === 'sch_block' && k.key === title && k.sheet === sheet.id) delete d.ledger[k.id];
+  const id = nextId(d, 'k');
+  d.ledger[id] = { id, kind: 'sch_block', key: title, sheet: sheet.id, page, x, y, domain: 'schematic', strength: 'soft', source: { type: by } };
+  // where it ended up: a block that would lie on one placed before it moved aside, or flows with
+  // the others when its page has no room
+  const now = schematicView(d).sheets.find((s) => s.id === sheet.id)!;
+  const frame = now.blocks?.find((b) => b.title === title);
+  if (!frame) return { op: 'place_block', effect: `block "${title}" placed on page ${first + page - 1} at (${x}, ${y}) mils`, ids: [id] };
+  const c = { x: frame.rect.x + frame.rect.w / 2, y: frame.rect.y + frame.rect.h / 2 };
+  const landed = Math.max(0, now.pages.findIndex((p) => c.x >= p.rect.x && c.x <= p.rect.x + p.rect.w && c.y >= p.rect.y && c.y <= p.rect.y + p.rect.h));
+  const pg = now.pages[landed]!;
+  const cx = Math.round(c.x - pg.rect.x);
+  const cy = Math.round(c.y - pg.rect.y);
+  const moved =
+    landed !== page - 1
+      ? `; page ${first + page - 1} has no room for it at (${x}, ${y}) clear of the blocks placed before it, so it flows with the others`
+      : Math.abs(cx - x) > GRID || Math.abs(cy - y) > GRID
+        ? `; it moved aside from (${x}, ${y}) to clear a block placed before it`
+        : '';
+  return {
+    op: 'place_block',
+    effect: `block "${title}" (${frame.rect.w} × ${frame.rect.h} mils) on page ${first + landed} at (${cx}, ${cy}) mils${moved}${pastArea(frame.rect, pg.rect) ? PAST_AREA : ''}`,
+    ids: [id],
+  };
+}
+
+const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+/** A block's frame runs past the drawing area of its page (inside the margins, above the title strip). */
+const pastArea = (r: Rect, page: Rect) => r.x < page.x + PAGE.margin || r.y < page.y + PAGE.margin || r.x + r.w > page.x + page.w - PAGE.margin || r.y + r.h > page.y + page.h - PAGE.margin - PAGE.title;
+const PAST_AREA = '; it runs past the drawing area of the page: move it in, or put it on a page of its own';
+
 function place(d: Design, op: Extract<EditOp, { op: 'place' }>, by: 'user' | 'agent' = 'agent'): OpResult {
   const comp = resolveComponent(d, op.ref);
   if (!d.board?.placement) keepPlacement(d); // start from what the user sees
@@ -1596,9 +1700,15 @@ function describe(d: Design, op: Extract<EditOp, { op: 'describe' }>): OpResult 
       if (other) reject({ code: 'INVALID_OP', message: `${d.components[id]!.refdes} is in two blocks ("${other}" and "${b.title}"); every part belongs to one block.` });
       taken.set(id, b.title);
     }
-    return { title: b.title.trim(), components, text: b.text.trim() };
+    const title = b.title.trim();
+    // without a text, the block keeps the one it had (same title): grouping the drawing does not erase the document
+    const text = b.text?.trim() ?? d.description?.blocks.find((x) => x.title === title)?.text ?? '';
+    return { title, components, text };
   });
   d.description = { overview: op.overview?.trim() ?? d.description?.overview ?? '', blocks: blocks ?? d.description?.blocks ?? [] };
+  // a block placed on the schematic that is gone (or renamed) leaves its placement behind
+  const titles = new Set(d.description.blocks.map((b) => b.title));
+  for (const k of Object.values(d.ledger)) if (k.kind === 'sch_block' && !titles.has(k.key ?? '')) delete d.ledger[k.id];
   const left = descriptionView(d)!.undescribed;
   return {
     op: 'describe',
@@ -1974,6 +2084,8 @@ function moveToSheet(d: Design, refs: string[], sheet: string): OpResult {
 const DIRECTIONAL = new Set(['left_of', 'right_of', 'above', 'below']);
 const OPPOSITE: Record<string, string> = { left_of: 'right_of', right_of: 'left_of', above: 'below', below: 'above' };
 const axis = (kind: string) => (kind === 'left_of' || kind === 'right_of' ? 'h' : 'v');
+/** An arrangement value that says whether an IC or connector is drawn mirrored. */
+const mirrors = (v?: string) => v === 'mirrored' || v === 'unmirrored';
 
 function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResult {
   const need = (v: unknown, what: string): void => {
@@ -2021,9 +2133,11 @@ function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResul
     const category = card.category;
     // a two-pin part at an IC's or connector's pin: which way it stands from the pin's wire
     const standing = isTwoPin(card) ? ['up', 'down'] : [];
-    const allowed = [...(category === 'diode' ? ['diamond', 'inline'] : category === 'ic' ? ['power_flow', 'compact'] : []), ...standing];
+    // an IC or connector in a functional block: drawn with its left pins on the right, or not
+    const mirror = isBoxSymbol(card) ? ['mirrored', 'unmirrored'] : [];
+    const allowed = [...(category === 'diode' ? ['diamond', 'inline'] : category === 'ic' ? ['power_flow', 'compact'] : []), ...standing, ...mirror];
     if (!allowed.length) {
-      reject({ code: 'CONSTRAINT_INVALID', message: `arrangement applies to diode bridges, regulator ICs and two-pin parts; ${a.refdes} is none of them.` });
+      reject({ code: 'CONSTRAINT_INVALID', message: `arrangement applies to diode bridges, ICs, connectors and two-pin parts; ${a.refdes} is none of them.` });
     }
     if (!allowed.includes(op.value ?? '')) {
       reject({ code: 'CONSTRAINT_INVALID', message: `arrangement for ${a.refdes}: value must be ${allowed.map((v) => `"${v}"`).join(' or ')}.` });
@@ -2054,7 +2168,8 @@ function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): OpResul
       (k.kind === 'near' && old.kind === 'near' && samePair) ||
       (k.kind === 'param' && old.kind === 'param' && old.a === k.a && old.key === k.key) ||
       (k.kind === 'layer' && old.kind === 'layer' && old.a === k.a) ||
-      (k.kind === 'arrangement' && old.kind === 'arrangement' && old.a === k.a);
+      // (a regulator's power_flow / compact and its mirroring are two choices, kept side by side)
+      (k.kind === 'arrangement' && old.kind === 'arrangement' && old.a === k.a && mirrors(old.value) === mirrors(k.value));
     if (!clash) continue;
     const contradicts =
       DIRECTIONAL.has(k.kind) &&
@@ -2119,6 +2234,8 @@ export function describeConstraint(d: Design, k: Constraint): string {
       return `position(${n(k.a)}) = (${k.xMm}, ${k.yMm}) mm${k.rel ? ` from ${n(k.rel)}` : ''}${k.rot !== undefined ? ` ${k.rot}°` : ''}${k.strength === 'hard' ? ', locked' : ''}`;
     case 'sch_position':
       return `${n(k.a)}${k.aUnit ?? ''} placed on page ${k.page} at (${k.x}, ${k.y}) mils${k.orient ? `, ${k.orient}` : ''}${k.mirror !== undefined ? (k.mirror ? ', mirrored' : ', not mirrored') : ''}`;
+    case 'sch_block':
+      return `block "${k.key}" placed on page ${k.page} of sheet ${d.sheets[k.sheet ?? '']?.name ?? k.sheet} at (${k.x}, ${k.y}) mils`;
     case 'note':
       return `note${k.a ? `(${n(k.a)})` : ''}: ${k.value}`;
     default:

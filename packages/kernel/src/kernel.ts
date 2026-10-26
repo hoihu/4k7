@@ -44,6 +44,7 @@ import { countDiagnostics, diagKey, runChecks, sortDiagnostics } from './checks.
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, valueOf } from './doc.ts';
 import { schematicView, syncDrawing } from './drawing.ts';
+import { blockAssignment } from './layout.ts';
 import { copperKey, layoutBoard, placeBoard, planePlan } from './board.ts';
 import type { RouteProgress } from './router.ts';
 import { DRAWING_OPS, HELPER_TX_MS, annotateChecks, followParts, movesParts, placementOf, type HelperHooks } from './copperops.ts';
@@ -487,6 +488,7 @@ export class Kernel {
           pages: view.sheets.flatMap((s) =>
             s.pages.map((p) => ({ page: p.number, sheet: s.name, name: p.name, w: p.rect.w, h: p.rect.h, ...(p.oversized ? { oversized: true } : {}), drawn: d.drawing?.[s.id] ? 'as you arranged it' : 'by the auto-layout, afresh after every change' })),
           ),
+          ...this.schematicBlocks(d, view),
           symbols: view.sheets.flatMap((s) =>
             s.symbols.map((sym) => {
               const cx = sym.bbox.x + sym.bbox.w / 2;
@@ -556,6 +558,49 @@ export class Kernel {
       case 'get_guide':
         return { error: 'The guides are served by the app.' };
     }
+  }
+
+  /**
+   * The functional blocks as get_schematic shows them: per sheet each block's frame (page, centre
+   * and size, in page mils), its parts, the parts the layout put with it (in no block yet), and
+   * whether the agent placed it; the parts in no block at all.
+   */
+  private schematicBlocks(d: Design, view: SchematicView): Record<string, unknown> {
+    if (!d.description?.blocks.length) {
+      return { blocks_note: 'No functional blocks yet: group the parts with describe blocks (a title and the parts of each, in reading order). Each block is then drawn as one framed unit, wired inside, labels only for the nets that leave it; place_block moves one. get_guide topic "schematic" says how.' };
+    }
+    const r = Math.round;
+    const ref = (id: string) => d.components[id]?.refdes ?? id;
+    const blocks: Record<string, unknown>[] = [];
+    const loose: string[] = [];
+    for (const s of view.sheets) {
+      const groups = blockAssignment(d, s.id);
+      if (!groups) continue;
+      loose.push(...groups.loose.map(ref));
+      for (const b of groups.blocks) {
+        const frames = (s.blocks ?? []).filter((f) => f.title === b.title || f.title === `${b.title} (continued)`);
+        const where = frames.map((f) => {
+          const cx = f.rect.x + f.rect.w / 2;
+          const cy = f.rect.y + f.rect.h / 2;
+          const pg = s.pages.find((p) => cx >= p.rect.x && cx <= p.rect.x + p.rect.w && cy >= p.rect.y && cy <= p.rect.y + p.rect.h) ?? s.pages[0]!;
+          return { page: pg.number, x: r(cx - pg.rect.x), y: r(cy - pg.rect.y), w: f.rect.w, h: f.rect.h };
+        });
+        const placed = Object.values(d.ledger).some((k) => k.kind === 'sch_block' && k.key === b.title && k.sheet === s.id);
+        blocks.push({
+          block: b.title,
+          sheet: s.name,
+          ...(where.length === 1 ? where[0] : where.length ? { frames: where } : { frame: d.drawing?.[s.id] ? 'none: its parts do not stand together (place_block draws it afresh in one place)' : 'none' }),
+          parts: b.ids.map(ref).sort(natCmp),
+          ...(b.guessed.length ? { guessed: b.guessed.map(ref).sort(natCmp) } : {}),
+          ...(placed ? { placed: true } : {}),
+        });
+      }
+    }
+    return {
+      blocks_note: 'x/y: the centre of the block\'s frame (place_block moves it there); guessed: parts in no block that the layout drew with this one (describe puts them in a block for good); a block taller than a page continues on the next (frames)',
+      blocks,
+      ...(loose.length ? { not_in_a_block: loose.sort(natCmp) } : {}),
+    };
   }
 
   summary(d: Design = this.draft): DesignSummary {
