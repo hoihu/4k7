@@ -529,6 +529,10 @@
         <li>Labels and logos, engraved or inlaid</li>
       </ul>
     </div>
+    <figure class="shot">
+      <button class="frame" type="button" title="Enlarge"><video muted loop playsinline preload="none" poster="/shots/enclosure.webp" width="2208" height="1380" aria-label="The Enclosure view in 3D, with the brief beside it. The lamp's box is turned by hand, opened, its pieces lifted apart, and closed again. Then it is cut across x and the cut is dragged through the box, showing the walls, the light baffle and the LEDs in section; then cut level and the cut raised from the stand into the box."><source src="/shots/enclosure.mp4" type="video/mp4"></video></button>
+      <figcaption><b>In 3D:</b> turn it, lift the pieces apart, and drag a cut through it to see inside.</figcaption>
+    </figure>
     <div class="enc-grid">
       <figure class="shot lamp">
         <img src="/shots/lamp.webp" width="1024" height="1264" loading="lazy" decoding="async" alt="The closed lamp on its stand: a front with a sunflower pattern of small dimples and a round diffuser in the middle.">
@@ -626,7 +630,7 @@
     });
   })();
 
-  // screenshots open full size, and so does the layout clip (with controls, for reduced motion)
+  // screenshots open full size, and so do the clips (with controls, for reduced motion)
   var still = window.matchMedia('(prefers-reduced-motion: reduce)');
   (function () {
     var box = document.querySelector('dialog.lightbox'), big = box.querySelector('img'), clip = box.querySelector('video');
@@ -647,7 +651,7 @@
     box.addEventListener('close', function () { clip.pause(); clip.removeAttribute('src'); clip.load(); });
   })();
 
-  // the layout clip plays while it is in view, not behind the lightbox, not with reduced motion
+  // a clip plays while it is in view, not behind the lightbox, not with reduced motion
   (function () {
     var box = document.querySelector('dialog.lightbox'), clips = [].slice.call(document.querySelectorAll('.frame video'));
     if (!clips.length || !('IntersectionObserver' in window)) return;
