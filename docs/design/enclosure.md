@@ -220,11 +220,11 @@ red in the pictures, blocked paths orange, printing warnings (overhangs, bridges
   brief, the report, the script in an editor. The user can edit the script; the edit is a changeset
   like any other and the agent sees the diff.
 - **The cut** (2026-10-24): Cut opens the box along a plane through its middle, across its shorter
-  side; x, y or z turn it, "at J1" starts it at an opening (as the agent's sections). The slider,
-  or the frame round the cut dragged in the view, moves it through the box; the half the camera
-  looks from is cut away, Flip shows the other. A message sent while it is open tells the agent
-  where (`<view kind="enclosure">`: the plane in board.scad coordinates and the `render_enclosure
-  section` that shows it), so "this wall" needs no coordinates.
+  side; x, y or z turn it. The slider, or the frame round the cut dragged in the view, moves it
+  through the box; the half the camera looks from is cut away, Flip shows the other. A message
+  sent while it is open tells the agent where (`<view kind="enclosure">`: the plane in board.scad
+  coordinates and the `render_enclosure section` that shows it), so "this wall" needs no
+  coordinates.
 - **Exports**: one 3MF plate with every piece turned for printing (the script's `print`), STL per
   piece the same way, `<project>-enclosure.scad` with `board.scad` inlined, and `board.scad`.
   OpenSCAD cannot write STEP; mechanical CAD imports the STL or the .scad.
