@@ -145,6 +145,12 @@ export interface PartCard {
   units?: SymbolUnit[];
   /** A picture of the part seen from the top (cropped from its datasheet), shown on its 3D body. */
   topImage?: TopImage;
+  /**
+   * Which way round the part goes, where its pins' names do not say it (set_polarity): the board
+   * marks pin 1, the cathode or the plus terminal (`pin`, by number), or nothing for a part that
+   * fits either way round. Without it the pins' names decide (K and A, + and −; pin 1 for the rest).
+   */
+  polarity?: { mark: 'pin1' | 'cathode' | 'plus' | 'none'; pin?: string };
 }
 
 /** PDF pages of a datasheet's sections, as the importer found them. */

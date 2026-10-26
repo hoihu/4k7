@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { boardPolygon, cutoutPolygon, type BoardView, type CopperLayer } from '@4k7/schema';
+  import { boardPolygon, bodyOutline, cutoutPolygon, type BoardView, type CopperLayer } from '@4k7/schema';
   import { boardDimensions, dimPaths } from '../dimensions.ts';
   import type { TopView } from '../three-body.ts';
 
@@ -38,6 +38,8 @@
 
   /** A closed polygon (flat x, y list) as SVG path data. */
   const polyPath = (pts: number[]) => pts.reduce((d, v, i) => (i % 2 ? `${d} ${v}` : `${d}${i ? ' L' : 'M'} ${v}`), '') + ' Z';
+  /** A flat x, y list as SVG points. */
+  const points = (pts: number[]) => pts.reduce((d, v, i) => (i % 2 ? `${d},${v}` : `${d}${i ? ' ' : ''}${v}`), '');
   /** The board outline (rounded corners) and its milled cutouts. */
   const outlinePath = $derived(board ? polyPath(boardPolygon(board.shape ? board : { ...board, cornerRadius: board.cornerRadius || 0.5 })) : '');
   const cutoutPaths = $derived(board ? board.cutouts.map((c) => polyPath(cutoutPolygon(c))) : []);
@@ -402,8 +404,11 @@
         {/each}
         {#if show.silk && !p.componentId.startsWith('hole:')}
           {#if p.body.round}<circle class="silk" cx={p.body.x + p.body.w / 2} cy={p.body.y + p.body.h / 2} r={p.body.w / 2} />
+          {:else if p.body.chamfer}<polygon class="silk" points={points(bodyOutline(p.body))} />
           {:else}<rect class="silk" x={p.body.x} y={p.body.y} width={p.body.w} height={p.body.h} />{/if}
-          {#if p.polarized}<circle class="silkdot" cx={p.pin1.x} cy={p.pin1.y} r="0.18" />{/if}
+          <!-- the polarity mark as the silkscreen prints it: a dot by pin 1, a band at the cathode, a "+" by the plus pad -->
+          {#each p.mark?.strokes ?? [] as st, i (i)}<polyline class="silkmark" points={points(st.pts)} stroke-width={st.w} />{/each}
+          {#each p.mark?.dots ?? [] as dot, i (i)}<circle class="silkdot" cx={dot.x} cy={dot.y} r={dot.d / 2} />{/each}
           {#if p.side === 'bottom'}<title>{p.refdes} · bottom side (mirrored, seen from the top)</title>{/if}
           <text class="ref" x={p.x} y={p.y} font-size={Math.max(0.5, Math.min(1.2, Math.min(p.body.w, p.body.h) * 0.45))}>{p.refdes}</text>
         {/if}
@@ -481,6 +486,7 @@
   .part.bottom .pad:not(.tht) { fill: #4f86d2; }
   .part.bottom .silk { stroke: #9dc0ee; stroke-dasharray: 0.4 0.25; }
   .part.bottom .silkdot, .part.bottom .ref { fill: #9dc0ee; }
+  .part.bottom .silkmark { stroke: #9dc0ee; }
   .pad.hot, .part.bottom .pad.hot { fill: #fff27a; }
   .drill { fill: #0b0f14; }
   .drill.npth { stroke: #9aa3ad; stroke-width: 0.08; }
@@ -490,6 +496,7 @@
   .via.hot circle:first-child { fill: #fff27a; }
   .silk { fill: none; stroke: #e9ecef; stroke-width: 0.12; opacity: 0.85; }
   .silkdot { fill: #e9ecef; }
+  .silkmark { fill: none; stroke: #e9ecef; stroke-linecap: round; stroke-linejoin: round; }
   .ref { fill: #e9ecef; text-anchor: middle; dominant-baseline: central; font-family: var(--mono); pointer-events: none; opacity: 0.9; }
   .court { fill: none; stroke: #d65db1; stroke-width: 0.05; stroke-dasharray: 0.3 0.2; opacity: 0.6; }
   .rats { stroke: #e9ecef; stroke-width: 0.06; opacity: 0.55; }

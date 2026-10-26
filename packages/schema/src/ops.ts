@@ -153,6 +153,15 @@ export const SetFootprintOp = z.object({
   mating: Mating.optional().describe('Connectors, card slots, switches: where the plug, card or finger comes in (also set_mating)'),
 });
 
+export const SetPolarityOp = z.object({
+  op: z.literal('set_polarity'),
+  ref: componentRef.describe('A component using the part, e.g. "D3"; applies to every component of that part'),
+  mark: z
+    .enum(['pin1', 'cathode', 'plus', 'none', 'auto'])
+    .describe('What the silkscreen marks: pin1 (a dot by pin 1: ICs, connectors, LEDs with a controller), cathode (a band across the body at the cathode: diodes, LEDs), plus (a "+" by the plus terminal: polarised capacitors, batteries, buzzers), none (fits either way round: a bidirectional TVS, a non-polarised part), auto (as its pin names say: K and A, + and −, pin 1 for the rest)'),
+  pin: z.string().optional().describe('The pin it marks, by number (default: the pin named K or +, else pin 1)'),
+}).describe('Which way round a part goes, when its pin names do not say it (DRC.POLARITY_UNKNOWN): the board marks it on the silkscreen so the assembler places it right. Read it off the datasheet (the cathode band, the + terminal, pin 1).');
+
 export const SetMatingOp = z.object({
   op: z.literal('set_mating'),
   ref: componentRef.describe('A component using the part, e.g. "J1"; applies to every component of that part'),
@@ -721,6 +730,7 @@ export const EditOp = z.discriminatedUnion('op', [
   SetPanelOp,
   DescribeOp,
   SetMatingOp,
+  SetPolarityOp,
   SetEnclosureBriefOp,
   SetEnclosureScriptOp,
   SetEnclosureGraphicOp,

@@ -1,0 +1,60 @@
+# Assembly: what the assembly house sees
+
+> Part of the [architecture](../ARCHITECTURE.md). Status: polarity marks 2026-10-26.
+
+An assembly house places every part from the BOM and the pick-and-place file, and checks the result
+against the board before it solders: its engineers draw their own model of each part over our pads
+and compare its pin 1, cathode or plus terminal with the board's silkscreen. Where the silkscreen
+does not say which way round a part goes, they stop and ask (JLCPCB's "please confirm the polarity"
+mail); where it says something else than their model, the board comes back wrong.
+
+The case that started this (spiral2 at JLCPCB, October 2026): the only mark the silkscreen had was a
+0.4 mm dash beside pad 1, clipped down to 0.2–0.4 mm by the pads. It read as a minus sign, and it
+sat beside the plus pad of both electrolytic capacitors and beside VDD of the 48 WS2812B LEDs, where
+JLCPCB's own footprint prints a "+". JLCPCB asked about the LEDs, the MCU, the USB-PD controller and
+the two indicator LEDs. The app's 2D view drew a dot there instead, so nobody saw what JLCPCB saw.
+
+## 1. Which way round a part goes
+
+`polarityOf` (`packages/kernel/src/marks.ts`) reads it off the part card:
+
+| The card | What is marked |
+|---|---|
+| `polarity` set on the card (`set_polarity`) | what it says: `pin1`, `cathode` or `plus` at its pin, or nothing (`none`) |
+| Two pins, one named K (or Cathode), or Anode (A on a diode or LED) | the cathode |
+| Two pins, one named + (or the other named −) | the plus terminal |
+| A two-pin diode or LED whose pins say neither | nothing: **DRC.POLARITY_UNKNOWN** asks for `set_polarity` |
+| A two-pin resistor, capacitor, inductor or crystal | nothing (it fits either way round) |
+| Anything else with two pins or more | pin 1 (or the first pin, "A1" on a BGA) |
+
+The mark goes by the pin's function, never by its number alone: LEDs number their pins both ways
+(LCSC's C84256 has the cathode as pin 1, C2297 the anode), and generic:D, generic:LED and generic:CP
+name their pins K/A and +/−. The datasheet importer names a polarised part's terminals the same way.
+`set_polarity` refuses generic parts (their pin names already say it for every component that uses
+them) and changes the design's copy of an imported part's card, like `set_mating`.
+
+`BoardPart.polarized` stays true for every part with a way round (the 3D body's pin-1 dimple);
+`BoardPart.mark` holds the mark.
+
+## 2. The marks
+
+| Kind | Mark | Where it goes, in order |
+|---|---|---|
+| `pin1` | a filled dot, Ø0.5 mm (Ø0.35 where that does not fit), and the body's outline chamfered at pin 1's corner (bodies of 2 mm and more) | beyond pin 1's pad on its outer side; off the body corner, diagonally; at the end of pin 1's row; further out; inside a big body's corner |
+| `cathode` | a band across the body, 0.3 mm wide (0.2 mm) | between the pads against the cathode, where the part carries its own band; beyond the cathode's outer end |
+| `plus` | a "+", 0.8 mm across (0.6 mm), 0.15 mm lines | beside the plus pad's outer half, either side; beyond its end; at its outer corners |
+
+Never a lone dash: next to a plus pad it reads as a minus. A polarised capacitor gets a "+" and not a
+bar, because a tantalum carries its band at the plus end and an aluminium can at the minus end.
+
+`placeMarks` places them once the board is placed (`placeBoard`) and again after routing
+(`layoutBoard`, clear of the routed vias), in refdes order, the bigger size first: the first spot
+whose ink keeps 0.15 mm from every pad of that side (and through-hole pad and hole), via, other mark
+and other part's body outline, and from the board edge and cutouts, and that is nearer the part's own
+pads than any other part's (so it is not read as a neighbour's mark). No spot: **DRC.SILK_POLARITY**
+(a warning) names what is in the way. It costs about a millisecond on a 130-part board.
+
+The marks are geometry in the board view (strokes and dots, board coordinates), so every picture of
+the board draws the same ink: the Gerber silkscreen (`packages/fab/src/gerber.ts`, refdes texts keep
+off the marks), the 2D view, the agent's `get_board_image` and the design document (all three
+`BoardCanvas.svelte`), and each copy on a panel. The chamfered outline is `bodyOutline(body)`.
