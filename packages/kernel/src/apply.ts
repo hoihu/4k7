@@ -61,6 +61,7 @@ import {
 } from '@4k7/schema';
 import { autoPlanes, dropOffset, padNet, placeBoard, storedPlacement } from './board.ts';
 import { underBody } from './drc.ts';
+import { polarityOf } from './marks.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
 import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
@@ -135,6 +136,8 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return setFootprint(d, op);
     case 'set_mating':
       return setMating(d, op);
+    case 'set_polarity':
+      return setPolarity(d, op);
     case 'set_enclosure_brief':
       return setEnclosureBrief(d, op);
     case 'set_enclosure_script':
@@ -1515,6 +1518,27 @@ function setMating(d: Design, op: Extract<EditOp, { op: 'set_mating' }>): OpResu
     effect: m ? `${users.join(', ')}: plugged from ${m.face === 'up' ? 'above' : `the ${m.face} of the footprint`}${m.plug_mm ? `, plug ${m.plug_mm[0]} × ${m.plug_mm[1]} mm` : ''}` : `${users.join(', ')}: not plugged`,
     ids: [card.id],
   };
+}
+
+/** Which way round a part goes (set_polarity): what its silkscreen marks, on the design's copy of its card. */
+function setPolarity(d: Design, op: Extract<EditOp, { op: 'set_polarity' }>): OpResult {
+  const comp = resolveComponent(d, op.ref);
+  const card = cardOf(d, comp.part)!;
+  const users = Object.values(d.components).filter((c) => c.part === card.id).map((c) => c.refdes).sort(natCmp);
+  if (card.id.startsWith('generic:')) {
+    const said = polarityOf(card);
+    reject({ code: 'PARAM_INVALID', message: `${card.id} is a generic part: its pins' names say ${said === null ? 'it fits either way round' : said === 'unknown' ? 'nothing' : `which pin to mark (${said.kind === 'pin1' ? 'pin 1' : `the ${said.kind === 'plus' ? 'plus terminal' : 'cathode'}, pin ${said.pin}`})`}, for ${users.join(', ')} alike. Connect the pins the other way round instead, or use a part of its own.` });
+  }
+  if (op.pin !== undefined && !card.pins.some((p) => p.number.toUpperCase() === op.pin!.toUpperCase())) {
+    reject({ code: 'PARAM_INVALID', message: `${comp.refdes} has no pin "${op.pin}" (pins: ${card.pins.map((p) => p.number).join(', ')}).` });
+  }
+  const copy: PartCard = structuredClone(card);
+  if (op.mark === 'auto') delete copy.polarity;
+  else copy.polarity = { mark: op.mark, ...(op.pin !== undefined && op.mark !== 'none' ? { pin: card.pins.find((p) => p.number.toUpperCase() === op.pin!.toUpperCase())!.number } : {}) };
+  d.parts[card.id] = copy;
+  const now = polarityOf(copy);
+  const said = now === null ? 'no mark (it fits either way round)' : now === 'unknown' ? 'no mark: its pins do not say which is the cathode' : now.kind === 'pin1' ? `a dot by pin ${now.pin}` : now.kind === 'cathode' ? `a band at the cathode, pin ${now.pin}` : `a "+" by the plus terminal, pin ${now.pin}`;
+  return { op: 'set_polarity', effect: `${users.join(', ')}: ${said}`, ids: [card.id] };
 }
 
 /** The enclosure's brief (replaced as a whole). */

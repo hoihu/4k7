@@ -102,6 +102,42 @@ describe('fab outputs', () => {
     expect(pickAndPlace(b).split('\n').filter((l) => l.endsWith(',Top')).length).toBeGreaterThan(0);
   });
 
+  it('prints the polarity marks: a dot by pin 1, a band at the cathode, the pin-1 corner chamfered', () => {
+    const b = board();
+    const silk = fabFiles(b, 'buck').find((f) => f.name === 'buck-F_Silkscreen.gbr')!.content;
+    const lines = silk.split('\n');
+    const apertures = new Map([...silk.matchAll(/%ADD(\d+)C,([\d.]+)\*%/g)].map((m) => [m[1]!, Number(m[2])]));
+    // each flash (D03) and stroke (D01) with the width of the aperture it was drawn with
+    const marks: { op: string; w: number; x: number; y: number }[] = [];
+    let cur = '';
+    for (const l of lines) {
+      const sel = /^D(\d+)\*$/.exec(l);
+      if (sel) cur = sel[1]!;
+      const m = /^X(-?\d+)Y(-?\d+)D0([13])\*$/.exec(l);
+      if (m) marks.push({ op: m[3]!, w: apertures.get(cur)!, x: Number(m[1]) / 1e6, y: b.outline.h - Number(m[2]) / 1e6 });
+    }
+    // U1's and J1's dots, flashed where the board view has them
+    for (const ref of ['U1', 'J1']) {
+      const dot = b.parts.find((p) => p.refdes === ref)!.mark!.dots[0]!;
+      expect(marks.some((m) => m.op === '3' && m.w === dot.d && Math.abs(m.x - dot.x) < 1e-3 && Math.abs(m.y - dot.y) < 1e-3), ref).toBe(true);
+    }
+    // D1's band: a 0.3 mm stroke ending where the board view has it
+    const band = b.parts.find((p) => p.refdes === 'D1')!.mark!.strokes[0]!;
+    expect(band.w).toBe(0.3);
+    expect(marks.some((m) => m.op === '1' && m.w === 0.3 && Math.abs(m.x - band.pts[2]!) < 1e-3 && Math.abs(m.y - band.pts[3]!) < 1e-3)).toBe(true);
+    // U1's outline runs diagonally across its chamfered corner (what is left of it beside the pads)
+    const u1 = b.parts.find((p) => p.refdes === 'U1')!;
+    const draws = lines.map((l, i) => [l, lines[i - 1] ?? ''] as const).filter(([l]) => l.endsWith('D01*'));
+    const pt = (l: string) => { const m = /X(-?\d+)Y(-?\d+)D0[12]/.exec(l)!; return [Number(m[1]) / 1e6, b.outline.h - Number(m[2]) / 1e6] as const; };
+    const diagonal = draws.some(([l, prev]) => {
+      if (!/D0[12]\*$/.test(prev)) return false;
+      const [[x0, y0], [x1, y1]] = [pt(prev), pt(l)];
+      const inBody = (x: number, y: number) => x >= u1.body.x - 0.01 && x <= u1.body.x + u1.body.w + 0.01 && y >= u1.body.y - 0.01 && y <= u1.body.y + u1.body.h + 0.01;
+      return Math.abs(x1 - x0) > 0.05 && Math.abs(Math.abs(x1 - x0) - Math.abs(y1 - y0)) < 1e-3 && inBody(x0, y0) && inBody(x1, y1);
+    });
+    expect(diagonal).toBe(true);
+  });
+
   it('packs a zip that unzip accepts with intact contents', () => {
     const files = fabFiles(board(), 'buck');
     const dir = mkdtempSync(join(tmpdir(), 'tw-zip-'));
@@ -151,6 +187,10 @@ describe('fab outputs', () => {
     expect(pnp.some((l) => l.startsWith('U1_1,'))).toBe(true);
     expect(pnp.some((l) => l.startsWith('U1_4,'))).toBe(true);
     expect(file('buck-panel-BOM.csv')).toContain('TPS54331DR,"U1_1,U1_2,U1_3,U1_4",SOIC-8,4,');
+    // every copy carries its parts' polarity marks, moved with it
+    const dot = b.parts.find((x) => x.refdes === 'U1')!.mark!.dots[0]!;
+    const silk = file('buck-panel-F_Silkscreen.gbr');
+    for (const c of p.copies) expect(silk).toContain(`X${Math.round((dot.x + c.dx) * 1e6)}Y${Math.round((p.h - dot.y - c.dy) * 1e6)}D03*`);
     // the single-board files stay as they were
     expect(fabFiles(b, 'buck').map((f) => f.name)).not.toContain('buck-NPTH.drl');
   });

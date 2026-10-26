@@ -42,7 +42,7 @@ function movePart(p: BoardPart, dx: number, dy: number, n: number): BoardPart {
     pads: p.pads.map(box),
     body: box(p.body),
     courtyard: box(p.courtyard),
-    pin1: box(p.pin1),
+    ...(p.mark ? { mark: { ...p.mark, strokes: p.mark.strokes.map((s) => ({ ...s, pts: shift(s.pts, dx, dy) })), dots: p.mark.dots.map(box) } } : {}),
   };
 }
 
@@ -62,7 +62,6 @@ function hole(id: string, x: number, y: number, d: number): BoardPart {
     pads: [{ number: '1', x, y, w: d, h: d, shape: 'round', drill: d, npth: true, layers: [] }],
     body: { x: r3(x - d / 2), y: r3(y - d / 2), w: d, h: d },
     courtyard: { x: r3(x - d / 2), y: r3(y - d / 2), w: d, h: d },
-    pin1: { x, y },
     polarized: false,
     locked: true,
   };

@@ -620,6 +620,46 @@ export function padHasPin(p: { number: string; also?: string[] }, pin: string): 
   return padPins(p).some((x) => x.toUpperCase() === n);
 }
 
+/** A corner of a part's body as it lies on the board (y down): top left, top right, bottom right, bottom left. */
+export type BodyCorner = 'tl' | 'tr' | 'br' | 'bl';
+
+/** What a part's polarity mark says: where pin 1 is (ICs, connectors), the cathode (diodes, LEDs), the plus terminal (polarised capacitors). */
+export type PolarityKind = 'pin1' | 'cathode' | 'plus';
+
+/**
+ * A part's polarity mark as printed on its side's silkscreen (board coordinates, mm): a dot beside
+ * pin 1, a band across the body at the cathode, a "+" beside the plus pad. It is placed clear of
+ * copper, holes, the edge and the other marks, nearer its own pad than any other part's; with no
+ * strokes and no dots there was no room for it (DRC.SILK_POLARITY).
+ */
+export interface PolarityMark {
+  kind: PolarityKind;
+  /** The pad it marks (its number). */
+  pad: string;
+  /** Polylines (x0, y0, x1, y1, …) with their line width. */
+  strokes: { pts: number[]; w: number }[];
+  /** Filled circles: centre and diameter. */
+  dots: { x: number; y: number; d: number }[];
+}
+
+/** A body's silkscreen outline as a closed polygon (flat x, y list, clockwise from the top left), its chamfered corners cut. */
+export function bodyOutline(body: BoardPart['body']): number[] {
+  const { x, y, w, h } = body;
+  const c = body.chamfer && body.chamfer.size > 0 ? Math.min(body.chamfer.size, w / 2, h / 2) : 0;
+  const cut = (k: BodyCorner) => c > 0 && !!body.chamfer?.corners.includes(k);
+  const pts: number[] = [];
+  // each corner: its point, or the two ends of its chamfer (in the order the outline runs)
+  if (cut('tl')) pts.push(x, y + c, x + c, y);
+  else pts.push(x, y);
+  if (cut('tr')) pts.push(x + w - c, y, x + w, y + c);
+  else pts.push(x + w, y);
+  if (cut('br')) pts.push(x + w, y + h - c, x + w - c, y + h);
+  else pts.push(x + w, y + h);
+  if (cut('bl')) pts.push(x + c, y + h, x, y + h - c);
+  else pts.push(x, y + h);
+  return pts;
+}
+
 export interface BoardPart {
   componentId: string;
   refdes: string;
@@ -645,12 +685,16 @@ export interface BoardPart {
   /** The side it is mounted on (a `layer` constraint). On the bottom its footprint is mirrored: the board is viewed from the top. */
   side: 'top' | 'bottom';
   pads: BoardPad[];
-  /** Body outline and courtyard, absolute axis-aligned rectangles; a round body is the circle in its box. */
-  body: { x: number; y: number; w: number; h: number; round?: boolean };
+  /**
+   * Body outline and courtyard, absolute axis-aligned rectangles; a round body is the circle in its
+   * box. `chamfer` cuts corners off the outline (pin 1's corner, the plus side of a capacitor's base).
+   */
+  body: { x: number; y: number; w: number; h: number; round?: boolean; chamfer?: { size: number; corners: BodyCorner[] } };
   courtyard: { x: number; y: number; w: number; h: number };
-  pin1: { x: number; y: number };
-  /** Its orientation matters (diodes, polarized caps, ICs, connectors): pin 1 is marked. */
+  /** Its orientation matters (diodes, polarized caps, ICs, connectors): `mark` shows which way round it goes. */
   polarized: boolean;
+  /** Its polarity mark on the silkscreen; absent when its card does not say which pin to mark (DRC.POLARITY_UNKNOWN). */
+  mark?: PolarityMark;
   /** A picture of the part from the top (from its part card), for the 3D view. */
   topImage?: { src: string; rot: 0 | 90 | 180 | 270 };
   /** Locked (a hard position constraint); the placer does not move it. */

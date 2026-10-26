@@ -65,6 +65,7 @@ import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy
 import { copperDrc, drawnDrc, edgeDrc, planeViaDrc, splitDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelView } from './panel.ts';
+import { padOfPin, pin1Chamfer, placeMarks, polarityOf } from './marks.ts';
 import { stableJson } from './canonical.ts';
 import { route, type RouteInput, type RouteProgress } from './router.ts';
 import { impedanceDrc, pourGaps, resolveImpedance } from './lines.ts';
@@ -991,7 +992,6 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       pads: [{ number: '1', x: r3(at.x), y: r3(at.y), w: pad, h: pad, shape: 'round', drill: hole.d, ...(hole.plated ? {} : { npth: true }), ...(hole.netId ? { netId: hole.netId } : {}), layers: hole.plated ? [...layers] : [] }],
       body: { x: r3(at.x - hole.d / 2), y: r3(at.y - hole.d / 2), w: hole.d, h: hole.d },
       courtyard: { x: r3(at.x - k / 2), y: r3(at.y - k / 2), w: k, h: k },
-      pin1: { x: r3(at.x), y: r3(at.y) },
       polarized: false,
       locked: true,
     };
@@ -1049,6 +1049,16 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   for (const ref of missing) {
     diagnostics.push({ code: 'DRC.NO_FOOTPRINT', severity: 'warning', message: `${ref} has no footprint (no package data); it is left off the board. Give it one from its datasheet drawing with set_footprint.`, entities: [ref] });
   }
+  // a diode or LED whose pins do not say which is the cathode: the board cannot mark it
+  for (const it of items) {
+    if (polarityOf(it.card) !== 'unknown') continue;
+    diagnostics.push({
+      code: 'DRC.POLARITY_UNKNOWN',
+      severity: 'warning',
+      message: `${it.comp.refdes} is a${it.card.category === 'led' ? 'n LED' : ' diode'}, but the names of its pins (${it.card.pins.map((p) => `${p.number} "${p.name}"`).join(', ')}) do not say which is the cathode, so the silkscreen cannot mark it and the assembler will have to ask. Read it off the datasheet and say it with set_polarity (mark cathode, pin).`,
+      entities: [it.comp.refdes],
+    });
+  }
   const planes = placePlanes(settingsPlanes(d, layers.length as 2 | 4), parts, w, h);
   const viaPlan = planVias(settings.vias ?? [], parts, w, h, rules, (id) => d.nets[id]?.attrs.maxCurrent);
   // the stack-up, and the impedance rules worked out for it (each layer's width and gaps)
@@ -1086,6 +1096,10 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     cutouts: boardCutouts,
     graphics: boardGraphics,
   };
+  // the polarity marks, once every pad and via is where it stays
+  const marked = placeMarks(view);
+  view.parts = marked.parts;
+  view.diagnostics.push(...marked.diagnostics);
   if (settings.panel && parts.length) {
     const panel = panelView(view, settings.panel);
     view.panel = panel.view;
@@ -1218,8 +1232,11 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     ...(copper.stopped ? { stopped: true } : {}),
     ...(copper.reused ? { reused: copper.reused } : {}),
   };
+  // the polarity marks again, clear of the vias the routing put down
+  const marked = placeMarks(routed);
+  routed.parts = marked.parts;
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics, ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
+  const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY'), ...marked.diagnostics, ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
@@ -1626,7 +1643,11 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     const [rw, rh] = swapped(it.rot) ? [h, w] : [w, h];
     return { x: r3(it.x - rw / 2), y: r3(it.y - rh / 2), w: rw, h: rh };
   };
-  const [p1x, p1y] = rotate(it.fp.pin1.x, it.fp.pin1.y, it.rot);
+  // which way round it goes, and the pad its mark is for (the mark is placed once the whole board is)
+  const polarity = polarityOf(it.card);
+  const marked = polarity && polarity !== 'unknown' ? padOfPin(pads, polarity.pin) : undefined;
+  const body = { ...rect(it.fp.body.w, it.fp.body.h), ...(it.fp.body.round ? { round: true } : {}) };
+  const chamfer = marked && polarity !== 'unknown' && polarity?.kind === 'pin1' ? pin1Chamfer(body, marked) : null;
   return {
     componentId: it.comp.id,
     refdes: it.comp.refdes,
@@ -1644,24 +1665,15 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     rot: it.rot,
     side: it.side,
     pads,
-    body: { ...rect(it.fp.body.w, it.fp.body.h), ...(it.fp.body.round ? { round: true } : {}) },
+    body: { ...body, ...(chamfer ? { chamfer } : {}) },
     courtyard: rect(it.cw, it.ch),
-    pin1: { x: r3(it.x + p1x), y: r3(it.y + p1y) },
-    polarized: polarized(it.card),
+    polarized: polarity !== null,
+    ...(marked && polarity && polarity !== 'unknown' ? { mark: { kind: polarity.kind, pad: marked.number, strokes: [], dots: [] } } : {}),
     ...(it.card.topImage ? { topImage: { src: it.card.topImage.src, rot: it.card.topImage.rot } } : {}),
     locked: it.fixed,
     ...(it.intent ? { intent: it.intent.rel ? { anchor: anchorRef(d, it.intent.rel) } : {} } : {}),
     ...(it.by && (it.fixed || it.intent) ? { by: it.by } : {}),
   };
-}
-
-/**
- * Whether a part's orientation matters, so pin 1 is marked: not for two-pin resistors, capacitors,
- * inductors and crystals whose pins carry no polarity (+/−, anode/cathode); for everything else.
- */
-function polarized(card: PartCard): boolean {
-  if (card.pins.length !== 2 || !['resistor', 'capacitor', 'inductor', 'crystal'].includes(card.category)) return true;
-  return card.pins.some((p) => /^([+−-]|a|k|anode|cathode)$/i.test(p.name));
 }
 
 const anchorRef = (d: Design, compId: string) => d.components[compId]?.refdes ?? compId;

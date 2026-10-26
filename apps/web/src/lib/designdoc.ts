@@ -52,6 +52,7 @@ const BOARD_STYLE = `
 .brd .via .drill { fill: #fff; stroke: none; }
 .brd .silk { fill: none; stroke: #222; stroke-width: 0.1; }
 .brd .silkdot { fill: #222; }
+.brd .silkmark { fill: none; stroke: #222; stroke-linecap: round; }
 .brd .ref { fill: #000; text-anchor: middle; dominant-baseline: central; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .brd .sgfx.fill { fill: #555; stroke: none; }
 .brd .sgfx.outline { fill: none; stroke: #555; stroke-linejoin: round; }
@@ -59,14 +60,17 @@ const BOARD_STYLE = `
 .brd .part.bottom .pad:not(.tht) { fill: #4f86d2; }
 .brd .part.bottom .silk { stroke: #2f6fc6; stroke-dasharray: 0.4 0.25; }
 .brd .part.bottom .silkdot, .brd .part.bottom .ref { fill: #2f6fc6; }
+.brd .part.bottom .silkmark { stroke: #2f6fc6; }
 .asm .pad { fill: #d4d4d4; }
 .asm .via, .asm .sgfx { display: none; }
 .asm .silk { stroke: #000; stroke-width: 0.15; }
 .asm .silkdot { fill: #000; }
+.asm .silkmark { stroke: #000; }
 .asm .ref { font-weight: 700; }
 .asm.side .part.bottom .pad:not(.tht) { fill: #d4d4d4; }
 .asm.side .part.bottom .silk { stroke: #000; stroke-dasharray: none; }
 .asm.side .part.bottom .silkdot, .asm.side .part.bottom .ref { fill: #000; }
+.asm.side .part.bottom .silkmark { stroke: #000; }
 .brd .dims .dl { fill: none; stroke: #000; }
 .brd .dims .da { fill: #000; stroke: none; }
 .brd .dims text { fill: #000; text-anchor: middle; dominant-baseline: central; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }

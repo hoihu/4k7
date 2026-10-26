@@ -3,7 +3,7 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
-import { boardPolygon, cutoutPolygon, figureDepths, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type PanelView } from '@4k7/schema';
+import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type PanelView } from '@4k7/schema';
 
 export interface FabFile {
   name: string;
@@ -200,16 +200,31 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFi
         if (run.length >= 4) silk.line([run[0]!, run[1]!, run.at(-2)!, run.at(-1)!], SILK_WIDTH);
       }
     };
+    // the polarity marks first (the kernel placed them clear of copper, holes and the edge), and
+    // the refdes texts keep off them
     const texts: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    for (const part of parts) {
+      for (const s of part.mark?.strokes ?? []) {
+        silk.line(s.pts, s.w);
+        const xs = s.pts.filter((_, i) => i % 2 === 0);
+        const ys = s.pts.filter((_, i) => i % 2 === 1);
+        texts.push({ x0: Math.min(...xs) - s.w / 2, y0: Math.min(...ys) - s.w / 2, x1: Math.max(...xs) + s.w / 2, y1: Math.max(...ys) + s.w / 2 });
+      }
+      for (const d of part.mark?.dots ?? []) {
+        silk.circle(d.x, d.y, d.d);
+        texts.push({ x0: d.x - d.d / 2, y0: d.y - d.d / 2, x1: d.x + d.d / 2, y1: d.y + d.d / 2 });
+      }
+    }
     for (const part of parts) {
       const r = part.body;
       if (r.round) {
         const n = 48;
         clipped(Array.from({ length: n + 1 }, (_, i) => [r.x + r.w / 2 + (r.w / 2) * Math.cos((2 * Math.PI * i) / n), r.y + r.h / 2 + (r.w / 2) * Math.sin((2 * Math.PI * i) / n)]).flat());
-      } else clipped([r.x, r.y, r.x + r.w, r.y, r.x + r.w, r.y + r.h, r.x, r.y + r.h, r.x, r.y]);
-      // pin-1 mark where the orientation matters: a short dash next to pin 1 (a dot would
-      // disappear in the clipping)
-      if (part.polarized) clipped([part.pin1.x - 0.2, part.pin1.y, part.pin1.x + 0.2, part.pin1.y]);
+      } else {
+        // the body, with pin 1's corner chamfered
+        const o = bodyOutline(r);
+        clipped([...o, o[0]!, o[1]!]);
+      }
       // refdes above the part, else below, else on the body
       const th = Math.min(1, Math.max(0.6, Math.min(r.w, r.h) * 0.6));
       const tw = textWidth(part.refdes, th);
