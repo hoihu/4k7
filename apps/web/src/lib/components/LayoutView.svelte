@@ -1,6 +1,6 @@
 <script lang="ts">
   import { boardStep, fabFiles, panelFabFiles, zip } from '@4k7/fab';
-  import { planeNames, userPlaced, whose, type BoardDiagnostic, type CopperLayer } from '@4k7/schema';
+  import { planeNames, userPlaced, whose, type BoardDiagnostic, type CopperLayer, type HousePlacement } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
   import BoardCanvas from './BoardCanvas.svelte';
@@ -173,10 +173,14 @@
       }
     }
     const name = projectName();
+    // where the house's own footprints lie on the pads (the check held each land against them): the
+    // pick-and-place in the house's frame for those parts, so it places them without turning them first
+    const placements = Object.assign({}, ...(checked?.lines.map((l) => l.placements ?? {}) ?? [])) as Record<string, HousePlacement>;
     // the BOM in the form the house the parts are sourced for reads
-    const files = panel ? panelFabFiles(board, name, app.house.id) : fabFiles(board, name, app.house.id);
+    const files = panel ? panelFabFiles(board, name, app.house.id, placements) : fabFiles(board, name, app.house.id, placements);
     download(new Blob([zip(files) as BlobPart], { type: 'application/zip' }), `${name.replace(/[^\w.-]+/g, '_')}-${panel ? 'panel' : 'fab'}.zip`);
     const stop = checked?.lines.filter(lineBlocks).flatMap((l) => l.refs) ?? [];
+    const framed = Object.keys(placements).length;
     const stock = !sourced
       ? ''
       : failed
@@ -186,7 +190,8 @@
           : stop.length
             ? ` · ${stop.length > 6 ? `${stop.length} parts` : stop.join(', ')} stop${stop.length === 1 ? 's' : ''} the order (Sourcing says why)`
             : ` · every part checked at ${app.house.name}`;
-    app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}${stock}`);
+    const frame = framed ? ` · ${framed} part${framed === 1 ? '' : 's'} placed in ${whose(app.house)} own frame` : '';
+    app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}${stock}${frame}`);
   }
 
   /** The board and its parts in 3D as a STEP file, for a mechanical CAD program. */

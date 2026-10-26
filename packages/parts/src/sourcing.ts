@@ -4,9 +4,9 @@
  * replacements for the ones in trouble). What is particular to a house comes from its AssemblyHouse
  * entry (packages/schema/src/sourcing.ts) and its catalogue, a PartSource (JLCPCB: jlc.ts).
  */
-import { currencySymbol, money, parseQuantity, STOCK_MARGIN, whose, type AssemblyHouse, type HouseFootprint, type PartCard, type PartCategory, type PartQuery, type SupplierPart } from '@4k7/schema';
+import { currencySymbol, money, parseQuantity, STOCK_MARGIN, whose, type AssemblyHouse, type HouseFootprint, type HousePlacement, type PartCard, type PartCategory, type PartQuery, type SupplierPart } from '@4k7/schema';
 import type { AssemblyQuote, CostEstimate, QuoteOrder } from './cost.ts';
-import { fitLand, type PlacedLand } from './land.ts';
+import { fitLand, type LandFit, type PlacedLand } from './land.ts';
 import { canPackage } from './packages.ts';
 
 /** A house's catalogue. */
@@ -164,6 +164,11 @@ export interface StockLine {
   replacements: SupplierPart[];
   /** What the replacements have in common with the part ("same resistance and package"). */
   replacementBasis?: string;
+  /**
+   * By refdes, where the house's own footprint for the part lies on the board, for the components on
+   * the top side whose land fits it: the pick-and-place file in the house's frame (fab: pickAndPlace).
+   */
+  placements?: Record<string, HousePlacement>;
 }
 
 export interface StockReport {
@@ -310,8 +315,12 @@ function settle(l: StockLine, comps: SourcedComponent[], house: AssemblyHouse, f
   for (const c of comps) {
     // the land the part needs against the one on the board, where the house has a footprint for the
     // part: that decides, not what the catalogue calls the package
-    const land = footprint && c.land ? landMismatch(c.land, footprint, l.part, c) : undefined;
+    const fit = footprint && c.land ? fitLand(c.land, footprint) : undefined;
+    const land = fit ? landMismatch(fit, c.land!, footprint!, l.part, c) : undefined;
     if (land) found.set(land, [...(found.get(land) ?? []), c.refdes]);
+    // where the house's part lies on the pads: its pick-and-place in the house's frame (the top side:
+    // how a house counts a part on the bottom side is not settled here, so those keep the board's)
+    if (fit && !fit.problems.length && !c.land!.bottom) (l.placements ??= {})[c.refdes] = { rotation: fit.rotation, at: fit.at };
     // the component's own MPN is the same part, whatever the catalogue calls its package; where the
     // land was compared the package's name still counts when it says a size (an electrolytic's can, a
     // chip size: a 6.3 mm can lies on an 8 mm can's pads well enough, but it is the wrong part)
@@ -327,8 +336,7 @@ function settle(l: StockLine, comps: SourcedComponent[], house: AssemblyHouse, f
  * Why the part the house buys does not fit the component's land (its footprint against the house's,
  * fitLand), with the package that would fit it when there is one: null when it fits.
  */
-function landMismatch(land: PlacedLand, footprint: HouseFootprint, part: SupplierPart, c: SourcedComponent): string | null {
-  const fit = fitLand(land, footprint);
+function landMismatch(fit: LandFit, land: PlacedLand, footprint: HouseFootprint, part: SupplierPart, c: SourcedComponent): string | null {
   if (!fit.problems.length) return null;
   const fits = canPackage(part.package);
   const instead = fits && c.pkg && !samePackage(fits, c.pkg) ? ` Package ${fits} fits this part (set_param package), or choose a part for ${land.name}.` : '';

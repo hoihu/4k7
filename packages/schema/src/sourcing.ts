@@ -81,6 +81,17 @@ export interface HouseFootprint {
   }[];
 }
 
+/**
+ * Where a house's own footprint for a part lies on the board: turned by `rotation` (degrees
+ * counter-clockwise from its library's 0°, seen from the top, as the house's pick-and-place file
+ * counts) with its origin `at` from the part's centre (mm, board axes, y down). The pick-and-place
+ * file written in the house's frame gives these, so the house places its part on our pads as it is.
+ */
+export interface HousePlacement {
+  rotation: number;
+  at: [number, number];
+}
+
 /** A catalogue search. */
 export interface PartQuery {
   /** Words of the catalogue description or a part number ("passive buzzer", "AMS1117-3.3"). */

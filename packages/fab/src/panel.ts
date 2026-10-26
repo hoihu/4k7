@@ -4,7 +4,7 @@
  * fiducials. Designators get the copy's number ("R1_2"), so the BOM counts the whole panel and
  * the pick-and-place lists every placement on it.
  */
-import type { BoardPart, BoardView, PanelView, Zone, ZoneCut } from '@4k7/schema';
+import type { BoardPart, BoardView, HousePlacement, PanelView, Zone, ZoneCut } from '@4k7/schema';
 import { bom, gerbers, pickAndPlace, type FabFile } from './gerber.ts';
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
@@ -98,11 +98,13 @@ export function panelBoard(b: BoardView, panel: PanelView): BoardView {
   };
 }
 
-/** Gerbers, drill, BOM (in the assembly house's form) and pick-and-place of the panel ("<project>-panel-…"). */
-export function panelFabFiles(b: BoardView, project: string, house?: string): FabFile[] {
+/** Gerbers, drill, BOM (in the assembly house's form) and pick-and-place of the panel ("<project>-panel-…"); each copy's parts in the house's frame where `placements` say it. */
+export function panelFabFiles(b: BoardView, project: string, house?: string, placements: Record<string, HousePlacement> = {}): FabFile[] {
   if (!b.panel) throw new Error('The board has no panel (set_panel).');
   const p = panelBoard(b, b.panel);
   const name = `${project}-panel`;
   const base = name.replace(/[^\w.-]+/g, '_');
-  return [...gerbers(p, name, b.panel), { name: `${base}-BOM.csv`, content: bom(p, house) }, { name: `${base}-PnP.csv`, content: pickAndPlace(p) }];
+  // a copy's part is the board's moved: its placement is the same, from its own centre
+  const copies = Object.fromEntries(b.panel.copies.flatMap((_, i) => Object.entries(placements).map(([ref, at]) => [`${ref}_${i + 1}`, at])));
+  return [...gerbers(p, name, b.panel), { name: `${base}-BOM.csv`, content: bom(p, house) }, { name: `${base}-PnP.csv`, content: pickAndPlace(p, copies) }];
 }

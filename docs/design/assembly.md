@@ -1,6 +1,6 @@
 # Assembly: what the assembly house sees
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: polarity marks, the land check and SMD electrolytics 2026-10-26.
+> Part of the [architecture](../ARCHITECTURE.md). Status: polarity marks, the land check, SMD electrolytics and the pick-and-place in the house's frame 2026-10-26.
 
 An assembly house places every part from the BOM and the pick-and-place file, and checks the result
 against the board before it solders: its engineers draw their own model of each part over our pads
@@ -122,5 +122,32 @@ its values.
 Exporting the fab files runs the stock check first when the parts carry the house's numbers (stock,
 each part against its component, each land against the house's footprint), then writes the zip and
 names the parts that stop the order; the Sourcing section says why. The files are written either way:
-they are what a quote is made from.
+they are what a quote is made from. The pick-and-place in the zip is in the house's frame for every
+part whose land the check held against its footprint (§6), and the message says for how many.
+
+## 6. The pick-and-place in the house's frame
+
+A pick-and-place file says where each part goes and how far it is turned, counted from the house's
+own footprint for the part at 0°, counter-clockwise seen from the top, and placed by that footprint's
+origin. The board's own frame is not the house's: JLCPCB's library draws a SOIC-8, a DFN, a SOT-23 and
+the WS2812B with pin 1 at the bottom where ours has it at the top left, so its engineers turned every
+one of those parts on spiral2 by hand ("Corrected Part Placement") and asked about the ones they could
+not check against the silkscreen.
+
+The land check of §3 already lays the house's footprint on ours: `fitLand` returns its rotation and
+where its origin lies (`at`, from the part's centre). The stock check keeps both for each component on
+the top side whose land fits (`StockLine.placements`), and the export writes them (`pickAndPlace(b,
+placements)`, `fabFiles`, each copy of a panel too): that part's row gets the house's rotation and
+the origin's position. Every other part keeps the board's frame as before: no footprint read, a land
+that does not fit (the order stops there anyway), and parts on the bottom side, where how a house
+counts the rotation (seen from the bottom, mirrored) is not settled here.
+
+On spiral2 this gives the rotations JLCPCB's engineers set: the 48 WS2812B, U6 (DFN), Q1 and U1 (SOIC)
+and Q2 (SOT-23) at 270° instead of 0°, U2 (SOT-223) and U4 at 180° instead of 270°, U5 (SOT-23-5) at
+0° instead of 90°; J2 (USB-C) stays at 0° but moves 1.2 mm to its footprint's origin; the rest is as
+before. Counter-clockwise is how the KiCad plugins for JLCPCB count too: their tables turn KiCad's
+SOIC and DFN (pin 1 at the top left, as ours) by 270°, as the fit does. Their fixed table goes by the
+footprint's name; the fit goes by the part's own footprint, which differs between parts of one package
+(JLCPCB's SOT-23 used to have its pins 1 and 2 along the bottom, now on the right), so it needs no
+table.
 
