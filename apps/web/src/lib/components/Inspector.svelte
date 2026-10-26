@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ASSEMBLY_HOUSES, currencySymbol, feeFreeTiers, whose, type ParamSpec, type SupplierPart } from '@4k7/schema';
-  import { describePart, lifecycleWarning, sourcingMismatch, stockState } from '@4k7/parts';
+  import { canPackage, describePart, lifecycleWarning, samePackage, sourcingMismatch, stockState } from '@4k7/parts';
   import { app, type InspectorTab } from '../app.svelte.ts';
   import { catalogueOf } from '../sourcing.ts';
 
@@ -168,15 +168,16 @@
       if (seq === findSeq) findBusy = false;
     }
   }
-  /** Take a search result: its number, and its package when the component's differs. */
+  /** Take a search result: its number, and its package when the component's differs (an electrolytic's can as the package that fits it). */
   async function pick(p: SupplierPart) {
     const param = house.param;
     if (!info || !param) return;
     const ref = info.refdes;
-    const pkgDiffers = !!p.package && !!info.package && (effPkg ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '') !== p.package.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const theirs = canPackage(p.package) ?? p.package;
+    const pkgDiffers = !!theirs && !!info.package && !samePackage(effPkg ?? '', theirs);
     const what = p.mpn !== p.sku ? `${p.sku} (${p.mpn})` : p.sku;
     let ok = false;
-    if (pkgDiffers) ok = await app.userEdit(`${ref}: ${what}, package ${p.package}`, [{ op: 'set_param', ref, params: { [param]: p.sku, package: p.package } }]);
+    if (pkgDiffers) ok = await app.userEdit(`${ref}: ${what}, package ${theirs}`, [{ op: 'set_param', ref, params: { [param]: p.sku, package: theirs } }]);
     if (!ok) ok = await app.userEdit(`${ref}: ${what}`, [{ op: 'set_param', ref, params: { [param]: p.sku } }]);
     if (ok) findOpen = false;
   }
@@ -188,7 +189,7 @@
     if (passiveKind === 'resistor' && (a.Resistance ?? a.Value)) params.resistance = (a.Resistance ?? a.Value)!.replace(/Ω$/, '');
     if (passiveKind === 'capacitor' && (a.Capacitance ?? a.Value)) params.capacitance = (a.Capacitance ?? a.Value)!;
     if (passiveKind === 'capacitor' && a['Voltage Rated']) params.voltage = a['Voltage Rated'];
-    if (sourcePart.package && info.package) params.package = sourcePart.package;
+    if (sourcePart.package && info.package) params.package = canPackage(sourcePart.package) ?? sourcePart.package;
     if (!Object.keys(params).length) return;
     void app.userEdit(`${info.refdes}: values of ${sourcePart.sku}`, [{ op: 'set_param', ref: info.refdes, params }]);
   }

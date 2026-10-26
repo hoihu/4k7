@@ -19,6 +19,7 @@ import {
   type BoardDiagnostic,
   type BoardPad,
   type BoardPart,
+  type BodyCorner,
   type BoardView,
   type Component,
   type Constraint,
@@ -138,8 +139,13 @@ export function padNet(comp: Pick<Component, 'pins'>, pad: { number: string; als
 
 /** A footprint as it lies on the bottom side, seen from the top: flipped about its vertical axis. */
 function mirrored(fp: Footprint): Footprint {
-  return { ...fp, pads: fp.pads.map((p) => ({ ...p, x: -p.x || 0 })), pin1: { x: -fp.pin1.x || 0, y: fp.pin1.y } };
+  const chamfer = fp.body.chamfer ? { ...fp.body.chamfer, corners: fp.body.chamfer.corners.map((c) => cornerAt(-CORNER[c][0], CORNER[c][1])) } : undefined;
+  return { ...fp, pads: fp.pads.map((p) => ({ ...p, x: -p.x || 0 })), pin1: { x: -fp.pin1.x || 0, y: fp.pin1.y }, body: { ...fp.body, ...(chamfer ? { chamfer } : {}) } };
 }
+
+/** A body corner as a direction from the body's centre (y down), and back. */
+const CORNER: Record<BodyCorner, [number, number]> = { tl: [-1, -1], tr: [1, -1], br: [1, 1], bl: [-1, 1] };
+const cornerAt = (x: number, y: number): BodyCorner => (y < 0 ? (x < 0 ? 'tl' : 'tr') : x < 0 ? 'bl' : 'br');
 
 /** Whether two parts compete for the same area: on the same side, or one of them goes through the board. */
 const collide = (a: Item, b: Item) => a.tht || b.tht || a.side === b.side;
@@ -1647,7 +1653,9 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
   const polarity = polarityOf(it.card);
   const marked = polarity && polarity !== 'unknown' ? padOfPin(pads, polarity.pin) : undefined;
   const body = { ...rect(it.fp.body.w, it.fp.body.h), ...(it.fp.body.round ? { round: true } : {}) };
-  const chamfer = marked && polarity !== 'unknown' && polarity?.kind === 'pin1' ? pin1Chamfer(body, marked) : null;
+  // the footprint's own chamfered corners (an electrolytic's + side), turned with the part; else pin 1's corner
+  const own = it.fp.body.chamfer && !it.fp.body.round ? { size: it.fp.body.chamfer.size, corners: it.fp.body.chamfer.corners.map((c) => cornerAt(...rotate(...CORNER[c], it.rot))) } : null;
+  const chamfer = own ?? (marked && polarity !== 'unknown' && polarity?.kind === 'pin1' ? pin1Chamfer(body, marked) : null);
   return {
     componentId: it.comp.id,
     refdes: it.comp.refdes,

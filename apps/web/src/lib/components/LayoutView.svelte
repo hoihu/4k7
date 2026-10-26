@@ -150,19 +150,42 @@
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 
-  /** Gerbers, drill, BOM and pick-and-place as one zip: of the board, or of its panel. */
-  function exportFab(panel = false) {
+  /**
+   * Gerbers, drill, BOM and pick-and-place as one zip: of the board, or of its panel. The parts are
+   * ordered with these files, so where they carry the house's numbers the stock check runs first
+   * (stock, the part against its component, its land against the house's footprint) and the flash
+   * names the parts that stop the order; the Sourcing section shows why.
+   */
+  async function exportFab(panel = false) {
     if (!b) return;
-    const name = projectName();
-    // the BOM in the form the house the parts are sourced for reads
-    const files = panel ? panelFabFiles(b, name, app.house.id) : fabFiles(b, name, app.house.id);
-    download(new Blob([zip(files) as BlobPart], { type: 'application/zip' }), `${name.replace(/[^\w.-]+/g, '_')}-${panel ? 'panel' : 'fab'}.zip`);
-    // the parts are ordered with these files: say when their stock was not checked, or the last check found parts that stop the order
-    const stop = app.stockReport?.lines.filter(lineBlocks).length ?? 0;
+    const board = b;
     // (a board part carries each house's number under its parameter's name)
     const param = app.house.param as 'lcsc' | 'eurocircuits' | undefined;
-    const sourced = !!param && b.parts.some((p) => !!p[param]);
-    const stock = !sourced ? '' : !app.stockReport ? ' · stock not checked yet (Sourcing)' : stop ? ` · ${stop} part${stop > 1 ? 's' : ''} stop the order at the last stock check (Sourcing)` : '';
+    const sourced = !!param && board.parts.some((p) => !!p[param]);
+    let checked = app.stockReport;
+    let failed = '';
+    if (sourced && !app.house.noCatalogue) {
+      app.flash(`Checking the parts at ${app.house.name} before the export…`);
+      try {
+        checked = await app.checkStock();
+      } catch (e) {
+        failed = (e as Error).message;
+      }
+    }
+    const name = projectName();
+    // the BOM in the form the house the parts are sourced for reads
+    const files = panel ? panelFabFiles(board, name, app.house.id) : fabFiles(board, name, app.house.id);
+    download(new Blob([zip(files) as BlobPart], { type: 'application/zip' }), `${name.replace(/[^\w.-]+/g, '_')}-${panel ? 'panel' : 'fab'}.zip`);
+    const stop = checked?.lines.filter(lineBlocks).flatMap((l) => l.refs) ?? [];
+    const stock = !sourced
+      ? ''
+      : failed
+        ? ` · the parts could not be checked (${failed})`
+        : !checked
+          ? ' · stock not checked yet (Sourcing)'
+          : stop.length
+            ? ` · ${stop.length > 6 ? `${stop.length} parts` : stop.join(', ')} stop${stop.length === 1 ? 's' : ''} the order (Sourcing says why)`
+            : ` · every part checked at ${app.house.name}`;
     app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}${stock}`);
   }
 

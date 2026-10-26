@@ -287,7 +287,12 @@ function explicitBody(pkg: PackageInfo, pads: Pad[], notes: string[]): Body3D {
   const boxes: Box3[] = [];
   const cylinders: Cyl3[] = [];
   if (round) cylinders.push({ x: 0, y: 0, z0, z1: H, r: r3(bw / 2), mat: 'body' });
-  else boxes.push(box(-bw / 2, -bl / 2, z0, bw / 2, bl / 2, H, 'body'));
+  else if (pkg.body_chamfer) {
+    // an SMD electrolytic: its plastic base plate, the can standing on it
+    const plate = r3(Math.min(0.6, H / 4));
+    boxes.push(box(-bw / 2, -bl / 2, z0, bw / 2, bl / 2, plate, 'body'));
+    cylinders.push({ x: 0, y: 0, z0: plate, z1: H, r: r3(Math.min(bw, bl) / 2 - 0.15), mat: 'body' });
+  } else boxes.push(box(-bw / 2, -bl / 2, z0, bw / 2, bl / 2, H, 'body'));
   for (const p of pads) {
     if (p.drill) cylinders.push({ x: p.x, y: p.y, z0: -3, z1: z0 + 0.01, r: r3(Math.max(0.15, (p.drill - 0.25) / 2)), mat: 'lead' });
     else boxes.push(box(p.x - p.w * 0.4, p.y - p.h * 0.4, 0, p.x + p.w * 0.4, p.y + p.h * 0.4, 0.15, 'lead'));

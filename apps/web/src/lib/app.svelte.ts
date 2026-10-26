@@ -31,7 +31,7 @@ import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
-import { assemblyFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
+import { assemblyFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, placedLand, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
 import { checkDesignCost, checkDesignStock, checkDesignValues, sourcingTool, type BoardFacts, type CostReport, type StockReport, type SupplierPart } from './sourcing.ts';
@@ -884,17 +884,26 @@ class AppState {
 
   /* -------------------------------- sourcing ------------------------------- */
 
-  /** The working copy's components as the stock check sees them: what each is, its values, its package. */
+  /**
+   * The working copy's components as the stock check sees them: what each is, its values, its
+   * package, and its land as it lies on the board (held against the house's footprint for the part).
+   */
   private async sourcedComponents(): Promise<SourcedComponent[]> {
     type Info = { refdes: string; part: string; category?: SourcedComponent['category']; params: Record<string, string>; package?: { name: string } };
     const refs = this.k?.summary.components.map((c) => c.refdes) ?? [];
-    const infos = (await Promise.all(refs.map((ref) => this.kernel.query({ op: 'get_component', ref })))) as (Info | { error: string })[];
+    const [infos, board] = await Promise.all([
+      Promise.all(refs.map((ref) => this.kernel.query({ op: 'get_component', ref }))) as Promise<(Info | { error: string })[]>,
+      this.kernel.boardPlacement().catch(() => null),
+    ]);
+    const placed = new Map((board?.parts ?? []).map((p) => [p.refdes, p]));
     return infos.flatMap((c) => {
       if (!('refdes' in c)) return [];
       const card = this.designParts[c.part];
       const pkg = c.package?.name ?? c.params.package ?? card?.package;
       const mpn = c.params.mpn ?? card?.mpn;
-      return [{ refdes: c.refdes, ...(c.category ? { category: c.category } : {}), params: c.params, ...(pkg ? { pkg } : {}), ...(mpn ? { mpn } : {}) }];
+      const p = placed.get(c.refdes);
+      const land = p && card ? placedLand(p, (pin) => card.pins.find((x) => x.number === pin)?.name) : undefined;
+      return [{ refdes: c.refdes, ...(c.category ? { category: c.category } : {}), params: c.params, ...(pkg ? { pkg } : {}), ...(mpn ? { mpn } : {}), ...(land ? { land } : {}) }];
     });
   }
 

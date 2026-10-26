@@ -59,6 +59,28 @@ export interface SupplierPart {
   placement?: PlacementKind;
 }
 
+/**
+ * The land an assembly house has for one of its parts: the footprint its placement and its
+ * engineers use (JLCPCB: the part's EasyEDA footprint). Pads in mm from the footprint's origin, top
+ * view, y down, as the house draws it at 0°.
+ */
+export interface HouseFootprint {
+  /** The house's name for it ("CAP-SMD_BD6.3-L6.6-W6.6-FD"). */
+  name: string;
+  pads: {
+    /** Its pin number, as the house numbers it ("1", "A1B12"). */
+    number: string;
+    /** The pin's name in the house's symbol ("VIN", "K", "+"), when it has one. */
+    name?: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    /** A drilled (through-hole) pad. */
+    drill?: boolean;
+  }[];
+}
+
 /** A catalogue search. */
 export interface PartQuery {
   /** Words of the catalogue description or a part number ("passive buzzer", "AMS1117-3.3"). */
@@ -209,6 +231,8 @@ export interface AssemblyHouse {
   reserveNote: string;
   /** Why the app cannot look its parts up, when it cannot (it keeps no catalogue the app can read). */
   noCatalogue?: string;
+  /** Its parts library has a footprint for each part (the one its placement uses): the stock check holds each land against it. */
+  footprints?: boolean;
   /** Its ways of assembling an order, cheapest first, and where their prices and limits were read (`name`: what the source is, "price page" when absent). */
   services: readonly AssemblyService[];
   prices: { url: string; name?: string; limitsUrl?: string; checked: string };
@@ -250,6 +274,8 @@ export const JLCPCB_ASSEMBLY: AssemblyHouse = {
   numberName: 'LCSC number',
   numberLabel: 'LCSC',
   example: 'C25804',
+  // its parts library's footprints are EasyEDA's (packages/parts/src/jlc.ts)
+  footprints: true,
   tiers: [
     { name: 'Basic', fee: false },
     { name: 'Preferred', fee: false },

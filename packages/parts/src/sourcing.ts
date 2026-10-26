@@ -4,8 +4,10 @@
  * replacements for the ones in trouble). What is particular to a house comes from its AssemblyHouse
  * entry (packages/schema/src/sourcing.ts) and its catalogue, a PartSource (JLCPCB: jlc.ts).
  */
-import { currencySymbol, money, parseQuantity, STOCK_MARGIN, type AssemblyHouse, type PartCard, type PartCategory, type PartQuery, type SupplierPart } from '@4k7/schema';
+import { currencySymbol, money, parseQuantity, STOCK_MARGIN, whose, type AssemblyHouse, type HouseFootprint, type PartCard, type PartCategory, type PartQuery, type SupplierPart } from '@4k7/schema';
 import type { AssemblyQuote, CostEstimate, QuoteOrder } from './cost.ts';
+import { fitLand, type PlacedLand } from './land.ts';
+import { canPackage } from './packages.ts';
 
 /** A house's catalogue. */
 export interface PartSource {
@@ -14,6 +16,8 @@ export interface PartSource {
   lookup(sku: string): Promise<SupplierPart | null>;
   /** The house's online quote for assembling an order, at a house that publishes no fees (PCBWay). */
   quote?(order: QuoteOrder): Promise<AssemblyQuote>;
+  /** The land the house has for one of its parts (its library's footprint); null when it has none for that number. */
+  footprint?(sku: string): Promise<HouseFootprint | null>;
 }
 
 /**
@@ -36,6 +40,8 @@ export function withFallback(first: PartSource, second: PartSource, note?: (why:
     search: (q) => run(() => first.search(q), () => second.search(q)),
     lookup: (sku) => run(() => first.lookup(sku), () => second.lookup(sku)),
     ...(first.quote ? { quote: first.quote.bind(first) } : {}),
+    // footprints: the house's own library, else a copy of it
+    ...(first.footprint && second.footprint ? { footprint: (sku: string) => run(() => first.footprint!(sku), () => second.footprint!(sku)) } : first.footprint ? { footprint: first.footprint.bind(first) } : {}),
   };
 }
 
@@ -89,7 +95,10 @@ export function sourcingMismatch(card: Pick<PartCard, 'category'>, params: Recor
     const have = parseQuantity(part.attributes['Voltage Rated']);
     if (want && have && have.value < want.value * 0.999) out.push(`voltage: the part is rated ${part.attributes['Voltage Rated']}, the component asks for ${params.voltage}`);
   }
-  if (effectivePackage && part.package && !samePackage(effectivePackage, part.package)) out.push(`package: the part is ${part.package}, the component ${effectivePackage}`);
+  if (effectivePackage && part.package && !samePackage(effectivePackage, part.package)) {
+    const fits = canPackage(part.package);
+    out.push(`package: the part is ${part.package}, the component ${effectivePackage}${fits ? ` (package ${fits} fits the part: set_param package, or choose a part for ${effectivePackage})` : ''}`);
+  }
   return out;
 }
 
@@ -101,7 +110,8 @@ const normPkg = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
  * Eurocircuits lists many parts) and a name of that family ("SOIC-8"). "SOT-23" and "SOT-23-5" differ.
  */
 export function samePackage(a: string, b: string): boolean {
-  const [x, y] = [normPkg(a), normPkg(b)];
+  // an electrolytic's can as a catalogue lists it ("SMD,D6.3xL5.4mm") is the package that fits it ("CAP-6.3x5.4")
+  const [x, y] = [normPkg(canPackage(a) ?? a), normPkg(canPackage(b) ?? b)];
   const family = (s: string) => /^[A-Z]+$/.test(s);
   return x === y || (family(x) && y.startsWith(x)) || (family(y) && x.startsWith(y));
 }
@@ -117,6 +127,8 @@ export interface SourcedComponent {
   /** The package it has (a generic part's pick or default, else its card's). */
   pkg?: string;
   mpn?: string;
+  /** Its land as it lies on the board: the check compares it with the house's footprint for the part (fitLand). */
+  land?: PlacedLand;
 }
 
 /**
@@ -172,6 +184,11 @@ export interface StockReport {
   unpriced: string[];
   /** The order at each of the house's services, when the board was known (see cost.ts). */
   estimates?: CostEstimate[];
+  /**
+   * The parts whose land was held against the house's own footprint for them (its library's), and
+   * the numbers whose footprint could not be read, with why.
+   */
+  lands?: { compared: number; unread: { sku: string; why: string }[] };
 }
 
 /** Lines that need a look: anything but plenty in stock (or bought for the order), fitting, fee-free, current. */
@@ -231,6 +248,7 @@ export async function checkStock(
   const { house, boards } = opts;
   const { lines, unsourced } = stockLines(components, house, boards);
   const byRef = new Map(components.map((c) => [c.refdes, c]));
+  const lands: NonNullable<StockReport['lands']> = { compared: 0, unread: [] };
   // a house without a catalogue the app can read buys every part for the order: nothing to look up
   if (house.noCatalogue) for (const l of lines) l.state = 'ordered';
   else
@@ -240,7 +258,19 @@ export async function checkStock(
       } catch (e) {
         l.error = (e as Error).message;
       }
-      settle(l, l.refs.map((r) => byRef.get(r)!), house);
+      const comps = l.refs.map((r) => byRef.get(r)!);
+      // the part's own land at the house, for the components that lie on the board
+      let footprint: HouseFootprint | null = null;
+      if (source.footprint && l.part && comps.some((c) => c.land)) {
+        try {
+          footprint = await source.footprint(l.sku);
+          if (footprint) lands.compared += comps.filter((c) => c.land).length;
+          else lands.unread.push({ sku: l.sku, why: `${house.name} has no footprint for it` });
+        } catch (e) {
+          lands.unread.push({ sku: l.sku, why: (e as Error).message });
+        }
+      }
+      settle(l, comps, house, footprint);
     });
   await pool(lines.filter(wantsReplacement), opts.concurrency ?? 4, (l) => findReplacements(l, byRef.get(l.refs[0]!)!, source, house, opts.replacements ?? 3));
   let cost = 0;
@@ -259,11 +289,12 @@ export async function checkStock(
     live: lines.every((l) => l.state !== 'failed' && (!l.part || l.part.live)),
     ...(unpriced.length < lines.length ? { cost: Math.round(cost * 100) / 100 } : {}),
     unpriced,
+    ...(lands.compared || lands.unread.length ? { lands } : {}),
   };
 }
 
 /** The line's state, mismatches and warnings once its part was looked up. */
-function settle(l: StockLine, comps: SourcedComponent[], house: AssemblyHouse) {
+function settle(l: StockLine, comps: SourcedComponent[], house: AssemblyHouse, footprint: HouseFootprint | null = null) {
   const unlisted = l.part === null ? house.unlisted?.(l.sku) : null;
   if (l.error !== undefined) l.state = 'failed';
   else if (unlisted) {
@@ -277,11 +308,31 @@ function settle(l: StockLine, comps: SourcedComponent[], house: AssemblyHouse) {
   if (life) l.warnings = [life];
   const found = new Map<string, string[]>();
   for (const c of comps) {
-    // the component's own MPN is the same part, whatever the catalogue calls its package
+    // the land the part needs against the one on the board, where the house has a footprint for the
+    // part: that decides, not what the catalogue calls the package
+    const land = footprint && c.land ? landMismatch(c.land, footprint, l.part, c) : undefined;
+    if (land) found.set(land, [...(found.get(land) ?? []), c.refdes]);
+    // the component's own MPN is the same part, whatever the catalogue calls its package; where the
+    // land was compared the package's name still counts when it says a size (an electrolytic's can, a
+    // chip size: a 6.3 mm can lies on an 8 mm can's pads well enough, but it is the wrong part)
     const own = !!l.part.mpn && normMpn(l.part.mpn) === normMpn(c.params.mpn ?? c.mpn ?? '');
-    for (const m of sourcingMismatch({ category: c.category ?? 'other' }, c.params, own ? undefined : c.pkg, l.part)) found.set(m, [...(found.get(m) ?? []), c.refdes]);
+    const sized = !!canPackage(l.part.package) || (/^\d{4}$/.test(normPkg(l.part.package)) && /^\d{4}$/.test(normPkg(c.pkg ?? '')));
+    const pkg = own || land || (land === null && !sized) ? undefined : c.pkg;
+    for (const m of sourcingMismatch({ category: c.category ?? 'other' }, c.params, pkg, l.part)) found.set(m, [...(found.get(m) ?? []), c.refdes]);
   }
   l.mismatch = [...found].map(([m, refs]) => (refs.length === comps.length ? m : `${refs.join(', ')}: ${m}`));
+}
+
+/**
+ * Why the part the house buys does not fit the component's land (its footprint against the house's,
+ * fitLand), with the package that would fit it when there is one: null when it fits.
+ */
+function landMismatch(land: PlacedLand, footprint: HouseFootprint, part: SupplierPart, c: SourcedComponent): string | null {
+  const fit = fitLand(land, footprint);
+  if (!fit.problems.length) return null;
+  const fits = canPackage(part.package);
+  const instead = fits && c.pkg && !samePackage(fits, c.pkg) ? ` Package ${fits} fits this part (set_param package), or choose a part for ${land.name}.` : '';
+  return `land: ${part.sku} does not fit footprint ${land.name}${footprint.name ? ` (the part's land is ${footprint.name})` : ''}: ${fit.problems.join('; ')}; the house cannot place it there.${instead}`;
 }
 
 const isPassive = (c: SourcedComponent) => c.category === 'resistor' || c.category === 'capacitor';
@@ -492,6 +543,12 @@ export function stockReportText(r: StockReport, house: AssemblyHouse): string {
   if (r.unsourced.length) {
     const none = house.byMpn && house.param ? `No ${house.numberName} and no manufacturer part number` : `No ${house.numberName}`;
     out.push(`${none} (${house.name} does not assemble them${house.byMpn ? '' : ' from its stock'}; fine for parts soldered by hand): ${r.unsourced.join(', ')}.`);
+  }
+  if (r.lands) {
+    const why = new Map<string, string[]>();
+    for (const u of r.lands.unread) why.set(u.why, [...(why.get(u.why) ?? []), u.sku]);
+    const unread = [...why].map(([w, skus]) => `${skus.length > 3 ? `${skus.length} part numbers` : skus.join(', ')} (${w})`);
+    out.push(`Lands: ${r.lands.compared} component${r.lands.compared === 1 ? '' : 's'} held against ${whose(house)} own footprint for the part${unread.length ? `; not compared: ${unread.join(', ')}` : ''}.`);
   }
   if (r.cost !== undefined) out.push(`Parts ≈ ${money(r.cost, house)} for ${r.boards} board${r.boards === 1 ? '' : 's'} at today's prices, without fees${r.unpriced.length ? ` (no price for ${r.unpriced.join(', ')})` : ''}.`);
   if (house.param && r.lines.some((l) => l.replacements.length)) out.push(`To take a replacement: design_edit set_param ${house.param} on every component of its line.`);

@@ -107,7 +107,7 @@ async function main() {
     allowedOrigin: (o) => server.allowedOrigin(o),
     reveal: (d) => openBrowser(d, log),
     scad,
-    sourcing: sourcing({ log }),
+    sourcing: sourcing({ log, footprintDir: join(configDir(), 'footprints') }),
     log,
   });
   server.setHttpHandler((req, res) => {
