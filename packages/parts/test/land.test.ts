@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { JLCPCB_ASSEMBLY, type HouseFootprint, type SupplierPart } from '@4k7/schema';
+import { JLCPCB_ASSEMBLY, type HouseFootprint, type PackageInfo, type SupplierPart } from '@4k7/schema';
 import { canPackage, checkStock, easyedaFootprint, fitLand, footprintFor, jlcpcbSource, samePackage, standardPackage, stockReportText, tscircuitSource, type PartSource, type PlacedLand, type SourcedComponent } from '../src/index.ts';
 import * as eda from './fixtures/easyeda.ts';
 
 const fp = (raw: unknown) => easyedaFootprint(raw)!;
 
-/** A standard package's land as the board places it: turned clockwise by `rot` (y down), with its pins' names. */
-function land(pkgName: string, names: Record<string, string>, rot = 0, polarity?: PlacedLand['polarity']): PlacedLand {
-  const pkg = standardPackage(pkgName)!;
+/** A package's land (a standard one by name) as the board places it: turned clockwise by `rot` (y down), with its pins' names. */
+function land(pkgName: string | PackageInfo, names: Record<string, string>, rot = 0, polarity?: PlacedLand['polarity']): PlacedLand {
+  const pkg = typeof pkgName === 'string' ? standardPackage(pkgName)! : pkgName;
   const r = footprintFor(pkg, Object.keys(names));
   if (!r.ok) throw new Error(r.reason);
   const turn = (x: number, y: number): [number, number] => (rot === 90 ? [-y, x] : rot === 180 ? [-x, -y] : rot === 270 ? [y, -x] : [x, y]);
@@ -111,7 +111,11 @@ describe('the land against the part the house buys', () => {
         ...[[-4.325, -3.1], [4.325, -3.1], [-4.325, 1.08], [4.325, 1.08]].map(([x, y]) => ({ numbers: ['17'], names: ['SHELL'], x: x!, y: y!, w: 1, h: 2, drill: true })),
       ],
     };
-    expect(fitLand(ours, usb)).toMatchObject({ by: 'name', rotation: 0, problems: [] });
+    const fit = fitLand(ours, usb);
+    expect(fit).toMatchObject({ by: 'name', rotation: 0, problems: [] });
+    // JLCPCB's footprint has its origin 1.2 mm from the body's centre, towards the shield's back legs
+    expect(fit.at[0]).toBeCloseTo(0, 3);
+    expect(fit.at[1]).toBeCloseTo(-1.196, 3);
   });
 
   it('mirrors the house\'s land for a part on the bottom side', () => {
@@ -126,6 +130,34 @@ describe('the land against the part the house buys', () => {
     expect(fit.problems.join(' ')).toContain('no pin of it lands on pad 3 of SOD-3');
     const wide: HouseFootprint = { name: 'wide', pads: [{ number: '1', x: -4, y: 0, w: 1, h: 1 }, { number: '2', x: 4, y: 0, w: 1, h: 1 }] };
     expect(fitLand(three, wide).problems.join(' ')).toMatch(/its pin \d lands 2\.5 mm off pad \d of SOD-3/);
+  });
+});
+
+describe('the house\'s frame: how its own footprint lies on our pads', () => {
+  it('turns JLCPCB\'s footprints counter-clockwise onto ours, as its engineers turned spiral2\'s parts', () => {
+    // its SOIC-8, SOT-23 and DFN footprints and its WS2812B have pin 1 at the bottom; ours at the top left
+    const soic = land('SOIC-8', { 1: 'S', 2: 'S', 3: 'S', 4: 'G', 5: 'D', 6: 'D', 7: 'D', 8: 'D' });
+    expect(fitLand(soic, fp(eda.C16072))).toMatchObject({ rotation: 270, by: 'number', problems: [] });
+    // (turned on the board, the house's rotation turns with it: 90° clockwise is 90 less)
+    expect(fitLand(land('SOIC-8', { 1: 'S', 2: 'S', 3: 'S', 4: 'G', 5: 'D', 6: 'D', 7: 'D', 8: 'D' }, 90), fp(eda.C16072)).rotation).toBe(180);
+    expect(fitLand(land('SOT-23', { 1: 'B', 2: 'E', 3: 'C' }), fp(eda.C2143))).toMatchObject({ rotation: 270, problems: [] });
+    const dfn: PackageInfo = { name: 'DFN-10L', family: 'DFN', pins: 10, pitch_mm: 0.5, body_mm: [3, 3], lead_length_mm: 0.4, lead_width_mm: 0.25, exposed_pad_mm: [1.7, 2.4] };
+    expect(fitLand(land(dfn, Object.fromEntries(Array.from({ length: 11 }, (_, i) => [String(i + 1), `P${i + 1}`]))), fp(eda.C7471904))).toMatchObject({ rotation: 270, problems: [] });
+    const ws2812: PackageInfo = {
+      name: 'PLCC4-5050',
+      family: 'other',
+      pins: 4,
+      body_mm: [5, 5],
+      pads: [
+        { number: '1', x: -1.95, y: -1.65, w: 1.5, h: 0.9 },
+        { number: '2', x: -1.95, y: 1.65, w: 1.5, h: 0.9 },
+        { number: '3', x: 1.95, y: 1.65, w: 1.5, h: 0.9 },
+        { number: '4', x: 1.95, y: -1.65, w: 1.5, h: 0.9 },
+      ],
+    };
+    const led = fitLand(land(ws2812, { 1: 'VDD', 2: 'DOUT', 3: 'VSS', 4: 'DIN' }), fp(eda.C2843785));
+    expect(led).toMatchObject({ rotation: 270, problems: [] });
+    expect(led.at.map((v) => Math.abs(v))).toEqual([0, 0]);
   });
 });
 
@@ -154,6 +186,8 @@ describe('the stock check holds each land against the house\'s footprint', () =>
   it('stops the order for spiral2\'s C1 and C11, and says which package would fit', async () => {
     const r = await checkStock([comp('C1', 'C72505', 'CAP-6.3x5.4', '22uF', chipLand), comp('C11', 'C3342', 'CAP-8x10', '220uF', land('CAP-8x10', { 1: '+', 2: '-' }, 90, { kind: 'plus', pad: '1' }))], catalogue(footprints), { house: JLCPCB_ASSEMBLY, boards: 5 });
     const c1 = r.lines.find((l) => l.sku === 'C72505')!;
+    // a part that does not fit its land has no place in the house's frame
+    expect(c1.placements).toBeUndefined();
     expect(c1.mismatch).toEqual(['land: C72505 does not fit footprint CAP-6.3x5.4 (the part\'s land is CAP-SMD_BD6.3-L6.6-W6.6-FD): its pads are 3.5 × 1.2 mm, 5.34 mm apart; the pads of CAP-6.3x5.4 2.2 × 6.8 mm, 5.1 mm apart; the house cannot place it there.']);
     // a 6.3 mm can lies on the 8 mm can's pads well enough, but it is not the part the footprint is for
     const c11 = r.lines.find((l) => l.sku === 'C3342')!;
@@ -165,9 +199,19 @@ describe('the stock check holds each land against the house\'s footprint', () =>
   it('passes the V-chip land, and a can of the same size by name when there is no footprint to compare', async () => {
     const ok = await checkStock([comp('C1', 'C72505', 'CAP-6.3x5.4', '22uF', land('CAP-6.3x5.4', { 1: '+', 2: '-' }, 0, { kind: 'plus', pad: '1' }))], catalogue(footprints), { house: JLCPCB_ASSEMBLY, boards: 5 });
     expect(ok.lines[0]!.mismatch).toEqual([]);
+    // where the house's part lies on the pads, for the pick-and-place in its frame
+    expect(ok.lines[0]!.placements).toEqual({ C1: { rotation: 0, at: [0, 0] } });
     const byName = await checkStock([comp('C1', 'C72505', 'CAP-6.3x5.4', '22uF')], catalogue(undefined), { house: JLCPCB_ASSEMBLY, boards: 5 });
     expect(byName.lines[0]!.mismatch).toEqual([]);
     expect(byName.lands).toBeUndefined();
+  });
+
+  it('leaves a part on the bottom side in the board\'s frame', async () => {
+    const top = land('CAP-6.3x5.4', { 1: '+', 2: '-' }, 0, { kind: 'plus', pad: '1' });
+    const under: PlacedLand = { ...top, bottom: true, pads: top.pads.map((p) => ({ ...p, x: -p.x })) };
+    const r = await checkStock([comp('C1', 'C72505', 'CAP-6.3x5.4', '22uF', under)], catalogue(footprints), { house: JLCPCB_ASSEMBLY, boards: 5 });
+    expect(r.lines[0]!.mismatch).toEqual([]);
+    expect(r.lines[0]!.placements).toBeUndefined();
   });
 
   it('says which footprints it could not read, and why, and still checks the package by name', async () => {

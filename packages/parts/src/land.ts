@@ -33,6 +33,8 @@ export interface LandFit {
   offset: number;
   /** The least an SMD pad of the house's overlaps the one it is paired with (shared area over joint area, 0–1). */
   overlap: number;
+  /** Where the house's footprint's origin lies from the part's centre (mm, board axes, y down), turned and shifted onto our pads. */
+  at: [number, number];
   /** Why the part does not fit the land, in words; empty when it fits. */
   problems: string[];
 }
@@ -106,6 +108,9 @@ interface Trial {
   rest: Theirs[];
   offset: number;
   overlap: number;
+  /** The shift that lays the house's footprint (its origin) on ours. */
+  dx: number;
+  dy: number;
 }
 
 /**
@@ -169,7 +174,7 @@ function trial(ours: PlacedLand, house: HouseFootprint, by: LandFit['by'], rotat
   }
   const offset = Math.max(...pairs.map(([p, q]) => Math.hypot(p.x - q.x, p.y - q.y)));
   const smd = pairs.filter(([p, q]) => !p.drill && !q.drill);
-  return { rotation, by, primary, pairs, rest, offset, overlap: smd.length ? Math.min(...smd.map(([p, q]) => overlap(p, q))) : 1 };
+  return { rotation, by, primary, pairs, rest, offset, overlap: smd.length ? Math.min(...smd.map(([p, q]) => overlap(p, q))) : 1, dx, dy };
 }
 
 /**
@@ -184,7 +189,7 @@ export function fitLand(ours: PlacedLand, house: HouseFootprint): LandFit {
   const problems: string[] = [];
   if (!best) {
     problems.push(`its pins (${house.pads.map((p) => p.number).join(', ')}) do not pair up with the pads of ${ours.name} (${ours.pads.map((p) => p.numbers[0]).join(', ')})`);
-    return { rotation: 0, by: ways[0]!, offset: Infinity, overlap: 0, problems };
+    return { rotation: 0, by: ways[0]!, offset: Infinity, overlap: 0, at: [0, 0], problems };
   }
   // soldered pads with nothing to pair with: a pin without a pad, a pad without a pin
   const lone = ours.pads.filter((p) => !p.drill && !best.pairs.some(([q]) => q === p)).map((p) => p.numbers[0]);
@@ -206,5 +211,6 @@ export function fitLand(ours: PlacedLand, house: HouseFootprint): LandFit {
       problems.push(`its pads are ${size(q)}, ${apart(a[1], b[1])} mm apart; the pads of ${ours.name} ${size(p)}, ${apart(a[0], b[0])} mm apart`);
     } else problems.push(`its pad ${q.number} (${size(q)}) and pad ${p.numbers[0]} of ${ours.name} (${size(p)}) share only ${Math.round(overlap(p, q) * 100)} % of their area`);
   }
-  return { rotation: best.rotation, by: best.by, offset: r2(best.offset), overlap: Math.round(best.overlap * 100) / 100, problems };
+  const r3 = (v: number) => Math.round(v * 1000) / 1000 || 0;
+  return { rotation: best.rotation, by: best.by, offset: r2(best.offset), overlap: Math.round(best.overlap * 100) / 100, at: [r3(best.dx), r3(best.dy)], problems };
 }

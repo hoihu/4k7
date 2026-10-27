@@ -157,7 +157,8 @@ listed too (fine for parts soldered by hand), and what the parts cost at today's
 They are ranked fee-free first, then those with 5 × the need in stock (or kept in stock), then by class and stock.
 **Use** sets the number on every component of the line and checks again; the agent does the same with `set_param` and
 the house's parameter. Exporting the fab files runs the check first when the parts carry the house's numbers, and the
-export's message names the parts that stop the order (the Sourcing section says why).
+export's message names the parts that stop the order (the Sourcing section says why); where the check laid the house's
+footprint on a land, the pick-and-place gives that part in the house's frame ([assembly](assembly.md) §6).
 
 At PCBWay there is nothing to look up: the check (**Check BOM**) lists what goes on its BOM, by MPN or by value, and the
 components it could not buy (no MPN, and not a resistor or capacitor).

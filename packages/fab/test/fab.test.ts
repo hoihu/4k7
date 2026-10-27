@@ -85,6 +85,19 @@ describe('fab outputs', () => {
     expect(pnp.find((l) => l.startsWith('U1,'))).toBe(`U1,TPS54331DR,SOIC-8,${u1.x.toFixed(3)},${(b.outline.h - u1.y).toFixed(3)},${(360 - u1.rot) % 360},Top`);
   });
 
+  it('writes a part in the house\'s frame where it is given: the house\'s rotation, its footprint\'s origin', () => {
+    const b = board();
+    const u1 = b.parts.find((p) => p.refdes === 'U1')!;
+    const row = (csv: string, ref: string) => csv.split('\n').find((l) => l.startsWith(`${ref},`))!.split(',');
+    const plain = pickAndPlace(b);
+    const framed = pickAndPlace(b, { U1: { rotation: 270, at: [0.5, -0.25] } });
+    expect(row(framed, 'U1')).toEqual(['U1', 'TPS54331DR', 'SOIC-8', (u1.x + 0.5).toFixed(3), (b.outline.h - (u1.y - 0.25)).toFixed(3), '270', 'Top']);
+    // every other part as before
+    expect(framed.split('\n').filter((l) => !l.startsWith('U1,'))).toEqual(plain.split('\n').filter((l) => !l.startsWith('U1,')));
+    // the files and each copy on a panel take it too
+    expect(row(fabFiles(b, 'buck', 'jlcpcb', { U1: { rotation: 270, at: [0, 0] } }).find((f) => f.name === 'buck-PnP.csv')!.content, 'U1')[5]).toBe('270');
+  });
+
   it('parts on the bottom side get their own silkscreen, paste and pick-and-place layer', () => {
     const k = new Kernel();
     k.transact(buckTransaction());
@@ -99,6 +112,8 @@ describe('fab outputs', () => {
     expect(file('buck-B_Paste.gbr').split('\n').filter((l) => l.endsWith('D03*'))).toHaveLength(2);
     const row = pickAndPlace(b).split('\n').find((l) => l.startsWith(`${cap.refdes},`))!;
     expect(row.endsWith(',Bottom')).toBe(true);
+    // a part on the bottom side keeps the board's frame (how a house counts it there is not settled)
+    expect(pickAndPlace(b, { [cap.refdes]: { rotation: 90, at: [1, 1] } }).split('\n').find((l) => l.startsWith(`${cap.refdes},`))).toBe(row);
     expect(pickAndPlace(b).split('\n').filter((l) => l.endsWith(',Top')).length).toBeGreaterThan(0);
   });
 
@@ -186,6 +201,13 @@ describe('fab outputs', () => {
     expect(pnp).toHaveLength(1 + 4 * (single.length - 1));
     expect(pnp.some((l) => l.startsWith('U1_1,'))).toBe(true);
     expect(pnp.some((l) => l.startsWith('U1_4,'))).toBe(true);
+    // each copy of U1 in the house's frame, its origin moved with the copy
+    const framed = panelFabFiles(b, 'buck', 'jlcpcb', { U1: { rotation: 270, at: [0.5, 0] } }).find((f) => f.name === 'buck-panel-PnP.csv')!.content.trim().split('\n');
+    const u1 = b.parts.find((x) => x.refdes === 'U1')!;
+    p.copies.forEach((c, i) => {
+      const f = framed.find((l) => l.startsWith(`U1_${i + 1},`))!.split(',');
+      expect([f[3], f[5]]).toEqual([(u1.x + c.dx + 0.5).toFixed(3), '270']);
+    });
     expect(file('buck-panel-BOM.csv')).toContain('TPS54331DR,"U1_1,U1_2,U1_3,U1_4",SOIC-8,4,');
     // every copy carries its parts' polarity marks, moved with it
     const dot = b.parts.find((x) => x.refdes === 'U1')!.mark!.dots[0]!;

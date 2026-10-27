@@ -3,7 +3,7 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
-import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type PanelView } from '@4k7/schema';
+import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type HousePlacement, type PanelView } from '@4k7/schema';
 
 export interface FabFile {
   name: string;
@@ -359,18 +359,27 @@ export function bom(b: BoardView, house = 'jlcpcb'): string {
   return csv([['Comment', 'Designator', 'Footprint', 'Quantity', 'MPN', 'Manufacturer', 'LCSC Part #'], ...lines.map((g) => [g.value, g.refs.join(','), g.pkg, g.refs.length, g.mpn, g.mfr, g.lcsc])]);
 }
 
-/** Pick-and-place: centre, counter-clockwise rotation, y up from the bottom-left corner. */
-export function pickAndPlace(b: BoardView): string {
+/**
+ * Pick-and-place: centre, counter-clockwise rotation, y up from the bottom-left corner. A part with a
+ * placement in the house's frame (by refdes: the house's own footprint for it, turned and placed on
+ * our pads, see HousePlacement) gets that footprint's rotation and origin instead of the board's, so
+ * the house places it without turning it first.
+ */
+export function pickAndPlace(b: BoardView, placements: Record<string, HousePlacement> = {}): string {
   return csv([
     ['Designator', 'Val', 'Package', 'Mid X', 'Mid Y', 'Rotation', 'Layer'],
     ...b.parts
       .filter((p) => p.pads.some((q) => !q.drill))
-      .map((p) => [p.refdes, p.value, p.pkg, p.x.toFixed(3), (b.outline.h - p.y).toFixed(3), ((360 - p.rot) % 360).toFixed(0), p.side === 'top' ? 'Top' : 'Bottom']),
+      .map((p) => {
+        const at = p.side === 'top' ? placements[p.refdes] : undefined;
+        const [x, y, rot] = at ? [p.x + at.at[0], p.y + at.at[1], at.rotation] : [p.x, p.y, (360 - p.rot) % 360];
+        return [p.refdes, p.value, p.pkg, x.toFixed(3), (b.outline.h - y).toFixed(3), (((rot % 360) + 360) % 360).toFixed(0), p.side === 'top' ? 'Top' : 'Bottom'];
+      }),
   ]);
 }
 
-/** Gerbers, drill, BOM (in the assembly house's form, see bom) and pick-and-place. */
-export function fabFiles(b: BoardView, project: string, house?: string): FabFile[] {
+/** Gerbers, drill, BOM (in the assembly house's form, see bom) and pick-and-place (in the house's frame where `placements` say it). */
+export function fabFiles(b: BoardView, project: string, house?: string, placements?: Record<string, HousePlacement>): FabFile[] {
   const base = project.replace(/[^\w.-]+/g, '_') || 'board';
-  return [...gerbers(b, project), { name: `${base}-BOM.csv`, content: bom(b, house) }, { name: `${base}-PnP.csv`, content: pickAndPlace(b) }];
+  return [...gerbers(b, project), { name: `${base}-BOM.csv`, content: bom(b, house) }, { name: `${base}-PnP.csv`, content: pickAndPlace(b, placements) }];
 }
