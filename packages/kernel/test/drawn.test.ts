@@ -431,10 +431,12 @@ describe('what the review found', () => {
   it('moves and turns leave no sharp corners in the router\'s copper taken over', () => {
     const k0 = takenOver();
     const design = k0.draftDesign();
+    // every move starts from this design: where its parts are is read off one board (a board laid out per move took this test past 5 s on CI)
+    const b0 = k0.board();
     for (const ref of ['C3', 'C4', 'C5', 'R1', 'R3', 'D1']) {
+      const p = part(b0, ref);
       for (const [dx, dy, turn] of [[1, 1, 0], [-0.5, 1, 0], [0, 0, 90], [0.5, 0.5, 180]] as const) {
         const k = new Kernel(design);
-        const p = part(k.board(), ref);
         if (k.transact({ summary: 'm', ops: [{ op: 'place', ref, x_mm: p.x + dx, y_mm: p.y + dy, rot: ((p.rot + turn) % 360) as 0 }] }).status !== 'ok') continue;
         for (const t of k.draftDesign().board!.drawn!.tracks) {
           expect(sharp(t.pts), `${ref} ${dx} ${dy} ${turn}: ${t.id} ${t.pts.join(',')}`).toBe(false);
