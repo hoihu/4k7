@@ -5,7 +5,6 @@
 import {
   approxEqual,
   ASSEMBLY_HOUSES,
-  paramSpecs,
   parseQuantity,
   type Component,
   type Constraint,
@@ -83,6 +82,7 @@ import {
   mergeNet,
   natCmp,
   nextId,
+  paramsOf,
   pinLabel,
   reject,
   requireCard,
@@ -1793,7 +1793,7 @@ function lookupCard(d: Design, id: string): PartCard {
 }
 
 function validateParams(card: PartCard, params: Record<string, string | null>, refdes: string): void {
-  const specs = paramSpecs(card);
+  const specs = paramsOf(card);
   for (const [key, value] of Object.entries(params)) {
     const spec = specs[key];
     if (!spec) {
@@ -1817,6 +1817,9 @@ function validateParams(card: PartCard, params: Record<string, string | null>, r
         message: `${refdes}: unknown package "${value}".${opts.length ? ` Known for this part: ${opts.join(', ')} (and KiCad names like R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm, CP_Radial_D8.0mm_P3.50mm).` : ''}`,
         candidates: opts,
       });
+    }
+    if (spec.values && value !== null && !spec.values.includes(value.trim().toLowerCase())) {
+      reject({ code: 'PARAM_INVALID', message: `${refdes}.${key} = "${value}" is not one of ${spec.values.join(', ')}.`, candidates: spec.values });
     }
     if (value === null || !spec.unit) continue;
     const q = parseQuantity(value);

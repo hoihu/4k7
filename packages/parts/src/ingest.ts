@@ -104,7 +104,7 @@ export function draftToCard(input: unknown): IngestResult {
     manufacturer: draft.manufacturer,
     description: draft.description,
     category: draft.category,
-    refPrefix: draft.category === 'connector' ? 'J' : draft.category === 'transistor' ? 'Q' : draft.category === 'crystal' ? 'Y' : 'U',
+    refPrefix: REF_PREFIX[draft.category] ?? 'U',
     package: pkg.name,
     pins,
     params: {},
@@ -119,6 +119,9 @@ export function draftToCard(input: unknown): IngestResult {
   };
   return { card: issues.some((i) => i.severity === 'error') ? null : card, issues };
 }
+
+/** The reference designator letters of a category (the rest: U). */
+const REF_PREFIX: Partial<Record<PartDraft['category'], string>> = { connector: 'J', transistor: 'Q', crystal: 'Y', inductor: 'L', diode: 'D', led: 'D' };
 
 const SECTIONS = ['pinout', 'package', 'application', 'design', 'layout'] as const;
 

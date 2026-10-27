@@ -4,6 +4,7 @@
  * through the datasheet ingest pipeline (M1) before production use.
  */
 import type { PartCard, PartPin, Provenance } from '@4k7/schema';
+import { SYMBOL_PARAMS } from './symbolgen.ts';
 
 const builtin = (note?: string): Provenance => ({ source: 'builtin', note: note ?? 'M0 seed, verify against datasheet' });
 
@@ -66,6 +67,7 @@ export const GENERIC_PARTS: PartCard[] = [
     params: {
       inductance: { unit: 'H', required: true },
       current: { unit: 'A', description: 'Saturation current' },
+      ...SYMBOL_PARAMS.inductor,
       package: {},
       mpn: {},
     },
@@ -74,15 +76,17 @@ export const GENERIC_PARTS: PartCard[] = [
   {
     id: 'generic:D',
     title: 'Diode',
-    description: 'Diode (rectifier, Schottky, TVS). Pin 1 = cathode K, pin 2 = anode A',
+    description: 'Diode (rectifier, Schottky, Zener, TVS). Pin 1 = cathode K, pin 2 = anode A',
     category: 'diode',
     refPrefix: 'D',
     pins: [passive('1', 'K'), passive('2', 'A')],
     notes: [
       'Four diodes wired as a full bridge are drawn automatically as the classic 45° diamond (AC left/right, + top, − bottom). Just connect them; constrain arrangement "inline" to draw them flat.',
+      'The symbol shows its type (Schottky, Zener, TVS): set type, or the mpn of a known family says it (SS34, B340A, BAT54: Schottky; BZX84, MMSZ: Zener; SMAJ, SMBJ, P6KE: TVS, bidirectional with CA).',
     ],
     params: {
       mpn: { description: 'e.g. B340A, 1N4148W, SMBJ5.0A' },
+      ...SYMBOL_PARAMS.diode,
       vr: { unit: 'V', description: 'Reverse voltage rating' },
       current: { unit: 'A' },
       package: {},

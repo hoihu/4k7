@@ -43,6 +43,16 @@ the user's local Claude Code through the server, like the app chat.
      unit. Each unit is its own symbol in the schematic (U1A, U1B …); satellites attach to the unit
      that has the pin, decoupling goes under the power unit. Default for parts with > 100 pins,
      switchable in review and for saved parts;
+   - symbols of their own kind where the part is not a box: the category says it (crystal,
+     transistor, inductor, diode, led), else the description (a switch, a relay, a fuse, a
+     thermistor, a varistor, a gas discharge tube, a ferrite bead, a common-mode choke) or the pins
+     (a shunt reference: cathode, anode, ref; an optocoupler: A, K and C, E or MT1, MT2). A crystal
+     lies between its terminals with its case pins stacked under it (an oscillator stays a box); a
+     tactile switch is a push button whose pins joined inside are found from shared names or their
+     descriptions ("internally connected to B"); a relay's contacts are found by name (COM, NO, NC,
+     numbered per pole, or IEC 11, 12, 14); a choke's windings by the number in its pins' names; a
+     MOSFET or transistor in a power package stacks its repeated pins on its three terminals. The
+     importer's category description tells the AI how to name such pins;
    - footprints for QFP/QFN, SOIC/SSOP/TSSOP/MSOP/DFN, BGA/CSP and DIP (IPC-7351-style nominal);
    - **3D bodies** (boxes and balls: body, gull-wing leads, no-lead terminals, BGA balls, DIP pins,
      pin-1 mark), shown with three.js (`apps/web/src/lib/three-body.ts`, loaded on demand), the same

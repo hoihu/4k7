@@ -61,7 +61,9 @@ function renderSheet(d: Design, id: string, name: string, sd: SheetDrawing): She
     if (!sym) continue;
     scene.symbols.push(sym);
     const c = d.components[s.comp]!;
-    for (const p of sym.pins) if (c.noConnect.includes(p.number)) scene.noConnects.push({ x: p.x, y: p.y });
+    // no mark on a spot a connected pin shares (a switch's pair)
+    const connected = (p: PinView) => sym.pins.some((q) => q.x === p.x && q.y === p.y && c.pins[q.number]);
+    for (const p of sym.pins) if (c.noConnect.includes(p.number) && !connected(p)) scene.noConnects.push({ x: p.x, y: p.y });
   }
   for (const w of sd.wires) if (d.nets[w.netId]) scene.wires.push({ netId: w.netId, pts: [...w.pts] });
   for (const l of sd.labels) {
@@ -361,7 +363,7 @@ export function syncSheet(d: Design, sheetId: string): void {
     const w = want.get(s.comp);
     return !!w && d.components[s.comp]!.part === s.part && JSON.stringify([...units.get(s.comp)!].sort()) === JSON.stringify(w);
   };
-  sd.symbols = sd.symbols.filter(fits);
+  sd.symbols = sd.symbols.filter(fits).map((s) => current(d, s));
   fixConnections(d, sd);
   const drawn = new Set(sd.symbols.map((s) => s.comp));
   const fresh = comps.filter((c) => !drawn.has(c.id)).map((c) => c.id);
@@ -374,6 +376,22 @@ export function syncSheet(d: Design, sheetId: string): void {
 }
 
 /**
+ * A stored symbol as its card draws it now. One drawn differently since it was stored (a crystal
+ * or a switch drawn as its symbol where it was a box; a card whose pins changed) is made again
+ * centred where it stood, and the sync cuts back the wires to pins that moved, so those
+ * connections show as labels. Lying parts and split units are left as they are.
+ */
+function current(d: Design, s: DrawnSymbol): DrawnSymbol {
+  if (s.rot || s.unit || s.spec.unit !== undefined) return s;
+  const def = symbolFromSpec(cardOf(d, s.part)!, s.spec);
+  const b = def.bbox;
+  if (s.bbox.x - s.x === b.x && s.bbox.y - s.y === b.y && s.bbox.w === b.w && s.bbox.h === b.h) return s;
+  const c = centre(s.bbox);
+  const base = { comp: s.comp, part: s.part, ...(s.with ? { with: s.with } : {}) };
+  return made(d, d.components[s.comp]!, base, def, Math.round(c.x / GRID) * GRID, Math.round(c.y / GRID) * GRID);
+}
+
+/**
  * Wires and labels follow the netlist: a group of wires takes the net of the pins it joins; a wire
  * running to a pin of another net (the pin was disconnected or moved to another net) is taken out,
  * and the ends left loose are cut back. A label takes the net of what it sits on, and one that sits
@@ -382,11 +400,15 @@ export function syncSheet(d: Design, sheetId: string): void {
 function fixConnections(d: Design, sd: SheetDrawing): void {
   const symbols = sd.symbols.map((s) => symbolOf(d, s)!);
   const pins = pinsOf(d, symbols);
+  // a pin left unconnected on the spot of a connected pin of its part (stacked: a switch's pin
+  // joined inside to its pair, a second GND of a crystal's case) is drawn by that pin's connection
+  const covered = (p: PinAt) => !p.net && pins.some((q) => q.sym === p.sym && q.net && q.pin.x === p.pin.x && q.pin.y === p.pin.y);
   for (let round = 0; round < 8; round++) {
     let changed = false;
     const drop = new Set<number>();
     for (const g of groups(pins, sd.wires, sd.labels)) {
       if (!g.wires.length) continue;
+      g.pins = g.pins.filter((i) => !covered(pins[i]!));
       const nets = g.pins.map((i) => pins[i]!.net);
       if (!nets.length) {
         if (!d.nets[sd.wires[g.wires[0]!]!.netId]) g.wires.forEach((i) => drop.add(i));
@@ -808,8 +830,9 @@ function restyle(d: Design, comp: Component, s: DrawnSymbol, two: boolean, look:
     const lying = !!s.rot;
     if ((look.orient === 'lying') === lying) return undefined;
     if (look.orient === 'lying') {
-      const def = uprightSymbol(card);
-      return { ...base, spec: def.spec!, x: cx, y: cy, rot: -90, bbox: { x: cx - 200, y: cy - 100, w: 400, h: 200 }, ref: { x: cx, y: cy - 175, anchor: 'middle' }, value: { x: cx, y: cy - 90, anchor: 'middle' } };
+      // pin 1 on the left, what the glyph has beside it (a core, an LED's arrows) below it (as horizontalPart)
+      const def = uprightSymbol(card, true);
+      return { ...base, spec: def.spec!, x: cx, y: cy, rot: 90, bbox: { x: cx - 200, y: cy - 100, w: 400, h: 200 }, ref: { x: cx, y: cy - 175, anchor: 'middle' }, value: { x: cx, y: cy - 90, anchor: 'middle' } };
     }
     return made(d, comp, base, symbolFor(card), cx, cy);
   }

@@ -284,6 +284,8 @@
             <path d={q.d} />
           {:else if q.t === 'circle'}
             <circle class:filled={q.fill} cx={q.x} cy={q.y} r={q.r} />
+          {:else if q.t === 'text'}
+            <text class="sym-t" x={q.x} y={q.y} text-anchor="middle">{q.text}</text>
           {/if}
         {/each}
         </g>
@@ -362,9 +364,10 @@
   .sym:hover rect:not(.hit), .sym:hover polygon, .sym:hover circle { stroke: var(--sym-hover); stroke-width: 16; }
   .sym:hover .filled { fill: var(--sym-fill-hover); }
   .sym:hover polygon.filled { fill: var(--sym-hover); }
-  .sym:hover .ref, .sym:hover .val { fill: var(--sym-hover); }
+  .sym:hover .ref, .sym:hover .val, .sym:hover .sym-t { fill: var(--sym-hover); }
   text { font-family: var(--mono); }
   .ref { fill: var(--sym); font-size: 88px; font-weight: 700; }
+  .sym-t { fill: var(--sym); font-size: 64px; }
   .val { fill: var(--sch-txt); font-size: 80px; }
   .pin-n { fill: var(--sch-txt); font-size: 70px; }
   .pin-no { fill: var(--pin-txt); font-size: 52px; }

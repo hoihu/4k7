@@ -50,6 +50,8 @@ export interface ParamSpec {
   unit?: string;
   required?: boolean;
   description?: string;
+  /** A choice: the values it may take (an inductor's core: ferrite, iron, air). */
+  values?: string[];
 }
 
 /**

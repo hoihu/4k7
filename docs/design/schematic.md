@@ -80,3 +80,27 @@ change, parts added later are drawn next to their block, and connections the dra
 appear as labels. `place_block` on such a sheet draws a block afresh, together and wired, where you
 put it (the result says what it runs into). `auto_draw` hands the sheet back to the layout. Use this only when the user asks for it:
 the drawing then no longer keeps itself tidy.
+
+## 6. Symbols
+
+Every part is drawn as its usual symbol, made from its card: an electrolytic capacitor with a
+hollow plus plate and a solid minus plate, an inductor with its core, a Schottky, Zener or TVS diode
+with its own cathode bar, a crystal or resonator lying between its two terminals (its case pins
+under it, to ground), a push button for a tactile switch (the pins joined inside in pairs on one
+terminal each), a TL431-type reference, a MOSFET in an SOIC-8 with its repeated pins stacked, a
+relay (its coil, the contacts of each pole beside it: common at the bottom, NO and NC at the top),
+an optocoupler (LED, phototransistor or photo-triac), and the protection and EMC parts: fuses and
+resettable fuses, NTC and PTC thermistors (−θ, +θ), varistors (U), gas discharge tubes, ferrite
+beads, common-mode chokes. Supplies are followed through fuses, ferrite beads, thermistors and a
+choke's windings, as through resistors and inductors. Two levers, set with `set_param` when the
+default is wrong:
+
+- `core` on an inductor: `ferrite`, `iron` or `air`. A power inductor (1 µH and more, or 1 A and
+  more) gets a ferrite core by default, an RF inductor none.
+- `type` on a diode: `standard`, `schottky`, `zener`, `tvs` or `tvs_bidirectional`. By default the
+  `mpn` says it for the usual families (SS34, B340A, BAT54: Schottky; BZX84, MMSZ: Zener; SMAJ,
+  SMBJ, P6KE: TVS, bidirectional with CA).
+
+On a sheet you arranged, a symbol the app draws differently since you placed it (a crystal that was
+a box) is made again where it stood, and its connections show as labels: wire them again, or let
+`place_block` redraw its block.

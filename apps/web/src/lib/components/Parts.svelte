@@ -388,6 +388,7 @@
       case 'poly':
         return { ...p, pts: p.pts.map((v, i) => (i % 2 ? v : v + dx)) };
       case 'circle':
+      case 'text':
         return { ...p, x: p.x + dx };
       default:
         return p; // paths only occur in two-pin symbols, which have a single unit

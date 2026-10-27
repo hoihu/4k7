@@ -74,6 +74,7 @@
   const EXAMPLES: Record<string, string> = { F: '100nF', 'Ω': '10k', H: '10uH', V: '25V', A: '2A', W: '0.25W' };
   const placeholder = (k: string) => {
     const spec = info?.specs?.[k];
+    if (spec?.values) return spec.values.join(' / ');
     return spec?.unit ? EXAMPLES[spec.unit] ?? spec.unit : (spec?.description ?? '').replace(/^e\.g\. /, '').slice(0, 24);
   };
   async function setParam(key: string, raw: string) {

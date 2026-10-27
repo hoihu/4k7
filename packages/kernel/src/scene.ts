@@ -3,8 +3,8 @@
  * placement, net decorations and extent estimates.
  */
 import type { BlockView, Component, Design, LabelView, Net, PinType, PinView, Point, Prim, Rect, SymbolSpec, SymbolView, WireView } from '@4k7/schema';
-import { CHAR_W, GRID, type SymbolDef } from '@4k7/parts';
-import { isGroundNet, isPowerNet, valueLinesOf, valueOf } from './doc.ts';
+import { CHAR_W, GRID, readsParams, symbolFromSpec, textOffset, type SymbolDef } from '@4k7/parts';
+import { cardOf, isGroundNet, isPowerNet, valueLinesOf, valueOf } from './doc.ts';
 
 /* --------------------------------- scene ---------------------------------- */
 
@@ -33,6 +33,7 @@ export function translatePrim(p: Prim, dx: number, dy: number): Prim {
     case 'poly':
       return { ...p, pts: p.pts.map((v, i) => v + (i % 2 ? dy : dx)) };
     case 'circle':
+    case 'text':
       return { ...p, x: p.x + dx, y: p.y + dy };
     case 'path':
       return {
@@ -168,12 +169,16 @@ export function rotateSymbol(s: SymbolView, def: SymbolDef, cx: number, cy: numb
 const SIDE_VEC: Record<PinView['side'], [number, number]> = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] };
 
 export function makeSymbol(d: Design, c: Component, def: SymbolDef, ox: number, oy: number): SymbolView {
+  // the component's own parameters refine the glyph (an inductor's core, a diode's type); they
+  // change only the strokes, so the layout may place a symbol made without them
+  const card = cardOf(d, c.part);
+  const prims = card && def.spec && readsParams(card) ? symbolFromSpec(card, def.spec, c.params).prims : def.prims;
   const sym: SymbolView = {
     componentId: c.id,
     refdes: c.refdes,
     value: valueOf(d, c),
     bbox: { ...def.bbox },
-    prims: def.prims.map((p) => ({ ...p })) as Prim[],
+    prims: prims.map((p) => ({ ...p })) as Prim[],
     pins: def.pins.map((p) => ({ ...p })) as PinView[],
     refPos: { ...def.refPos },
     valuePos: { ...def.valuePos },
@@ -197,20 +202,21 @@ export function makeSymbol(d: Design, c: Component, def: SymbolDef, ox: number, 
 /** Line height of stacked value text, in mils. */
 export const LINE = 85;
 
-/** Distance from a two-pin part's axis to its text. */
-export const TEXT_GAP = 100;
 /** Widest half-body of a neighbouring two-pin part (capacitor plates, 80) plus clear air. */
 const NEXT_BODY = 140;
 
 /**
- * Width a vertical two-pin part needs: its text on the right and room for the next part's
- * body, and for the decoration under it (a rail at the bottom turns aside, see leadEnd).
- * Rounded to a 50-mil grid (the usual schematic grid) to keep columns tight.
+ * Width a vertical two-pin part needs: its text on the right (from its axis: textOffset, further
+ * out beside an LED's arrows) and room for the next part's body, and for the decoration under it
+ * (a rail at the bottom turns aside, see leadEnd). Rounded to a 50-mil grid (the usual schematic
+ * grid) to keep columns tight.
  */
 export function satWidth(d: Design, c: Component, bottom?: Net): number {
   const text = Math.max(tw(c.refdes), ...valueLinesOf(d, c).map(tw));
+  const card = cardOf(d, c.part);
+  const gap = card ? textOffset(card) : 100;
   const below = !bottom ? 0 : supplyDir(bottom) === 'up' ? turnStub(bottom) + tw(bottom.name) / 2 + 80 : tw(bottom.name) / 2 + 80;
-  return Math.max(300, halfGrid(Math.max(TEXT_GAP + text + NEXT_BODY, below + 100)));
+  return Math.max(300, halfGrid(Math.max(gap + text + NEXT_BODY, below + 100)));
 }
 
 const halfGrid = (v: number) => Math.ceil(v / 50) * 50;

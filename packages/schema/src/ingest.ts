@@ -90,7 +90,10 @@ export const PartDraft = z.object({
   manufacturer: z.string().min(2),
   title: z.string().min(2).max(30).optional().describe('The part\'s short name, no description: the base part number without ordering suffixes ("ADIN2111", "STM32F777", "TPS54331"), or its product name if it has one ("Raspberry Pi Pico")'),
   description: z.string().min(5).describe('One line: what the part is, key specs'),
-  category: z.enum(['ic', 'connector', 'transistor', 'crystal', 'other']).default('ic'),
+  category: z
+    .enum(['ic', 'connector', 'transistor', 'crystal', 'inductor', 'diode', 'led', 'other'])
+    .default('ic')
+    .describe('What the part is; it picks the schematic symbol, which the description and pin names refine. crystal: a quartz crystal or ceramic resonator (an oscillator, with supply and output pins, is an ic); transistor: a MOSFET (pins G, D, S) or bipolar transistor (B, C, E); inductor, diode, led: a two-pin part drawn with its usual symbol (a power inductor, a ferrite bead, a Schottky, Zener or TVS diode; diode and LED pins named K and A); ic: also an optocoupler (pins A, K and C, E, B, or MT1, MT2 for a triac output); other: what is none of these, its description saying what it is: a relay (coil pins COIL1, COIL2 or A1, A2; contacts COM, NO, NC, and COM2, NO2, NC2 for a second pole), a switch (the pins joined inside in pairs said in their descriptions: "internally connected to B"), a fuse or resettable fuse, an NTC or PTC thermistor, a varistor, a gas discharge tube, a common-mode choke (pins named by winding: 1A, 1B, 2A, 2B), a buzzer, a capacitor'),
   datasheet: z.string().optional().describe('Datasheet URL if known'),
   package: PackageInfo,
   pins: z.array(DraftPin).min(1).describe('EVERY pin of this package, including every supply, ground and NC pin'),
