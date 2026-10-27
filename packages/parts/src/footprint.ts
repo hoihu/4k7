@@ -5,7 +5,7 @@
  * reaching out past the body edge on no-lead packages, balls at ~80 % diameter.
  */
 import { padPins } from '@4k7/schema';
-import type { PackageInfo } from '@4k7/schema';
+import type { BodyCorner, PackageInfo } from '@4k7/schema';
 
 export interface Pad {
   number: string;
@@ -24,8 +24,8 @@ export interface Pad {
 
 export interface Footprint {
   pads: Pad[];
-  /** Package body outline (silkscreen/fab), centred; round: a circle of diameter w. */
-  body: { w: number; h: number; round?: boolean };
+  /** Package body outline (silkscreen/fab), centred; round: a circle of diameter w; chamfer: corners cut off it (an electrolytic's + side). */
+  body: { w: number; h: number; round?: boolean; chamfer?: { size: number; corners: BodyCorner[] } };
   /** Keep-out rectangle around everything (courtyard), centred. */
   courtyard: { w: number; h: number };
   pin1: { x: number; y: number };
@@ -185,7 +185,7 @@ function explicit(pkg: PackageInfo, pinNumbers: string[]): FootprintResult {
     ok: true,
     footprint: {
       pads,
-      body: { w: bw, h: bh, ...(round ? { round: true } : {}) },
+      body: { w: bw, h: bh, ...(round ? { round: true } : !round && pkg.body_chamfer ? { chamfer: { size: pkg.body_chamfer.mm, corners: [...pkg.body_chamfer.corners] } } : {}) },
       courtyard: { w: r2(Math.max(bw, 2 * ex) + 2 * COURTYARD), h: r2(Math.max(bh, 2 * ey) + 2 * COURTYARD) },
       pin1: { x: r2(first.x - first.w / 2 - 0.4), y: first.y },
       notes,

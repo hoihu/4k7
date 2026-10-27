@@ -210,7 +210,7 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
       }
 
       // a house's parts catalogue: POST sourcing/<house>/search (a PartQuery), GET sourcing/<house>/part/<number>;
-      // its assembly quote: POST sourcing/<house>/quote (a QuoteOrder)
+      // its assembly quote: POST sourcing/<house>/quote (a QuoteOrder); a part's land: GET sourcing/<house>/footprint/<number>
       if (kind === 'sourcing' && opts.sourcing) {
         const house = id ?? '';
         if (!opts.sourcing.houses.includes(house)) return notFound();
@@ -219,6 +219,7 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
           return json(200, { parts: await opts.sourcing.search(house, q) });
         }
         if (action === 'part' && parts.length === 4 && parts[3] && m === 'GET') return json(200, { part: await opts.sourcing.lookup(house, parts[3]) });
+        if (action === 'footprint' && parts.length === 4 && parts[3] && m === 'GET') return json(200, { footprint: await opts.sourcing.footprint(house, parts[3]) });
         if (action === 'quote' && parts.length === 3 && m === 'POST') {
           const order = quoteRequest(JSON.parse((await readBody(req)).toString('utf8')));
           return json(200, { quote: await opts.sourcing.quote(house, order) });

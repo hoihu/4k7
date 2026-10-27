@@ -94,15 +94,56 @@ export function standardPackage(name: string, pins = 2): PackageInfo | null {
       return { name: 'IND-10x10', family: 'CHIP', pins: 2, body_mm: [10.0, 10.0], lead_length_mm: 2.5, height_mm: 4.5 };
     case 'IND-12X12':
       return { name: 'IND-12x12', family: 'CHIP', pins: 2, body_mm: [12.3, 12.3], lead_length_mm: 2.8, height_mm: 6.0 };
-    case 'CAP-6.3X5.4':
     case 'CAP-6.3':
-      return { name: 'CAP-6.3x5.4', family: 'CHIP', pins: 2, body_mm: [6.6, 6.6], lead_length_mm: 1.8, height_mm: 5.4 };
-    case 'CAP-8X10':
-      return { name: 'CAP-8x10', family: 'CHIP', pins: 2, body_mm: [8.3, 8.3], lead_length_mm: 2.2, height_mm: 10 };
-    case 'CAP-10X10':
-      return { name: 'CAP-10x10', family: 'CHIP', pins: 2, body_mm: [10.3, 10.3], lead_length_mm: 2.6, height_mm: 10.5 };
+      return vchip('CAP-6.3X5.4');
   }
+  if (VCHIP[n]) return vchip(n);
   return null;
+}
+
+/**
+ * SMD aluminium electrolytics (V-chip), by can (diameter × height): pin 1 (+) on the left, a pad
+ * under each lead as the makers recommend (Panasonic, Nichicon, Rubycon: the lands of KiCad's
+ * CP_Elec footprints), the base plate's corners chamfered on the + side as on the part.
+ */
+const VCHIP: Record<string, { can: [number, number]; base: number; height: number; pad: [number, number]; at: number }> = {
+  'CAP-4X5.4': { can: [4, 5.4], base: 4.3, height: 5.4, pad: [2.6, 1.6], at: 1.8 },
+  'CAP-5X5.4': { can: [5, 5.4], base: 5.3, height: 5.4, pad: [3, 1.6], at: 2.2 },
+  'CAP-6.3X5.4': { can: [6.3, 5.4], base: 6.6, height: 5.4, pad: [3.5, 1.6], at: 2.8 },
+  'CAP-6.3X7.7': { can: [6.3, 7.7], base: 6.6, height: 7.7, pad: [3.5, 1.6], at: 2.7 },
+  'CAP-8X6.5': { can: [8, 6.5], base: 8.3, height: 6.5, pad: [4, 2.5], at: 3.05 },
+  'CAP-8X10': { can: [8, 10], base: 8.3, height: 10.2, pad: [3.5, 2.5], at: 3.25 },
+  'CAP-10X10': { can: [10, 10], base: 10.3, height: 10.2, pad: [4, 2.5], at: 4 },
+};
+
+function vchip(key: string): PackageInfo {
+  const v = VCHIP[key]!;
+  const pad = (number: string, x: number) => ({ number, x, y: 0, w: v.pad[0], h: v.pad[1], shape: 'rect' as const });
+  return {
+    name: `CAP-${v.can[0]}x${v.can[1]}`,
+    family: 'CHIP',
+    pins: 2,
+    body_mm: [v.base, v.base],
+    height_mm: v.height,
+    pads: [pad('1', -v.at), pad('2', v.at)],
+    body_chamfer: { mm: Math.round(v.base * 0.2 * 100) / 100, corners: ['tl', 'bl'] },
+  };
+}
+
+/**
+ * The package for an SMD electrolytic's can as a catalogue lists it ("SMD,D6.3xL7.7mm"): the one of
+ * the same diameter whose height is nearest (within 0.8 mm: a 6.3 × 7 mm can sits on the 6.3 × 7.7
+ * land). Null for anything else (a through-hole can, "Plugin,D8xL11.5mm"), or a can there is no package for.
+ */
+export function canPackage(spec: string): string | null {
+  if (!/\bSMD\b/i.test(spec)) return null;
+  const m = /\bD\s*(\d+(?:\.\d+)?)\s*[x×*]\s*L?\s*(\d+(?:\.\d+)?)/i.exec(spec);
+  if (!m) return null;
+  const [d, l] = [Number(m[1]), Number(m[2])];
+  const near = Object.values(VCHIP)
+    .filter((v) => Math.abs(v.can[0] - d) < 0.05)
+    .sort((a, b) => Math.abs(a.can[1] - l) - Math.abs(b.can[1] - l))[0];
+  return near && Math.abs(near.can[1] - l) <= 0.8 ? `CAP-${near.can[0]}x${near.can[1]}` : null;
 }
 
 /**
@@ -150,7 +191,7 @@ export function packageOptions(card: PartCard): string[] {
     case 'generic:C':
       return ['0402', '0603', '0805', '1206', '1210', '1812', 'RADIAL-D4-P2.5', 'RADIAL-D5-P5'];
     case 'generic:CP':
-      return ['CAP-6.3x5.4', 'CAP-8x10', 'CAP-10x10', 'RADIAL-D5', 'RADIAL-D6.3', 'RADIAL-D8', 'RADIAL-D10', 'RADIAL-D12.5', 'RADIAL-D16'];
+      return ['CAP-4x5.4', 'CAP-5x5.4', 'CAP-6.3x5.4', 'CAP-6.3x7.7', 'CAP-8x6.5', 'CAP-8x10', 'CAP-10x10', 'RADIAL-D5', 'RADIAL-D6.3', 'RADIAL-D8', 'RADIAL-D10', 'RADIAL-D12.5', 'RADIAL-D16'];
     case 'generic:L':
       return ['0603', '0805', '1206', 'IND-4x4', 'IND-6x6', 'IND-8x8', 'IND-10x10', 'IND-12x12', 'RADIAL-D8-P5', 'RADIAL-D10-P5', 'AXIAL-0.4', 'AXIAL-0.5'];
     case 'generic:D':
@@ -186,7 +227,7 @@ function defaultSlot(card: PartCard): keyof Omit<PackageDefaults, 'autoSize'> | 
 const STEPS: Record<string, string[]> = {
   chip: ['0201', '0402', '0603', '0805', '1206', '1210', '1812', '2010', '2512'],
   ind: ['IND-4X4', 'IND-6X6', 'IND-8X8', 'IND-10X10', 'IND-12X12'],
-  cap: ['CAP-6.3X5.4', 'CAP-8X10', 'CAP-10X10'],
+  cap: ['CAP-4X5.4', 'CAP-5X5.4', 'CAP-6.3X5.4', 'CAP-6.3X7.7', 'CAP-8X6.5', 'CAP-8X10', 'CAP-10X10'],
   diode: ['SOD-323', 'SOD-123', 'SMA', 'SMB'],
 };
 

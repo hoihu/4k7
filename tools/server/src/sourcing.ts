@@ -4,14 +4,23 @@
  * Answers are kept for a few minutes and only a few requests run at a time, so the stock check of a
  * whole design is no more load on the house than a person looking the parts up.
  */
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { eurocircuitsSource, jlcpcbSource, pcbwaySource, type AssemblyQuote, type PartSource, type QuoteOrder } from '@4k7/parts';
-import type { PartQuery, SupplierPart } from '@4k7/schema';
+import type { HouseFootprint, PartQuery, SupplierPart } from '@4k7/schema';
 
 /** Like the datasheet downloads: a browser's agent, with the app's name. */
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) 4k7';
 const KEEP_MS = 10 * 60_000;
 const MAX_KEPT = 1000;
 const AT_ONCE = 3;
+/**
+ * A part's footprint hardly ever changes: kept a day in memory and a month on disk, and asked for at
+ * most every FOOTPRINT_GAP_MS (EasyEDA's front stops answering an address that asks too fast).
+ */
+const FOOTPRINT_KEEP_MS = 24 * 3600_000;
+const FOOTPRINT_DISK_MS = 30 * 24 * 3600_000;
+const FOOTPRINT_GAP_MS = 150;
 
 export interface Sourcing {
   /** The houses with a catalogue here ("jlcpcb", "eurocircuits"). */
@@ -20,19 +29,23 @@ export interface Sourcing {
   lookup(house: string, sku: string): Promise<SupplierPart | null>;
   /** The house's online quote for assembling an order (a house that publishes no fees: PCBWay). */
   quote(house: string, order: QuoteOrder): Promise<AssemblyQuote>;
+  /** The house's footprint for one of its parts (its library's); null when it has none for the number. */
+  footprint(house: string, sku: string): Promise<HouseFootprint | null>;
 }
 
 /** An error with the HTTP status the route answers with. */
 const failure = (status: number, message: string) => Object.assign(new Error(message), { status });
 
-export function sourcing(opts: { sources?: Record<string, PartSource>; log?: (msg: string) => void } = {}): Sourcing {
+export function sourcing(opts: { sources?: Record<string, PartSource>; log?: (msg: string) => void; footprintDir?: string } = {}): Sourcing {
   const post = (url: string, init: { method: 'POST'; headers: Record<string, string>; body: string; signal?: AbortSignal }) => fetch(url, { ...init, headers: { ...init.headers, 'user-agent': USER_AGENT } });
+  const get = (url: string, init: { signal?: AbortSignal }) => fetch(url, { ...init, headers: { 'user-agent': USER_AGENT } });
   const sources: Record<string, PartSource> = opts.sources ?? {
-    jlcpcb: jlcpcbSource(post),
+    jlcpcb: jlcpcbSource(post, undefined, get),
     eurocircuits: eurocircuitsSource(post),
     pcbway: pcbwaySource(post),
   };
   const kept = new Map<string, { at: number; value: Promise<unknown> }>();
+  let nextFootprint = 0;
   let running = 0;
   const waiting: (() => void)[] = [];
 
@@ -47,9 +60,9 @@ export function sourcing(opts: { sources?: Record<string, PartSource>; log?: (ms
     }
   }
 
-  function keep<T>(key: string, make: () => Promise<T>): Promise<T> {
+  function keep<T>(key: string, make: () => Promise<T>, keepMs = KEEP_MS): Promise<T> {
     const hit = kept.get(key);
-    if (hit && Date.now() - hit.at < KEEP_MS) return hit.value as Promise<T>;
+    if (hit && Date.now() - hit.at < keepMs) return hit.value as Promise<T>;
     const value = slot(make).catch((e: Error) => {
       kept.delete(key); // a failure is not worth remembering
       opts.log?.(`sourcing ${key}: ${e.message}`);
@@ -81,7 +94,45 @@ export function sourcing(opts: { sources?: Record<string, PartSource>; log?: (ms
       if (!s.quote) throw failure(404, `no assembly quote for "${house}"`);
       return keep(`${house} quote ${JSON.stringify(order)}`, () => s.quote!(order));
     },
+    footprint: (house, sku) => {
+      const s = source(house);
+      if (!s.footprint) throw failure(404, `no footprints for "${house}"`);
+      const key = sku.trim().toUpperCase();
+      const file = opts.footprintDir ? join(opts.footprintDir, `${house}-${key.replace(/[^A-Z0-9-]/g, '_')}.json`) : null;
+      return keep(
+        `${house} footprint ${key}`,
+        async () => {
+          if (file) {
+            try {
+              if (Date.now() - statSync(file).mtimeMs < FOOTPRINT_DISK_MS) return JSON.parse(readFileSync(file, 'utf8')) as HouseFootprint | null;
+            } catch {
+              // not kept yet (or unreadable): ask
+            }
+          }
+          await paced();
+          const fp = await s.footprint!(sku);
+          if (file) {
+            try {
+              mkdirSync(opts.footprintDir!, { recursive: true });
+              writeFileSync(file, JSON.stringify(fp));
+            } catch (e) {
+              opts.log?.(`footprint ${key} not kept: ${(e as Error).message}`);
+            }
+          }
+          return fp;
+        },
+        FOOTPRINT_KEEP_MS,
+      );
+    },
   };
+
+  /** Footprints are asked for one at a time, FOOTPRINT_GAP_MS apart. */
+  function paced(): Promise<void> {
+    const now = Date.now();
+    const at = Math.max(now, nextFootprint);
+    nextFootprint = at + FOOTPRINT_GAP_MS;
+    return at > now ? new Promise((go) => setTimeout(go, at - now)) : Promise.resolve();
+  }
 }
 
 /** An order to quote as the tab sends it, checked field by field (400 for anything else). */

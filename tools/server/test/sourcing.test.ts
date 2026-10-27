@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PartSource } from '@4k7/parts';
-import type { SupplierPart } from '@4k7/schema';
+import type { HouseFootprint, SupplierPart } from '@4k7/schema';
 import { partQuery, quoteRequest, sourcing } from '../src/sourcing.ts';
 import { storageHandler } from '../src/storage.ts';
 
@@ -15,6 +15,7 @@ afterEach(() => {
 });
 
 const part = (sku: string): SupplierPart => ({ sku, mpn: 'X', package: '0603', description: '', stock: 5, tier: 'Basic', fee: false, price: [], attributes: {}, url: '', live: true });
+const land: HouseFootprint = { name: 'R0603', pads: [{ number: '1', x: -0.8, y: 0, w: 0.9, h: 0.95 }, { number: '2', x: 0.8, y: 0, w: 0.9, h: 0.95 }] };
 
 describe('sourcing service', () => {
   it('keeps answers for a while, forgets failures, and runs three requests at a time', async () => {
@@ -43,6 +44,24 @@ describe('sourcing service', () => {
     await expect(s.lookup('jlcpcb', 'C13')).rejects.toThrow();
     expect(calls.filter((c) => c === 'C13')).toHaveLength(2);
     expect(() => s.lookup('pcbway', 'C1')).toThrow(/no parts catalogue/);
+  });
+
+  it('keeps footprints a day in memory and a month on disk, and asks for them one after another', async () => {
+    const dir = mkdtempSync(join(tmpdir(), '4k7-footprints-'));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const asked: [string, number][] = [];
+    const src: PartSource = { search: async () => [], lookup: async () => null, footprint: async (sku) => (asked.push([sku, Date.now()]), sku === 'C404' ? null : land) };
+    const s = sourcing({ sources: { jlcpcb: src }, footprintDir: dir });
+    expect(await Promise.all(['C1', 'C2', 'C3'].map((x) => s.footprint('jlcpcb', x)))).toEqual([land, land, land]);
+    // spaced out, so a whole board's check does not trip the library's limit
+    expect(asked[2]![1] - asked[0]![1]).toBeGreaterThanOrEqual(2 * 150 - 30);
+    expect(await s.footprint('jlcpcb', 'c1 ')).toEqual(land);
+    expect(asked).toHaveLength(3);
+    // a server started later reads them off the disk
+    expect(await sourcing({ sources: { jlcpcb: src }, footprintDir: dir }).footprint('jlcpcb', 'C2')).toEqual(land);
+    expect(asked).toHaveLength(3);
+    expect(await s.footprint('jlcpcb', 'C404')).toBeNull();
+    expect(() => sourcing({ sources: { jlcpcb: { search: async () => [], lookup: async () => null } } }).footprint('jlcpcb', 'C1')).toThrow(/no footprints/);
   });
 
   it('reads JLCPCB, Eurocircuits and PCBWay unless told otherwise, and keeps quotes like answers', async () => {
@@ -80,6 +99,7 @@ describe('sourcing routes', () => {
     const src: PartSource = {
       search: async (q) => (asked.push(q), [part('C25804')]),
       lookup: async (sku) => (sku === 'C404' ? null : sku === 'C500' ? Promise.reject(new Error('down')) : part(sku)),
+      footprint: async (sku) => (sku === 'C404' ? null : land),
     };
     const quoting: PartSource = { search: async () => [], lookup: async () => null, quote: async (o) => ({ price: o.boards * 10, days: '5-6 days' }) };
     const handler = storageHandler({ accessKey: KEY, projectsDir: join(root, 'p'), dataDir: join(root, 'd'), allowedOrigin: (o) => o === 'http://localhost:5173', sourcing: sourcing({ sources: { jlcpcb: src, pcbway: quoting } }) });
@@ -101,6 +121,14 @@ describe('sourcing routes', () => {
     const found = await api('sourcing/jlcpcb/search', { method: 'POST', body: JSON.stringify({ text: 'buzzer', limit: 3 }) });
     expect(await found.json()).toEqual({ parts: [part('C25804')] });
     expect(asked).toEqual([{ text: 'buzzer', limit: 3 }]);
+  });
+
+  it("answers a part's footprint, and says when a house has none", async () => {
+    const { api } = await start();
+    expect(await (await api('sourcing/jlcpcb/footprint/C25804')).json()).toEqual({ footprint: land });
+    expect(await (await api('sourcing/jlcpcb/footprint/C404')).json()).toEqual({ footprint: null });
+    expect((await api('sourcing/pcbway/footprint/C1')).status).toBe(404);
+    expect((await api('sourcing/jlcpcb/footprint/C1', { method: 'POST' })).status).toBe(405);
   });
 
   it("asks a house's online quote for an order", async () => {

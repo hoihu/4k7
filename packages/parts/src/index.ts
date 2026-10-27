@@ -11,3 +11,4 @@ export * from './jlc.ts';
 export * from './datasheet.ts';
 export * from './eurocircuits.ts';
 export * from './pcbway.ts';
+export * from './land.ts';
