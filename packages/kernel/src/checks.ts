@@ -18,13 +18,13 @@ import {
   type SchematicView,
   type Severity,
 } from '@4k7/schema';
+import { seriesPaths } from '@4k7/parts';
 import { sameValue, describeConstraint } from './apply.ts';
 import { allocRefdes, applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 
 const DRIVERS = new Set(['out', 'bidir', 'tri', 'pwr_out', 'oc', 'passive']);
 /** IC pin types that may stay unconnected without being an error. */
 const IO = new Set(['bidir', 'out', 'tri', 'oc']);
-const SERIES_CATEGORIES = new Set(['inductor', 'resistor', 'diode']);
 
 interface Ctx {
   d: Design;
@@ -155,15 +155,16 @@ function powerChecks(ctx: Ctx) {
     const pins = members.get(net.id) ?? [];
     if (net.attrs.external || isGroundNet(net) || pins.some((p) => p.pin.type === 'pwr_out')) driven.add(net.id);
   }
-  // power flows through series elements (inductors, resistors, diodes)
+  // power flows through series elements (inductors, resistors, diodes, fuses, ferrite beads, a choke's windings)
   const edges = new Map<string, string[]>();
   for (const c of Object.values(d.components)) {
     const card = cardOf(d, c.part);
-    if (!card || !SERIES_CATEGORIES.has(card.category) || card.pins.length !== 2) continue;
-    const [a, b] = card.pins.map((p) => c.pins[p.number]);
-    if (!a || !b || a === b) continue;
-    edges.set(a, [...(edges.get(a) ?? []), b]);
-    edges.set(b, [...(edges.get(b) ?? []), a]);
+    for (const [x, y] of card ? seriesPaths(card) : []) {
+      const [a, b] = [c.pins[x], c.pins[y]];
+      if (!a || !b || a === b) continue;
+      edges.set(a, [...(edges.get(a) ?? []), b]);
+      edges.set(b, [...(edges.get(b) ?? []), a]);
+    }
   }
   const queue = [...driven];
   while (queue.length) {

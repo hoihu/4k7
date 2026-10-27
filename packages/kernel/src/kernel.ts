@@ -4,7 +4,6 @@
  * in a Web Worker. M0 is TypeScript; the Rust/WASM kernel will implement this same API.
  */
 import {
-  paramSpecs,
   QueryOp,
   Transaction,
   emptyDesign,
@@ -42,7 +41,7 @@ import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
 import { applyOp, describeConstraint, descriptionView } from './apply.ts';
 import { countDiagnostics, diagKey, runChecks, sortDiagnostics } from './checks.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
-import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, valueOf } from './doc.ts';
+import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, valueOf } from './doc.ts';
 import { schematicView, syncDrawing } from './drawing.ts';
 import { blockAssignment } from './layout.ts';
 import { copperKey, layoutBoard, placeBoard, planePlan } from './board.ts';
@@ -419,7 +418,7 @@ export class Kernel {
           /** The board side it is mounted on (a layer constraint; top unless told otherwise). */
           side: Object.values(d.ledger).some((k) => k.kind === 'layer' && k.a === c.id && k.value === 'bottom') ? 'bottom' : 'top',
           /** Every parameter this component may carry (the card's and the universal lcsc), for editors. */
-          specs: card ? paramSpecs(card) : {},
+          specs: card ? paramsOf(card) : {},
           ...(card && packageOptions(card).length ? { package: { ...packageChoice(card, c.params, d.packageDefaults), options: packageOptions(card) } } : {}),
           pins: card?.pins.map((p) => ({
             pin: p.number,

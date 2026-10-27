@@ -1,8 +1,8 @@
 /**
  * Low-level design document helpers: ids, lookups, reference resolution.
  */
-import type { Component, Constraint, Design, Net, PartCard, PartPin, Rejection } from '@4k7/schema';
-import { getBuiltinPart } from '@4k7/parts';
+import { paramSpecs, type Component, type Constraint, type Design, type Net, type ParamSpec, type PartCard, type PartPin, type Rejection } from '@4k7/schema';
+import { SYMBOL_PARAMS, getBuiltinPart, readsParams, seriesPaths } from '@4k7/parts';
 
 export class RejectError extends Error {
   constructor(public rejection: Omit<Rejection, 'opIndex'>) {
@@ -26,6 +26,15 @@ export function nextId(d: Design, prefix: string): string {
 
 export function cardOf(d: Design, partId: string): PartCard | undefined {
   return d.parts[partId] ?? getBuiltinPart(partId);
+}
+
+/**
+ * The parameters a component of this card may carry: the card's own, the universal ones, and
+ * those that change how it is drawn (any inductor's core, any diode's type: also on an imported
+ * part, or a generic card a design copied before they existed).
+ */
+export function paramsOf(card: PartCard): Record<string, ParamSpec> {
+  return { ...(readsParams(card) ? SYMBOL_PARAMS[card.category] : {}), ...paramSpecs(card) };
 }
 
 export function requireCard(d: Design, c: Component): PartCard {
@@ -246,12 +255,10 @@ export function valueOf(d: Design, c: Component): string {
   return card?.mpn ?? card?.id.split(':')[1] ?? c.part;
 }
 
-/** Two-pin parts that pass power through them (for "is this net supplied" questions). */
-const SERIES = new Set(['inductor', 'resistor', 'diode']);
-
 /**
  * Nets the circuit itself supplies: reachable from a power output pin (a regulator's VOUT or
- * switch node) through series parts. External inputs are not included.
+ * switch node) through series parts (seriesPaths: resistors, inductors, diodes, fuses, ferrite
+ * beads …). External inputs are not included.
  */
 export function circuitSuppliedNets(d: Design): Set<string> {
   const out = new Set<string>();
@@ -260,8 +267,8 @@ export function circuitSuppliedNets(d: Design): Set<string> {
     const card = cardOf(d, c.part);
     if (!card) continue;
     for (const p of card.pins) if (p.type === 'pwr_out' && c.pins[p.number]) out.add(c.pins[p.number]!);
-    if (SERIES.has(card.category) && card.pins.length === 2) {
-      const [a, b] = card.pins.map((p) => c.pins[p.number]);
+    for (const [x, y] of seriesPaths(card)) {
+      const [a, b] = [c.pins[x], c.pins[y]];
       if (a && b && a !== b) {
         edges.set(a, [...(edges.get(a) ?? []), b]);
         edges.set(b, [...(edges.get(b) ?? []), a]);

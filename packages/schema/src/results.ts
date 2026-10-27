@@ -156,7 +156,9 @@ export type Prim =
   | { t: 'line'; x1: number; y1: number; x2: number; y2: number }
   | { t: 'poly'; pts: number[]; fill?: boolean; closed?: boolean }
   | { t: 'path'; d: string }
-  | { t: 'circle'; x: number; y: number; r: number; fill?: boolean };
+  | { t: 'circle'; x: number; y: number; r: number; fill?: boolean }
+  /** A mark written on the symbol (a thermistor's θ, a varistor's U), centred on (x, y): its baseline. */
+  | { t: 'text'; x: number; y: number; text: string };
 
 export interface PinView {
   number: string;

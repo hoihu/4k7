@@ -334,10 +334,11 @@ export function flowCell(ctx: Ctx, plan: FlowPlan): Scene {
     // horizontal on the rail: pin on the switch node to the left
     const card = cardOf(d, plan.inductor.part)!;
     const leftIsPin1 = plan.inductor.pins[card.pins[0]!.number] === plan.swNet;
-    const def = symbolFor(card);
+    // turned one way, flipped for pin 1 on the left: its turns and core lie below the rail, clear of its text
+    const def = symbolFor(card, leftIsPin1);
     const cx = x + 100; // its leads run along the rail, above the previous part's text
     const s = makeSymbol(d, plan.inductor, def, cx, yR);
-    rotateSymbol(s, def, cx, yR, leftIsPin1 ? -90 : 90);
+    rotateSymbol(s, def, cx, yR, 90);
     s.bbox = { x: cx - 200, y: yR - 100, w: 400, h: 200 };
     s.refPos = { x: cx, y: yR - 175, anchor: 'middle' };
     s.valuePos = { x: cx, y: yR - 90, anchor: 'middle' };

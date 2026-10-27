@@ -1434,12 +1434,16 @@ function drawStack(ctx: Ctx, scene: Scene, plan: StackPlan, x: number, y: number
   endLead(scene, d.nets[net]!, x, y, 'up');
 }
 
-/** A two-pin part lying horizontally centred on (cx, cy); `pin1Left` puts pin 1 on the left. */
+/**
+ * A two-pin part lying horizontally centred on (cx, cy); `pin1Left` puts pin 1 on the left. It is
+ * turned one way and flipped for pin 1 on the left, so what a glyph has beside it (an inductor's
+ * core, an LED's arrows) lies below it, clear of its name and value above.
+ */
 function horizontalPart(d: Design, comp: Component, cx: number, cy: number, pin1Left: boolean): SymbolView {
   const card = cardOf(d, comp.part)!;
-  const def = uprightSymbol(card);
+  const def = uprightSymbol(card, pin1Left);
   const s = makeSymbol(d, comp, def, cx, cy);
-  rotateSymbol(s, def, cx, cy, pin1Left ? -90 : 90);
+  rotateSymbol(s, def, cx, cy, 90);
   s.bbox = { x: cx - 200, y: cy - 100, w: 400, h: 200 };
   s.refPos = { x: cx, y: cy - 175, anchor: 'middle' };
   s.valuePos = { x: cx, y: cy - 90, anchor: 'middle' };
@@ -1621,7 +1625,10 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
       rises.set(p.number, Math.max(rises.get(p.number) ?? 0, p.y - arrowBase(o)));
     }
   }
-  for (const p of sym.pins) {
+  // connected pins first: on a spot several pins share (a switch's pair, a case's GND pins) the
+  // connection is drawn, not the no-connect mark of a pin left free there
+  const connectedFirst = [...sym.pins].sort((a, b) => Number(!plan.comp.pins[a.number]) - Number(!plan.comp.pins[b.number]));
+  for (const p of connectedFirst) {
     const netId = plan.comp.pins[p.number];
     const net = netId ? d.nets[netId] : undefined;
     const at = `${p.x},${p.y}`;
@@ -1645,6 +1652,11 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
       continue;
     }
     const dir: Dir = p.side === 'left' ? 'left' : p.side === 'right' ? 'right' : p.side === 'top' ? 'up' : 'down';
+    // a supply against a top or bottom pin's lead (a rail on the drain under a P-MOSFET) turns aside to point its own way
+    if ((dir === 'up' || dir === 'down') && supplyDir(net) && supplyDir(net) !== dir) {
+      endLead(scene, net, p.x, p.y, dir);
+      continue;
+    }
     const stub = stubs.get(p.number) ?? 100;
     scene.labels.push(deco(net, p.x, p.y, dir, stub, rises.get(p.number) ?? 0, plan.card.pins.find((cp) => cp.number === p.number)?.type));
     if (p.side === 'right') gapRight = Math.max(gapRight, decoWidth(net, stub) + 100);

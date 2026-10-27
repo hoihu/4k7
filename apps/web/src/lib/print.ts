@@ -23,6 +23,7 @@ export const SCHEMATIC_STYLE = `
 .sch-p .sym .filled { fill: #f2f2f2; }
 .sch-p .sym polygon.filled { fill: #000; }
 .sch-p .ref { font-size: 88px; font-weight: 700; }
+.sch-p .sym-t { font-size: 64px; }
 .sch-p .val { font-size: 80px; }
 .sch-p .pin-n { font-size: 70px; }
 .sch-p .pin-no { font-size: 52px; fill: #555; }
