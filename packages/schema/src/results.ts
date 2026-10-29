@@ -61,6 +61,8 @@ export type RejectionCode =
   | 'ENCLOSURE_INVALID'
   | 'STACKUP_INVALID'
   | 'STACKUP_UNKNOWN'
+  /** Drawn copper that would lie in a keep-out (draw_track, draw_via, draw_pair). */
+  | 'KEEPOUT_HIT'
   /** No layer of the board can carry a line at that impedance (set_impedance). */
   | 'IMPEDANCE_IMPOSSIBLE'
   /** The route helper's results were computed for an earlier working copy (it changed meanwhile). */

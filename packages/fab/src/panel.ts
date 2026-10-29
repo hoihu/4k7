@@ -11,7 +11,7 @@ const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const shift = (pts: number[], dx: number, dy: number) => pts.map((v, i) => r3(v + (i % 2 === 0 ? dx : dy)));
 
 function moveCut(c: ZoneCut, dx: number, dy: number): ZoneCut {
-  if (c.k === 'stroke') return { ...c, pts: shift(c.pts, dx, dy) };
+  if (c.k === 'stroke' || c.k === 'poly') return { ...c, pts: shift(c.pts, dx, dy) };
   return { ...c, x: r3(c.x + dx), y: r3(c.y + dy) };
 }
 

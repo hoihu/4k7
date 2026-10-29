@@ -134,14 +134,18 @@ guidelines and the reference board, with their pictures) and follow them; say wh
   sits where the datasheet puts it, at the chip's RF pin or at the antenna's feed point, its pads in
   the line's path, so the line runs through it.
 - **The antenna** goes where its datasheet puts it, usually at a board edge or corner, with its
-  keep-out area free of copper on every layer: no pour, no tracks, no vias, no parts. The board has
-  no keep-out op yet: make the pours areas that leave the keep-out free (set_plane with rect on each
-  layer, the rest of the board covered), keep the tracks out of it (draw the copper near it yourself),
-  and check it with get_board_image. Say that it was done this way.
+  keep-out area free of copper on every layer: no pour, no tracks, no vias, no parts. Lay that
+  area down with add_keepout (see section 7): attached to the antenna part (`part`, the rectangle
+  in the part's frame, so it follows when the part moves), layers "all", forbid tracks, vias, pours
+  and parts. The area is the datasheet's drawing: its size from the antenna's body, often reaching
+  past the board edge or the module's end; a ground plane clearance under a chip antenna is the
+  same thing on the inner layers. Check it with get_board_image (the area shows hatched, with its
+  label) and DRC.KEEPOUT in drc.
 - **An RF connector** (u.FL, SMA): its datasheet's footprint, its ground pads to the plane with
   several vias right at them. A pad much wider than the line (an edge SMA's centre pin) lowers the
-  impedance there; datasheets often clear the plane under it, which the board cannot do yet: keep that
-  stretch short and say so.
+  impedance there; datasheets often clear the plane under it: add_keepout under the pad, forbid
+  pours only, on the layer(s) the plane is on (section 7). Keep that stretch short; the line
+  crossing the cleared plane reports IMP.REFERENCE, which you waive with the reason.
 
 ## 6. Before you propose
 
@@ -152,5 +156,27 @@ guidelines and the reference board, with their pictures) and follow them; say wh
 - Tell the user what to order: the stack-up by its name, and at JLCPCB impedance control with that
   stack-up selected; the lines with their impedance and widths. On 2 layers say that the fab does
   not control impedance, and the line comes out within about ±15 %.
-- Say what the board cannot do yet where it mattered: a copper keep-out for an antenna, a plane
-  cleared under a pad.
+- Say what you departed from in the datasheet's layout and why, and which keep-outs you set
+  (get_board lists them).
+
+## 7. Keep-outs
+
+add_keepout marks an area where some things may not be, on some layers. It is how an antenna's
+clearance, the plane cleared under a wide pad or a coil, a no-via zone and a no-part zone are said.
+
+- `rect` (x_mm, y_mm, width_mm, height_mm, top-left corner) or `polygon` (corners in order), in
+  millimetres on the board; with `part` they are in that part's own frame (origin at the part, the
+  footprint as drawn, x right, y down, the part at rotation 0 on top; it is mirrored and turned
+  with the part). The part may stand in it; everything else follows it.
+- `layers`: "all" (default) or a list ("F.Cu", "In1.Cu" …). A via or a through-hole part goes
+  through every layer.
+- `forbid`: tracks, vias, pours (the copper fill of pours and planes, inner planes too: the plane
+  is cut there), parts (courtyards, on the sides the layers name). Default: tracks, vias, pours.
+- Examples: antenna `part: "ANT1"`, rect round its radiating end, layers all, forbid all four. A
+  coil or a wide RF pad: `rect` under it, layers the plane's layer, forbid ["pours"]. A quiet node:
+  forbid ["vias"] near it. A mechanical no-part zone (a screw head, a connector's plug): forbid
+  ["parts"] on the side that matters.
+- The router and the placer keep out of it, draw_track / draw_pair / draw_via refuse to enter it
+  (KEEPOUT_HIT, with where), pours are cut round it, and DRC.KEEPOUT finds copper or a part that
+  is in one anyway. edit_keepout changes it, remove_keepout removes it.
+

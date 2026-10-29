@@ -3,6 +3,14 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
+## Unreleased
+
+### Board
+
+- **Copper keep-outs**: an area of the board where tracks, vias, pours or parts are not allowed, on all layers or the ones named (`add_keepout`, `edit_keepout`, `remove_keepout`; no buttons, the agent sets them). For an antenna's clearance, the plane cleared under a wide pad or a coil, a no-via zone, a no-track or a no-part zone. A rectangle or a polygon, and it can be attached to a part, so the antenna's clearance moves and turns with the antenna.
+- **Everything keeps out of it**: pours and planes (inner ones too) are cut round it and the Gerber copper file shows the cleared zone; the router and the placer keep out; `draw_track`, `draw_pair` and `draw_via` refuse to enter one and say where; `DRC.KEEPOUT` finds copper or a part that is in one anyway. It is not exported as artwork.
+- **Seen on the board**: hatched and translucent in the 2D view with its label, listed by `get_board` and in the design document. The layout guides for antennas and RF connectors now tell the agent to use it.
+
 ## 0.2.0 — 2026-10-25
 
 The chat runs on the coding agent you already use, projects are files on your computer, and the agent now takes a board from placement to the last routed connection, designs an enclosure for it, checks stock and cost at three assembly houses and lays lines at a set impedance.

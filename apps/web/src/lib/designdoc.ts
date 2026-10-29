@@ -483,6 +483,7 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
         [
           ['Outline', `${b.outline.w} × ${b.outline.h} mm${b.shape ? ', free-form' : b.cornerRadius ? `, corners R${b.cornerRadius}` : ''}${b.cutouts.length ? `, ${plural(b.cutouts.length, 'cutout')}` : ''}`],
           ['Layers', `${b.layers.length} (${b.layers.join(', ')})`],
+          ...(b.keepouts?.length ? [['Keep-outs', b.keepouts.map((k) => `${k.id}${k.name ? ` ${k.name}` : ''}: no ${k.forbid.join(', ')}${k.layers.length < b.layers.length ? ` on ${k.layers.join(', ')}` : ''}${k.part ? `, follows ${k.part}` : ''}`).join('; ')]] : []),
           ['Rules', `clearance ${b.rules.clearance} mm · track ${b.rules.track} mm, power ${b.rules.powerTrack} mm · via ${b.rules.viaPad}/${b.rules.viaDrill} mm · edge ${b.rules.edgeClearance} mm`],
           ...(b.fab ? [['Manufacturer', `${b.fab.house}, ${b.fab.tier}: track ${b.fab.limits.track} mm, gap ${b.fab.limits.clearance} mm at the narrowest (${b.fab.source.url}${b.fab.source.checked ? `, checked ${b.fab.source.checked}` : ''})`]] : []),
           ['Routing', b.routing === 'done' ? `${b.stats.routed} of ${b.stats.nets} nets, ${Math.round(b.stats.trackLength)} mm of track, ${plural(b.stats.vias, 'via')}${b.ratsnest.length ? `, ${b.ratsnest.length} connections open` : ''}` : 'not routed'],

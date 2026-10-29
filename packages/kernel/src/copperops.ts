@@ -9,12 +9,13 @@
  * drawn already. The app runs that search in a worker and hands the transaction its result
  * (RouteHelperResult), so the kernel stays responsive and the user can watch and stop it.
  */
-import { DEFAULT_BOARD, padHasPin, type BoardDiagnostic, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
+import { DEFAULT_BOARD, padHasPin, type BoardDiagnostic, type CopperLayer, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
 import { boardRouteInput, copperKey, placeBoard, rotate, softened, storedPlacement } from './board.ts';
 import { findNet, isPowerNet, reject, resolveComponent, resolvePins } from './doc.ts';
 import { schematicView } from './drawing.ts';
 import { copperDrc, drawnDrc, edgeDrc } from './drc.ts';
 import { padPointDist } from './keep.ts';
+import { keepoutDrc, rejectTrackInKeepout, rejectViaInKeepout } from './keepout.ts';
 import { route, type RouteProgress, type RouteResult } from './router.ts';
 import { impedanceDrc, ruleWidth } from './lines.ts';
 
@@ -339,6 +340,7 @@ export function drawTrack(d: Design, op: Extract<EditOp, { op: 'draw_track' }>):
   const pts = polyline([ends[0]!, ...(op.via ?? []).map(([x, y]) => ({ x, y })), ends[1]!], op.bend);
   if (pts.length < 4) reject({ code: 'INVALID_OP', message: 'The track starts and ends at the same point.' });
   const width = op.width_mm ?? defaultWidth(d, netId!, board, layer);
+  rejectTrackInKeepout(board, layer as CopperLayer, pts, width);
   const [f, t] = ends.map((e) => e.anchor);
   const track: DrawnTrack = { id: nextId(dc, 't'), netId: netId!, layer, width, pts, ...(f ? { from: f } : {}), ...(t ? { to: t } : {}) };
   dc.tracks.push(track);
@@ -446,6 +448,7 @@ export function drawPair(d: Design, op: Extract<EditOp, { op: 'draw_pair' }>): O
     const pts = simplify(polyline([e0, a0, j0, ...corners, j1, a1, e1]));
     if (pts.length < 4) reject({ code: 'INVALID_OP', message: 'A track of the pair starts and ends at the same point.' });
     const net = nets[k]!;
+    rejectTrackInKeepout(board, layer as CopperLayer, pts, w, `The ${k === 0 ? 'positive' : 'negative'} track of the pair`);
     return { id: nextId(dc, 't'), netId: net, layer, width: w, pts, ...(e0.anchor ? { from: e0.anchor } : {}), ...(e1.anchor ? { to: e1.anchor } : {}) };
   });
   dc.tracks.push(...tracks);
@@ -465,6 +468,7 @@ export function drawVia(d: Design, op: Extract<EditOp, { op: 'draw_via' }>): OpR
   const drill = op.drill_mm ?? b.rules.viaDrill;
   const size = op.size_mm ?? Math.max(b.rules.viaPad, drill + 0.2);
   viaSize(drill, size);
+  if (b.keepouts?.length) rejectViaInKeepout(placed(d), op.at[0], op.at[1], size);
   const via: DrawnVia = { id: nextId(dc, 'v'), netId: net!.id, x: r3(op.at[0]), y: r3(op.at[1]), drill, pad: size };
   dc.vias.push(via);
   return { op: op.op, effect: `via ${via.id}: ${net!.name} at ${via.x}, ${via.y} (${drill}/${size} mm)`, ids: ['board', via.id] };
@@ -1019,7 +1023,7 @@ export function checkCopper(d: Design, ids: Set<string>): BoardDiagnostic[] {
   if (!d.board?.drawn || !ids.size) return [];
   const b = placed(d);
   const supplies = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
-  const out = [...copperDrc(b, ids), ...edgeDrc(b, true, ids), ...drawnDrc(b, ids), ...impedanceDrc(b, ids, supplies)];
+  const out = [...copperDrc(b, ids), ...edgeDrc(b, true, ids), ...keepoutDrc(b, ids), ...drawnDrc(b, ids), ...impedanceDrc(b, ids, supplies)];
   const fab = b.fab?.limits;
   if (fab) {
     for (const t of b.drawn?.tracks ?? []) if (ids.has(t.id) && t.width < fab.track - 0.005) out.push({ code: 'DRC.FAB_TRACK', severity: 'error', message: `Track ${t.id} is ${t.width} mm wide; ${b.fab!.house} makes ${fab.track} mm at the narrowest.`, at: { x: t.pts[0]!, y: t.pts[1]! }, entities: [t.id] });
