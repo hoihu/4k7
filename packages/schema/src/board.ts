@@ -991,6 +991,9 @@ export function boardSummary(b: BoardView, routed = true) {
         ...(m ? { plugged_from: PLUGGED_FROM[boardFacing(m.face, p.rot, p.side)] } : {}),
       };
     }),
+    ...(b.parts.some((p) => p.side === 'bottom')
+      ? { bottom_side: { parts: b.parts.filter((p) => p.side === 'bottom').map((p) => p.refdes), note: 'mounted on the bottom (mirrored, SMD pads on B.Cu): the assembly house sets up a second side for them (the cost check prices it). Nothing flips a part by itself; place side "top" brings one back' } }
+      : {}),
     ...(userPlaced(b).length ? { user_placed: { parts: userPlaced(b), note: USER_PLACED_NOTE } } : {}),
     routing: !routed
       ? 'not computed here (see the Layout view)'

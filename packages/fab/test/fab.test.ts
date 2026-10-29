@@ -123,6 +123,39 @@ describe('fab outputs', () => {
     expect(pickAndPlace(b).split('\n').filter((l) => l.endsWith(',Top')).length).toBeGreaterThan(0);
   });
 
+  it('a bottom part\'s pads, mask openings, paste and polarity mark are on the bottom layers only, where the mirrored footprint puts them', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    k.accept();
+    const d1 = k.board().parts.find((p) => p.refdes === 'D1')!;
+    k.transact({ summary: 'under', ops: [{ op: 'place', ref: 'D1', x_mm: d1.x, y_mm: d1.y, side: 'bottom' }] });
+    const b = k.board();
+    const under = b.parts.find((p) => p.refdes === 'D1')!;
+    const files = fabFiles(b, 'buck');
+    const file = (name: string) => files.find((f) => f.name === `buck-${name}.gbr`)!.content;
+    // a flash or stroke point as the file writes it: x, then y up from the bottom edge, in 1e-6 mm
+    const at = (x: number, y: number) => `X${Math.round(x * 1e6)}Y${Math.round((b.outline.h - y) * 1e6)}D03*`;
+    for (const pad of under.pads) {
+      for (const layer of ['B_Cu', 'B_Mask', 'B_Paste']) expect(file(layer), `${layer} ${pad.number}`).toContain(at(pad.x, pad.y));
+      for (const layer of ['F_Cu', 'F_Mask', 'F_Paste']) expect(file(layer), `${layer} ${pad.number}`).not.toContain(at(pad.x, pad.y));
+    }
+    // the flashes of the paste layers: the bottom has this part's two pads, the top every other SMD pad
+    const flashes = (name: string) => file(name).split('\n').filter((l) => l.endsWith('D03*')).length;
+    const smd = b.parts.flatMap((p) => p.pads.filter((q) => !q.drill && !q.npth));
+    expect(flashes('B_Paste')).toBe(2);
+    expect(flashes('F_Paste')).toBe(smd.length - 2);
+    expect(under.pads.every((q) => q.layers.join() === 'B.Cu')).toBe(true);
+    // the cathode band is printed on the bottom silkscreen, not the top
+    const band = under.mark!.strokes[0]!.pts;
+    const stroke = (x: number, y: number) => `X${Math.round(x * 1e6)}Y${Math.round((b.outline.h - y) * 1e6)}D0`;
+    expect(file('B_Silkscreen')).toContain(stroke(band[0]!, band[1]!));
+    expect(file('F_Silkscreen')).not.toContain(stroke(band[0]!, band[1]!));
+    expect(file('B_Silkscreen')).toContain('FileFunction,Legend,Bot');
+    // the through-hole header is on both: pads on every copper layer and a mask opening
+    const j1 = b.parts.find((p) => p.refdes === 'J1')!;
+    for (const layer of ['F_Cu', 'B_Cu', 'F_Mask', 'B_Mask']) expect(file(layer)).toContain(at(j1.pads[0]!.x, j1.pads[0]!.y));
+  });
+
   it('prints the polarity marks: a dot by pin 1, a band at the cathode, the pin-1 corner chamfered', () => {
     const b = board();
     const silk = fabFiles(b, 'buck').find((f) => f.name === 'buck-F_Silkscreen.gbr')!.content;

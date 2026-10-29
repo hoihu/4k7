@@ -1301,10 +1301,11 @@ export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_p
   }
   if (op.width_mm !== undefined) setBoard(d, { op: 'set_board', width_mm: op.width_mm, height_mm: op.height_mm });
   const r = (v: number) => Math.round(v * 1000) / 1000;
+  // (the sides first: turning a part over keeps the placement as it stands, which must not hold the new choices yet)
+  for (const { p, comp } of given) if (p.side) setSide(d, comp, p.side);
   const choices = given.map(({ p, comp }) => {
     const id = nextId(d, 'k');
     d.ledger[id] = { id, kind: 'position', a: comp.id, xMm: r(p.x_mm), yMm: r(p.y_mm), rot: p.rot ?? 0, domain: 'placement', strength: 'soft', source: { type: by } };
-    if (p.side) setSide(d, comp, p.side);
     return d.ledger[id]!;
   });
   const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
