@@ -1913,6 +1913,35 @@ class AppState {
     if (this.selection.length === 1) this.tab = 'sel';
   }
 
+  /* ----------------- hand editing in the schematic ------------------ */
+  /* The gestures of the canvas issue the ops the agent uses, as the user's own edit: undoable,
+     validated like any op, and marked as the user's decision where the drawing keeps one. */
+
+  /** Move or turn a symbol (place_symbol): the wires it had are drawn again, round what is there. */
+  placeSymbol(ref: string, spot: { page: number; x: number; y: number }, look: { orient?: 'upright' | 'lying'; mirror?: boolean } = {}): Promise<boolean> {
+    const what = look.orient ? `Turn ${ref} ${look.orient === 'lying' ? 'lying' : 'upright'}` : look.mirror !== undefined ? `Mirror ${ref}` : `Move ${ref}`;
+    return this.userEdit(what, [{ op: 'place_symbol', ref, ...spot, ...look, rewire: true }]);
+  }
+
+  /** Point a net label another way round its pin (label). */
+  labelAt(pin: string, net: string, dir: 'left' | 'right' | 'up' | 'down'): Promise<boolean> {
+    return this.userEdit(`Label ${net} ${dir} at ${pin}`, [{ op: 'label', pin, dir }]);
+  }
+
+  /** Take one drawn wire or net label away (erase at a point); the connection shows as an automatic label if nothing else does. */
+  eraseDrawn(what: 'wire' | 'label', net: string, at: { page: number; x: number; y: number }): Promise<boolean> {
+    return this.userEdit(`Erase ${what} of ${net}`, [{ op: 'erase', at: [{ ...at, what }] }]);
+  }
+
+  /** Remove parts from the design (remove), after asking: it changes the circuit, not only the drawing. */
+  async removeParts(refs: string[]): Promise<boolean> {
+    if (!refs.length) return false;
+    if (!window.confirm(`Remove ${refs.join(', ')} from the design? ${refs.length === 1 ? 'Its' : 'Their'} connections go with ${refs.length === 1 ? 'it' : 'them'} (Undo brings ${refs.length === 1 ? 'it' : 'them'} back).`)) return false;
+    const ok = await this.userEdit(`Remove ${refs.join(', ')}`, refs.map((ref) => ({ op: 'remove', ref })));
+    if (ok) this.selection = this.selection.filter((r) => !refs.includes(r));
+    return ok;
+  }
+
   flash(msg: string) {
     this.toast = msg;
     setTimeout(() => {

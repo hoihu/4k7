@@ -9,7 +9,7 @@
  */
 import { DEFAULT_PAPER, PAGE, paperOf, type BlockView, type Component, type Design, type DrawnSymbol, type LabelView, type PageView, type PinView, type Rect, type SchematicView, type SheetDrawing, type SheetView, type SymbolView, type WireView } from '@4k7/schema';
 import { GRID, isTwoPin, symbolFor, symbolFromSpec, unitCount, uprightSymbol } from '@4k7/parts';
-import { cardOf, componentsSorted, natCmp } from './doc.ts';
+import { cardOf, componentsSorted, natCmp, nextId } from './doc.ts';
 import { PAGE_GAP, blockAssignment, drawnWith, evaluateConstraints, layoutSheetOf, pageName, pagesBBox, symbolKey } from './layout.ts';
 import { FRAME_PAD, frameAround, pieces } from './blocks.ts';
 import { cleanWires } from './wireclean.ts';
@@ -33,6 +33,14 @@ export function schematicView(d: Design): SchematicView {
     const sheet = d.components[k.a ?? '']?.sheet;
     if (sheet && d.drawing?.[sheet]) why[k.id] = `sheet ${d.sheets[sheet]!.name} is drawn as arranged, and an order only guides the auto-layout: move the part with place_symbol, or let the layout redraw the sheet with auto_draw`;
   }
+  // what the app's R and F keys need to know: a two-pin part turns, an IC or connector mirrors (and says whether it is)
+  for (const v of views) {
+    for (const sym of v.symbols) {
+      const card = cardOf(d, d.components[sym.componentId]?.part ?? '');
+      if (card && isTwoPin(card)) sym.twoPin = true;
+      else if (symbolMaking(sym)?.spec.mirror) sym.mirrored = true;
+    }
+  }
   return { paper: d.paper ?? DEFAULT_PAPER, sheets: views, constraintStatus: status, ...(Object.keys(why).length ? { constraintWhy: why } : {}) };
 }
 
@@ -48,6 +56,7 @@ export function symbolOf(d: Design, s: DrawnSymbol): SymbolView | undefined {
   const sym = makeSymbol(d, c, def, s.x, s.y);
   if (s.rot) rotateSymbol(sym, def, s.x, s.y, s.rot);
   if (s.unit) sym.unit = s.unit;
+  if (s.by) sym.by = s.by;
   sym.bbox = { ...s.bbox };
   sym.refPos = { ...s.ref };
   sym.valuePos = { ...s.value };
@@ -150,7 +159,7 @@ interface PinAt {
   net: string | null;
 }
 
-const pinsOf = (d: Design, symbols: SymbolView[]): PinAt[] =>
+export const pinsOf = (d: Design, symbols: SymbolView[]): PinAt[] =>
   symbols.flatMap((s, i) => {
     const comp = d.components[s.componentId]!;
     return s.pins.map((pin) => ({ sym: i, pin, comp, net: comp.pins[pin.number] ?? null }));
@@ -195,7 +204,7 @@ interface Group {
   labels: number[];
 }
 
-function groups(pins: PinAt[], wires: WireView[], labels: Pick<LabelView, 'x' | 'y' | 'netId'>[]): Group[] {
+export function groups(pins: PinAt[], wires: WireView[], labels: Pick<LabelView, 'x' | 'y' | 'netId'>[]): Group[] {
   const n = pins.length + wires.length + labels.length;
   const parent = Array.from({ length: n }, (_, i) => i);
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i]!)));
@@ -331,10 +340,43 @@ export function ownSheet(d: Design, sheetId: string): SheetDrawing {
 
 /** Hand a sheet back to the auto-layout (auto_draw): it draws it afresh after every change again. */
 export function releaseSheet(d: Design, sheetId: string): boolean {
-  if (!d.drawing?.[sheetId]) return false;
-  delete d.drawing[sheetId];
-  if (!Object.keys(d.drawing).length) delete d.drawing;
+  const sd = d.drawing?.[sheetId];
+  if (!sd) return false;
+  keepUsers(d, sd);
+  delete d.drawing![sheetId];
+  if (!Object.keys(d.drawing!).length) delete d.drawing;
   return true;
+}
+
+/**
+ * The symbols the user put somewhere (a drag or turn in the app) become sch_position entries of
+ * theirs when the sheet goes back to the auto-layout, which stands them where they were put and
+ * flows the rest round them.
+ */
+function keepUsers(d: Design, sd: SheetDrawing): void {
+  for (const s of sd.symbols) {
+    const comp = d.components[s.comp];
+    const card = comp && cardOf(d, s.part);
+    if (s.by !== 'user' || !card) continue;
+    for (const k of Object.values(d.ledger)) if (k.kind === 'sch_position' && k.a === s.comp && (k.aUnit ?? '') === (s.unit ?? '')) delete d.ledger[k.id];
+    const c = centre(s.bbox);
+    const i = pageAt(sd.pages, c);
+    const pg = sd.pages[i]!;
+    const id = nextId(d, 'k');
+    d.ledger[id] = {
+      id,
+      kind: 'sch_position',
+      a: s.comp,
+      ...(s.unit ? { aUnit: s.unit } : {}),
+      page: i + 1,
+      x: Math.round(c.x - pg.x),
+      y: Math.round(c.y - pg.y),
+      ...(isTwoPin(card) ? { orient: s.rot ? ('lying' as const) : ('upright' as const) } : { mirror: !!s.spec.mirror }),
+      domain: 'schematic',
+      strength: 'soft',
+      source: { type: 'user' },
+    };
+  }
 }
 
 /* -------------------------------- in step ---------------------------------- */
@@ -883,7 +925,9 @@ function made(d: Design, comp: Component, base: Omit<DrawnSymbol, 'spec' | 'x' |
  */
 export function redrawBlock(d: Design, sheetId: string, title: string, page: number, x: number, y: number): { x: number; y: number; frame: Rect; page: Rect; under?: string } {
   const sd = ownSheet(d, sheetId);
-  const ids = new Set(blockAssignment(d, sheetId)?.blocks.find((b) => b.title === title)?.ids ?? []);
+  // what the user put somewhere stays where it stands
+  const kept = new Set(sd.symbols.filter((s) => s.by === 'user').map((s) => s.comp));
+  const ids = new Set((blockAssignment(d, sheetId)?.blocks.find((b) => b.title === title)?.ids ?? []).filter((id) => !kept.has(id)));
   addPages(d, sd, page);
   sd.symbols = sd.symbols.filter((s) => !ids.has(s.comp));
   const view = layoutSheetOf(d, sheetId, ids);

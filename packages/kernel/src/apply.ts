@@ -62,10 +62,10 @@ import { autoPlanes, dropOffset, padNet, placeBoard, storedPlacement } from './b
 import { underBody } from './drc.ts';
 import { polarityOf } from './marks.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
-import { eraseOp, labelOp, wireOp } from './drawops.ts';
+import { eraseOp, labelOp, rewire, wireOp, wiredPins } from './drawops.ts';
 import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
-import { isDrawn, moveSymbol, redrawBlock, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
+import { isDrawn, moveSymbol, ownSheet, redrawBlock, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
 import { blockAssignment } from './layout.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
@@ -163,7 +163,7 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
     case 'attach':
       return attach(d, op, by);
     case 'place_symbol':
-      return placeSymbol(d, op);
+      return placeSymbol(d, op, by);
     case 'auto_draw':
       return autoDraw(d, op);
     case 'place_block':
@@ -941,7 +941,7 @@ function keepPlacement(d: Design) {
  * drawing, which is kept from then on. The page is given as the design counts pages. A
  * `sch_position` ledger entry of earlier versions on the part goes: the drawing says it now.
  */
-function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>): OpResult {
+function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>, by: 'user' | 'agent'): OpResult {
   const { comp, unit } = resolveUnitRef(d, op.ref);
   const label = `${comp.refdes}${unit ?? ''}`;
   const old = Object.values(d.ledger).filter((k) => k.kind === 'sch_position' && k.a === comp.id && (k.aUnit ?? '') === (unit ?? ''));
@@ -975,8 +975,21 @@ function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>): Op
   }
   const taken = !isDrawn(d, comp.sheet);
   const unitOf = unit ?? (card && unitCount(card) > 1 ? card.units![0]!.name : undefined);
+  // the wires it has now, to wire again what the move cuts
+  const wiredBefore = op.rewire ? wiredPins(d, ownSheet(d, comp.sheet)) : [];
   const at = moveSymbol(d, comp.sheet, comp, unitOf, page, op.x, op.y, { ...(op.orient ? { orient: op.orient } : {}), ...(op.mirror !== undefined ? { mirror: op.mirror } : {}) });
-  const notes = [taken ? `sheet ${sheet.name} is drawn as you arrange it from now on` : '', at.under ? `it lies on ${at.under}: move one of them` : ''].filter(Boolean);
+  const mine = d.drawing![comp.sheet]!.symbols.find((s) => s.comp === comp.id && (s.unit ?? undefined) === unitOf)!;
+  const wasUsers = mine.by === 'user';
+  // a drag or turn in the app is the user's decision, kept when the agent redraws; the agent's own move is its own again
+  if (by === 'user') mine.by = 'user';
+  else delete mine.by;
+  const wires = wiredBefore.length ? rewire(d, comp.sheet, wiredBefore) : undefined;
+  const notes = [
+    taken ? `sheet ${sheet.name} is drawn as you arrange it from now on` : '',
+    at.under ? `it lies on ${at.under}: move one of them` : '',
+    wires ? `${wires.wired} wire${wires.wired === 1 ? '' : 's'} drawn again${wires.left ? `, ${wires.left} connection${wires.left === 1 ? '' : 's'} left to labels (no clear path)` : ''}` : '',
+    wasUsers && by === 'agent' ? "it was the user's placement; now yours" : '',
+  ].filter(Boolean);
   return { op: op.op, effect: `${label} placed on page ${first + page - 1} at (${at.x}, ${at.y}) mils${notes.length ? `; ${notes.join('; ')}` : ''}`, ids: [comp.id] };
 }
 

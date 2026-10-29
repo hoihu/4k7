@@ -442,6 +442,7 @@ export const PlaceSymbolOp = z.object({
   orient: z.enum(['upright', 'lying']).optional().describe('Two-pin parts: standing or lying, e.g. a resistor in series in a signal path; omit it to keep how it is drawn'),
   mirror: z.boolean().optional().describe('ICs and connectors: pins of the left side on the right (a connector at the right edge facing the circuit); omit it to keep how it is drawn'),
   auto: z.boolean().optional().describe('true: take the part out of your drawing; it is drawn afresh in free space'),
+  rewire: z.boolean().optional().describe('true: the connections the symbol had by wire are wired again after the move (the path finder of wire; a connection with no clear path shows as a net label). The app\'s drag and turn of a symbol use it'),
 }).describe('Move a part on the schematic: its symbol\'s centre goes there (the move is rounded to the 100-mil grid; the result says where it ended up). The first move on a sheet makes its drawing yours: from then on it stays as you arrange it, and parts added later are drawn in free space. An IC or connector takes the small parts drawn at its pins with it, wired as before; a two-pin part goes on its own. Wires to parts that stay behind are cut back, and those connections show as net labels. Use it to make a drawing look like a reference or the user\'s sketch.');
 
 const pagePoint = z.object({ x: z.number(), y: z.number() }).describe('Page coordinates in mils from the paper\'s top-left corner (as get_schematic gives them)');
@@ -463,6 +464,12 @@ export const EraseOp = z.object({
   op: z.literal('erase'),
   pins: z.array(pinRef).optional().describe('Erase the wires and labels drawn at these pins'),
   net: netName.optional().describe('Erase every wire and label of this net'),
+  at: z.array(z.object({
+    page: z.number().int().min(1).describe('Page number as get_schematic counts them'),
+    x: z.number().describe('Mils from the paper\'s left edge'),
+    y: z.number().describe('Mils from the paper\'s top edge'),
+    what: z.enum(['wire', 'label']).describe('wire: the drawn wires that pass through this point (a wire runs between two joints, so its middle is a safe spot); label: the net labels and supply symbols standing at this point'),
+  })).max(20).optional().describe('Erase this one wire or label rather than all that is drawn at a pin (the app\'s Delete key on a selected wire or label)'),
 }).describe('Take wires and labels out of the drawing (the netlist does not change). Connections no longer drawn show as automatic labels until you draw them again (wire, label).');
 
 export const PlaceBlockOp = z.object({
