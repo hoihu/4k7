@@ -63,11 +63,13 @@ mm, e.g. round an open connection. It waits for routing.
 
 The guide tells the agent the arrangement is its own, and what a good one is for routing: an IC's
 small parts at the pins they serve, pads facing what they connect to, signal chains in order,
-ratsnest lines not crossing where they need not. Two numbers on every board, before any routing
+ratsnest lines not crossing where they need not. Three numbers on every board, before any routing
 (`BoardView.measures`, `get_board` `placement_measures`):
 
 - **ratsnest length** (mm) of the nets routed as tracks (nets on a dedicated inner plane left out),
-- **ratsnest crossings**: pairs of ratsnest lines of different nets that cross.
+- **ratsnest crossings**: pairs of ratsnest lines of different nets that cross,
+- **congestion** (mm, §11): how much track the ratsnest wants above what the layers carry, cell
+  by cell (and the worst cell's demand over its capacity).
 
 Lower is better. Moving or turning a part and reading the numbers again tells the agent whether it
 helped, before it spends a routing run on it. A move makes the routing out of date, so the board
@@ -429,22 +431,27 @@ Each step is useful alone.
     a mechanism (a dragged IC takes its parts along), but the agent decides it. Benches unchanged
     (2 and 4 layers: same board, tracks and vias).
 13. **Next.** (a) The placer's guesses softened one by one, judged on the benches: the board
-    density, the alignment snapping, the margin to the edge, satellites always at the courtyard.
-    (b) Planes in try_placements (compare split or not by trial routing).
+    density, the margin to the edge, satellites always at the courtyard (the alignment snapping
+    and the re-run of every guess on each move are done, §11). (b) Planes in try_placements
+    (compare split or not by trial routing).
 
 ## 8. Open questions
 
 - The budget. 90 s covers the benches; a real 300-part board may need more (the user can stop it
   and keep the best pass). With incremental routing (§5.5) a long first route matters less.
-- The placer moves parts a move did not touch: a 1.5 mm move of one part on the bench nudged up
-  to 20 others by 0.1–1.4 mm (the outline grew, snapping, small parts placed again). Incremental
-  routing copes (a pad that moved within its own copper keeps its tracks), but a steadier placer
-  would keep more copper and surprise the user less (§7 step 13a).
+- The placer moved parts a move did not touch (a 1.5 mm move nudged up to 20 others by 0.1–1.4 mm).
+  Fixed for the placer, §11.1: a move touches the part, the parts that follow it and what it
+  pushes into. What is left: a part placed into a dense pack still pushes a chain of neighbours
+  (each by what it must), and a main part's followers move with it by design; whether they should
+  keep their place relative to their parent after a long move is the placer's old guess
+  (`NUDGE_MM`).
 - A stopped routing is still routed again from scratch (`route` drops it); it could be kept as the
   start of an incremental route instead.
-- A better measure of routability than crossing ratsnest lines: the router's result swings with a
-  small move (one board: 211 vias placed one way, 318 refined), so a congestion estimate (where the
-  nets' boxes overlap more than the board's two layers carry) may judge small-part moves better.
+- A better measure of routability than crossing ratsnest lines: congestion (§11.2) predicts how
+  hard the router finds a placement (passes, connections left open) better than crossings do, but
+  not its vias or track length, and the vias swing with a small move whatever the measure (one
+  board: 211 vias placed one way, 318 refined). A measure that sees the escape of a pin row, or
+  the router's own cost map after a few passes, is the next candidate.
 - Should open connections block `propose` for the in-app agent too? Today the rule is in the
   Claude Code path (`propose` is its tool); the in-app agent's turn ends with the changeset whatever
   the board says.
@@ -618,3 +625,118 @@ best one, computed in the board worker after routing); let the router try them i
 stuck (with the user's parts out of bounds, reported in the effect); pin and gate swaps (two
 channels of an op-amp, equivalent MCU pins), which change the schematic and need the user's say;
 and blocks as areas the parts keep to (rooms).
+
+## 11. A steadier placer, and congestion as a placement measure (2026-10-29)
+
+Two follow-ups of §8, both measured on the benches (`packages/kernel/bench/`).
+
+### 11.1 A move touches what it needs
+
+**Measure.** `bench/board.ts 2|4 1|2|3 steady 6` places the bench board, then moves six small parts
+(two-pin) and six main parts, one at a time by 1.5 mm with `place` (the user's choice), and counts
+the other parts that moved by more than 0.05 mm or turned, not counting the parts that follow the
+one moved (they move with it, by design), and the furthest any of them went.
+
+**Causes** (found by following one nudge through the placer):
+
+- *A choice and the placement disagreed.* A part the user placed keeps its spot in the ledger; the
+  placer then nudged it clear of a neighbour and stored the result. Laid out again from the stored
+  placement, the choice was applied again at the old spot, pushed the neighbour again, and so on:
+  every layout re-pushed the same parts, and each later move started from a board that was not at
+  rest.
+- *The clean-up ran on the whole board.* From a stored placement `settle` and `alignSimilar` still
+  ran over every part: `separate` snapped even the part that stayed (a user's choice, 0.05 mm off
+  its pad-1 grid), `alignSimilar` picked the line of each row or column of similar parts again (1–2
+  mm when a group changed), and parts the alignment had left 0.03 mm off the grid were snapped back
+  at the next layout, so five parts shifted on every layout, with no move at all.
+- *Followers were relaxed again.* The parts that follow a moved part (a connector's 38 small parts)
+  went through 60 relaxation steps towards their nets and the small parts of an IC were put at its
+  pins again: 1–15 mm for a 1.5 mm nudge of the parent.
+- *No room meant a jump.* A pair the separation could not pull apart went to the nearest free spot
+  (`legalize`), wherever that was, or grew the outline by 10 %. (The outline did not grow in these
+  runs; §8 named it from an earlier one.)
+
+**Fixes** (`board.ts`, `apply.ts`):
+
+- From a stored placement, the parts that moved (the part placed, its followers, new parts, those
+  off the board or in someone's way already) are *active*; every other part is held still while the
+  board is settled and aligned. A held part that an active one overlaps joins the active ones and
+  gives way; that repeats, round by round, so a nudge into a pack pushes a chain, each part by what
+  it must. Only when that finds no room are the parts in the way moved to the nearest free spot,
+  and only then is the whole board settled again (it may grow).
+- Choices are recorded where their part ended up (`choicesWhereTheyStand`; relative ones in the
+  anchor's frame; a two-pin part turned round by 180° keeps the direction chosen), and a choice
+  within 0.005 mm of the stored place is not a move. The placement shown is the stored one.
+- Parts held still are neither re-snapped nor re-aligned; `separate` snaps only what it moved.
+- Followers move with a parent that went less than 3 mm without turning exactly as it did; the
+  relaxation and the re-hugging of an IC's small parts only follow a longer move or a turn.
+- Two-pin parts that share a small net with a part that moved are tried turned by 180° (they may
+  face it the other way round now).
+
+Six moves of 1.5 mm; other parts disturbed (furthest), before → after:
+
+| | small parts moved | main parts moved |
+|---|---|---|
+| 2 layers, 3 clusters (130 parts) | 69 (7.1 mm) → **6** (2.6 mm) | 326 (10.2 mm) → **26** (5.1 mm) |
+| 4 layers, 3 clusters | 167 (10.0 mm) → **17** (8.2 mm) | 216 (17.6 mm) → **30** (3.5 mm) |
+| 2 layers, 1 cluster (56 parts) | 16 (1.5 mm) → **4** (3.0 mm) | 55 (8.4 mm) → **7** (1.4 mm) |
+
+A move takes the same time or less (160 ms against 160–320 ms on the 130-part board). Incremental
+routing profits: after the same six moves on the 56-part board (`bench/board.ts 2 1 6`) the router
+kept 157, 188, 74, 168, 147 and 206 of about 200 tracks before and 157, 189, 181, 197, 200 and 197
+after; every move now needs one pass (two of them needed two), 0.9 s in all against 1.4 s. What is
+left: a part dropped on a pack still pushes its neighbours, and a part pushed against a held one can
+jump past it (the furthest values above). `test/board.test.ts`: the buck's eleven two-pin parts moved
+in turn disturb at most six others (the placer moved 22), and the board shown is the stored
+placement.
+
+### 11.2 Congestion
+
+`congestion.ts`, RUDY-style, in milliseconds: every ratsnest line (the nets routed as tracks, as for
+the other two measures) spreads its Manhattan length evenly over its bounding box (at least 1 × 1
+mm) on a grid of 3 mm cells; a cell's capacity is the track its signal layers fit in it, the free
+area over the pitch (track + clearance), with pads and their clearance taken out on their own layer
+(a dedicated inner plane carries no signal). What counts is the demand above 40 % of the capacity
+(the router never fills a layer: vias, detours, escapes): `overflowMm` summed over the cells, with
+`peak` (the worst cell's demand over its capacity) and `hot` (cells over). It is in
+`BoardView.measures.congestion`, `get_board` `placement_measures` (`congestion_mm`,
+`congestion_peak`) and `try_placements` (`congestion_mm`, `routability`).
+
+One score for the searches, `routability` = 4 × crossings + ratsnest mm + 8 × congestion mm (lower
+is better). It is the cost of `refinePlacement` and `exploreMain` (their model keeps the grid and
+draws again only the lines a move changes: `Grid.delta`), the screening of `suggest_moves`, what
+`refine_placement` and `propose_placement` accept (a refinement is kept if the placement as the
+placer then makes it scores lower), the explore step of `try_placements` and, after the open
+connections and the placement problems, the order of its options.
+
+**Validation** (`bench/congest.ts`): the bench board placed 24–40 ways each (the main parts shifted
+and turned at random, the placer putting the small parts round them), each routed to completion, then
+Spearman's rho between each measure of the placement and what routing gave. Four sets, 124
+placements: 2 layers 1 cluster on the proposed size and squeezed to 80 %, 4 layers 1 cluster squeezed
+to 80 %, 2 layers 2 clusters squeezed to 85 %. Mean over the sets:
+
+| measure | vias | track mm | router passes | open connections |
+|---|---|---|---|---|
+| crossings | 0.44 | 0.63 | 0.43 | 0.35 |
+| ratsnest mm | 0.34 | 0.67 | 0.26 | 0.28 |
+| 4 × crossings + ratsnest mm (the old score) | 0.43 | **0.68** | 0.40 | 0.33 |
+| congestion mm | 0.32 | 0.41 | **0.52** | **0.51** |
+| routability (the old score + 8 × congestion mm) | 0.40 | 0.59 | **0.53** | **0.50** |
+
+(Open connections: the unsqueezed set routes everything, so that column is the mean of the other
+three.) Congestion is the better predictor of how hard the router finds a placement, the passes it
+needs and the connections it leaves open, and a poorer one of the track length, where the ratsnest
+stays best; no measure here predicts the vias (they swing with a small move). So the score helps
+where routing is the problem and costs a little rank correlation with track length where it is not.
+The weight 8 is a compromise: from 1 to 16, more congestion predicts passes and open connections
+better and the track length worse. Straight-line fits of the outcomes on the measures explain little
+(leave-one-out R² mostly under 0.5), so these are rankings of placements, not predictions of numbers.
+
+On the routed benches (`bench/board.ts … place`): the refined placement of the 2 layer, 2 cluster
+board routes with 124 vias instead of 131 and `try_placements` now finds an improvement on it (115
+vias and 1006 mm of track; it found none before); on the 4 layer, 3 cluster board the refined
+placement routes about the same (237 vias, 1516 mm against 232, 1465) and so does the explored one
+(204, 1266 against 202, 1249).
+
+    node --experimental-transform-types packages/kernel/bench/board.ts 2 3 steady 6
+    node --experimental-transform-types packages/kernel/bench/congest.ts 2 1 30     (env SQUEEZE=0.8)

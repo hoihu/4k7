@@ -505,7 +505,7 @@ export const RefinePlacementOp = z.object({
   op: z.literal('refine_placement'),
   parts: z.array(componentRef).optional().describe('Only these small parts (default: all the placer put down)'),
   near: z.array(componentRef).optional().describe('Only the small parts within 5 mm of these parts (e.g. the parts round an open connection)'),
-}).describe('Refine the placement of the small parts the placer put down (resistors, capacitors, diodes; not the parts you or the user placed or locked, nor connectors): each is moved up to 2 mm and turned where that untangles the ratsnest (fewer crossing lines first, then a shorter one), clear of the other parts, a decoupling cap staying at its pin. Kept only if placement_measures improve; the effect lists what moved. Routing is then out of date.');
+}).describe('Refine the placement of the small parts the placer put down (resistors, capacitors, diodes; not the parts you or the user placed or locked, nor connectors): each is moved up to 2 mm and turned where that untangles the ratsnest and eases the congestion (the score: 4 × crossing lines + ratsnest mm + 8 × congestion mm), clear of the other parts, a decoupling cap staying at its pin. Kept only if placement_measures improve; the effect lists what moved. Routing is then out of date.');
 
 export const RouteOp = z.object({
   op: z.literal('route'),
@@ -782,7 +782,7 @@ export const QueryOp = z.discriminatedUnion('op', [
       .max(8),
     route: z.boolean().optional().describe('Also route each option for a few seconds (a trial: how many connections it closes). Slower; use it to choose between options whose ratsnest is close'),
     explore: z.boolean().optional().describe('Then improve on the best option (default true): turn its main parts, swap two of them, shift one a few mm, keeping each change that makes the ratsnest cross less and shorter; the result is one more option, with its parts to apply'),
-  }).describe('Compare arrangements of the main parts without changing the design: each is placed as propose_placement would place it (small parts round them, refined) and measured (ratsnest length, crossing ratsnest lines, overlaps, board size; with route a trial routing). Then the kernel improves on the best (explore) and adds that as an option. Lists the current placement too, then the options best first. Apply the winner with design_edit propose_placement and its parts'),
+  }).describe('Compare arrangements of the main parts without changing the design: each is placed as propose_placement would place it (small parts round them, refined) and measured (ratsnest length, crossing ratsnest lines, congestion, overlaps, board size; with route a trial routing). Then the kernel improves on the best (explore) and adds that as an option. Lists the current placement too, then the options best first. Apply the winner with design_edit propose_placement and its parts'),
   z.object({
     op: z.literal('suggest_moves'),
     parts: z.array(componentRef).optional().describe('Try these small parts (default: those at the open connections)'),

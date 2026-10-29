@@ -107,7 +107,7 @@ describe('placement in the design', () => {
     const b = k.boardPlacement();
     // a poor arrangement: every main part turned round
     const main = b.parts.filter((p) => p.pads.length > 3).map((p) => ({ ref: p.refdes, x_mm: p.x, y_mm: p.y, rot: ((p.rot + 180) % 360) as 0 | 90 | 180 | 270 }));
-    const r = k.query({ op: 'try_placements', candidates: [{ name: 'turned round', parts: main }] }) as { options: { option: number; ratsnest_crossings: number; ratsnest_mm: number; parts?: unknown[] }[]; explored?: string };
+    const r = k.query({ op: 'try_placements', candidates: [{ name: 'turned round', parts: main }] }) as { options: { option: number; ratsnest_crossings: number; ratsnest_mm: number; congestion_mm: number; routability: number; parts?: unknown[] }[]; explored?: string };
     expect(r.explored).toBeDefined();
     // nothing changed by the query itself
     expect(k.boardPlacement().placementKey).toBe(b.placementKey);
@@ -116,7 +116,10 @@ describe('placement in the design', () => {
       // ranked first, and better than what it started from
       expect(r.options[0]).toBe(improved);
       const base = r.options.find((o) => o.option === 1)!;
-      expect(improved.ratsnest_crossings * 4 + improved.ratsnest_mm).toBeLessThan(base.ratsnest_crossings * 4 + base.ratsnest_mm);
+      expect(improved.routability).toBeLessThan(base.routability);
+      // (the score is 4 × crossings + ratsnest mm + 8 × congestion mm, and the options come best first)
+      expect(Math.abs(improved.routability - (improved.ratsnest_crossings * 4 + improved.ratsnest_mm + improved.congestion_mm * 8))).toBeLessThan(1);
+      expect(r.options.map((o) => o.routability)).toEqual([...r.options.map((o) => o.routability)].sort((x, y) => x - y));
       expect(k.transact({ summary: 'apply', ops: [{ op: 'propose_placement', parts: improved.parts as never }] }).status).toBe('ok');
     } else expect(r.explored).toMatch(/^no turn, shift or swap/);
   });

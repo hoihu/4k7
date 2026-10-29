@@ -3,6 +3,14 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
+## Unreleased
+
+### Board
+
+- **A steadier placer**: moving or locking one part now moves only what the move needs. The parts that follow it go along, the parts it pushes into give way (a chain, each by what it must), and everything else stays exactly where it was. Before, a 1.5 mm nudge of one part moved dozens of others (on the 130-part bench, six nudged small parts moved 69 others, six main parts 326; now 6 and 26). A part the placer had to nudge clear of a neighbour is remembered where it stands, so the next move does not push it again. Incremental routing keeps more of its copper after a move (197 of 201 tracks instead of 168 of 207 on one bench move).
+- **Congestion as a placement measure**: beside the ratsnest length and the crossings, `get_board` and `try_placements` now report where the ratsnest wants more track than the layers carry (`congestion_mm`, `congestion_peak`), estimated in milliseconds from the nets' boxes and the room the pads leave. On the bench it follows how many passes the router needs and how many connections it leaves open better than crossings do (rank correlation 0.5 against 0.35 for open connections); it does not predict vias, and the ratsnest stays the better guide to track length.
+- **The searches use it**: `try_placements` ranks and explores by one routability score (4 × crossings + ratsnest mm + 8 × congestion mm) after open connections and placement problems, and so do `refine_placement`, `propose_placement`'s refinement and `suggest_moves`' screening. On the 2-layer, 2-cluster bench board the refined placement routes with 124 vias instead of 131, and `try_placements` finds an improvement it missed (115 vias, 1006 mm of track against 131, 1063).
+
 ## 0.2.0 — 2026-10-25
 
 The chat runs on the coding agent you already use, projects are files on your computer, and the agent now takes a board from placement to the last routed connection, designs an enclosure for it, checks stock and cost at three assembly houses and lays lines at a set impedance.

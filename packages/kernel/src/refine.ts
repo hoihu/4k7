@@ -1,7 +1,8 @@
 /**
  * Placement refinement on a placed board, measured as get_board's placement_measures are (the
- * ratsnest, the nets on a dedicated inner plane left out): fewer crossing ratsnest lines first,
- * then a shorter ratsnest. Two searches on one model of the board:
+ * ratsnest, the nets on a dedicated inner plane left out): one score, 4 × crossing ratsnest lines
+ * + ratsnest mm + 8 × congestion mm (congestion.ts: where the lines want more track than the
+ * layers carry). Two searches on one model of the board:
  *
  *  - refinePlacement: the small parts the placer put down (resistors, capacitors, diodes; no part
  *    someone placed, locked or plugs a cable in) are moved a little and turned, one at a time. A
@@ -15,9 +16,8 @@
  * clear of each other and inside the outline as the placer keeps them.
  */
 import { cutoutDistance, insideBoard, matingOf, padHasPin, type BoardView } from '@4k7/schema';
+import { CONGESTION_WEIGHT, CROSSING_MM, Grid, boardOf } from './congestion.ts';
 
-/** A crossing costs as much as this much more ratsnest (mm): untangling comes first. */
-const CROSSING_MM = 4;
 /** A part at an IC's pin: its distance to the pin counts this many times over. */
 const ATTACH_WEIGHT = 3;
 /** Between courtyards, as the placer keeps them (board.ts SPACING). */
@@ -40,8 +40,8 @@ export interface RefineMove {
 
 export interface RefineResult {
   moves: RefineMove[];
-  before: { ratsnestMm: number; crossings: number };
-  after: { ratsnestMm: number; crossings: number };
+  before: { ratsnestMm: number; crossings: number; congestionMm: number };
+  after: { ratsnestMm: number; crossings: number; congestionMm: number };
 }
 
 /** A local point turned clockwise (y down) by a multiple of 90° (as board.ts turns footprints). */
@@ -163,11 +163,14 @@ function model(b: BoardView, planeNets: Set<string>, margin: number) {
   };
   const trees = members.map((_, n) => treeOf(n));
   const len = (ls: Line[]) => ls.reduce((s, l) => s + Math.hypot(l.x2 - l.x1, l.y2 - l.y1), 0);
+  // the congestion of the lines as they stand (the room the pads leave is taken as it is now)
+  const grid = new Grid(boardOf(b));
+  for (const l of trees.flat()) grid.add(l);
   const measure = () => {
     const all = trees.flat();
     let crossings = 0;
     for (let a = 0; a < all.length; a++) for (let c = a + 1; c < all.length; c++) if (crosses(all[a]!, all[c]!)) crossings++;
-    return { ratsnestMm: Math.round(len(all) * 10) / 10, crossings };
+    return { ratsnestMm: Math.round(len(all) * 10) / 10, crossings, congestionMm: grid.measure().overflowMm };
   };
 
   // a part at an IC's pin: the pad it shares with that pin, and the pin, so its distance there can be weighed
@@ -260,12 +263,16 @@ function model(b: BoardView, planeNets: Set<string>, margin: number) {
     attach.forEach((a, i) => {
       if (a && (over.has(i) || over.has(a.pa))) attached += attachCost(i, over) - attachCost(i);
     });
-    return CROSSING_MM * (crossingsOf(come) - crossingsOf(gone)) + len(come) - len(gone) + attached;
+    return CROSSING_MM * (crossingsOf(come) - crossingsOf(gone)) + len(come) - len(gone) + CONGESTION_WEIGHT * grid.delta(gone, come) + attached;
   };
   /** Take the moves in `over`. */
   const apply = (over: Map<number, Pose>) => {
     for (const [i, at] of over) Object.assign(parts[i]!, at);
-    for (const n of new Set([...over.keys()].flatMap((i) => netsOf[i]!))) trees[n] = treeOf(n);
+    for (const n of new Set([...over.keys()].flatMap((i) => netsOf[i]!))) {
+      for (const l of trees[n]!) grid.add(l, -1);
+      trees[n] = treeOf(n);
+      for (const l of trees[n]!) grid.add(l);
+    }
   };
   return { parts, byRef, netsOf, fits, delta, apply, measure };
 }
@@ -275,7 +282,7 @@ const snap = (v: number) => Math.round(v * 10) / 10;
 /**
  * Sets of moves screened on the model (suggest_moves): for each, null where the parts would not
  * fit (overlapping, off the outline), else what it changes, as the refinement weighs it (crossing
- * ratsnest lines × CROSSING_MM, plus ratsnest mm; lower is better).
+ * ratsnest lines × CROSSING_MM, plus ratsnest mm, plus congestion mm × CONGESTION_WEIGHT; lower is better).
  */
 export function screenMoves(b: BoardView, planeNets: Set<string>, margin: number, sets: { refdes: string; x: number; y: number; rot: number }[][]): (number | null)[] {
   const m = model(b, planeNets, margin);

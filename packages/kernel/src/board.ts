@@ -10,6 +10,9 @@
  *    supply pin (one cap per pin, nearest first), `near` constraints pull hard, and courtyards
  *    push each other apart.
  *  - Two-pin parts get the rotation with the shortest connections; everything snaps to 0.1 mm.
+ *  - From a stored placement only what a change touches moves: the part moved, the parts that
+ *    follow it, new parts, and the parts they push into (round by round); everything else stays
+ *    exactly where it was (no re-snapping, re-aligning or re-relaxing of the whole board).
  *  - `position` constraints (the place op, dragging) pin a part; the placer never moves it.
  *  - `layer` constraints put a part on the bottom side: its footprint is mirrored (seen from the
  *    top), its SMD pads are on B.Cu, and it shares the area with the SMD parts on the top side.
@@ -67,6 +70,7 @@ import { copperDrc, drawnDrc, edgeDrc, planeViaDrc, splitDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelView } from './panel.ts';
 import { padOfPin, pin1Chamfer, placeMarks, polarityOf } from './marks.ts';
+import { congestion, type Board as CongestionBoard } from './congestion.ts';
 import { stableJson } from './canonical.ts';
 import { route, type RouteInput, type RouteProgress } from './router.ts';
 import { impedanceDrc, pourGaps, resolveImpedance } from './lines.ts';
@@ -1168,7 +1172,12 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     diagnostics,
     stats: { nets: 0, routed: 0, unrouted: 0, trackLength: 0, vias: 0 },
     unrouted: [],
-    measures: placementMeasures(parts, new Set(planes.filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu' && !pl.area).map((pl) => pl.netId))),
+    measures: placementMeasures(parts, new Set(planes.filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu' && !pl.area).map((pl) => pl.netId)), {
+      w,
+      h,
+      rules,
+      signal: layers.filter((l) => !planes.some((pl) => pl.layer === l && l !== 'F.Cu' && l !== 'B.Cu' && !pl.area)),
+    }),
     missing,
     netNames: Object.fromEntries(Object.values(d.nets).map((n) => [n.id, n.name])),
     routing: drawn ? 'done' : settings.routed ? (settings.routed === placementKey ? 'done' : 'stale') : 'none',
@@ -1464,7 +1473,7 @@ export function copperKey(d: Design, sch: SchematicView): string {
 const NEAR_MM = 3;
 
 /** The ratsnest of the nets routed as tracks: its length and where lines of different nets cross. */
-function placementMeasures(parts: BoardPart[], planeNets: Set<string>): { ratsnestMm: number; crossings: number } {
+function placementMeasures(parts: BoardPart[], planeNets: Set<string>, board: Omit<CongestionBoard, 'pads'>): BoardView['measures'] {
   const lines = ratsnest(parts).filter((l) => !planeNets.has(l.netId));
   const len = lines.reduce((s, l) => s + Math.hypot(l.x2 - l.x1, l.y2 - l.y1), 0);
   const o = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number) => Math.sign((bx - ax) * (cy - ay) - (by - ay) * (cx - ax));
@@ -1478,7 +1487,7 @@ function placementMeasures(parts: BoardPart[], planeNets: Set<string>): { ratsne
       if (o(a.x1, a.y1, a.x2, a.y2, c.x1, c.y1) * o(a.x1, a.y1, a.x2, a.y2, c.x2, c.y2) < 0 && o(c.x1, c.y1, c.x2, c.y2, a.x1, a.y1) * o(c.x1, c.y1, c.x2, c.y2, a.x2, a.y2) < 0) crossings++;
     }
   }
-  return { ratsnestMm: Math.round(len * 10) / 10, crossings };
+  return { ratsnestMm: Math.round(len * 10) / 10, crossings, congestion: congestion({ ...board, pads: parts.flatMap((p) => p.pads) }, lines) };
 }
 
 function polyLength(pts: number[]): number {

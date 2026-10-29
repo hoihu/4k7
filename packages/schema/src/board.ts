@@ -812,9 +812,10 @@ export interface BoardView {
   unrouted: UnroutedConnection[];
   /**
    * How well the placement lends itself to routing (lower is better): the ratsnest of the nets
-   * routed as tracks (not those on a dedicated plane), its length and where its lines cross.
+   * routed as tracks (not those on a dedicated plane), its length and where its lines cross, and
+   * the congestion: where those lines want more track than the layers carry (kernel congestion.ts).
    */
-  measures: { ratsnestMm: number; crossings: number };
+  measures: { ratsnestMm: number; crossings: number; congestion: { overflowMm: number; peak: number; hot: number } };
   /** Copper just routed, for the app to keep in the design (absent when it came from the design). */
   newCopper?: StoredCopper;
   /** The user stopped the routing; the copper is the best pass it had finished. */
@@ -1019,7 +1020,7 @@ export function boardSummary(b: BoardView, routed = true) {
         : b.routing === 'stale'
           ? 'out of date: the placement changed since the route step (route again when the placement is final)'
           : 'not routed yet (the route op, once the placement is final)',
-    placement_measures: { ratsnest_mm: b.measures.ratsnestMm, ratsnest_crossings: b.measures.crossings },
+    placement_measures: { ratsnest_mm: b.measures.ratsnestMm, ratsnest_crossings: b.measures.crossings, congestion_mm: b.measures.congestion.overflowMm, congestion_peak: b.measures.congestion.peak },
     planes: b.planes.map((p) => ({ net: b.netNames[p.netId] ?? p.netId, layer: p.layer, dedicated: p.layer !== 'F.Cu' && p.layer !== 'B.Cu', automatic: p.auto, ...(p.area ? { area_mm: p.area, ...(p.under ? { under: p.under } : {}) } : {}), ...(p.style ? { style_mm: p.style } : {}) })),
     ...(b.viaGroups.length
       ? {

@@ -34,7 +34,7 @@ const TRY_MS = 800;
 /** Tries routed (the best screened), and all of it together (ms). */
 const ROUTED = 12;
 const TOTAL_MS = 15_000;
-/** A try may tangle the ratsnest this much (screen cost: crossings × 4 + mm) and still be routed: room for a path can cost a little. */
+/** A try may tangle the ratsnest this much (screen cost: 4 × crossings + mm + 8 × congestion mm) and still be routed: room for a path can cost a little. */
 const WORSE = 6;
 /** Open connections whose parts are tried when none are named. */
 const SPOTS = 4;

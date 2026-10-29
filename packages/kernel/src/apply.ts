@@ -60,6 +60,7 @@ import {
   roundPadDist,
 } from '@4k7/schema';
 import { autoPlanes, dropOffset, padNet, placeBoard, storedPlacement } from './board.ts';
+import { routability } from './congestion.ts';
 import { underBody } from './drc.ts';
 import { polarityOf } from './marks.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
@@ -1309,18 +1310,18 @@ export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_p
   const m = refined?.after ?? now.measures;
   return {
     op: 'propose_placement',
-    effect: `placement proposed: ${now.outline.w} × ${now.outline.h} mm${now.sizeBy === 'user' ? ' (your size)' : ''}, ${placed} parts${given.length ? `, ${given.map((g) => g.comp.refdes).join(', ')} where you put them` : ''}${forgot ? `, ${forgot} placement choice(s) forgotten` : ''}; ratsnest ${m.ratsnestMm} mm, ${m.crossings} crossing(s)${refined?.moved.length ? ` (the small parts refined: ${refined.moved.length} moved or turned, from ${refined.before.ratsnestMm} mm, ${refined.before.crossings} crossings)` : ''}`,
+    effect: `placement proposed: ${now.outline.w} × ${now.outline.h} mm${now.sizeBy === 'user' ? ' (your size)' : ''}, ${placed} parts${given.length ? `, ${given.map((g) => g.comp.refdes).join(', ')} where you put them` : ''}${forgot ? `, ${forgot} placement choice(s) forgotten` : ''}; ratsnest ${m.ratsnestMm} mm, ${m.crossings} crossing(s), congestion ${m.congestion.overflowMm} mm${refined?.moved.length ? ` (the small parts refined: ${refined.moved.length} moved or turned, from ${refined.before.ratsnestMm} mm, ${refined.before.crossings} crossings, congestion ${refined.before.congestion.overflowMm} mm)` : ''}`,
     ids: ['board', ...given.map((g) => g.comp.id)],
   };
 }
 
 /**
  * Refine the small parts the placer put down (refine.ts): moved a little and turned where that
- * untangles the ratsnest. Checked on the placement as the placer then makes it, and kept only if
- * its measures are better (fewer crossings, or as many and a shorter ratsnest). `only`: these
- * components at most.
+ * untangles the ratsnest and eases the congestion. Checked on the placement as the placer then
+ * makes it, and kept only if its measures are better (the routability score: 4 × crossings +
+ * ratsnest mm + 8 × congestion mm). `only`: these components at most.
  */
-export function refineSmallParts(d: Design, only?: Set<string>): { moved: RefineMove[]; before: { ratsnestMm: number; crossings: number }; after: { ratsnestMm: number; crossings: number } } {
+export function refineSmallParts(d: Design, only?: Set<string>): { moved: RefineMove[]; before: BoardView['measures']; after: BoardView['measures'] } {
   if (!d.board?.placement) keepPlacement(d);
   const b0 = placedNow(d);
   const before = b0.measures;
@@ -1334,7 +1335,7 @@ export function refineSmallParts(d: Design, only?: Set<string>): { moved: Refine
   for (const mv of r.moves) d.board!.placement!.parts[mv.componentId] = { x: mv.x, y: mv.y, rot: mv.rot };
   const b1 = placedNow(d);
   const after = b1.measures;
-  if (!(after.crossings < before.crossings || (after.crossings === before.crossings && after.ratsnestMm < before.ratsnestMm - 0.05))) {
+  if (!(routability(after) < routability(before) - 0.05)) {
     d.board!.placement = saved;
     return none;
   }
@@ -1375,10 +1376,10 @@ function refineStep(d: Design, op: Extract<EditOp, { op: 'refine_placement' }>):
   const mine = new Set([...refinable(b)].filter((id) => !only || only.has(id)));
   if (!mine.size) return { op: 'refine_placement', effect: 'nothing to refine: no small part the placer put down among them (parts you or the user placed or locked, and connectors, stay as they are)', ids: [] };
   const r = refineSmallParts(d, only);
-  if (!r.moved.length) return { op: 'refine_placement', effect: `no better place found for the ${mine.size} small part(s): ratsnest ${r.before.ratsnestMm} mm, ${r.before.crossings} crossing(s) as they are. If the tangle remains, move or turn the main parts (try_placements)`, ids: [] };
+  if (!r.moved.length) return { op: 'refine_placement', effect: `no better place found for the ${mine.size} small part(s): ratsnest ${r.before.ratsnestMm} mm, ${r.before.crossings} crossing(s), congestion ${r.before.congestion.overflowMm} mm as they are. If the tangle remains, move or turn the main parts (try_placements)`, ids: [] };
   return {
     op: 'refine_placement',
-    effect: `${r.moved.length} small part(s) moved or turned: ratsnest ${r.before.ratsnestMm} → ${r.after.ratsnestMm} mm, crossings ${r.before.crossings} → ${r.after.crossings}. ${refineText(r.moved)}`,
+    effect: `${r.moved.length} small part(s) moved or turned: ratsnest ${r.before.ratsnestMm} → ${r.after.ratsnestMm} mm, crossings ${r.before.crossings} → ${r.after.crossings}, congestion ${r.before.congestion.overflowMm} → ${r.after.congestion.overflowMm} mm. ${refineText(r.moved)}`,
     ids: ['board', ...r.moved.map((m) => m.componentId)],
   };
 }

@@ -4,11 +4,13 @@
  * round the main ones, refined) and measured; with `route` it is also routed for a few seconds, a
  * trial of how many connections that arrangement closes. Then the kernel improves on the best
  * (explore): it turns the main parts, swaps two, shifts one, and keeps what untangles the
- * ratsnest; that arrangement is one more option, with its parts. The agent applies the winner.
+ * ratsnest and eases the congestion; that arrangement is one more option, with its parts. The
+ * agent applies the winner.
  */
 import type { BoardView, Design, PartPlacement, SchematicView } from '@4k7/schema';
 import { proposePlacement } from './apply.ts';
 import { layoutBoard, placeBoard } from './board.ts';
+import { routability } from './congestion.ts';
 import { exploreMain } from './refine.ts';
 import { RejectError, clone } from './doc.ts';
 
@@ -24,8 +26,8 @@ const TRIAL_TOTAL_MS = 40_000;
 const TRIAL_MAX_MS = 8_000;
 /** Exploring round the best option: at most this long. */
 const EXPLORE_MS = 8_000;
-/** In the explore score, a crossing weighs as much as this much ratsnest (mm); a placement problem, far more. */
-const CROSSING_MM = 4;
+/** In the explore score (routability: 4 × crossings + ratsnest mm + 8 × congestion mm), a placement problem weighs far more. */
+const PROBLEM_SCORE = 1e5;
 /** Placement findings: parts overlapping, off the board or too close to its edge. */
 const PLACEMENT_CODES = new Set(['DRC.COURTYARD_OVERLAP', 'DRC.OFF_BOARD', 'DRC.EDGE_CLEARANCE', 'DRC.CUTOUT_OVERLAP']);
 
@@ -35,6 +37,8 @@ function measures(b: BoardView) {
     board_mm: [b.outline.w, b.outline.h],
     ratsnest_mm: b.measures.ratsnestMm,
     ratsnest_crossings: b.measures.crossings,
+    congestion_mm: b.measures.congestion.overflowMm,
+    routability: Math.round(routability(b.measures)),
     placement_problems: problems.length,
     ...(problems.length ? { problems: problems.slice(0, 4).map((x) => x.message) } : {}),
   };
@@ -66,8 +70,7 @@ function explore(d: Design, sch: SchematicView, base: TrialCandidate, until: num
     return placeBoard(work, sch);
   };
   const score = (b: BoardView) => {
-    const m = measures(b);
-    return m.placement_problems * 1e5 + m.ratsnest_crossings * CROSSING_MM + m.ratsnest_mm;
+    return measures(b).placement_problems * PROBLEM_SCORE + routability(b.measures);
   };
   let parts = base.parts.map((p) => ({ ...p }));
   let b = placed(parts);
@@ -137,7 +140,7 @@ export function tryPlacements(d: Design, sch: SchematicView, candidates: TrialCa
   };
   const options: (ReturnType<typeof trial> & { parts?: PartPlacement[] })[] = candidates.map(trial);
   const score = (o: (typeof options)[number]) =>
-    'error' in o ? [Infinity] : [o.routing?.open_connections ?? 0, o.placement_problems, o.ratsnest_crossings, o.ratsnest_mm];
+    'error' in o ? [Infinity] : [o.routing?.open_connections ?? 0, o.placement_problems, o.routability];
   const rank = (list: typeof options) =>
     [...list].sort((a, b) => {
       const [sa, sb] = [score(a), score(b)];
@@ -167,6 +170,6 @@ export function tryPlacements(d: Design, sch: SchematicView, candidates: TrialCa
     note:
       'Best first: fewest open connections' +
       (route ? ` (each routed for up to ${Math.round(budgetMs / 100) / 10} s; the route step runs longer and closes more)` : '') +
-      ', then fewest placement problems, crossing ratsnest lines, shortest ratsnest. shifted_mm: the board was fitted round the arrangement, which moved it over as a whole; nudged: main parts the placer moved away from where you put them (to clear an overlap or the edge). Nothing changed: apply the one you choose with design_edit propose_placement and the same parts, or vary the best further.',
+      ', then fewest placement problems, then the lowest routability score (4 × crossing ratsnest lines + ratsnest mm + 8 × congestion mm: where the ratsnest wants more track than the layers carry). shifted_mm: the board was fitted round the arrangement, which moved it over as a whole; nudged: main parts the placer moved away from where you put them (to clear an overlap or the edge). Nothing changed: apply the one you choose with design_edit propose_placement and the same parts, or vary the best further.',
   };
 }
