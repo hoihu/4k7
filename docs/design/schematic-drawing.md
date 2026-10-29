@@ -400,3 +400,49 @@ The first plan, steps 1–3 built 2026-10-12:
   only where possible.
 - **Claude Code.** Through the local server it gets the same hints and the same ruleset
   (`get_context`). Nothing provider-specific is planned.
+
+## 8. The drawing eval
+
+*2026-10-29.* The auto-layout and the blocks draw every sheet, so a change to either needs a measure
+of the drawings, not only tests of single cases. `packages/kernel/bench/schematic-golden.ts` builds
+twelve circuits through the kernel's ops (the two bucks, USB-C with ESD and CC resistors, an MCU
+with decoupling, crystal and SWD header, an MCU with a QSPI flash, an H-bridge, an op-amp stage, a
+bridge of four diodes and one in a package, a 555, and a 29-part board drawn plain and as five
+blocks). `schematic-eval.ts` lays each out as the app does and prints, per circuit, the `SCH.*`
+findings by id, wire segments, bends, crossings, jogs, detours, net flags against wires, supply
+symbols, pages, and the pins the drawing leaves apart from their net or joins to another one:
+
+```sh
+node --experimental-transform-types packages/kernel/bench/schematic-eval.ts [--only id,id] [--compare packages/kernel/bench/schematic-baseline.json]
+```
+
+It writes the numbers to `schematic-latest.json` (ignored by git; `--out` picks another file) and
+`--compare` shows each change against a baseline in the table. When a change to the layout is meant
+(fewer crossings for more labels, say), run it with `--out packages/kernel/bench/schematic-baseline.json`
+and commit the new baseline with the change, so the diff of that file is the effect on the drawings.
+
+`test/schematic-eval.test.ts` is the guard, one test per circuit (about 20 ms each): every part is
+drawn, every connection is a wire or a label and no wire touches another net's pin, no `SCH.*`
+finding is at the Must fix level, and segments, crossings, jogs, detours and pages are at most a tenth
+(rounded up) above the baseline, so a count of zero stays zero. Better numbers never fail it.
+
+### Known weaknesses
+
+What the first baseline shows (the circuits are small, so each is a pattern, not an accident):
+
+- **Buses and fast interfaces become labels.** The four QSPI data lines between MCU and flash, the
+  USB D+/D- through the ESD array and the gate lines of the H-bridge are all labels (net flags are
+  60 to 75 % of the drawing in these three); the QSPI labels also run into the series resistor
+  that stands between the two parts.
+- **Crystal away from its MCU.** In the MCU circuit the crystal stands to the right of the
+  MCU and its LED, joined to it by labels, while its load caps and the resistor are wired on the left.
+- **Dividers and pull-ups drawn upside down.** The bias divider of the op-amp stage and the 555's
+  timing resistor stand with the supply at the bottom (`SCH.RAIL_SIDE`); the divider is drawn as two
+  columns side by side, the case of §1.
+- **Blocks run over the page.** The 29-part board grouped into blocks needs two pages (one when drawn
+  plain) and has the only crossings of the set: I2C against each other, the feedback divider across
+  +3V3 and SW, and an I2C wire that doubles back.
+- **Switch node jog.** The inductor of a buck is not level with the regulator's switch pin
+  (`SCH.JOG` in both TPS54331 drawings).
+- **H-bridge** (all of it): the MOSFETs stand in one row at the top, the drivers in another far below,
+  and the boot lines run into the gate-drive labels (`SCH.TEXT_OVERLAP`, 7).
