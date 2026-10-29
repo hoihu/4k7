@@ -112,8 +112,14 @@ describe('fab outputs', () => {
     expect(file('buck-B_Paste.gbr').split('\n').filter((l) => l.endsWith('D03*'))).toHaveLength(2);
     const row = pickAndPlace(b).split('\n').find((l) => l.startsWith(`${cap.refdes},`))!;
     expect(row.endsWith(',Bottom')).toBe(true);
-    // a part on the bottom side keeps the board's frame (how a house counts it there is not settled)
-    expect(pickAndPlace(b, { [cap.refdes]: { rotation: 90, at: [1, 1] } }).split('\n').find((l) => l.startsWith(`${cap.refdes},`))).toBe(row);
+    // the position is the board's own (not mirrored); the rotation is 180° − the counter-clockwise one
+    const r = row.split(',');
+    expect([r[3], r[4]]).toEqual([cap.x.toFixed(3), (b.outline.h - cap.y).toFixed(3)]);
+    expect(Number(r[5])).toBe(((180 - (360 - cap.rot)) % 360 + 360) % 360);
+    // in the house's frame: its footprint mirrored onto the pads, turned by 90°, is 90° the other way for the file
+    const framed = pickAndPlace(b, { [cap.refdes]: { rotation: 90, at: [1, 1] } }).split('\n').find((l) => l.startsWith(`${cap.refdes},`))!.split(',');
+    expect(framed).toEqual([cap.refdes, r[1], r[2], (cap.x + 1).toFixed(3), (b.outline.h - cap.y - 1).toFixed(3), '90', 'Bottom']);
+    expect(pickAndPlace(b, { [cap.refdes]: { rotation: 0, at: [0, 0] } }).split('\n').find((l) => l.startsWith(`${cap.refdes},`))!.split(',')[5]).toBe('180');
     expect(pickAndPlace(b).split('\n').filter((l) => l.endsWith(',Top')).length).toBeGreaterThan(0);
   });
 

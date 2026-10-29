@@ -166,7 +166,7 @@ export interface StockLine {
   replacementBasis?: string;
   /**
    * By refdes, where the house's own footprint for the part lies on the board, for the components on
-   * the top side whose land fits it: the pick-and-place file in the house's frame (fab: pickAndPlace).
+   * whose land fits it (a part on the bottom side too: the footprint lies mirrored): the pick-and-place file in the house's frame (fab: pickAndPlace).
    */
   placements?: Record<string, HousePlacement>;
 }
@@ -318,9 +318,9 @@ function settle(l: StockLine, comps: SourcedComponent[], house: AssemblyHouse, f
     const fit = footprint && c.land ? fitLand(c.land, footprint) : undefined;
     const land = fit ? landMismatch(fit, c.land!, footprint!, l.part, c) : undefined;
     if (land) found.set(land, [...(found.get(land) ?? []), c.refdes]);
-    // where the house's part lies on the pads: its pick-and-place in the house's frame (the top side:
-    // how a house counts a part on the bottom side is not settled here, so those keep the board's)
-    if (fit && !fit.problems.length && !c.land!.bottom) (l.placements ??= {})[c.refdes] = { rotation: fit.rotation, at: fit.at };
+    // where the house's part lies on the pads: its pick-and-place in the house's frame (on the bottom
+    // side the fit is mirrored, see fab's pickAndPlace for how the file counts that)
+    if (fit && !fit.problems.length) (l.placements ??= {})[c.refdes] = { rotation: fit.rotation, at: fit.at };
     // the component's own MPN is the same part, whatever the catalogue calls its package; where the
     // land was compared the package's name still counts when it says a size (an electrolytic's can, a
     // chip size: a 6.3 mm can lies on an 8 mm can's pads well enough, but it is the wrong part)

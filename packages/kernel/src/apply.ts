@@ -1136,6 +1136,7 @@ const PAST_AREA = '; it runs past the drawing area of the page: move it in, or p
 function place(d: Design, op: Extract<EditOp, { op: 'place' }>, by: 'user' | 'agent' = 'agent'): OpResult {
   const comp = resolveComponent(d, op.ref);
   if (!d.board?.placement) keepPlacement(d); // start from what the user sees
+  const flipped = op.side ? setSide(d, comp, op.side) : false;
   const now = placedNow(d);
   let rot: number | undefined = op.rot;
   let prevRel: string | undefined;
@@ -1192,7 +1193,20 @@ function place(d: Design, op: Extract<EditOp, { op: 'place' }>, by: 'user' | 'ag
   keepPlacement(d);
   const at = `(${r(op.x_mm)}, ${r(op.y_mm)}) mm${rot !== undefined ? `, ${rot}°` : ''}`;
   const overrode = wasUsers && source.type === 'agent' ? ` (it was the user's placement; now yours)` : '';
-  return { op: 'place', effect: `${op.lock ? `${comp.refdes} locked at ${at}` : `${comp.refdes} placed at ${at}${anchor ? ` (kept relative to ${anchor.refdes})` : ''}`}${overrode}`, ids: [id] };
+  return { op: 'place', effect: `${op.lock ? `${comp.refdes} locked at ${at}` : `${comp.refdes} placed at ${at}${anchor ? ` (kept relative to ${anchor.refdes})` : ''}`}${flipped ? `, on the ${op.side} side` : ''}${overrode}`, ids: [id] };
+}
+
+/**
+ * Put a part on the top or the bottom side: the `layer` constraint (one per part; top is the
+ * default, so it leaves none). Returns whether the side changed. A hard `layer` constraint of the
+ * user's is refused like constrain refuses it.
+ */
+function setSide(d: Design, comp: Component, side: 'top' | 'bottom'): boolean {
+  const had = Object.values(d.ledger).some((k) => k.kind === 'layer' && k.a === comp.id && k.value === 'bottom') ? 'bottom' : 'top';
+  if (had === side) return false;
+  const made = constrain(d, { op: 'constrain', kind: 'layer', a: comp.refdes, value: side, strength: 'soft' });
+  if (side === 'top') for (const id of made.ids ?? []) delete d.ledger[id];
+  return true;
 }
 
 /**
@@ -1290,6 +1304,7 @@ export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_p
   const choices = given.map(({ p, comp }) => {
     const id = nextId(d, 'k');
     d.ledger[id] = { id, kind: 'position', a: comp.id, xMm: r(p.x_mm), yMm: r(p.y_mm), rot: p.rot ?? 0, domain: 'placement', strength: 'soft', source: { type: by } };
+    if (p.side) setSide(d, comp, p.side);
     return d.ledger[id]!;
   });
   const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);

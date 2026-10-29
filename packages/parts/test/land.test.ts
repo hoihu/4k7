@@ -206,12 +206,12 @@ describe('the stock check holds each land against the house\'s footprint', () =>
     expect(byName.lands).toBeUndefined();
   });
 
-  it('leaves a part on the bottom side in the board\'s frame', async () => {
+  it('keeps where the house\'s footprint lies on a part on the bottom side (mirrored)', async () => {
     const top = land('CAP-6.3x5.4', { 1: '+', 2: '-' }, 0, { kind: 'plus', pad: '1' });
     const under: PlacedLand = { ...top, bottom: true, pads: top.pads.map((p) => ({ ...p, x: -p.x })) };
     const r = await checkStock([comp('C1', 'C72505', 'CAP-6.3x5.4', '22uF', under)], catalogue(footprints), { house: JLCPCB_ASSEMBLY, boards: 5 });
     expect(r.lines[0]!.mismatch).toEqual([]);
-    expect(r.lines[0]!.placements).toBeUndefined();
+    expect(r.lines[0]!.placements).toEqual({ C1: { rotation: 0, at: [0, 0] } });
   });
 
   it('says which footprints it could not read, and why, and still checks the package by name', async () => {

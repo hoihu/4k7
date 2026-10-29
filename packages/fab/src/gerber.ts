@@ -364,6 +364,13 @@ export function bom(b: BoardView, house = 'jlcpcb'): string {
  * placement in the house's frame (by refdes: the house's own footprint for it, turned and placed on
  * our pads, see HousePlacement) gets that footprint's rotation and origin instead of the board's, so
  * the house places it without turning it first.
+ *
+ * A part on the bottom side is counted the way JLCPCB and the KiCad plugins for it count one: the
+ * position in the board's own coordinates (not mirrored), the rotation as the footprint turns when the
+ * board is turned over about its horizontal axis, 180° − the rotation of the mirrored footprint on the
+ * board (KiCad's orientation of a bottom footprint; KiBot's notes on the position file). A bottom part
+ * not turned is therefore 180°. This is the convention, not something the house documents: the
+ * order's preview shows the parts as it will place them.
  */
 export function pickAndPlace(b: BoardView, placements: Record<string, HousePlacement> = {}): string {
   return csv([
@@ -371,9 +378,12 @@ export function pickAndPlace(b: BoardView, placements: Record<string, HousePlace
     ...b.parts
       .filter((p) => p.pads.some((q) => !q.drill))
       .map((p) => {
-        const at = p.side === 'top' ? placements[p.refdes] : undefined;
-        const [x, y, rot] = at ? [p.x + at.at[0], p.y + at.at[1], at.rotation] : [p.x, p.y, (360 - p.rot) % 360];
-        return [p.refdes, p.value, p.pkg, x.toFixed(3), (b.outline.h - y).toFixed(3), (((rot % 360) + 360) % 360).toFixed(0), p.side === 'top' ? 'Top' : 'Bottom'];
+        const at = placements[p.refdes];
+        const bottom = p.side === 'bottom';
+        // counter-clockwise on the board, with the footprint mirrored on the bottom (fitLand's rotation, or ours)
+        const [x, y, ccw] = at ? [p.x + at.at[0], p.y + at.at[1], at.rotation] : [p.x, p.y, 360 - p.rot];
+        const rot = bottom ? 180 - ccw : ccw;
+        return [p.refdes, p.value, p.pkg, x.toFixed(3), (b.outline.h - y).toFixed(3), (((rot % 360) + 360) % 360).toFixed(0), bottom ? 'Bottom' : 'Top'];
       }),
   ]);
 }
