@@ -3,6 +3,12 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
+## Unreleased
+
+### Checks
+
+- **The schematic, the board and the BOM are checked against each other** (`XCHK.*`, in `get_diagnostics` and the Inspector): a symbol pin with no pad in the footprint, a pad no pin is on, a pin that matches its pad only in upper/lower case (the board would not connect it), a net left short of pads on the board, a `package` parameter the footprint does not follow (the part card's own package data wins over it), a part with no footprint that is then in neither the BOM nor the pick-and-place, and a mounting hole, plane, via group or drawn copper on a net the schematic no longer has. Each says what to change.
+
 ## 0.2.0 — 2026-10-25
 
 The chat runs on the coding agent you already use, projects are files on your computer, and the agent now takes a board from placement to the last routed connection, designs an enclosure for it, checks stock and cost at three assembly houses and lays lines at a set impedance.
