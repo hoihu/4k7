@@ -573,6 +573,19 @@ export const EditCopperOp = z.object({
   size_mm: z.number().positive().optional().describe('Vias: the new pad diameter'),
 }).describe('Drawn copper: change tracks and vias in place (shift, new corners, width, layer, via size), keeping their ids, instead of erasing and drawing again. Checked at once like draw_track.');
 
+export const TuneLengthOp = z.object({
+  op: z.literal('tune_length'),
+  track: z.string().optional().describe('One of your tracks by id (t3): the meander goes into this track. Without it, net names the net and the meander goes into its longest straight stretch that has room'),
+  net: netName.optional().describe('The net to lengthen (its drawn track; with several, the one with room). Required without track'),
+  target_mm: z.number().positive().optional().describe('The length the net should have in all (its drawn copper, as get_board impedance counts it)'),
+  match: z.array(netName).min(1).optional().describe('Or make the net as long as the longest of these nets: a pair\'s other member, the other lines of a group. Without target_mm and match, a pair member is matched to its partner'),
+  tolerance_mm: z.number().min(0).optional().describe('Accept a length this close to the target. Default 0.1 mm, or the pair\'s max skew if that is smaller'),
+  gap_mm: z.number().positive().optional().describe('Gap between the meander\'s legs, edge to edge. Default 3 times the width (more where the net\'s rule keeps other signals further off); never below that or the clearance'),
+  height_mm: z.number().positive().optional().describe('The tallest a bump may be (centre line of its legs, mm). Default 4 mm, for a pair member twice the pair\'s gap (small bumps near the mismatch, as TI asks)'),
+  side: z.enum(['left', 'right']).optional().describe('Which side of the track (looking along it from its first end) the bumps go. Default: away from the pair partner, else the side with room'),
+  near: z.union([z.enum(['start', 'end']), mmPoint]).optional().describe('Where along the track: near its first or last end, or near a point [x, y]. Default: the longest straight stretch'),
+}).describe('Drawn copper: add length to a drawn track with a meander (serpentine of square bumps with 45° corners, on the track\'s own layer, legs at least 3 widths apart) until its net reaches target_mm, or matches match (the other member of a pair, or the longest of a group), within tolerance_mm. Only straight stretches of your track are used, the gap and clearance to all other copper are kept; where there is no room the op is refused and says where and what to do. The effect gives the length reached and, for a pair, the skew (IMP.SKEW holds it). Use it after the pair is drawn: tune the shorter member close to where the difference arises.');
+
 export const EraseCopperOp = z.object({
   op: z.literal('erase_copper'),
   ids: z.array(z.string()).optional().describe('Tracks and vias by id (t3, v1)'),
@@ -714,6 +727,7 @@ export const EditOp = z.discriminatedUnion('op', [
   DrawPairOp,
   DrawViaOp,
   EditCopperOp,
+  TuneLengthOp,
   EraseCopperOp,
   SetPlaneOp,
   SetPlaneStyleOp,

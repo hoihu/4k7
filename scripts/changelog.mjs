@@ -23,11 +23,14 @@ const fail = (msg) => {
 /** The releases in CHANGELOG.md, newest first: version, date and the Markdown under the heading. */
 function releases(md) {
   const out = [];
+  // (the "## Unreleased" section is where changes are noted until a release: not published)
+  let into = null;
   for (const line of md.split('\n')) {
     const m = /^## (\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?) [—-] (\d{4}-\d{2}-\d{2})\s*$/.exec(line);
-    if (m) out.push({ version: m[1], date: m[2], lines: [] });
-    else if (line.startsWith('## ')) fail(`a release heading is "## <version> — <yyyy-mm-dd>", not "${line}"`);
-    else out.at(-1)?.lines.push(line);
+    if (m) out.push((into = { version: m[1], date: m[2], lines: [] }));
+    else if (/^## Unreleased\s*$/.test(line)) into = { lines: [] };
+    else if (line.startsWith('## ')) fail(`a release heading is "## <version> — <yyyy-mm-dd>" (or "## Unreleased"), not "${line}"`);
+    else into?.lines.push(line);
   }
   for (let i = 1; i < out.length; i++) {
     if (compareVersions(out[i - 1].version, out[i].version) <= 0) fail(`${out[i - 1].version} comes before ${out[i].version}: newest first`);

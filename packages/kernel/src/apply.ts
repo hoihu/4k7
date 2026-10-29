@@ -64,6 +64,7 @@ import { polarityOf } from './marks.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
 import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
+import { tuneLength } from './tune.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
 import { isDrawn, moveSymbol, redrawBlock, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
 import { blockAssignment } from './layout.ts';
@@ -196,6 +197,8 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return drawVia(d, op);
     case 'edit_copper':
       return editCopper(d, op);
+    case 'tune_length':
+      return tuneLength(d, op);
     case 'erase_copper':
       return eraseCopper(d, op);
     case 'set_plane':

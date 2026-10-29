@@ -12,8 +12,9 @@
  * grid passes follow (horizontal on F.Cu, vertical on B.Cu, vias cheap; see Style): a board
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, padCapsule, roundPadDist, type PlaneStyle, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, padCapsule, roundPadDist, type PlaneStyle, type RoutedLine, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
 import { keptCopper, type KeptCopper } from './keep.ts';
+import { routeLines } from './pairroute.ts';
 import { segDist, segSegDist } from './segments.ts';
 
 const G = 0.1; // grid pitch, mm
@@ -71,6 +72,16 @@ export interface RouteInput {
    * plane's net, so other tracks and vias do not cut the plane under a line (its return path).
    */
   lines?: { netId: string; layer: CopperLayer; over: CopperLayer; plane: string; h: number }[];
+  /**
+   * Lines at a set impedance (pairroute.ts): routed first, and frozen as drawn copper for the rest of
+   * the nets. A pair with a gap goes as one coupled track along a centre line, at the rule's width
+   * and gap, its via transitions together; a single line before the others, so they keep off the
+   * plane under it. A pair that cannot be coupled is routed as two nets, with the reason in
+   * RouteResult.lines.
+   */
+  controlled?: { id: string; nets: string[]; layers: { layer: CopperLayer; width: number; gap?: number }[] }[];
+  /** Net names by id, for what the router says about lines at a set impedance. */
+  netNames?: Record<string, string>;
   /**
    * Planes: an inner layer dedicated to one net (no tracks there), or a pour on an outer layer
    * filling what the tracks leave. Pads of the net drop onto their plane with a via. An inner
@@ -144,6 +155,8 @@ export interface RouteResult {
   groups: number[];
   /** Copper taken over from RouteInput.keep, as it lies in the result. */
   reused?: { tracks: number; vias: number };
+  /** What was done with the lines at a set impedance routed first (RouteInput.controlled). */
+  lines?: RoutedLine[];
 }
 
 /** Why a connection stayed open: what its way would have to cross (see probe in routeOnce). */
@@ -179,6 +192,10 @@ interface Conn {
 
 
 export function route(input: RouteInput, passes = 40): RouteResult {
+  return input.controlled?.length ? routeLines(input, passes, routeNets) : routeNets(input, passes);
+}
+
+function routeNets(input: RouteInput, passes = 40): RouteResult {
   const pads: BoardPad[] = input.parts.flatMap((p) => p.pads);
   const owner = input.parts.flatMap((p) => p.pads.map(() => p));
   const conns = connections(pads);

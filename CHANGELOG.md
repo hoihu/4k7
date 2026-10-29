@@ -3,6 +3,13 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
+## Unreleased
+
+### Board
+
+- **Pairs routed together**: with a differential pair's impedance rule set, the router lays the pair as two tracks side by side at the rule's width and gap, found in one search for the pair's centre line, and changes layer with a via for each track side by side. Where it cannot keep them together it routes the two nets apart and says so (the route effect, or an `IMP.PAIR` note on the board). Lines at a set impedance are routed before the other nets, which keep off the plane under them.
+- **Length tuning**: the new `tune_length` op adds a meander to a drawn track to reach a length or to match the other member of a pair (or the longest of a group): square bumps with 45° corners on the track's own layer, legs at least three widths apart, clear of other copper. It says the length and skew reached, and where there is no room when there is none.
+
 ## 0.2.0 — 2026-10-25
 
 The chat runs on the coding agent you already use, projects are files on your computer, and the agent now takes a board from placement to the last routed connection, designs an enclosure for it, checks stock and cost at three assembly houses and lays lines at a set impedance.
