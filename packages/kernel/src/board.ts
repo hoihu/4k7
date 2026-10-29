@@ -72,6 +72,10 @@ import { route, type RouteInput, type RouteProgress } from './router.ts';
 import { impedanceDrc, pourGaps, resolveImpedance } from './lines.ts';
 
 const SPACING = 0.3; // between courtyards
+/** Rounds a change from a stored placement may pull in more neighbours before the whole board is settled again. */
+const STEADY_ROUNDS = 30;
+/** A part's parent moved less than this (mm) and did not turn: its followers move with it as they are, no more. */
+const NUDGE_MM = 3;
 const GRID_MM = 0.1;
 
 interface Item {
@@ -331,21 +335,22 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }
   };
   /** Put each part with a choice where the user wants it (relative ones next to their anchor). */
-  const applyIntents = () => {
+  const applyIntents = (only?: Set<Item>) => {
     for (const it of bySize) {
       const k = it.intent;
-      if (!k) continue;
+      if (!k || (only && (!only.has(it) || k.rel))) continue; // (one kept relative to a part that is pushed away goes with it)
       const a = anchorOf(it);
       if (k.rel && !a) continue; // the anchor is gone: the part stays where it is
+      // (`only`: back to the spot, not the turn, which the two-pin parts' flipping may have changed)
       if (a) {
         const [ox, oy] = rotate(k.xMm ?? 0, k.yMm ?? 0, a.rot);
         it.x = a.x + ox;
         it.y = a.y + oy;
-        if (k.rot !== undefined) it.rot = (((a.rot + k.rot) % 360) + 360) % 360;
+        if (k.rot !== undefined && !only) it.rot = (((a.rot + k.rot) % 360) + 360) % 360;
       } else {
         if (k.xMm !== undefined) it.x = k.xMm + offset.x;
         if (k.yMm !== undefined) it.y = k.yMm + offset.y;
-        if (k.rot !== undefined) it.rot = k.rot;
+        if (k.rot !== undefined && !only) it.rot = k.rot;
       }
     }
   };
@@ -625,8 +630,13 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }
   };
 
+  // from a stored placement, a part that has not moved is on the grid as it was left (snapping it again only nudges it)
+  const rests = (it: Item) => {
+    const was = stored?.parts[it.comp.id];
+    return !!was && was.x === it.x && was.y === it.y;
+  };
   /** Final clean-up: no overlaps, inside the outline, on the grid; a proposed outline grows if it must. */
-  const settle = () => {
+  const settle = (grow = true) => {
     for (let attempt = 0; attempt < 6; attempt++) {
       for (let round = 0; round < 30; round++) {
         // stuck against the outline: spread in two dimensions now and then
@@ -634,14 +644,15 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
           separate(items, 10);
           for (const it of items) contain(it);
         }
-        separate(items, 40, true);
+        separate(items, 40, true, !!stored);
         for (const it of items) contain(it);
-        for (const it of items) if (!it.fixed) snapItem(it);
+        for (const it of items) if (!it.fixed && !rests(it)) snapItem(it);
         // settled: the spacing holds to within a grid step (what the strict separation leaves)
         if (!overlapping(items, SPACING - GRID_MM)) return;
       }
       // the parts still in the way to the nearest spot where they fit (a pair the separation
       // cannot pull apart: a small part wedged against a main part someone placed)
+      if (!grow) return; // (the caller pulls in more neighbours to push instead)
       legalize();
       if (userSize) return; // the user's size: what still overlaps shows as DRC errors
       if (!overlapping(items, SPACING - GRID_MM)) return;
@@ -650,10 +661,13 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }
   };
   /** Room for a part at (x, y): inside the outline as far as it must be (keepsIn), clear of every other part. */
-  const fits = (it: Item, x: number, y: number) => {
+  const within = (it: Item, x: number, y: number) => {
     const r = reach(it);
     if (x < r.l - 1e-6 || y < r.t - 1e-6 || x > outline.w - r.r + 1e-6 || y > outline.h - r.b + 1e-6) return false;
-    if (shape && keepsIn(it).some((p) => insidePolygon(shape, x + p.x, y + p.y) < p.need - 1e-6)) return false;
+    return !shape || !keepsIn(it).some((p) => insidePolygon(shape, x + p.x, y + p.y) < p.need - 1e-6);
+  };
+  const fits = (it: Item, x: number, y: number) => {
+    if (!within(it, x, y)) return false;
     const [ox, oy] = [it.x, it.y];
     it.x = x;
     it.y = y;
@@ -825,6 +839,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     applyIntents();
     // parts placed automatically follow their parent when it moved or turned
     const followers: Item[] = [];
+    // … those whose parent went further than a nudge, or turned, gather round it again (below)
+    const gather = new Set<Item>();
     for (const it of bySize) {
       const pa = parent.get(it);
       const was = before.get(it);
@@ -838,17 +854,20 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       it.y = pa.y + oy;
       it.rot = (it.rot + dr) % 360;
       followers.push(it);
+      if (dr || Math.hypot(pa.x - paWas.x, pa.y - paWas.y) >= NUDGE_MM || gather.has(pa)) gather.add(it);
     }
     /*
      * … and then settle in close around it again: parts pushed away earlier (something was in
      * the way) would otherwise keep that distance for good. A short relaxation towards their
-     * connections, the rest staying put, and the IC's small parts back at their pins.
+     * connections, the rest staying put, and the IC's small parts back at their pins. After a
+     * nudge of the parent they keep their distance (the relaxation moved them by whole
+     * millimetres for it).
      */
-    if (followers.length && !frozen) {
-      const still = items.filter((it) => !followers.includes(it) && !it.fixed);
+    if (gather.size && !frozen) {
+      const still = items.filter((it) => !gather.has(it) && !it.fixed);
       for (const it of still) it.fixed = true;
-      relax(followers, 60);
-      hugCaps(new Set(followers));
+      relax([...gather], 60);
+      hugCaps(gather);
       for (const it of still) it.fixed = false;
     }
     // new parts: next to what they connect to, then relaxed among the others (which stay put)
@@ -880,11 +899,70 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       for (const it of keptStill) it.fixed = true;
     }
   }
+  // the two-pin parts that share a small net with a part that moved may want to face it the other way round
+  if (flipOnly) {
+    for (const it of [...flipOnly]) {
+      for (const { net } of padsOf(it)) {
+        if (!net || (nets.get(net)?.length ?? 0) > 4) continue;
+        for (const m of nets.get(net)!) if (isTwoPin(m.it.card)) flipOnly.add(m.it);
+      }
+    }
+  }
   flipTwoPin(flipOnly);
-  if (!frozen) settle();
+  /*
+   * From a stored placement the settling and the alignment move only the parts the change touched
+   * (moved, followers, new, off the board) and what they push into: a part that overlaps one of
+   * them joins it, round by round, and anything else stays exactly where it was.
+   */
+  const active = new Set<Item>(items);
+  let held: Item[] = [];
+  const hold = () => {
+    held = items.filter((it) => !it.fixed && !active.has(it));
+    for (const it of held) it.fixed = true;
+  };
+  const release = () => {
+    for (const it of held) it.fixed = false;
+    held = [];
+  };
+  /** A part that moved still overlaps another (not a pair of locked ones). */
+  const unresolved = () => items.some((a) => active.has(a) && items.some((o) => o !== a && !(a.fixed && o.fixed) && closer(a, o, SPACING - GRID_MM)));
+  if (stored && !frozen && flipOnly) {
+    active.clear();
+    for (const it of flipOnly) active.add(it);
+    // … and what already is off the board or in someone's way (a part turned over onto the side of another)
+    for (const it of items) if (!it.fixed && (!within(it, it.x, it.y) || items.some((o) => o !== it && closer(it, o, SPACING - GRID_MM)))) active.add(it);
+    const moved = new Set(active);
+    /** The held parts that the given ones overlap join the active ones (to give way); whether any did. */
+    const pullIn = (from: Iterable<Item>) => {
+      const size = active.size;
+      for (const a of [...from]) for (const o of items) if (!active.has(o) && !o.fixed && closer(a, o, SPACING - GRID_MM)) active.add(o);
+      return active.size > size;
+    };
+    pullIn(active);
+    for (let round = 0; round < STEADY_ROUNDS; round++) {
+      // (a part the user placed is where they put it each round: a held part it meets joins in and gives way)
+      applyIntents(moved);
+      hold();
+      settle(false);
+      release();
+      if (!unresolved() || !pullIn(active)) break;
+    }
+    if (unresolved()) {
+      // no room that way: what is still in the way goes to the nearest free spot, and only if that fails the board is settled as a whole (it may grow)
+      hold();
+      legalize();
+      release();
+      if (unresolved() && !userSize) {
+        for (const it of items) active.add(it);
+        settle();
+      }
+    }
+  } else if (!frozen) settle();
   // (drawn copper: a new part that lands on another goes to the nearest free spot; the others stay, fixed for now)
   else if (items.some((it) => !it.fixed)) legalize();
+  hold();
   alignSimilar(items, contain);
+  release();
 
   // locked parts outside a proposed outline widen it
   let w = outline.w;
@@ -1426,7 +1504,7 @@ function snapItem(it: Item) {
 }
 
 /** Push overlapping courtyards apart along the axis of least overlap. */
-function separate(items: Item[], passes: number, strict = false) {
+function separate(items: Item[], passes: number, strict = false, keepStill = false) {
   const sorted = [...items].sort((a, b) => natCmp(a.comp.refdes, b.comp.refdes));
   for (let pass = 0; pass < passes; pass++) {
     let moved = false;
@@ -1490,11 +1568,12 @@ function separate(items: Item[], passes: number, strict = false) {
           b.y -= sign * amount * kb;
         }
         if (strict) {
-          if (!a.fixed) {
+          // (keepStill, from a stored placement: only what moved, snapping a part that stayed would nudge a user's choice off its place)
+          if (!a.fixed && (ka > 0 || !keepStill)) {
             a.x = snap(a.x);
             a.y = snap(a.y);
           }
-          if (!b.fixed) {
+          if (!b.fixed && (kb > 0 || !keepStill)) {
             b.x = snap(b.x);
             b.y = snap(b.y);
           }

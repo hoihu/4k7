@@ -3,13 +3,15 @@
  * planes): the 12 V buck plus clusters of ATtiny85 with LEDs and decoupling, LM358 stages and a
  * 555, on a 10-pin header. Times the route step (routing, pours, copper checks).
  *
- *   node --experimental-transform-types packages/kernel/bench/board.ts [layers 2|4] [clusters 1|2|3] [moves | place]
+ *   node --experimental-transform-types packages/kernel/bench/board.ts [layers 2|4] [clusters 1|2|3] [moves | place | steady]
  *
  * Prints the time, the board stats, the unrouted nets and a hash of the routes. With moves (a
  * number), then moves that many parts in turn, one step each, and routes again after each move,
  * incrementally (keeping the copper that still holds) and from scratch, for comparison. With
  * place: the placement instead, as proposed (small parts refined or not), then try_placements on
- * the main parts as they stand (the kernel improves on them), each routed.
+ * the main parts as they stand (the kernel improves on them), each routed. With steady (and a
+ * number of moves, default 6): no routing; one part moved 1.5 mm at a time (small parts, then
+ * main parts), and how many other parts that disturbed and how far.
  */
 import { createHash } from 'node:crypto';
 import type { Transaction } from '@4k7/schema';
@@ -119,6 +121,51 @@ if (process.argv[4] === 'place') {
     const kk = new Kernel(k.draftDesign());
     kk.transact({ summary: 'apply', ops: [{ op: 'propose_placement', parts: best.parts }] });
     line('improved by try_placements', kk);
+  }
+  process.exit(0);
+}
+
+if (process.argv[4] === 'steady') {
+  // the placer as the user drives it: one placement, then single parts moved 1.5 mm in turn (small
+  // two-pin parts, then main parts), and what else moved with each: parts disturbed, the furthest
+  k.transact({ summary: 'propose', ops: [{ op: 'propose_placement' }] });
+  const n = Number(process.argv[5] ?? 6);
+  const first = k.boardPlacement();
+  const lists = {
+    small: first.parts.filter((p) => p.pads.length === 2 && !p.locked),
+    main: first.parts.filter((p) => p.pads.length > 3 && !p.componentId.startsWith('hole:') && !p.locked),
+  };
+  for (const [name, list] of Object.entries(lists)) {
+    let disturbed = 0;
+    let followed = 0;
+    let worst = 0;
+    const t = performance.now();
+    for (let m = 0; m < n; m++) {
+      const before = k.boardPlacement();
+      const p = before.parts.find((q) => q.refdes === list[Math.floor(((m + 0.5) * list.length) / n)]!.refdes)!;
+      const dx = p.x + 3 < before.outline.w ? 1.5 : -1.5;
+      k.transact({ summary: 'move', ops: [{ op: 'place', ref: p.refdes, x_mm: p.x + dx, y_mm: p.y }] });
+      const after = k.boardPlacement();
+      const was = new Map(before.parts.map((q) => [q.refdes, q]));
+      // another part counts as disturbed if it moved by more than 0.05 mm or turned
+      const others = after.parts
+        .filter((q) => q.refdes !== p.refdes && was.has(q.refdes))
+        .map((q) => ({ ref: q.refdes, d: Math.hypot(q.x - was.get(q.refdes)!.x, q.y - was.get(q.refdes)!.y), turned: q.rot !== was.get(q.refdes)!.rot }))
+        .filter((q) => q.d > 0.05 || q.turned);
+      // the parts that belong with it follow it, by design: only the others count
+      const own = new Set([p.refdes]);
+      for (let grew = true; grew; ) {
+        grew = false;
+        for (const q of before.parts) if (q.follows && own.has(q.follows) && !own.has(q.refdes)) own.add(q.refdes), (grew = true);
+      }
+      const strangers = others.filter((q) => !own.has(q.ref));
+      const far = Math.max(0, ...strangers.map((q) => q.d));
+      disturbed += strangers.length;
+      followed += others.length - strangers.length;
+      worst = Math.max(worst, far);
+      console.log(`${name} ${p.refdes} ${dx > 0 ? '+' : ''}${dx} mm: board ${before.outline.w}x${before.outline.h} -> ${after.outline.w}x${after.outline.h}; ${others.length - strangers.length} of its ${own.size - 1} followers moved, ${strangers.length} other parts disturbed, max ${far.toFixed(2)} mm: ${strangers.slice(0, 8).map((q) => `${q.ref}${q.turned ? ' turned' : ''} ${q.d.toFixed(2)}`).join(', ')}`);
+    }
+    console.log(`${name}: ${disturbed} other parts disturbed over ${n} moves (and ${followed} followers moved), furthest ${worst.toFixed(2)} mm (${((performance.now() - t) / n).toFixed(0)} ms per move)`);
   }
   process.exit(0);
 }

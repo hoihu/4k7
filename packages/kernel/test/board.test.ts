@@ -218,7 +218,56 @@ describe('dragging a part (place)', () => {
     expect(same.length).toBeGreaterThanOrEqual(before.parts.length - 3);
     expect(after.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
   });
+
+  it('a small part moved 1.5 mm in turn disturbs next to no other part, and the board shown is the stored placement', () => {
+    const k = buck();
+    k.transact({ summary: 'propose', ops: [{ op: 'propose_placement' }] });
+    const smalls = k.boardPlacement().parts.filter((p) => p.pads.length === 2).map((p) => p.refdes);
+    let disturbed = 0;
+    let furthest = 0;
+    for (const ref of smalls) {
+      const before = k.boardPlacement();
+      const p = before.parts.find((q) => q.refdes === ref)!;
+      k.transact({ summary: 'drag', ops: [{ op: 'place', ref, x_mm: p.x + 1.5, y_mm: p.y }] });
+      const after = k.boardPlacement();
+      expect(after.outline).toEqual(before.outline);
+      for (const q of after.parts) {
+        const was = before.parts.find((o) => o.refdes === q.refdes)!;
+        const d = Math.hypot(q.x - was.x, q.y - was.y);
+        if (q.refdes === ref || (d <= 0.05 && q.rot === was.rot)) continue;
+        disturbed++;
+        furthest = Math.max(furthest, d);
+      }
+      // laid out again from the stored placement, nothing moves (no nudges on the grid, no choice pushed twice)
+      const stored = k.draftDesign().board!.placement!.parts;
+      for (const q of after.parts) expect([q.x, q.y, q.rot]).toEqual([stored[q.componentId]!.x, stored[q.componentId]!.y, stored[q.componentId]!.rot]);
+    }
+    // (the placer used to nudge 22 others over these moves: outline growth, snapping, small parts placed again)
+    expect(disturbed).toBeLessThanOrEqual(6);
+    expect(furthest).toBeLessThan(3);
+  });
+
+  it('a placement choice the placer had to nudge is recorded where its part stands, and not pushed again by the next move', () => {
+    const k = buck();
+    const at = (ref: string) => k.board().parts.find((p) => p.refdes === ref)!;
+    const j1 = at('J1');
+    // onto the locked connector: the cap is moved clear of it
+    k.transact({ summary: 'lock', ops: [{ op: 'place', ref: 'J1', x_mm: j1.x, y_mm: j1.y, lock: true }] });
+    k.transact({ summary: 'onto', ops: [{ op: 'place', ref: 'C5', x_mm: j1.x + 0.5, y_mm: j1.y }] });
+    const nudged = at('C5');
+    expect(Math.hypot(nudged.x - (j1.x + 0.5), nudged.y - j1.y)).toBeGreaterThan(0.5);
+    const choice = Object.values(k.draftDesign().ledger).find((x) => x.kind === 'position' && x.a === nudged.componentId)!;
+    const base = choice.rel ? at(k.draftDesign().components[choice.rel]!.refdes) : { x: 0, y: 0, rot: 0 };
+    expect(base.rot).toBe(0);
+    expect([r(base.x + choice.xMm!), r(base.y + choice.yMm!)]).toEqual([nudged.x, nudged.y]);
+    // another part dragged: the cap stays where the placer put it
+    const other = at('R1');
+    k.transact({ summary: 'drag', ops: [{ op: 'place', ref: 'R1', x_mm: other.x + 1.5, y_mm: other.y }] });
+    expect([at('C5').x, at('C5').y]).toEqual([nudged.x, nudged.y]);
+  });
 });
+
+const r = (v: number) => Math.round(v * 1000) / 1000;
 
 describe('the user\'s placement choices', () => {
   const at = (k: Kernel, ref: string) => k.board().parts.find((p) => p.refdes === ref)!;
@@ -311,9 +360,13 @@ describe('the user\'s placement choices', () => {
     const c5 = b.parts.find((p) => p.refdes === 'C5')!;
     const r = b.parts.find((p) => p.refdes === 'R3')!;
     const d = (a: { x: number; y: number }, c: { x: number; y: number }) => Math.hypot(a.x - c.x, a.y - c.y);
-    const shared = d(c5.pads.find((q) => q.number === '1')!, r.pads.find((q) => q.number === '2')!);
-    // the connected pads are now the nearest pair of the two parts
-    for (const p of c5.pads) for (const q of r.pads) expect(shared).toBeLessThanOrEqual(d(p, q) + 1e-6);
+    const c5Shared = c5.pads.find((q) => q.number === '1')!;
+    const c5Other = c5.pads.find((q) => q.number === '2')!;
+    const r3Shared = r.pads.find((q) => q.number === '2')!;
+    // the part placed turned round: its connected pad is the one nearer R3 (R3 stays as it is when
+    // turning it would cost its other connection as much as it gains here)
+    expect(d(c5Shared, r3Shared)).toBeLessThan(d(c5Other, r3Shared));
+    expect(c5.rot).toBe(180);
     // each kept its direction (lying), at most turned round
     expect([c5.rot % 180, r.rot % 180]).toEqual([0, 0]);
     expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
