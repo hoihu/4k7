@@ -46,7 +46,7 @@ function spotsOf(d: Design, ref: string): { sheet: string; sd: SheetDrawing; spo
 }
 
 /** Boxes a new wire keeps clear of where it can: labels of other nets and the parts' names and values. */
-function softBoxes(d: Design, sd: SheetDrawing, net: string): Rect[] {
+export function softBoxes(d: Design, sd: SheetDrawing, net: string): Rect[] {
   const out: Rect[] = [];
   for (const l of sd.labels) if (l.netId !== net) out.push(labelRect({ ...l, text: d.nets[l.netId]?.name ?? '' }));
   for (const s of sd.symbols) {
@@ -112,7 +112,7 @@ export function wireOp(d: Design, op: Extract<EditOp, { op: 'wire' }>): OpResult
 }
 
 /** Take away what is drawn at a pin as its label: labels on it, and a lead from it that only ends in a label. */
-function clearPinLabels(sd: SheetDrawing, pin: PinView): number {
+export function clearPinLabels(sd: SheetDrawing, pin: PinView): number {
   const at = (x: number, y: number) => x === pin.x && y === pin.y;
   const before = sd.labels.length + sd.wires.length;
   const leads = sd.wires.filter((w) => {

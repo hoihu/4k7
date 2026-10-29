@@ -3,6 +3,12 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
+## Unreleased
+
+### Schematic
+
+- **A small part you place is wired, not labelled**: a resistor, capacitor, LED or other two-pin part placed with `place_symbol` is wired to the nearest pin of each of its nets when the wire is clean (no crossing, no jog, no detour, short), and connected by net labels otherwise; the result says which pins got wires and why the others did not. Two example circuits placed part by part: 16 net labels down to 11 and 15 to 11, the drawing warnings 2 down to 0 and 0 to 0.
+
 ## 0.2.0 — 2026-10-25
 
 The chat runs on the coding agent you already use, projects are files on your computer, and the agent now takes a board from placement to the last routed connection, designs an enclosure for it, checks stock and cost at three assembly houses and lays lines at a set impedance.
