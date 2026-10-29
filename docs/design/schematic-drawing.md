@@ -78,8 +78,8 @@ which already stores its own geometry (`board.tracks`):
   label, or a supply symbol for a rail or ground: one op, the net decides); `erase { pins | net }`.
 - **Import** builds the netlist and redraws the original's arrangement, wires where it had wires.
 - **The checks** (§3) judge the agent's drawing, so every finding is one it can act on.
-- **Hand editing** (dragging symbols and wires in the editor) is not planned yet: later, depending on
-  how well the agent does.
+- **Hand editing** is minimal and stays inside this model (2026-10-29, §2c): gestures on the canvas
+  that issue the agent's own ops. There is no pencil, wire or trace tool, and no toolbar button.
 
 This supersedes "the kernel decides where every line goes" in §2 and the hint-based steps of §4–5;
 the router of §5 becomes the `wire` op's path finder.
@@ -140,6 +140,43 @@ two shallow steps); about 300 ms for the transaction and the view. Left as label
 flash's DI and CLK, whose pins run in another order than the MCU's (`set_symbol layout` on the flash
 wires them; the path finder does not reorder pins). The flash also stands below the crystal in its
 column, so its other lines jog.
+
+## 2c. Hand editing, 2026-10-29
+
+The user can fix a small thing by hand without asking the agent. Every gesture is one of the agent's
+ops, sent by the app as the user's own transaction: validated like any op, one undo step, shown in
+the history as the user's. No gesture draws anything new; the netlist never changes except by Delete
+on a part.
+
+| Gesture | Op |
+|---|---|
+| Drag a symbol (snaps to the 100-mil grid; may cross to another page) | `place_symbol x y page rewire` |
+| `R` on a selected two-pin part: standing / lying | `place_symbol orient rewire` |
+| `F` on a selected IC or connector: mirror | `place_symbol mirror rewire` |
+| Drag a net label round its pin: it points where the pointer is | `label pin dir` |
+| Click a wire or label (it is picked and its net selected), `Delete` / `Backspace` | `erase at` |
+| `Delete` / `Backspace` on selected parts, after a confirmation | `remove` |
+
+- **Wires follow.** `place_symbol` has `rewire: true`: the pins hung together by wire before the move
+  are joined again after it, by the `wire` op's path finder (`kernel/drawops.ts rewire`), shortest
+  gap first. A connection with no clear path (or on another page) is left to the automatic label,
+  as after any move, and the result says so. Without `rewire` nothing changes for the agent.
+- **`erase at`** names one wire (the drawn wires through a point; a wire runs between two joints, so
+  the canvas sends the middle of the clicked segment) or one label (at its point), by page
+  coordinates. A label that was the only sign of a connection comes back as an automatic one.
+- **The user's decision.** A symbol moved or turned by the user carries `DrawnSymbol.by: "user"`
+  (`SymbolView.by`; `get_schematic` says `user_placed`). The kernel keeps it: `place_block` draws
+  the rest of the block afresh round it, `auto_draw` of the whole sheet turns it into a `sch_position`
+  entry (source user) the layout stands it at, and Optimize may not move it. The agent may still
+  move it with `place_symbol` when asked or when it must; the result says "it was the user's
+  placement; now yours", as on the board. Wires and labels carry no mark.
+- **Keys.** The canvas takes focus on a click (`tabindex`), so R, F and Delete act on it only, never
+  while the chat box is focused, and never with ⌘, Ctrl or Alt held (⌘R, ⌘F and the like are the
+  browser's). The canvas does not take edits while the agent works or a changeset waits for review.
+- **Limits.** The drag preview moves the symbol alone: the wires are drawn once it lands, and an IC's
+  small parts follow then. Rotation is the op's: two-pin parts stand or lie, ICs only mirror. Mirroring
+  an IC with many wires can send them the long way round; Undo is one step. A part dragged with its
+  `rewire` on a crowded sheet may leave some connections as labels.
 
 ## 3. Notes and checks
 

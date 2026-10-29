@@ -3,6 +3,12 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
+## Unreleased
+
+### Schematic
+
+- **Fix a drawing by hand**: drag a symbol to move it (on the grid, its wires drawn again; what cannot be wired shows as labels), drag a net label round its pin, press **R** to turn a selected two-pin part or **F** to mirror an IC or connector, and **Delete** to take a clicked wire or label (or the selected parts, after asking) away. No new tools or buttons: each gesture is one of the agent's own operations, one undo step, and a part you placed stays where you put it when the agent redraws.
+
 ## 0.2.0 — 2026-10-25
 
 The chat runs on the coding agent you already use, projects are files on your computer, and the agent now takes a board from placement to the last routed connection, designs an enclosure for it, checks stock and cost at three assembly houses and lays lines at a set impedance.

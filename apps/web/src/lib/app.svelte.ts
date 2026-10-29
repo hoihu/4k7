@@ -1930,7 +1930,7 @@ class AppState {
 
   /** Take one drawn wire or net label away (erase at a point); the connection shows as an automatic label if nothing else does. */
   eraseDrawn(what: 'wire' | 'label', net: string, at: { page: number; x: number; y: number }): Promise<boolean> {
-    return this.userEdit(`Erase ${what} of ${net}`, [{ op: 'erase', at: [{ ...at, what }] }]);
+    return this.userEdit(`Erase ${what}${net ? ` of ${net}` : ''}`, [{ op: 'erase', at: [{ ...at, what }] }]);
   }
 
   /** Remove parts from the design (remove), after asking: it changes the circuit, not only the drawing. */

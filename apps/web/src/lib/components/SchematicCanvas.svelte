@@ -203,7 +203,7 @@
     }
     return { x: best.x, y: best.y };
   }
-  const netName = (id: string) => sheet?.labels.find((l) => l.netId === id)?.text ?? 'a net';
+  const netName = (id: string) => sheet?.labels.find((l) => l.netId === id)?.text ?? '';
 
   /** A click on a wire or label picks it (Delete takes it away); its net is selected with it. Clicking it again lets go. */
   function pick(p: NonNullable<typeof picked>) {

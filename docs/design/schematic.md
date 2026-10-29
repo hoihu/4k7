@@ -81,6 +81,11 @@ appear as labels. `place_block` on such a sheet draws a block afresh, together a
 put it (the result says what it runs into). `auto_draw` hands the sheet back to the layout. Use this only when the user asks for it:
 the drawing then no longer keeps itself tidy.
 
+The user may move parts by hand too (drag, R, F in the app). `get_schematic` marks those symbols
+`user_placed`: they are the user's decisions, like the parts they place on the board. `place_block`
+and `auto_draw` keep them where they are; arrange round them, and move one only when the drawing
+cannot do without it (then say which and why).
+
 ## 6. Symbols
 
 Every part is drawn as its usual symbol, made from its card: an electrolytic capacitor with a
