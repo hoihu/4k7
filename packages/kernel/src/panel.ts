@@ -13,12 +13,15 @@ import {
   FIDUCIAL,
   PANEL_SIDES,
   RAIL_MARK_OFFSET,
+  TAB_KEEPOUT,
   TOOLING_HOLE,
   type BoardDiagnostic,
+  type BoardView,
   type PanelSettings,
   type PanelSide,
   type PanelView,
 } from '@4k7/schema';
+import { segRect } from './drc.ts';
 
 /** Clipper's precision: decimal places (µm). */
 const PREC = 3;
@@ -207,4 +210,69 @@ function tabHolds(t: { x: number; y: number; w: number; h: number }, board: Path
     [t.x + t.w - 0.1, t.y + t.h / 2],
   ];
   return pts.some(([x, y]) => inside(board, x!, y!));
+}
+
+/**
+ * Parts and copper at the tabs, on the board as it stands (call it again once it is routed):
+ * `PANEL.TAB_ZONE` (warning) for parts, pads, tracks and vias within 1.5 mm of a tab, where the
+ * board flexes when it is snapped out and ceramic capacitors crack; `PANEL.TAB_OVERHANG` (error)
+ * for a part that reaches over a board edge that has a tab, into the channel the router mills.
+ * A part is its body and pads. Pours are left out (they reach to the edge clearance everywhere).
+ * The tab is taken at the side of the bounding box, which is where it starts on a rectangle.
+ */
+export function panelTabDrc(b: BoardView): BoardDiagnostic[] {
+  const panel = b.panel;
+  if (!panel) return [];
+  const { w, h } = b.outline;
+  const tw = panel.settings.tab.width;
+  const used = new Set(panel.tabs.flatMap((t) => t.src));
+  const boxes = b.parts.map((p) => {
+    const xs = [p.body.x, p.body.x + p.body.w, ...p.pads.flatMap((q) => [q.x - q.w / 2, q.x + q.w / 2])];
+    const ys = [p.body.y, p.body.y + p.body.h, ...p.pads.flatMap((q) => [q.y - q.h / 2, q.y + q.h / 2])];
+    return { p, x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+  });
+  const out: BoardDiagnostic[] = [];
+  const sides = new Set<PanelSide>();
+  for (const i of used) {
+    const t = panel.settings.tabs[i];
+    if (!t) continue;
+    sides.add(t.side);
+    const vertical = t.side === 'top' || t.side === 'bottom';
+    const centre = t.at * (vertical ? w : h);
+    const [u0, u1] = [centre - tw / 2, centre + tw / 2];
+    // the tab, outward from the edge (the channel and beyond)
+    const r = t.side === 'top' ? { x0: u0, y0: -5, x1: u1, y1: 0 } : t.side === 'bottom' ? { x0: u0, y0: h, x1: u1, y1: h + 5 } : t.side === 'left' ? { x0: -5, y0: u0, x1: 0, y1: u1 } : { x0: w, y0: u0, x1: w + 5, y1: u1 };
+    const near: string[] = [];
+    let closest = Infinity;
+    for (const m of boxes) {
+      const d = Math.hypot(Math.max(r.x0 - m.x1, m.x0 - r.x1, 0), Math.max(r.y0 - m.y1, m.y0 - r.y1, 0));
+      if (d < TAB_KEEPOUT - 1e-6) {
+        near.push(m.p.refdes);
+        closest = Math.min(closest, d);
+      }
+    }
+    const copper: string[] = [];
+    const seen = new Set<string>();
+    const note = (netId: string, what: string, d: number) => {
+      if (d >= TAB_KEEPOUT - 1e-6) return;
+      const k = `${what} ${b.netNames[netId] ?? netId}`;
+      if (!seen.has(k)) copper.push(k), seen.add(k);
+    };
+    for (const tr of b.tracks) for (let q = 0; q + 3 < tr.pts.length; q += 2) note(tr.netId, 'tracks of', segRect(tr.pts[q]!, tr.pts[q + 1]!, tr.pts[q + 2]!, tr.pts[q + 3]!, r) - tr.width / 2);
+    for (const v of b.vias) note(v.netId, 'vias of', Math.hypot(Math.max(r.x0 - v.x, v.x - r.x1, 0), Math.max(r.y0 - v.y, v.y - r.y1, 0)) - v.pad / 2);
+    if (!near.length && !copper.length) continue;
+    const where = `the ${t.side} tab at ${Math.round(t.at * 100)} %`;
+    out.push({
+      code: 'PANEL.TAB_ZONE',
+      severity: 'warning',
+      message: `Panel: ${[near.length ? `${near.join(', ')} ${near.length === 1 ? 'stands' : 'stand'} ${r3(closest)} mm from ${where}` : '', copper.length ? `${near.length ? 'and ' : ''}${copper.join(', ')} lie within ${TAB_KEEPOUT} mm of ${near.length ? 'it' : where}` : ''].filter(Boolean).join(' ')} (keep ${TAB_KEEPOUT} mm clear of a tab: the board flexes there when it is snapped out and ceramic capacitors crack). Move them, or move the tab (set_panel).`,
+      at: { x: r3(Math.max(0, Math.min(w, (r.x0 + r.x1) / 2))), y: r3(Math.max(0, Math.min(h, (r.y0 + r.y1) / 2))) },
+      entities: ['panel', ...near],
+    });
+  }
+  for (const m of boxes) {
+    const over = ([['top', m.y0 < -1e-6], ['bottom', m.y1 > h + 1e-6], ['left', m.x0 < -1e-6], ['right', m.x1 > w + 1e-6]] as const).filter(([side, hit]) => hit && sides.has(side)).map(([side]) => side);
+    if (over.length) out.push({ code: 'PANEL.TAB_OVERHANG', severity: 'error', message: `Panel: ${m.p.refdes} reaches over the ${over.join(' and ')} edge of the board, which has a tab: it would stand in the channel the router mills or on the tab. Move it inside the outline.`, at: { x: r3(m.p.x), y: r3(m.p.y) }, entities: ['panel', m.p.refdes] });
+  }
+  return out;
 }

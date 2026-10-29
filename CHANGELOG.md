@@ -3,6 +3,16 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
+## Unreleased
+
+### Board
+
+- **Panel tab zone** (`PANEL.TAB_ZONE`, `PANEL.TAB_OVERHANG`): parts, pads, tracks and vias within 1.5 mm of a tab are flagged (JLCPCB: ceramic capacitors crack where the board is snapped out), and a part over a board edge that has a tab is an error.
+- **Solder-mask webs** (`DRC.FAB_MASK_WEB`) between pads of different nets that fall below the fab profile's mask bridge (JLCPCB and PCBWay: 0.1 mm), and silkscreen text lower than the fab prints (`DRC.FAB_SILK_TEXT`).
+- **Etching checks**: acid traps (`DRC.ACID_TRAP`, tracks of a net meeting below 90° with an empty wedge) and necks (`DRC.NECK`, a track narrower than its net's width).
+- **Thermal reliefs** are checked: `DRC.THERMAL_SPOKES` for a pad with fewer than two spokes to its pour (an error when it is cut off), `DRC.FAB_SPOKE` for spokes thinner than the fab's tracks.
+- **Dead copper** was already left out of the pours; `DRC.DEAD_COPPER` (a note) now says where it was.
+
 ## 0.2.0 — 2026-10-25
 
 The chat runs on the coding agent you already use, projects are files on your computer, and the agent now takes a board from placement to the last routed connection, designs an enclosure for it, checks stock and cost at three assembly houses and lays lines at a set impedance.

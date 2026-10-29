@@ -63,13 +63,13 @@ import {
 } from '@4k7/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
 import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
-import { copperDrc, drawnDrc, edgeDrc, planeViaDrc, splitDrc } from './drc.ts';
+import { acidDrc, copperDrc, deadCopperDrc, drawnDrc, edgeDrc, neckDrc, planeViaDrc, splitDrc, thermalDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
-import { panelView } from './panel.ts';
+import { panelTabDrc, panelView } from './panel.ts';
 import { padOfPin, pin1Chamfer, placeMarks, polarityOf } from './marks.ts';
 import { stableJson } from './canonical.ts';
 import { route, type RouteInput, type RouteProgress } from './router.ts';
-import { impedanceDrc, pourGaps, resolveImpedance } from './lines.ts';
+import { impedanceDrc, pourGaps, resolveImpedance, ruleWidth } from './lines.ts';
 
 const SPACING = 0.3; // between courtyards
 const GRID_MM = 0.1;
@@ -1110,6 +1110,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     const panel = panelView(view, settings.panel);
     view.panel = panel.view;
     view.diagnostics.push(...panel.diagnostics);
+    view.diagnostics.push(...panelTabDrc(view));
   }
   view.diagnostics.push(...fabPlacementDrc(view));
   applyWaivers(d, view.diagnostics);
@@ -1156,7 +1157,7 @@ const COPPER_FORMAT = 1;
 export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean; onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
   const b = placeBoard(d, sch);
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
-  const { powerNets, planes, key, basis } = routeSetup(d, b);
+  const { powerNets, planes, netWidths, key, basis } = routeSetup(d, b);
   const pads = b.parts.flatMap((p) => p.pads);
   const kept = d.board?.copper?.key === key ? d.board.copper : null;
   // routed before for another placement on the same board: the router keeps what still holds of
@@ -1242,7 +1243,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   const marked = placeMarks(routed);
   routed.parts = marked.parts;
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY'), ...marked.diagnostics, ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
+  const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY' && !x.code.startsWith('PANEL.TAB_')), ...marked.diagnostics, ...panelTabDrc(routed), ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...acidDrc(routed), ...neckDrc(routed, (id, layer) => ruleWidth(b.impedance, id, layer) ?? netWidths[id] ?? (powerNets.has(id) ? b.rules.powerTrack : b.rules.track)), ...thermalDrc(routed), ...deadCopperDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {

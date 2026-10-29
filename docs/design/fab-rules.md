@@ -32,13 +32,23 @@ Limits (all optional except track and clearance; an absent limit is simply not c
 | `pthDrill`, `npthDrill` | `DRC.FAB_HOLE` |
 | `holeToHole`, `padHoleToHole` | `DRC.FAB_HOLE_SPACING`: wall between holes; the second applies when a component or mounting hole is involved |
 | `copperToEdge`, `copperToEdgeInner` | the edge-clearance rule floor (the inner value applies to 4-layer boards) |
-| `silkWidth` | `DRC.FAB_SILK` (outline graphics); `silkHeight` and `maskBridge` are informational |
+| `silkWidth` | `DRC.FAB_SILK` (outline graphics) |
+| `silkHeight` | `DRC.FAB_SILK_TEXT`: a text graphic whose letters are lower than this (warning) |
+| `maskBridge` | `DRC.FAB_MASK_WEB`: the solder-mask web between the openings of two pads |
+| the track limit | `DRC.FAB_SPOKE` also for a pour's thermal spokes (`set_plane_style spoke_mm`) |
 | `minBoard`, `maxBoard` | `DRC.FAB_BOARD_SIZE`, either orientation |
 | the profile's `layers` | `DRC.FAB_LAYERS` |
 | rules kept below a limit (`keep_rules`) | `DRC.FAB_RULES` |
 
 All fab diagnostics are errors, so `propose` is refused while one is open, except spacing between
-two pads of one footprint, which is a warning: the footprint decides that, not the layout.
+two pads of one footprint, which is a warning: the footprint decides that, not the layout. The same goes for
+`DRC.FAB_MASK_WEB` (warning inside a footprint, error between parts).
+
+**Mask webs** (`maskWebs`, fabdrc.ts; 2026-10-29). The mask opens 0.05 mm past a pad (`MASK_MARGIN`, shared
+with the Gerber writer); the web is the copper gap between two pads of different nets on one side minus 0.1 mm.
+Below `maskBridge` a house drops the web and the two pads share one opening, which bridges in reflow. JLCPCB and
+PCBWay publish 0.1 mm; Eurocircuits' classification does not, so its presets carry no `maskBridge` and nothing is
+checked (an imported profile can give `mask_bridge_mm`). A limit not published is left out, not guessed.
 
 ## Applying a profile
 
@@ -106,8 +116,9 @@ source and date, and the Manufacturer panel shows them.
 - A preset is a **capability floor** for the standard service, not a quote: surcharges for tighter
   tiers, impedance control, special finishes and thicker copper are not modelled. Notes mention
   the common ones.
-- Only what the DRC can check is checked. Solder-mask web and silkscreen text height are stored
-  for the record: there is no mask or silk text model to check them against.
+- Only what the DRC can check is checked. The reference designators' text height is not: the Gerber writer sets it
+  from the part's body (0.6–1 mm, `refdesHeight`), under JLCPCB's 1 mm on small parts, and the layout cannot
+  choose it; only text graphics are checked.
 - 2 oz and heavier copper for PCBWay is not a preset (the page defers to a separate table); import
   it.
 
@@ -127,6 +138,6 @@ source and date, and the Manufacturer panel shows them.
 
 - Per-net-class rules (a profile only sets the floor; per-net widths still come from `set_net`).
 - Layer counts beyond 2 and 4. (The stack-up and impedance rules: [impedance](impedance.md); a board without a stack-up takes its fab's standard one.)
-- Checking mask web and silk text height.
+- Reference designator text height (see above), and a mask web check for houses that publish no limit.
 - Import from KiCad `.kicad_dru` or manufacturers' rule files.
 - Per-house naming and packaging of the fab export, and price or lead-time tiers.

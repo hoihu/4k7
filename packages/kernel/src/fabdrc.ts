@@ -3,8 +3,9 @@
  * cannot guarantee by themselves because it comes from parts, holes, per-net widths or the board
  * size. Placement checks need no routing; copper checks (tracks, vias) run with the route.
  */
-import { fabRuleIssues } from '@4k7/schema';
-import type { BoardDiagnostic, BoardView } from '@4k7/schema';
+import { fabRuleIssues, MASK_MARGIN } from '@4k7/schema';
+import type { BoardDiagnostic, BoardPad, BoardView, CopperLayer } from '@4k7/schema';
+import { padGap } from './drc.ts';
 import { segSegDist } from './segments.ts';
 
 interface Hole {
@@ -71,7 +72,51 @@ function spacing(b: BoardView, viaPairs: boolean): BoardDiagnostic[] {
   return out;
 }
 
-/** Layers, board size, rules, component holes and rings, silkscreen lines: everything known at placement. */
+/**
+ * Solder-mask webs thinner than the fab's minimum. The mask opens 0.05 mm past each pad; what is
+ * left between two openings is the web, and a house cannot hold one thinner than its limit (it
+ * drops the web, and the two pads share one opening: solder bridges). Pads of one net are let be
+ * (they join anyway). Between pads of one part the footprint decides (a warning); between parts
+ * the layout does (an error). One finding per pair of parts, at its narrowest web.
+ */
+function maskWebs(b: BoardView): BoardDiagnostic[] {
+  const min = b.fab!.limits.maskBridge;
+  if (min === undefined) return [];
+  const pads = b.parts.flatMap((p) => p.pads.filter((q) => !q.npth).map((q) => ({ p: p.refdes, q })));
+  pads.sort((a, c) => a.q.x - c.q.x);
+  const reach = Math.max(0, ...pads.map((a) => a.q.w)) + min + 2 * MASK_MARGIN;
+  // (a through-hole pad is open on both sides; the inner layers have no mask)
+  const faces = (q: BoardPad): CopperLayer[] => (q.drill ? ['F.Cu', 'B.Cu'] : q.layers.filter((l) => l === 'F.Cu' || l === 'B.Cu'));
+  const worst = new Map<string, { web: number; a: (typeof pads)[number]; c: (typeof pads)[number] }>();
+  for (let i = 0; i < pads.length; i++) {
+    const A = pads[i]!;
+    for (let j = i + 1; j < pads.length; j++) {
+      const C = pads[j]!;
+      if (C.q.x - A.q.x > reach) break; // sweep on x
+      if (A.q.netId && A.q.netId === C.q.netId) continue;
+      if (!faces(A.q).some((l) => faces(C.q).includes(l))) continue;
+      const web = padGap(A.q, C.q) - 2 * MASK_MARGIN;
+      if (web >= min - EPS) continue;
+      const key = [A.p, C.p].sort().join('|');
+      const w = worst.get(key);
+      if (!w || web < w.web) worst.set(key, { web, a: A, c: C });
+    }
+  }
+  const out: BoardDiagnostic[] = [];
+  for (const { web, a, c } of worst.values()) {
+    const same = a.p === c.p;
+    out.push({
+      code: 'DRC.FAB_MASK_WEB',
+      severity: same ? 'warning' : 'error',
+      message: `${a.p}.${a.q.number} and ${c.p}.${c.q.number}: ${mm(Math.max(0, web))} of solder mask between the pad openings (${b.fab!.house} holds ${mm(min)}); the web is dropped and the two pads share one opening, which bridges in reflow.${same ? ' The footprint sets that spacing.' : ' Move the parts apart.'}`,
+      at: { x: (a.q.x + c.q.x) / 2, y: (a.q.y + c.q.y) / 2 },
+      entities: [...new Set([a.p, c.p])],
+    });
+  }
+  return out;
+}
+
+/** Layers, board size, rules, component holes and rings, mask webs, silkscreen lines and text: everything known at placement. */
 export function fabPlacementDrc(b: BoardView): BoardDiagnostic[] {
   const fab = b.fab;
   if (!fab) return [];
@@ -128,6 +173,17 @@ export function fabPlacementDrc(b: BoardView): BoardDiagnostic[] {
     }
   }
   out.push(...spacing(b, false));
+  out.push(...maskWebs(b));
+
+  if (l.silkHeight !== undefined) {
+    // text graphics: the shorter side of the text's box is its height (a line of text, turned 0 or 90°)
+    for (const g of b.graphics) {
+      const th = Math.min(g.bounds[2] - g.bounds[0], g.bounds[3] - g.bounds[1]);
+      if (g.text && g.text.trim().length > 1 && th < l.silkHeight - EPS) {
+        out.push({ code: 'DRC.FAB_SILK_TEXT', severity: 'warning', message: `Silkscreen text ${g.id} ("${g.text}") is ${mm(th)} high; ${fab.house} prints ${mm(l.silkHeight)} at the smallest; use edit_graphic to enlarge it.`, entities: [g.id] });
+      }
+    }
+  }
 
   if (l.silkWidth !== undefined) {
     for (const g of b.graphics) {
@@ -161,6 +217,11 @@ export function fabCopperDrc(b: BoardView): BoardDiagnostic[] {
       seen.add(key);
       out.push({ code: 'DRC.FAB_VIA', severity: 'error', message: `Vias ${mm(v.drill)} drill / ${mm(v.pad)} pad are below ${fab.house}'s smallest (${l.viaDrill !== undefined ? mm(l.viaDrill) : '–'} / ${l.viaPad !== undefined ? mm(l.viaPad) : '–'}).`, at: { x: v.x, y: v.y }, entities: [] });
     }
+  }
+  // thermal-relief spokes are copper too
+  for (const z of b.zones) {
+    const w = Math.min(Infinity, ...(z.shape?.adds ?? []).map((a) => a.w));
+    if (w < l.track - EPS) out.push({ code: 'DRC.FAB_SPOKE', severity: 'error', message: `The thermal spokes of ${b.netNames[z.netId] ?? z.netId} on ${z.layer} are ${mm(w)} wide; ${fab.house} makes ${mm(l.track)} at the narrowest (set_plane_style spoke_mm).`, entities: [] });
   }
   out.push(...spacing(b, true));
   return out;

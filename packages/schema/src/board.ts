@@ -742,6 +742,8 @@ export interface Zone {
   layer: CopperLayer;
   rects: number[];
   shape?: ZoneShape;
+  /** Islands of the pour left out of the fill because they touched no copper of the net: how many, their area (mm²) and where the biggest is. */
+  removed?: { islands: number; area: number; at: { x: number; y: number } };
 }
 
 export type ZoneCut =

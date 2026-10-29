@@ -415,6 +415,22 @@ Each step is useful alone.
     (over an unbroken plane) where it can. Supplies and ground do not pay. The check
     `PLANE.SPLIT_CROSSING` (warning, one per net and area, `splitDrc` in drc.ts) names the signals
     that still cross on the layer over the split; a slow one (an LED, a button) is waived.
+    **Etching and pour checks** (2026-10-29, all in drc.ts, run with the routed or drawn copper and on each
+    drawn op). `DRC.ACID_TRAP` (`acidDrc`, warning): two tracks of one net meeting at less than 90° (a bend, a
+    junction, or a track ending on the side of another) with nothing of the net in the wedge between them: a pad,
+    via, pour or other track of the net filling it, or a junction inside a pad or via, clears it. `DRC.NECK`
+    (`neckDrc`, warning): a track narrower than its net's width (`set_net`, its impedance rule, else the power or
+    signal width), unless it starts or ends on a pad too small for that width (a fine-pitch escape).
+    `DRC.THERMAL_SPOKES` (`thermalDrc`): a pad joined to its pour through a thermal relief has fewer than two spokes
+    (warning), or none and no track of its net on the layer (an error for a surface pad: it is cut off). Pads of a
+    plane with `thermal: false`, with thermal vias, or with a track on the layer are not counted. Thermal reliefs
+    themselves are real: the router cuts a ring round each pad and via of the pour's net, draws the spokes back
+    where no other net is in the way, and the Gerber writer clears the cuts and draws the spokes
+    (`ZoneShape.cuts`, `adds`); style, gap and spoke width are `set_plane_style`'s.
+    **Dead copper**: a pour island that touches no copper of its net is never filled (the `alive` set in
+    `planeShape`), so no floating copper reaches the Gerbers. `Zone.removed` counts the islands of 1 mm² and
+    more and `DRC.DEAD_COPPER` (info) tells the agent where the biggest was: a track or pad of another net
+    split the pour there.
 12. **Which part belongs with which** (built 2026-10-15). The placer guessed each part's parent
     (a decoupling cap: the IC whose supply pin it takes; else the biggest part sharing a signal
     net) and the agent could not say otherwise: a connector followed the regulator it feeds, a
@@ -559,7 +575,7 @@ the agent may), the fab's limits, parts off the board or overlapping, `DRC.UNROU
 yet", unless `propose open_connections` says why). Warnings are soft, the agent's judgement:
 `DRAW.DANGLING` (a track end meeting no copper of its net), `DRAW.ANGLE` (a piece off 45°, the
 short jog onto a pad aside), `DRC.VIA_IN_PAD` in a small part's land pattern (a via over another
-net's pad is a short anyway), `DRC.PLANE_VIAS`, `PLANE.SPLIT_CROSSING`, silkscreen.
+net's pad is a short anyway), `DRC.PLANE_VIAS`, `PLANE.SPLIT_CROSSING`, `DRC.ACID_TRAP`, `DRC.NECK`, `DRC.THERMAL_SPOKES`, silkscreen.
 
 Bench (`bench/drawn.ts`, the 128-part board of `bench/board.ts`, 3 clusters):
 
