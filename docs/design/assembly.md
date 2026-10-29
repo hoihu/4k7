@@ -58,6 +58,10 @@ and other part's body outline, and from the board edge and cutouts, and that is 
 pads than any other part's (so it is not read as a neighbour's mark). No spot: **DRC.SILK_POLARITY**
 (a warning) names what is in the way. It costs about a millisecond on a 130-part board.
 
+On the bottom side the marks are the same ink, printed on the bottom silkscreen (dots, bars and "+" are the same
+mirrored: pin 1's dot lies beyond the mirrored pad 1, so it reads right from below, and the chamfered corner is
+mirrored with the body). Only the refdes texts are mirrored in the file, so they read right from the board's underside.
+
 The marks are geometry in the board view (strokes and dots, board coordinates), so every picture of
 the board draws the same ink: the Gerber silkscreen (`packages/fab/src/gerber.ts`, refdes texts keep
 off the marks), the 2D view, the agent's `get_board_image` and the design document (all three
@@ -138,9 +142,18 @@ The land check of §3 already lays the house's footprint on ours: `fitLand` retu
 where its origin lies (`at`, from the part's centre). The stock check keeps both for each component on
 the top side whose land fits (`StockLine.placements`), and the export writes them (`pickAndPlace(b,
 placements)`, `fabFiles`, each copy of a panel too): that part's row gets the house's rotation and
-the origin's position. Every other part keeps the board's frame as before: no footprint read, a land
-that does not fit (the order stops there anyway), and parts on the bottom side, where how a house
-counts the rotation (seen from the bottom, mirrored) is not settled here.
+the origin's position. Every other part keeps the board's frame as before: no footprint read, and a land
+that does not fit (the order stops there anyway).
+
+A part on the bottom side is written the way JLCPCB and the KiCad plugins for it count one (2026-10-29): `Layer` Bottom,
+the position in the board's own coordinates (not mirrored) and the rotation as the part turns when the board is turned
+over about its horizontal axis, which is 180° minus the counter-clockwise rotation of the mirrored footprint on the
+board (the fit's `rotation`, or 360° minus the part's own `rot` where no footprint was read). A bottom part not turned
+is therefore 180°. This is KiBot's account of the position file (KiCad mirrors a bottom footprint, JLCPCB does not,
+and the plugins' own bottom formula is the one that is off) and the formula of the fabrication plugins, not something
+the house documents: the order's preview shows the parts as it will place them, and that is the check. The land check
+of §3 lays the house's footprint mirrored on ours for a bottom part, so its `at` and `rotation` are already for the
+bottom.
 
 On spiral2 this gives the rotations JLCPCB's engineers set: the 48 WS2812B, U6 (DFN), Q1 and U1 (SOIC)
 and Q2 (SOT-23) at 270° instead of 0°, U2 (SOT-223) and U4 at 180° instead of 270°, U5 (SOT-23-5) at

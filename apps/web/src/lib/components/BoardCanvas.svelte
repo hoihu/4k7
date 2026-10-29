@@ -325,7 +325,8 @@
     {/each}
 
     {#if show.courtyard}
-      {#each board.parts as p (p.componentId)}
+      <!-- (a part's courtyard, like its pads and silkscreen, goes with its side's copper layer) -->
+      {#each board.parts.filter((p) => p.pads.some((q) => q.drill) || show[p.side === 'bottom' ? 'B.Cu' : 'F.Cu']) as p (p.componentId)}
         <rect class="court" x={p.courtyard.x} y={p.courtyard.y} width={p.courtyard.w} height={p.courtyard.h} />
       {/each}
     {/if}
@@ -402,7 +403,7 @@
           {:else if pad.drill}<circle class="drill" cx={pad.x} cy={pad.y} r={pad.drill / 2} />{/if}
           {/if}
         {/each}
-        {#if show.silk && !p.componentId.startsWith('hole:')}
+        {#if show.silk && !p.componentId.startsWith('hole:') && (p.pads.some((q) => q.drill) || show[p.side === 'bottom' ? 'B.Cu' : 'F.Cu'])}
           {#if p.body.round}<circle class="silk" cx={p.body.x + p.body.w / 2} cy={p.body.y + p.body.h / 2} r={p.body.w / 2} />
           {:else if p.body.chamfer}<polygon class="silk" points={points(bodyOutline(p.body))} />
           {:else}<rect class="silk" x={p.body.x} y={p.body.y} width={p.body.w} height={p.body.h} />{/if}

@@ -740,3 +740,56 @@ placement routes about the same (237 vias, 1516 mm against 232, 1465) and so doe
 
     node --experimental-transform-types packages/kernel/bench/board.ts 2 3 steady 6
     node --experimental-transform-types packages/kernel/bench/congest.ts 2 1 30     (env SQUEEZE=0.8)
+
+## 12. Parts on the bottom side (2026-10-29)
+
+A part's side is a placement property the agent decides: `place` takes `side` (`top` or `bottom`; omitted, the
+part keeps its side), so do the parts of `propose_placement` and `try_placements` (a trial can measure a
+board with the decoupling caps under their ICs), and `constrain layer` sets the same thing (one `layer` entry
+per part; top, the default, leaves none; a hard one is not overridden by `place`). Existing projects have no
+`layer` entries and load unchanged. The placer never flips a part itself: an automatic part stays where its
+side says. `get_board` says each part's `side` and lists the parts on the bottom (`bottom_side`), so a part
+that is there by accident is seen.
+
+**The footprint** (`mirrored`, `board.ts`): pads, pin 1 and the body's chamfered corners are mirrored about the
+footprint's vertical axis, then the part is turned clockwise by `rot` as on the top (KiCad's convention: a
+bottom footprint is the mirror image, then turned). Pin numbers stay. SMD pads are on B.Cu; through-hole pads
+on every layer. Courtyard and body are centred, so they do not change. A drop via's spot and a part's keep-out
+in the footprint's frame are mirrored the same way (`dropSpot`).
+
+**Placement.** Courtyards collide only with parts on the same side; a through-hole part takes both sides
+(`collide`). The separation, the settling, the legalizing of overlaps and the DRC (`DRC.COURTYARD_OVERLAP`)
+use that one rule, so an SMD part can sit right under an IC on the other side. Turning a part over keeps
+the rest of the placement as it is (`keepPlacement` first), and `propose_placement` sets the sides before it
+stores the agent's choices, so a part given under an IC is not pushed off it by a pass that still saw it on top.
+The congestion estimate (§11.2) takes a pad's room from the layers the pad is on (a bottom pad from B.Cu only,
+a through-hole pad from every signal layer).
+
+**Routing.** The router and the copper checks treat B.Cu pads like any outer-layer pad: a track starts on the
+pad's layer, a via takes it to another, the pour of that layer clears it. Drawn copper starts on the layer of
+the pad it leaves (`draw_track from C3.1` runs on B.Cu); turning a part over leaves its tracks where they are
+and says so, only their ends on its pads follow (mirrored).
+
+**Fab files.** Each side has its own copper, mask, paste and silkscreen file; the bottom silkscreen is written
+only when something is printed there. The files are in the board's top-view frame, as KiCad writes them
+(`FileFunction` says Bot; the viewer mirrors); text on the bottom (refdes, `add_graphic` text) is mirrored in
+the file so it reads from below. The pick-and-place has `Bottom` in the Layer column, see
+[assembly](assembly.md) §6. The STEP file hangs the part's body below the board, turned over about the vertical
+axis. The 2D view draws the parts on the bottom in the bottom copper's colour with a dashed outline; the
+Top and Bottom copper checkboxes show and hide each side's parts (pads, silkscreen, courtyards) with the layer,
+so unchecking the top copper shows the underside alone.
+
+**The cost.** A part on the bottom makes a second side at the assembly house: `bottomRefs` in the cost check
+(`parts/cost.ts`). JLCPCB's Economic assembly takes one side only (the check says why it cannot take the order),
+Standard charges the setup and the stencil for both sides (`setupBothSides`, the stencils), PCBWay is quoted by
+sides, Eurocircuits charges the second side. The numbers are each house's entry in the repo; moving the bottom
+parts to the top is one of the savings the check lists (`kind: 'side'`).
+
+**When to use it** (the agent's guide): the user asks; a dense board whose top has no room (decoupling caps
+right under the IC's pins); a quiet side for sensitive analogue parts, with the ground plane between; connectors,
+switches or a battery holder that belong on the underside. Keep the parts on the bottom together and few,
+leave connectors and large parts on top unless the design needs them below, say what was moved and why.
+
+Not done: the placer proposing a side by itself; rules for parts on the bottom of a board that stands on its
+feet (clearance to the table, in the enclosure's `lowest_bottom`); mask and paste DRC beyond what the Gerbers
+write per side; a bottom-side view of the 2D board (mirrored, as seen from below).
