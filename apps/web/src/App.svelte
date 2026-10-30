@@ -184,6 +184,13 @@
             onselect={(r, add) => app.toggleSelect(r, add)}
             onselectnet={(n) => app.selectNet(n)}
             onclear={() => app.clearSelection()}
+            editable={!app.running && !app.k?.proposal}
+            onmovesymbol={(ref, spot) => app.placeSymbol(ref, spot)}
+            onturnsymbol={(ref, spot, look) => app.placeSymbol(ref, spot, look)}
+            onlabeldir={(pin, net, dir) => app.labelAt(pin, net, dir)}
+            onerase={(what, net, at) => app.eraseDrawn(what, net, at)}
+            onremove={(refs) => app.removeParts(refs)}
+            onnote={(m) => app.flash(m)}
           />
           <!-- one row: the pending bar goes on a line of its own when the tabs leave no room, never under them -->
           <div class="top">
@@ -215,7 +222,7 @@
             </div>
           {/if}
           <div class="status">
-            <span>click = reference · shift-click = add · drag = pan · wheel = zoom</span>
+            <span>click = reference · shift-click = add · drag a part or label = move it · drag the sheet = pan · wheel = zoom · R / F turn · ⌫ delete</span>
             <span class="sp mono">{app.selection.join(' ') || '—'}</span>
           </div>
         </div>

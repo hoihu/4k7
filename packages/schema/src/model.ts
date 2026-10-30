@@ -81,6 +81,8 @@ export interface DrawnSymbol {
   part: string;
   /** A small part drawn at an IC's or connector's pins: that symbol (component id, "#unit" for a unit). It moves with it. */
   with?: string;
+  /** The user put it here (a drag or turn in the app): their decision, which the agent's redraws (place_block, auto_draw) keep. */
+  by?: 'user';
   spec: SymbolSpec;
   /** Where the symbol's own origin is. */
   x: number;

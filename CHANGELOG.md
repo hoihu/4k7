@@ -27,6 +27,9 @@ and every pull request of a release are on its [GitHub release](https://github.c
 ### Schematic
 
 - **A small part you place is wired, not labelled**: a resistor, capacitor, LED or other two-pin part placed with `place_symbol` is wired to the nearest pin of each of its nets when the wire is clean (no crossing, no jog, no detour, short), and connected by net labels otherwise; the result says which pins got wires and why the others did not. Two example circuits placed part by part: 16 net labels down to 11 and 15 to 11, the drawing warnings 2 down to 0 and 0 to 0.
+### Schematic
+
+- **Fix a drawing by hand**: drag a symbol to move it (on the grid, its wires drawn again; what cannot be wired shows as labels), drag a net label round its pin, press **R** to turn a selected two-pin part or **F** to mirror an IC or connector, and **Delete** to take a clicked wire or label (or the selected parts, after asking) away. No new tools or buttons: each gesture is one of the agent's own operations, one undo step, and a part you placed stays where you put it when the agent redraws.
 
 ## 0.2.0 — 2026-10-25
 

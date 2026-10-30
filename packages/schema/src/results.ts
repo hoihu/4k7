@@ -192,6 +192,12 @@ export interface SymbolView {
    */
   rotation?: number;
   origin?: Point;
+  /** A two-pin part: it turns standing or lying (place_symbol orient); the others mirror. */
+  twoPin?: boolean;
+  /** An IC or connector drawn mirrored (its left pins on the right). */
+  mirrored?: boolean;
+  /** The user put it where it stands (a drag or turn in the app): their decision, which the agent's redraws keep. */
+  by?: 'user';
 }
 
 export interface LabelView {

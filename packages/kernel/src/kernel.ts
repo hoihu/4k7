@@ -494,7 +494,7 @@ export class Kernel {
               const cx = sym.bbox.x + sym.bbox.w / 2;
               const cy = sym.bbox.y + sym.bbox.h / 2;
               const p = s.pages.find((pg) => cx >= pg.rect.x && cx <= pg.rect.x + pg.rect.w && cy >= pg.rect.y && cy <= pg.rect.y + pg.rect.h) ?? s.pages[0]!;
-              return { ref: `${sym.refdes}${sym.unit ?? ''}`, page: p.number, x: r(cx - p.rect.x), y: r(cy - p.rect.y), w: sym.bbox.w, h: sym.bbox.h, ...(sym.rotation ? { lying: true } : {}) };
+              return { ref: `${sym.refdes}${sym.unit ?? ''}`, page: p.number, x: r(cx - p.rect.x), y: r(cy - p.rect.y), w: sym.bbox.w, h: sym.bbox.h, ...(sym.rotation ? { lying: true } : {}), ...(sym.by ? { user_placed: true } : {}) };
             }),
           ),
           // net labels (supply symbols left out), at the pin they sit on; auto: a connection the drawing does not show yet
