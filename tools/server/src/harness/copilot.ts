@@ -1,8 +1,9 @@
 /**
- * GitHub Copilot CLI: `copilot -p` with JSONL output. The 4k7 endpoint is added as an MCP server
- * for the run, and every other tool (shell, files, the GitHub MCP server, the user's own MCP
- * servers) is filtered out with --available-tools. The CLI has no system-prompt option, so the
- * chat rules open the first message of a conversation.
+ * GitHub Copilot CLI with JSONL output, in its non-interactive mode. The 4k7 endpoint is added as
+ * an MCP server for the run, and every other tool (shell, files, the GitHub MCP server, the user's
+ * own MCP servers) is filtered out with --available-tools. The CLI has no system-prompt option, so
+ * the chat rules open the first message of a conversation, which is too long for a command line on
+ * Windows: it goes in on stdin rather than in -p.
  */
 import { randomUUID } from 'node:crypto';
 import { CHAT_WEB_PROMPT, chatModePrompt, type HarnessCapability, type TokenCount } from '@4k7/schema';
@@ -38,8 +39,6 @@ export class CopilotHarness implements Harness {
     sink.emit({ kind: 'session', session });
     return {
       args: [
-        '-p',
-        rules + job.text,
         '--output-format',
         'json',
         '--stream',
@@ -60,6 +59,7 @@ export class CopilotHarness implements Harness {
         ...(job.effort ? ['--reasoning-effort', job.effort] : []),
       ],
       env: this.#env(),
+      stdin: rules + job.text,
       ...this.#reader(session, job.session !== null, sink),
     };
   }

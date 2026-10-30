@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-// Stand-in for `copilot -p ... --output-format json` in tests. It connects to the MCP server given
-// in --additional-mcp-config like the Copilot CLI would, calls one tool, and prints JSONL events.
+// Stand-in for `copilot --output-format json` in tests. It reads the prompt from stdin, connects to the MCP
+// server given in --additional-mcp-config like the Copilot CLI would, calls one tool, and prints JSONL events.
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 const require = createRequire(import.meta.url);
-const { Client } = await import(require.resolve('@modelcontextprotocol/sdk/client/index.js'));
-const { StreamableHTTPClientTransport } = await import(require.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js'));
+const load = (id) => import(pathToFileURL(require.resolve(id)).href);
+const { Client } = await load('@modelcontextprotocol/sdk/client/index.js');
+const { StreamableHTTPClientTransport } = await load('@modelcontextprotocol/sdk/client/streamableHttp.js');
 
 const args = process.argv.slice(2);
 if (args[0] === '--version') {
@@ -22,7 +24,8 @@ const list = (name) => {
   return out;
 };
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
-const prompt = arg('-p');
+let prompt = '';
+for await (const chunk of process.stdin) prompt += chunk;
 const session = args.find((a) => a.startsWith('--session-id='))?.slice(13);
 if (prompt.includes('please fail')) {
   process.stderr.write('Error: Model "nope" from --model flag is not available.\n');

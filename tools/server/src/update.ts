@@ -1,5 +1,5 @@
 /**
- * Update check for the downloaded app (the DMG and the Linux archive do not update themselves the
+ * Update check for the downloaded app (the DMG and the other archives do not update themselves the
  * way `npx` re-resolved the latest version on every run). Asks GitHub for the latest release at most
  * once a day, remembers the answer in ~/.4k7/update.json, and tells the tab when it is newer.
  */

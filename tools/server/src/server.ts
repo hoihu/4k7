@@ -39,6 +39,8 @@ export interface LocalServerOptions {
   devPorts?: readonly number[];
   /** Called when a tab connects (true) or the connected tab goes away (false). */
   onTab?: (connected: boolean) => void;
+  /** How Claude Code starts this server, when the app cannot know from its build (the downloaded app). */
+  mcpCommand?: string;
   log?: (msg: string) => void;
 }
 
@@ -95,7 +97,8 @@ export class LocalServer {
         this.#http.on('upgrade', (req, socket, head) => this.#wss!.handleUpgrade(req, socket, head, (ws) => this.#wss!.emit('connection', ws, req)));
         return port;
       } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw e;
+        // taken, or on Windows in a range the system keeps for itself (Hyper-V and WSL reserve whole ranges)
+        if (!['EADDRINUSE', 'EACCES'].includes((e as NodeJS.ErrnoException).code ?? '')) throw e;
       }
     }
     throw new Error(`All server ports are in use (${ports.join(', ')}). Is another Claude Code session already running the server?`);
@@ -264,6 +267,7 @@ export class LocalServer {
             chat: this.#chat,
             harnesses: this.#harnesses,
             ...(this.#update ? { update: this.#update } : {}),
+            ...(this.#opts.mcpCommand ? { mcpCommand: this.#opts.mcpCommand } : {}),
           } satisfies ServerToTab),
         );
         if (first) this.#opts.onTab?.(true);

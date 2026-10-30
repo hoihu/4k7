@@ -5,6 +5,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 interface TextItem {
   str: string;
@@ -22,7 +23,7 @@ let pdfjs: PdfJs | null = null;
 async function loadPdfJs(): Promise<PdfJs> {
   if (!pdfjs) {
     const require = createRequire(import.meta.url);
-    pdfjs = (await import(require.resolve('pdfjs-dist/legacy/build/pdf.mjs'))) as PdfJs;
+    pdfjs = (await import(pathToFileURL(require.resolve('pdfjs-dist/legacy/build/pdf.mjs')).href)) as PdfJs;
   }
   return pdfjs;
 }

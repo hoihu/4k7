@@ -48,7 +48,7 @@ npm test           # kernel + agent tests (vitest)
 npm run typecheck  # tsc + svelte-check
 npm run build      # static build in apps/web/dist
 npm start          # build, package and run it like npx does (dist/4k7pcb.js)
-node scripts/bundle.mjs  # the downloads (DMGs and Linux archives) in build/
+node scripts/bundle.mjs  # the downloads (DMGs, Linux and Windows archives) in build/
 ```
 
 ## Bring your own AI

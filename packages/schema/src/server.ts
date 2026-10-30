@@ -132,7 +132,7 @@ export interface TokenCount {
 
 export type ServerToTab =
   /** `chat`: Claude Code (what older tabs read); `harnesses`: every agent the server knows, Claude Code included. */
-  | { type: 'welcome'; protocol: number; agent: string; chat: ChatCapability; harnesses?: HarnessCapability[]; update?: UpdateInfo }
+  | { type: 'welcome'; protocol: number; agent: string; chat: ChatCapability; harnesses?: HarnessCapability[]; update?: UpdateInfo; mcpCommand?: string }
   /** The agents' details changed (a model list arrived after the tab connected). */
   | { type: 'harnesses'; harnesses: HarnessCapability[] }
   /** The answer to agent_bin: saved and the agent detected again, or why not. */

@@ -8,6 +8,6 @@ export { OpenCodeHarness } from './harness/opencode.ts';
 export type { Harness, ChatJob, Invocation, RunSink } from './harness/types.ts';
 export { loadConfig, configPath, configDir, type ClaudeProfile } from './config.ts';
 export { checkForUpdate, compareVersions, DOWNLOAD_URL } from './update.ts';
-export { candidateDirs, extendPathFor, findBin, isExecutable, loginShellPath } from './claude-bin.ts';
+export { candidateDirs, commandFor, extendPathFor, findBin, isExecutable, loginShellPath, shimTarget } from './claude-bin.ts';
 export { Agents, AGENT_BINS, binFor } from './agents.ts';
 export { storageHandler, defaultProjectsDir, projectFileName, PROJECT_EXT, type ProjectEntry, type StorageOptions } from './storage.ts';

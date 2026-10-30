@@ -27,6 +27,10 @@ class Disk {
   status = $state<DiskStatus>('off');
   /** Where the server keeps the projects. */
   projectsDir = $state('');
+  /** Where a project's file is, for showing: the folder comes from the server, with its computer's separators. */
+  projectFile(id: string): string {
+    return `${this.projectsDir}${this.projectsDir.includes('\\') ? '\\' : '/'}${id}.twd.json`;
+  }
   #base = '';
   #key = '';
 

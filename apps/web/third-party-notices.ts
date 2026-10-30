@@ -60,7 +60,7 @@ function notices(modules: Set<string>): string {
   const packages = new Map<string, string[]>();
   const sections: string[] = [];
   for (const id of modules) {
-    const dir = /^.*\/node_modules\/(?:@[^/]+\/)?[^/]+/.exec(id)?.[0];
+    const dir = /^.*\/node_modules\/(?:@[^/]+\/)?[^/]+/.exec(id.replaceAll('\\', '/'))?.[0];
     if (dir) packages.set(dir, [...(packages.get(dir) ?? []), id]);
     else {
       const file = vendored(id);

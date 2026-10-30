@@ -3,8 +3,11 @@
  * start it with only the 4k7 tools, and how to read what it prints. Each one uses the user's own
  * login and plan (Claude Code, GitHub Copilot CLI, OpenCode).
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { AgentEffort, ChatCapability, ChatEvent, HarnessCapability, HarnessId, TokenCount } from '@4k7/schema';
+import { commandFor, isBatchFile, spawnCli, spawnCliSync, stopCli } from '../claude-bin.ts';
 
 export type DoneEvent = Extract<ChatEvent, { kind: 'done' }>;
 
@@ -20,6 +23,8 @@ export interface ChatJob {
   /** The server's MCP endpoint and the bearer token of this run (it decides which tools it sees). */
   mcpUrl: string;
   token: string;
+  /** Where the run's rules can be written for the CLI to read (see rulesFile). */
+  rulesDir: string;
 }
 
 /** Where a run's output goes. */
@@ -54,22 +59,53 @@ export interface Harness {
   chat(job: ChatJob, sink: RunSink): Invocation;
 }
 
+/**
+ * A run's rules in a file, for a CLI that can read them from one: the chat rules alone are longer than a whole
+ * command line may be on Windows (32,767 characters), and than an environment variable there. Named after what it
+ * holds, so runs share it and a server of another version leaves it alone.
+ */
+export function rulesFile(dir: string, text: string): string {
+  const file = join(dir, `rules-${createHash('sha256').update(text).digest('hex').slice(0, 16)}.md`);
+  if (existsSync(file)) return file;
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // a run must never read half of it, nor a later one after a crash
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, text, { mode: 0o600 });
+  try {
+    renameSync(tmp, file);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    if (!existsSync(file)) throw e; // else another server just wrote the same and has it open
+  }
+  return file;
+}
+
 /** `<bin> --version`, the first line of it; unavailable when it does not run. */
 export function detectCli(bin: string, name: string, env: NodeJS.ProcessEnv, envVar: string): ChatCapability {
-  const r = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 10_000, env });
+  // a large CLI's first start on Windows takes a while (the virus scanner reads it first)
+  const r = spawnCliSync(bin, ['--version'], { encoding: 'utf8', timeout: process.platform === 'win32' ? 30_000 : 10_000, env });
   if (r.error || r.status !== 0) {
+    const file = commandFor(bin, env).file;
+    if (process.platform === 'win32' && isBatchFile(file)) {
+      return { available: false, reason: `${file} is a batch file that was not installed by npm, which the app cannot start. Give the path of the ${name} program itself in Settings → Coding agents (or ${envVar}).` };
+    }
     return { available: false, reason: `${name} CLI not found ("${bin}"). Install it, or give its full path in Settings → Coding agents (or ${envVar}).` };
   }
-  return { available: true, version: r.stdout.trim().split('\n')[0] ?? '' };
+  return { available: true, version: r.stdout.trim().split(/\r?\n/)[0] ?? '' };
 }
 
 /** Run a CLI to completion and return its stdout (null when it failed). */
 export function capture(bin: string, args: string[], opts: { env: NodeJS.ProcessEnv; cwd?: string; timeoutMs?: number }): Promise<string | null> {
   return new Promise((resolve) => {
-    const child = spawn(bin, args, { env: opts.env, ...(opts.cwd ? { cwd: opts.cwd } : {}), stdio: ['ignore', 'pipe', 'ignore'] });
+    let child: ReturnType<typeof spawnCli>;
+    try {
+      child = spawnCli(bin, args, { env: opts.env, ...(opts.cwd ? { cwd: opts.cwd } : {}), stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      return resolve(null); // Windows refuses a batch file right here
+    }
     let out = '';
-    const timer = setTimeout(() => child.kill('SIGKILL'), opts.timeoutMs ?? 30_000);
-    child.stdout.on('data', (d) => (out += String(d)));
+    const timer = setTimeout(() => stopCli(child, 'SIGKILL'), opts.timeoutMs ?? 30_000);
+    child.stdout!.on('data', (d) => (out += String(d)));
     child.on('error', () => {
       clearTimeout(timer);
       resolve(null);

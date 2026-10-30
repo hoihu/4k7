@@ -8,14 +8,15 @@ import { SERVER_PROTOCOL, type ServerToTab, type ChatEvent } from '@4k7/schema';
 import { LocalServer, ChatRunner, detectClaude, mcpHttpHandler, type ClaudeProfile } from '../src/index.ts';
 
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
-const FAKE = fileURLToPath(new URL('./fake-claude.mjs', import.meta.url));
+// on Windows behind an npm shim, like a real agent installed with npm
+const FAKE = fileURLToPath(new URL(process.platform === 'win32' ? './fake-claude.cmd' : './fake-claude.mjs', import.meta.url));
 const cleanups: (() => unknown)[] = [];
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
 });
 
 async function setup(bin = FAKE, profile?: ClaudeProfile) {
-  const base = 40000 + Math.floor(Math.random() * 20000);
+  const base = 20000 + Math.floor(Math.random() * 20000);
   const server = new LocalServer({ accessKey: KEY, ports: [base, base + 1], devPorts: [5173] });
   const port = await server.start();
   cleanups.push(() => server.stop());
@@ -63,12 +64,43 @@ async function setup(bin = FAKE, profile?: ClaudeProfile) {
         }
       }, 20);
     });
-  return { server, port, welcome, calls, send, run, ingestDir };
+  return { server, port, welcome, calls, send, run, ingestDir, ws, events };
 }
 
 const text = (es: ChatEvent[]) => es.filter((e) => e.kind === 'text').map((e) => (e as { text: string }).text).join('');
 
 describe('app chat via Claude Code', () => {
+  /** Starts a run that hangs, stops it once it has started, and gives how it ended and how long stopping took. */
+  async function stopped(message: string) {
+    const { ws, events, send } = await setup();
+    const ended = send('h1', message);
+    for (let i = 0; i < 500 && !events.get('h1')?.some((e) => e.kind === 'session'); i++) await new Promise((r) => setTimeout(r, 20));
+    const asked = Date.now();
+    ws.send(JSON.stringify({ type: 'chat_cancel', id: 'h1' }));
+    return { es: await ended, ms: Date.now() - asked };
+  }
+
+  it('stops a run when asked', async () => {
+    const { es, ms } = await stopped('please hang');
+    expect(es.at(-1)).toMatchObject({ kind: 'done', ok: false, error: 'Stopped.' });
+    expect(ms).toBeLessThan(4000);
+  });
+
+  it.runIf(process.platform === 'win32')('stops what the run started too, which keeps its output open', async () => {
+    const { es, ms } = await stopped('please hang, with a child');
+    expect(es.at(-1)).toMatchObject({ kind: 'done', ok: false, error: 'Stopped.' });
+    expect(ms).toBeLessThan(4000);
+  });
+
+  it('takes a message of any length, with its line breaks and quotes', async () => {
+    const { send } = await setup();
+    // longer than a command line may be on Windows, as the rules are
+    const message = `line 1 "quoted" ^ % & | <x>\nline 2 ${'x'.repeat(40_000)}`;
+    const es = await send('l1', message);
+    const reply = text(es);
+    expect(JSON.parse(reply.slice(reply.indexOf('flags=') + 6)).prompt).toBe(message);
+  });
+
   it('passes the effort level, and only a known one', async () => {
     const { send } = await setup();
     const flagsOf = (es: ChatEvent[]) => {

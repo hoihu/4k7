@@ -104,7 +104,10 @@ export class Agents {
     if (process.env[env]) return { ok: false, error: `${env} is set when the server starts; it decides the program. Remove it to choose here.` };
     const path = bin === null ? '' : expandHome(bin.trim());
     if (path) {
-      if (!isAbsolute(path)) return { ok: false, error: 'Give the full path, e.g. /opt/homebrew/bin/' + AGENT_BINS[id].name + '.' };
+      if (!isAbsolute(path)) {
+        const example = process.platform === 'win32' ? `C:\\Users\\you\\AppData\\Roaming\\npm\\${AGENT_BINS[id].name}.cmd` : `/opt/homebrew/bin/${AGENT_BINS[id].name}`;
+        return { ok: false, error: `Give the full path, e.g. ${example}.` };
+      }
       if (!isExecutable(path)) return { ok: false, error: `${path} is not a program this user can run.` };
       const before = h.bin;
       h.bin = path;

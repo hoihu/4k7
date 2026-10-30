@@ -5,7 +5,8 @@
   import Section from './Section.svelte';
 
   let copied = $state(false);
-  const mcpCommand = `claude mcp add --scope user 4k7 -- ${__SERVER_MCP__}`;
+  // the server knows where the downloaded app was put; npx and node commands take cmd on Windows (the tab runs on the server's computer)
+  const mcpCommand = $derived(`claude mcp add --scope user 4k7 -- ${server.mcpCommand ?? (navigator.userAgent.includes('Windows') ? `cmd /c ${__SERVER_MCP__}` : __SERVER_MCP__)}`);
   const serverRun = __SERVER_RUN__;
   const where = __PACKAGED__ ? '' : ' (in this repository)';
 

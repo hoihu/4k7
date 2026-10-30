@@ -2,13 +2,15 @@
 // binary beside it, so nothing has to be installed (no Node, no npm). One folder per platform in build/:
 //   4k7-macos-arm64.dmg, 4k7-macos-x64.dmg   a 4k7.app that opens the app in the browser (double-click)
 //   4k7-linux-x64.tar.gz, 4k7-linux-arm64.tar.gz   a folder with a 4k7 launcher script
+//   4k7-windows-x64.zip   a folder with a 4k7.cmd launcher
 // Run by the release workflow; `node scripts/bundle.mjs` by hand (--target darwin-arm64,linux-x64 for
 // some, --node 22.21.0 to pin Node; default: the latest release of the major in .node-version).
-// DMGs need macOS (hdiutil); on another system the macOS targets come out as zip files.
+// DMGs need macOS (hdiutil); on another system the macOS targets come out as zip files. Run it on macOS or
+// Linux, also for the Windows download (it takes zip and unzip); scripts/check-download.mjs tries one out.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -16,7 +18,8 @@ const build = join(root, 'build');
 const cache = join(build, 'cache');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const NAME = '4k7';
-const ALL_TARGETS = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64'];
+const ALL_TARGETS = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64', 'win-x64'];
+const LABELS = { darwin: 'macos', linux: 'linux', win: 'windows' };
 
 const args = process.argv.slice(2);
 const opt = (name) => {
@@ -31,12 +34,10 @@ const log = (msg) => console.log(`[bundle] ${msg}`);
 
 mkdirSync(cache, { recursive: true });
 
-// 1. the package, built for the downloaded app: its Settings say to open the app, not to run npx
+// 1. the package, built for the downloaded app: its Settings say to open the app, not to run npx. One build for
+// every platform, so what differs between them comes from the launcher (FOURK7_LAUNCHER: where it is, for the command in Settings).
 log('building the package');
-const packageEnv = {
-  FOURK7_RUN: `the ${NAME} app`,
-  FOURK7_MCP: process.platform === 'darwin' ? `/Applications/${NAME}.app/Contents/MacOS/${NAME} mcp` : `/path/to/${NAME}/${NAME} mcp`,
-};
+const packageEnv = { FOURK7_RUN: `the ${NAME} app` };
 run('npm', ['run', 'package'], root, packageEnv);
 // Some npm versions run `prepare` on pack despite --ignore-scripts, which rebuilds the package and
 // prints to stdout: the same env keeps that rebuild identical, and the tarball name is derived rather
@@ -68,11 +69,12 @@ const outputs = [];
 for (const target of targets) {
   const [os, arch] = target.split('-');
   const node = await nodeBinary(nodeVersion, os, arch, shasums);
-  const label = `${NAME}-${os === 'darwin' ? 'macos' : os}-${arch}`;
+  const label = `${NAME}-${LABELS[os]}-${arch}`;
   const out = join(build, label);
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
   if (os === 'darwin') outputs.push(macApp(out, label, node));
+  else if (os === 'win') outputs.push(windowsFolder(out, label, node));
   else outputs.push(linuxFolder(out, label, node));
 }
 log(`done:\n${outputs.map((o) => `  ${o}`).join('\n')}`);
@@ -94,6 +96,7 @@ function macApp(out, label, node) {
 # ${NAME}: opened from the Finder this opens the app in the browser (starting its server when needed).
 # Other commands: "${NAME} mcp" (MCP server for the Claude Code CLI), "${NAME} --no-open", "${NAME} --help".
 R="$(cd "$(dirname "$0")/../Resources" && pwd)"
+export FOURK7_LAUNCHER="$(cd "$(dirname "$0")" && pwd)/${NAME}"
 case "$1" in -psn_*) shift;; esac
 [ $# -eq 0 ] && set -- app
 exec "$R/node" "$R/${entry}" "$@"
@@ -185,6 +188,7 @@ function linuxFolder(out, label, node) {
 # ${NAME}: with no arguments, opens the app in the browser (starting its server when needed; it stops when the tab is closed).
 # Other commands: "${NAME} mcp" (MCP server for the Claude Code CLI), "${NAME} --no-open", "${NAME} --help".
 D="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+export FOURK7_LAUNCHER="$D/${NAME}"
 [ $# -eq 0 ] && set -- app
 exec "$D/node" "$D/${entry}" "$@"
 `,
@@ -224,6 +228,55 @@ Logs: ~/.4k7/server.log
   return `${tgz} (${(dirSize(tgz) / 1e6).toFixed(1)} MB)`;
 }
 
+/* ----------------------------------- Windows ---------------------------------- */
+
+function windowsFolder(out, label, node) {
+  const dir = join(out, NAME);
+  mkdirSync(dir);
+  cpSync(lib, join(dir, 'lib'), { recursive: true });
+  copyNode(node, dir);
+  const script = entry.replaceAll('/', '\\');
+  // a batch file wants CRLF. Double-clicked, its window closes by itself, unless something went wrong and it has to be read.
+  writeFileSync(
+    join(dir, `${NAME}.cmd`),
+    crlf(`@echo off
+rem ${NAME}: with no arguments, opens the app in the browser (starting its server when needed; it stops when the tab is closed).
+rem Other commands: "${NAME} mcp" (MCP server for the Claude Code CLI), "${NAME} --no-open", "${NAME} --help".
+setlocal
+set "FOURK7_LAUNCHER=%~f0"
+if "%~1"=="" goto app
+"%~dp0node.exe" "%~dp0${script}" %*
+exit /b %errorlevel%
+:app
+"%~dp0node.exe" "%~dp0${script}" app
+if errorlevel 1 pause
+`),
+  );
+  writeFileSync(
+    join(dir, 'README.txt'),
+    crlf(`${NAME} ${pkg.version} for Windows (${label.replace(`${NAME}-windows-`, '')})
+
+Unpack the whole zip anywhere (right-click it, Extract All), then double-click ${NAME}.cmd: it opens the app in your
+browser at http://localhost:7777 and stops when you close the tab. Nothing else to install; Node is included.
+
+The app is not signed yet, so Windows may say it protected your PC the first time: choose More info, then Run anyway.
+
+To keep it at hand: right-click ${NAME}.cmd, Send to, Desktop (create shortcut).
+
+The chat in the app is answered by your Claude Code, if "claude" is installed; otherwise add an API key in Settings.
+Logs: %USERPROFILE%\\.4k7\\server.log
+`),
+  );
+  const zip = join(build, `${label}.zip`);
+  rmSync(zip, { force: true });
+  run('zip', ['-qr', zip, NAME], out);
+  return `${zip} (${(dirSize(zip) / 1e6).toFixed(1)} MB)`;
+}
+
+function crlf(text) {
+  return text.replaceAll('\n', '\r\n');
+}
+
 /* ------------------------------------ Node ------------------------------------ */
 
 /** The latest release of a Node major ("22"). */
@@ -237,32 +290,39 @@ async function latestNode(major) {
 /** The node binary for a platform, downloaded (once) and checked, with Node's license beside it. */
 async function nodeBinary(version, os, arch, shasums) {
   const name = `node-v${version}-${os}-${arch}`;
-  const archive = join(cache, `${name}.tar.gz`);
+  const file = `${name}.${os === 'win' ? 'zip' : 'tar.gz'}`;
+  const archive = join(cache, file);
   if (!existsSync(archive)) {
     log(`downloading ${name}`);
-    const r = await fetch(`https://nodejs.org/dist/v${version}/${name}.tar.gz`);
+    const r = await fetch(`https://nodejs.org/dist/v${version}/${file}`);
     if (!r.ok) throw new Error(`download failed: ${r.status} ${name}`);
     writeFileSync(archive, Buffer.from(await r.arrayBuffer()));
   }
-  const expected = shasums.split('\n').find((l) => l.endsWith(` ${name}.tar.gz`))?.split(/\s+/)[0];
+  const expected = shasums.split('\n').find((l) => l.endsWith(` ${file}`))?.split(/\s+/)[0];
   const actual = createHash('sha256').update(readFileSync(archive)).digest('hex');
   if (!expected || expected !== actual) {
     rmSync(archive, { force: true });
-    throw new Error(`checksum mismatch for ${name}.tar.gz`);
+    throw new Error(`checksum mismatch for ${file}`);
   }
   const dir = join(cache, name);
-  if (!existsSync(join(dir, 'node')) || !existsSync(join(dir, 'LICENSE'))) {
+  const binary = join(dir, os === 'win' ? 'node.exe' : 'node');
+  if (!existsSync(binary) || !existsSync(join(dir, 'LICENSE'))) {
     mkdirSync(dir, { recursive: true });
-    run('tar', ['-xzf', archive, '-C', dir, '--strip-components=2', `${name}/bin/node`]);
-    run('tar', ['-xzf', archive, '-C', dir, '--strip-components=1', `${name}/LICENSE`]);
+    if (os === 'win') {
+      run('unzip', ['-qoj', archive, `${name}/node.exe`, `${name}/LICENSE`, '-d', dir]);
+    } else {
+      run('tar', ['-xzf', archive, '-C', dir, '--strip-components=2', `${name}/bin/node`]);
+      run('tar', ['-xzf', archive, '-C', dir, '--strip-components=1', `${name}/LICENSE`]);
+    }
   }
-  return join(dir, 'node');
+  return binary;
 }
 
 /** Node into a download: the binary ships, so its license goes with it. */
 function copyNode(node, dir) {
-  cpSync(node, join(dir, 'node'));
-  chmodSync(join(dir, 'node'), 0o755);
+  const copy = join(dir, basename(node));
+  cpSync(node, copy);
+  chmodSync(copy, 0o755);
   cpSync(join(dirname(node), 'LICENSE'), join(dir, 'LICENSE-node'));
 }
 
@@ -274,8 +334,9 @@ async function fetchText(url) {
 
 /* ------------------------------------ files ------------------------------------ */
 
-/** What the server never loads: sourcemaps, type declarations, and pdf.js's browser builds (it uses legacy/build/pdf.mjs). */
+/** What the server never loads: sourcemaps, type declarations, pdf.js's browser builds (it uses legacy/build/pdf.mjs), and the links to the packages' commands. */
 function prune(lib) {
+  rmSync(join(lib, 'node_modules', '.bin'), { recursive: true, force: true });
   for (const f of findFiles(lib, (n) => n.endsWith('.map') || n.endsWith('.d.ts') || n.endsWith('.d.mts'))) rmSync(f);
   const pdfjs = join(lib, 'node_modules', 'pdfjs-dist');
   for (const d of ['build', 'web', 'types', 'image_decoders', join('legacy', 'web')]) rmSync(join(pdfjs, d), { recursive: true, force: true });

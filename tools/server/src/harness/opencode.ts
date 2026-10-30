@@ -1,14 +1,15 @@
 /**
  * OpenCode: `opencode run --format json` with an agent of its own, defined for the run through
  * OPENCODE_CONFIG_CONTENT (merged into the user's config, so their providers and logins apply):
- * the chat rules as its prompt, the 4k7 endpoint as a remote MCP server, and every tool but the
- * 4k7 ones switched off. The message goes in on stdin (an argument would be quoted).
+ * the chat rules as its prompt (from a file: they do not fit a variable on Windows), the 4k7
+ * endpoint as a remote MCP server, and every tool but the 4k7 ones switched off. The message goes
+ * in on stdin (an argument would be quoted).
  *
  * `opencode run` can exit before it prints the last step of its answer, so once it has exited the
  * session is read back with `opencode export` and whatever the stream left out is sent then.
  */
 import { CHAT_WEB_PROMPT, chatModePrompt, type HarnessCapability } from '@4k7/schema';
-import { capture, detectCli, parseLine, type ChatJob, type Harness, type Invocation, type RunSink } from './types.ts';
+import { capture, detectCli, parseLine, rulesFile, type ChatJob, type Harness, type Invocation, type RunSink } from './types.ts';
 
 const AGENT = '4k7-chat';
 
@@ -41,7 +42,8 @@ export class OpenCodeHarness implements Harness {
         [AGENT]: {
           mode: 'primary',
           description: 'Answers the chat of the 4k7 app through its tools',
-          prompt: job.web ? `${chatModePrompt()}\n\n${CHAT_WEB_PROMPT}` : chatModePrompt(),
+          // forward slashes: this goes into the config's text as it is, where a backslash would be an escape
+          prompt: `{file:${rulesFile(job.rulesDir, job.web ? `${chatModePrompt()}\n\n${CHAT_WEB_PROMPT}` : chatModePrompt()).replaceAll('\\', '/')}}`,
           tools: { '*': false, '4k7_*': true, ...(job.web ? { webfetch: true, websearch: true } : {}) },
           permission: { edit: 'deny', bash: 'deny', webfetch: job.web ? 'allow' : 'deny', external_directory: 'deny' },
         },

@@ -2,7 +2,7 @@
 // tarball into an empty folder (no workspace, no dev dependencies) and runs `4k7pcb` from there.
 // Run by CI and by `prepublishOnly`; `npm run check:package` by hand. Leaves the tarball in the
 // repository root (ignored by git) for trying it out: npx -y ./4k7pcb-<version>.tgz
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +10,15 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const pkg = JSON.parse(readFileSync(`${root}package.json`, 'utf8'));
-const run = (cmd, args, cwd = root) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+// on Windows npm and the installed command are batch files: they take a shell, and quotes where there are spaces
+// (only there: npm.cmd started as "npm" looks for itself in the current folder)
+const windows = process.platform === 'win32';
+const quoted = (a) => (/\s/.test(a) ? `"${a}"` : a);
+const shell = (cmd, args) => (windows ? [quoted(cmd), args.map(quoted), { shell: true }] : [cmd, args, {}]);
+const run = (cmd, args, cwd = root) => {
+  const [file, argv, opts] = shell(cmd, args);
+  return execFileSync(file, argv, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], ...opts });
+};
 const fail = (msg) => {
   throw new Error(msg);
 };
@@ -39,14 +47,16 @@ let child;
 try {
   writeFileSync(join(dir, 'package.json'), '{"private":true}\n');
   run('npm', ['install', '--no-audit', '--no-fund', '--omit=dev', tarball], dir);
-  const bin = join(dir, 'node_modules', '.bin', '4k7pcb');
+  const bin = join(dir, 'node_modules', '.bin', windows ? '4k7pcb.cmd' : '4k7pcb');
 
   const version = run(bin, ['--version']).trim();
   if (version !== pkg.version) fail(`4k7pcb --version says ${version}, package.json ${pkg.version}`);
 
   // start it with its own home and access key, and load the app page from it
   const accessKey = '00000000-0000-4000-8000-000000000000';
-  child = spawn(bin, ['--no-open'], {
+  const [file, argv, opts] = shell(bin, ['--no-open']);
+  child = spawn(file, argv, {
+    ...opts,
     cwd: dir,
     env: { ...process.env, FOURK7_HOME: join(dir, 'home'), FOURK7_ACCESS_KEY: accessKey, FOURK7_CLAUDE_BIN: join(dir, 'no-claude') },
     stdio: ['ignore', 'ignore', 'pipe'],
@@ -72,6 +82,8 @@ try {
   console.error(`check-package: ${e.message}`);
   process.exitCode = 1;
 } finally {
-  child?.kill();
-  rmSync(dir, { recursive: true, force: true });
+  // on Windows the child is the shell: the server under it has to go too, or it keeps the folder
+  if (windows && child?.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
+  else child?.kill();
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
 }

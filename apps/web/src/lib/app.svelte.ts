@@ -313,7 +313,7 @@ class AppState {
     await markMovedToDisk();
     if (project) {
       await this.updateSettings({ project });
-      this.flash(`Your project is now a file: ${disk.projectsDir}/${project}.twd.json`);
+      this.flash(`Your project is now a file: ${disk.projectFile(project)}`);
     }
   }
 

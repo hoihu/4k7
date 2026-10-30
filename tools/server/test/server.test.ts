@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { get as httpGet } from 'node:http';
+import { Server as NetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configDir, loadConfig } from '../src/config.ts';
 import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -21,7 +22,7 @@ const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 const OTHER = '11111111-2222-4333-8444-555555555555';
 
 async function startServer(accessKey = KEY) {
-  const base = 40000 + Math.floor(Math.random() * 20000);
+  const base = 20000 + Math.floor(Math.random() * 20000);
   const server = new LocalServer({ accessKey, ports: [base, base + 1], devPorts: [5173] });
   const port = await server.start();
   cleanups.push(() => server.stop());
@@ -97,12 +98,26 @@ describe('server access', () => {
   });
 
   it('falls through to the next port when one is taken', async () => {
-    const base = 40000 + Math.floor(Math.random() * 20000);
+    const base = 20000 + Math.floor(Math.random() * 20000);
     const a = new LocalServer({ accessKey: KEY, ports: [base, base + 1] });
     const b = new LocalServer({ accessKey: OTHER, ports: [base, base + 1] });
     expect(await a.start()).toBe(base);
     expect(await b.start()).toBe(base + 1);
     cleanups.push(() => a.stop(), () => b.stop());
+  });
+
+  it('falls through a port the system keeps for itself, as Windows does with whole ranges', async () => {
+    const base = 20000 + Math.floor(Math.random() * 20000);
+    const listen = NetServer.prototype.listen;
+    const reserved = vi.spyOn(NetServer.prototype, 'listen').mockImplementation(function (this: NetServer, ...args: unknown[]) {
+      if (args[0] !== base) return listen.apply(this, args as never);
+      process.nextTick(() => this.emit('error', Object.assign(new Error(`listen EACCES: permission denied 127.0.0.1:${base}`), { code: 'EACCES' })));
+      return this;
+    });
+    cleanups.push(() => reserved.mockRestore());
+    const server = new LocalServer({ accessKey: KEY, ports: [base, base + 1] });
+    expect(await server.start()).toBe(base + 1);
+    cleanups.push(() => server.stop());
   });
 
   it('fails pending calls when the tab goes away', async () => {
@@ -219,12 +234,14 @@ describe('serving the app', () => {
 describe('config folder', () => {
   it('moves ~/.tracewise (the old name) to ~/.4k7 and keeps its access key', () => {
     const home = mkdtempSync(join(tmpdir(), '4k7-home-'));
-    const env = { HOME: process.env.HOME, FOURK7_HOME: process.env.FOURK7_HOME };
+    // the home folder comes from USERPROFILE on Windows
+    const env = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, FOURK7_HOME: process.env.FOURK7_HOME };
     try {
       mkdirSync(join(home, '.tracewise'));
       const accessKey = '8b1f4d2e-5c3a-4e6f-9a7b-0c1d2e3f4a5b';
       writeFileSync(join(home, '.tracewise', 'server.json'), JSON.stringify({ accessKey, claude: { unsetEnv: ['X'], env: {} } }));
       process.env.HOME = home;
+      process.env.USERPROFILE = home;
       delete process.env.FOURK7_HOME;
       expect(configDir()).toBe(join(home, '.4k7'));
       expect(existsSync(join(home, '.tracewise'))).toBe(false);
@@ -232,6 +249,8 @@ describe('config folder', () => {
       expect(JSON.parse(readFileSync(join(home, '.4k7', 'server.json'), 'utf8')).accessKey).toBe(accessKey);
     } finally {
       process.env.HOME = env.HOME;
+      if (env.USERPROFILE !== undefined) process.env.USERPROFILE = env.USERPROFILE;
+      else delete process.env.USERPROFILE;
       if (env.FOURK7_HOME !== undefined) process.env.FOURK7_HOME = env.FOURK7_HOME;
       rmSync(home, { recursive: true, force: true });
     }
