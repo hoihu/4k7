@@ -90,8 +90,9 @@ async function main() {
   const claude = new ClaudeHarness(binFor('claude-code', cfg.bins), cfg.claude);
   const others: Harness[] = [new CopilotHarness(binFor('copilot', cfg.bins)), new OpenCodeHarness(binFor('opencode', cfg.bins), workDir)];
   const agents = new Agents({ harnesses: [claude, ...others], bins: cfg.bins, log, onChange: (caps) => server.setHarnesses(caps) });
-  const harnesses = agents.detect();
+  // first: it makes the working directory, where detecting asks the agents for their models
   const chat = new ChatRunner({ server, claudeBin: claude.bin, claude, workDir, ingestDir: join(configDir(), 'ingest'), profile: cfg.claude, harnesses: others, log });
+  const harnesses = agents.detect();
   server.setChatHandler(chat.handle, harnesses[0]!, harnesses);
   server.setAgentsHandler((msg) => {
     if (msg.type === 'agents_detect') return server.setHarnesses(agents.detect());
