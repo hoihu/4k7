@@ -13,6 +13,7 @@ and every pull request of a release are on its [GitHub release](https://github.c
 - **R keeps which end of a two-pin part is which**: turning it twice gives back what was there. It used to come back with pin 1 on top, its wires drawn round to the other end.
 - **Turning, mirroring and dragging are about three times faster** on a big sheet: about half a second for a small part on a design of 120 parts, about five seconds for an RP2040.
 - **The agent can turn symbols and sees which way round they are**: `place_symbol rotate` does what **R** does, `get_schematic` shows `mirrored` and `rotated`, and the result says where a small symbol's pins went or that nothing changed. Asking for a crystal mirrored when it already was changed nothing and said nothing, so the agent went round it with a worse drawing. A `set_symbol` layout refused for a crystal or transistor now points at `mirror`.
+- **A wire no longer stays hidden behind a part**: put a part down on a wire, by dragging it or through the agent, and the wire goes round it. Only the stretch behind the part moves, and what it connects stays connected. Wires already behind a part come out when the drawing opens. One that cannot get round, because a pin of its own lies under the part, stays until you move the part off it.
 - **A wire no longer turns into labels by running over a pin** of a part drawn off the wire's grid: it now goes round that pin.
 
 ### Coding agents

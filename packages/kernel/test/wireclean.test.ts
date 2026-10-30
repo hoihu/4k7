@@ -128,6 +128,93 @@ describe('the wire clean-up', () => {
     expect(cleanWires(d, sd, symbols, area)).toBe(false);
     expect(sd.wires[0]).toEqual(via);
   });
+
+  describe('a run through a part', () => {
+    /** A part's box, with no pin on what runs through it. */
+    const part = (id: string, x: number, y: number, w: number, h: number): SymbolView => ({ ...pinBox(id, x, y - 500, 'top', 'P'), bbox: { x, y, w, h } });
+    const clear = (sd: SheetDrawing, ...boxes: SymbolView[]) => {
+      for (const w of sd.wires) for (let i = 0; i + 3 < w.pts.length; i += 2) for (const { bbox: b } of boxes) {
+        const [x1, y1, x2, y2] = [w.pts[i]!, w.pts[i + 1]!, w.pts[i + 2]!, w.pts[i + 3]!];
+        const [ax, bx, ay, by] = [Math.min(x1, x2), Math.max(x1, x2), Math.min(y1, y2), Math.max(y1, y2)];
+        expect(ay === by ? ay > b.y && ay < b.y + b.h && Math.max(ax, b.x) < Math.min(bx, b.x + b.w) : ax > b.x && ax < b.x + b.w && Math.max(ay, b.y) < Math.min(by, b.y + b.h), JSON.stringify(w.pts)).toBe(false);
+      }
+    };
+
+    it('goes round the part from pin to pin', () => {
+      const { d, symbols } = world([['A', 0, 0, 'right', 'N'], ['B', 1000, 0, 'left', 'N']]);
+      const box = part('P', 400, -100, 200, 200);
+      const all = [...symbols, box];
+      const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [0, 0, 1000, 0] }] };
+      expect(cleanWires(d, sd, all, area)).toBe(true);
+      clear(sd, box);
+      expect(sd.wires.length).toBe(1);
+      expect([sd.wires[0]!.pts.slice(0, 2).join(), sd.wires[0]!.pts.slice(-2).join()].sort()).toEqual(['0,0', '1000,0']);
+      expect(cleanWires(d, sd, all, area)).toBe(false);
+    });
+
+    it('moves only what stood behind the part, the rest of the net stays as drawn', () => {
+      // a T from C onto the wire A–B; the part stands on the run from the T to B
+      const { d, symbols } = world([['A', 0, 0, 'right', 'N'], ['B', 1500, 0, 'left', 'N'], ['C', 400, 600, 'top', 'N']]);
+      const box = part('P', 800, -100, 200, 200);
+      const all = [...symbols, box];
+      const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [0, 0, 1500, 0] }, { netId: 'N', pts: [400, 600, 400, 0] }] };
+      expect(cleanWires(d, sd, all, area)).toBe(true);
+      clear(sd, box);
+      const forwards = (pts: number[]) => (pts[0]! <= pts.at(-2)! ? pts : Array.from({ length: pts.length / 2 }, (_, i) => pts.slice(-2 * (i + 1), pts.length - 2 * i)).flat());
+      const runs = sd.wires.map((w) => forwards(w.pts));
+      expect(runs).toContainEqual([0, 0, 400, 0, 400, 600]); // A to C, as it was
+      expect(runs.length).toBe(2);
+      const way = runs.find((r) => r.at(-2) === 1500)!; // on to B from the part's near side only
+      expect(way.slice(-4)).toEqual([1000, 0, 1500, 0]);
+      expect(cleanWires(d, sd, all, area)).toBe(false);
+    });
+
+    it('joins again the pins of a T that stood behind the part', () => {
+      const { d, symbols } = world([['A', 0, 0, 'right', 'N'], ['B', 1000, 0, 'left', 'N'], ['C', 500, 800, 'top', 'N']]);
+      const box = part('P', 400, -100, 200, 200);
+      const all = [...symbols, box];
+      const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [0, 0, 1000, 0] }, { netId: 'N', pts: [500, 800, 500, 0] }] };
+      expect(cleanWires(d, sd, all, area)).toBe(true);
+      clear(sd, box);
+      for (const s of symbols) expect(joinedWires(sd.wires, 'N', s.pins[0]!.x, s.pins[0]!.y).length, s.refdes).toBe(sd.wires.length);
+      expect(cleanWires(d, sd, all, area)).toBe(false);
+    });
+
+    it('goes round even with the agent\'s corners, and then no longer keeps them', () => {
+      const { d, symbols } = world([['A', 0, 0, 'right', 'N'], ['B', 1000, 0, 'left', 'N']]);
+      const box = part('P', 400, -400, 200, 200);
+      const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [0, 0, 100, 0, 100, -300, 900, -300, 900, 0, 1000, 0], via: true }] };
+      expect(cleanWires(d, sd, [...symbols, box], area)).toBe(true);
+      clear(sd, box);
+      expect(sd.wires.some((w) => w.via)).toBe(false);
+    });
+
+    it('leaves a run along the edge of a box, as the router draws it', () => {
+      const { d, symbols } = world([['A', 0, 0, 'right', 'N'], ['B', 1000, 0, 'left', 'N']]);
+      const box = part('P', 400, 0, 200, 200);
+      const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [0, 0, 1000, 0] }] };
+      expect(cleanWires(d, sd, [...symbols, box], area)).toBe(false);
+    });
+
+    it('stays where there is no way round, and joins nothing else', () => {
+      // the part covers B's pin: nothing can reach it
+      const { d, symbols } = world([['A', 0, 0, 'right', 'N'], ['B', 1000, 0, 'left', 'N']]);
+      const box = part('P', 800, -400, 800, 800);
+      const pts = [0, 0, 1000, 0];
+      const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [...pts] }] };
+      expect(cleanWires(d, sd, [...symbols, box], area)).toBe(false);
+      expect(sd.wires[0]!.pts).toEqual(pts);
+    });
+
+    it('leaves a slanted lead alone: it belongs to the part drawn at 45°', () => {
+      const { d, symbols } = world([['A', 150, 50, 'top', 'N'], ['B', 250, 350, 'bottom', 'N']]);
+      const box = part('P', 100, 100, 200, 200);
+      const pts = [150, 50, 250, 350];
+      const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [...pts] }] };
+      expect(cleanWires(d, sd, [...symbols, box], area)).toBe(false);
+      expect(sd.wires[0]!.pts).toEqual(pts);
+    });
+  });
 });
 
 /** The TPS40222 buck of docs/design/schematic-drawing.md §1, with its sheet taken over. */
