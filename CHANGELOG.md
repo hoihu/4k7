@@ -3,6 +3,12 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
+## Unreleased
+
+### Schematic
+
+- **A wire joins a pin from any side**: a wire along the top of a standing part now ends on its top pin, or runs on through it with a dot, instead of hopping over the pin to come down onto it. The agent can draw these straight, and a part you drag or place is wired in more places where it used to fall back to labels. Hops already in a drawing come out when it opens, unless the agent drew that wire through corners of its own: ask it to draw the wire again.
+
 ## 0.4.0 — 2026-10-30
 
 4k7 runs on Windows now: a download with Node inside, and your coding agent found and started from it. A cut through the enclosure now shows everything it goes through as solid.

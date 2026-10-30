@@ -1,13 +1,16 @@
 /**
  * The path of a schematic wire (drawing ops `wire`, the wire clean-up): orthogonal, on the grid of
- * its ends, leaving and entering each pin outwards, never through a part, along a wire or onto a
- * pin or wire end that is not one of its ends. It runs from one drawn piece of a net to another:
- * from a pin or anywhere on the wires already joined to it, to a pin or anywhere on the wires
- * joined to that (a T onto a wire), so a net drawn bit by bit stays one tree. Bends and crossings
- * cost, so the path is the plain one a person would draw. The agent can force corners (`via`).
+ * its ends, never through a part, along a wire or onto a pin or wire end that is not one of its
+ * ends (`through` lets it through the pins of its own net). It joins a pin from any side but the
+ * part's own; the side costs a corner, because it draws one with the pin's lead. It runs from one
+ * drawn piece of a net to another: from a pin or anywhere on the wires already joined to it, to a
+ * pin or anywhere on the wires joined to that (a T onto a wire), so a net drawn bit by bit stays
+ * one tree. Bends and crossings cost, so the path is the plain one a person would draw. The agent
+ * can force corners (`via`).
  */
 import type { PinView, Point, Rect, SymbolView, WireView } from '@4k7/schema';
 import { GRID } from '@4k7/parts';
+import { RETURN_LEG } from './scene.ts';
 
 export interface RouteInput {
   /** Where the wire may start: pins or label spots, and the wires joined to them (polylines). */
@@ -26,6 +29,8 @@ export interface RouteInput {
   bounds: Rect;
   /** Spots the wire must not reach moving this way (a label: not through its text). */
   forbid?: Map<string, [number, number]>;
+  /** Pins of the wire's own net: it runs through their ends, which joins them, rather than hop over. */
+  through?: Point[];
 }
 
 const BEND = 300;
@@ -51,20 +56,43 @@ interface Ends {
 
 /** The wire's points, corners only; null when there is no way through. */
 export function routeWire(r: RouteInput): number[] | null {
-  const legs: Ends[] = [
-    { pts: r.from, segs: r.fromWires.flatMap(segsOf) },
-    ...r.via.map((p) => ({ pts: [p], segs: [] })),
-    { pts: r.to, segs: r.toWires.flatMap(segsOf) },
-  ];
+  const pts = pathOf(r, BEND);
+  // a run as long as a row (the return from one row of a chain to the next) goes straight out of its
+  // pins where a stub will do, as the clean-up keeps it: off their side counts twice
+  return pts && offSideOfLong(r, pts) ? (pathOf(r, 2 * BEND) ?? pts) : pts;
+}
+
+function pathOf(r: RouteInput, side: number): number[] | null {
+  const from: Ends = { pts: r.from, segs: r.fromWires.flatMap(segsOf) };
+  const to: Ends = { pts: r.to, segs: r.toWires.flatMap(segsOf) };
+  // it sets off from the last corner on what is drawn at its start (a pin itself, the wires joined
+  // to it) and is done at the first on what is drawn at its end: the way along those is there already
+  const via = r.via.slice(r.via.findLastIndex((p) => reaches(from, p)) + 1);
+  const done = via.findIndex((p) => reaches(to, p));
+  const legs: Ends[] = [from, ...(done < 0 ? via : via.slice(0, done)).map((p) => ({ pts: [p], segs: [] })), to];
   const pts: Point[] = [];
   for (let i = 0; i + 1 < legs.length; i++) {
-    const from = pts.length ? { pts: [pts.at(-1)!], segs: [] } : legs[i]!;
-    const leg = routeLeg(r, from, legs[i + 1]!, pts.length > 1 ? dirOf(pts.at(-2)!, pts.at(-1)!) : undefined);
+    if (pts.length && reaches(legs[i + 1]!, pts.at(-1)!)) continue; // the same corner twice
+    const start = pts.length ? { pts: [pts.at(-1)!], segs: [] } : legs[i]!;
+    const leg = routeLeg(r, start, legs[i + 1]!, side, pts.length > 1 ? dirOf(pts.at(-2)!, pts.at(-1)!) : undefined);
     if (!leg) return null;
     pts.push(...(pts.length ? leg.slice(1) : leg));
   }
   return corners(pts);
 }
+
+/** A run as long as a row, on a wire that leaves a pin to the side at either end. */
+function offSideOfLong(r: RouteInput, pts: number[]): boolean {
+  if (!segsOf(pts).some(([x1, y1, x2, y2]) => Math.abs(x2 - x1) + Math.abs(y2 - y1) >= RETURN_LEG)) return false;
+  const off = (x: number, y: number, nx: number, ny: number) => {
+    const pin = r.symbols.flatMap((s) => s.pins).find((p) => p.x === x && p.y === y);
+    return !!pin && (Math.sign(nx - x) !== OUT[pin.side][0] || Math.sign(ny - y) !== OUT[pin.side][1]);
+  };
+  return off(pts[0]!, pts[1]!, pts[2]!, pts[3]!) || off(pts.at(-2)!, pts.at(-1)!, pts.at(-4)!, pts.at(-3)!);
+}
+
+const onSegs = (segs: Seg[], p: Point) => segs.some(([x1, y1, x2, y2]) => p.x >= Math.min(x1, x2) && p.x <= Math.max(x1, x2) && p.y >= Math.min(y1, y2) && p.y <= Math.max(y1, y2));
+const reaches = (e: Ends, p: Point) => e.pts.some((q) => q.x === p.x && q.y === p.y) || onSegs(e.segs, p);
 
 function dirOf(a: Point, b: Point): [number, number] {
   return [Math.sign(b.x - a.x), Math.sign(b.y - a.y)];
@@ -94,7 +122,7 @@ function lattice(lo: number, hi: number, through: number[]): number[] {
   return [...out].sort((a, b) => a - b);
 }
 
-function routeLeg(r: RouteInput, A: Ends, B: Ends, came?: [number, number]): Point[] | null {
+function routeLeg(r: RouteInput, A: Ends, B: Ends, side: number, came?: [number, number]): Point[] | null {
   const coords = (f: (p: Point) => number, g: (s: Seg) => number[]) => [...A.pts.map(f), ...B.pts.map(f), ...A.segs.flatMap(g), ...B.segs.flatMap(g)];
   const allX = coords((p) => p.x, (s) => [s[0], s[2]]);
   const allY = coords((p) => p.y, (s) => [s[1], s[3]]);
@@ -138,20 +166,21 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, came?: [number, number]): Poi
     return i === undefined || j === undefined ? -1 : id(i, j);
   };
 
-  // the two ends: start and goal nodes; at a pin the wire leaves (or enters) outwards
+  // the two ends: start and goal nodes
   const start = new Uint8Array(nx * ny);
   const goal = new Uint8Array(nx * ny);
   for (const p of A.pts) if (nodeAt(p) >= 0) start[nodeAt(p)] = 1;
   for (const s of A.segs) for (const n of nodesOn(s)) start[n] = 1;
   for (const p of B.pts) if (nodeAt(p) >= 0) goal[nodeAt(p)] = 1;
   for (const s of B.segs) for (const n of nodesOn(s)) goal[n] = 1;
-  // (a pin its piece's wires already run to takes a wire from any side: the lead out of it is drawn)
-  const wired = (p: Point) => [...A.segs, ...B.segs].some(([x1, y1, x2, y2]) => p.x >= Math.min(x1, x2) && p.x <= Math.max(x1, x2) && p.y >= Math.min(y1, y2) && p.y <= Math.max(y1, y2));
-  const pinWay = new Map<number, [number, number]>();
+  // a wire goes on from a pin's lead: straight out it draws no corner, to the side one, back never
+  // (at a pin its piece's wires already run to it makes a T, whichever way it goes)
+  const wired = (p: Point) => onSegs([...A.segs, ...B.segs], p);
+  const lead = new Map<number, [number, number]>();
   for (const s of r.symbols) {
     for (const p of s.pins) {
       const n = nodeAt(p);
-      if (n >= 0 && (start[n] || goal[n]) && !wired(p)) pinWay.set(n, OUT[p.side]);
+      if (n >= 0 && (start[n] || goal[n]) && !wired(p)) lead.set(n, OUT[p.side]);
     }
   }
 
@@ -160,7 +189,8 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, came?: [number, number]): Poi
   const onH = new Uint8Array(nx * ny); // on a horizontal segment's inside
   const onV = new Uint8Array(nx * ny);
   const soft = new Uint8Array(nx * ny);
-  const free = (n: number) => start[n] || goal[n];
+  const through = new Set((r.through ?? []).map(nodeAt));
+  const free = (n: number) => start[n] || goal[n] || through.has(n);
   for (const s of r.symbols) {
     const [i0, i1] = span(xs, s.bbox.x + 1, s.bbox.x + s.bbox.w - 1);
     const [j0, j1] = span(ys, s.bbox.y + 1, s.bbox.y + s.bbox.h - 1);
@@ -229,7 +259,8 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, came?: [number, number]): Poi
   const heap = new Heap();
   for (let n = 0; n < nx * ny; n++) {
     if (!start[n]) continue;
-    const st = n * 5 + (came ? dirIndex(came) : 4);
+    const going = came ?? lead.get(n);
+    const st = n * 5 + (going ? dirIndex(going) : 4);
     cost[st] = 0;
     heap.push(st, h(n % nx, Math.floor(n / nx)));
   }
@@ -240,20 +271,17 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, came?: [number, number]): Poi
     const din = st % 5;
     const i = node % nx;
     const j = Math.floor(node / nx);
-    if (goal[node] && din < 4) {
-      const way = pinWay.get(node);
+    if (goal[node] && din < 4 && prev[st]! >= 0) {
       const no = r.forbid?.get(key(xs[i]!, ys[j]!));
       const [dx, dy] = DIRS[din]!;
-      if ((!way || (dx === -way[0] && dy === -way[1])) && (!no || dx !== no[0] || dy !== no[1])) {
+      if (!no || dx !== no[0] || dy !== no[1]) {
         found = st;
         break;
       }
     }
     const c = cost[st]!;
-    const out = din === 4 ? pinWay.get(node) : undefined;
     for (let k = 0; k < 4; k++) {
       const [di, dj] = DIRS[k]!;
-      if (out && (di !== out[0] || dj !== out[1])) continue;
       if (din < 4 && DIRS[din]![0] === -di && DIRS[din]![1] === -dj) continue; // no turning back
       const i2 = i + di;
       const j2 = j + dj;
@@ -266,8 +294,11 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, came?: [number, number]): Poi
       const bend = din < 4 && din !== k;
       if ((onH[node] || onV[node]) && bend && !start[node]) continue;
       if (!goal[n2] && (dj === 0 ? onH[n2] : onV[n2])) continue;
+      const into = goal[n2] ? lead.get(n2) : undefined;
+      if (into && di === into[0] && dj === into[1]) continue; // from behind the pin: through its part
       let step = Math.abs(xs[i2]! - xs[i]!) + Math.abs(ys[j2]! - ys[j]!);
-      if (bend) step += BEND;
+      if (bend) step += prev[st]! < 0 && !came && lead.has(node) ? side : BEND; // (off a pin's lead: its corner)
+      if (into && (di !== -into[0] || dj !== -into[1])) step += side; // the corner with its lead
       if (!goal[n2] && (dj === 0 ? onV[n2] : onH[n2])) step += CROSS;
       if (soft[n2] && !goal[n2]) step += SOFT;
       if (aim && ((xs[i2]! - aim.x) % GRID || (ys[j2]! - aim.y) % GRID)) step += 1;
