@@ -1902,6 +1902,11 @@ class AppState {
     return this.userEdit(`Label ${net} ${dir} at ${pin}`, [{ op: 'label', pin, dir }]);
   }
 
+  /** Move a supply symbol on its page (move_supply): a wire joins it to what it stood on. */
+  moveSupply(net: string, from: { page: number; x: number; y: number }, to: { x: number; y: number }): Promise<boolean> {
+    return this.userEdit(`Move the ${net} symbol`, [{ op: 'move_supply', ...from, to: { x: to.x, y: to.y } }]);
+  }
+
   /** Take one drawn wire or net label away (erase at a point); the connection shows as an automatic label if nothing else does. */
   eraseDrawn(what: 'wire' | 'label', net: string, at: { page: number; x: number; y: number }): Promise<boolean> {
     return this.userEdit(`Erase ${what}${net ? ` of ${net}` : ''}`, [{ op: 'erase', at: [{ ...at, what }] }]);

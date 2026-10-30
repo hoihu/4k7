@@ -277,11 +277,11 @@ export function leadEnd(net: Net, x: number, y: number, dir: 'up' | 'down', side
   return { wires: [{ netId: net.id, pts: [x, y, x, ey] }], label: deco(net, x, ey, side, turnStub(net)) };
 }
 
-/** The label a pin's net gets at that pin, pointing out of the part (and the lead to it, for a supply that must turn aside). */
-export function labelForPin(net: Net, pin: PinView, type?: PinType): { label: LabelView; wires: WireView[] } {
+/** The label a pin's net gets at that pin, pointing out of the part (and the lead to it, for a supply that must turn aside). `stub`: how far a supply symbol stands off a left or right pin. */
+export function labelForPin(net: Net, pin: PinView, type?: PinType, stub = 100): { label: LabelView; wires: WireView[] } {
   const dir: Dir = pin.side === 'left' ? 'left' : pin.side === 'right' ? 'right' : pin.side === 'top' ? 'up' : 'down';
   if (dir === 'up' || dir === 'down') return leadEnd(net, pin.x, pin.y, dir);
-  return { label: deco(net, pin.x, pin.y, dir, 100, 0, type), wires: [] };
+  return { label: deco(net, pin.x, pin.y, dir, stub, 0, type), wires: [] };
 }
 
 const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;

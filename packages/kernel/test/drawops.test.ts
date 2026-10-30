@@ -264,6 +264,16 @@ describe('label', () => {
     expect(sch(k)).toEqual([]);
   });
 
+  it('keeps a wire to another pin, whatever stands on that pin', () => {
+    const k = kernel();
+    const r = k.transact({ summary: 'label', ops: [{ op: 'label', pin: 'R2.1' }, { op: 'label', pin: 'U1.IN2' }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const s = sheetOf(k);
+    const [a, b] = [pinOf(s, 'U1', 'IN2'), pinOf(s, 'R2', '1')];
+    expect(s.wires.some((w) => onWire(a.x, a.y, w.pts) && onWire(b.x, b.y, w.pts))).toBe(true);
+    for (const p of [a, b]) expect(labelsOf(s, 'BIAS').some((l) => l.x === p.x && l.y === p.y && !l.auto)).toBe(true);
+  });
+
   it('draws a supply symbol pointing its own way, and refuses a label lying on the part', () => {
     const k = kernel();
     k.transact({ summary: 'label', ops: [{ op: 'label', pin: 'U1.VCC' }] });

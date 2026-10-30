@@ -73,6 +73,7 @@ export const SetNetOp = z.object({
   power: z.boolean().optional().describe('Draw as a power rail'),
   max_current: z.number().nullable().optional().describe('Expected maximum current in amps: get_net suggests a track width for it and how many vias it needs (about 0.9 A per 0.3 mm via) where it flows through a pad: place them with add_vias drop'),
   track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise)'),
+  draw_as: z.enum(['label', 'wire']).nullable().optional().describe('Force how the schematic draws this net, now and after every later change, on each sheet it is on (the sheet\'s drawing becomes yours, as with place_symbol, and auto_draw redraws it but does not hand it back while a net on it is forced). label: a label or supply symbol at every pin, no wire between them. wire: wires and no label; a label stays only where no wire can go (another page or sheet, no clear path), and a supply keeps one symbol per drawn piece. null: no longer forced, drawn afresh: wires where they draw cleanly, labels where not. While it is forced, wire (draw_as label), label (draw_as wire) and erase on the net are refused. The app\'s net panel sets it: the user\'s choice, so change it only when asked'),
 });
 
 export const AddSheetOp = z.object({
@@ -517,6 +518,14 @@ export const EraseOp = z.object({
   })).max(20).optional().describe('Erase this one wire or label rather than all that is drawn at a pin (the app\'s Delete key on a selected wire or label)'),
 }).describe('Take wires and labels out of the drawing (the netlist does not change). Connections no longer drawn show as automatic labels until you draw them again (wire, label).');
 
+export const MoveSupplyOp = z.object({
+  op: z.literal('move_supply'),
+  page: z.number().int().min(1).describe('Page number as get_schematic counts them'),
+  x: z.number().describe('Where the symbol stands now, mils from the paper\'s left edge (get_schematic: supplies)'),
+  y: z.number().describe('Where the symbol stands now, mils from the paper\'s top edge'),
+  to: pagePoint.describe('Where the foot of its stem goes, on the same page'),
+}).describe('Move one supply symbol (a rail or ground) to another spot on its page: it stands there on a wire the kernel draws from what it stood on (its pin, or the wires joined to it), and the old lead goes. It still points its own way (rails up, ground down), and the wire never comes in through it. The netlist does not change. Refused on a part, on a wire or pin of another net, or with no clear path. The app\'s drag of a supply symbol uses it. Use it to clear a symbol out of the way of a wire or a name; a redraw of its block draws the symbol afresh.');
+
 export const PlaceBlockOp = z.object({
   op: z.literal('place_block'),
   block: z.string().min(1).describe('The block\'s title, as in the description (describe) and get_schematic'),
@@ -770,6 +779,7 @@ export const EditOp = z.discriminatedUnion('op', [
   WireOp,
   LabelOp,
   EraseOp,
+  MoveSupplyOp,
   AutoDrawOp,
   PlaceBlockOp,
   ProposePlacementOp,

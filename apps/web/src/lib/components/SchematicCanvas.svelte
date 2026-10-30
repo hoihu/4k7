@@ -24,7 +24,7 @@
     scopeRect?: Rect | null;
     compact?: boolean;
     /**
-     * Hand editing: drag a symbol or swing a net label, R / F to turn or mirror the selected symbol,
+     * Hand editing: drag a symbol or supply symbol or swing a net label, R / F to turn or mirror the selected symbol,
      * Delete to take a picked wire or label (or the selected parts) away. Each gesture is one of the
      * agent's ops, issued by the app as the user's edit; the callbacks say whether it went through.
      */
@@ -35,6 +35,8 @@
     onturnsymbol?: (ref: string, spot: Spot, look: { orient?: 'upright' | 'lying'; mirror?: boolean; rotate?: 0 | 90 | 180 | 270 }) => Promise<boolean>;
     /** A net label swung round its pin: the pin ("U1.3"), the net's name and the way it points. */
     onlabeldir?: (pin: string, net: string, dir: Dir) => Promise<boolean>;
+    /** A supply symbol dragged: the net's name, where it stands now and where the foot of its stem goes, on that page. */
+    onmovesupply?: (net: string, from: Spot, to: Spot) => Promise<boolean>;
     /** Delete on a picked wire or label: the point on it that names it. */
     onerase?: (what: 'wire' | 'label', net: string, at: Spot) => Promise<boolean>;
     /** Delete on selected parts. */
@@ -46,7 +48,7 @@
   type Dir = 'left' | 'right' | 'up' | 'down';
   type Spot = { page: number; x: number; y: number };
 
-  let { sheet, designName, pageCount, paper = 'A4', overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false, editable = false, onmovesymbol, onturnsymbol, onlabeldir, onerase, onremove, onnote }: Props = $props();
+  let { sheet, designName, pageCount, paper = 'A4', overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false, editable = false, onmovesymbol, onturnsymbol, onlabeldir, onmovesupply, onerase, onremove, onnote }: Props = $props();
 
   /** The layout's grid, in mils: a dragged symbol moves in whole steps of it (keep in sync with GRID in @4k7/parts). */
   const GRID = 100;
@@ -124,11 +126,14 @@
   /* ---- hand editing: a press on a symbol or net label is an edit gesture, not a pan ---- */
   type Edit =
     | { kind: 'symbol'; ref: string; unit: string | undefined; sx: number; sy: number; cx: number; cy: number; dx: number; dy: number; moved: boolean }
-    | { kind: 'label'; i: number; cx: number; cy: number; dir: Dir; moved: boolean };
+    | { kind: 'label'; i: number; cx: number; cy: number; dir: Dir; moved: boolean }
+    | { kind: 'supply'; i: number; sx: number; sy: number; cx: number; cy: number; dx: number; dy: number; moved: boolean };
   let edit = $state<Edit | null>(null);
   /** A symbol just dropped is shown there until the sheet arrives in which it has moved (the edit takes a moment). */
   let dropped = $state<{ ref: string; unit: string | undefined; x0: number; y0: number; dx: number; dy: number } | null>(null);
   let droppedTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A supply symbol just dropped, shown there until the edit has gone through or been refused. */
+  let droppedSupply = $state<{ i: number; dx: number; dy: number } | null>(null);
   /** The wire or net label the last click picked: what Delete takes away. Cleared when the sheet changes (a wire's place is only good for the sheet it was picked on). */
   let picked = $state<{ kind: 'wire'; pts: number[]; at: { x: number; y: number }; net: string; name: string } | { kind: 'label'; x: number; y: number; net: string; name: string } | null>(null);
 
@@ -151,9 +156,8 @@
     const gap = (p: PageView) => Math.max(p.rect.x - x, 0, x - p.rect.x - p.rect.w) + Math.max(p.rect.y - y, 0, y - p.rect.y - p.rect.h);
     return sheet?.pages.reduce<PageView | undefined>((best, p) => (!best || gap(p) < gap(best) ? p : best), undefined);
   }
-  /** A sheet point as a spot on its page, kept inside the page's drawing area if asked. */
-  function spotAt(x: number, y: number, keepInside = false): Spot | null {
-    const pg = pageAtPoint(x, y);
+  /** A sheet point as a spot on its page (or that page, for one that stays there), kept inside the page's drawing area if asked. */
+  function spotAt(x: number, y: number, keepInside = false, pg = pageAtPoint(x, y)): Spot | null {
     if (!pg) return null;
     const m = PAGE.margin;
     const px = x - pg.rect.x;
@@ -180,6 +184,18 @@
     }
     return null;
   }
+  /** Where a supply symbol's stem starts, past its stub and past the longer stem it may have to clear something: where a move takes it. */
+  function footOf(l: LabelView): { x: number; y: number } {
+    return { x: l.x + (l.stub === 'left' ? -1 : l.stub === 'right' ? 1 : 0) * (l.stubLen ?? 100), y: l.y + (l.dir === 'up' ? -1 : 1) * (l.rise ?? 0) };
+  }
+  /** What can be grabbed of a supply symbol: its thin lines alone would be hard to hit. */
+  function supplyBox(l: LabelView): Rect {
+    const f = footOf(l);
+    const half = l.kind === 'ground' ? 80 : Math.max(60, (l.text.length * 47) / 2 + 10);
+    const h = l.kind === 'ground' ? 160 : RAIL_STEM + 180;
+    return { x: f.x - half, y: l.dir === 'up' ? f.y - h : f.y, w: 2 * half, h };
+  }
+  const supplyShift = (i: number) => (edit?.kind === 'supply' && edit.i === i ? edit : droppedSupply?.i === i ? droppedSupply : null);
   const OUT: Record<PinView['side'], Dir> = { left: 'left', right: 'right', top: 'up', bottom: 'down' };
   const BACK: Record<Dir, Dir> = { left: 'right', right: 'left', up: 'down', down: 'up' };
   /** A net label that can be swung round its pin (not a supply symbol, nor one of the kernel's own, nor a name on a wire). */
@@ -242,12 +258,17 @@
       edit = { kind: 'label', i: li, cx: e.clientX, cy: e.clientY, dir: lbl.dir as Dir, moved: false };
       return;
     }
+    if (e.button === 0 && canEdit && lbl && lbl.kind !== 'net') {
+      const p = toSvg(e);
+      edit = { kind: 'supply', i: li, sx: p.x, sy: p.y, cx: e.clientX, cy: e.clientY, dx: 0, dy: 0, moved: false };
+      return;
+    }
     drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false, ref, net, wire: wireAt != null ? Number(wireAt) : null, at: toSvg(e) };
   }
   function onpointermove(e: PointerEvent) {
     if (edit) {
       if (Math.abs(e.clientX - edit.cx) + Math.abs(e.clientY - edit.cy) > 3) edit.moved = true;
-      if (edit.kind === 'symbol') {
+      if (edit.kind !== 'label') {
         const p = toSvg(e);
         edit.dx = Math.round((p.x - edit.sx) / GRID) * GRID;
         edit.dy = Math.round((p.y - edit.sy) / GRID) * GRID;
@@ -298,6 +319,18 @@
         void Promise.resolve(onmovesymbol?.(`${s.refdes}${s.unit ?? ''}`, spot)).then((went) => {
           if (!went) dropped = null;
         });
+      } else if (d.kind === 'supply') {
+        const l = sheet?.labels[d.i];
+        if (!l) return;
+        // a click: its net is selected, as for a wire
+        if (!d.moved || (d.dx === 0 && d.dy === 0)) return onselectnet?.(l.netId);
+        const foot = footOf(l);
+        const from = spotAt(l.x, l.y);
+        // (a wire stays on its page: dragged past the edge, the symbol stops at it)
+        const to = spotAt(foot.x + d.dx, foot.y + d.dy, true, pageAtPoint(l.x, l.y));
+        if (!from || !to) return;
+        droppedSupply = { i: d.i, dx: d.dx, dy: d.dy };
+        void Promise.resolve(onmovesupply?.(l.text, from, to)).then(() => (droppedSupply = null));
       } else {
         const l = sheet?.labels[d.i];
         const pin = l && pinOfLabel(l);
@@ -469,7 +502,8 @@
     <!-- labels -->
     {#each sheet.labels as l0, i (i)}
       {@const l = swung(l0, i)}
-      <g class="net" class:hl={l.netId === selectedNet} class:swing={canEdit && swingable(l0)} data-net={l.netId} data-label={i}>
+      {@const moved = supplyShift(i)}
+      <g class="net" class:hl={l.netId === selectedNet} class:swing={canEdit && (swingable(l0) || l0.kind !== 'net')} class:dragging={!!moved} data-net={l.netId} data-label={i} transform={moved ? `translate(${moved.dx} ${moved.dy})` : undefined}>
       {#if l.kind === 'ground' || l.kind === 'rail'}
         <!-- supplies are always vertical; on a horizontal lead a stub comes first -->
         {@const sx = l.x + (l.stub === 'left' ? -1 : l.stub === 'right' ? 1 : 0) * (l.stubLen ?? 100)}
@@ -478,6 +512,10 @@
         {@const r = l.rise ?? 0}
         {@const stem = RAIL_STEM + r}
         <g class="pwr">
+          {#if onselectnet}
+            {@const hit = supplyBox(l)}
+            <rect class="pwr-hit" x={hit.x} y={hit.y} width={hit.w} height={hit.h} />
+          {/if}
           {#if sx !== l.x}<line x1={l.x} y1={l.y} x2={sx} y2={l.y} />{/if}
           {#if l.kind === 'ground'}
             <line x1={sx} y1={l.y} x2={sx} y2={l.y + s * (r + 80)} />
@@ -628,6 +666,8 @@
   .pin-n { fill: var(--sch-txt); font-size: 70px; }
   .pin-no { fill: var(--pin-txt); font-size: 52px; }
   .pwr line { stroke: var(--wire); stroke-width: 14; stroke-linecap: round; }
+  .pwr-hit { fill: transparent; stroke: none; }
+  .net.dragging { opacity: 0.85; }
   .pwr .arrow { fill: var(--wire); stroke: var(--wire); stroke-width: 8; stroke-linejoin: round; }
   .rail-t { fill: var(--wire); font-size: 78px; font-weight: 700; }
   .net-t { fill: var(--wire); font-size: 72px; font-weight: 600; }

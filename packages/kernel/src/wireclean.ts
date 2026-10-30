@@ -244,7 +244,7 @@ function messy(pts: number[]): boolean {
 }
 
 /** Which way a wire must not arrive at a label (through its text or symbol). */
-const NOT_INTO: Record<string, [number, number]> = { up: [0, 1], down: [0, -1], left: [1, 0], right: [-1, 0] };
+export const NOT_INTO: Record<string, [number, number]> = { up: [0, 1], down: [0, -1], left: [1, 0], right: [-1, 0] };
 
 /**
  * A piece drawn afresh, as a person would: from its first pin, each next pin or label (the nearest
@@ -338,8 +338,9 @@ function straighten(pts: number[], net: string, rest: Wire[], sheet: Sheet): num
 
 /**
  * Whether a run drawn anew is allowed: it runs through no part, not even back along a pin's lead,
- * and touches nothing but its own two ends (no pin, label or wire end on it, no run along a wire);
- * crossing a wire straight across is fine.
+ * comes into no label of its net through its text or symbol, and touches nothing but its own two
+ * ends (no pin, label or wire end on it, no run along a wire); crossing a wire straight across is
+ * fine.
  */
 function valid(pts: number[], was: number[], net: string, rest: Wire[], sheet: Sheet): boolean {
   if (pts.length < 4) return false;
@@ -351,6 +352,11 @@ function valid(pts: number[], was: number[], net: string, rest: Wire[], sheet: S
   for (const [end, next] of [[P[0]!, P[1]!], [P.at(-1)!, P.at(-2)!]] as const) {
     const pin = sheet.pins.find((p) => p.x === end.x && p.y === end.y && p.net === net);
     if (pin && wayOff(pin, end, next) === 'back') return false;
+    const [dx, dy] = dir(next, end);
+    for (const l of sheet.labels) {
+      const no = l.netId === net && l.x === end.x && l.y === end.y ? NOT_INTO[l.stub ?? l.dir] : undefined;
+      if (no && no[0] === dx && no[1] === dy) return false;
+    }
   }
   const restSegs = rest.flatMap((w) => segsOf(w.pts).map((sg) => ({ sg, net: w.netId })));
   for (const sg of segsOf(pts)) {

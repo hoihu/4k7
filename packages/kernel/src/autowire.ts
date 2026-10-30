@@ -42,7 +42,7 @@ export function wirePlaced(d: Design, comp: Component): AutoWired {
     const net = comp.pins[pin.number];
     const nn = net ? d.nets[net] : undefined;
     // a supply is a symbol at the pin, which place_symbol carried along
-    if (!net || !nn || deco(nn, 0, 0, 'right').kind !== 'net') continue;
+    if (!net || !nn || deco(nn, 0, 0, 'right').kind !== 'net' || nn.attrs.drawAs === 'label') continue;
     const r = wirePin(d, sd, views, { sym: self, pin }, net);
     const ref = `${comp.refdes}.${pin.name === pin.number ? pin.number : pin.name}`;
     if (r.to) out.wired.push(`${ref} to ${r.to}`);
@@ -50,6 +50,17 @@ export function wirePlaced(d: Design, comp: Component): AutoWired {
   }
   if (out.wired.length) syncSheet(d, comp.sheet);
   return out;
+}
+
+/** Each pin of one net wired to its neighbours by the same rule; what does not draw cleanly is shown by labels. */
+export function wireNet(d: Design, sheetId: string, net: string): void {
+  const sd = d.drawing![sheetId]!;
+  const views = sd.symbols.map((s) => symbolOf(d, s)!);
+  let wired = false;
+  views.forEach((v, sym) => {
+    for (const pin of v.pins) if (d.components[v.componentId]?.pins[pin.number] === net && wirePin(d, sd, views, { sym, pin }, net).to) wired = true;
+  });
+  if (wired) syncSheet(d, sheetId);
 }
 
 function wirePin(d: Design, sd: SheetDrawing, views: SymbolView[], me: PinRef, net: string): { to?: string; why?: string } {
@@ -74,7 +85,7 @@ function wirePin(d: Design, sd: SheetDrawing, views: SymbolView[], me: PinRef, n
   let why = '';
   for (const c of near) {
     // the labels (and their leads) at the pin and at the neighbour's pins are in the way of a wire
-    for (const q of [pin, ...c.p.pins.map((x) => x.pin)]) clearPinLabels(sd, q);
+    for (const q of [pin, ...c.p.pins.map((x) => x.pin)]) clearPinLabels(sd, q, views);
     const ps = pieces(d, scene(), net);
     const mine = ps.find((p) => p.pins.some((q) => same(q, me)))!;
     const target = ps.find((p) => p.pins.some((q) => same(q, c.first)))!;
@@ -94,9 +105,9 @@ function wirePin(d: Design, sd: SheetDrawing, views: SymbolView[], me: PinRef, n
     sd.labels = saved.labels;
     if (pts && !bad) {
       // the wire takes the place of the labels at both ends
-      clearPinLabels(sd, pin);
+      clearPinLabels(sd, pin, views);
       const end = target.pins.find((q) => q.pin.x === pts.at(-2) && q.pin.y === pts.at(-1));
-      if (end) clearPinLabels(sd, end.pin);
+      if (end) clearPinLabels(sd, end.pin, views);
       sd.wires.push({ netId: net, pts });
       return { to: refOf(end ?? c.first) };
     }
