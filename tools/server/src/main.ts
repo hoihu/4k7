@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 4k7-server: connects the 4k7 app in the browser to a coding agent (Claude Code, Copilot, OpenCode…).
+ * 4k7-server: connects the 4k7 app in the browser to a coding agent (Claude Code, Copilot, Codex, OpenCode…).
  *
  * Either way it serves the built app on its port, at http://localhost:7777/<access-key>: the key (kept
  * in ~/.4k7/server.json) is what lets the tab connect to the server.
@@ -8,7 +8,7 @@
  * Two ways to use it:
  *   1. You type in the app's chat and a coding agent on this computer answers:
  *        node tools/server/src/main.ts --serve [--open]   (npm run server; `npx 4k7pcb` runs this with --open)
- *      The server runs the agent's CLI headlessly per message (`claude -p`, `copilot -p`, `opencode run`),
+ *      The server runs the agent's CLI headlessly per message (`claude -p`, `copilot -p`, `codex exec`, `opencode run`),
  *      with only the 4k7 tools.
  *      With --idle-exit (the downloaded app) it stops by itself once no tab has been connected for a while.
  *   2. Claude Code drives the app (you type in the Claude Code CLI):
@@ -26,6 +26,7 @@ import { LocalServer } from './server.ts';
 import { ChatRunner } from './chat.ts';
 import { Agents, binFor } from './agents.ts';
 import { ClaudeHarness } from './harness/claude.ts';
+import { CodexHarness } from './harness/codex.ts';
 import { CopilotHarness } from './harness/copilot.ts';
 import { OpenCodeHarness } from './harness/opencode.ts';
 import type { Harness } from './harness/types.ts';
@@ -85,10 +86,10 @@ async function main() {
   const port = await server.start();
   const dir = appDir();
 
-  // chat in the app, answered by a coding agent on this computer (Claude Code, Copilot CLI, OpenCode)
+  // chat in the app, answered by a coding agent on this computer (Claude Code, Copilot CLI, Codex CLI, OpenCode)
   const workDir = join(configDir(), 'claude-workspace');
   const claude = new ClaudeHarness(binFor('claude-code', cfg.bins), cfg.claude);
-  const others: Harness[] = [new CopilotHarness(binFor('copilot', cfg.bins)), new OpenCodeHarness(binFor('opencode', cfg.bins), workDir)];
+  const others: Harness[] = [new CopilotHarness(binFor('copilot', cfg.bins)), new CodexHarness(binFor('codex', cfg.bins), workDir), new OpenCodeHarness(binFor('opencode', cfg.bins), workDir)];
   const agents = new Agents({ harnesses: [claude, ...others], bins: cfg.bins, log, onChange: (caps) => server.setHarnesses(caps) });
   // first: it makes the working directory, where detecting asks the agents for their models
   const chat = new ChatRunner({ server, claudeBin: claude.bin, claude, workDir, ingestDir: join(configDir(), 'ingest'), profile: cfg.claude, harnesses: others, log });

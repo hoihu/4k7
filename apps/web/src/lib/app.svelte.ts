@@ -1681,7 +1681,7 @@ class AppState {
     this.abort?.abort();
   }
 
-  /** One chat turn answered by a coding agent on this computer (Claude Code, Copilot, OpenCode) through the server. */
+  /** One chat turn answered by a coding agent on this computer (Claude Code, Copilot, Codex, OpenCode) through the server. */
   private async runCodingAgent(text: string, item: ChatItem): Promise<void> {
     const fail = (t: string) => item.segments.push({ type: 'error', text: t });
     const h = this.harness;

@@ -1,5 +1,5 @@
 /**
- * Finding the agent CLIs (Claude Code, Copilot, OpenCode) when the server was started from the Finder or a desktop launcher
+ * Finding the agent CLIs (Claude Code, Copilot, Codex, OpenCode) when the server was started from the Finder or a desktop launcher
  * rather than a terminal: such a process gets a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so
  * `claude` installed by npm, Homebrew or the native installer is not on it. The directories those
  * put it in are tried first, then the user's login shell is asked for its PATH (what a terminal
@@ -34,7 +34,7 @@ export function findBin(bin: string, path = process.env.PATH ?? ''): string | nu
   return null;
 }
 
-/** Where installers put `claude`, `copilot`, `opencode` (and the node they may need), by convention. */
+/** Where installers put `claude`, `copilot`, `codex`, `opencode` (and the node they may need), by convention. */
 export function candidateDirs(home = homedir(), env = process.env): string[] {
   const dirs = [
     join(home, '.claude', 'local'), // the native installer and `claude install`
@@ -46,9 +46,9 @@ export function candidateDirs(home = homedir(), env = process.env): string[] {
     join(home, '.bun', 'bin'),
     join(home, '.opencode', 'bin'), // OpenCode's installer
     join(home, '.fnm', 'aliases', 'default', 'bin'),
-    // Windows: npm's global folder, winget's, Scoop's and Volta's
+    // Windows: npm's global folder, winget's, Volta's, Codex's installer's and Scoop's
     ...(env.APPDATA ? [join(env.APPDATA, 'npm')] : []),
-    ...(env.LOCALAPPDATA ? [join(env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links'), join(env.LOCALAPPDATA, 'Volta', 'bin')] : []),
+    ...(env.LOCALAPPDATA ? [join(env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links'), join(env.LOCALAPPDATA, 'Volta', 'bin'), join(env.LOCALAPPDATA, 'Programs', 'OpenAI', 'Codex', 'bin')] : []),
     join(home, 'scoop', 'shims'),
   ];
   // nvm: every installed node has its own bin; newest first

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { SERVER_PROTOCOL, type ChatEvent, type HarnessCapability, type ServerToTab } from '@4k7/schema';
-import { ChatRunner, CopilotHarness, LocalServer, OpenCodeHarness, mcpHttpHandler } from '../src/index.ts';
+import { ChatRunner, CodexHarness, CopilotHarness, LocalServer, OpenCodeHarness, mcpHttpHandler } from '../src/index.ts';
 import { rulesFile } from '../src/harness/types.ts';
 
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
@@ -23,9 +23,10 @@ async function setup() {
   cleanups.push(() => server.stop());
   const workDir = mkdtempSync(join(tmpdir(), 'tw-chat-'));
   const copilot = new CopilotHarness(fake('fake-copilot.mjs'));
+  const codex = new CodexHarness(fake('fake-codex.mjs'), workDir);
   const opencode = new OpenCodeHarness(fake('fake-opencode.mjs'), workDir);
-  const harnesses: HarnessCapability[] = [copilot.detect(), opencode.detect()];
-  const chat = new ChatRunner({ server, claudeBin: fake('fake-claude.mjs'), workDir, harnesses: [copilot, opencode] });
+  const harnesses: HarnessCapability[] = [copilot.detect(), codex.detect(), opencode.detect()];
+  const chat = new ChatRunner({ server, claudeBin: fake('fake-claude.mjs'), workDir, harnesses: [copilot, codex, opencode] });
   server.setChatHandler(chat.handle, { available: true }, harnesses);
   server.setHttpHandler(mcpHttpHandler(server, (t) => chat.modeFor(t)));
 
@@ -57,7 +58,7 @@ async function setup() {
         }
       }, 20);
     });
-  return { server, welcome, pushed, calls, send, opencode };
+  return { server, welcome, pushed, calls, send, opencode, codex };
 }
 
 describe('the rules of a run', () => {
@@ -84,6 +85,7 @@ describe('app chat via other coding agents', () => {
       type: 'welcome',
       harnesses: [
         { id: 'copilot', name: 'GitHub Copilot CLI', available: true, version: 'GitHub Copilot CLI 1.0.95 (fake).' },
+        { id: 'codex', name: 'Codex CLI', available: true, version: 'codex-cli 0.166.0' },
         { id: 'opencode', name: 'OpenCode', available: true, version: '1.15.10' },
       ],
     });
@@ -146,7 +148,7 @@ describe('app chat via other coding agents', () => {
       const { send } = await setup();
       expect(flagsOf(await send({ id: 'e1', text: 'think', harness: 'copilot', model: 'gpt-5.2', effort: 'high' }))).toMatchObject({ model: 'gpt-5.2', effort: 'high' });
       const es = await send({ id: 'e2', text: 'think', harness: 'copilot', effort: 'low' }); // the default model ("auto") has no effort setting
-      expect(es).toContainEqual({ kind: 'status', text: expect.stringContaining('no effort setting') });
+      expect(es).toContainEqual({ kind: 'status', text: expect.stringContaining('does not take that effort level') });
       expect(flagsOf(es)).toMatchObject({ model: null, effort: null, rules: true });
       expect(es.at(-1)).toMatchObject({ kind: 'done', ok: true });
     });
@@ -155,6 +157,126 @@ describe('app chat via other coding agents', () => {
       const { send } = await setup();
       const es = await send({ id: 'f1', text: 'please fail', harness: 'copilot' });
       expect(es.at(-1)).toMatchObject({ kind: 'done', ok: false, error: expect.stringContaining('GitHub Copilot CLI exited (1): Error: Model "nope"') });
+    });
+  });
+
+  describe('Codex CLI', () => {
+    it('runs codex with only the 4k7 tools, the chat rules from a file, the message on stdin and the token out of its arguments', async () => {
+      const { send, calls } = await setup();
+      const es = await send({ id: 'x1', text: 'build a "buck"\nwith 2 A', harness: 'codex', model: 'gpt-fake' });
+      expect(es[0]).toEqual({ kind: 'session', session: expect.stringMatching(/^[0-9a-f-]{36}$/) });
+      expect(calls).toEqual(['get_context']);
+      const flags = flagsOf(es);
+      expect(flags).toMatchObject({
+        json: true,
+        gitCheck: false, // its working directory is no repository
+        resume: false,
+        model: 'gpt-fake',
+        rules: true,
+        webRules: false,
+        message: 'build a "buck"\nwith 2 A', // stdin: exactly as typed
+        tokenInArgs: false,
+        sandbox_mode: 'read-only', // what stops apply_patch, which no setting takes away
+        web_search: 'disabled',
+        notify: [],
+        developer_instructions: '',
+        agents: { enabled: false },
+        tools: { experimental_request_user_input: { enabled: false } },
+        features: { shell_tool: false, view_image: false, image_generation: false, apps: false, plugins: false, multi_agent_v2: false, hooks: false, goals: false, code_mode: { direct_only_tool_namespaces: ['mcp__4k7_chat'] } },
+      });
+      expect(flags.mcp_servers['4k7_chat']).toMatchObject({ required: true, default_tools_approval_mode: 'approve', tool_input_schema_max_bytes: 1_000_000 });
+      expect(flags.offered).toContain('design_edit');
+      expect(flags.model_reasoning_effort).toBeUndefined();
+      expect(text(es)).toMatch(/^Let me look\.\n\nGot it\. flags=/);
+      expect(es).toContainEqual({ kind: 'thinking', text: 'Looking at the design.\n\n' });
+      // cached input apart, the reasoning tokens are part of the output
+      expect(es.at(-1)).toMatchObject({ kind: 'done', ok: true, session: (es[0] as { session: string }).session, tokens: { input: 600, cacheRead: 400, cacheWrite: 0, output: 50, model: 'gpt-fake' } });
+    });
+
+    it('switches off the MCP servers from the user’s settings and keeps its own apart from one they call 4k7', async () => {
+      const { send } = await setup();
+      const flags = flagsOf(await send({ id: 'x2', text: 'hi', harness: 'codex' }));
+      expect(flags.mcp_servers).toMatchObject({ 'my.own': { enabled: false }, '4k7': { enabled: false } });
+      expect(flags.mcp_servers['4k7_chat'].url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+    });
+
+    it('does not start when it cannot tell which servers those are', async () => {
+      process.env.FAKE_CODEX_NO_MCP_LIST = '1';
+      cleanups.push(() => delete process.env.FAKE_CODEX_NO_MCP_LIST);
+      const { send, calls } = await setup();
+      const es = await send({ id: 'x3', text: 'hi', harness: 'codex' });
+      expect(es.at(-1)).toMatchObject({ kind: 'done', ok: false, error: expect.stringContaining('Could not start Codex CLI') });
+      expect(calls).toEqual([]);
+    });
+
+    it('reaches the 4k7 endpoint past a proxy, and keeps the user’s own exceptions', async () => {
+      for (const k of ['NO_PROXY', 'no_proxy']) {
+        const saved = process.env[k];
+        cleanups.push(() => (saved === undefined ? delete process.env[k] : (process.env[k] = saved)));
+        delete process.env[k];
+      }
+      process.env.no_proxy = 'gateway.example.com';
+      const { send } = await setup();
+      expect(flagsOf(await send({ id: 'x4', text: 'hi', harness: 'codex' })).noProxy).toBe('gateway.example.com,127.0.0.1');
+    });
+
+    it('continues the session with the same settings, and counts only this run’s tokens', async () => {
+      const { send } = await setup();
+      const first = await send({ id: 'x5', text: 'hi', harness: 'codex' });
+      const session = (first[0] as { session: string }).session;
+      const second = await send({ id: 'x6', text: 'and now 5 V', harness: 'codex', session });
+      const flags = flagsOf(second);
+      expect(flags).toMatchObject({ resume: true, rules: true, message: 'and now 5 V', sandbox_mode: 'read-only' });
+      expect(flags.mcp_servers).toMatchObject({ 'my.own': { enabled: false } });
+      // the CLI reports the session's totals (2 runs); the run's own are the difference
+      expect(second.at(-1)).toMatchObject({ kind: 'done', ok: true, session, tokens: { input: 600, cacheRead: 400, output: 50 } });
+    });
+
+    it('allows the web only when the user does', async () => {
+      const { send } = await setup();
+      expect(flagsOf(await send({ id: 'x7', text: 'look it up', harness: 'codex', web: true }))).toMatchObject({ web_search: 'live', webRules: true });
+    });
+
+    it('passes the effort level, and asks again without it when the model does not have that one', async () => {
+      const { send } = await setup();
+      expect(flagsOf(await send({ id: 'x8', text: 'think', harness: 'codex', model: 'gpt-fake', effort: 'high' }))).toMatchObject({ model: 'gpt-fake', model_reasoning_effort: 'high' });
+      const es = await send({ id: 'x9', text: 'think', harness: 'codex', model: 'gpt-old', effort: 'max' });
+      expect(es).toContainEqual({ kind: 'status', text: expect.stringContaining('does not take that effort level') });
+      expect(flagsOf(es).model_reasoning_effort).toBeUndefined();
+      expect(es.at(-1)).toMatchObject({ kind: 'done', ok: true });
+    });
+
+    it('leaves out a version that would strip the tools’ schema, and says to update', async () => {
+      process.env.FAKE_CODEX_VERSION = '0.157.1';
+      cleanups.push(() => delete process.env.FAKE_CODEX_VERSION);
+      const { codex } = await setup();
+      expect(codex.detect()).toMatchObject({ available: false, version: 'codex-cli 0.157.1', reason: expect.stringContaining('codex update') });
+      process.env.FAKE_CODEX_VERSION = '0.158.0';
+      expect(codex.detect()).toMatchObject({ available: true });
+    });
+
+    it('lists the models it offers, and not the internal ones', async () => {
+      const { codex } = await setup();
+      expect(await codex.models()).toEqual(['gpt-fake']);
+    });
+
+    it('shows an API error as a person can read it', async () => {
+      const { send } = await setup();
+      const es = await send({ id: 'x10', text: 'please fail', harness: 'codex' });
+      expect(es.at(-1)).toMatchObject({ kind: 'done', ok: false, error: 'Your organization has run out of credits.', session: (es[0] as { session: string }).session });
+    });
+
+    it('goes on while it reconnects, and says what to do about a refused login', async () => {
+      const { send } = await setup();
+      const es = await send({ id: 'x11', text: 'not signed in', harness: 'codex' });
+      expect(es.filter((e) => e.kind === 'status')).toEqual([{ kind: 'status', text: expect.stringContaining('Reconnecting... 1/5') }]);
+      expect(es.at(-1)).toMatchObject({ kind: 'done', ok: false, error: expect.stringContaining('codex login') });
+    });
+
+    it('reports an error when the CLI ends without finishing the turn, or says why it could not start', async () => {
+      const { send } = await setup();
+      expect((await send({ id: 'x12', text: 'please crash', harness: 'codex' })).at(-1)).toMatchObject({ kind: 'done', ok: false, error: 'stream disconnected' });
+      expect((await send({ id: 'x13', text: 'hi', harness: 'codex', session: 'gone' })).at(-1)).toMatchObject({ kind: 'done', ok: false, error: expect.stringContaining('Codex CLI exited (1): ') });
     });
   });
 

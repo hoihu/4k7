@@ -1,5 +1,5 @@
 /**
- * The coding agents' CLIs on this computer (Claude Code, Copilot, OpenCode): which program each one
+ * The coding agents' CLIs on this computer (Claude Code, Copilot, Codex, OpenCode): which program each one
  * runs, whether it works, and the models it offers. The program is, in this order, the
  * FOURK7_…_BIN environment variable, the path chosen in the app (kept in server.json), or the name
  * looked up on the PATH. The app can set a path and ask for a new look (after installing an agent).
@@ -14,6 +14,7 @@ import type { Harness } from './harness/types.ts';
 export const AGENT_BINS: Record<HarnessId, { name: string; env: string }> = {
   'claude-code': { name: 'claude', env: 'FOURK7_CLAUDE_BIN' },
   copilot: { name: 'copilot', env: 'FOURK7_COPILOT_BIN' },
+  codex: { name: 'codex', env: 'FOURK7_CODEX_BIN' },
   opencode: { name: 'opencode', env: 'FOURK7_OPENCODE_BIN' },
 };
 
@@ -114,7 +115,7 @@ export class Agents {
       const cap = h.detect();
       if (!cap.available) {
         h.bin = before;
-        return { ok: false, error: `${path} did not answer --version like ${h.name}.` };
+        return { ok: false, error: cap.version ? `${path}: ${cap.reason}` : `${path} did not answer --version like ${h.name}.` };
       }
     }
     const bins = { ...this.#bins };

@@ -9,7 +9,7 @@ You describe what you want, give hints ("put V1 on the left", "make C1 100 µF")
 choose does the design through a typed operation API. A deterministic kernel turns that intent into
 geometry and checks every change.
 
-- **Bring your own AI**: chat in the app through the coding agent you already have (Claude Code, GitHub Copilot CLI or OpenCode, on your existing plan or company login), or with an API key (Anthropic, OpenAI, OpenRouter, Gemini, a local model, any OpenAI- or Anthropic-compatible gateway). Or let your agent drive 4k7 from its own chat through the MCP server.
+- **Bring your own AI**: chat in the app through the coding agent you already have (Claude Code, GitHub Copilot CLI, Codex CLI or OpenCode, on your existing plan or company login), or with an API key (Anthropic, OpenAI, OpenRouter, Gemini, a local model, any OpenAI- or Anthropic-compatible gateway). Or let your agent drive 4k7 from its own chat through the MCP server.
 - **Bring your own tools**: attach any MCP server (distributor stock, company part DB, simulation…).
 - **Parts from datasheets**: drop a manufacturer PDF (Parts → Import from datasheet); your agent extracts the pin table and package, the app checks it, and deterministic generators build the symbol and footprint.
 - **Sourcing at JLCPCB, Eurocircuits or PCBWay** (Layout → Sourcing): parts are looked up on demand in the house's catalogue, by you in the Inspector or by the agent ("a cheap buzzer from JLC"): JLCPCB's assembly catalogue (LCSC numbers, stock as of now, price, Basic/Extended), Eurocircuits' component database (its free Generic resistors and capacitors, eC-stock and On Demand parts, obsolete parts flagged). Before you order, **Check stock** looks every part up for the number of boards you build: out of stock, too few, low stock, gone from the catalogue, obsolete, not the part the design asks for, a part that does not fit its pads (held against the house's own footprint for it), fees; with in-stock replacements one click away; exporting the fab files runs it too (at PCBWay, which buys every part for the order, **Check BOM** says what it could not buy). **Check cost** prices the order with every assembly fee: JLCPCB's Economic and Standard assembly as a range, Eurocircuits' fees from the price table its calculator runs on (in euros), PCBWay's own online quote with its special price for small orders; and lists what would make it cheaper: fee-free or cheaper equivalents (a free Generic part for an On Demand one), one part number for parts that are the same, every part on one side, the bare board's surcharges. **Optimize cost with the agent ✦** goes further, part by part by what each does: other values where a part may move, two common parts in series or parallel for an odd value (31.6 kΩ as 30 kΩ + 1.5 kΩ, both Basic), one value for parts that do the same job; the agent can compare the houses. The fab files' BOM is in the chosen house's form (JLCPCB's LCSC column, Eurocircuits' MPN column with its Generic numbers, PCBWay's template).
@@ -64,6 +64,7 @@ The local server runs your agent's CLI headlessly for every chat message, with o
 |---|---|---|
 | Claude Code | `claude -p` | Model: default/opus/sonnet/fable/haiku. Also imports datasheets. |
 | GitHub Copilot CLI | `copilot -p` | Your Copilot plan (personal or company). Model: default, `auto` or any Copilot model. |
+| Codex CLI | `codex exec` | Your ChatGPT plan or OpenAI API key, or the provider in `~/.codex/config.toml`. Model: default or any Codex model. Needs Codex 0.158 or newer. |
 | OpenCode | `opencode run` | Whatever providers OpenCode is logged in to (`opencode models`), e.g. `github-copilot/…`, a company gateway, local models. |
 
 1. Install the agent and sign in once in a terminal.
@@ -71,9 +72,10 @@ The local server runs your agent's CLI headlessly for every chat message, with o
 3. Pick the agent and model with the model button under the chat box.
 
 - Switch agents or models at any time; the design stays, a new agent starts its own session. Star models to keep them under ★.
-- **Effort** (next to the model button): Claude Code and Copilot take an effort level; *Default* leaves it to the agent. Copilot models without the setting answer without it. OpenCode has no effort level, but a model variant can be typed as `provider/model#variant`.
+- **Effort** (next to the model button): Claude Code, Copilot and Codex take an effort level; *Default* leaves it to the agent. A Copilot or Codex model without that level answers without it. OpenCode has no effort level, but a model variant can be typed as `provider/model#variant`.
 - Turn on **Web** (next to the model button) to allow read-only web lookups (datasheets).
-- The server finds the CLIs on your PATH. **Settings → Coding agents** shows which program each agent runs and its version, takes a full path to run another one (kept in `~/.4k7/server.json`), and **Look again** finds an agent installed after the server started. `FOURK7_CLAUDE_BIN`, `FOURK7_COPILOT_BIN`, `FOURK7_OPENCODE_BIN` still win over the app's choice.
+- Codex shows its answers a whole message at a time: its headless mode does not stream them.
+- The server finds the CLIs on your PATH. **Settings → Coding agents** shows which program each agent runs and its version, takes a full path to run another one (kept in `~/.4k7/server.json`), and **Look again** finds an agent installed after the server started. `FOURK7_CLAUDE_BIN`, `FOURK7_COPILOT_BIN`, `FOURK7_CODEX_BIN`, `FOURK7_OPENCODE_BIN` still win over the app's choice.
 
 ### B. API key (chat in the app, billed per token)
 
@@ -86,7 +88,7 @@ The local server runs your agent's CLI headlessly for every chat message, with o
 - The app calls the API from the browser: the service must allow that (CORS). Ollama needs `OLLAMA_ORIGINS` set to the app's address.
 - **Session spend** shows the cost where the model's price is known (Anthropic). Empty field + **Save** removes the key.
 
-### C. Your agent drives the app (Claude Code, Copilot, OpenCode, any MCP client)
+### C. Your agent drives the app (Claude Code, Copilot, Codex, OpenCode, any MCP client)
 
 The agent drives 4k7 over MCP, on your existing plan. Server command (needs Node 22.18+):
 
@@ -122,6 +124,19 @@ claude mcp list   # 4k7: ✓ Connected
   ```
 
 - CLI: same server in `~/.copilot/mcp-config.json` under `mcpServers`, with `"type": "local"` and `"tools": ["*"]`.
+
+#### Codex
+
+- Add to `~/.codex/config.toml`, restart Codex:
+
+  ```toml
+  [mcp_servers.4k7]
+  command = "npx"
+  args = ["-y", "github:hoihu/4k7", "mcp"]
+  tool_input_schema_max_bytes = 1000000  # or Codex strips the schema of design_edit, which is 90 KB
+  tool_timeout_sec = 1800                # imports and reviews take minutes
+  default_tools_approval_mode = "approve"  # or it asks before each call; you review the result in the app
+  ```
 
 #### OpenCode
 
@@ -166,4 +181,4 @@ The server binds to `127.0.0.1` and requires the access key in `~/.4k7/server.js
 | `packages/fab` | Gerber X2, Excellon drill, BOM, pick-and-place, zip |
 | `packages/agent` | Agent loop with kernel verification, calculators, Anthropic and OpenAI-compatible providers |
 | `apps/web` | Svelte 5 app: schematic workspace (chat + canvas + inspector), parts, settings. The kernel runs in a Web Worker |
-| `tools/server` | Local server: serves the built app, MCP over stdio for your agent, headless Claude Code / Copilot CLI / OpenCode for the app chat, WebSocket to the tab, access key and origin checks. Bundled with the app into the `4k7pcb` package |
+| `tools/server` | Local server: serves the built app, MCP over stdio for your agent, headless Claude Code / Copilot CLI / Codex CLI / OpenCode for the app chat, WebSocket to the tab, access key and origin checks. Bundled with the app into the `4k7pcb` package |

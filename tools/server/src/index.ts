@@ -3,6 +3,7 @@ export { createMcpServer, mcpHttpHandler, VERSION, type McpMode } from './mcp.ts
 export { pdfPages, prepareDatasheet } from './pdf.ts';
 export { ChatRunner, childEnv, detectClaude } from './chat.ts';
 export { ClaudeHarness } from './harness/claude.ts';
+export { CodexHarness } from './harness/codex.ts';
 export { CopilotHarness } from './harness/copilot.ts';
 export { OpenCodeHarness } from './harness/opencode.ts';
 export type { Harness, ChatJob, Invocation, RunSink } from './harness/types.ts';

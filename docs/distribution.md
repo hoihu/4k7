@@ -69,7 +69,7 @@ the server starts). What is different there, all of it in `tools/server/src`:
   yarn's is refused (the agent shows as unavailable, with the reason).
 - A command line holds 32,767 characters and the chat rules alone are 53,000. So on every system
   the message goes in on stdin and the rules in a file (`~/.4k7/claude-workspace/rules/`, named after their
-  content): `--append-system-prompt-file` for Claude Code, `{file:…}` in the config for OpenCode. Copilot has
+  content): `--append-system-prompt-file` for Claude Code, `model_instructions_file` for Codex, `{file:…}` in the config for OpenCode. Copilot has
   no such option, so rules and message both go in on stdin.
 - Stopping a run ends the whole process tree (`taskkill /t /f`): there are no signals to ask with.
 - Saving retries for a moment when Windows refuses to replace a file that the virus scanner or a sync client
@@ -95,7 +95,9 @@ to the newest release, so the file names must not change. To release:
 2. Set `version` in `package.json` and `package-lock.json`. CI checks that `CHANGELOG.md` has a
    section for it and that the site's page is up to date; the release workflow checks that the tag
    matches the version.
-3. Merge to `main` (which also deploys the site), then `git tag v0.3.0 && git push origin v0.3.0`.
+3. `npm run check:codex` with the newest Codex CLI: the harness switches off Codex's tools one by one, so a new
+   Codex can add one it does not know of. Not in CI, where a Codex release would fail pull requests about something else.
+4. Merge to `main` (which also deploys the site), then `git tag v0.3.0 && git push origin v0.3.0`.
 
 ## What npm does (`npx github:hoihu/4k7`)
 
