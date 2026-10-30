@@ -82,6 +82,7 @@ export function wireOp(d: Design, op: Extract<EditOp, { op: 'wire' }>): OpResult
   if (fromWires.some((i) => toWires.includes(i))) {
     return { op: 'wire', effect: `${pinLabel(a.h)} and ${pinLabel(b.h)} are already joined by wires of ${d.nets[na]!.name}; nothing drawn`, ids: [A.sheet] };
   }
+  const own = views.flatMap((s) => s.pins.filter((p) => d.components[s.componentId]?.pins[p.number] === na));
   const pts = routeWire({
     from: [{ x: a.pin.x, y: a.pin.y }],
     fromWires: fromWires.map((i) => sd.wires[i]!.pts),
@@ -92,15 +93,16 @@ export function wireOp(d: Design, op: Extract<EditOp, { op: 'wire' }>): OpResult
     wires: sd.wires,
     soft: softBoxes(d, sd, na),
     bounds: drawingArea(page),
+    through: own,
   });
   if (!pts) {
     reject({ code: 'NO_PATH', message: `No clear path from ${la} to ${lb}: parts or wires of other nets are in the way. Give via points (corners the wire must pass, page coordinates in mils), or move parts first (place_symbol).` });
   }
   sd.wires.push({ netId: na, pts: pts!, ...(via.length ? { via: true } : {}) });
-  // the net labels at the two pins have done their job
-  const at = (l: { x: number; y: number }, p: PinView) => l.x === p.x && l.y === p.y;
+  // the net labels at the two pins, and at those it runs through, have done their job
+  const done = [a.pin, b.pin, ...own.filter((p) => onWire(p.x, p.y, pts!))];
   const before = sd.labels.length;
-  sd.labels = sd.labels.filter((l) => !(l.kind === 'net' && (at(l, a.pin) || at(l, b.pin))));
+  sd.labels = sd.labels.filter((l) => !(l.kind === 'net' && done.some((p) => l.x === p.x && l.y === p.y)));
   syncSheet(d, A.sheet);
   const corners = pts!.length / 2 - 2;
   const dropped = before - sd.labels.length;

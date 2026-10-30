@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Schematic
+
+- **A wire joins a pin from any side**: a wire along the top of a standing part now ends on its top pin, or runs on through it with a dot, instead of hopping over the pin to come down onto it. The agent can draw these straight, and a part you drag or place is wired in more places where it used to fall back to labels. Hops already in a drawing come out when it opens, unless the agent drew that wire through corners of its own: ask it to draw the wire again.
+
 ### Coding agents
 
 - **Chat through the Codex CLI**: OpenAI's Codex can answer the app's chat on your ChatGPT plan or API key, next to Claude Code, GitHub Copilot CLI and OpenCode. Pick it with the model button under the chat box. It gets only the 4k7 tools, like the others: no shell, no files, and your own MCP servers stay out of it. It needs Codex 0.158 or newer, and shows its answers a whole message at a time. It can also drive the app from its own chat (see the README).

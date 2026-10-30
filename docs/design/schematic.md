@@ -85,6 +85,11 @@ label that shows in its place stays. `place_block` on such a sheet draws a block
 put it (the result says what it runs into). `auto_draw` hands the sheet back to the layout. Use this only when the user asks for it:
 the drawing then no longer keeps itself tidy.
 
+`wire` joins a pin from any side and runs through a pin of its own net, so a wire along the top of a
+standing part ends on its top pin or goes on through it. Leave `via` out unless you want a way of your
+own: a wire drawn through your corners keeps its exact path and is not tidied. When one has a step or a
+hump (`SCH.DETOUR` says so), `erase` it and `wire` it again without them.
+
 The user may move parts by hand too (drag, R, F in the app). `get_schematic` marks those symbols
 `user_placed`: they are the user's decisions, like the parts they place on the board. `place_block`
 and `auto_draw` keep them where they are; arrange round them, and move one only when the drawing
