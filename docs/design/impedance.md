@@ -183,7 +183,7 @@ No buttons: the user asks in words; the Layout view shows the copper as before.
 
 ## 9. Not yet
 
-- A copper keep-out exists now (`add_keepout`, layout.md §11: an antenna's clearance, the plane
+- A copper keep-out exists now (`add_keepout`, layout.md §13: an antenna's clearance, the plane
   cleared under a wide pad). What it does not do: IMP.REFERENCE does not know a void is meant, so a
   line that crosses a plane cleared on purpose is reported (keep that stretch short, say why, and
   add_waiver); the cut is a clean polygon, not tuned to a pad's size or the line's gap.
