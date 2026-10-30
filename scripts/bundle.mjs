@@ -8,7 +8,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -86,8 +86,7 @@ function macApp(out, label, node) {
   mkdirSync(join(contents, 'MacOS'), { recursive: true });
   mkdirSync(res, { recursive: true });
   cpSync(lib, join(res, 'lib'), { recursive: true });
-  cpSync(node, join(res, 'node'));
-  chmodSync(join(res, 'node'), 0o755);
+  copyNode(node, res);
   const launcher = join(contents, 'MacOS', NAME);
   writeFileSync(
     launcher,
@@ -178,8 +177,7 @@ function linuxFolder(out, label, node) {
   const dir = join(out, NAME);
   mkdirSync(dir);
   cpSync(lib, join(dir, 'lib'), { recursive: true });
-  cpSync(node, join(dir, 'node'));
-  chmodSync(join(dir, 'node'), 0o755);
+  copyNode(node, dir);
   const launcher = join(dir, NAME);
   writeFileSync(
     launcher,
@@ -236,7 +234,7 @@ async function latestNode(major) {
   return hit.version.slice(1);
 }
 
-/** The node binary for a platform, downloaded (once) and checked. */
+/** The node binary for a platform, downloaded (once) and checked, with Node's license beside it. */
 async function nodeBinary(version, os, arch, shasums) {
   const name = `node-v${version}-${os}-${arch}`;
   const archive = join(cache, `${name}.tar.gz`);
@@ -253,11 +251,19 @@ async function nodeBinary(version, os, arch, shasums) {
     throw new Error(`checksum mismatch for ${name}.tar.gz`);
   }
   const dir = join(cache, name);
-  if (!existsSync(join(dir, 'node'))) {
+  if (!existsSync(join(dir, 'node')) || !existsSync(join(dir, 'LICENSE'))) {
     mkdirSync(dir, { recursive: true });
     run('tar', ['-xzf', archive, '-C', dir, '--strip-components=2', `${name}/bin/node`]);
+    run('tar', ['-xzf', archive, '-C', dir, '--strip-components=1', `${name}/LICENSE`]);
   }
   return join(dir, 'node');
+}
+
+/** Node into a download: the binary ships, so its license goes with it. */
+function copyNode(node, dir) {
+  cpSync(node, join(dir, 'node'));
+  chmodSync(join(dir, 'node'), 0o755);
+  cpSync(join(dirname(node), 'LICENSE'), join(dir, 'LICENSE-node'));
 }
 
 async function fetchText(url) {

@@ -1,6 +1,6 @@
 {
   "name": "4k7pcb",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "AI-first PCB schematic and layout tool, run locally: download from 4k7.dev or npx github:hoihu/4k7",

@@ -22,7 +22,8 @@ Nothing is published to the npm registry: npm installs straight from the GitHub 
 
 Each holds the package exactly as npm would install it (`dist/` and the runtime dependencies,
 without sourcemaps and pdf.js's browser builds; `lib/`), the official Node binary of the major in
-`.node-version` (downloaded from nodejs.org and checked against its checksums), and a launcher
+`.node-version` (downloaded from nodejs.org and checked against its checksums) with its license
+(`LICENSE-node`), and a launcher
 that runs `node lib/node_modules/4k7pcb/dist/4k7pcb.js app`. There is no Electron and no
 window: the app is the browser tab, as with npx.
 

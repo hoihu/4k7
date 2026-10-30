@@ -1,5 +1,5 @@
 /**
- * The board as an OpenSCAD library (board.scad) for the enclosure script the agent writes
+ * The board as an OpenSCAD library (board.scad), a download for a box of one's own in OpenSCAD
  * (docs/design/enclosure.md §3): the outline, holes and cutouts, every part's body, where each
  * part is plugged from and the way its plug needs, as data and as modules.
  *
