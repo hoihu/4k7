@@ -108,7 +108,7 @@
             <p class="demo">
               {#if app.apiProblem === 'no model'}The chat has no model yet: pick one with the model button below, or
               {:else}The API is not set up ({app.apiProblem}). <button class="linkbtn" onclick={() => (app.view = 'set')}>Finish it</button>, or{/if} {#if __APP_RUN__}open {__SERVER_RUN__}{:else}run <code>{__SERVER_RUN__}</code> and open the link it prints{/if} to chat with a coding agent on this computer
-              (<b>Claude Code</b>, <b>GitHub Copilot</b>, <b>OpenCode</b>).
+              (<b>Claude Code</b>, <b>GitHub Copilot</b>, <b>Codex</b>, <b>OpenCode</b>).
             </p>
           {:else if app.settings.provider === 'agent' && server.status !== 'connected'}
             <p class="demo">

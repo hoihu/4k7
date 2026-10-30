@@ -1,7 +1,7 @@
 /**
  * A coding agent's CLI ("harness") that the server runs headlessly to answer the app chat: how to
  * start it with only the 4k7 tools, and how to read what it prints. Each one uses the user's own
- * login and plan (Claude Code, GitHub Copilot CLI, OpenCode).
+ * login and plan (Claude Code, GitHub Copilot CLI, Codex CLI, OpenCode).
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -56,7 +56,8 @@ export interface Harness {
   detect(): HarnessCapability;
   /** The models the CLI offers, if it can list them. */
   models?(): Promise<string[]>;
-  chat(job: ChatJob, sink: RunSink): Invocation;
+  /** Promise: it first has to ask the CLI something. */
+  chat(job: ChatJob, sink: RunSink): Invocation | Promise<Invocation>;
 }
 
 /**

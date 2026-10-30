@@ -43,6 +43,7 @@ describe('the chat model picker', () => {
     expect(effortLevels({ source: { kind: 'agent', id: 'claude-code' }, model: 'opus' })?.[0]).toBe(''); // the agent's own default first
     expect(effortLevels({ source: { kind: 'agent', id: 'claude-code' }, model: 'haiku' })).toBeNull();
     expect(effortLevels({ source: { kind: 'agent', id: 'copilot' }, model: '' })).not.toBeNull();
+    expect(effortLevels({ source: { kind: 'agent', id: 'codex' }, model: 'gpt-6-sol' })).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max']);
     expect(effortLevels({ source: { kind: 'agent', id: 'opencode' }, model: 'a/b' })).toBeNull();
   });
 

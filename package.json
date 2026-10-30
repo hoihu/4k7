@@ -45,6 +45,7 @@
     "start": "npm run package && node dist/4k7pcb.js",
     "prepare": "npm run package",
     "check:package": "node scripts/check-package.mjs",
+    "check:codex": "node scripts/check-codex.mjs",
     "changelog": "node scripts/changelog.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run check:package",
     "test": "vitest run",

@@ -109,5 +109,6 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 function prettyAgent(name: string): string {
   if (/claude[-_ ]?code/i.test(name)) return 'Claude Code';
   if (/cursor/i.test(name)) return 'Cursor';
+  if (/codex/i.test(name)) return 'Codex';
   return name;
 }

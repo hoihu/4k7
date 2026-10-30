@@ -50,6 +50,7 @@ export function sourceMark(src: Source): string {
   const marks: Record<string, string> = {
     'claude-code': '✻',
     copilot: 'GH',
+    codex: 'CX',
     opencode: 'OC',
     anthropic: '✻',
     'anthropic-compatible': '✻',
@@ -92,8 +93,8 @@ export function modelsOf(src: Source, opts: { harnesses: HarnessCapability[]; li
 
 /**
  * The effort levels the chosen model takes ('' = the agent's own default), or null when it has none:
- * Claude Code and Copilot take one (Copilot drops it for models without), the Anthropic API for
- * models with the setting. OpenCode has per-model variants instead (`provider/model#variant`).
+ * Claude Code, Copilot and Codex take one (Copilot and Codex drop it for models without), the Anthropic
+ * API for models with the setting. OpenCode has per-model variants instead (`provider/model#variant`).
  */
 export function effortLevels(c: ModelChoice): ('' | AgentEffort)[] | null {
   const claude = c.source.id === 'claude-code' || (c.source.kind === 'api' && apiService(c.source.id).format === 'anthropic');

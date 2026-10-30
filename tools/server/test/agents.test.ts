@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { HarnessCapability, HarnessId } from '@4k7/schema';
-import { Agents, binFor, commandFor, CopilotHarness, detectClaude, findBin, OpenCodeHarness, shimTarget } from '../src/index.ts';
+import { Agents, binFor, CodexHarness, commandFor, CopilotHarness, detectClaude, findBin, OpenCodeHarness, shimTarget } from '../src/index.ts';
 
 /** A stand-in CLI: on Windows behind an npm shim, like a real agent installed with npm. */
 const fake = (name: string) => fileURLToPath(new URL(`./${process.platform === 'win32' ? name.replace('.mjs', '.cmd') : name}`, import.meta.url));
@@ -44,6 +44,24 @@ describe('the agents’ programs', () => {
     expect(binFor('copilot', { copilot: '/x/copilot' })).toBe('/x/copilot');
     setEnv('FOURK7_COPILOT_BIN', '/env/copilot');
     expect(binFor('copilot', { copilot: '/x/copilot' })).toBe('/env/copilot');
+  });
+
+  it('looks for Codex under its name, or its own variable', () => {
+    setEnv('FOURK7_CODEX_BIN', undefined);
+    expect(binFor('codex', {})).toBe('codex');
+    setEnv('FOURK7_CODEX_BIN', '/env/codex');
+    expect(binFor('codex', { codex: '/x/codex' })).toBe('/env/codex');
+  });
+
+  it('refuses a Codex too old to be of use, and says so', () => {
+    setEnv('FOURK7_CODEX_BIN', undefined);
+    setEnv('FAKE_CODEX_VERSION', '0.150.1');
+    const codex = new CodexHarness('codex', tmpdir());
+    const agents = new Agents({ harnesses: [codex], bins: {}, save: () => {}, extendPath: false });
+    expect(agents.setBin('codex', fake('fake-codex.mjs'))).toMatchObject({ ok: false, error: expect.stringContaining('needs 0.158.0 or newer') });
+    expect(codex.bin).toBe('codex');
+    setEnv('FAKE_CODEX_VERSION', '0.158.0');
+    expect(agents.setBin('codex', fake('fake-codex.mjs'))).toEqual({ ok: true });
   });
 
   it('reports what it runs, where that is and who chose it', () => {

@@ -42,7 +42,7 @@
     </Field>
   {:else if !knowsPaths}
     <Field label="Programs" hint="Restart the server to choose the agents' programs here (this one is older).">
-      <span class="muted">set FOURK7_CLAUDE_BIN, FOURK7_COPILOT_BIN or FOURK7_OPENCODE_BIN instead</span>
+      <span class="muted">set FOURK7_CLAUDE_BIN, FOURK7_COPILOT_BIN, FOURK7_CODEX_BIN or FOURK7_OPENCODE_BIN instead</span>
     </Field>
   {:else}
     {#each HARNESSES as h (h.id)}
@@ -54,10 +54,11 @@
           {:else if cap?.binFrom === 'env'}Set by {cap.binEnv} when the server started.
           {:else if cap?.binFrom === 'settings'}Set here.{#if !cap.available} {cap.reason}{/if}
           {:else if cap?.available}Found on the PATH{#if cap.path}: <span class="mono">{cap.path}</span>{/if}. Give a full path to run another one.
+          {:else if cap?.version}{cap.reason}
           {:else}Not found. <a href={h.install} target="_blank" rel="noreferrer">Install it</a>, sign in once in a terminal, then press Look again, or give the full path.{/if}
         {/snippet}
         <div class="row">
-          <span class="tag" class:ok={cap?.available} class:warn={!cap?.available} title={cap?.available ? cap.version : cap?.reason}>{cap?.available ? (cap.version?.match(/\d+(\.\d+)+/)?.[0] ?? 'ok') : 'not found'}</span>
+          <span class="tag" class:ok={cap?.available} class:warn={!cap?.available} title={cap?.available ? cap.version : cap?.reason}>{cap?.available ? (cap.version?.match(/\d+(\.\d+)+/)?.[0] ?? 'ok') : cap?.version ? 'too old' : 'not found'}</span>
           <input
             class="text grow mono"
             {value}

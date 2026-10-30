@@ -1,5 +1,5 @@
 /**
- * Jobs answered by a coding agent on this computer (Claude Code, GitHub Copilot CLI, OpenCode),
+ * Jobs answered by a coding agent on this computer (Claude Code, GitHub Copilot CLI, Codex CLI, OpenCode),
  * each a headless run whose only 4k7 tools come from this server's MCP endpoint, streamed back to
  * the tab. Uses the user's own login and plan for that agent (harness/*.ts: how each is run).
  * - chat: a message typed into the app's chat; design tools, no files or shell.
@@ -117,9 +117,10 @@ export class ChatRunner {
     const job: ChatJob = { text: msg.text, session: msg.session, ...(msg.model ? { model: msg.model } : {}), ...(effort ? { effort } : {}), web: !!msg.web, mcpUrl: this.#mcpUrl(), token, rulesDir: this.#rulesDir };
     void (async () => {
       let done = await this.#spawn(msg.id, run, harness, this.#opts.workDir, (sink) => harness.chat(job, sink));
-      // Copilot refuses an effort level for models without one (its default "auto" among them) before it starts: ask again without
-      if (!done.ok && effort && !run.cancelled && /does not support reasoning effort/i.test(done.error ?? '')) {
-        this.#emit(msg.id, { kind: 'status', text: `This model has no effort setting; ${harness.name} answers without it.` });
+      // Copilot refuses an effort level for models without one (its default "auto" among them), the OpenAI API behind Codex
+      // one the model does not have (reasoning.effort), both before they start: ask again without
+      if (!done.ok && effort && !run.cancelled && /does not support reasoning effort|\(reasoning\.effort\)/i.test(done.error ?? '')) {
+        this.#emit(msg.id, { kind: 'status', text: `This model does not take that effort level; ${harness.name} answers without it.` });
         const { effort: _effort, ...plain } = job;
         done = await this.#spawn(msg.id, run, harness, this.#opts.workDir, (sink) => harness.chat(plain, sink));
       }
@@ -223,7 +224,7 @@ export class ChatRunner {
   }
 
   /** Run one headless agent session; resolves when it has exited. */
-  #spawn(id: string, run: Run, harness: Harness, cwd: string, invoke: (sink: RunSink) => Invocation): Promise<DoneEvent> {
+  async #spawn(id: string, run: Run, harness: Harness, cwd: string, invoke: (sink: RunSink) => Invocation | Promise<Invocation>): Promise<DoneEvent> {
     let resolveDone!: (e: DoneEvent) => void;
     const result = new Promise<DoneEvent>((r) => (resolveDone = r));
     const label = `${run.mode} ${id}`;
@@ -240,11 +241,12 @@ export class ChatRunner {
     let inv: Invocation;
     let child: ChildProcess;
     try {
-      inv = invoke(sink);
+      inv = await invoke(sink);
+      if (run.cancelled) return { kind: 'done', ok: false, error: 'Stopped.' };
       child = spawnCli(harness.bin, inv.args, { cwd, env: inv.env, stdio: [inv.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     } catch (e) {
       // its rules could not be written, or Windows refused the program right away
-      return Promise.resolve({ kind: 'done', ok: false, error: `Could not start ${harness.name}: ${(e as Error).message}` });
+      return { kind: 'done', ok: false, error: `Could not start ${harness.name}: ${(e as Error).message}` };
     }
     run.child = child;
     if (inv.stdin !== undefined) {

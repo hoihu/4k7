@@ -72,18 +72,19 @@ export interface ChatCapability {
 
 /**
  * The coding agents ("harnesses") the server can run headlessly for the app chat, each on the
- * user's own login and plan (a Claude subscription, GitHub Copilot, whatever OpenCode is set up with).
+ * user's own login and plan (a Claude subscription, GitHub Copilot, ChatGPT, whatever OpenCode is set up with).
  */
-export type HarnessId = 'claude-code' | 'opencode' | 'copilot';
+export type HarnessId = 'claude-code' | 'opencode' | 'copilot' | 'codex';
 
-/** `effort`: the CLI takes an effort level (Claude Code --effort, Copilot --reasoning-effort; OpenCode only has per-model variants, `provider/model#variant`). */
+/** `effort`: the CLI takes an effort level (Claude Code --effort, Copilot --reasoning-effort, Codex model_reasoning_effort; OpenCode only has per-model variants, `provider/model#variant`). */
 export const HARNESSES: { id: HarnessId; name: string; install: string; effort: boolean }[] = [
   { id: 'claude-code', name: 'Claude Code', install: 'https://docs.claude.com/en/docs/claude-code', effort: true },
   { id: 'copilot', name: 'GitHub Copilot CLI', install: 'https://docs.github.com/copilot/how-tos/copilot-cli', effort: true },
+  { id: 'codex', name: 'Codex CLI', install: 'https://developers.openai.com/codex/cli', effort: true },
   { id: 'opencode', name: 'OpenCode', install: 'https://opencode.ai', effort: false },
 ];
 
-/** Effort levels both Claude Code and the Copilot CLI take. */
+/** Effort levels Claude Code, the Copilot CLI and the Codex CLI all take. */
 export const AGENT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type AgentEffort = (typeof AGENT_EFFORTS)[number];
 

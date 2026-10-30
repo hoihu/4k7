@@ -82,7 +82,7 @@ Parameter hints ("make C1 100 µF") become `set_param` + a `param` constraint, s
 | OpenRouter | yes | Access to many models with one key |
 | Ollama / LM Studio / vLLM | yes if CORS is enabled on the local server | Local/offline |
 | Anything else OpenAI-compatible | yes if it allows browser requests (CORS) | Company gateways (LiteLLM…). Not yet: through the relay |
-| A coding agent's plan (Claude, Copilot, OpenCode's providers) | through the local server | See §6: the server runs the agent's CLI |
+| A coding agent's plan (Claude, Copilot, Codex, OpenCode's providers) | through the local server | See §6: the server runs the agent's CLI |
 
 The services and their defaults are in `packages/agent/src/providers/services.ts`.
 
@@ -140,7 +140,7 @@ claude mcp add --scope user 4k7 -- node <repo>/tools/server/src/main.ts
   and the server `instructions` (the external agent's equivalent of the system prompt) only add their engine's framing.
 - The in-app agent and an external agent never edit at the same time: server calls are refused while the in-app agent runs.
 - **App chat via a coding agent** (`npm run server`): the tab sends chat messages over the WebSocket with the agent it
-  chose (`harness`: `claude-code`, `copilot`, `opencode`; `tools/server/src/harness/`); the server runs that CLI headlessly
+  chose (`harness`: `claude-code`, `copilot`, `codex`, `opencode`; `tools/server/src/harness/`); the server runs that CLI headlessly
   with the 4k7 `/mcp` endpoint as its only tool source. Claude Code:
   `claude -p --output-format stream-json --include-partial-messages --tools "" --strict-mcp-config --mcp-config <http>
   --allowedTools mcp__4k7 --permission-mode dontAsk --append-system-prompt <chat rules> [--resume <session>]` in a
@@ -150,6 +150,18 @@ claude mcp add --scope user 4k7 -- node <repo>/tools/server/src/main.ts
   - **GitHub Copilot CLI**: `copilot -p --output-format json --additional-mcp-config <http> --disable-builtin-mcps
     --available-tools 4k7 --allow-tool 4k7 --no-custom-instructions --session-id=<id>`. It has no system-prompt option, so
     the chat rules open the first message of a conversation. Token totals are per session; a run's are the difference.
+  - **Codex CLI**: `codex exec --json --skip-git-repo-check -c … -`, or `codex exec resume … <id> -`, the message on stdin.
+    Codex has no list of allowed tools, so `-c` switches off each thing it would add (`FEATURES_OFF` in `harness/codex.ts`, web search,
+    sub-agents) and, by name from `codex mcp list --json`, the user's own MCP servers; the rules replace its prompt through
+    `model_instructions_file`. The user's login, provider and model stay, and so does `~/.codex/AGENTS.md`, which no setting
+    leaves out. Three settings on the 4k7 server make it work at all: `default_tools_approval_mode = "approve"` (headless, Codex
+    cancels a call it would ask about), `tool_input_schema_max_bytes` (above 5,000 bytes it strips a schema to nothing, and
+    `design_edit`'s is 90,000) and `features.code_mode.direct_only_tool_namespaces` (current models otherwise reach MCP tools only
+    from a script). `apply_patch` stays on offer, because only the model catalog decides that, and the read-only sandbox refuses it;
+    `exec`/`wait`, on current models, are JavaScript with no files or network. Output comes a message at a time, and its token totals
+    are per session like Copilot's. `npm run check:codex` runs the real CLI through the harness against a stand-in for the API and
+    fails on any other tool, because a new Codex can add one the harness does not know of. Needs Codex 0.158 or newer: older ones
+    strip the schema whatever the setting.
   - **OpenCode**: `opencode run --format json --agent 4k7-chat`, the agent (prompt, `tools: {"*": false, "4k7_*": true}`,
     permissions) and the remote MCP server given in `OPENCODE_CONFIG_CONTENT`, the message on stdin. `opencode run` can
     exit before printing its last step, so the session is read back with `opencode export` afterwards.
