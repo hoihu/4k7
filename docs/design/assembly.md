@@ -164,3 +164,33 @@ footprint's name; the fit goes by the part's own footprint, which differs betwee
 (JLCPCB's SOT-23 used to have its pins 1 and 2 along the bottom, now on the right), so it needs no
 table.
 
+
+## 7. The schematic, the board and the BOM agree
+
+The board, the BOM and the pick-and-place are all made from the board's parts, and a board part exists
+only when its component has a footprint with a pad for the pins. A mismatch between the symbol and the
+footprint therefore does not show as an error anywhere else: the pin is simply not connected on the
+board, or the part is simply not in the files. `crossChecks` (`packages/kernel/src/xcheck.ts`) holds the
+three against each other. It is a function of the design alone (the files are made from the same parts, so
+it works out what they will hold without placing the board) and runs with the ERC, so `get_diagnostics`,
+the counts, a transaction's introduced findings, the Inspector and the agent's must-fix gate all see it.
+
+| Code | Severity | When |
+|---|---|---|
+| `XCHK.PIN_NO_PAD` | error if a connected pin has none, else info | a pin of the symbol that no pad of the footprint carries (a pad carries its own number and the pins in `also`); lists the pins with their nets |
+| `XCHK.PAD_NO_PIN` | warning | a pad no pin of the symbol is on (a generated exposed pad `EP` when the card has no such pin; a hand-given pad is refused by `set_footprint`, so this is a card or package edited afterwards); a pin of type `nc` is a pin, so its pad is fine |
+| `XCHK.PIN_PAD_MAP` | error / warning | a pin that matches a pad only in upper/lower case (the generator and `padHasPin` accept it, the board's pin-to-net lookup does not: error if connected); a pin claimed by two different pads (warning) |
+| `XCHK.NET_INCOMPLETE` | error | a net with a pin on a part that is on the board whose pad is missing (the cases above): how many pads it reaches. A part with no footprint at all is reported once by `XCHK.NOT_IN_BOM`, with its nets, not once per net |
+| `XCHK.PACKAGE_MISMATCH` | warning | the component's `package` parameter and the footprint built differ: the part card's own package data wins over the parameter, or the name is not one the generator knows and the card's package was used. Fix hint: remove the parameter |
+| `XCHK.NOT_IN_BOM` | warning | a component with no usable footprint: not on the board, so in neither the BOM nor the pick-and-place. The board view's `DRC.NO_FOOTPRINT` says the same about the board; this one says what the order lacks, and why the footprint is unusable (the generator's reason) |
+| `XCHK.BOARD_NET_UNKNOWN` | warning | a mounting hole, plane, via group or drawn track or via on a net id the design no longer has (a net deleted or merged away). Stored copper is a cache and is not looked at |
+
+What is not checked:
+
+- **Do-not-populate.** `Component.dnp` exists in the model, but no op sets it and neither the board, the
+  BOM nor the pick-and-place reads it (only the capacitor-requirement check skips such a capacitor). A
+  consistency check between them would have nothing to compare, so there is none until DNP is a feature.
+- **Through-hole parts are not in the pick-and-place** (it holds parts with a pad on the surface, §6) and are
+  in the BOM with type Thru-hole; that is by design for every board with a header, so it is not a finding.
+- **A BOM line against its component.** The stock check does that (§3, [sourcing](sourcing.md)); `XCHK.*`
+  does not need the network.

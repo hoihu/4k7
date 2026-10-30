@@ -40,6 +40,7 @@ import {
 import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
 import { applyOp, describeConstraint, descriptionView } from './apply.ts';
 import { countDiagnostics, diagKey, runChecks, sortDiagnostics } from './checks.ts';
+import { crossChecks } from './xcheck.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, valueOf } from './doc.ts';
 import { schematicView, syncDrawing } from './drawing.ts';
@@ -109,7 +110,7 @@ export class Kernel {
       const view = schematicView(d);
       const sch = schematicChecks(d, view, this.rules);
       applyWaivers(d, sch);
-      a = { view, diagnostics: sortDiagnostics([...runChecks(d, view.constraintStatus, view.constraintWhy), ...sch]) };
+      a = { view, diagnostics: sortDiagnostics([...runChecks(d, view.constraintStatus, view.constraintWhy), ...crossChecks(d), ...sch]) };
       this.cache.set(d, a);
     }
     return a;

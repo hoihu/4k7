@@ -3,6 +3,7 @@
 //   node scripts/changelog.mjs --check      fails when site/changelog.html is behind CHANGELOG.md, or when
 //                                           CHANGELOG.md has no section for package.json's version (run by CI)
 //   node scripts/changelog.mjs notes 0.2.0  prints that release's notes, for `gh release create --notes-file`
+// Changes not yet released go under `## Unreleased` at the top; it is left out of the page and the notes.
 // A release is `## 0.2.0 — 2026-10-25`, then paragraphs, `### ` headings and `- ` lists with **bold**, *italics*,
 // `code` and [links](https://…). An `## Unreleased` section above the newest release collects what is not released yet;
 // it is not put on the site. The site stays plain HTML: the page is written here and committed.
@@ -26,6 +27,11 @@ function releases(md) {
   const out = [];
   let unreleased = false;
   for (const line of md.split('\n')) {
+    if (/^## Unreleased\s*$/.test(line)) {
+      if (out.length) fail('"## Unreleased" goes above the releases');
+      unreleased = true;
+      continue;
+    }
     const m = /^## (\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?) [—-] (\d{4}-\d{2}-\d{2})\s*$/.exec(line);
     if (m) out.push({ version: m[1], date: m[2], lines: [] });
     // what changed since the last release: collected as it happens, given a version and a date (and the site) at release time
