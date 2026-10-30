@@ -1,7 +1,7 @@
 import type { Stackup } from './stackup.ts';
 import type { EditOp } from './ops.ts';
 import type { ScopeOutcome } from './scope.ts';
-import type { ValueSeries } from './model.ts';
+import type { QuarterTurn, ValueSeries } from './model.ts';
 
 /* ------------------------------ diagnostics ------------------------------- */
 
@@ -192,9 +192,11 @@ export interface SymbolView {
    */
   rotation?: number;
   origin?: Point;
-  /** A two-pin part: it turns standing or lying (place_symbol orient); the others mirror. */
+  /** Drawn as a two-pin part: it turns standing or lying (place_symbol orient); the others turn by quarters (place_symbol rotate). */
   twoPin?: boolean;
-  /** An IC or connector drawn mirrored (its left pins on the right). */
+  /** Turned clockwise from how it is usually drawn (place_symbol rotate); `pins`, `bbox` and `prims` are already so. */
+  rotated?: QuarterTurn;
+  /** Drawn mirrored (place_symbol mirror): its left pins on the right; a two-pin part with pin 1 at the bottom or, lying, on the right. */
   mirrored?: boolean;
   /** The user put it where it stands (a drag or turn in the app): their decision, which the agent's redraws keep. */
   by?: 'user';

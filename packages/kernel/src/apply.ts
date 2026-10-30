@@ -999,11 +999,12 @@ function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>, by:
   if (op.x === undefined || op.y === undefined) reject({ code: 'INVALID_OP', message: `place_symbol needs x and y (the centre of ${label}'s symbol, mils from the paper's top-left corner), or auto: true. design_query get_schematic shows where everything is now.` });
   const card = cardOf(d, comp.part);
   const twoPin = !!card && isTwoPin(card);
-  if (op.orient && !twoPin) reject({ code: 'INVALID_OP', message: `orient is for two-pin parts; ${label} is drawn by its symbol. Use mirror to put its left pins on the right.` });
-  if (op.mirror !== undefined && twoPin) reject({ code: 'INVALID_OP', message: `mirror is for ICs and connectors; give ${label} orient "upright" or "lying".` });
   syncDrawing(d); // parts added earlier in this transaction are drawn first
   const view = schematicView(d);
   const sheet = view.sheets.find((s) => s.id === comp.sheet)!;
+  const drawnTwoPin = twoPin || !!sheet.symbols.find((s) => s.componentId === comp.id && (unit === undefined || s.unit === unit))?.twoPin;
+  if (op.orient && !drawnTwoPin) reject({ code: 'INVALID_OP', message: `orient is for two-pin parts; ${label} is drawn by its symbol: give it rotate (0, 90, 180 or 270 degrees clockwise from how it is usually drawn).` });
+  if (op.rotate !== undefined && drawnTwoPin) reject({ code: 'INVALID_OP', message: `rotate is for the symbols that are no two-pin parts; ${label} stands or lies: give it orient "upright" or "lying", and mirror to swap its ends.` });
   const first = sheet.pages[0]!.number;
   const last = sheet.pages.at(-1)!.number;
   let page: number;
@@ -1023,7 +1024,7 @@ function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>, by:
   const unitOf = unit ?? (card && unitCount(card) > 1 ? card.units![0]!.name : undefined);
   // the wires it has now, to wire again what the move cuts
   const wiredBefore = op.rewire ? wiredPins(d, ownSheet(d, comp.sheet)) : [];
-  const at = moveSymbol(d, comp.sheet, comp, unitOf, page, op.x, op.y, { ...(op.orient ? { orient: op.orient } : {}), ...(op.mirror !== undefined ? { mirror: op.mirror } : {}) });
+  const at = moveSymbol(d, comp.sheet, comp, unitOf, page, op.x, op.y, { ...(op.orient ? { orient: op.orient } : {}), ...(op.mirror !== undefined ? { mirror: op.mirror } : {}), ...(op.rotate !== undefined ? { rotate: op.rotate } : {}) });
   const mine = d.drawing![comp.sheet]!.symbols.find((s) => s.comp === comp.id && (s.unit ?? undefined) === unitOf)!;
   const wasUsers = mine.by === 'user';
   // a drag or turn in the app is the user's decision, kept when the agent redraws; the agent's own move is its own again
@@ -1032,8 +1033,11 @@ function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>, by:
   // the user's drag joins again what was wired before; an agent's two-pin part on its own is wired to its neighbours where that is clean, else labels connect it
   const wires = wiredBefore.length ? rewire(d, comp.sheet, wiredBefore) : undefined;
   const wired = twoPin && !op.rewire ? wirePlaced(d, comp) : undefined;
+  const asked = [op.mirror !== undefined ? (op.mirror ? 'mirrored' : 'not mirrored') : '', op.rotate !== undefined ? `rotated ${op.rotate}°` : ''].filter(Boolean).join(' and ');
   const notes = [
     taken ? `sheet ${sheet.name} is drawn as you arrange it from now on` : '',
+    asked && !at.relooked ? `it is ${asked} already, so that changed nothing${op.mirror !== undefined ? `: mirror ${!op.mirror} draws it the other way round` : ''}` : asked && !op.orient ? `now ${asked}` : '',
+    at.relooked && at.pins ? `pins: ${at.pins}` : '',
     at.under ? `it lies on ${at.under}: move one of them` : '',
     wired?.wired.length ? `wired ${wired.wired.join(', ')}` : '',
     wired?.labelled.length ? `connected by labels: ${wired.labelled.join('; ')}` : '',
@@ -1465,7 +1469,7 @@ function setSymbol(d: Design, op: Extract<EditOp, { op: 'set_symbol' }>): OpResu
 function setPinLayout(d: Design, comp: Component, card: PartCard, users: string[], op: Extract<EditOp, { op: 'set_symbol' }>): OpResult {
   if (op.style === 'units') reject({ code: 'SYMBOL_STYLE', message: 'A layout arranges one symbol: give style "units" or a layout, not both.' });
   if (!isBoxSymbol(card)) {
-    reject({ code: 'SYMBOL_STYLE', message: `${comp.refdes} (${card.id}) has a symbol of its own kind (a two-pin part, transistor or bridge) whose pins cannot be moved; only ICs, connectors and modules drawn as a box take a layout.` });
+    reject({ code: 'SYMBOL_STYLE', message: `${comp.refdes} (${card.id}) has a symbol of its own kind (a two-pin part, transistor, crystal or bridge) whose pins cannot be moved; only ICs, connectors and modules drawn as a box take a layout. place_symbol mirror draws it the other way round.` });
   }
   const copy: PartCard = structuredClone(card);
   delete copy.units;
@@ -2333,7 +2337,7 @@ export function describeConstraint(d: Design, k: Constraint): string {
     case 'position':
       return `position(${n(k.a)}) = (${k.xMm}, ${k.yMm}) mm${k.rel ? ` from ${n(k.rel)}` : ''}${k.rot !== undefined ? ` ${k.rot}°` : ''}${k.strength === 'hard' ? ', locked' : ''}`;
     case 'sch_position':
-      return `${n(k.a)}${k.aUnit ?? ''} placed on page ${k.page} at (${k.x}, ${k.y}) mils${k.orient ? `, ${k.orient}` : ''}${k.mirror !== undefined ? (k.mirror ? ', mirrored' : ', not mirrored') : ''}`;
+      return `${n(k.a)}${k.aUnit ?? ''} placed on page ${k.page} at (${k.x}, ${k.y}) mils${k.orient ? `, ${k.orient}` : ''}${k.mirror !== undefined ? (k.mirror ? ', mirrored' : ', not mirrored') : ''}${k.rotated ? `, rotated ${k.rotated}°` : ''}`;
     case 'sch_block':
       return `block "${k.key}" placed on page ${k.page} of sheet ${d.sheets[k.sheet ?? '']?.name ?? k.sheet} at (${k.x}, ${k.y}) mils`;
     case 'note':

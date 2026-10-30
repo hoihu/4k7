@@ -32,7 +32,7 @@
     /** A symbol dragged: its centre's new page (as the design counts them) and place, in mils from the paper's top-left. */
     onmovesymbol?: (ref: string, spot: Spot) => Promise<boolean>;
     /** R or F on the selected symbol, which stays where it is. */
-    onturnsymbol?: (ref: string, spot: Spot, look: { orient?: 'upright' | 'lying'; mirror?: boolean }) => Promise<boolean>;
+    onturnsymbol?: (ref: string, spot: Spot, look: { orient?: 'upright' | 'lying'; mirror?: boolean; rotate?: 0 | 90 | 180 | 270 }) => Promise<boolean>;
     /** A net label swung round its pin: the pin ("U1.3"), the net's name and the way it points. */
     onlabeldir?: (pin: string, net: string, dir: Dir) => Promise<boolean>;
     /** Delete on a picked wire or label: the point on it that names it. */
@@ -344,12 +344,11 @@
     if (refs.length !== 1) return;
     const s = sheet!.symbols.find((x) => x.refdes === refs[0])!;
     e.preventDefault();
-    if (turn && !s.twoPin) return onnote?.(`${s.refdes} is not a two-pin part: F mirrors an IC or a connector.`);
-    if (mirror && s.twoPin) return onnote?.(`${s.refdes} is a two-pin part: R turns it standing or lying.`);
     const c = centreOf(s);
     const spot = spotAt(c.x, c.y);
     if (!spot) return;
-    const look = turn ? { orient: s.rotation ? ('upright' as const) : ('lying' as const) } : { mirror: !s.mirrored };
+    // a two-pin part stands or lies and keeps which end is which, so turning it twice gives back what was there; the others go round by quarters
+    const look = !turn ? { mirror: !s.mirrored } : s.twoPin ? { orient: s.rotation ? ('upright' as const) : ('lying' as const), mirror: !!s.mirrored } : { rotate: (((s.rotated ?? 0) + 90) % 360) as 0 | 90 | 180 | 270 };
     void onturnsymbol?.(`${s.refdes}${s.unit ?? ''}`, spot, look);
   }
 
@@ -530,14 +529,19 @@
         {/each}
         </g>
         {#each s.pins as p (p.number)}
+          <!-- a turned box has its side pins' close pitch on top and at the bottom: their text runs along them -->
+          {@const along = (s.rotated === 90 || s.rotated === 270) && (p.side === 'top' || p.side === 'bottom')}
+          {@const inward = p.side === 'top' ? 1 : -1}
           {#if p.showName}
-            {#if p.side === 'left'}<text class="pin-n" x={p.x + 230} y={p.y + 25}>{p.name}</text>
+            {#if along}<text class="pin-n" transform="rotate(-90 {p.x + 25} {p.y + inward * 230})" x={p.x + 25} y={p.y + inward * 230} text-anchor={p.side === 'top' ? 'end' : 'start'}>{p.name}</text>
+            {:else if p.side === 'left'}<text class="pin-n" x={p.x + 230} y={p.y + 25}>{p.name}</text>
             {:else if p.side === 'right'}<text class="pin-n" x={p.x - 230} y={p.y + 25} text-anchor="end">{p.name}</text>
             {:else if p.side === 'top'}<text class="pin-n" x={p.x} y={p.y + 300} text-anchor="middle">{p.name}</text>
             {:else}<text class="pin-n" x={p.x} y={p.y - 250} text-anchor="middle">{p.name}</text>{/if}
           {/if}
           {#if p.showNumber}
-            {#if p.side === 'left'}<text class="pin-no" x={p.x + 100} y={p.y - 22} text-anchor="middle">{p.number}</text>
+            {#if along}<text class="pin-no" transform="rotate(-90 {p.x - 22} {p.y + inward * 100})" x={p.x - 22} y={p.y + inward * 100} text-anchor="middle">{p.number}</text>
+            {:else if p.side === 'left'}<text class="pin-no" x={p.x + 100} y={p.y - 22} text-anchor="middle">{p.number}</text>
             {:else if p.side === 'right'}<text class="pin-no" x={p.x - 100} y={p.y - 22} text-anchor="middle">{p.number}</text>
             {:else if p.side === 'top'}<text class="pin-no" x={p.x + 22} y={p.y + 110}>{p.number}</text>
             {:else}<text class="pin-no" x={p.x + 22} y={p.y - 70}>{p.number}</text>{/if}

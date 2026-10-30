@@ -8,6 +8,11 @@ and every pull request of a release are on its [GitHub release](https://github.c
 ### Schematic
 
 - **A wire joins a pin from any side**: a wire along the top of a standing part now ends on its top pin, or runs on through it with a dot, instead of hopping over the pin to come down onto it. The agent can draw these straight, and a part you drag or place is wired in more places where it used to fall back to labels. Hops already in a drawing come out when it opens, unless the agent drew that wire through corners of its own: ask it to draw the wire again.
+- **F mirrors every symbol**: a transistor, optocoupler, relay, TL431 or bridge is drawn turned over, where **F** used to do nothing but mark it as yours. A resistor, capacitor or diode swaps its ends where it stands, and a load drawn on a transistor swaps its ends too, where it used to slide down the page on each press. A design you pressed **F** in stays as it is drawn when you open it.
+- **R turns every symbol**: a crystal, transistor, relay, IC or connector goes round by quarter turns with its pins, and four presses bring it back to exactly where it stood. A turned IC's pin names run along its pins.
+- **R keeps which end of a two-pin part is which**: turning it twice gives back what was there. It used to come back with pin 1 on top, its wires drawn round to the other end.
+- **Turning, mirroring and dragging are about three times faster** on a big sheet: about half a second for a small part on a design of 120 parts, about five seconds for an RP2040.
+- **The agent can turn symbols and sees which way round they are**: `place_symbol rotate` does what **R** does, `get_schematic` shows `mirrored` and `rotated`, and the result says where a small symbol's pins went or that nothing changed. Asking for a crystal mirrored when it already was changed nothing and said nothing, so the agent went round it with a worse drawing. A `set_symbol` layout refused for a crystal or transistor now points at `mirror`.
 
 ### Coding agents
 

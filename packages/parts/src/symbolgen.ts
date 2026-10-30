@@ -11,7 +11,7 @@
  *    relays, optocouplers, switches, protection parts …: glyphSymbol) are 'box' symbols too,
  *    drawn as that symbol.
  */
-import { parseAs, type ParamSpec, type PartCard, type PartPin, type PinSide, type Prim, type SymbolLayout, type SymbolSpec, type SymbolUnit } from '@4k7/schema';
+import { parseAs, type ParamSpec, type PartCard, type PartPin, type PinSide, type Prim, type QuarterTurn, type SymbolLayout, type SymbolSpec, type SymbolUnit } from '@4k7/schema';
 
 export const GRID = 100;
 export const PIN_LEN = 200;
@@ -50,8 +50,10 @@ export function isTwoPin(card: PartCard): boolean {
 export interface SymbolOptions {
   /** Pin numbers to put first (topmost / leftmost) on their side, e.g. the power path. */
   first?: string[];
-  /** Swap left and right pins, e.g. for an output connector at the right edge facing the circuit. */
+  /** Swap left and right pins, e.g. for an output connector at the right edge facing the circuit; any symbol that is no two-pin part. */
   mirror?: boolean;
+  /** Turned clockwise, after any mirroring; any symbol that is no two-pin part. */
+  rotated?: QuarterTurn;
   /** Unit index of a split symbol (card.units); only that unit's pins are drawn. */
   unit?: number;
   /** The component's parameters, where they decide the glyph (an inductor's `core`, a diode's `type`); never stored with the spec. */
@@ -74,7 +76,7 @@ export function unitOfPin(card: PartCard, pinNumber: string): number {
 }
 
 export function symbolFor(card: PartCard, flip = false, opts: SymbolOptions = {}): SymbolDef {
-  return { ...symbolDef(card, flip, opts), spec: specOf({ flip, ...opts }) };
+  return { ...symbolDef(card, flip, opts), spec: specOf({ flip, ...opts, over: !!opts.mirror && turnsOver(card) }) };
 }
 
 /** Whether the part is drawn as a box (ICs, connectors, modules): the only symbols whose pins can be arranged (set_symbol layout). */
@@ -105,27 +107,113 @@ export function readsParams(card: PartCard): boolean {
 
 function symbolDef(card: PartCard, flip: boolean, opts: SymbolOptions): SymbolDef {
   if (isTwoPin(card)) return twoPin(card, flip, opts.params ?? {});
-  return glyphSymbol(card, opts.mirror ?? false) ?? box(card, opts.first ?? [], opts.mirror ?? false, opts.unit);
+  const def = glyphSymbol(card, opts.mirror ?? false) ?? box(card, opts.first ?? [], opts.mirror ?? false, opts.unit);
+  return opts.rotated ? turned(def, opts.rotated) : def;
 }
 
 /**
- * The usual symbol of a part that is not drawn as a box: a bridge, a transistor, a crystal, a shunt
- * reference, an optocoupler, a relay, a switch, a fuse, thermistor, varistor or ferrite bead, a gas
- * discharge tube, a common-mode choke; else null.
+ * The usual symbol of a part that is not drawn as a box: a bridge, a transistor, a shunt reference,
+ * an optocoupler, a relay, which mirrored are drawn turned over; a crystal, a switch, a fuse,
+ * thermistor, varistor or ferrite bead, a gas discharge tube, a common-mode choke, which mirrored
+ * swap their terminals; else null.
  */
 function glyphSymbol(card: PartCard, mirror: boolean): SymbolDef | null {
+  const fixed = fixedGlyph(card);
+  if (fixed) return mirror ? turnedOver(fixed) : fixed;
+  return crystalSymbol(card, mirror) ?? switchSymbol(card, mirror) ?? lyingSymbol(card, mirror) ?? gdtSymbol(card, mirror) ?? chokeSymbol(card, mirror);
+}
+
+function fixedGlyph(card: PartCard): SymbolDef | null {
   if (card.category === 'diode' && card.pins.length === 4) return bridgeDiamond(card);
-  return (
-    transistorSymbol(card) ??
-    crystalSymbol(card, mirror) ??
-    shuntReference(card) ??
-    optoSymbol(card) ??
-    relaySymbol(card) ??
-    switchSymbol(card, mirror) ??
-    lyingSymbol(card, mirror) ??
-    gdtSymbol(card, mirror) ??
-    chokeSymbol(card, mirror)
-  );
+  return transistorSymbol(card) ?? shuntReference(card) ?? optoSymbol(card) ?? relaySymbol(card);
+}
+
+/** Whether mirroring turns the part's whole drawing over (a transistor, an optocoupler …): it then reads against its usual way, so the layout leaves it. */
+export function turnsOver(card: PartCard): boolean {
+  return !isTwoPin(card) && !!fixedGlyph(card);
+}
+
+/** A symbol reflected about x = 0, pins and text with it, so the pins stay on the grid. The glyphs turned over have no paths or marks. */
+function turnedOver(def: SymbolDef): SymbolDef {
+  const text = (t: SymbolDef['refPos']): SymbolDef['refPos'] => ({ ...t, x: -t.x, anchor: t.anchor === 'start' ? 'end' : t.anchor === 'end' ? 'start' : t.anchor });
+  return {
+    ...def,
+    prims: def.prims.map((p): Prim => {
+      if (p.t === 'line') return { ...p, x1: -p.x1, x2: -p.x2 };
+      if (p.t === 'rect') return { ...p, x: -p.x - p.w };
+      if (p.t === 'circle') return { ...p, x: -p.x };
+      if (p.t === 'poly') return { ...p, pts: p.pts.map((v, i) => (i % 2 ? v : -v)) };
+      return p;
+    }),
+    pins: def.pins.map((p) => ({ ...p, x: -p.x, side: p.side === 'left' ? 'right' : p.side === 'right' ? 'left' : p.side })),
+    bbox: { ...def.bbox, x: -def.bbox.x - def.bbox.w },
+    refPos: text(def.refPos),
+    valuePos: text(def.valuePos),
+  };
+}
+
+/** The middle of a symbol's box on the grid, half a step going toward zero: a crystal, whose box takes in its case's pin, then turns about its terminals' middle. */
+const pivotOf = (v: number) => Math.sign(v) * Math.ceil(Math.abs(v) / GRID - 0.5) * GRID;
+
+/**
+ * A symbol turned clockwise about its pivot, on the grid, so its pins stay on the grid and a symbol
+ * keeps its origin as it turns: four turns bring it back to the mil. Text stays upright: a mark moves
+ * with the drawing, the name and value go beside it (nameBeside).
+ */
+function turned(def: SymbolDef, by: QuarterTurn): SymbolDef {
+  const [cos, sin] = by === 90 ? [0, 1] : by === 180 ? [-1, 0] : [0, -1];
+  const [px, py] = [pivotOf(def.bbox.x + def.bbox.w / 2), pivotOf(def.bbox.y + def.bbox.h / 2)];
+  const at = (x: number, y: number): [number, number] => [px + (x - px) * cos - (y - py) * sin + 0, py + (x - px) * sin + (y - py) * cos + 0];
+  const rect = (r: { x: number; y: number; w: number; h: number }) => {
+    const [[x1, y1], [x2, y2]] = [at(r.x, r.y), at(r.x + r.w, r.y + r.h)];
+    return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) };
+  };
+  // a path has points (M, Q) and relative arcs, which keep their radii and flags: their ends turn about nothing
+  const path = (d: string) =>
+    d.replace(/([MQa])([^MQa]*)/g, (_, cmd: string, args: string) => {
+      const n = args.trim().split(/[\s,]+/).map(Number);
+      if (cmd === 'a') return `a${n[0]},${n[1]} ${n[2]} ${n[3]} ${n[4]} ${n[5]! * cos - n[6]! * sin + 0},${n[5]! * sin + n[6]! * cos + 0} `;
+      return `${cmd}${n.flatMap((v, i) => (i % 2 ? [] : [at(v, n[i + 1]!).join(',')])).join(' ')} `;
+    });
+  const SIDES: PinSide[] = ['left', 'top', 'right', 'bottom'];
+  const prims = def.prims.map((p): Prim => {
+    if (p.t === 'line') {
+      const [[x1, y1], [x2, y2]] = [at(p.x1, p.y1), at(p.x2, p.y2)];
+      return { ...p, x1, y1, x2, y2 };
+    }
+    if (p.t === 'rect') return { ...p, ...rect(p) };
+    if (p.t === 'poly') return { ...p, pts: p.pts.flatMap((v, i) => (i % 2 ? [] : at(v, p.pts[i + 1]!))) };
+    if (p.t === 'path') return { ...p, d: path(p.d).trimEnd() };
+    const [x, y] = at(p.x, p.y);
+    return { ...p, x, y };
+  });
+  const pins = def.pins.map((p) => {
+    const [x, y] = at(p.x, p.y);
+    return { ...p, x, y, side: SIDES[(SIDES.indexOf(p.side) + by / 90) % 4]! };
+  });
+  const bbox = rect(def.bbox);
+  return { ...def, prims, pins, bbox, ...nameBeside(prims, pins, bbox) };
+}
+
+/** Where the name and value of a turned symbol go: on a side without pins (right first, then above, below, left), else at the box's top left corner, where a box has them. */
+function nameBeside(prims: Prim[], pins: SymbolPin[], bbox: SymbolDef['bbox']): Pick<SymbolDef, 'refPos' | 'valuePos'> {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const p of prims) {
+    if (p.t === 'line') xs.push(p.x1, p.x2), ys.push(p.y1, p.y2);
+    else if (p.t === 'rect') xs.push(p.x, p.x + p.w), ys.push(p.y, p.y + p.h);
+    else if (p.t === 'circle') xs.push(p.x - p.r, p.x + p.r), ys.push(p.y - p.r, p.y + p.r);
+    else if (p.t === 'poly') p.pts.forEach((v, i) => (i % 2 ? ys : xs).push(v));
+  }
+  const [left, right, top, bottom] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const [mx, my] = [(left + right) / 2, (top + bottom) / 2];
+  const free = (side: PinSide) => !pins.some((p) => p.side === side);
+  const two = (x: number, y1: number, y2: number, anchor: 'start' | 'middle' | 'end') => ({ refPos: { x, y: y1, anchor }, valuePos: { x, y: y2, anchor } });
+  if (free('right')) return two(right + 30, my - 15, my + 70, 'start');
+  if (free('top')) return two(mx, top - 130, top - 40, 'middle');
+  if (free('bottom')) return two(mx, bottom + 90, bottom + 175, 'middle');
+  if (free('left')) return two(left - 30, my - 15, my + 70, 'end');
+  return two(bbox.x + PIN_LEN - 30, bbox.y + PIN_LEN - 115, bbox.y + PIN_LEN - 30, 'end');
 }
 
 /** The spec with only what is set, so stored drawings stay small and compare equal. */
@@ -134,6 +222,8 @@ function specOf(s: SymbolSpec): SymbolSpec {
     ...(s.upright ? { upright: true } : {}),
     ...(s.flip ? { flip: true } : {}),
     ...(s.mirror ? { mirror: true } : {}),
+    ...(s.over ? { over: true } : {}),
+    ...(s.rotated ? { rotated: s.rotated } : {}),
     ...(s.first?.length ? { first: [...s.first] } : {}),
     ...(s.unit !== undefined ? { unit: s.unit } : {}),
   };
@@ -142,7 +232,12 @@ function specOf(s: SymbolSpec): SymbolSpec {
 /** The symbol a stored drawing names (DrawnSymbol.spec): the same def symbolFor or uprightSymbol made (with the component's `params`). */
 export function symbolFromSpec(card: PartCard, spec: SymbolSpec, params?: Params): SymbolDef {
   if (spec.upright) return uprightSymbol(card, !!spec.flip, params);
-  return symbolFor(card, !!spec.flip, { ...(spec.first ? { first: spec.first } : {}), ...(spec.mirror ? { mirror: true } : {}), ...(spec.unit !== undefined ? { unit: spec.unit } : {}), ...(params ? { params } : {}) });
+  return symbolFor(card, !!spec.flip, { ...(spec.first ? { first: spec.first } : {}), ...(specMirrors(card, spec) ? { mirror: true } : {}), ...(spec.rotated ? { rotated: spec.rotated } : {}), ...(spec.unit !== undefined ? { unit: spec.unit } : {}), ...(params ? { params } : {}) });
+}
+
+/** Whether a stored spec draws its symbol mirrored. Drawings stored before 2026-10-30 may say `mirror` on a part that turns over, which took no notice: such a part stays as it was drawn unless it says `over`. */
+export function specMirrors(card: PartCard, spec: SymbolSpec): boolean {
+  return !!spec.mirror && (!!spec.over || !turnsOver(card));
 }
 
 /* ------------------------------- two-pin ---------------------------------- */

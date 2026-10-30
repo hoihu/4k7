@@ -14,8 +14,8 @@
  *  - Connections that are not drawn as wires are shown by net labels, so the drawing is
  *    always electrically complete and correct.
  */
-import { DEFAULT_PAPER, PAGE, paperOf, parseAs, type Component, type Constraint, type Design, type Net, type PageView, type PartCard, type Point, type Rect, type SchematicView, type SheetView, type SymbolView } from '@4k7/schema';
-import { GRID, isTwoPin, symbolFor, unitCount, uprightSymbol } from '@4k7/parts';
+import { DEFAULT_PAPER, PAGE, paperOf, parseAs, type Component, type Constraint, type Design, type Net, type PageView, type PartCard, type Point, type QuarterTurn, type Rect, type SchematicView, type SheetView, type SymbolView } from '@4k7/schema';
+import { GRID, isTwoPin, symbolFor, turnsOver, unitCount, uprightSymbol } from '@4k7/parts';
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, valueOf, type NetPin } from './doc.ts';
 import { drawBlock, FRAME_PAD, FRAME_TITLE, type BlockNode } from './blocks.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
@@ -66,6 +66,8 @@ interface AnchorPlan {
   extraRight: Component[];
   /** Pins drawn on the opposite side (output connectors at the right edge face the circuit). */
   mirror?: boolean;
+  /** Turned, as the user left it. */
+  rotated?: QuarterTurn;
   /** Unit of a split symbol (big ICs): each unit is its own symbol with its own satellites. */
   unit?: number;
   /** A transistor's load, stacked on its drain/collector up to the rail (see planStack). */
@@ -82,7 +84,7 @@ interface StackPlan {
   items: { comp: Component; parallel: Component[] }[];
 }
 
-const anchorSymbol = (plan: AnchorPlan) => symbolFor(plan.card, false, { mirror: plan.mirror ?? false, ...(plan.unit !== undefined ? { unit: plan.unit } : {}) });
+const anchorSymbol = (plan: AnchorPlan) => symbolFor(plan.card, false, { mirror: plan.mirror ?? false, ...(plan.rotated ? { rotated: plan.rotated } : {}), ...(plan.unit !== undefined ? { unit: plan.unit } : {}) });
 
 interface Ctx {
   d: Design;
@@ -180,7 +182,7 @@ function planOf(ctx: Ctx, comps: Component[], opts: { mirrors?: ReadonlyMap<stri
   // a transistor switching a load: the load stacks on its drain/collector up to the rail
   const stacks = new Map<string, StackPlan>();
   for (const a of anchors) {
-    if (flows.has(a.id)) continue;
+    if (flows.has(a.id) || pinned.get(a.id)?.rotated) continue;
     const claimable = new Set([...unclaimed, ...anchors.filter((x) => x.id !== a.id && !flows.has(x.id) && !stacks.has(x.id))].filter((x) => cardFor(x).pins.length === 2).map((x) => x.id));
     const st = planStack(ctx, a, claimable);
     if (!st) continue;
@@ -210,7 +212,7 @@ function planOf(ctx: Ctx, comps: Component[], opts: { mirrors?: ReadonlyMap<stri
         const key = nodeKey(c.id, n > 1 ? unit ?? 0 : undefined);
         const at = pinned.get(key);
         const mirror = opts.mirrors?.get(key) ?? mirrorAsked(d, c.id) ?? (at ? at.mirror ?? (card.category === 'connector' && at.x > paperOf(d.paper).w / 2) : outputConn.has(c.id));
-        return { comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror, ...(unit !== undefined ? { unit } : {}), ...(stacks.has(c.id) ? { stack: stacks.get(c.id)! } : {}) };
+        return { comp: c, card, left: [], right: [], decaps: [], extraLeft: [], extraRight: [], mirror, ...(at?.rotated ? { rotated: at.rotated } : {}), ...(unit !== undefined ? { unit } : {}), ...(stacks.has(c.id) ? { stack: stacks.get(c.id)! } : {}) };
       };
       return [c.id, n > 1 ? Array.from({ length: n }, (_, u) => make(u)) : [make()]];
     }),
@@ -258,7 +260,7 @@ function planOf(ctx: Ctx, comps: Component[], opts: { mirrors?: ReadonlyMap<stri
     // a part on a transistor's control pin belongs to the transistor (its gate drive), not to
     // the IC or connector the signal comes from
     const onControl = (plan: AnchorPlan) => {
-      if (plan.card.category !== 'transistor') return false;
+      if (plan.card.category !== 'transistor' || plan.rotated) return false;
       const g = anchorSymbol(plan).pins.find((p) => p.side === 'left');
       return !!g && nets.some((n) => n?.id === plan.comp.pins[g.number]);
     };
@@ -414,7 +416,7 @@ function classicRows(ctx: Ctx, p: Planned): { cellRows: CellRow[]; placed: Place
     const unit = n.plan.unit !== undefined ? n.plan.card.units?.[n.plan.unit]?.name : undefined;
     placed.push({ cell: { scene, heads: [n.comp] }, at, comp: n.comp.id, ...(unit ? { unit } : {}) });
   }
-  for (const c of placedTwoPins) placed.push({ cell: { scene: verticalPart(ctx, c, 0, 0, pinned.get(c.id)!.orient === 'lying'), heads: [] }, at: pinned.get(c.id)!, comp: c.id });
+  for (const c of placedTwoPins) placed.push({ cell: { scene: verticalPart(ctx, c, 0, 0, pinned.get(c.id)!.orient === 'lying', pinned.get(c.id)!.mirror), heads: [] }, at: pinned.get(c.id)!, comp: c.id });
   return { cellRows, placed };
 }
 
@@ -564,7 +566,7 @@ function blockCells(ctx: Ctx, members: Component[], title: string): Cell[] {
     nodes.push({
       key: n.key,
       heads: [n.comp],
-      canMirror: !flow && n.plan.card.category !== 'transistor' && !n.plan.stack,
+      canMirror: !flow && n.plan.card.category !== 'transistor' && !turnsOver(n.plan.card) && !n.plan.stack,
       ...(mirrorAsked(d, n.comp.id) !== undefined ? { mirror: mirrorAsked(d, n.comp.id)! } : {}),
       build: (mirror) => {
         if (flow) return flowCell(ctx, flow);
@@ -1172,6 +1174,7 @@ interface Pin {
   y: number;
   orient?: 'upright' | 'lying';
   mirror?: boolean;
+  rotated?: QuarterTurn;
 }
 
 /** The placements on these components, by node key (a placement of a split symbol without a unit is its first unit's). */
@@ -1183,7 +1186,7 @@ function placementsOf(d: Design, comps: Component[]): Map<string, Pin> {
     const card = cardOf(d, d.components[k.a]!.part)!;
     const n = unitCount(card);
     const unit = n > 1 ? Math.max(0, card.units?.findIndex((u) => u.name === k.aUnit) ?? 0) : undefined;
-    out.set(nodeKey(k.a, unit), { page: k.page ?? 1, x: k.x, y: k.y, ...(k.orient ? { orient: k.orient } : {}), ...(k.mirror !== undefined ? { mirror: k.mirror } : {}) });
+    out.set(nodeKey(k.a, unit), { page: k.page ?? 1, x: k.x, y: k.y, ...(k.orient ? { orient: k.orient } : {}), ...(k.mirror !== undefined ? { mirror: k.mirror } : {}), ...(k.rotated ? { rotated: k.rotated } : {}) });
   }
   return out;
 }
@@ -1517,7 +1520,7 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
     return id && !satsByPin.has(num) && !plan.comp.noConnect.includes(num) ? supplyDir(d.nets[id]!) : null;
   };
   const decorated = new Set<string>(); // stacked pins (repeated VDD) share one position
-  if (plan.card.category === 'transistor') {
+  if (plan.card.category === 'transistor' && !plan.rotated) {
     // the control input as a signal path: input ▷── series R ──┬── gate, pull-downs from the node
     const g = sym.pins.find((p) => p.side === 'left');
     const list = g ? satsByPin.get(g.number) : undefined;
@@ -1933,8 +1936,8 @@ function chainBottomNet(ctx: Ctx, c: Component, s: Sat): Net | undefined {
   return pin ? ctx.d.nets[c.pins[pin.number]!] : undefined;
 }
 
-/** A vertical two-pin part centred at (cx, cy) with decorations on both ends (`lying`: horizontal, as asked by a placement). */
-function verticalPart(ctx: Ctx, c: Component, cx: number, cy: number, lying = false): Scene {
+/** A vertical two-pin part centred at (cx, cy) with decorations on both ends (`lying`: horizontal, `mirror`: pin 1 at the bottom or on the right or not, as asked by a placement). */
+function verticalPart(ctx: Ctx, c: Component, cx: number, cy: number, lying = false, mirror?: boolean): Scene {
   const { d } = ctx;
   const card = cardOf(d, c.part)!;
   const nets = card.pins.map((p) => (c.pins[p.number] ? d.nets[c.pins[p.number]!] : undefined));
@@ -1943,7 +1946,7 @@ function verticalPart(ctx: Ctx, c: Component, cx: number, cy: number, lying = fa
   if (lying || betweenSupplies(nets)) {
     // between two rails (a filter resistor VIN → AVIN) or two grounds: lying flat, both symbols
     // pointing their own way from its ends, the rail the power comes from on the left
-    const sym = horizontalPart(d, c, cx, cy, sourceRank(ctx, nets[0]) >= sourceRank(ctx, nets[1]));
+    const sym = horizontalPart(d, c, cx, cy, mirror !== undefined ? !mirror : sourceRank(ctx, nets[0]) >= sourceRank(ctx, nets[1]));
     scene.symbols.push(sym);
     for (const p of sym.pins) {
       const net = nets[card.pins.findIndex((pp) => pp.number === p.number)];
@@ -1953,7 +1956,7 @@ function verticalPart(ctx: Ctx, c: Component, cx: number, cy: number, lying = fa
     }
     return scene;
   }
-  const flip = rank(nets[1]) < rank(nets[0]);
+  const flip = mirror ?? rank(nets[1]) < rank(nets[0]);
   const sym = makeSymbol(d, c, symbolFor(card, flip), cx, cy);
   scene.symbols.push(sym);
   for (const p of sym.pins) {

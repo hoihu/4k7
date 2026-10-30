@@ -90,6 +90,15 @@ standing part ends on its top pin or goes on through it. Leave `via` out unless 
 own: a wire drawn through your corners keeps its exact path and is not tidied. When one has a step or a
 hump (`SCH.DETOUR` says so), `erase` it and `wire` it again without them.
 
+`place_symbol mirror` draws a symbol the other way round: the left pins of an IC, connector, crystal,
+transistor or the like on the right, the ends of a two-pin part swapped. `rotate` turns any symbol but
+a two-pin part clockwise from how it is usually drawn, by 90, 180 or 270 degrees, after any mirror: a
+crystal at 90 stands with its left terminal on top and its case on the left, often the straightest way
+to two pins of an IC one above the other. A two-pin part stands or lies by `orient`. All of them say
+how the symbol ends up, not "swap it" or "turn it further": `get_schematic` shows `mirrored`, `rotated`
+and `lying`, and the result says where a small symbol's pins went, or that nothing changed. Wires to
+the symbol are cut back: `wire` them again.
+
 The user may move parts by hand too (drag, R, F in the app). `get_schematic` marks those symbols
 `user_placed`: they are the user's decisions, like the parts they place on the board. `place_block`
 and `auto_draw` keep them where they are; arrange round them, and move one only when the drawing

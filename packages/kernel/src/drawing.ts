@@ -7,8 +7,8 @@
  * completes it on the way to the canvas: a connection the drawing does not show gets a net label of
  * its own (`auto`), so the picture never leaves a connection out.
  */
-import { DEFAULT_PAPER, PAGE, paperOf, type BlockView, type Component, type Design, type DrawnSymbol, type LabelView, type PageView, type PinView, type Rect, type SchematicView, type SheetDrawing, type SheetView, type SymbolView, type WireView } from '@4k7/schema';
-import { GRID, isTwoPin, symbolFor, symbolFromSpec, unitCount, uprightSymbol } from '@4k7/parts';
+import { DEFAULT_PAPER, PAGE, paperOf, type BlockView, type Component, type Design, type DrawnSymbol, type LabelView, type PageView, type PartCard, type PinView, type QuarterTurn, type Rect, type SchematicView, type SheetDrawing, type SheetView, type SymbolSpec, type SymbolView, type WireView } from '@4k7/schema';
+import { GRID, isTwoPin, specMirrors, symbolFor, symbolFromSpec, unitCount, uprightSymbol } from '@4k7/parts';
 import { cardOf, componentsSorted, natCmp, nextId } from './doc.ts';
 import { PAGE_GAP, blockAssignment, drawnWith, evaluateConstraints, layoutSheetOf, pageName, pagesBBox, symbolKey } from './layout.ts';
 import { FRAME_PAD, frameAround, pieces } from './blocks.ts';
@@ -33,12 +33,14 @@ export function schematicView(d: Design): SchematicView {
     const sheet = d.components[k.a ?? '']?.sheet;
     if (sheet && d.drawing?.[sheet]) why[k.id] = `sheet ${d.sheets[sheet]!.name} is drawn as arranged, and an order only guides the auto-layout: move the part with place_symbol, or let the layout redraw the sheet with auto_draw`;
   }
-  // what the app's R and F keys need to know: a two-pin part turns, an IC or connector mirrors (and says whether it is)
+  // what the app's R and F keys and get_schematic need to know: a two-pin part turns, and which way round each symbol is
   for (const v of views) {
     for (const sym of v.symbols) {
       const card = cardOf(d, d.components[sym.componentId]?.part ?? '');
-      if (card && isTwoPin(card)) sym.twoPin = true;
-      else if (symbolMaking(sym)?.spec.mirror) sym.mirrored = true;
+      const spec = symbolMaking(sym)?.spec;
+      if (card && (isTwoPin(card) || spec?.upright)) sym.twoPin = true;
+      if (card && spec && isMirrored(card, spec, sym.rotation)) sym.mirrored = true;
+      if (spec?.rotated) sym.rotated = spec.rotated;
     }
   }
   return { paper: d.paper ?? DEFAULT_PAPER, sheets: views, constraintStatus: status, ...(Object.keys(why).length ? { constraintWhy: why } : {}) };
@@ -46,6 +48,14 @@ export function schematicView(d: Design): SchematicView {
 
 /** Whether the agent has taken over this sheet's drawing. */
 export const isDrawn = (d: Design, sheetId: string) => !!d.drawing?.[sheetId];
+
+/**
+ * Whether a symbol is drawn mirrored (place_symbol mirror): one drawn as a two-pin part has pin 1 at
+ * the bottom or, lying, on the right; any other has its left pins on the right.
+ */
+function isMirrored(card: PartCard, spec: SymbolSpec, rot?: number): boolean {
+  return isTwoPin(card) || spec.upright ? (rot ? !spec.flip : !!spec.flip) : specMirrors(card, spec);
+}
 
 /** The symbol a stored drawing names, where it stands; undefined when its component or card is gone. */
 export function symbolOf(d: Design, s: DrawnSymbol): SymbolView | undefined {
@@ -213,16 +223,28 @@ export function groups(pins: PinAt[], wires: WireView[], labels: Pick<LabelView,
   };
   const W = (i: number) => pins.length + i;
   const L = (i: number) => pins.length + wires.length + i;
+  // the box round each wire first: this runs after every wire drawn, on sheets of hundreds
+  const boxes = wires.map((w) => {
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (let k = 0; k + 1 < w.pts.length; k += 2) {
+      x0 = Math.min(x0, w.pts[k]!);
+      x1 = Math.max(x1, w.pts[k]!);
+      y0 = Math.min(y0, w.pts[k + 1]!);
+      y1 = Math.max(y1, w.pts[k + 1]!);
+    }
+    return { x0, y0, x1, y1 };
+  });
+  const near = (i: number, x: number, y: number) => x >= boxes[i]!.x0 && x <= boxes[i]!.x1 && y >= boxes[i]!.y0 && y <= boxes[i]!.y1;
   wires.forEach((a, i) => {
     wires.forEach((b, j) => {
       if (j <= i || a.netId !== b.netId) return;
-      if (ends(a).some(([x, y]) => onWire(x, y, b.pts)) || ends(b).some(([x, y]) => onWire(x, y, a.pts))) join(W(i), W(j));
+      if (ends(a).some(([x, y]) => near(j, x, y) && onWire(x, y, b.pts)) || ends(b).some(([x, y]) => near(i, x, y) && onWire(x, y, a.pts))) join(W(i), W(j));
     });
     pins.forEach((p, k) => {
-      if (onWire(p.pin.x, p.pin.y, a.pts)) join(k, W(i));
+      if (near(i, p.pin.x, p.pin.y) && onWire(p.pin.x, p.pin.y, a.pts)) join(k, W(i));
     });
     labels.forEach((l, k) => {
-      if (l.netId === a.netId && onWire(l.x, l.y, a.pts)) join(L(k), W(i));
+      if (l.netId === a.netId && near(i, l.x, l.y) && onWire(l.x, l.y, a.pts)) join(L(k), W(i));
     });
   });
   const at = new Map<string, number>();
@@ -371,7 +393,9 @@ function keepUsers(d: Design, sd: SheetDrawing): void {
       page: i + 1,
       x: Math.round(c.x - pg.x),
       y: Math.round(c.y - pg.y),
-      ...(isTwoPin(card) ? { orient: s.rot ? ('lying' as const) : ('upright' as const) } : { mirror: !!s.spec.mirror }),
+      ...(isTwoPin(card) ? { orient: s.rot ? ('lying' as const) : ('upright' as const) } : {}),
+      mirror: isMirrored(card, s.spec, s.rot),
+      ...(s.spec.rotated ? { rotated: s.spec.rotated } : {}),
       domain: 'schematic',
       strength: 'soft',
       source: { type: 'user' },
@@ -429,7 +453,7 @@ function current(d: Design, s: DrawnSymbol): DrawnSymbol {
   const b = def.bbox;
   if (s.bbox.x - s.x === b.x && s.bbox.y - s.y === b.y && s.bbox.w === b.w && s.bbox.h === b.h) return s;
   const c = centre(s.bbox);
-  const base = { comp: s.comp, part: s.part, ...(s.with ? { with: s.with } : {}) };
+  const base = { comp: s.comp, part: s.part, ...(s.with ? { with: s.with } : {}), ...(s.by ? { by: s.by } : {}) };
   return made(d, d.components[s.comp]!, base, def, Math.round(c.x / GRID) * GRID, Math.round(c.y / GRID) * GRID);
 }
 
@@ -783,13 +807,14 @@ export function addPages(d: Design, sd: SheetDrawing, count: number): void {
 
 /**
  * Move a symbol so its centre is at (x, y) on a page of its sheet (place_symbol), optionally lying
- * or standing (two-pin parts) or mirrored (ICs and connectors). An IC or connector takes the small
+ * or standing (two-pin parts), turned (the others) or mirrored. An IC or connector takes the small
  * parts drawn at its pins with it, still wired; a two-pin part goes alone. Wires to what stays are
  * cut back; the connections they made show as labels until the agent wires them again.
  * The move is a whole number of grid steps, so the drawing stays on the grid. Returns where the
- * symbol's centre ended up (page coordinates) and the symbol that now lies under it, if any.
+ * symbol's centre ended up (page coordinates), whether its look changed, the sides of its pins if it
+ * has few, and the symbol that now lies under it, if any.
  */
-export function moveSymbol(d: Design, sheetId: string, comp: Component, unit: string | undefined, page: number, x: number, y: number, look: { orient?: 'upright' | 'lying'; mirror?: boolean }): { x: number; y: number; under?: string } {
+export function moveSymbol(d: Design, sheetId: string, comp: Component, unit: string | undefined, page: number, x: number, y: number, look: Look): { x: number; y: number; relooked: boolean; pins: string; under?: string } {
   const sd = ownSheet(d, sheetId);
   const i = sd.symbols.findIndex((s) => s.comp === comp.id && (s.unit ?? undefined) === unit);
   if (i < 0) throw new Error(`${comp.refdes}${unit ?? ''} is not on its sheet`);
@@ -831,7 +856,7 @@ export function moveSymbol(d: Design, sheetId: string, comp: Component, unit: st
     g.labels.forEach((l) => carried.labels.add(l));
   }
   // its new look: the symbol is made again, and what was wired to it is cut back
-  const relook = restyle(d, comp, target, two, look);
+  const relook = restyle(d, comp, target, look);
   if (relook) {
     for (const g of groups(pins, sd.wires, sd.labels)) {
       if (!g.pins.some((p) => pins[p]!.sym === i)) continue;
@@ -842,9 +867,12 @@ export function moveSymbol(d: Design, sheetId: string, comp: Component, unit: st
   }
   const now = sd.symbols[i]!;
   const rect = sd.pages[page - 1]!;
+  const was = centre(target.bbox);
   const c = centre(now.bbox);
-  const dx = Math.round((rect.x + x - c.x) / GRID) * GRID;
-  const dy = Math.round((rect.y + y - c.y) / GRID) * GRID;
+  // asked to stay where it stood, it does, though its box's middle may have changed with its look
+  const step = (want: number, before: number, middle: number) => (Math.abs(want - before) < GRID / 2 ? 0 : Math.round((want - middle) / GRID) * GRID);
+  const dx = step(rect.x + x, was.x, c.x);
+  const dy = step(rect.y + y, was.y, c.y);
   for (const j of moving) moveSymbolBy(sd.symbols[j]!, dx, dy);
   sd.wires.forEach((w, j) => {
     if (carried.wires.has(j)) w.pts = w.pts.map((v, k) => v + (k % 2 ? dy : dx));
@@ -859,29 +887,48 @@ export function moveSymbol(d: Design, sheetId: string, comp: Component, unit: st
   const under = sd.symbols.find((s) => s !== moved && hits(s.bbox, moved.bbox));
   const at = centre(moved.bbox);
   const pg = sd.pages[pageAt(sd.pages, at)]!;
-  return { x: Math.round(at.x - pg.x), y: Math.round(at.y - pg.y), ...(under ? { under: `${d.components[under.comp]!.refdes}${under.unit ?? ''}` } : {}) };
+  return { x: Math.round(at.x - pg.x), y: Math.round(at.y - pg.y), relooked: !!relook, pins: pinSides(symbolOf(d, moved)!), ...(under ? { under: `${d.components[under.comp]!.refdes}${under.unit ?? ''}` } : {}) };
 }
 
-/** The symbol made again with a new look (lying or standing, mirrored), centred where it was; undefined when the look does not change. */
-function restyle(d: Design, comp: Component, s: DrawnSymbol, two: boolean, look: { orient?: 'upright' | 'lying'; mirror?: boolean }): DrawnSymbol | undefined {
+/** Where a small symbol's pins are ("left XTAL2, right XTAL1, bottom GND"); empty for one with many. */
+function pinSides(sym: SymbolView): string {
+  const names = (side: PinView['side']) => [...new Set(sym.pins.filter((p) => p.side === side).map((p) => p.name))];
+  const sides = (['left', 'right', 'top', 'bottom'] as const).map((side) => ({ side, names: names(side) }));
+  if (sides.reduce((n, s) => n + s.names.length, 0) > 6) return '';
+  return sides.filter((s) => s.names.length).map((s) => `${s.side} ${s.names.join(' and ')}`).join(', ');
+}
+
+/** How place_symbol asks a symbol to be drawn. */
+type Look = { orient?: 'upright' | 'lying'; mirror?: boolean; rotate?: QuarterTurn | 0 };
+
+/** The symbol made again with a new look (lying or standing, turned, mirrored), centred where it was; undefined when the look does not change. */
+function restyle(d: Design, comp: Component, s: DrawnSymbol, look: Look): DrawnSymbol | undefined {
   const card = cardOf(d, comp.part)!;
   const c = centre(s.bbox);
   const [cx, cy] = [Math.round(c.x / GRID) * GRID, Math.round(c.y / GRID) * GRID];
   const base = { comp: s.comp, ...(s.unit ? { unit: s.unit } : {}), part: s.part, ...(s.with ? { with: s.with } : {}) };
-  if (two && look.orient) {
-    const lying = !!s.rot;
-    if ((look.orient === 'lying') === lying) return undefined;
-    if (look.orient === 'lying') {
-      // pin 1 on the left, what the glyph has beside it (a core, an LED's arrows) below it (as horizontalPart)
-      const def = uprightSymbol(card, true);
-      return { ...base, spec: def.spec!, x: cx, y: cy, rot: 90, bbox: { x: cx - 200, y: cy - 100, w: 400, h: 200 }, ref: { x: cx, y: cy - 175, anchor: 'middle' }, value: { x: cx, y: cy - 90, anchor: 'middle' } };
-    }
-    return made(d, comp, base, symbolFor(card), cx, cy);
+  const mirrored = isMirrored(card, s.spec, s.rot);
+  if (isTwoPin(card) || s.spec.upright) {
+    // drawn as a two-pin part: it stands or lies, and its ends swap
+    const lying = look.orient ? look.orient === 'lying' : !!s.rot;
+    const turned = lying !== !!s.rot;
+    // a turn puts pin 1 on top or on the left, unless it is told which way round
+    const mirror = look.mirror ?? (turned ? false : mirrored);
+    if (!turned && mirror === mirrored) return undefined;
+    // lying, pin 1 is on the left with the symbol flipped, and what it has beside it (a core, an LED's arrows) is below it (as horizontalPart)
+    const def = uprightSymbol(card, lying ? !mirror : mirror);
+    if (!turned) return { ...s, spec: def.spec! }; // its ends swap where they are
+    if (!lying) return made(d, comp, base, def, cx, cy);
+    return { ...base, spec: def.spec!, x: cx, y: cy, rot: 90, bbox: { x: cx - 200, y: cy - 100, w: 400, h: 200 }, ref: { x: cx, y: cy - 175, anchor: 'middle' }, value: { x: cx, y: cy - 90, anchor: 'middle' } };
   }
-  if (!two && look.mirror !== undefined && look.mirror !== !!s.spec.mirror) {
-    return made(d, comp, base, symbolFor(card, false, { ...s.spec, mirror: look.mirror }), cx, cy);
-  }
-  return undefined;
+  const { rotated: was, ...spec } = s.spec;
+  const rotated = look.rotate === undefined ? was : look.rotate || undefined;
+  const mirror = look.mirror ?? mirrored;
+  if (rotated === was && mirror === mirrored) return undefined;
+  const def = symbolFor(card, false, { ...spec, mirror, ...(rotated ? { rotated } : {}) });
+  if (mirror !== mirrored) return made(d, comp, base, def, cx, cy);
+  // turned about its pivot: the origin stays, on the grid, so four turns bring it back to the mil
+  return drawnAt(d, comp, base, def, Math.round(s.x / GRID) * GRID, Math.round(s.y / GRID) * GRID);
 }
 
 /**
@@ -900,7 +947,7 @@ export function remakeSymbols(d: Design, partId: string): string[] {
       if (s.part !== partId || !comp || s.unit || s.spec.unit !== undefined) return s;
       hit = true;
       const c = centre(s.bbox);
-      const base = { comp: s.comp, part: s.part, ...(s.with ? { with: s.with } : {}) };
+      const base = { comp: s.comp, part: s.part, ...(s.with ? { with: s.with } : {}), ...(s.by ? { by: s.by } : {}) };
       return made(d, comp, base, symbolFromSpec(card, s.spec), Math.round(c.x / GRID) * GRID, Math.round(c.y / GRID) * GRID);
     });
     if (hit) touched.push(d.sheets[sheetId]?.name ?? sheetId);
@@ -912,6 +959,10 @@ function made(d: Design, comp: Component, base: Omit<DrawnSymbol, 'spec' | 'x' |
   // centre the new symbol's box where the old one was
   const ox = cx - Math.round((def.bbox.x + def.bbox.w / 2) / GRID) * GRID;
   const oy = cy - Math.round((def.bbox.y + def.bbox.h / 2) / GRID) * GRID;
+  return drawnAt(d, comp, base, def, ox, oy);
+}
+
+function drawnAt(d: Design, comp: Component, base: Omit<DrawnSymbol, 'spec' | 'x' | 'y' | 'bbox' | 'ref' | 'value'>, def: ReturnType<typeof symbolFor>, ox: number, oy: number): DrawnSymbol {
   const sym = makeSymbol(d, comp, def, ox, oy);
   return { ...base, spec: def.spec!, x: ox, y: oy, bbox: sym.bbox, ref: sym.refPos, value: sym.valuePos };
 }

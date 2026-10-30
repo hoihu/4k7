@@ -184,8 +184,9 @@ on a part.
 | Gesture | Op |
 |---|---|
 | Drag a symbol (snaps to the 100-mil grid; may cross to another page) | `place_symbol x y page rewire` |
-| `R` on a selected two-pin part: standing / lying | `place_symbol orient rewire` |
-| `F` on a selected IC or connector: mirror | `place_symbol mirror rewire` |
+| `R` on a selected two-pin part: standing / lying, which end is which stays | `place_symbol orient mirror rewire` |
+| `R` on any other selected symbol: a quarter turn clockwise | `place_symbol rotate rewire` |
+| `F` on a selected symbol: mirror (a two-pin part's ends swap, where it stands) | `place_symbol mirror rewire` |
 | Drag a net label round its pin: it points where the pointer is | `label pin dir` |
 | Click a wire or label (it is picked and its net selected), `Delete` / `Backspace` | `erase at` |
 | `Delete` / `Backspace` on selected parts, after a confirmation | `remove` |
@@ -207,9 +208,9 @@ on a part.
   while the chat box is focused, and never with ⌘, Ctrl or Alt held (⌘R, ⌘F and the like are the
   browser's). The canvas does not take edits while the agent works or a changeset waits for review.
 - **Limits.** The drag preview moves the symbol alone: the wires are drawn once it lands, and an IC's
-  small parts follow then. Rotation is the op's: two-pin parts stand or lie, ICs only mirror. Mirroring
-  an IC with many wires can send them the long way round; Undo is one step. A part dragged with its
-  `rewire` on a crowded sheet may leave some connections as labels.
+  small parts follow then. A turned or mirrored symbol stays where it stands, so a tall IC turned may
+  lie on its neighbours (the result says so), and its wires can go the long way round; Undo is one
+  step. A part dragged with its `rewire` on a crowded sheet may leave some connections as labels.
 
 ## 3. Notes and checks
 
@@ -384,6 +385,30 @@ bends, crossings, running through parts or text. That is the largest piece of ne
      labels; wires to what stays are cut back. `orient` and `mirror` make the symbol again. A part
      that ends up on another is reported in the op's result. The old `sch_position` entries are still
      honoured by the layout and removed when the part is placed again.
+   - `mirror` says how the symbol ends up, not "swap it" (the ledger and the app's `F` need it that
+     way), so `get_schematic` marks the symbols that are `mirrored` now and the result says when a
+     `mirror` changed nothing. What it does depends on the symbol: a box or a part lying between two
+     terminals (crystal, switch, fuse, choke) swaps its pins' sides, a transistor, optocoupler,
+     relay, shunt reference or bridge is drawn turned over (`turnedOver`, `SymbolSpec.over`), a part
+     drawn as a two-pin one swaps its ends (`SymbolSpec.flip`: mirrored is pin 1 at the bottom or,
+     lying, on the right). `orient` without `mirror` puts pin 1 on top or on the left, as the agent's
+     guide says; the app's `R` sends `mirror` along so that turning twice gives back what was there.
+     The layout mirrors a part only to swap its pins (`canMirror`), never to turn one over. `F` works
+     in the symbol's own frame: a crystal standing swaps its terminals, top for bottom.
+   - `rotate` turns any symbol but one drawn as a two-pin part by quarters clockwise from how it is
+     usually drawn, after any mirror (`SymbolSpec.rotated`). The def itself is turned (`turned`, as
+     `turnedOver` mirrors), not the picture as `DrawnSymbol.rot` does for a lying two-pin part, so the
+     pins, the box, stored drawings, `set_symbol` and the layout all take it as any other symbol. It
+     turns about the middle of its box on the grid and keeps its origin, so four turns bring it back
+     to the mil, and the pins stay on the grid. Text stays upright: the name and value go on a side
+     without pins (`nameBeside`), and the names of a box's close-pitched pins on top and at the bottom
+     run along them (the canvas). `place_block` keeps a turned symbol the user placed, and a sheet
+     without blocks back with the layout keeps the turn (`sch_position.rotated`), except for a
+     regulator drawn in power flow. On a sheet with blocks `auto_draw` arranges each block afresh and
+     the turn goes, as a mirror and the place do.
+   - Drawings stored before 2026-10-30 may say `mirror` on a part that turns over, from a layout or
+     an `F` that had no effect then. It stays as it was drawn (`specMirrors`): opening a design moves
+     nothing, and `F` then mirrors it for real.
    - Changesets: one `drawing` hunk per sheet; accepting a part without it draws the part in free space.
    - Relative constraints only guide the layout: on an arranged sheet they wait for `auto_draw`, and a
      violated one says so.

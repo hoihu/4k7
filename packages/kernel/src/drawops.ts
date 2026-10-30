@@ -132,25 +132,29 @@ export function wiredPins(d: Design, sd: SheetDrawing): PinKey[][] {
 export function rewire(d: Design, sheetId: string, before: PinKey[][]): { wired: number; left: number } {
   let wired = 0;
   let left = 0;
+  // what hangs together now, worked out again only after a wire was tried: most groups are untouched
+  let joined: PinKey[][] | undefined;
+  const wiredNow = () => (joined ??= wiredPins(d, d.drawing![sheetId]!));
   for (const keys of before) {
     const failed = new Set<string>();
     for (let tries = 0; tries < 6; tries++) {
-      const sd = d.drawing![sheetId]!;
-      const pins = pinsOf(d, sd.symbols.map((s) => symbolOf(d, s)!));
-      const at = new Map(pins.map((p) => [`${p.comp.refdes}.${p.pin.number}` as PinKey, p.pin] as const));
       // the pieces the group is in now
       const piece = new Map(keys.map((k, i) => [k, i] as const));
-      for (const g of wiredPins(d, sd)) {
+      for (const g of wiredNow()) {
         const hit = g.filter((k) => piece.has(k));
         for (const k of hit) piece.set(k, piece.get(hit[0]!)!);
       }
       if (new Set(piece.values()).size < 2) break;
+      const sd = d.drawing![sheetId]!;
+      const pins = pinsOf(d, sd.symbols.map((s) => symbolOf(d, s)!));
+      const at = new Map(pins.map((p) => [`${p.comp.refdes}.${p.pin.number}` as PinKey, p.pin] as const));
       const pairs = keys
         .flatMap((a) => keys.map((b) => [a, b] as const))
         .filter(([a, b]) => piece.get(a)! < piece.get(b)! && at.has(a) && at.has(b) && !failed.has(`${a} ${b}`))
         .sort(([a, b], [c, e]) => dist(at.get(a)!, at.get(b)!) - dist(at.get(c)!, at.get(e)!));
       if (!pairs.length) break;
       const [a, b] = pairs[0]!;
+      joined = undefined;
       try {
         wireOp(d, { op: 'wire', from: a, to: b });
         wired++;
@@ -159,8 +163,7 @@ export function rewire(d: Design, sheetId: string, before: PinKey[][]): { wired:
         failed.add(`${a} ${b}`);
       }
     }
-    const sd = d.drawing![sheetId]!;
-    const now = wiredPins(d, sd);
+    const now = wiredNow();
     if (keys.some((k) => !now.some((g) => g.includes(k) && keys.every((o) => g.includes(o))))) left++;
   }
   return { wired, left };
