@@ -138,7 +138,8 @@ describe('tune_length', () => {
     const was = len(track(k, 't1'));
     // (the bumps go up, away from it)
     ok(k, [{ op: 'tune_length', track: 't1', target_mm: was + 3 }]);
-    expect(codes(k.board()).filter((c) => c.startsWith('DRC.') && c !== 'DRC.UNROUTED')).toEqual([]);
+    // (DRC.NECK: the GND track beside it is drawn thinner than GND runs, on purpose)
+    expect(codes(k.board()).filter((c) => c.startsWith('DRC.') && c !== 'DRC.UNROUTED' && c !== 'DRC.NECK')).toEqual([]);
     const up = track(k, 't1').pts.filter((_, i) => i % 2 === 1);
     expect(Math.min(...up)).toBeLessThan(5 - 0.5);
     // forced down, between the two, there is none
