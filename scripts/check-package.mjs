@@ -10,9 +10,11 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const pkg = JSON.parse(readFileSync(`${root}package.json`, 'utf8'));
-// on Windows npm and the installed command are batch files: they take a shell, and quotes in case of spaces
+// on Windows npm and the installed command are batch files: they take a shell, and quotes where there are spaces
+// (only there: npm.cmd started as "npm" looks for itself in the current folder)
 const windows = process.platform === 'win32';
-const shell = (cmd, args) => (windows ? [`"${cmd}"`, args.map((a) => `"${a}"`), { shell: true }] : [cmd, args, {}]);
+const quoted = (a) => (/\s/.test(a) ? `"${a}"` : a);
+const shell = (cmd, args) => (windows ? [quoted(cmd), args.map(quoted), { shell: true }] : [cmd, args, {}]);
 const run = (cmd, args, cwd = root) => {
   const [file, argv, opts] = shell(cmd, args);
   return execFileSync(file, argv, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], ...opts });
