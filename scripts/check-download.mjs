@@ -80,7 +80,8 @@ try {
     stop(served.pid);
   }
 
-  // what a double-click runs: it returns at once and the server goes on by itself
+  // what a double-click runs: it returns at once and the server goes on by itself (a home of its own: the log above is not this server's)
+  env.FOURK7_HOME = join(dir, 'double-click');
   const opened = await output(start([], { stdio: ['ignore', 'ignore', 'pipe'] }));
   if (opened.code !== 0) fail(`no arguments: exit ${opened.code}:\n${opened.out}`);
   if (/already running/.test(opened.out)) {
@@ -90,7 +91,7 @@ try {
   const pid = Number(/pid (\d+)/.exec(opened.out)?.[1]);
   if (!pid) fail(`no server started:\n${opened.out}`);
   try {
-    const logFile = join(dir, 'home', 'server.log');
+    const logFile = join(env.FOURK7_HOME, 'server.log');
     const read = () => {
       try {
         return readFileSync(logFile, 'utf8');
