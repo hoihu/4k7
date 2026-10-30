@@ -29,10 +29,10 @@ export interface FabLimits {
   /** Copper to the routed board edge (outer layers) and, when larger, on inner layers. */
   copperToEdge?: number;
   copperToEdgeInner?: number;
-  /** Silkscreen: narrowest line and smallest text height (informational for text). */
+  /** Silkscreen: narrowest line and smallest text height. */
   silkWidth?: number;
   silkHeight?: number;
-  /** Narrowest solder-mask web between pads (informational). */
+  /** Narrowest solder-mask web between the openings of two pads. Not published by every house: absent, not checked. */
   maskBridge?: number;
   /** Smallest and largest board, width × height in either orientation. */
   minBoard?: [number, number];
@@ -59,6 +59,12 @@ export interface FabProfile {
   /** Caveats a designer should know (not checked by the DRC). */
   notes?: string[];
 }
+
+/** How far the solder-mask opening of a pad reaches past its copper, each side (mm): the Gerber mask and the mask-web check use it. */
+export const MASK_MARGIN = 0.05;
+
+/** The cap height of a part's reference designator on the silkscreen (mm): from its body, 0.6–1 mm. */
+export const refdesHeight = (body: { w: number; h: number }) => Math.min(1, Math.max(0.6, Math.min(body.w, body.h) * 0.6));
 
 const CHECKED = '2026-10-09';
 

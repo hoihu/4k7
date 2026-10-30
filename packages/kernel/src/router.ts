@@ -2592,7 +2592,20 @@ function routeOnce(
       for (const [key, o] of open) if (!next.has(key)) close(o, j);
       open = next;
     }
-    zones.push({ netId: pl.netId, layer: pl.layer, rects, shape: planeShape(pl, rg, alive) });
+    // what was left out (dead copper): the islands that touch nothing of the net, those of 1 mm² and more counted
+    const lost = new Map<number, { n: number; sx: number; sy: number }>();
+    for (let c = 0; c < N; c++) {
+      const isl = rg.island[c]!;
+      if (isl < 0 || alive.has(isl)) continue;
+      const e = lost.get(isl) ?? { n: 0, sx: 0, sy: 0 };
+      e.n++;
+      e.sx += (c % W) * G;
+      e.sy += Math.floor(c / W) * G;
+      lost.set(isl, e);
+    }
+    const dead = [...lost.values()].filter((e) => e.n * G * G >= 1).sort((x, y) => y.n - x.n);
+    const removed = dead.length ? { islands: dead.length, area: Math.round(dead.reduce((s, e) => s + e.n, 0) * G * G * 10) / 10, at: { x: r3(dead[0]!.sx / dead[0]!.n), y: r3(dead[0]!.sy / dead[0]!.n) } } : undefined;
+    zones.push({ netId: pl.netId, layer: pl.layer, rects, shape: planeShape(pl, rg, alive), ...(removed ? { removed } : {}) });
   }
   // connections made through a plane count as routed; those left to a pour it did not join, open
   for (let q = failed.length - 1; q >= 0; q--) if (find(failed[q]!.a) === find(failed[q]!.b)) failed.splice(q, 1);

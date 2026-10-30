@@ -13,7 +13,7 @@ import { DEFAULT_BOARD, padHasPin, type BoardDiagnostic, type CopperLayer, type 
 import { boardRouteInput, copperKey, placeBoard, rotate, softened, storedPlacement } from './board.ts';
 import { findNet, isPowerNet, reject, resolveComponent, resolvePins } from './doc.ts';
 import { schematicView } from './drawing.ts';
-import { copperDrc, drawnDrc, edgeDrc } from './drc.ts';
+import { acidDrc, copperDrc, drawnDrc, edgeDrc, neckDrc } from './drc.ts';
 import { padPointDist } from './keep.ts';
 import { keepoutDrc, rejectTrackInKeepout, rejectViaInKeepout } from './keepout.ts';
 import { route, type RouteProgress, type RouteResult } from './router.ts';
@@ -1022,14 +1022,14 @@ export const DRAWING_OPS = new Set(['draw_track', 'draw_pair', 'draw_via', 'edit
 /**
  * The rules on the drawn copper with these ids, on the board as it is now (placement only: pours
  * fill round the copper later, so they never clash): other nets' copper too close or touching, the
- * edge, the fab's limits (errors), loose ends and pieces off 45°, a via in a small part's land
+ * edge, the fab's limits (errors), loose ends, pieces off 45°, acid traps, necks, a via in a small part's land
  * pattern (warnings).
  */
 export function checkCopper(d: Design, ids: Set<string>): BoardDiagnostic[] {
   if (!d.board?.drawn || !ids.size) return [];
   const b = placed(d);
   const supplies = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
-  const out = [...copperDrc(b, ids), ...edgeDrc(b, true, ids), ...keepoutDrc(b, ids), ...drawnDrc(b, ids), ...impedanceDrc(b, ids, supplies)];
+  const out = [...copperDrc(b, ids), ...edgeDrc(b, true, ids), ...keepoutDrc(b, ids), ...drawnDrc(b, ids), ...acidDrc(b, ids), ...neckDrc(b, (id, layer) => defaultWidth(d, id, b, layer), ids), ...impedanceDrc(b, ids, supplies)];
   const fab = b.fab?.limits;
   if (fab) {
     for (const t of b.drawn?.tracks ?? []) if (ids.has(t.id) && t.width < fab.track - 0.005) out.push({ code: 'DRC.FAB_TRACK', severity: 'error', message: `Track ${t.id} is ${t.width} mm wide; ${b.fab!.house} makes ${fab.track} mm at the narrowest.`, at: { x: t.pts[0]!, y: t.pts[1]! }, entities: [t.id] });

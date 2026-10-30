@@ -16,6 +16,11 @@ and every pull request of a release are on its [GitHub release](https://github.c
 - **Seen on the board**: hatched and translucent in the 2D view with its label, listed by `get_board` and in the design document. The layout guides for antennas and RF connectors now tell the agent to use it.
 - **Pairs routed together**: with a differential pair's impedance rule set, the router lays the pair as two tracks side by side at the rule's width and gap, found in one search for the pair's centre line, and changes layer with a via for each track side by side. Where it cannot keep them together it routes the two nets apart and says so (the route effect, or an `IMP.PAIR` note on the board). Lines at a set impedance are routed before the other nets, which keep off the plane under them.
 - **Length tuning**: the new `tune_length` op adds a meander to a drawn track to reach a length or to match the other member of a pair (or the longest of a group): square bumps with 45° corners on the track's own layer, legs at least three widths apart, clear of other copper. It says the length and skew reached, and where there is no room when there is none.
+- **Panel tab zone** (`PANEL.TAB_ZONE`, `PANEL.TAB_OVERHANG`): parts, pads, tracks and vias within 1.5 mm of a tab are flagged (JLCPCB: ceramic capacitors crack where the board is snapped out), and a part over a board edge that has a tab is an error.
+- **Solder-mask webs** (`DRC.FAB_MASK_WEB`) between pads of different nets that fall below the fab profile's mask bridge (JLCPCB and PCBWay: 0.1 mm), and silkscreen text lower than the fab prints (`DRC.FAB_SILK_TEXT`).
+- **Etching checks**: acid traps (`DRC.ACID_TRAP`, tracks of a net meeting below 90° with an empty wedge) and necks (`DRC.NECK`, a track narrower than its net's width).
+- **Thermal reliefs** are checked: `DRC.THERMAL_SPOKES` for a pad with fewer than two spokes to its pour (an error when it is cut off), `DRC.FAB_SPOKE` for spokes thinner than the fab's tracks.
+- **Dead copper** was already left out of the pours; `DRC.DEAD_COPPER` (a note) now says where it was.
 
 ## 0.2.0 — 2026-10-25
 

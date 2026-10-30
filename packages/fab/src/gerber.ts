@@ -3,14 +3,13 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
-import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type HousePlacement, type PanelView } from '@4k7/schema';
+import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, MASK_MARGIN, refdesHeight, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type HousePlacement, type PanelView } from '@4k7/schema';
 
 export interface FabFile {
   name: string;
   content: string;
 }
 
-const MASK_MARGIN = 0.05;
 const SILK_WIDTH = 0.15;
 const SILK_TO_PAD = 0.15;
 const f6 = (v: number) => Math.round(v * 1e6).toString();
@@ -227,7 +226,7 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFi
         clipped([...o, o[0]!, o[1]!]);
       }
       // refdes above the part, else below, else on the body
-      const th = Math.min(1, Math.max(0.6, Math.min(r.w, r.h) * 0.6));
+      const th = refdesHeight(r);
       const tw = textWidth(part.refdes, th);
       const spots = [
         { x: part.x, y: part.courtyard.y - th / 2 - 0.2 },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { autoTabs, type BoardView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
+import { panelTabDrc } from '../src/panel.ts';
 import { buckTransaction } from './fixtures.ts';
 
 function panel(...ops: unknown[]) {
@@ -111,5 +112,34 @@ describe('fabrication panel', () => {
     expect(codes(b)).toEqual(['PANEL.SIZE']);
     const ec = panel({ op: 'set_board', width_mm: 40, height_mm: 30 }, { op: 'set_fab_profile', preset: 'eurocircuits/6C' }, { op: 'set_panel', hole_mm: 0.3 });
     expect(codes(ec.b)).toEqual(['PANEL.HOLE']);
+  });
+
+  it('warns about parts and copper within 1.5 mm of a tab, and errors on a part over an edge with one', () => {
+    const tabs = [{ side: 'top', at: 0.5 }, { side: 'bottom', at: 0.5 }];
+    const { k, b } = panel({ op: 'set_board', width_mm: 40, height_mm: 30 }, { op: 'set_panel', tabs });
+    expect(codes(b)).toEqual([]);
+    const at = (x: number, y: number) => {
+      k.transact({ summary: 'move', ops: [{ op: 'place', ref: 'C1', x_mm: x, y_mm: y, lock: true }] });
+      return k.board().diagnostics.filter((d) => d.code.startsWith('PANEL.TAB_'));
+    };
+    // under the top tab (x 17.5–22.5), then beside it, then clear of it
+    const near = at(20, 2);
+    expect(near).toMatchObject([{ code: 'PANEL.TAB_ZONE', severity: 'warning', entities: ['panel', 'C1'] }]);
+    expect(near[0]!.message).toContain('the top tab at 50 %');
+    expect(at(25, 2)).toMatchObject([{ code: 'PANEL.TAB_ZONE' }]);
+    expect(at(29, 2)).toEqual([]);
+    expect(at(20, 8)).toEqual([]);
+    // over the top edge: an error; over the left edge, which has no tab, nothing
+    expect(at(20, -0.5).map((d) => [d.code, d.severity])).toContainEqual(['PANEL.TAB_OVERHANG', 'error']);
+    expect(at(-0.5, 15).filter((d) => d.code === 'PANEL.TAB_OVERHANG')).toEqual([]);
+  });
+
+  it('counts tracks and vias at a tab, and leaves the pours', () => {
+    const { b } = panel({ op: 'set_board', width_mm: 40, height_mm: 30 }, { op: 'set_panel', tabs: [{ side: 'top', at: 0.5 }, { side: 'bottom', at: 0.5 }] });
+    const net = Object.keys(b.netNames)[0]!;
+    const track = (x: number, y: number) => ({ netId: net, layer: 'F.Cu' as const, width: 0.25, pts: [x, y, x, y + 3] });
+    const d = panelTabDrc({ ...b, tracks: [track(20, 0.5), track(30, 0.5)], vias: [{ netId: net, x: 21, y: 1, drill: 0.3, pad: 0.6 }], zones: [{ netId: net, layer: 'F.Cu', rects: [0.5, 0.5, 39, 29] }] });
+    expect(d).toHaveLength(1);
+    expect(d[0]!.message).toContain(`tracks of ${b.netNames[net]}, vias of ${b.netNames[net]} lie within 1.5 mm of the top tab at 50 %`);
   });
 });

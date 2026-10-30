@@ -3,9 +3,9 @@
  * between tracks, vias and pads of different nets on the same layer.
  */
 import { cutoutDistance, insideBoard, padCapsule, roundPadDist } from '@4k7/schema';
-import type { BoardDiagnostic, BoardPart, BoardView, CopperLayer } from '@4k7/schema';
+import type { BoardDiagnostic, BoardPad, BoardPart, BoardView, CopperLayer, Track } from '@4k7/schema';
 import { segDist } from './segments.ts';
-import { padPointDist } from './keep.ts';
+import { padPointDist, padSegDist } from './keep.ts';
 
 type Shape =
   | { kind: 'seg'; ax: number; ay: number; bx: number; by: number; r: number }
@@ -46,10 +46,7 @@ export function copperDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] 
   for (const p of b.parts) {
     for (const pad of p.pads) {
       const layers = pad.drill ? b.layers : pad.layers;
-      const shape: Shape =
-        pad.shape === 'round'
-          ? { kind: 'seg', ...padCapsule(pad) }
-          : { kind: 'rect', x0: pad.x - pad.w / 2, y0: pad.y - pad.h / 2, x1: pad.x + pad.w / 2, y1: pad.y + pad.h / 2 };
+      const shape = padShape(pad);
       for (const layer of layers) {
         items.push({ net: pad.netId ?? `nc:${p.refdes}.${pad.number}`, layer, shape, bb: [pad.x - pad.w / 2, pad.y - pad.h / 2, pad.x + pad.w / 2, pad.y + pad.h / 2], what: `${p.refdes}.${pad.number}`, part: p.refdes, track: false });
       }
@@ -131,6 +128,12 @@ export function copperDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] 
   return [...viaIssues, ...out];
 }
 
+const padShape = (pad: BoardPad): Shape =>
+  pad.shape === 'round' ? { kind: 'seg', ...padCapsule(pad) } : { kind: 'rect', x0: pad.x - pad.w / 2, y0: pad.y - pad.h / 2, x1: pad.x + pad.w / 2, y1: pad.y + pad.h / 2 };
+
+/** The gap between the copper of two pads (0 where they touch). */
+export const padGap = (a: BoardPad, b: BoardPad) => Math.max(0, distance(padShape(a), padShape(b)));
+
 function centre(s: Shape) {
   return s.kind === 'seg' ? { x: (s.ax + s.bx) / 2, y: (s.ay + s.by) / 2 } : { x: (s.x0 + s.x1) / 2, y: (s.y0 + s.y1) / 2 };
 }
@@ -165,7 +168,7 @@ function segSeg(ax: number, ay: number, bx: number, by: number, cx: number, cy: 
   return Math.min(pointSeg(ax, ay, cx, cy, dx, dy), pointSeg(bx, by, cx, cy, dx, dy), pointSeg(cx, cy, ax, ay, bx, by), pointSeg(dx, dy, ax, ay, bx, by));
 }
 
-function segRect(ax: number, ay: number, bx: number, by: number, r: { x0: number; y0: number; x1: number; y1: number }): number {
+export function segRect(ax: number, ay: number, bx: number, by: number, r: { x0: number; y0: number; x1: number; y1: number }): number {
   const inside = (x: number, y: number) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
   if (inside(ax, ay) || inside(bx, by)) return 0;
   const edges: [number, number, number, number][] = [
@@ -405,3 +408,168 @@ const inRects = (rects: number[], x: number, y: number) => {
   for (let i = 0; i + 3 < rects.length; i += 4) if (x >= rects[i]! && y >= rects[i + 1]! && x <= rects[i]! + rects[i + 2]! && y <= rects[i + 1]! + rects[i + 3]!) return true;
   return false;
 };
+
+/** The angle (degrees, 0–180) between two directions. */
+const angleBetween = (a: [number, number], b: [number, number]) => (Math.acos(Math.max(-1, Math.min(1, (a[0] * b[0] + a[1] * b[1]) / (Math.hypot(...a) * Math.hypot(...b))))) * 180) / Math.PI;
+
+/**
+ * Acid traps: two tracks of one net that meet at less than 90° (at a bend, a junction, or where
+ * one ends on the side of another) with nothing of the net filling the wedge between them. Etchant
+ * pools in a narrow copper-free wedge and goes on eating after the board is rinsed. A wedge that a
+ * pad, a via, a pour or another track of the net fills is not one, and neither is a junction inside
+ * a pad or a via. `focus`: only junctions of these drawn tracks (by id).
+ */
+export function acidDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] {
+  type Arm = { dx: number; dy: number; w: number; id?: string };
+  const nodes = new Map<string, { x: number; y: number; netId: string; layer: CopperLayer; arms: Arm[] }>();
+  const at = (t: { netId: string; layer: CopperLayer }, x: number, y: number) => {
+    const key = `${t.layer}|${t.netId}|${Math.round(x * 100)},${Math.round(y * 100)}`;
+    let n = nodes.get(key);
+    if (!n) nodes.set(key, (n = { x, y, netId: t.netId, layer: t.layer, arms: [] }));
+    return n;
+  };
+  const all: { t: Track; a: [number, number]; b: [number, number] }[] = [];
+  for (const t of b.tracks) {
+    for (const [ax, ay, bx, by] of pieces(t)) {
+      if (Math.hypot(bx - ax, by - ay) < 1e-6) continue;
+      all.push({ t, a: [ax, ay], b: [bx, by] });
+      at(t, ax, ay).arms.push({ dx: bx - ax, dy: by - ay, w: t.width, id: idOf(t) });
+      at(t, bx, by).arms.push({ dx: ax - bx, dy: ay - by, w: t.width, id: idOf(t) });
+    }
+  }
+  // a track ending on the side of another of its net: that one's two directions leave from there
+  for (const t of b.tracks) {
+    if (t.pts.length < 4) continue;
+    for (const [x, y] of [[t.pts[0]!, t.pts[1]!], [t.pts.at(-2)!, t.pts.at(-1)!]] as const) {
+      for (const o of all) {
+        if (o.t === t || o.t.netId !== t.netId || o.t.layer !== t.layer) continue;
+        if (segDist(o.a[0], o.a[1], o.b[0], o.b[1])(x, y) > 0.01 || Math.hypot(x - o.a[0], y - o.a[1]) < 0.01 || Math.hypot(x - o.b[0], y - o.b[1]) < 0.01) continue;
+        at(t, x, y).arms.push({ dx: o.a[0] - x, dy: o.a[1] - y, w: o.t.width, id: idOf(o.t) }, { dx: o.b[0] - x, dy: o.b[1] - y, w: o.t.width, id: idOf(o.t) });
+      }
+    }
+  }
+  const out: BoardDiagnostic[] = [];
+  const pads = b.parts.flatMap((p) => p.pads);
+  for (const n of nodes.values()) {
+    if (n.arms.length < 2) continue;
+    if (focus && !n.arms.some((a) => a.id && focus.has(a.id))) continue;
+    // inside a pad or a via of the net: the copper there is whole
+    if (pads.some((p) => p.netId === n.netId && (p.drill || p.layers.includes(n.layer)) && padPointDist(p, n.x, n.y) < EPS) || b.vias.some((v) => v.netId === n.netId && Math.hypot(v.x - n.x, v.y - n.y) < v.pad / 2)) continue;
+    let worst: number | undefined;
+    for (let i = 0; i < n.arms.length; i++) {
+      for (let j = i + 1; j < n.arms.length; j++) {
+        const [p, q] = [n.arms[i]!, n.arms[j]!];
+        const deg = angleBetween([p.dx, p.dy], [q.dx, q.dy]);
+        if (deg < 1 || deg > 90 - 0.5 || (worst !== undefined && deg >= worst)) continue;
+        const [lp, lq] = [Math.hypot(p.dx, p.dy), Math.hypot(q.dx, q.dy)];
+        const [mx, my] = [p.dx / lp + q.dx / lq, p.dy / lp + q.dy / lq];
+        // along the bisector the two tracks' edges meet at (w / 2) / sin(angle / 2); the wedge opens beyond that
+        const reach = Math.max(p.w, q.w) / 2 / Math.sin((deg * Math.PI) / 360) + 0.1;
+        const [px, py] = [n.x + (mx / Math.hypot(mx, my)) * reach, n.y + (my / Math.hypot(mx, my)) * reach];
+        const filled =
+          pads.some((pd) => pd.netId === n.netId && (pd.drill || pd.layers.includes(n.layer)) && padPointDist(pd, px, py) < EPS) ||
+          b.vias.some((v) => v.netId === n.netId && Math.hypot(v.x - px, v.y - py) < v.pad / 2) ||
+          b.zones.some((z) => z.netId === n.netId && z.layer === n.layer && inRects(z.rects, px, py)) ||
+          all.some((o) => o.t.netId === n.netId && o.t.layer === n.layer && segDist(o.a[0], o.a[1], o.b[0], o.b[1])(px, py) < o.t.width / 2);
+        if (!filled) worst = deg;
+      }
+    }
+    if (worst === undefined) continue;
+    const net = b.netNames[n.netId] ?? n.netId;
+    const ids = [...new Set(n.arms.flatMap((a) => (a.id ? [a.id] : [])))];
+    out.push({
+      code: 'DRC.ACID_TRAP',
+      severity: 'warning',
+      message: `${net} on ${n.layer}: tracks meet at ${Math.round(worst)}° at ${n.x.toFixed(2)}, ${n.y.toFixed(2)} with nothing of the net filling the wedge between them (an acid trap: etchant pools there). Bend them 90° or wider${ids.length ? ` (edit_copper with bend on ${ids.join(', ')})` : ''}, or make the join in a pad or via.`,
+      at: { x: Math.round(n.x * 100) / 100, y: Math.round(n.y * 100) / 100 },
+      entities: ids.length ? ids : [`net:${net}`],
+    });
+  }
+  return out;
+}
+
+/**
+ * Necks: a track narrower than the width its net runs at (`widthOf`: set_net, its impedance rule,
+ * else the power or signal width). Copper that thin carries less than the net was sized for and
+ * heats first. A track that starts or ends on a pad too small to take the net's width (an escape
+ * from a fine-pitch pad) is the pad's doing and is let be. One finding per net and width where the
+ * copper is routed; `focus`: only these drawn tracks (by id).
+ */
+export function neckDrc(b: BoardView, widthOf: (netId: string, layer: CopperLayer) => number, focus?: Set<string>): BoardDiagnostic[] {
+  const out: BoardDiagnostic[] = [];
+  const seen = new Set<string>();
+  const pads = b.parts.flatMap((p) => p.pads);
+  for (const t of b.tracks) {
+    const want = widthOf(t.netId, t.layer);
+    if (t.width >= want - 0.005 || t.pts.length < 4) continue;
+    const id = idOf(t);
+    if (focus && !(id && focus.has(id))) continue;
+    const ends = [[t.pts[0]!, t.pts[1]!], [t.pts.at(-2)!, t.pts.at(-1)!]] as const;
+    if (ends.some(([x, y]) => pads.some((p) => p.netId === t.netId && (p.drill || p.layers.includes(t.layer)) && padPointDist(p, x, y) < EPS && Math.min(p.w, p.h) < want - 0.005))) continue;
+    const net = b.netNames[t.netId] ?? t.netId;
+    const key = id ?? `${net}|${t.width}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      code: 'DRC.NECK',
+      severity: 'warning',
+      message: `${id ? `Track ${id}` : 'A track'} (${net}, ${t.layer}) is ${t.width} mm wide where ${net} runs at ${want} mm: a neck in the net's copper. Widen it${id ? ' (edit_copper width)' : ''}, or set the net's width (set_net) to what it can take.`,
+      at: { x: t.pts[0]!, y: t.pts[1]! },
+      entities: id ? [id] : [`net:${net}`],
+    });
+  }
+  return out;
+}
+
+/**
+ * Pads joined to their pour through thermal reliefs (a ring cut round the pad, spokes drawn back
+ * where no other net is in the way): with fewer than two spokes the joint is weak, and a pad left
+ * with none is cut off from the pour (an error for a surface pad that no track of its net reaches
+ * either). A pad of a plane styled `thermal: false`, or with thermal vias, is joined solid and not
+ * counted; a pad a track of the net joins on the layer is let be.
+ */
+export function thermalDrc(b: BoardView): BoardDiagnostic[] {
+  const out: BoardDiagnostic[] = [];
+  for (const z of b.zones) {
+    if (!z.shape) continue;
+    if (b.planes.find((pl) => pl.netId === z.netId && pl.layer === z.layer)?.style?.thermal === false) continue;
+    const net = b.netNames[z.netId] ?? z.netId;
+    for (const part of b.parts) {
+      for (const pad of part.pads) {
+        if (pad.netId !== z.netId || pad.npth || !(pad.drill || pad.layers.includes(z.layer))) continue;
+        if (b.vias.some((v) => v.inPad && v.netId === z.netId && padPointDist(pad, v.x, v.y) < EPS)) continue;
+        // (a pad the pour does not reach has no ring: no pour a little way out from it)
+        if (![[-1, 0], [1, 0], [0, -1], [0, 1]].some(([dx, dy]) => inRects(z.rects, pad.x + dx! * (pad.w / 2 + 0.5), pad.y + dy! * (pad.h / 2 + 0.5)))) continue;
+        const spokes = z.shape.adds.filter((a) => Math.abs(a.pts[0]! - pad.x) < 0.002 && Math.abs(a.pts[1]! - pad.y) < 0.002).length;
+        if (spokes >= 2 || b.tracks.some((t) => t.netId === z.netId && t.layer === z.layer && pieces(t).some(([ax, ay, bx, by]) => padSegDist(pad, ax, ay, bx, by) < EPS))) continue;
+        const cut = spokes === 0 && !pad.drill;
+        out.push({
+          code: 'DRC.THERMAL_SPOKES',
+          severity: cut ? 'error' : 'warning',
+          message: `${part.refdes}.${pad.number} (${net}) joins its pour on ${z.layer} through ${spokes || 'no'} thermal spoke${spokes === 1 ? '' : 's'}${cut ? ': the pad is cut off from the pour' : ': a weak joint'}. Open room round it (move what crowds the pad, set_plane_style clearance_mm), or join it solid (set_plane_style thermal: false).`,
+          at: { x: Math.round(pad.x * 100) / 100, y: Math.round(pad.y * 100) / 100 },
+          entities: [part.refdes],
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** A note on each pour that lost islands: pieces the fill left out because they touched no copper of the net (dead copper). */
+export function deadCopperDrc(b: BoardView): BoardDiagnostic[] {
+  const out: BoardDiagnostic[] = [];
+  for (const z of b.zones) {
+    if (!z.removed) continue;
+    const net = b.netNames[z.netId] ?? z.netId;
+    const n = z.removed.islands;
+    out.push({
+      code: 'DRC.DEAD_COPPER',
+      severity: 'info',
+      message: `${n} island${n === 1 ? '' : 's'} of the ${net} pour on ${z.layer} (${z.removed.area} mm², the biggest near ${z.removed.at.x}, ${z.removed.at.y}) touched no ${net} copper and ${n === 1 ? 'was' : 'were'} left out of the fill: no floating copper reaches the fab. Tracks or pads of other nets split the pour there.`,
+      at: z.removed.at,
+      entities: [`net:${net}`],
+    });
+  }
+  return out;
+}

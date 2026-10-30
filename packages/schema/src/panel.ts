@@ -55,6 +55,8 @@ export const DEFAULT_PANEL: Omit<PanelSettings, 'tabs'> = {
 export const RAIL_MARK_OFFSET = 3.85;
 export const FIDUCIAL = { copper: 1, mask: 2 };
 export const TOOLING_HOLE = 2;
+/** How far a part or copper keeps from a tab (mm): JLCPCB asks 1.5 mm between a tab's edge and the nearest part or pad (ceramic capacitors crack when the board is snapped out). */
+export const TAB_KEEPOUT = 1.5;
 
 /** Tabs spread over the chosen sides of a w × h board: one on a side up to 30 mm, then one per 50 mm (at least two). */
 export function autoTabs(sides: PanelSide[], w: number, h: number, perSide?: number): PanelTab[] {

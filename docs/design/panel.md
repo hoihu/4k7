@@ -71,8 +71,18 @@ of holes follows the outline, one hole per line across the tab.
 | `PANEL.RAILS` | fiducials or tooling holes asked for, but no 5 mm rails on two opposite sides (warning) |
 | `PANEL.SIZE` | the panel is larger than the fab profile's largest board |
 | `PANEL.HOLE` | mouse-bite holes smaller than the profile's smallest non-plated hole |
+| `PANEL.TAB_ZONE` | parts, pads, tracks or vias within 1.5 mm of a tab (warning, one per tab) |
+| `PANEL.TAB_OVERHANG` | a part reaches over a board edge that has a tab |
 
 A tab facing a panel edge that has no rail is left out, as intended, and not reported.
+
+**The tab zone** (`panelTabDrc`, panel.ts; 2026-10-29) is JLCPCB's 1.5 mm between a tab's edge and the
+nearest part or pad: the board flexes there when it is snapped out and ceramic capacitors crack.
+A part is its body and its pads. The tab is its rectangle on the side of the board's bounding box,
+so on a free-form outline that starts deeper the check is on the generous side of the truth. Tracks and
+vias count once the board is routed (or drawn); pours do not (they run to the edge clearance
+everywhere). A part over an edge that has a tab is an error: it would stand in the milled channel or on the
+tab. Edges without a tab are the edge clearance's business.
 
 ## Output
 
@@ -151,7 +161,5 @@ board and the smallest non-plated hole are checked against the profile.
 
 ## Not yet
 
-- **Tab-zone check**: parts or copper within 1.5 mm of a tab (JLCPCB's guide; ceramic capacitors
-  crack there), and parts that reach over an edge with a tab.
 - V-scoring (straight cuts, rectangular boards), mixed panels, copies turned by 180°.
 - Panel limits as fields of the fab profile.
