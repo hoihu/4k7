@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#121211">
+<title>FAQ — 4k7</title>
+<meta name="description" content="Questions about 4k7: what it costs, which AI it needs, what it runs on, where your projects are kept, and what alpha means.">
+<meta property="og:title" content="4k7 FAQ">
+<meta property="og:description" content="What 4k7 costs, which AI it needs, what it runs on, where your projects are kept, and what alpha means.">
+<meta property="og:url" content="https://4k7.dev/faq">
+<meta property="og:image" content="https://4k7.dev/brand/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/site.css">
+<style>
+  main { position: relative; z-index: 2; flex: 1; width: 100%; max-width: 760px; margin: 0 auto; padding: 28px 28px 64px; }
+  @media (max-width: 520px) { main { padding: 20px 18px 48px; } }
+  h1 { margin: 0 0 6px; font-size: clamp(28px, 4vw, 38px); line-height: 1.15; letter-spacing: -.02em; }
+  .intro { margin: 0 0 30px; color: var(--muted); }
+  .intro a { color: var(--body); text-underline-offset: 3px; }
+  h2 { margin: 34px 0 6px; font: 500 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  details { border-bottom: 1px solid var(--line); scroll-margin-top: 16px; }
+  summary {
+    display: flex; align-items: center; gap: 14px; cursor: pointer; list-style: none; padding: 16px 2px; font-size: 17px; font-weight: 600; letter-spacing: -.005em;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: ""; flex: none; width: 4px; height: 18px; border-radius: 1px; background: var(--band, var(--gold)); opacity: .5; transition: opacity .15s, box-shadow .15s; }
+  summary:hover::before, details[open] > summary::before { opacity: 1; }
+  details[open] > summary::before { box-shadow: 0 0 12px var(--band, var(--gold)); }
+  summary::after { content: "+"; margin-left: auto; font: 400 20px/1 var(--mono); color: var(--muted); }
+  details[open] > summary::after { content: "–"; }
+  .a { padding: 0 2px 18px 18px; color: #cfcabd; }
+  .a p { margin: 0 0 10px; }
+  .a ul { margin: 0 0 10px; padding-left: 20px; }
+  .a a { color: var(--ink-gold); text-underline-offset: 3px; }
+  .a code { font-size: 13.5px; color: var(--body); background: #1f1d1a; padding: 1px 6px; border-radius: 5px; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="resistor-mini" viewBox="0 0 80 40">
+    <rect x="0" y="18" width="80" height="4" fill="#8f887d"/>
+    <rect x="14" y="7" width="52" height="26" rx="9" fill="#d9c69f"/>
+    <rect x="22" y="7" width="6" height="26" fill="#f2c230"/>
+    <rect x="32" y="7" width="6" height="26" fill="#7a3fb0"/>
+    <rect x="42" y="7" width="6" height="26" fill="#d6382f"/>
+    <rect x="54" y="7" width="6" height="26" fill="#d7a63a"/>
+  </symbol>
+</svg>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/">
+      <svg aria-hidden="true"><use href="#resistor-mini"/></svg>
+      4k7 <span class="pill">alpha</span>
+    </a>
+    <nav aria-label="Main">
+      <a href="/#schematic">Features</a>
+      <a href="/faq" aria-current="page">FAQ</a>
+      <a href="/changelog">Changelog</a>
+      <a class="gh" href="https://github.com/hoihu/4k7">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <h1>Questions</h1>
+  <p class="intro">Not here? Ask on <a href="https://github.com/hoihu/4k7/issues">GitHub</a>.</p>
+
+  <h2>The basics</h2>
+  <details id="what" style="--band:var(--yellow)">
+    <summary>What is 4k7?</summary>
+    <div class="a">
+      <p>An all-in-one workbench for makers: AI-assisted PCB design and 3D enclosure design in one free app. You describe a project in a sentence; the agent asks what it needs to know, imports the parts from their datasheets, draws the schematic, lays out the board, designs the enclosure and prices the order. You review every change.</p>
+      <p>It is not meant for professional board designers. It is for everyone who wants to get from an idea to a working board, fast.</p>
+    </div>
+  </details>
+  <details id="cost" style="--band:var(--yellow)">
+    <summary>What does it cost?</summary>
+    <div class="a"><p>4k7 is free and open source under the MIT license. It ships no AI model: you bring your own (next question), and that is billed by whoever provides it.</p></div>
+  </details>
+  <details id="ai" style="--band:var(--yellow)">
+    <summary>Which AI do I need?</summary>
+    <div class="a">
+      <p>Any of these:</p>
+      <ul>
+        <li>a coding agent you already use, on the plan or company login you already have: Claude Code, GitHub Copilot CLI or OpenCode;</li>
+        <li>an API key: Anthropic, OpenAI, OpenRouter, Gemini, a local model, or any OpenAI- or Anthropic-compatible gateway;</li>
+        <li>or your agent's own chat, driving 4k7 through its MCP server.</li>
+      </ul>
+    </div>
+  </details>
+  <details id="why" style="--band:var(--yellow)">
+    <summary>Why “4k7”?</summary>
+    <div class="a"><p>It is the value of a very common resistor, 4.7 kΩ. Its bands are yellow (4), violet (7), red (×100) and gold (±5 %), which are also the four steps of the app: schematic, board, enclosure, order.</p></div>
+  </details>
+
+  <h2>Installing</h2>
+  <details id="needs" style="--band:var(--violet)">
+    <summary>What do I need?</summary>
+    <div class="a">
+      <p>A Mac (Apple silicon or Intel) or a Linux computer (x64 or arm64), an AI as above, and <a href="https://openscad.org">OpenSCAD</a> if you want enclosures. The download has Node inside, so there is nothing else to install.</p>
+      <p>Opening the app opens it in your browser. Closing the tab stops it.</p>
+    </div>
+  </details>
+  <details id="windows" style="--band:var(--violet)">
+    <summary>Is there a Windows version?</summary>
+    <div class="a"><p>There is no Windows download at the moment: the downloads are for macOS and Linux. With Node 22.18+ you can also run it straight from the repository with <code>npx github:hoihu/4k7</code>.</p></div>
+  </details>
+  <details id="unsigned" style="--band:var(--violet)">
+    <summary>macOS says it cannot check the app</summary>
+    <div class="a"><p>The Mac app is not signed yet. Open System Settings → Privacy &amp; Security and choose <b>Open Anyway</b>.</p></div>
+  </details>
+  <details id="alpha" style="--band:var(--violet)">
+    <summary>What does alpha mean?</summary>
+    <div class="a"><p>Features, screens and the project file will keep changing between releases, sometimes a lot, and some things will break. The <a href="/changelog">changelog</a> says what changed; tell us what broke on <a href="https://github.com/hoihu/4k7/issues">GitHub</a>.</p></div>
+  </details>
+
+  <h2>Your work</h2>
+  <details id="files" style="--band:var(--red)">
+    <summary>Where are my projects, and can I leave?</summary>
+    <div class="a">
+      <p>Every project is a plain file on your computer, saved as you work. The outputs open anywhere: Gerber, drill, BOM and pick-and-place for the board, STEP for the 3D model, and 3MF or STL for the enclosure, plus the OpenSCAD script it came from.</p>
+      <p>Your API keys stay in your browser. Nothing is hosted: there is no 4k7 server that holds your designs.</p>
+    </div>
+  </details>
+  <details id="datasheets" style="--band:var(--red)">
+    <summary>How does it know a part?</summary>
+    <div class="a"><p>From the manufacturer's datasheet. The agent reads the PDF, and you get the symbol, the land pattern and the pin functions. It designs from the datasheet's typical application and design procedure, and says which page each choice came from.</p></div>
+  </details>
+  <details id="review" style="--band:var(--red)">
+    <summary>Can I trust what the agent does?</summary>
+    <div class="a"><p>It works step by step and you review every change before it is kept. The drawings are checked on every change, and the enclosure is checked against the board and every plug. It is still an AI and alpha software: look at the result before you order anything.</p></div>
+  </details>
+
+  <h2>Ordering</h2>
+  <details id="houses" style="--band:var(--gold)">
+    <summary>Which board houses does it know?</summary>
+    <div class="a">
+      <p>JLCPCB, PCBWay and Eurocircuits. 4k7 checks live stock for the number of boards you want, prices the assembly with every fee, and offers parts that are in stock or cheaper, a click away. The files for the board house come from the same project.</p>
+    </div>
+  </details>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div><span class="bands-mini"><i style="background:var(--yellow)"></i><i style="background:var(--violet)"></i><i style="background:var(--red)"></i><i style="background:var(--gold)"></i></span>4k7 · MIT licensed</div>
+    <div><a href="/">Home</a><a href="https://github.com/hoihu/4k7">GitHub</a><a href="https://github.com/hoihu/4k7/releases">Releases</a><a href="/changelog">Changelog</a></div>
+  </div>
+</footer>
+
+<script>
+  // a link to #alpha (or any question) opens it
+  function open_() {
+    var d = location.hash && document.getElementById(location.hash.slice(1));
+    if (d && d.tagName === 'DETAILS') { d.open = true; d.scrollIntoView(); }
+  }
+  window.addEventListener('hashchange', open_); open_();
+</script>
+</body>
+</html>
