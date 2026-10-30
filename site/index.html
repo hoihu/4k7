@@ -157,6 +157,7 @@
     <a class="dl dl-main" href="https://github.com/hoihu/4k7/releases/latest/download/4k7-macos-arm64.dmg" data-os="mac-arm64">Download for Mac <small>Apple silicon</small></a>
     <span class="others">also:
       <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-macos-x64.dmg" data-os="mac-x64">Mac (Intel)</a> ·
+      <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-windows-x64.zip" data-os="windows-x64">Windows (x64)</a> ·
       <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-linux-x64.tar.gz" data-os="linux-x64">Linux (x64)</a> ·
       <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-linux-arm64.tar.gz" data-os="linux-arm64">Linux (arm64)</a> ·
       <a href="https://github.com/hoihu/4k7">source</a>
@@ -240,7 +241,7 @@
   // the main button offers the file for this computer (Apple silicon Macs cannot be told from Intel ones by the browser; the default stands)
   (function () {
     var ua = navigator.userAgent;
-    var os = /Linux/.test(ua) && !/Android/.test(ua) ? (/aarch64|arm64/.test(ua) ? 'linux-arm64' : 'linux-x64') : /Mac/.test(ua) ? 'mac-arm64' : null;
+    var os = /Windows/.test(ua) ? 'windows-x64' : /Linux/.test(ua) && !/Android/.test(ua) ? (/aarch64|arm64/.test(ua) ? 'linux-arm64' : 'linux-x64') : /Mac/.test(ua) ? 'mac-arm64' : null;
     if (!os) return;
     document.querySelectorAll('.install').forEach(function (box) {
       var main = box.querySelector('.dl-main'), pick = box.querySelector('.others a[data-os="' + os + '"]');

@@ -22,9 +22,10 @@ geometry and checks every change.
 
 ## Running it
 
-Download it from [4k7.dev](https://4k7.dev/#download): a `4k7.app` for the Mac (Apple silicon or Intel) or a folder for Linux,
-with Node inside, so nothing else is needed. Opening it opens the app in your browser; closing the tab stops it. The Mac app is
-not signed yet, so the first time macOS asks you to allow it under System Settings → Privacy & Security → Open Anyway.
+Download it from [4k7.dev](https://4k7.dev/#download): a `4k7.app` for the Mac (Apple silicon or Intel) or a folder for Windows (x64)
+or Linux, with Node inside, so nothing else is needed. Opening it opens the app in your browser; closing the tab stops it. It is
+not signed yet, so the first time macOS asks you to allow it under System Settings → Privacy & Security → Open Anyway, and Windows
+may warn that it protected your PC: More info → Run anyway.
 
 Or with Node 22.18+ and npm, straight from this repository:
 
