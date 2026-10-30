@@ -86,7 +86,7 @@ engrave(face, at, shape, depth = 0.6), emboss(face, at, shape, height = 0.6)
 A part's solids are its body (boxes, cylinders) plus one box round its leads above the board and
 one round those below; parts without a 3D body (`body3dFor` fails) are their footprint's body
 outline at the package height, marked `approx`. The agent reads all of it except the solids
-(`design_query get_enclosure`, `boardScadSummary`).
+(`design_query get_enclosure`, `enclosureApiSummary`).
 
 **Where connectors face** was the one fact the board did not have. `PackageInfo.mating` gives the
 footprint face a plug comes in through (`left`, `right`, `top`, `bottom` of the drawing, or `up`:
@@ -106,9 +106,9 @@ Port names, a product name and a logo on the box (2026-10-17). Text is the scrip
 box needs no new kind of geometry. What the agent needs is a way to get it on the right face the
 right way round, and a way to get the user's logo into a script that may not read files.
 
-- **Faces.** `on_face(face, at)` maps 2D x, y onto a face of the box: x to the reader's right, y
+- **Faces.** `on_face(face, at, solid)` lays a solid on a face of the box: x to the reader's right, y
   up, z out. The faces are named like a connector's plugged-from (`left`, `right`, `top`,
-  `bottom`, `above`, `below`), so a port's name goes on `part_info(ref)[6][0]`. `engrave` and
+  `bottom`, `above`, `below`), so a port's name goes on `part_info(ref).mating.facing`. `engrave` and
   `emboss` extrude along it, so the agent never writes a rotation for a label.
 - **Graphics.** A script reads nothing from outside (§8). A logo is copied into the design instead
   (`design_edit set_enclosure_graphic`: a saved artwork by name, or an SVG path the agent writes for
@@ -158,8 +158,8 @@ script.
 
 ## 5. Render, look, measure, rewrite
 
-`set_enclosure_script` stores the script (`Design.enclosure.script`, text, its pieces named by a
-`piece` variable: `piece = "base"` renders the base). `render_enclosure` renders it and answers with
+`set_enclosure_script` stores the script (`Design.enclosure.script`, text: one function per piece,
+named by `const pieces = ['base', 'lid'];`). `render_enclosure` renders it and answers with
 pictures and a report.
 
 ### 5.1 Rendering
@@ -207,8 +207,8 @@ a piece.
 
 ### 5.3 The pictures
 
-The app loads the STL into the 3D view with the board (`Board3DView`'s scene) and renders, for the
-agent:
+The app loads the pieces' triangles into the 3D view with the board (`Board3DView`'s scene) and
+renders, for the agent:
 
 - two angled views (front-left-top and back-right-top),
 - the box opened: the lid lifted by its height plus 10 mm,
@@ -216,7 +216,7 @@ agent:
   (three.js clipping planes), which shows a plug's path, the wall's thickness and the fit,
 - the base from above without the lid, which shows posts, ribs and the board on them.
 
-`views` picks a subset; `section` cuts anywhere (`{ axis: "x", at: 21 }`). Collisions are drawn
+`views` picks a subset; `section` cuts anywhere (`{ axis: "x", at_mm: 21 }`). Collisions are drawn
 red in the pictures, blocked paths orange, printing warnings (overhangs, bridges, thin walls) amber.
 
 ### 5.4 The loop
@@ -294,8 +294,8 @@ Each step is useful alone.
   what connects and what stores (`fetch`, `XMLHttpRequest`, `WebSocket`, `indexedDB`, `Worker` …), so
   the connections the policy allows are closed too, and its address is a blob's, without the
   access key. The engine and the font come from the page. The static checks (`scriptProblems`) only
-  say early what would not work, and are not part of the boundary. What is left: a script can burn a
-  minute of a core and the worker's memory, and then it is stopped; and it can lie about its own
+  say early what would not work, and are not part of the boundary. What is left: a script can burn
+  45 s of a core and the worker's memory, and then it is stopped; and it can lie about its own
   report, since it runs in the same worker as the checks. What comes back is read as data and goes
   to the view and the agent as text and triangles, and the agent reads the script anyway.
 - **Images per turn.** Five or six pictures per render, up to eight renders: about 40 images in a
