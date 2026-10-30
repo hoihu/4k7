@@ -5,4 +5,5 @@ export * from './panel.ts';
 export * from './step.ts';
 export * from './scad.ts';
 export * from './enclosure.ts';
+export * from './enclosure-api.ts';
 export * from './print.ts';

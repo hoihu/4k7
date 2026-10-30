@@ -1,6 +1,6 @@
 /**
  * The Enclosure view's cut: a plane the user moves through the box to see inside it, across x, y
- * or z (it starts in the middle). board.scad coordinates: x right and y up from the board's
+ * or z (it starts in the middle). board coordinates: x right and y up from the board's
  * bottom-left corner, z up from its underside. No three.js here: the toolbar uses it.
  */
 import type { EnclosureFacts, EnclosurePiece } from '@4k7/fab';
@@ -68,7 +68,7 @@ export function firstCut(box: Box): Axis {
 
 /**
  * A new cut across an axis, through the middle of the box; the half towards `eye` (the camera,
- * board.scad) cut away, so its cut faces are what the camera sees.
+ * board coordinates) cut away, so its cut faces are what the camera sees.
  */
 export function newSection(by: Axis, box: Box, eye?: V3 | null): Section {
   const normal = AXES.map((a) => (a === by ? 1 : 0)) as V3;

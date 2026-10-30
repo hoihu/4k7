@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync } from 'node:fs';
 import { Kernel } from '@4k7/kernel';
 import { scriptPrintRotations, type EnclosureBrief } from '@4k7/schema';
-import { bounds, enclosureJob, enclosureReport, orient, parseStl, plate, printFiles, printIssues, thinWalls, threeMf, warpLimit, warping, writeStl, type Tris } from '../src/index.ts';
-import { OpenScad, openscadCandidates } from '../../../tools/server/src/scad.ts';
+import { bounds, orient, parseStl, plate, printFiles, printIssues, thinWalls, threeMf, warpLimit, warping, writeStl, type Tris } from '../src/index.ts';
+import { render } from './csg-setup.ts';
 import { buckTransaction } from '../../kernel/test/fixtures.ts';
 
 /** A closed prism: a polygon in the x–z plane (counter-clockwise seen from −y), `depth` along y. */
@@ -133,38 +132,31 @@ describe('printing the pieces', () => {
   });
 
   it('reads the print orientation from the script', () => {
-    expect(scriptPrintRotations('pieces = ["base", "lid"];\nprint = [["lid", [180, 0, 0]], ["clip", [0, -90, 45.5]]];')).toEqual({ lid: [180, 0, 0], clip: [0, -90, 45.5] });
-    expect(scriptPrintRotations('// print = [["lid", [180, 0, 0]]];\npieces = ["lid"];')).toEqual({});
+    const s = (print: string) => `const pieces = ['lid', 'clip'];\n${print}\nfunction lid() { return cube(1); }\nfunction clip() { return cube(1); }`;
+    expect(scriptPrintRotations(s("const print = { lid: [180, 0, 0], 'clip': [0, -90, 45.5] };"))).toEqual({ lid: [180, 0, 0], clip: [0, -90, 45.5] });
+    expect(scriptPrintRotations(s('// const print = { lid: [180, 0, 0] };'))).toEqual({});
   });
 
-  const real = openscadCandidates().find((p) => existsSync(p));
-  it.skipIf(!real)('flags the lid\'s ceiling until the script turns it over for printing', async () => {
+  it('flags the lid\'s ceiling until the script turns it over for printing', async () => {
     const k = new Kernel();
     k.transact(buckTransaction());
     k.transact({ summary: 'holes', ops: [{ op: 'add_hole', diameter_mm: 3.2, corner: 'all' }, { op: 'set_mating', ref: 'J1', face: 'left' }] });
     const brief: EnclosureBrief = { items: [{ topic: 'Closure', decision: 'screws' }], openings: ['J1'] };
-    const script = (print: string) => `include <board.scad>
-wall = 2; gap = 0.5; standoff = 3; clearance = 0.3;
-pieces = ["base", "lid"];
-piece = "all";
+    const script = (print: string) => `const wall = 2, gap = 0.5, standoff = 3, clearance = 0.3;
+const pieces = ['base', 'lid'];
 ${print}
-module shell(z0, z1) { translate([0, 0, z0]) linear_extrude(height = z1 - z0) offset(r = wall) pcb_shape(gap); }
-module cavity(z0, z1) { translate([0, 0, z0]) linear_extrude(height = z1 - z0) pcb_shape(gap); }
-module base() { difference() { union() { difference() { shell(-standoff - 2, pcb_thickness + 2); cavity(-standoff, 20); } hole_posts(-standoff); } for (r = brief_openings) mating_path(r, grow = clearance); } }
-module lid() { difference() { shell(pcb_thickness + 2, tallest_top + 3); cavity(0, tallest_top + 1); for (r = brief_openings) mating_path(r, grow = clearance); } }
-if (piece == "base" || piece == "all") base();
-if (piece == "lid" || piece == "all") lid();
+const shell = (z0, z1) => translate([0, 0, z0], linear_extrude(offset(pcb_shape(gap), { r: wall }), { height: z1 - z0 }));
+const cavity = (z0, z1) => translate([0, 0, z0], linear_extrude(pcb_shape(gap), { height: z1 - z0 }));
+const openings = () => brief_openings.map((r) => mating_path(r, { grow: clearance }));
+function base() { return difference(union(difference(shell(-standoff - 2, pcb_thickness + 2), cavity(-standoff, 20)), hole_posts(-standoff)), openings()); }
+function lid() { return difference(shell(pcb_thickness + 2, tallest_top + 3), cavity(0, tallest_top + 1), openings()); }
 `;
-    const scad = new OpenScad({ bin: real!, save: () => {} });
-    const run = async (s: string) => {
-      const job = enclosureJob(k.boardPlacement(), 'buck', s, brief);
-      return enclosureReport(job, await scad.render(job), s);
-    };
-    const asBuilt = await run(script(''));
+    const b = k.boardPlacement();
+    const asBuilt = await render(b, script(''), brief);
     const bridge = asBuilt.findings.find((f) => f.code === 'ENC.BRIDGE');
     expect(bridge?.message).toMatch(/^lid, printed as built/);
     expect(asBuilt.findings.filter((f) => f.severity === 'error')).toEqual([]);
-    const turned = await run(script('print = [["lid", [180, 0, 0]]];'));
+    const turned = await render(b, script('const print = { lid: [180, 0, 0] };'), brief);
     expect(turned.findings.filter((f) => f.code === 'ENC.BRIDGE' || f.code === 'ENC.OVERHANG')).toEqual([]);
     const files = printFiles(turned, 'buck');
     expect(files.stl.map((f) => f.name)).toEqual(['base', 'lid']);
@@ -172,5 +164,5 @@ if (piece == "lid" || piece == "all") lid();
     const lid = parseStl(files.stl[1]!.data);
     expect(bounds(lid).min[2]).toBeCloseTo(0, 4);
     expect(new TextDecoder().decode(files.plate)).toContain('name="lid"');
-  }, 60_000);
+  });
 });

@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Kernel } from '@4k7/kernel';
 import { boardFacing, type EditOp } from '@4k7/schema';
-import { boardScad, boardScadSummary, enclosureFacts } from '../src/index.ts';
+import { boardScad, boardScadSummary, enclosureFacts, parseStl, bounds } from '../src/index.ts';
+import { createApi } from '../src/csg/api.ts';
+import { createBoardLib } from '../src/csg/board.ts';
+import { textMaker } from '../src/csg/text.ts';
+import { csg } from './csg-setup.ts';
 import { buckTransaction } from '../../kernel/test/fixtures.ts';
 
 function kernel(ops: EditOp[] = []) {
@@ -15,7 +19,7 @@ function kernel(ops: EditOp[] = []) {
   return k;
 }
 
-/** OpenSCAD on this computer, if there is one (the render tests are skipped without it). */
+/** OpenSCAD on this computer, if there is one (board.scad is a download for people who have it; these tests are skipped without it). */
 function openscad(): string | null {
   for (const bin of [process.env.FOURK7_OPENSCAD_BIN, '/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD', '/usr/bin/openscad', '/usr/local/bin/openscad', '/opt/homebrew/bin/openscad']) {
     if (bin && existsSync(bin)) return bin;
@@ -148,4 +152,39 @@ describe('board.scad', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(!bin)('says the same as the script\'s library: the same board in both engines', async () => {
+    const k = kernel([{ op: 'set_mating', ref: 'J1', face: 'left' }]);
+    const b = k.boardPlacement();
+    const brief = { items: [{ topic: 'x', decision: 'y' }], openings: ['J1'] };
+    const dir = mkdtempSync(join(tmpdir(), 'scad-'));
+    try {
+      writeFileSync(join(dir, 'board.scad'), boardScad(b, 'buck', brief).content);
+      const { w, font } = await csg();
+      const api = createApi(w, textMaker(font), []);
+      const lib = createBoardLib(w, api, enclosureFacts(b), brief);
+      const cases: [string, () => { boundingBox(): { min: number[]; max: number[] } }][] = [
+        ['pcb();', () => lib.pcb()],
+        ['parts();', () => lib.parts()],
+        ['mating_path("J1", grow = 0.3);', () => lib.mating_path('J1', { grow: 0.3 })],
+        ['hole_posts(-3);', () => lib.hole_posts(-3)],
+        ['linear_extrude(height = 2) pcb_shape(2);', () => api.linear_extrude(lib.pcb_shape(2), { height: 2 })],
+        ['emboss("left", [1, 2, 3], 1) square([4, 2]);', () => lib.emboss('left', [1, 2, 3], api.square([4, 2]), 1)],
+      ];
+      for (const [i, [code, js]] of cases.entries()) {
+        writeFileSync(join(dir, `c${i}.scad`), `include <board.scad>\n${code}\n`);
+        const stl = join(dir, `c${i}.stl`);
+        const r = spawnSync(bin!, ['--backend=manifold', '-o', stl, '--export-format', 'binstl', join(dir, `c${i}.scad`)], { encoding: 'utf8', timeout: 60_000 });
+        expect(r.status, r.stderr).toBe(0);
+        const theirs = bounds(parseStl(new Uint8Array(readFileSync(stl))));
+        const ours = js().boundingBox();
+        for (const a of [0, 1, 2]) {
+          expect(ours.min[a]!, `${code} min ${a}`).toBeCloseTo(theirs.min[a]!, 2);
+          expect(ours.max[a]!, `${code} max ${a}`).toBeCloseTo(theirs.max[a]!, 2);
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

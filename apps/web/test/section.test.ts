@@ -4,7 +4,7 @@ import { contentBox, extent, firstCut, liftStep, newSection, sectionLabel, secti
 
 type V3 = [number, number, number];
 const facts = (w: number, h: number, parts: EnclosureFacts['parts'] = []): EnclosureFacts => ({ thickness: 1.6, size: [w, h], outline: [], cutouts: [], holes: [], tallestTop: 8, lowestBottom: -2, parts });
-const piece = (name: string, min: V3, max: V3) => ({ name, stl: '', bbox: { min, max } }) as EnclosurePiece;
+const piece = (name: string, min: V3, max: V3) => ({ name, tris: new Float32Array(), bbox: { min, max } }) as EnclosurePiece;
 /** A USB socket on the left edge, a millimetre over it. */
 const usb = { ref: 'J2', kind: 'connector', min: [-1, 20, 1.6] as V3, max: [8, 29, 5] as V3, side: 'top' as const, approx: false };
 

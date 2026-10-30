@@ -552,7 +552,7 @@ export class Kernel {
         const p = cardOf(d, q.id);
         return p ?? { error: `No part ${q.id}`, candidates: searchParts(q.id).slice(0, 5).map((x) => x.id) };
       }
-      // the app answers these with board.scad, OpenSCAD and the guide; the kernel alone knows the design's part
+      // the app answers these with the board's facts and the guide; the kernel alone knows the design's part
       case 'get_enclosure':
         return { brief: d.enclosure?.brief ?? null, script: d.enclosure?.script ?? null, graphics: enclosureGraphicsInfo(d.enclosure?.graphics) };
       case 'get_guide':

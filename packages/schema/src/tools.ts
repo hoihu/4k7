@@ -173,7 +173,7 @@ export const RenderEnclosureInput = z.object({
   section: z
     .object({ axis: z.enum(['x', 'y', 'z']), at_mm: z.number() })
     .optional()
-    .describe('One more cut anywhere: the plane x, y or z = at_mm (board.scad coordinates), seen from the side it faces'),
+    .describe('One more cut anywhere: the plane x, y or z = at_mm (board coordinates), seen from the side it faces'),
   width: z.number().int().min(400).max(1600).default(900).describe('Width of each picture in pixels'),
 });
 export type RenderEnclosureInput = z.infer<typeof RenderEnclosureInput>;
@@ -381,8 +381,8 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
     {
       name: TOOL_NAMES.renderEnclosure,
       description:
-        "Render the enclosure script (the working copy's, set with design_edit set_enclosure_script) with the user's OpenSCAD, in 3D with the board: " +
-        'the report (OpenSCAD\'s errors with line numbers, and what the checks measured: collisions with named parts, blocked openings, ' +
+        "Render the enclosure script (the working copy's, set with design_edit set_enclosure_script), in 3D with the board: " +
+        'the report (the script\'s errors with line numbers, what it said with echo, and what the checks measured: collisions with named parts, blocked openings, ' +
         'room under the lid, the board held, pieces overlapping, the size) and pictures (faces: straight at the faces with labels or logos). Fix what the report says first, then what the pictures show; render again after every change.',
       input_schema: schemaOf(RenderEnclosureInput),
     },

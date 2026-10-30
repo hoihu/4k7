@@ -7,18 +7,16 @@
  * corner, z up, the board's underside at z = 0 (its top at pcb_thickness).
  */
 import { boardBodies, type Body3D } from '@4k7/parts';
-import { boardFacing, boardPolygon, cutoutPolygon, matingOf, type BoardFacing, type BoardPart, type BoardView, type EnclosureBrief, type EnclosureGraphic, type Mating } from '@4k7/schema';
+import { boardFacing, boardPolygon, cutoutPolygon, FACE_FRAMES, MATING_PATH_LENGTH as PATH_LENGTH, matingOf, type BoardFacing, type BoardPart, type BoardView, type EnclosureBrief, type EnclosureGraphic, type Mating } from '@4k7/schema';
 import type { FabFile } from './gerber.ts';
 
 /** Board thickness and copper (as the 3D view and the STEP export: parts sit on the copper). */
 export const PCB_THICKNESS = 1.6;
 const CU = 0.035;
-/** How far a mating path reaches out by default (mm). */
-const PATH_LENGTH = 30;
 
 export type V3 = [number, number, number];
 
-/** A part as the enclosure sees it, in board.scad coordinates. */
+/** A part as the enclosure sees it, in board coordinates. */
 export interface ScadPart {
   ref: string;
   /** Its card's category ("connector", "ic" …), or "part". */
@@ -83,21 +81,22 @@ function frame(part: BoardPart, boardH: number) {
     const p = [X[0] * x - Y[0] * y + Z[0] * z, X[1] * x - Y[1] * y + Z[1] * z, X[2] * x - Y[2] * y + Z[2] * z] as V3;
     return p.map((v) => Math.round(v * 1e9) / 1e9 || 0) as V3;
   };
-  // OpenSCAD's multmatrix for body coordinates with y already flipped (y up): columns X, Y, Z, O
-  const matrix = `[[${n(X[0])}, ${n(Y[0])}, ${n(Z[0])}, ${n(O[0])}], [${n(X[1])}, ${n(Y[1])}, ${n(Z[1])}, ${n(O[1])}], [${n(X[2])}, ${n(Y[2])}, ${n(Z[2])}, ${n(O[2])}], [0, 0, 0, 1]]`;
-  return { point, dir, matrix };
+  // the matrix for body coordinates with y already flipped (y up): columns X, Y, Z, O
+  const rows = [0, 1, 2].map((i) => [r3(X[i]!), r3(Y[i]!), r3(Z[i]!), r3(O[i]!)]);
+  const matrix = `[${[...rows, [0, 0, 0, 1]].map(vec).join(', ')}]`;
+  return { point, dir, rows, matrix };
 }
 
 /** Local solids of a body for the enclosure: the body itself, leads above the board as one box, leads below as one. */
-interface Solid {
+export interface PartSolid {
   /** Box (y down, body coordinates). */
   box?: { min: V3; max: V3 };
   /** Upright cylinder, or lying along x. */
   cyl?: { x: number; y: number; z0: number; z1: number; r: number; lying?: number };
 }
 
-function bodySolids(body: Body3D): Solid[] {
-  const out: Solid[] = [];
+function bodySolids(body: Body3D): PartSolid[] {
+  const out: PartSolid[] = [];
   const above: { min: V3; max: V3 }[] = [];
   const below: { min: V3; max: V3 }[] = [];
   const lead = (min: V3, max: V3) => {
@@ -128,7 +127,7 @@ function bodySolids(body: Body3D): Solid[] {
 }
 
 /** The solids of a part without a 3D body: its body outline (footprint, axis-aligned on the board) at the package height. */
-function fallbackSolids(part: BoardPart): Solid[] {
+function fallbackSolids(part: BoardPart): PartSolid[] {
   const swapped = part.rot % 180 !== 0;
   const w = swapped ? part.body.h : part.body.w;
   const h = swapped ? part.body.w : part.body.h;
@@ -136,7 +135,7 @@ function fallbackSolids(part: BoardPart): Solid[] {
 }
 
 /** Bounding box of solids in their own (body) coordinates; `above`: only what is above the board. */
-function localBounds(solids: Solid[], above = false): { min: V3; max: V3 } | null {
+function localBounds(solids: PartSolid[], above = false): { min: V3; max: V3 } | null {
   const min: V3 = [Infinity, Infinity, Infinity];
   const max: V3 = [-Infinity, -Infinity, -Infinity];
   for (const s of solids) {
@@ -192,8 +191,11 @@ function matingPath(m: Mating, part: BoardPart, local: { min: V3; max: V3 }, f: 
 
 const isHole = (p: BoardPart) => p.componentId.startsWith('hole:');
 
-/** The board's facts for the enclosure (board.scad's data, get_enclosure). */
-export function enclosureFacts(b: BoardView): EnclosureFacts & { solids: Map<string, { matrix: string; solids: Solid[] }> } {
+/** Each part's solids and where they go: rows (3 × 4) take body coordinates with y flipped to the board's. */
+export type PartSolids = Map<string, { matrix: string; rows: number[][]; solids: PartSolid[] }>;
+
+/** The board's facts for the enclosure (the script's library, board.scad, get_enclosure). */
+export function enclosureFacts(b: BoardView): EnclosureFacts & { solids: PartSolids } {
   const H = b.outline.h;
   const flip = (poly: number[]): [number, number][] => {
     const pts: [number, number][] = [];
@@ -202,7 +204,7 @@ export function enclosureFacts(b: BoardView): EnclosureFacts & { solids: Map<str
   };
   const bodies = boardBodies(b);
   const parts: ScadPart[] = [];
-  const solids = new Map<string, { matrix: string; solids: Solid[] }>();
+  const solids: PartSolids = new Map();
   let top = PCB_THICKNESS;
   let bottom = 0;
   for (const part of b.parts) {
@@ -229,7 +231,7 @@ export function enclosureFacts(b: BoardView): EnclosureFacts & { solids: Map<str
       approx: !body,
       ...(m ? { mating: matingPath(m, part, above, f) } : {}),
     });
-    solids.set(part.refdes, { matrix: f.matrix, solids: local });
+    solids.set(part.refdes, { matrix: f.matrix, rows: f.rows, solids: local });
   }
   return {
     thickness: PCB_THICKNESS,
@@ -245,7 +247,7 @@ export function enclosureFacts(b: BoardView): EnclosureFacts & { solids: Map<str
 }
 
 /** One solid in OpenSCAD, body coordinates with y flipped (inside the part's multmatrix). */
-function solidScad(s: Solid): string {
+function solidScad(s: PartSolid): string {
   if (s.box) {
     const { min, max } = s.box;
     return `translate(${vec([min[0], -max[1], min[2]])}) cube(${vec([max[0] - min[0], max[1] - min[1], max[2] - min[2]])});`;
@@ -255,18 +257,6 @@ function solidScad(s: Solid): string {
   return `translate(${vec([c.x, -c.y, c.z0])}) cylinder(h = ${n(c.z1 - c.z0)}, r = ${n(c.r)});`;
 }
 
-/**
- * The faces labels go on, each as [the reader's right, up, out of the box] (board.scad: x right,
- * y up, z up). Read from outside, upright; the floor is read with the box tipped towards you.
- */
-const FACE_FRAMES: Record<BoardFacing, [V3, V3, V3]> = {
-  left: [[0, -1, 0], [0, 0, 1], [-1, 0, 0]],
-  right: [[0, 1, 0], [0, 0, 1], [1, 0, 0]],
-  top: [[-1, 0, 0], [0, 0, 1], [0, 1, 0]],
-  bottom: [[1, 0, 0], [0, 0, 1], [0, -1, 0]],
-  above: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-  below: [[1, 0, 0], [0, -1, 0], [0, 0, -1]],
-};
 const vec3s = (f: readonly V3[]) => `[${f.map(vec).join(', ')}]`;
 
 /** A graphic's figures in OpenSCAD (y up): one even-odd polygon, or each figure's outline as a band `line` wide. */

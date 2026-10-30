@@ -2,12 +2,12 @@
   import type { EnclosureScene, EnclosureViewer, SceneOptions, ViewerSection } from '../enclosure3d.ts';
 
   /**
-   * The enclosure in 3D: the board with the pieces OpenSCAD rendered (three.js, loaded when first
+   * The enclosure in 3D: the board with the pieces the script made (three.js, loaded when first
    * shown). `cut`: a section, with a frame round it the user drags to move it (`onmove`: to where).
    */
   let { scene, options, cut = null, onmove }: { scene: EnclosureScene; options: SceneOptions; cut?: ViewerSection | null; onmove?: (at: number) => void } = $props();
 
-  /** Where the camera is (board.scad): a new cut takes away the half it looks from. */
+  /** Where the camera is (board coordinates): a new cut takes away the half it looks from. */
   export function eye(): [number, number, number] | null {
     return viewer?.eye() ?? null;
   }

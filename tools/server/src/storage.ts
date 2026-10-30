@@ -5,7 +5,7 @@
  *   default), written as the design changes. The file's name is the project's id.
  * - Imported parts and artwork: one JSON file per record in ~/.4k7/library and ~/.4k7/artwork.
  * - Datasheets: ~/.4k7/datasheets/<sha256>.pdf with the file's original name (and link) next to it.
- * - Not files: the assembly houses' parts catalogues (/api/sourcing, see sourcing.ts), and OpenSCAD (/api/scad).
+ * - Not files: the assembly houses' parts catalogues (/api/sourcing, see sourcing.ts).
  *
  * Every request needs the access key (`authorization: Bearer <key>`). Requests from a page carry
  * its origin, which must be one of the app's (the server's own pages, the dev server); a website
@@ -18,9 +18,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { secretsMatch } from './mcp.ts';
-import type { ScadJob } from '@4k7/schema';
 import type { HttpHandler } from './server.ts';
-import type { OpenScad } from './scad.ts';
 import { download as fetchPdf, isPdf, MAX_PDF_BYTES, pdfName } from './download.ts';
 import { partQuery, quoteRequest, type Sourcing } from './sourcing.ts';
 
@@ -43,8 +41,6 @@ export interface StorageOptions {
   allowedOrigin: (origin: string) => boolean;
   /** Show a folder in the file manager. */
   reveal?: (dir: string) => void;
-  /** OpenSCAD for the enclosure (/api/scad). */
-  scad?: OpenScad;
   /** Parts catalogues of assembly houses (/api/sourcing). */
   sourcing?: Sourcing;
   log?: (msg: string) => void;
@@ -198,16 +194,6 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
         return res.writeHead(204).end();
       }
 
-      if (kind === 'scad' && opts.scad) {
-        const scad = opts.scad;
-        if (id === undefined && m === 'GET') return json(200, url.searchParams.has('again') ? scad.detect() : scad.status);
-        if (id === 'render' && m === 'POST') return json(200, await scad.render(JSON.parse((await readBody(req)).toString('utf8')) as ScadJob));
-        if (id === 'bin' && m === 'POST') {
-          const { bin } = JSON.parse((await readBody(req)).toString('utf8')) as { bin?: string | null };
-          return json(200, scad.setBin(bin ?? null));
-        }
-        return res.writeHead(405).end();
-      }
 
       // a house's parts catalogue: POST sourcing/<house>/search (a PartQuery), GET sourcing/<house>/part/<number>;
       // its assembly quote: POST sourcing/<house>/quote (a QuoteOrder); a part's land: GET sourcing/<house>/footprint/<number>

@@ -83,7 +83,7 @@ export interface AreaViewInfo {
   partly: string[];
 }
 
-/** The Enclosure view with the box cut open: the plane the user looks at (board.scad, mm). */
+/** The Enclosure view with the box cut open: the plane the user looks at (board coordinates, mm). */
 export interface EnclosureViewInfo {
   view: 'enclosure';
   /** The plane is across this axis, at `at_mm` along it. */

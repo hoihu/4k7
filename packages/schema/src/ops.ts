@@ -172,7 +172,7 @@ export const SetMatingOp = z.object({
   plug_mm: Mating.shape.plug_mm,
   axis_mm: Mating.shape.axis_mm,
   along_mm: Mating.shape.along_mm,
-}).describe('Where a connector, card slot or switch is used from: the face the plug comes in through and the size of the plug (its overmold), read off the datasheet. The enclosure leaves that way clear (board.scad mating_path), get_board shows which way it faces on the board.');
+}).describe('Where a connector, card slot or switch is used from: the face the plug comes in through and the size of the plug (its overmold), read off the datasheet. The enclosure leaves that way clear (mating_path in its script), get_board shows which way it faces on the board.');
 
 export const SetEnclosureBriefOp = z.object({
   op: z.literal('set_enclosure_brief'),
@@ -185,16 +185,16 @@ export const SetEnclosureScriptOp = z.object({
     .string()
     .min(20)
     .nullable()
-    .describe('The whole OpenSCAD script (replaces the one before): include <board.scad>, parameters at the top, pieces = ["base", "lid"]; one module per piece, built in assembled position, piece = "all"; and the pieces drawn at the end by piece. null removes it'),
-}).describe('The enclosure as an OpenSCAD script. Render it with render_enclosure (pictures and the measured report) after every change.');
+    .describe("The whole script (replaces the one before), JavaScript against get_enclosure's board_api: parameters at the top, const pieces = ['base', 'lid']; and one function per piece, returning a solid built in assembled position. A syntax error is refused here, with its line. null removes it"),
+}).describe('The enclosure as a script. Render it with render_enclosure (pictures and the measured report) after every change.');
 
 export const SetEnclosureGraphicOp = z.object({
   op: z.literal('set_enclosure_graphic'),
-  name: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/, 'letters, digits, - and _, starting with a letter').describe('What the script calls it: graphic("logo"). Setting a name again replaces that graphic'),
+  name: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/, 'letters, digits, - and _, starting with a letter').describe("What the script calls it: graphic('logo'). Setting a name again replaces that graphic"),
   artwork: z.string().optional().describe('A saved artwork by name (the artwork library: the user\'s logos, imported SVGs, traced pictures). List it with the artwork tool'),
   svg_path: z.string().min(1).optional().describe('Or SVG path data you write (an icon: a USB trident, a power symbol, an arrow; any units, M L H V C S Q T A Z), filled even-odd: figures inside figures are holes'),
   remove: z.boolean().optional().describe('true: remove the graphic of this name'),
-}).describe('A graphic for the box (a logo, an icon), kept in the design: board.scad draws it as graphic(name, width, height), 2D and centred, to emboss, engrave or inlay on a face like a label. Text needs no graphic: label("USB").');
+}).describe("A graphic for the box (a logo, an icon), kept in the design: the script draws it as graphic(name, { width, height }), 2D and centred, to emboss, engrave or inlay on a face like a label. Text needs no graphic: label('USB').");
 
 const pkgName = z.string().nullable().optional();
 export const SetPackageDefaultsOp = z.object({
@@ -864,7 +864,7 @@ export const QueryOp = z.discriminatedUnion('op', [
     text: z.string().describe('Search text: function, MPN, category ("buck", "capacitor", "555")'),
   }),
   z.object({ op: z.literal('get_part'), id: z.string() }),
-  z.object({ op: z.literal('get_enclosure') }).describe('The enclosure: the brief, the script, the board as an OpenSCAD library (board.scad: its variables and modules, the parts with where they are and which way they are plugged), OpenSCAD on this computer, the last render\'s report'),
+  z.object({ op: z.literal('get_enclosure') }).describe("The enclosure: the brief, the script, board_api (the board as the script finds it: its variables and functions, the parts with where they are and which way they are plugged, and the geometry the script can call), the last render's report"),
   z.object({ op: z.literal('get_guide'), topic: z.enum(['mechanics', 'cost', 'high_speed', 'schematic']) }).describe('A guide: schematic = how to arrange a schematic that reads well (functional blocks, their order and place on the pages, what goes inside a block, wire or label), read before you arrange or tidy a sheet; cost = how to make a design cheaper to make (what costs money at the assembly house, how far each kind of part may move its value, series and parallel pairs, the board), read before optimising cost; mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script), read before the first brief; high_speed = how to lay out lines at a set impedance (fast interfaces such as USB, Ethernet, HDMI, LVDS, and RF lines to antennas and connectors): which lines need it, the stack-up, widths and gaps, planes and return paths, pairs, vias, antennas. Read it before routing such lines'),
 ]);
 export type QueryOp = z.infer<typeof QueryOp>;

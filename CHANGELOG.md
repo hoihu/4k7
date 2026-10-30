@@ -31,6 +31,13 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 - **Fix a drawing by hand**: drag a symbol to move it (on the grid, its wires drawn again; what cannot be wired shows as labels), drag a net label round its pin, press **R** to turn a selected two-pin part or **F** to mirror an IC or connector, and **Delete** to take a clicked wire or label (or the selected parts, after asking) away. No new tools or buttons: each gesture is one of the agent's own operations, one undo step, and a part you placed stays where you put it when the agent redraws.
 
+### Enclosure
+
+- **Nothing to install**: the box no longer needs OpenSCAD. The agent writes it as a script that the app runs itself, in a sandbox of its own, on Manifold (the geometry engine of OpenSCAD 2025). A small box renders and is checked in a fraction of a second.
+- **Round boxes, lights and lenses**: `round_extrude` rounds any outline before the cavity is cut, `dome` and `lens` make lights and lenses, and `sdf` with `smooth_union` makes forms with no straight edge.
+- **What the agent is told**: a syntax error is refused when the script is set, every error gives its line, `echo` prints measures to the report, and a new warning (`ENC.NEAR`) finds a wall under 0.2 mm from a part. Mistakes that used to pass in silence stop the render, such as a helper that forgot its `return`.
+- **Boxes saved before this** keep their OpenSCAD script as text, and the render says it needs rewriting: ask the agent to do it. Label capitals are now exactly the size asked (they came about 4.5 % small). The Enclosure view downloads the script as `.js`; `board.scad` stays, for a box of your own in OpenSCAD.
+
 ## 0.2.0 — 2026-10-25
 
 The chat runs on the coding agent you already use, projects are files on your computer, and the agent now takes a board from placement to the last routed connection, designs an enclosure for it, checks stock and cost at three assembly houses and lays lines at a set impedance.

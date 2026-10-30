@@ -3,7 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "dependencies": { "@4k7/parts": "0.1.0", "@4k7/schema": "0.1.0" },
-  "devDependencies": { "@4k7/kernel": "0.1.0" }
+  "exports": {
+    ".": "./src/index.ts",
+    "./csg": "./src/csg/index.ts",
+    "./fonts/*": "./fonts/*"
+  },
+  "dependencies": {
+    "@4k7/parts": "0.1.0",
+    "@4k7/schema": "0.1.0",
+    "manifold-3d": "^3.5.4",
+    "opentype.js": "^2.0.0"
+  },
+  "devDependencies": {
+    "@4k7/kernel": "0.1.0"
+  }
 }
