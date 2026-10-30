@@ -104,7 +104,7 @@ describe('the command for Claude Code', () => {
 describe('idle exit', () => {
   it('tells when the first tab connects and when the last one leaves', async () => {
     const events: boolean[] = [];
-    const base = 40000 + Math.floor(Math.random() * 20000);
+    const base = 20000 + Math.floor(Math.random() * 20000);
     const server = new LocalServer({ accessKey: '0cd22f19-30de-4d39-9287-ab0123456789', ports: [base], devPorts: [5173], onTab: (c) => events.push(c) });
     const port = await server.start();
     cleanups.push(() => server.stop());

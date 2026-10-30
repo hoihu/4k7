@@ -97,7 +97,8 @@ export class LocalServer {
         this.#http.on('upgrade', (req, socket, head) => this.#wss!.handleUpgrade(req, socket, head, (ws) => this.#wss!.emit('connection', ws, req)));
         return port;
       } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw e;
+        // taken, or on Windows in a range the system keeps for itself (Hyper-V and WSL reserve whole ranges)
+        if (!['EADDRINUSE', 'EACCES'].includes((e as NodeJS.ErrnoException).code ?? '')) throw e;
       }
     }
     throw new Error(`All server ports are in use (${ports.join(', ')}). Is another Claude Code session already running the server?`);
