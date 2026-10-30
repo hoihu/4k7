@@ -488,6 +488,11 @@ none of them (nor the anchors and the helper mark) when the board goes back to t
   place, keeping the ids. A move shifts the tracks and vias named; the ends of other tracks on a
   moved via go along, a track end on a pad (or on a via that stays) stays and the piece next to it
   stretches.
+- `tune_length { track? | net?, target_mm? | match?, tolerance_mm?, gap_mm?, height_mm?, side?, near? }`
+  (`tune.ts`): a meander of square bumps with 45° corners into a straight stretch of a drawn track,
+  to reach a length or match a pair member or a group (docs/design/impedance.md §6); checked
+  exactly against all other copper before it is put in, refused with where and why where there is
+  no room, and checked at once like the other drawing ops.
 - `erase_copper { ids? | nets? | parts? | rect? | all? }`.
 - `route { nets? | from, to, width_mm?, fresh? }`: the router as a helper. It routes only those
   connections (nothing given: every open one), round the drawn copper, which it never moves; what
@@ -497,9 +502,13 @@ none of them (nor the anchors and the helper mark) when the board goes back to t
   connection, its whole net) and lays it again round the agent's own: for when the helper's copper
   is in the way, or should adapt to a path the agent redrew. A fresh run the user stops changes
   nothing (its best pass so far is no better than what it would take up).
+  Nets with an impedance rule are routed first, as one unit: a pair with a gap as a coupled pair
+  (one search for its centre line, the two tracks drawn either side at the rule's gap, its via
+  transitions together), a single line before the rest, so the plane under it stays whole; the
+  effect names a pair it had to route apart, and why (`RouteResult.lines`, `pairroute.ts`).
 - `design_query get_copper { nets?, rect? }` lists the drawn copper by id (and `by`).
 
-**Checked at once.** What `draw_track`, `draw_via` and `edit_copper` laid, and what a move dragged
+**Checked at once.** What `draw_track`, `draw_pair`, `draw_via`, `edit_copper` and `tune_length` laid, and what a move dragged
 along, is checked when the transaction is applied (`annotateChecks`: the copper DRC, edge, fab
 limits and the soft checks, focused on those ids, on the placement as it is; pours fill round the
 copper later and never clash). The op's effect ends in `check: clear` or names the findings, so the

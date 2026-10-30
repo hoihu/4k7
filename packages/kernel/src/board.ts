@@ -1299,6 +1299,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     passes: r.passes,
     basis,
     ...(r.reused ? { reused: r.reused } : {}),
+    ...(r.lines?.length ? { lines: r.lines } : {}),
   });
   const copper =
     kept ??
@@ -1358,6 +1359,10 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   routed.parts = marked.parts;
   const name = (id: string) => d.nets[id]?.name ?? id;
   const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY' && x.code !== 'DRC.KEEPOUT'), ...marked.diagnostics, ...keepoutDrc(routed), ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
+  // a pair the router could not keep together: recorded, so it is not silently two lines
+  for (const l of copper.lines ?? []) {
+    if (l.nets.length === 2 && l.why) diags.push({ code: 'IMP.PAIR', severity: 'info', message: `${l.nets.map(name).join('/')} (${l.id}) ${l.coupled ? 'kept together' : 'routed apart (open pair)'}: ${l.why}.`, entities: [l.id] });
+  }
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
@@ -1424,6 +1429,7 @@ export function boardRouteInput(d: Design, b: BoardView, extra: Partial<RouteInp
     netWidths,
     ...(Object.keys(gaps).length ? { pourGaps: gaps } : {}),
     ...(lines.length ? { lines } : {}),
+    ...(b.impedance?.some((v) => v.layers.length) ? { controlled: b.impedance.filter((v) => v.layers.length).map((v) => ({ id: v.id, nets: v.nets, layers: v.layers.map((l) => ({ layer: l.layer, width: l.width, ...(l.gap !== undefined ? { gap: l.gap } : {}) })) })), netNames: b.netNames } : {}),
     planes: planes.map(({ netId, layer, area, style }) => ({ netId, layer, ...(area ? { area } : {}), ...(style ? { style } : {}) })),
     ...(b.viaGroups.length ? { vias: withGaps(planVias(d.board?.vias ?? [], b.parts, b.outline.w, b.outline.h, b.rules, (id) => d.nets[id]?.attrs.maxCurrent), gaps, b.rules.clearance) } : {}),
     cornerRadius: b.cornerRadius,

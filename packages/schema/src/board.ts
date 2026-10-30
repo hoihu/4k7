@@ -129,6 +129,8 @@ export interface RouteHelperResult {
   timedOut?: boolean;
   /** The user stopped it: the best pass by then (nothing before the first one ended). */
   stopped?: boolean;
+  /** The lines at a set impedance routed first, and whether a pair kept together. */
+  lines?: RoutedLine[];
 }
 
 /**
@@ -174,6 +176,21 @@ export interface RouteBlockage {
   plane?: CopperLayer;
 }
 
+/**
+ * What the router did with a line at a set impedance it routes first (docs/design/impedance.md §6):
+ * a pair as one coupled track along a centre line, at the rule's width and gap, or each net alone.
+ */
+export interface RoutedLine {
+  /** The rule (Z1). */
+  id: string;
+  /** The nets (ids), a pair positive first. */
+  nets: string[];
+  /** A pair routed side by side; for a single line, routed before the other nets. */
+  coupled: boolean;
+  /** Why the two nets are routed apart (or the line was not routed first), when they are. */
+  why?: string;
+}
+
 /** A routed board as stored (see BoardSettings.copper). Pads are counted through all parts' pads in board order. */
 export interface StoredCopper {
   /** The placement, rules and net widths it was routed for. */
@@ -200,6 +217,8 @@ export interface StoredCopper {
   basis?: { board: string; nets: Record<string, string> };
   /** Copper taken over from the routing before it (incremental routing), as it lies in this one. */
   reused?: { tracks: number; vias: number };
+  /** The lines at a set impedance routed first, and whether a pair kept together. */
+  lines?: RoutedLine[];
 }
 
 export interface StoredPlacement {
@@ -1169,7 +1188,7 @@ export function boardSummary(b: BoardView, routed = true) {
     // (drawn copper: with code and entities, which add_waiver takes for a soft rule kept on purpose)
     drc: b.diagnostics.filter((x) => !x.waivedBy).map((x) => (b.drawn ? `${x.severity} ${x.code}${x.entities.length ? ` [${x.entities.join(', ')}]` : ''}: ${x.message}` : `${x.severity}: ${x.message}`)),
     missing_footprints: b.missing,
-    ...(b.drawn ? { copper_note: 'Drawn copper: you lay every track and via (draw_track, draw_via, edit_copper, erase_copper; route nets / from, to as a helper). Planes and pours still fill round your copper. Parts move only when moved on purpose; a part moved takes the copper by it along (its pads\' tracks as far as they stay by it, and the vias they end on), the piece beyond stretches: look at the spot after a move.' } : {}),
+    ...(b.drawn ? { copper_note: 'Drawn copper: you lay every track and via (draw_track, draw_pair, draw_via, edit_copper, tune_length, erase_copper; route nets / from, to as a helper). Planes and pours still fill round your copper. Parts move only when moved on purpose; a part moved takes the copper by it along (its pads\' tracks as far as they stay by it, and the vias they end on), the piece beyond stretches: look at the spot after a move.' } : {}),
     note: 'Workflow: decide the main parts\' places and rotations (try_placements compares arrangements, propose_placement parts applies one; the placer puts the small parts round them), then fine-tune (place = a choice for a part, kept relative to its parent part, rot turns it; lock: true pins it exactly; set_board for the size; placement_measures say how the arrangement routes: shorter, fewer crossing ratsnest lines are better), then route as the last step, to 100 %. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
   };
 }

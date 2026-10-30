@@ -81,12 +81,22 @@ width, the pours keep the line's gap, and the IMP.* checks judge the copper.
 
 ## 4. Drawing them
 
-The router routes a single line at its width (necked down only into a pad too small for it), but
-the two tracks of a pair apart from each other, and it knows nothing of stubs, bends or skew. So take the copper yourself (set_copper_mode drawn;
-keep: true takes over what the router laid), draw these lines first, then let route find the rest:
-the helper routes round your lines and keeps its tracks and vias off the plane under them.
+The router routes a line at its width (necked down only into a pad too small for it) and lays
+these lines first, before the other nets, so nothing else cuts the plane under them. A pair it
+routes together: one search for the pair's centre line, the two tracks drawn either side of it at
+the rule's gap with their 45° jogs in from the pads, and where it must change layer, a via for each
+track side by side. It keeps the two nets together even where other nets find it hard (it routes
+the pair apart only if together it leaves another connection open, and then says so), and when it
+cannot (no room for the fat pair, pads that do not pair up two to four each, a via where the line
+turns, copper in the way) it routes the two nets apart and the effect says why ("routed apart, open
+pair: …"; get_board IMP.PAIR): then draw the pair yourself. It knows nothing of stubs or skew, and a
+route through parts in the line (an ESD array, a choke) is only as good as the pads allow. For the
+lines that matter most, or where the router gives up, take the copper yourself (set_copper_mode
+drawn; keep: true takes over what the router laid), draw these lines first, then let route find
+the rest: the helper routes round your lines and keeps its tracks and vias off the plane under them.
 
-- **Pairs**: draw_pair from the two pads at one end to the two at the other, positive first, with the
+- **Pairs**: route nets with both nets of the pair gives a coupled pair when it can (above);
+  draw_pair from the two pads at one end to the two at the other, positive first, with the
   centre line's corners in via. Start the centre line straight out between the two pads, across the
   line joining them, and leave room at both ends for the tracks to come together at 45° (a few times
   the pads' pitch; the op says when it is not enough). Bend 45° at a time (bend "diagonal_first").
@@ -96,9 +106,16 @@ the helper routes round your lines and keeps its tracks and vias off the plane u
 - **Lengths**: get_board impedance gives a pair's skew. The tracks differ in length where they bend
   (the outer one is longer) and at their pads: bends to the left and to the right cancel out, so
   route a pair with both. Where a difference remains, make it up close to where it arises (TI: as
-  close to the mismatched end as possible), with small bumps on the shorter track: a bump no higher
-  than twice the pair's gap, its pieces at least three times the width long, a few rather than one
-  big one (edit_copper via gives the track its new corners). Big bumps change the impedance.
+  close to the mismatched end as possible), with small bumps on the shorter track. tune_length does
+  it: tune_length net <the shorter one> alone matches a pair member to its partner (match names
+  other nets for a group; target_mm a length; near start | end | [x, y] where along the track;
+  tolerance_mm). It puts square bumps with 45° corners into a straight stretch of the track, on the
+  side away from the partner, no higher than twice the pair's gap (height_mm for a single line,
+  4 mm), the legs at least three widths apart, a few small ones rather than one big one, clear of
+  all other copper; the effect gives the length reached and the skew. If there is no room it says
+  where and why (move what is in the way, a longer straight stretch with edit_copper via, or tune
+  the other nets). Big bumps change the impedance. Tune after the pair is drawn and its vias are
+  in: a via adds length to both tracks alike.
 - **Vias**: a layer change takes the line to another plane, and its return current needs a way
   between the planes there: a ground via right beside each signal via (the check wants one within
   1.5 mm; TI allows 5 mm, closer is better), a pair's two vias side by side with one ground via each,
