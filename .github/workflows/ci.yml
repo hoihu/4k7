@@ -34,7 +34,8 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
-      - run: npm test
+      # starting a program takes about a second on this runner, and the tests of the agents start several: 4.5 s of the default 5 s
+      - run: npx vitest run --testTimeout=15000
       - run: node dist/4k7pcb.js --version
       - run: npm run check:package
 
