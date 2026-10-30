@@ -25,8 +25,11 @@ const tarball = `${root}${packed.filename}`;
 const files = packed.files.map((f) => f.path);
 const unexpected = files.filter((f) => !f.startsWith('dist/') && !['package.json', 'README.md', 'LICENSE'].includes(f));
 if (unexpected.length) fail(`unexpected files in the package: ${unexpected.join(', ')}`);
-for (const f of ['dist/4k7pcb.js', 'dist/app/index.html', 'LICENSE']) if (!files.includes(f)) fail(`${f} is missing from the package`);
+for (const f of ['dist/4k7pcb.js', 'dist/app/index.html', 'dist/app/THIRD-PARTY-NOTICES.txt', 'LICENSE']) if (!files.includes(f)) fail(`${f} is missing from the package`);
 if (files.some((f) => f.endsWith('.map'))) fail('the package contains sourcemaps');
+// the ones easy to lose: pdf.js names its owner only in a source header, and the font's license is a file in this repository
+const notices = readFileSync(`${root}dist/app/THIRD-PARTY-NOTICES.txt`, 'utf8');
+for (const s of ['Apache License', 'Mozilla Foundation', 'SIL Open Font License']) if (!notices.includes(s)) fail(`the third-party notices lack "${s}"`);
 const app = files.filter((f) => f.startsWith('dist/app/') && /\.(js|html)$/.test(f));
 if (app.some((f) => readFileSync(`${root}${f}`, 'utf8').includes('tools/server/src/main.ts'))) fail('the app contains checkout paths (dev-only code)');
 console.log(`${packed.filename}: ${files.length} files, ${(packed.size / 1e6).toFixed(1)} MB packed, ${(packed.unpackedSize / 1e6).toFixed(1)} MB unpacked`);
