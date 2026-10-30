@@ -240,7 +240,11 @@ red in the pictures, blocked paths orange, printing warnings (overhangs, bridges
   through the box; the half the camera looks from is cut away, Flip shows the other. A message
   sent while it is open tells the agent where (`<view kind="enclosure">`: the plane in board
   coordinates and the `render_enclosure section` that shows it), so "this wall" needs no
-  coordinates.
+  coordinates. What it cuts shows solid: flat faces on the plane, from the stencil buffer, a shade of
+  orange per piece (so pieces that touch stay apart; an inlay in its own colour), the board tan, the
+  parts grey. A piece's inside in a flat colour would be no face: it is the far side of the solid, seen
+  through the plane, with its edges. It clips a hair (0.01 mm) into what it keeps: the slider and the
+  scripts like round numbers, and a face exactly on the plane would come and go pixel by pixel.
 - **Exports**: one 3MF plate with every piece turned for printing (the script's `print`), STL per
   piece the same way, the script as `<project>-enclosure.js`, and `board.scad` for a box of one's own.
   Manifold has meshes, not surfaces, so there is no STEP of the box; mechanical CAD imports the STL.

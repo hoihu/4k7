@@ -48,12 +48,18 @@ const toViewer = (h: number) => new THREE.Matrix4().set(1, 0, 0, 0, 0, 0, 1, -T,
 /**
  * Colours of the pieces (base, lid, more): muted mid tones, so the lights shade them as they do the
  * Layout's 3D view (pale ones wash out); of an inlay the script gives no colour; their edges a darker
- * line; a cut through them.
+ * line; a cut through them: shades of one orange, to tell pieces that touch (an inlay's, its own colour).
  */
 const PIECE_COLOURS = [0x6b727d, 0x4d6688, 0x8c7b5a, 0x5c7d66];
 const INLAY = 0x2a2e35;
 const EDGE = 0x10141a;
-const CUT = 0xe0703a;
+const CUT = [0xe0703a, 0xb8541f, 0xf09a62, 0x9c4316];
+/** A cut through the board (bare FR4), a part's body and its leads: not the box's colour, to tell them from it. */
+const CUT_BOARD = 0xb5a67c;
+const CUT_BODY = 0x8a93a3;
+const CUT_LEAD = 0xc9ccd2;
+/** How far inside what the plane keeps a cut's face lies (mm): on the plane itself, clipping would speckle it. */
+const FACE_INSET = 0.005;
 /** Facets meeting at less than this are shaded smooth (rounded corners, holes), and get no edge line. */
 const CREASE = 30;
 
@@ -79,11 +85,70 @@ function hosts(s: EnclosureScene): EnclosurePiece[] {
   return s.pieces.filter((p) => !s.inlays?.[p.name] || !s.pieces.some((h) => h.name === s.inlays![p.name]!.host));
 }
 
+/**
+ * The faces a section cuts through the box, the board and its parts (`kinds`: a colour and the materials
+ * of the solids it is for; `content`: complete). A cut leaves every solid open, and its inside in a flat
+ * colour is no face: that is the far side of it, seen through the plane, with its edges and all it has in
+ * it. So these are flat faces on the plane, where the stencil buffer finds a solid open: along a ray, the
+ * back faces left add one and the front faces left take one away, which leaves the solids it enters at the
+ * plane. Made at the first cut; returns what viewerCore.clip calls (userData.clipped).
+ */
+export function sectionCaps(content: THREE.Group, kinds: [THREE.ColorRepresentation, THREE.Material[]][], owned: { dispose(): void }[]): (planes: THREE.Plane[]) => void {
+  const around = new THREE.Sphere();
+  const faces: THREE.Mesh[] = [];
+  const materials: THREE.Material[] = [];
+  let made = false;
+  function make() {
+    made = true;
+    new THREE.Box3().setFromObject(content).getBoundingSphere(around);
+    const meshes: THREE.Mesh[] = [];
+    content.traverse((o) => void (o instanceof THREE.Mesh && meshes.push(o)));
+    const quad = new THREE.PlaneGeometry(2.2 * around.radius, 2.2 * around.radius);
+    owned.push(quad);
+    kinds.forEach(([colour, of], i) => {
+      const solids = meshes.filter((m) => of.includes(Array.isArray(m.material) ? m.material[0]! : m.material));
+      if (!solids.length) return;
+      const counter = (side: THREE.Side, op: THREE.StencilOp) => new THREE.MeshBasicMaterial({ side, colorWrite: false, depthWrite: false, depthTest: false, stencilWrite: true, stencilFunc: THREE.AlwaysStencilFunc, stencilFail: op, stencilZFail: op, stencilZPass: op });
+      const counters = [counter(THREE.BackSide, THREE.IncrementWrapStencilOp), counter(THREE.FrontSide, THREE.DecrementWrapStencilOp)];
+      // (all it covers goes back to 0, seen or not, for the next kind)
+      const reset = { stencilRef: 0, stencilFail: THREE.ReplaceStencilOp, stencilZFail: THREE.ReplaceStencilOp, stencilZPass: THREE.ReplaceStencilOp };
+      const flat = new THREE.MeshBasicMaterial({ color: colour, side: THREE.DoubleSide, stencilWrite: true, stencilFunc: THREE.NotEqualStencilFunc, ...reset });
+      materials.push(...counters, flat);
+      owned.push(...counters, flat);
+      for (const solid of solids) {
+        for (const m of counters) {
+          const copy = solid instanceof THREE.InstancedMesh ? Object.assign(new THREE.InstancedMesh(solid.geometry, m, solid.count), { instanceMatrix: solid.instanceMatrix }) : new THREE.Mesh(solid.geometry, m);
+          // (after everything else, whose depth then hides the face or not; a kind at a time)
+          copy.renderOrder = 1 + 2 * i;
+          copy.userData.keepGeometry = solid.userData.keepGeometry;
+          solid.add(copy);
+        }
+      }
+      const face = new THREE.Mesh(quad, flat);
+      face.renderOrder = 2 + 2 * i;
+      content.add(face);
+      faces.push(face);
+    });
+  }
+  const up = new THREE.Vector3(0, 0, 1);
+  return (planes) => {
+    const plane = planes[0];
+    if (plane && !made) make();
+    for (const m of materials) m.visible = !!plane;
+    if (!plane) return;
+    for (const face of faces) {
+      plane.projectPoint(around.center, face.position).addScaledVector(plane.normal, FACE_INSET);
+      face.quaternion.setFromUnitVectors(up, plane.normal);
+    }
+  };
+}
+
 /** The board, the pieces and the marks, as one group for the viewer core. */
 export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}, redraw?: () => void): THREE.Group {
   const h = s.board.outline.h;
   const group = o.board === false ? new THREE.Group() : boardGroup(s.board, boardBodies(s.board), res, redraw);
   const owned: { dispose(): void }[] = [];
+  const cuts: [THREE.ColorRepresentation, THREE.Material[]][] = [];
   const lift = liftStep(s.pieces) * (o.open ?? 0);
   const order = hosts(s).map((p) => p.name);
   /** The piece a piece moves and shows with: an inlay's host, else itself. */
@@ -98,7 +163,6 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
     if (o.show && !o.show.includes(host)) return;
     const i = order.indexOf(host);
     const geo = pieceGeometry(p, h);
-    // the outside in the piece's colour; where a section cuts it open, its inside shows in the cut colour
     let colour: THREE.ColorRepresentation = PIECE_COLOURS[i % PIECE_COLOURS.length]!;
     if (host !== p.name) {
       colour = INLAY;
@@ -108,12 +172,12 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
         // not a CSS colour: the default
       }
     }
-    // (pushed back, so the inside never shows through where the outside meets another piece's)
+    // (pushed back, so its edges stay clear of it)
     const front = new THREE.MeshStandardMaterial({ color: colour, roughness: 0.6, metalness: 0.05, side: THREE.FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-    const back = new THREE.MeshBasicMaterial({ color: CUT, side: THREE.BackSide, polygonOffset: true, polygonOffsetFactor: 3, polygonOffsetUnits: 3 });
     const edge = new THREE.LineBasicMaterial({ color: EDGE, transparent: true, opacity: 0.55 });
-    owned.push(front, back, edge);
-    const parts: THREE.Object3D[] = [new THREE.Mesh(geo.faces, front), new THREE.Mesh(geo.faces, back), new THREE.LineSegments(geo.edges, edge)];
+    owned.push(front, edge);
+    cuts.push([host === p.name ? CUT[i % CUT.length]! : colour, [front]]);
+    const parts: THREE.Object3D[] = [new THREE.Mesh(geo.faces, front), new THREE.LineSegments(geo.edges, edge)];
     for (const o of parts) {
       o.position.y = lift * i;
       o.userData.keepGeometry = true;
@@ -154,6 +218,8 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
       group.add(helper);
     }
   }
+  // (the box first: a part standing in a wall shows on its face)
+  group.userData.clipped = sectionCaps(group, [...cuts, [CUT_BOARD, [res.mask, res.pcb]], [CUT_BODY, [res.body]], [CUT_LEAD, [res.lead]]], owned);
   const before = group.userData.dispose as (() => void) | undefined;
   group.userData.dispose = () => {
     before?.();
@@ -512,7 +578,7 @@ export async function enclosurePictures(
           const d = toDir(m.dir).normalize();
           const target = at.clone().addScaledVector(d, 4);
           look(target, u.clone().add(new THREE.Vector3(0, 0.25, 0)), Math.max(28, Math.max(...m.size) * 4) / (2 * Math.tan(THREE.MathUtils.degToRad(fov / 2))));
-          snap(`section through ${ref}'s opening (plugged from ${m.facing}), cut across the wall: the cut surfaces are orange, the plug's way is the faint orange box`);
+          snap(`section through ${ref}'s opening (plugged from ${m.facing}), cut across the wall: the box's cut surfaces are shades of orange (one per piece), the parts' grey, the board's tan, the plug's way is the faint orange box`);
         }
       }
     }
