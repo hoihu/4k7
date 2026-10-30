@@ -38,6 +38,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 - **What the agent is told**: a syntax error is refused when the script is set, every error gives its line, `echo` prints measures to the report, and a new warning (`ENC.NEAR`) finds a wall under 0.2 mm from a part. Mistakes that used to pass in silence stop the render, such as a helper that forgot its `return`.
 - **Boxes saved before this** keep their OpenSCAD script as text, and the render says it needs rewriting: ask the agent to do it. Label capitals are now exactly the size asked (they came about 4.5 % small). The Enclosure view downloads the script as `.js`; `board.scad` stays, for a box of your own in OpenSCAD.
 
+### Licenses
+
+- **Third-party notices ship with the app**: `THIRD-PARTY-NOTICES.txt` in the app's folder has the license of every package and font built into it, such as pdf.js, Manifold and Liberation Sans.
+
 ## 0.2.0 — 2026-10-25
 
 The chat runs on the coding agent you already use, projects are files on your computer, and the agent now takes a board from placement to the last routed connection, designs an enclosure for it, checks stock and cost at three assembly houses and lays lines at a set impedance.

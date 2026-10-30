@@ -74,7 +74,9 @@ to the newest release, so the file names must not change. To release:
 Installing from git, npm clones the repository, installs it with its dev dependencies and runs
 `prepare` (`npm run package`):
 
-1. `npm run build`: the web app into `apps/web/dist` (no sourcemaps).
+1. `npm run build`: the web app into `apps/web/dist` (no sourcemaps), with
+   `THIRD-PARTY-NOTICES.txt`, the licenses of the packages and fonts bundled into it
+   (`apps/web/third-party-notices.ts`).
 2. `scripts/package.mjs`: the server (`tools/server/src/cli.ts`) bundled with rolldown into
    `dist/4k7pcb.js` with the workspace packages inlined (Node does not strip types under
    `node_modules`), and the web app copied to `dist/app`.
