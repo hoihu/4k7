@@ -223,16 +223,28 @@ export function groups(pins: PinAt[], wires: WireView[], labels: Pick<LabelView,
   };
   const W = (i: number) => pins.length + i;
   const L = (i: number) => pins.length + wires.length + i;
+  // the box round each wire first: this runs after every wire drawn, on sheets of hundreds
+  const boxes = wires.map((w) => {
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (let k = 0; k + 1 < w.pts.length; k += 2) {
+      x0 = Math.min(x0, w.pts[k]!);
+      x1 = Math.max(x1, w.pts[k]!);
+      y0 = Math.min(y0, w.pts[k + 1]!);
+      y1 = Math.max(y1, w.pts[k + 1]!);
+    }
+    return { x0, y0, x1, y1 };
+  });
+  const near = (i: number, x: number, y: number) => x >= boxes[i]!.x0 && x <= boxes[i]!.x1 && y >= boxes[i]!.y0 && y <= boxes[i]!.y1;
   wires.forEach((a, i) => {
     wires.forEach((b, j) => {
       if (j <= i || a.netId !== b.netId) return;
-      if (ends(a).some(([x, y]) => onWire(x, y, b.pts)) || ends(b).some(([x, y]) => onWire(x, y, a.pts))) join(W(i), W(j));
+      if (ends(a).some(([x, y]) => near(j, x, y) && onWire(x, y, b.pts)) || ends(b).some(([x, y]) => near(i, x, y) && onWire(x, y, a.pts))) join(W(i), W(j));
     });
     pins.forEach((p, k) => {
-      if (onWire(p.pin.x, p.pin.y, a.pts)) join(k, W(i));
+      if (near(i, p.pin.x, p.pin.y) && onWire(p.pin.x, p.pin.y, a.pts)) join(k, W(i));
     });
     labels.forEach((l, k) => {
-      if (l.netId === a.netId && onWire(l.x, l.y, a.pts)) join(L(k), W(i));
+      if (l.netId === a.netId && near(i, l.x, l.y) && onWire(l.x, l.y, a.pts)) join(L(k), W(i));
     });
   });
   const at = new Map<string, number>();

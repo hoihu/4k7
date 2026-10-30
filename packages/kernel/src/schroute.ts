@@ -226,16 +226,20 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, side: number, came?: [number,
     const [j0, j1] = span(ys, y0 + 1, y1 - 1);
     for (let j = j0; j < j1; j++) onV[id(i, j)] = 1;
   }
-  // an edge along a drawn segment that lies between lattice points
+  // an edge along a drawn segment that lies between lattice points (by row and column: this is asked for every step of the search)
+  const byLine = (segs: [number, number, number][]) => {
+    const out = new Map<number, [number, number][]>();
+    for (const [at, a, b] of segs) out.set(at, [...(out.get(at) ?? []), [a, b]]);
+    return out;
+  };
+  const [rowsOfWire, columnsOfWire] = [byLine(wireH), byLine(wireV)];
   const alongWire = (i: number, j: number, di: number, dj: number) => {
     if (dj === 0) {
-      const y = ys[j]!;
       const [p, q] = [Math.min(xs[i]!, xs[i + di]!), Math.max(xs[i]!, xs[i + di]!)];
-      return wireH.some(([fy, x0, x1]) => fy === y && x0 < q && x1 > p);
+      return !!rowsOfWire.get(ys[j]!)?.some(([x0, x1]) => x0 < q && x1 > p);
     }
-    const x = xs[i]!;
     const [p, q] = [Math.min(ys[j]!, ys[j + dj]!), Math.max(ys[j]!, ys[j + dj]!)];
-    return wireV.some(([fx, y0, y1]) => fx === x && y0 < q && y1 > p);
+    return !!columnsOfWire.get(xs[i]!)?.some(([y0, y1]) => y0 < q && y1 > p);
   };
 
   // the heuristic: the distance to the nearest goal point or wire
