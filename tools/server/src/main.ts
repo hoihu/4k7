@@ -34,7 +34,6 @@ import { openBrowser } from './launch.ts';
 import { createMcpServer, mcpHttpHandler, VERSION } from './mcp.ts';
 import { checkForUpdate } from './update.ts';
 import { storageHandler } from './storage.ts';
-import { OpenScad } from './scad.ts';
 import { sourcing } from './sourcing.ts';
 
 const serve = process.argv.includes('--serve');
@@ -99,14 +98,12 @@ async function main() {
   });
   const mcpHttp = mcpHttpHandler(server, (t) => chat.modeFor(t));
   const app = appHandler(dir, VERSION, cfg.accessKey);
-  const scad = new OpenScad({ ...(cfg.openscadBin ? { bin: cfg.openscadBin } : {}), log });
   const storage = storageHandler({
     accessKey: cfg.accessKey,
     projectsDir: cfg.projectsDir,
     dataDir: configDir(),
     allowedOrigin: (o) => server.allowedOrigin(o),
     reveal: (d) => openBrowser(d, log),
-    scad,
     sourcing: sourcing({ log, footprintDir: join(configDir(), 'footprints') }),
     log,
   });

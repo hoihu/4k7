@@ -18,6 +18,8 @@ export default defineConfig(({ command }) => {
   return {
     plugins: [svelte()],
     worker: { format: 'es' },
+    // what the enclosure's worker loads: known up front, or the first render in development reloads the page
+    optimizeDeps: { include: ['manifold-3d', 'opentype.js/dist/opentype.mjs'] },
     // shown in Settings so the Claude Code setup command can be copied as-is
     define: {
       __PACKAGED__: JSON.stringify(packaged),

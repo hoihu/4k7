@@ -1,19 +1,19 @@
 /**
- * Rendering and measuring an enclosure script (docs/design/enclosure.md §5.1–5.2). The job: one
- * run per piece (its mesh) and one per check, each an intersection that is empty when the check
- * passes. The report: what OpenSCAD said and what the checks found, in words the agent can act on.
+ * The report on an enclosure script (docs/design/enclosure.md §5.1–5.2), as the app, the agent and the
+ * print files read it, and how a script is wrapped to run. Rendering and measuring are in csg/ (its
+ * own entry, @4k7/fab/csg: only the worker that renders loads the geometry engine).
  */
-import { DEFAULT_LID_CLEARANCE, enclosureKey, matingOf, scriptInlays, scriptPieces, scriptPrintRotations, type BoardView, type EnclosureBrief, type EnclosureGraphic, type ScadJob, type ScadRunResult } from '@4k7/schema';
-import { boardScad, type EnclosureFacts } from './scad.ts';
-import { orient, orientTogether, parseStl, plate, printIssues, thinWalls, threeMf, warping, writeStl, type PlateObject } from './print.ts';
+import { matingOf, scriptInlays, scriptPrintRotations, type BoardView, type EnclosureBrief } from '@4k7/schema';
+import type { EnclosureFacts } from './scad.ts';
+import { orient, orientTogether, plate, threeMf, writeStl, type PlateObject, type Tris } from './print.ts';
 
-export type EnclosureCode = 'ENC.SCRIPT' | 'ENC.COLLIDES' | 'ENC.BLOCKED' | 'ENC.NO_MATING' | 'ENC.LOOSE' | 'ENC.LOW_LID' | 'ENC.PIECES_OVERLAP' | 'ENC.SIZE' | 'ENC.OVERHANG' | 'ENC.BRIDGE' | 'ENC.THIN' | 'ENC.WARP' | 'ENC.WARNING';
+export type EnclosureCode = 'ENC.SCRIPT' | 'ENC.COLLIDES' | 'ENC.BLOCKED' | 'ENC.NO_MATING' | 'ENC.LOOSE' | 'ENC.LOW_LID' | 'ENC.PIECES_OVERLAP' | 'ENC.SIZE' | 'ENC.NEAR' | 'ENC.OVERHANG' | 'ENC.BRIDGE' | 'ENC.THIN' | 'ENC.WARP';
 
 export interface EnclosureFinding {
   code: EnclosureCode;
   severity: 'error' | 'warning';
   message: string;
-  /** Where (board.scad coordinates), for the pictures. */
+  /** Where (board coordinates), for the pictures. */
   box?: { min: [number, number, number]; max: [number, number, number] };
   /** The parts it is about. */
   parts?: string[];
@@ -23,8 +23,8 @@ export interface EnclosureFinding {
 
 export interface EnclosurePiece {
   name: string;
-  /** Binary STL, base64, in assembled position (board.scad coordinates). */
-  stl: string;
+  /** Its triangles (9 numbers each), in assembled position (board coordinates). */
+  tris: Tris;
   bbox: { min: [number, number, number]; max: [number, number, number] };
 }
 
@@ -37,51 +37,41 @@ export interface EnclosureReport {
   findings: EnclosureFinding[];
   /** The closed box: x × y × z. */
   size: [number, number, number] | null;
-  /** Rendering time, all runs (ms). */
+  /** Rendering time (ms). */
   ms: number;
+  /** What the script said with echo(). */
+  log?: string[];
 }
 
-/** Everything a render needs: the files and the runs. */
-export interface EnclosureJob extends ScadJob {
-  pieces: string[];
-  facts: EnclosureFacts;
-  brief?: EnclosureBrief;
-  key: string;
+/** The global the wrapped script leaves its function in. */
+export const SCRIPT_GLOBAL = '__enclosureScript';
+
+/**
+ * A script as source to evaluate: one line, then the script, so its line n is line n + 1 here. A
+ * function, so the script's names stay its own and shadow the library's. Called, it returns the pieces'
+ * functions. Not in strict mode: there, Safari makes `return difference(…)` a tail call, which takes the
+ * piece off the stack and with it the line of nearly every error (scriptProblems holds the script to
+ * strict syntax, and to declaring what it assigns, before it gets here).
+ */
+export function scriptSource(script: string, pieces: string[]): string {
+  return `globalThis.${SCRIPT_GLOBAL} = function () {\n${script}\n;return { ${pieces.join(', ')} };\n};`;
 }
 
-const r2 = (v: number) => Math.round(v * 100) / 100 || 0;
-const pt = (v: readonly number[]) => `(${v.map(r2).join(', ')})`;
-const dims = (b: { min: readonly number[]; max: readonly number[] }) => b.max.map((v, i) => r2(v - b.min[i]!)).join(' × ');
+/** The line of the script an error comes from: the innermost in the script itself, whatever library call it died in. */
+export function scriptLine(e: unknown, scriptUrl: string): number | null {
+  const stack = (e as Error | undefined)?.stack ?? '';
+  for (const frame of stack.split('\n')) {
+    const i = frame.indexOf(scriptUrl);
+    if (i < 0) continue;
+    const m = /^:(\d+):\d+/.exec(frame.slice(i + scriptUrl.length));
+    if (m) return Number(m[1]) - 1;
+  }
+  return null;
+}
 
-/** The job for a script on this board: the pieces, then the checks. */
-export function enclosureJob(b: BoardView, project: string, script: string, brief?: EnclosureBrief, graphics?: EnclosureGraphic[]): EnclosureJob {
-  const lib = boardScad(b, project, brief, graphics);
-  const pieces = scriptPieces(script) ?? [];
-  const inlays = scriptInlays(script);
-  const all = `union() { ${pieces.map((p) => `${p}();`).join(' ')} }`;
-  const head = 'use <enclosure.scad>\ninclude <board.scad>\n';
-  const runs: ScadJob['runs'] = [];
-  for (const p of pieces) runs.push({ id: `piece:${p}`, code: `use <enclosure.scad>\n${p}();\n`, mesh: true });
-  for (const p of pieces) runs.push({ id: `collide:${p}`, code: `${head}intersection() { ${p}(); union() { pcb(); parts(); } }\n` });
-  for (const ref of brief?.openings ?? []) {
-    const part = lib.facts.parts.find((x) => x.ref === ref);
-    if (part?.mating) runs.push({ id: `way:${ref}`, code: `${head}intersection() { ${all} mating_path(${JSON.stringify(ref)}); }\n` });
-  }
-  // the room over every part on top, as high as the brief's lid clearance
-  const clear = brief?.lid_clearance_mm ?? DEFAULT_LID_CLEARANCE;
-  if (clear > 0) runs.push({ id: 'lid', code: `${head}intersection() { ${all} for (p = parts_info) if (p[4] == "top") translate([p[2][0], p[2][1], p[3][2]]) cube([p[3][0] - p[2][0], p[3][1] - p[2][1], ${clear}]); }\n` });
-  // the board rests on something under each hole (or anywhere under it when it has none)
-  if (lib.facts.holes.length) {
-    for (const h of lib.facts.holes) runs.push({ id: `rest:${h.id}`, code: `${head}intersection() { ${all} translate([${h.x}, ${h.y}, -0.25]) cylinder(h = 0.25, r = ${h.d / 2 + 1.5}, $fn = 24); }\n` });
-  } else runs.push({ id: 'rest:board', code: `${head}intersection() { ${all} translate([0, 0, -0.25]) linear_extrude(height = 0.25) pcb_shape(); }\n` });
-  for (let i = 0; i < pieces.length; i++) {
-    for (let j = i + 1; j < pieces.length; j++) {
-      // an inlay fills the hollow cut for it in its host: they meet face to face, which OpenSCAD can leave as a sliver
-      if (inlays[pieces[i]!]?.host === pieces[j] || inlays[pieces[j]!]?.host === pieces[i]) continue;
-      runs.push({ id: `overlap:${pieces[i]}:${pieces[j]}`, code: `use <enclosure.scad>\nintersection() { ${pieces[i]}(); ${pieces[j]}(); }\n` });
-    }
-  }
-  return { files: { 'board.scad': lib.content, 'enclosure.scad': script }, runs, pieces, facts: lib.facts, ...(brief ? { brief } : {}), key: enclosureKey({ script, ...(graphics ? { graphics } : {}) }) };
+/** A report with one thing to say, that nothing could be made: the script is not fit to run, or did not end. */
+export function failedReport(script: string, key: string, message: string, ms = 0): EnclosureReport {
+  return { script, key, pieces: [], findings: [{ code: 'ENC.SCRIPT', severity: 'error', message }], size: null, ms };
 }
 
 /**
@@ -97,146 +87,7 @@ export function warpLimit(brief?: EnclosureBrief): { process: string; slendernes
   return { process: 'FDM in PLA or PETG', slenderness: 50 };
 }
 
-/** Parts whose box meets `box` (grown a hair). */
-function partsAt(facts: EnclosureFacts, box: { min: readonly number[]; max: readonly number[] }): string[] {
-  const g = 0.05;
-  return facts.parts.filter((p) => [0, 1, 2].every((i) => p.min[i]! <= box.max[i]! + g && p.max[i]! >= box.min[i]! - g)).map((p) => p.ref);
-}
-
-/** Read the runs' results into the report. */
-export function enclosureReport(job: EnclosureJob, results: ScadRunResult[], script: string): EnclosureReport {
-  const findings: EnclosureFinding[] = [];
-  const by = new Map(results.map((r) => [r.id, r]));
-  const ms = results.reduce((s, r) => s + r.ms, 0);
-  // a script that does not render: its errors are all there is to say
-  const failed = results.filter((r) => !r.ok);
-  if (failed.length) {
-    const lines = [...new Set(failed.flatMap((r) => r.errors ?? []))].slice(0, 12);
-    findings.push({ code: 'ENC.SCRIPT', severity: 'error', message: `OpenSCAD could not render it:\n${lines.join('\n') || 'no output'}` });
-    return { script, key: job.key, pieces: [], findings, size: null, ms };
-  }
-  const warnings = [...new Set(results.flatMap((r) => r.warnings ?? []))];
-  if (warnings.length) findings.push({ code: 'ENC.WARNING', severity: 'warning', message: `OpenSCAD warned:\n${warnings.slice(0, 8).join('\n')}` });
-
-  const pieces: EnclosurePiece[] = [];
-  for (const name of job.pieces) {
-    const r = by.get(`piece:${name}`);
-    if (!r || r.empty || !r.stl || !r.bbox) findings.push({ code: 'ENC.SCRIPT', severity: 'error', message: `The piece ${name}() is empty: it draws nothing.` });
-    else pieces.push({ name, stl: r.stl, bbox: r.bbox });
-  }
-
-  for (const name of job.pieces) {
-    const r = by.get(`collide:${name}`);
-    if (!r || r.empty || !r.bbox) continue;
-    const near = partsAt(job.facts, r.bbox);
-    findings.push({
-      code: 'ENC.COLLIDES',
-      severity: 'error',
-      message: `${name} runs into ${near.length ? near.join(', ') : 'the board itself'}: ${dims(r.bbox)} mm of it, between ${pt(r.bbox.min)} and ${pt(r.bbox.max)}.`,
-      box: r.bbox,
-      ...(near.length ? { parts: near } : {}),
-    });
-  }
-
-  for (const ref of job.brief?.openings ?? []) {
-    const part = job.facts.parts.find((x) => x.ref === ref);
-    if (!part) continue;
-    if (!part.mating) {
-      findings.push({ code: 'ENC.NO_MATING', severity: 'error', message: `${ref} should have an opening, but where it is plugged from is unknown: set_mating (face and plug size from its datasheet).`, parts: [ref] });
-      continue;
-    }
-    const r = by.get(`way:${ref}`);
-    if (!r || r.empty || !r.bbox) continue;
-    findings.push({
-      code: 'ENC.BLOCKED',
-      severity: 'error',
-      message: `${ref}'s way out (plugged from ${part.mating.facing}, ${part.mating.size.join(' × ')} mm) is blocked: ${dims(r.bbox)} mm of the box, between ${pt(r.bbox.min)} and ${pt(r.bbox.max)}. Cut it with mating_path("${ref}", grow = clearance).`,
-      box: r.bbox,
-      parts: [ref],
-    });
-  }
-
-  const lid = by.get('lid');
-  if (lid && !lid.empty && lid.bbox) {
-    const clear = job.brief?.lid_clearance_mm ?? DEFAULT_LID_CLEARANCE;
-    const near = partsAt(job.facts, { min: [lid.bbox.min[0], lid.bbox.min[1], lid.bbox.min[2] - clear], max: lid.bbox.max }).filter((ref) => {
-      const p = job.facts.parts.find((x) => x.ref === ref)!;
-      return p.side === 'top' && p.max[2] <= lid.bbox!.max[2] && p.max[2] >= lid.bbox!.min[2] - clear - 0.05;
-    });
-    findings.push({
-      code: 'ENC.LOW_LID',
-      severity: 'error',
-      message: `Less than ${clear} mm (the brief's lid clearance) over ${near.length ? near.join(', ') : 'some parts'}: the box comes down to z = ${r2(lid.bbox.min[2])} between ${pt(lid.bbox.min)} and ${pt(lid.bbox.max)}.`,
-      box: lid.bbox,
-      ...(near.length ? { parts: near } : {}),
-    });
-  }
-
-  const holes = job.facts.holes;
-  if (holes.length) {
-    const loose = holes.filter((h) => by.get(`rest:${h.id}`)?.empty !== false);
-    if (loose.length) {
-      findings.push({
-        code: 'ENC.LOOSE',
-        severity: loose.length === holes.length ? 'error' : 'warning',
-        message: `The board rests on ${holes.length - loose.length} of ${holes.length} mounting holes: nothing reaches the underside (z = 0) under ${loose.map((h) => h.id).join(', ')}. A post under each (hole_posts) holds it.`,
-      });
-    }
-  } else if (by.get('rest:board')?.empty !== false) {
-    findings.push({ code: 'ENC.LOOSE', severity: 'error', message: 'Nothing holds the board from below: no post, rib or ledge reaches its underside (z = 0).' });
-  }
-
-  for (const r of results.filter((x) => x.id.startsWith('overlap:') && !x.empty && x.bbox)) {
-    const [, a, b] = r.id.split(':');
-    findings.push({ code: 'ENC.PIECES_OVERLAP', severity: 'error', message: `${a} and ${b} overlap where they meet (${dims(r.bbox!)} mm between ${pt(r.bbox!.min)} and ${pt(r.bbox!.max)}): leave a clearance between them.`, box: r.bbox! });
-  }
-
-  // printing: overhangs and wide ceilings as each piece is printed, pieces that may warp, walls too thin to print
-  // (not for inlays: they lie in or on their host, which carries them, and are as thin as they are meant to be)
-  const turns = scriptPrintRotations(script);
-  const inlays = scriptInlays(script);
-  for (const p of pieces) {
-    if (inlays[p.name]) continue;
-    const tris = parseStl(p.stl);
-    const how = turns[p.name] ? `printed turned ${turns[p.name]!.join(', ')}` : 'printed as built (no print orientation in the script)';
-    for (const x of printIssues(tris, orient(tris, turns[p.name]))) {
-      findings.push(
-        x.kind === 'overhang'
-          ? { code: 'ENC.OVERHANG', severity: 'warning', message: `${p.name}, ${how}: ${x.area} mm² hangs over steeper than 45° between ${pt(x.box.min)} and ${pt(x.box.max)}: it needs supports. Chamfer it, or turn the piece (print = [["${p.name}", [x, y, z]]];).`, box: x.box, piece: p.name }
-          : { code: 'ENC.BRIDGE', severity: 'warning', message: `${p.name}, ${how}: a ceiling ${x.size} mm across with nothing under it, between ${pt(x.box.min)} and ${pt(x.box.max)}: wider than a printer bridges (about 20 mm). Turn the piece so it lies on the bed, or support it.`, box: x.box, piece: p.name },
-      );
-    }
-    const w = warping(tris);
-    const limit = warpLimit(job.brief);
-    // a frame (a window, a lattice) shrinks towards its openings and twists: it warps sooner
-    const max = Math.round(w && w.open >= 0.25 ? limit.slenderness * 0.8 : limit.slenderness);
-    if (w && w.slenderness > max) {
-      const frame = w.open >= 0.25 ? ` ${Math.round(w.open * 100)} % of its outline is open (a frame round a window, a lattice): it shrinks towards the openings and twists along its diagonals.` : '';
-      findings.push({
-        code: 'ENC.WARP',
-        severity: 'warning',
-        message: `${p.name} may warp: ${w.span} mm along ${w.along}, but only as stiff as a ${w.thickness} mm plate (slenderness ${w.slenderness}; keep it under ${max} for ${limit.process}).${frame} Stiffen it rather than thicken it all: ribs on its inside, 2–3 × the plate high and 0.6–0.8 × its thickness, at most ~30 mm apart (a cross or a grid, joined to the rim); a deeper rim or lip all round (4–6 mm); a rim round each large opening; a fillet where walls meet the plate. Or a plate about ${Math.ceil((w.span / max) * 10) / 10} mm thick.`,
-        box: w.box,
-        piece: p.name,
-      });
-    }
-    for (const x of thinWalls(tris)) {
-      findings.push({ code: 'ENC.THIN', severity: 'warning', message: `${p.name}: walls down to ${x.size} mm over ${x.area} mm² between ${pt(x.box.min)} and ${pt(x.box.max)}: thinner than two perimeters (0.8 mm) prints weak or not at all, unless it is meant to be (a light window). In a label or logo: details too fine to print; make it larger or bolder.`, box: x.box, piece: p.name });
-    }
-  }
-
-  let size: [number, number, number] | null = null;
-  if (pieces.length) {
-    const min = [0, 1, 2].map((i) => Math.min(...pieces.map((p) => p.bbox.min[i]!)));
-    const max = [0, 1, 2].map((i) => Math.max(...pieces.map((p) => p.bbox.max[i]!)));
-    size = [r2(max[0]! - min[0]!), r2(max[1]! - min[1]!), r2(max[2]! - min[2]!)];
-    const limit = job.brief?.max_size_mm;
-    if (limit && size.some((v, i) => v > limit[i]! + 1e-6)) {
-      findings.push({ code: 'ENC.SIZE', severity: 'error', message: `The box is ${size.join(' × ')} mm; the brief allows ${limit.join(' × ')} mm.` });
-    }
-  }
-  return { script, key: job.key, pieces, findings, size, ms };
-}
+const dims = (b: { min: readonly number[]; max: readonly number[] }) => b.max.map((v, i) => Math.round((v - b.min[i]!) * 100) / 100 || 0).join(' × ');
 
 /** The report as the agent reads it. */
 export function reportText(r: EnclosureReport, facts?: EnclosureFacts): string {
@@ -246,6 +97,7 @@ export function reportText(r: EnclosureReport, facts?: EnclosureFacts): string {
   if (facts) lines.push(`Board: ${facts.size.join(' × ')} mm, top at z = ${facts.thickness}, tallest part to z = ${facts.tallestTop}, leads down to z = ${facts.lowestBottom}.`);
   lines.push(errors.length ? `${errors.length} finding(s) to fix:` : r.findings.length ? 'No errors; warnings:' : 'The report is clean: no collisions, every opening clear, the board held.');
   for (const f of r.findings) lines.push(`- ${f.severity === 'error' ? '' : 'warning: '}${f.code} ${f.message}`);
+  if (r.log?.length) lines.push('The script said (echo):', ...r.log.map((l) => `  ${l}`));
   return lines.join('\n');
 }
 
@@ -262,8 +114,8 @@ export function printFiles(r: EnclosureReport, project: string): { stl: { name: 
   // a piece and its inlays turned alike and set on the bed together, so the inlays stay where they belong
   const objects: PlateObject[] = hosts.map((h) => {
     const with_ = r.pieces.filter((p) => inlays[p.name]?.host === h.name);
-    if (!with_.length) return { name: h.name, tris: orient(parseStl(h.stl), turns[h.name]) };
-    const [tris, ...rest] = orientTogether([h, ...with_].map((p) => parseStl(p.stl)), turns[h.name]);
+    if (!with_.length) return { name: h.name, tris: orient(h.tris, turns[h.name]) };
+    const [tris, ...rest] = orientTogether([h, ...with_].map((p) => p.tris), turns[h.name]);
     return { name: h.name, tris: tris!, parts: with_.map((p, i) => ({ name: p.name, tris: rest[i]! })) };
   });
   const byName = new Map(objects.flatMap((o) => [[o.name, o.tris] as const, ...(o.parts ?? []).map((x) => [x.name, x.tris] as const)]));

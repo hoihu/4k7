@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boardFacing, boardSummary, scriptInlays, scriptPieces, scriptProblems, type EnclosureBrief } from '@4k7/schema';
+import { boardFacing, boardSummary, scriptGraphics, scriptInlays, scriptPieces, scriptPrintRotations, scriptProblems, type EnclosureBrief } from '@4k7/schema';
 import { Kernel, registerArtwork, unregisterArtwork } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 
@@ -10,14 +10,10 @@ function kernel() {
   return k;
 }
 
-const SCRIPT = `include <board.scad>
-wall = 2;
-pieces = ["base", "lid"];
-piece = "all";
-module base() { cube([10, 10, 5]); }
-module lid() { translate([0, 0, 6]) cube([10, 10, 1]); }
-if (piece == "base" || piece == "all") base();
-if (piece == "lid" || piece == "all") lid();
+const SCRIPT = `const wall = 2;
+const pieces = ['base', 'lid'];
+function base() { return cube([10, 10, 5]); }
+const lid = () => translate([0, 0, 6], cube([10, 10, 1]));
 `;
 
 const BRIEF: EnclosureBrief = {
@@ -97,12 +93,66 @@ describe('enclosure script', () => {
   it('names its pieces and is checked before it is stored', () => {
     expect(scriptPieces(SCRIPT)).toEqual(['base', 'lid']);
     expect(scriptProblems(SCRIPT)).toEqual([]);
-    expect(scriptProblems('cube(1);').join(' ')).toMatch(/include <board.scad>.*pieces/);
-    expect(scriptProblems(SCRIPT.replace('module lid()', 'module cover()')).join(' ')).toContain('no module lid()');
-    expect(scriptProblems(`${SCRIPT}\nimport("/etc/passwd");`).join(' ')).toContain('import()');
-    expect(scriptProblems(`${SCRIPT}\ninclude <../secrets.scad>`).join(' ')).toContain('only board.scad');
-    // commented out, it does not count
-    expect(scriptProblems(`${SCRIPT}\n// import("x.stl");`)).toEqual([]);
+    expect(scriptProblems('cube(1);').join(' ')).toContain('Name the pieces: const pieces');
+    expect(scriptProblems(SCRIPT.replace('const lid =', 'const cover =')).join(' ')).toContain('pieces names "lid" but there is no function lid()');
+    // plain names only: it is read without running the script
+    expect(scriptProblems(SCRIPT.replace("['base', 'lid']", "['base', name]")).join(' ')).toContain('Name the pieces');
+    expect(scriptProblems(SCRIPT.replace("['base', 'lid']", "['base lid']")).join(' ')).toContain('Name the pieces');
+  });
+
+  it('says where a syntax error is, in any browser', () => {
+    const [problem] = scriptProblems(`const wall = 2;\nconst pieces = ['base'];\nfunction base() {\n  return cube([1, 2, 3);\n}`);
+    expect(problem).toMatch(/^Line 4, column 23: Unexpected token\.$/);
+    expect(scriptPieces('const pieces = [')).toBeNull();
+    expect(scriptProblems(`const pieces = ['base'];\nconst pieces = ['lid'];\nfunction base() {}`)[0]).toMatch(/^Line 2, column 7: Identifier 'pieces' has already been declared/);
+    // its syntax is held to strict mode's
+    expect(scriptProblems(`const pieces = ['a'];\nfunction a() { with (x) {} }`)[0]).toMatch(/^Line 2/);
+    // a stray return or await would not reach the end of the script
+    expect(scriptProblems(`const pieces = ['a'];\nfunction a() {}\nreturn 3;`)[0]).toMatch(/^Line 3/);
+    expect(scriptProblems(`const pieces = ['a'];\nfunction a() {}\nawait 3;`)[0]).toMatch(/^Line 3/);
+  });
+
+  it('does not reach outside; said while it can still be fixed, with the line', () => {
+    const one = (extra: string) => scriptProblems(`${SCRIPT}${extra}`).join(' ');
+    expect(one('fetch("https://example.com");')).toContain('Line 5: fetch is not there');
+    expect(one('const x = new XMLHttpRequest();')).toContain('XMLHttpRequest is not there');
+    expect(one('eval("1");')).toContain('eval is not there');
+    expect(one('const f = Function("return 1");')).toContain('Function is not there');
+    expect(one('import("./x.js");')).toContain('Line 5: no import()');
+    expect(one('import x from "./x.js";')).toContain('Line 5: no import or export');
+    expect(one('export { base };')).toContain('no import or export');
+    expect(one('export function other() {}')).toContain('no import or export');
+    // not when it is only text, a comment, a key or its own
+    expect(one('// fetch("x"); import("y");')).toBe('');
+    expect(one('const label = "fetch";')).toBe('');
+    expect(one('const o = { fetch: 1, eval: 2 }; const z = o.fetch + o.eval;')).toBe('');
+    expect(one('function fetch() { return 1; } fetch();')).toBe('');
+    // a window is a thing a box has
+    expect(one('const window = cube(1); const document = 2;')).toBe('');
+  });
+
+  it('recognises an OpenSCAD script, and says what to do with it', () => {
+    const old = `include <board.scad>\nwall = 2;\npieces = ["base"];\npiece = "all";\nmodule base() { cube(1); }\nbase();\n`;
+    expect(scriptProblems(old)).toHaveLength(1);
+    expect(scriptProblems(old)[0]).toMatch(/^This is an OpenSCAD script.*rewrite it/);
+    expect(scriptPieces(old)).toBeNull();
+    expect(scriptProblems('module base() { cube(1); }\npieces = ["base"];')[0]).toMatch(/^This is an OpenSCAD script/);
+    // only if it is not JavaScript: a comment may well mention it
+    expect(scriptProblems(`// from include <board.scad>\n${SCRIPT}`)).toEqual([]);
+  });
+
+  it('reads print and inlays without running it: plain values only', () => {
+    expect(scriptPrintRotations(`${SCRIPT}const print = { lid: [180, 0, -90.5] };`)).toEqual({ lid: [180, 0, -90.5] });
+    expect(scriptPrintRotations(SCRIPT)).toEqual({});
+    expect(scriptProblems(`${SCRIPT}const a = 180; const print = { lid: [a, 0, 0] };`).join(' ')).toContain('print is plain numbers');
+    expect(scriptProblems(`${SCRIPT}const print = [['lid', [180, 0, 0]]];`).join(' ')).toContain('print is plain numbers');
+    expect(scriptProblems(`${SCRIPT}const print = { cover: [180, 0, 0] };`).join(' ')).toContain('print names "cover", which is not in pieces');
+  });
+
+  it('knows the graphics it draws, written any way', () => {
+    expect(scriptGraphics(`${SCRIPT}const a = graphic('logo', { width: 3 }); const b = graphic("icon"); const c = graphic(\`mark\`); // graphic('no')`)).toEqual(['logo', 'icon', 'mark']);
+    // a name it works out itself shows at render time
+    expect(scriptGraphics(`${SCRIPT}const n = 'x'; const a = graphic(n);`)).toEqual([]);
   });
 
   it('is stored, diffed and merged apart from the brief', () => {
@@ -131,7 +181,7 @@ describe('enclosure script', () => {
 
 describe('enclosure graphics', () => {
   const LOGO_PATH = 'M0 0 H20 V10 H0 Z M3 3 H8 V7 H3 Z';
-  const drawn = SCRIPT.replace('module lid() { translate([0, 0, 6]) cube([10, 10, 1]); }', 'module lid() { translate([0, 0, 6]) linear_extrude(1) graphic("logo", width = 8); }');
+  const drawn = SCRIPT.replace('translate([0, 0, 6], cube([10, 10, 1]))', "translate([0, 0, 6], linear_extrude(graphic('logo', { width: 8 }), 1))");
 
   it('are kept in the design, centred, and become a hunk of their own', () => {
     const k = kernel();
@@ -168,7 +218,7 @@ describe('enclosure graphics', () => {
     const k = kernel();
     const r = k.transact({ summary: 'box', ops: [{ op: 'set_enclosure_script', script: drawn }] });
     expect(r).toMatchObject({ status: 'rejected', rejection: { code: 'ENCLOSURE_INVALID' } });
-    expect(JSON.stringify(r)).toContain('graphic(\\"logo\\"): there is no such graphic');
+    expect(JSON.stringify(r)).toContain("graphic('logo'): there is no such graphic");
     // in one transaction: the graphic first, then the script
     expect(k.transact({ summary: 'box', ops: [{ op: 'set_enclosure_graphic', name: 'logo', svg_path: LOGO_PATH }, { op: 'set_enclosure_script', script: drawn }] }).status).toBe('ok');
     // neither both nor none of artwork and svg_path
@@ -176,11 +226,12 @@ describe('enclosure graphics', () => {
   });
 
   it('inlays name their host among the pieces', () => {
-    const inlaid = SCRIPT.replace('pieces = ["base", "lid"];', 'pieces = ["base", "lid", "lid_text"];\ninlays = [["lid_text", "lid", "#ffffff"]];').replace('module lid()', 'module lid_text() { cube(1); }\nmodule lid()');
+    const inlaid = `${SCRIPT.replace("['base', 'lid']", "['base', 'lid', 'lid_text']")}function lid_text() { return cube(1); }\nconst inlays = { lid_text: { host: 'lid', colour: '#ffffff' } };\n`;
     expect(scriptInlays(inlaid)).toEqual({ lid_text: { host: 'lid', colour: '#ffffff' } });
     expect(scriptInlays(SCRIPT)).toEqual({});
     expect(scriptProblems(inlaid)).toEqual([]);
-    expect(scriptProblems(inlaid.replace('["lid_text", "lid", "#ffffff"]', '["lid_text", "cover"]')).join(' ')).toContain('"cover", which is not in pieces');
-    expect(scriptProblems(inlaid.replace('["lid_text", "lid", "#ffffff"]', '["lid_text", "lid"], ["lid", "base"]')).join(' ')).toContain('itself an inlay');
+    expect(scriptProblems(inlaid.replace("{ host: 'lid', colour: '#ffffff' }", "{ host: 'cover' }")).join(' ')).toContain('"cover", which is not in pieces');
+    expect(scriptProblems(inlaid.replace("lid_text: { host: 'lid', colour: '#ffffff' }", "lid_text: { host: 'lid' }, lid: { host: 'base' }")).join(' ')).toContain('itself an inlay');
+    expect(scriptProblems(inlaid.replace("{ host: 'lid', colour: '#ffffff' }", '"lid"')).join(' ')).toContain('inlays is plain text');
   });
 });

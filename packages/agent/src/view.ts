@@ -66,7 +66,7 @@ function formatCut(v: EnclosureViewInfo): string {
   const opened = v.opened ? '; the pieces lifted apart' : '';
   return [
     '<view kind="enclosure">',
-    `the box cut open across ${v.axis}: the plane ${v.axis} = ${v.at_mm} mm (board.scad); the ${v.removed === '+' ? '+' : '−'}${v.axis} half cut away${opened}`,
+    `the box cut open across ${v.axis}: the plane ${v.axis} = ${v.at_mm} mm (board coordinates); the ${v.removed === '+' ? '+' : '−'}${v.axis} half cut away${opened}`,
     `render_enclosure section: { axis: "${v.axis}", at_mm: ${v.at_mm} } shows this plane`,
     '</view>',
   ].join('\n');

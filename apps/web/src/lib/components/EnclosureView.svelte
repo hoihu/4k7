@@ -10,11 +10,10 @@
   /**
    * Enclosure workspace (docs/design/enclosure.md §6): the agent's chat, the box in 3D with the
    * board, and a side panel with the brief (the user answers its questions here), the report of the
-   * last render, OpenSCAD on this computer, the script, and the downloads.
+   * last render, the script, and the downloads.
    */
   $effect(() => {
     void app.refreshEnclosure();
-    void app.scadStatus();
   });
 
   const b = $derived(app.board);
@@ -30,11 +29,11 @@
   const errors = $derived(report?.findings.filter((f) => f.severity === 'error') ?? []);
   const warnings = $derived(report?.findings.filter((f) => f.severity === 'warning') ?? []);
 
-  /* render the script once it changed (and OpenSCAD is there); a failed render is not retried by itself */
+  /* render the script once it changed; a failed render is not retried by itself */
   let tried = $state<string | null>(null);
   let renderError = $state<string | null>(null);
   $effect(() => {
-    if (!script || last || app.enclosureBusy || tried === encKey || !app.scad?.available || !b) return;
+    if (!script || last || app.enclosureBusy || tried === encKey || !b) return;
     tried = encKey;
     void render();
   });
@@ -152,14 +151,6 @@
     void app.userEdit(`Remove the graphic "${g.name}" from the box`, [{ op: 'set_enclosure_graphic', name: g.name, remove: true }]);
   }
 
-  /* OpenSCAD */
-  let binInput = $state('');
-  let binError = $state<string | null>(null);
-  async function useBin(bin: string | null) {
-    binError = await app.setScadBin(bin);
-    if (!binError) binInput = '';
-  }
-
   /* downloads */
   const projectName = () => (app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : '4k7-board').replace(/[^\w.-]+/g, '_');
   function download(blob: Blob, file: string) {
@@ -170,7 +161,7 @@
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
-  /** One piece as STL, turned for printing as the script says (print = …), on the bed. */
+  /** One piece as STL, turned for printing as the script says (const print = …), on the bed. */
   function stl(name: string) {
     if (!report) return;
     const f = printFiles(report, projectName()).stl.find((x) => x.name === name);
@@ -181,12 +172,9 @@
     if (!report) return;
     download(new Blob([printFiles(report, projectName()).plate as BlobPart], { type: 'model/3mf' }), `${projectName()}-enclosure.3mf`);
   }
-  /** The script with board.scad in it: one file that opens in OpenSCAD as it is. */
-  async function scadFile() {
-    const lib = await app.boardScadFile();
-    if (!script || !lib) return;
-    const one = script.replace(/^\s*include\s*<\s*board\.scad\s*>\s*;?/m, `// ---- board.scad (4k7) ----\n${lib.content}\n// ---- the enclosure ----`);
-    download(new Blob([one], { type: 'text/plain' }), `${projectName()}-enclosure.scad`);
+  /** The script as it is. */
+  function scriptFile() {
+    if (script) download(new Blob([script], { type: 'text/javascript' }), `${projectName()}-enclosure.js`);
   }
   async function boardScad() {
     const lib = await app.boardScadFile();
@@ -216,7 +204,7 @@
             <button aria-pressed={!!cut} title="Cut the box open to see inside: a plane through its middle; move it with the slider or drag its frame in the view" onclick={cutOpen}>Cut</button>
           </div>
         {/if}
-        {#if script}<button class="btn" disabled={app.enclosureBusy || !app.scad?.available} onclick={render}>{app.enclosureBusy ? 'Rendering…' : 'Render'}</button>{/if}
+        {#if script}<button class="btn" disabled={app.enclosureBusy} onclick={render}>{app.enclosureBusy ? 'Rendering…' : 'Render'}</button>{/if}
       </div>
       {#if app.k?.proposal}
         <div class="pend">
@@ -231,7 +219,7 @@
           <div class="seg">
             {#each AXES as a (a)}<button aria-pressed={cut.by === a} title={AXIS_TIPS[a]} onclick={() => cutBy(a)}>{a}</button>{/each}
           </div>
-          <label class="slide" title="Where the cut is (board.scad: x from the board's left edge, y from its bottom edge, z from its underside)">
+          <label class="slide" title="Where the cut is (x from the board's left edge, y from its bottom edge, z from its underside)">
             <input type="range" min={cutRange[0]} max={cutRange[1]} step="0.1" bind:value={cut.at} />
             <span class="mono">{sectionLabel(cut)}</span>
           </label>
@@ -242,7 +230,7 @@
     {#if !brief && !script}
       <div class="blank">
         <div class="card">
-          <p><b>No enclosure yet.</b> The agent designs the box for this board as an OpenSCAD script: first a brief with what it must do and the questions only you can answer, then the box, rendered with OpenSCAD on this computer and checked for collisions and blocked connectors.</p>
+          <p><b>No enclosure yet.</b> The agent designs the box for this board as a script: first a brief with what it must do and the questions only you can answer, then the box, rendered here and checked for collisions and blocked connectors.</p>
           <button class="btn pri" disabled={app.running || !b?.parts.length} onclick={start}>Design an enclosure</button>
         </div>
       </div>
@@ -305,7 +293,7 @@
 
       {#if script}
         <h4>Checks {#if report}<span class="tag err">{errors.length}</span> <span class="tag warn">{warnings.length}</span>{/if}</h4>
-        {#if app.enclosureBusy}<p class="small muted">Rendering with OpenSCAD…</p>
+        {#if app.enclosureBusy}<p class="small muted">Rendering…</p>
         {:else if renderError}<p class="small bad">{renderError}</p>
         {:else if !report}<p class="small muted">Not rendered since the script changed.</p>
         {:else if !report.findings.length}<p class="small ok">No collisions, every opening clear, the board held.</p>{/if}
@@ -315,15 +303,16 @@
               <li><span class="tag {f.severity === 'error' ? 'err' : 'warn'}">{f.severity[0]!.toUpperCase()}</span><span class="msg">{f.message}</span></li>
             {/each}
           </ul>
-          <p class="small muted">{report.pieces.length} piece{report.pieces.length === 1 ? '' : 's'} · rendered in {(report.ms / 1000).toFixed(1)} s of OpenSCAD</p>
+          {#if report.log?.length}<pre class="code">{report.log.join('\n')}</pre>{/if}
+          <p class="small muted">{report.pieces.length} piece{report.pieces.length === 1 ? '' : 's'} · rendered in {report.ms < 1000 ? `${report.ms} ms` : `${(report.ms / 1000).toFixed(1)} s`}</p>
         {/if}
 
         <h4>Files</h4>
         <div class="row2">
           <button class="btn" title="Every piece on one plate, turned for printing as the script says: a 3MF for the slicer" onclick={plate3mf}>Print plate .3mf ⤓</button>
           {#each pieces as p (p.name)}<button class="btn" title="The {p.name} as STL, {printTurns[p.name] ? `turned ${printTurns[p.name]!.join(', ')} for printing` : 'as built (the script gives no print orientation for it)'}, on the bed" onclick={() => stl(p.name)}>{p.name}.stl ⤓</button>{/each}
-          <button class="btn" title="The script with board.scad in it: one file that opens in OpenSCAD" onclick={scadFile}>.scad ⤓</button>
-          <button class="btn" title="The board as an OpenSCAD library (outline, holes, parts, plug paths)" onclick={boardScad}>board.scad ⤓</button>
+          <button class="btn" title="The script, as the agent wrote it" onclick={scriptFile}>.js ⤓</button>
+          <button class="btn" title="The board as an OpenSCAD library (outline, holes, parts, plug paths), for a box of your own in OpenSCAD" onclick={boardScad}>board.scad ⤓</button>
         </div>
 
         <h4>Script <span class="muted small">{scriptPieces(script)?.join(', ')} · {script.split('\n').length} lines</span></h4>
@@ -336,24 +325,6 @@
         {/if}
       {:else if b && !brief}
         <button class="btn wide" onclick={boardScad} title="The board as an OpenSCAD library (outline, holes, parts, plug paths), for your own box">board.scad ⤓</button>
-      {/if}
-
-      <h4>OpenSCAD</h4>
-      {#if !app.scad}
-        <p class="small muted">The 4k7 server on this computer runs OpenSCAD; it is not reachable (or older than the enclosure).</p>
-      {:else if app.scad.available}
-        <p class="small">OpenSCAD {app.scad.version}{app.scad.manifold ? '' : ' (no Manifold engine: slow; 2025 or later is much faster)'} <span class="muted mono" title={app.scad.path}>{app.scad.from === 'env' ? `from ${app.scad.env}` : app.scad.from === 'settings' ? 'chosen here' : 'found'}</span></p>
-      {:else}
-        <p class="small bad">{app.scad.reason}</p>
-        <p class="small">Install <a href="https://openscad.org/downloads.html" target="_blank" rel="noreferrer">OpenSCAD</a> (2025 or later), then look again, or give its path.</p>
-      {/if}
-      {#if app.scad}
-        <div class="row2">
-          <input class="other mono" placeholder="/path/to/openscad" bind:value={binInput} />
-          <button class="btn" disabled={!binInput.trim()} onclick={() => useBin(binInput)}>Use</button>
-          <button class="btn" onclick={() => (app.scad?.from === 'settings' ? useBin(null) : app.scadStatus(true))}>Look again</button>
-        </div>
-        {#if binError}<p class="small bad">{binError}</p>{/if}
       {/if}
     </div>
   </aside>

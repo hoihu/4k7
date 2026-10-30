@@ -10,8 +10,8 @@ in the brief.
 
 ## 1. Before you draw: the brief
 
-Read the board first: `get_board`, `board.scad` (`parts_info`, `holes`, `tallest_top`,
-`lowest_bottom`), and the datasheets of the connectors. Then write the brief. Decide what the
+Read the board first: `get_board`, `get_enclosure`'s `board_api` (`parts_info`, `holes`,
+`tallest_top`, `lowest_bottom`), and the datasheets of the connectors. Then write the brief. Decide what the
 request, the board or a sensible default settles, with the reason. Ask what only the user knows.
 
 **Always ask** (unless the request or the notes already say it):
@@ -99,13 +99,26 @@ panel-mount in the brief. For board-mount, support the board (§4).
   0.4–0.6 mm) glows over a bright LED. A light pipe (clear, separate) carries the light to the
   surface.
 - **Window**: an opening and a separate clear part, or a pocket for a cut acrylic sheet glued in.
+- **Lens**: a bought lens gives a beam you can count on, and a printed one does not: FDM prints
+  are cloudy and ribbed, and even clear resin wants sanding and a coat of lacquer. So a controlled
+  beam means a bought part, with a seat in the box for it (a pocket 0.1–0.2 mm over its diameter
+  and a lip to hold it). Print a dome or lens to spread and soften light, say so in the brief, and
+  say which process: clear resin, or clear PETG with thick walls and slow printing.
+  `dome(d, h)` and `lens(d, { r, r2, edge })` make the shapes; a sphere's sag over the diameter d is
+  r − √(r² − d²/4), and an LED under a surface of radius r in clear plastic is near focus at about
+  2–3 r. A small lens is a piece of its own, printed on its flat side.
+- **Light pipe**: a clear piece of its own, 3–5 mm across, from 0.2–0.5 mm over the LED's top
+  (`part_info(ref).max[2]`) up through the lid, in a hole 0.2 mm wider, with a collar under the lid
+  so it cannot fall out. Straight is best; a bend under ~3 × its diameter loses most of the light.
+- **Diffuser**: a thin plate or a dome of white or clear plastic over the LEDs, at least the LEDs'
+  spacing away from them so they blend into one glow. It is thin on purpose (§5.1).
 
 ## 4. Holding the board
 
 The board must not move when a plug goes in or a button is pressed.
 
 - **Screws through its mounting holes onto posts** (the default when it has holes). Use
-  `holes` in `board.scad`. The post's top is at z = 0 (the board's underside). Its diameter is
+  `holes` (or `hole_posts`). The post's top is at z = 0 (the board's underside). Its diameter is
   about twice the hole, and at least the hole plus 2.5 mm. Its height is at least
   −`lowest_bottom` + 1 mm, so THT leads and bottom parts clear the floor.
   - Self-tapping into plastic: a pilot hole ~0.3–0.5 mm under the screw's thread diameter
@@ -188,30 +201,30 @@ Say so when the user asks for outdoor use: the printed box keeps rain off, it is
 ## 6. Labels and logos
 
 Port names ("USB", "12 V", "IN", "OUT"), a product name, a logo, arrows and icons go on the
-outside of the box. board.scad has the helpers. Never rotate text by hand: mirrored and upside-down
+outside of the box. The script has the helpers. Never rotate text by hand: mirrored and upside-down
 labels are the usual mistake.
 
-- `label("USB", size = 4)` is 2D text, centred, in the font that comes with OpenSCAD (Liberation
+- `label('USB', { size: 4 })` is 2D text, centred, in the font that comes with the app (Liberation
   Sans Bold). `size` is the height of the capitals.
-- `graphic("logo", width = 20)` is a graphic from the design, 2D and centred. The user's logos are
+- `graphic('logo', { width: 20 })` is a graphic from the design, 2D and centred. The user's logos are
   in their artwork library (the artwork tool lists them; they import SVGs and trace pictures in
   Parts → Artwork). Put one in the design first with `design_edit set_enclosure_graphic name: "logo"
   artwork: "<its name>"`. For a simple icon (the USB trident, a power symbol, an arrow), write the
   SVG path yourself (`svg_path`). Do not trace text into a graphic: use `label`.
-- `on_face(face, at)` lays 2D children on a face of the box, reading the right way from outside:
-  their x to the reader's right, their y up, their z out of the box. `at` is a point on the face's
+- `on_face(face, at, solid)` lays a solid on a face of the box, reading the right way from outside:
+  its x to the reader's right, its y up, its z out of the box. `at` is a point on the face's
   outside: you know where your walls are. Faces are named as `parts_info`'s plugged-from: `left`,
   `right`, `top`, `bottom` (the walls along the board's edges seen from above), `above` (the lid,
   read from above with the board's top edge away from the reader) and `below` (the floor, read with
   the box tipped towards you).
-- `engrave(face, at, depth = 0.6)` is the 2D children sunk into the face: `difference()` it from
-  the piece. `emboss(face, at, height = 0.6)` is the 2D children raised out of the face: `union()`
-  it with the piece.
+- `engrave(face, at, shape, depth = 0.6)` is a 2D shape sunk into the face: subtract it from the
+  piece. `emboss(face, at, shape, height = 0.6)` is a 2D shape raised out of the face: union it
+  with the piece.
 
-```scad
-j1 = part_info("J1")[6];                       // J1's mating: [from, face centre, …]
-module usb_label() engrave("left", [-gap - wall, j1[1][1], j1[1][2] - 6], 0.5) label("USB", size = 4);
-module base() difference() { base_body(); usb_label(); }
+```js
+const j1 = part_info('J1').mating;             // J1's mating: { facing, origin (the face's centre), … }
+const usb_label = () => engrave('left', [-gap - wall, j1.origin[1], j1.origin[2] - 6], label('USB', { size: 4 }), 0.5);
+function base() { return difference(base_body(), usb_label()); }
 ```
 
 **Which way.** Engrave by default. It prints well on every face and nothing sticks out. Raised
@@ -232,12 +245,12 @@ edge and from the wall's edges. A logo goes on the lid or the largest wall, cent
 the engraving exactly: the engraving cut from the host, and the same shape cut out of the host's
 body.
 
-```scad
-pieces = ["base", "lid", "lid_logo"];
-inlays = [["lid_logo", "lid", "white"]];       // [inlay, host, colour shown]; list inlays after their hosts
-module logo() engrave("above", [cx, cy, lid_top], 0.6) graphic("logo", width = 24);
-module lid() difference() { lid_body(); logo(); }
-module lid_logo() intersection() { lid_body(); logo(); }
+```js
+const pieces = ['base', 'lid', 'lid_logo'];    // list inlays after their hosts
+const inlays = { lid_logo: { host: 'lid', colour: 'white' } };   // the colour it is shown in
+const logo = () => engrave('above', [cx, cy, lid_top], graphic('logo', { width: 24 }), 0.6);
+function lid() { return difference(lid_body(), logo()); }
+function lid_logo() { return intersection(lid_body(), logo()); }
 ```
 
 An inlay prints with its host: turned the same way, in the same 3MF object as a part of its own, so
@@ -254,8 +267,8 @@ own name when a brand has it too.
 
 - When the box carries a name or logo and a service prints it, say so in the brief: ask whether it
   is the user's own mark (or one they may use), and whether to keep it off the service's files.
-- Put every name and logo behind one parameter at the top, `brand = true;`, and draw them only
-  `if (brand)`. The user turns it off for the upload (and adds a sticker or engraves it later)
+- Put every name and logo behind one parameter at the top, `const brand = true;`, and draw them
+  only when it is on (`brand && logo()` among difference's children). The user turns it off for the upload (and adds a sticker or engraves it later)
   without losing it.
 - Generic port labels ("USB", "12 V", "IN") and icons are never a problem.
 
@@ -265,19 +278,79 @@ size, and is it in the right place?
 
 ## 7. Writing the script
 
-- Start with `include <board.scad>`. Take every position and size from it (`holes`,
-  `parts_info`, `pcb_outline`, `tallest_top`). Never type a coordinate the board already has.
-- Put every choice in a named parameter at the top (`wall = 2;`, `clearance = 0.25;`,
-  `lid_gap = 1;`). The user changes them, and so do you between renders.
-- One module per piece (`base()`, `lid()`, `plunger()`), chosen by `piece`. Build each piece in
-  assembled position (the lid on the base), and say how each is turned for printing:
-  `print = [["lid", [180, 0, 0]]];` (OpenSCAD rotate angles; a piece not named prints as built).
-  The print files (STL, one 3MF plate) and the overhang checks use it.
-- Openings from `mating_path(ref)` grown by the clearance (`minkowski` or `offset` on its
-  profile), so an opening follows its connector when the board changes.
-- Round outer edges (`hull` of spheres, or `offset(r)` on the outline before `linear_extrude`).
-  Leave sharp inside corners where printing needs them.
-- `$fn = 48` for holes and posts, lower for big rounds while iterating.
+The script is JavaScript on the Manifold geometry engine. `get_enclosure`'s
+`board_api` lists everything it can call, and it reads like OpenSCAD with the children as arguments:
+`translate([x, y, z], c)`, `difference(a, b, c)`, `linear_extrude(shape, { height })`. Nothing else
+is there but JavaScript itself: no import or export, nothing from outside. `sin`, `cos` and the rest
+are in degrees, as OpenSCAD's; `Math.sin` and the rest of `Math` are in radians.
+
+```js
+// parameters at the top
+const wall = 2, gap = 0.5, floor_t = 2, standoff = 3, clearance = 0.3, lid_t = 2;
+const pieces = ['base', 'lid'];
+const print = { lid: [180, 0, 0] };
+
+const floor_z = -standoff - floor_t;
+const split_z = pcb_thickness + 2;
+const lid_top = tallest_top + lid_clearance + lid_t;
+
+const outline = () => offset(pcb_shape(gap), { r: wall });
+const cavity = (z0, z1) => translate([0, 0, z0], linear_extrude(pcb_shape(gap), { height: z1 - z0 }));
+const openings = () => brief_openings.map((ref) => mating_path(ref, { grow: clearance }));
+
+function base() {
+  const shell = translate([0, 0, floor_z], linear_extrude(outline(), { height: split_z - floor_z }));
+  return difference(union(difference(shell, cavity(-standoff, split_z + 1)), hole_posts(-standoff)), openings());
+}
+
+function lid() {
+  const shell = translate([0, 0, split_z], linear_extrude(outline(), { height: lid_top - split_z }));
+  return difference(shell, cavity(split_z - 1, tallest_top + lid_clearance), openings());
+}
+```
+
+- Take every position and size from the board's globals (`holes`, `parts_info`, `pcb_outline`,
+  `tallest_top`). Never type a coordinate the board already has.
+- Put every choice in a named parameter at the top. The user changes them, and so do you between
+  renders.
+- One function per piece, named in `const pieces = ['base', 'lid'];`, each returning a solid built
+  in assembled position (the lid on the base). `const print = { lid: [180, 0, 0] };` says how a
+  piece is turned for printing (the angles of `rotate`; a piece not named prints as built). The
+  print files (STL, one 3MF plate) and the overhang checks use it. `pieces`, `print` and `inlays`
+  are read without running the script, so write them out plainly: names and numbers, no variables.
+- Openings from `mating_path(ref, { grow: clearance })`, so an opening follows its connector when
+  the board changes.
+- Everything returns a new shape and changes nothing in place: `translate(v, a)` is a new solid,
+  `a` stays. A lone list is the children (`intersection(list.map(…))` is what they all share). Among
+  other children a list is the union of what is in it, so `difference([a, b], c)` cuts `c` from
+  both. `null` or `false` leaves a child out (`brand && logo()`), and `undefined` is an
+  error: a helper that forgot its `return` would otherwise simply not cut.
+- Round things are fine for printing by default: leave them, or give one a `fn` (`fn: 96` for a lens).
+- `echo(bbox(lid()).size)` prints to the report: measure what you are not sure of instead of
+  working it out. `distance(a, b)` is how far apart two solids are.
+
+**Rounding.** Round the plain outer shape first, then cut the cavity and the openings out of it:
+
+- `round_extrude(shape, { height, r })` is the way to a round box: any outline, its rims and its
+  outer corners rounded, at once for a convex outline and in a second or two for any other.
+  `top: false` or `bottom: false` leaves that rim sharp, both off rounds only the corners:
+  `round_extrude(outline(), { height: 12, r: 1.5, bottom: false })` from z = 0.
+- `round_box([x, y, z], r)` is a rounded block. `round_rect([x, y], r)` is a 2D outline to offset
+  or extrude.
+- `rounded(solid, r)` and `filleted(solid, r)` work on any solid, rounding what stands out or filling
+  what goes in (where a post meets a floor). They take about 10 ms per triangle, and refuse a solid
+  of more than 3000: use them on a small plain piece, or a single post before you join it.
+- **The rim on the bed.** Rounding the face that lies on the bed is an overhang (ENC.OVERHANG) and
+  it lifts the first layer. Leave the bed's rim sharp (`bottom: false` for a base printed open side
+  up; `top: false` for a lid printed on its top), and keep the rounding for the rims that end up
+  on top. A print service in resin or nylon does not care, so round all of it there.
+
+**Smooth forms.** A shape with no straight edges (a dome that melts into a body, a hand-held form) is
+a signed distance: `sdf(smooth_union(3, sd_box([40, 30, 20], 4), sd_sphere(12, [15, 0, 8])), { min: [-30, -25, -15], max: [30, 25, 25], edge: 1 })`.
+The surface comes out within about `edge` of the true one, so cut anything that must fit (the
+cavity, the openings, the screw holes) out of it afterwards with the exact solids. `edge: 1` while
+you work, `0.5` at the end: each halving takes eight times as long. `f` may be any function of
+`[x, y, z]`, negative inside.
 
 ## 8. Judging your render
 

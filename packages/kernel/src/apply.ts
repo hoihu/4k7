@@ -52,6 +52,7 @@ import {
   textFigures,
   unknownGlyphs,
   openQuestions,
+  scriptGraphics,
   scriptPieces,
   scriptProblems,
   viaCurrentFor,
@@ -1642,7 +1643,7 @@ function setEnclosureBrief(d: Design, op: Extract<EditOp, { op: 'set_enclosure_b
   };
 }
 
-/** The enclosure's OpenSCAD script (replaced as a whole), checked before it can be rendered. */
+/** The enclosure's script (replaced as a whole), checked before it can be rendered. */
 function setEnclosureScript(d: Design, op: Extract<EditOp, { op: 'set_enclosure_script' }>): OpResult {
   if (op.script === null) {
     if (d.enclosure) delete d.enclosure.script;
@@ -1653,7 +1654,7 @@ function setEnclosureScript(d: Design, op: Extract<EditOp, { op: 'set_enclosure_
   // graphics it draws must be in the design first (set_enclosure_graphic)
   const have = (d.enclosure?.graphics ?? []).map((g) => g.name);
   for (const name of new Set(scriptGraphics(op.script))) {
-    if (!have.includes(name)) problems.push(`graphic("${name}"): there is no such graphic; add it first with set_enclosure_graphic (from the artwork library or an SVG path)${have.length ? `, or use one there is: ${have.join(', ')}` : ''}.`);
+    if (!have.includes(name)) problems.push(`graphic('${name}'): there is no such graphic; add it first with set_enclosure_graphic (from the artwork library or an SVG path)${have.length ? `, or use one there is: ${have.join(', ')}` : ''}.`);
   }
   if (problems.length) reject({ code: 'ENCLOSURE_INVALID', message: `The script cannot be rendered yet:\n- ${problems.join('\n- ')}` });
   d.enclosure = { ...d.enclosure, script: op.script };
@@ -1668,16 +1669,10 @@ function pruneEnclosure(d: Design) {
   if (e && !e.brief && !e.script && !e.graphics) delete d.enclosure;
 }
 
-/** The graphics a script draws by name: graphic("logo", …). */
-function scriptGraphics(script: string): string[] {
-  const code = script.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-  return [...code.matchAll(/\bgraphic\s*\(\s*"([^"]*)"/g)].map((m) => m[1]!);
-}
-
 /** Most points a graphic for the box may have (a traced picture with fine dots has many). */
 const MAX_GRAPHIC_POINTS = 100_000;
 
-/** A graphic for the box (a logo, an icon), copied into the design: board.scad draws it as graphic(name). */
+/** A graphic for the box (a logo, an icon), copied into the design: the script draws it as graphic(name). */
 function setEnclosureGraphic(d: Design, op: Extract<EditOp, { op: 'set_enclosure_graphic' }>): OpResult {
   const list = [...(d.enclosure?.graphics ?? [])];
   const at = list.findIndex((g) => g.name === op.name);
@@ -1727,7 +1722,7 @@ function setEnclosureGraphic(d: Design, op: Extract<EditOp, { op: 'set_enclosure
   d.enclosure = { ...d.enclosure, graphics: list };
   return {
     op: 'set_enclosure_graphic',
-    effect: `graphic "${g.name}" for the box (${source}): ${g.mode === 'fill' ? 'filled' : `outlines ${g.line} mm`}, ${figs.length} figure(s), ${points} points, ${g.w} × ${g.h} as stored; draw it with graphic("${g.name}", width = …) (2D, centred) and emboss, engrave or inlay it like a label`,
+    effect: `graphic "${g.name}" for the box (${source}): ${g.mode === 'fill' ? 'filled' : `outlines ${g.line} mm`}, ${figs.length} figure(s), ${points} points, ${g.w} × ${g.h} as stored; draw it with graphic('${g.name}', { width: … }) (2D, centred) and emboss, engrave or inlay it like a label`,
     ids: ['enclosure'],
   };
 }

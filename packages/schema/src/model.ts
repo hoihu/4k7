@@ -38,7 +38,7 @@ export interface Design {
    * A sheet without one is drawn by the auto-layout, afresh after every change.
    */
   drawing?: Record<string, SheetDrawing>;
-  /** The enclosure: the brief agreed with the user and the OpenSCAD script (docs/design/enclosure.md). */
+  /** The enclosure: the brief agreed with the user and the script (docs/design/enclosure.md). */
   enclosure?: EnclosureSettings;
 }
 

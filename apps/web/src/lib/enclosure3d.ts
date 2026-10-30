@@ -1,14 +1,13 @@
 /**
  * The enclosure in 3D (three.js, loaded on demand): the board as the Layout's 3D view draws it,
- * the pieces OpenSCAD rendered (STL), the ways out the brief asks for and what the report found.
+ * the pieces the script made, the ways out the brief asks for and what the report found.
  * The Enclosure view shows it; render_enclosure takes pictures of it for the agent
  * (docs/design/enclosure.md §5.3).
  *
- * board.scad coordinates (x right, y up, z up, the board's underside at z = 0) become the board
+ * Board coordinates (x right, y up, z up, the board's underside at z = 0) become the board
  * viewer's (x, board top at y = 0, z = the board's y down): (x, y, z) → (x, z − 1.6, h − y).
  */
 import * as THREE from 'three';
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { boardBodies } from '@4k7/parts';
 import type { BoardView } from '@4k7/schema';
@@ -41,7 +40,7 @@ export interface SceneOptions {
   marks?: boolean;
 }
 
-/** A board.scad point, direction and the matrix for meshes, in the viewer's coordinates. */
+/** A board point, direction and the matrix for meshes, in the viewer's coordinates. */
 const toPoint = (p: V3, h: number) => new THREE.Vector3(p[0]!, p[2]! - T, h - p[1]!);
 const toDir = (d: V3) => new THREE.Vector3(d[0]!, d[2]!, -d[1]!);
 const toViewer = (h: number) => new THREE.Matrix4().set(1, 0, 0, 0, 0, 0, 1, -T, 0, -1, 0, h, 0, 0, 0, 1);
@@ -58,23 +57,18 @@ const CUT = 0xe0703a;
 /** Facets meeting at less than this are shaded smooth (rounded corners, holes), and get no edge line. */
 const CREASE = 30;
 
-function decode(b64: string): ArrayBuffer {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out.buffer;
-}
-
-/** Geometry of the pieces and their edges, parsed once per report. */
+/** Geometry of the pieces and their edges, made once per report. */
 const parsed = new WeakMap<EnclosurePiece, { faces: THREE.BufferGeometry; edges: THREE.EdgesGeometry }>();
 function pieceGeometry(p: EnclosurePiece, h: number) {
   let g = parsed.get(p);
   if (!g) {
-    const stl = new STLLoader().parse(decode(p.stl));
-    stl.applyMatrix4(toViewer(h));
-    // (an STL's normals are per facet: curved faces would show every facet)
-    g = { faces: toCreasedNormals(stl, THREE.MathUtils.degToRad(CREASE)), edges: new THREE.EdgesGeometry(stl, CREASE) };
-    stl.dispose();
+    const mesh = new THREE.BufferGeometry();
+    // (a copy: the report keeps its board coordinates)
+    mesh.setAttribute('position', new THREE.BufferAttribute(p.tris.slice(), 3));
+    mesh.applyMatrix4(toViewer(h));
+    // (normals per facet would show every facet of a curved face)
+    g = { faces: toCreasedNormals(mesh, THREE.MathUtils.degToRad(CREASE)), edges: new THREE.EdgesGeometry(mesh, CREASE) };
+    mesh.dispose();
     parsed.set(p, g);
   }
   return g;
@@ -168,7 +162,7 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
   return group;
 }
 
-/** A cut for the viewer (board.scad): the plane n · p = at through `box` (what it may move through; its frame goes round it). */
+/** A cut for the viewer (board coordinates): the plane n · p = at through `box` (what it may move through; its frame goes round it). */
 export interface ViewerSection {
   normal: [number, number, number];
   at: number;
@@ -181,7 +175,7 @@ export interface EnclosureViewer {
   setScene(s: EnclosureScene, o: SceneOptions): void;
   /** A section with a frame round it, to drag it by; null: whole. */
   section(cut: ViewerSection | null): void;
-  /** Where the camera is (board.scad). */
+  /** Where the camera is (board coordinates). */
   eye(): [number, number, number];
   view(preset: 'iso' | 'top' | 'bottom' | 'front'): void;
   resize(width: number, height: number): void;
@@ -441,7 +435,7 @@ export type PictureName = 'front_left' | 'back_right' | 'open' | 'sections' | 'b
 export type FaceName = 'left' | 'right' | 'top' | 'bottom' | 'above' | 'below';
 
 /**
- * Where the camera stands to read a face (board.scad directions, as board.scad's on_face): out from
+ * Where the camera stands to read a face (board directions, as the script's on_face): out from
  * it, tilted about 20° so engraved and raised edges catch the light (straight on, a groove's floor
  * shades like the face round it). Walls lean towards the text's top and left; the lid and the floor
  * only towards the text's foot, which keeps the face's up at the top of the picture (the camera does
@@ -530,7 +524,7 @@ export async function enclosurePictures(
       const v = FACE_VIEW[face];
       const box = new THREE.Box3().setFromObject(g);
       const size = box.getSize(new THREE.Vector3());
-      // board.scad x, y, z are the viewer's x, z, y
+      // board x, y, z are the viewer's x, z, y
       const across = ([size.x, size.z, size.y] as number[]).filter((_, i) => i !== v.out);
       const r = Math.hypot(across[0]!, across[1]!) / 2;
       look(box.getCenter(new THREE.Vector3()), toDir(v.dir), (r / Math.sin(THREE.MathUtils.degToRad(fov / 2))) * 1.1 + ([size.x, size.z, size.y][v.out]! / 2));

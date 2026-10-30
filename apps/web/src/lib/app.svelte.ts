@@ -20,8 +20,9 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ASSEMBLY_HOUSE, assemblyHouse, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, type ScadStatus, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
-import { boardScadSummary, enclosureJob, enclosureReport, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
+import { ASSEMBLY_HOUSE, assemblyHouse, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { enclosureApiSummary, enclosureFacts, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
+import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import costGuide from '../../../../docs/design/cost.md?raw';
 import highSpeedGuide from '../../../../docs/design/high-speed.md?raw';
@@ -179,8 +180,6 @@ class AppState {
   }
   sourcingShown = $state<'stock' | 'cost'>('stock');
   stockBusy = $state(false);
-  /** OpenSCAD on this computer, as the server last said (null: not asked yet, or no server). */
-  scad = $state.raw<ScadStatus | null>(null);
   /** The working copy's enclosure (brief and script), kept while the Enclosure view is open. */
   encDraft = $state.raw<EnclosureSettings | null>(null);
   /** Design revision (bumped on every refresh) and the revision the shown board was computed for. */
@@ -517,44 +516,21 @@ class AppState {
     return next;
   }
 
-  /** OpenSCAD on this computer (asks the server; `again`: look for it again). Null without a server that knows it. */
-  async scadStatus(again = false): Promise<ScadStatus | null> {
-    if (disk.status !== 'ok') return null;
-    try {
-      this.scad = await disk.scadStatus(again);
-    } catch {
-      this.scad = null;
-    }
-    return this.scad;
-  }
-
-  /** Use this OpenSCAD (an absolute path), or look for it again (null). */
-  async setScadBin(bin: string | null): Promise<string | null> {
-    const r = await disk.scadSetBin(bin);
-    if (!r.ok) return r.error;
-    this.scad = r.status;
-    return null;
-  }
-
   /**
-   * Render the working copy's enclosure script with the user's OpenSCAD and measure it
+   * Run the working copy's enclosure script and measure what it makes, in a worker of its own
    * (docs/design/enclosure.md §5). Keeps the result for the Enclosure view and the pictures.
    */
   async renderEnclosure(): Promise<{ report: EnclosureReport; facts: EnclosureFacts } | { error: string }> {
     const design = await this.kernel.draftDesign();
     const script = design.enclosure?.script;
     if (!script) return { error: 'There is no enclosure script yet: write one with design_edit set_enclosure_script.' };
-    if (disk.status !== 'ok') return { error: 'Rendering needs the 4k7 server on this computer: it runs OpenSCAD.' };
-    const st = await this.scadStatus();
-    if (!st) return { error: 'This 4k7 server cannot render enclosures yet: it is older than the app. Restart it (or update the app).' };
-    if (!st.available) return { error: `OpenSCAD is not available: ${st.reason ?? 'not found'} Install OpenSCAD 2025 or later (https://openscad.org/downloads.html), then Enclosure → OpenSCAD → Look again; or set its path there.` };
     const b = await this.routedBoard();
     if (!b) return { error: 'The board could not be computed.' };
-    const job = enclosureJob(b, design.name, script, design.enclosure?.brief, design.enclosure?.graphics);
+    const facts = enclosureFacts(b);
     this.enclosureBusy = true;
     try {
-      const results = await disk.scadRender(job);
-      const out = { report: enclosureReport(job, results, script), facts: job.facts };
+      const report = await renderScript({ facts, script, ...(design.enclosure?.brief ? { brief: design.enclosure.brief } : {}), ...(design.enclosure?.graphics ? { graphics: design.enclosure.graphics } : {}) });
+      const out = { report, facts };
       this.enclosure = out;
       return out;
     } catch (e) {
@@ -578,29 +554,27 @@ class AppState {
     }
   }
 
-  /** board.scad for the working copy (download, get_enclosure). */
+  /** board.scad for the working copy (a download, for a box of one's own in OpenSCAD). */
   async boardScadFile(): Promise<{ name: string; content: string } | null> {
     const design = await this.kernel.draftDesign();
     const b = await this.routedBoard();
     return b ? boardScad(b, design.name, design.enclosure?.brief, design.enclosure?.graphics) : null;
   }
 
-  /** design_query get_enclosure: the brief, the script, the board as OpenSCAD sees it, OpenSCAD, the last render. */
+  /** design_query get_enclosure: the brief, the script, the board as the script finds it and what it can call, the last render. */
   private async enclosureQuery(): Promise<unknown> {
     const design = await this.kernel.draftDesign();
     const enc = design.enclosure;
-    const lib = await this.boardScadFile();
-    const st = await this.scadStatus();
+    const b = await this.routedBoard();
     const last = this.enclosure;
     return {
       brief: enc?.brief ?? null,
       open_questions: openQuestions(enc?.brief).map((i) => `${i.topic}: ${i.question}`),
       script: enc?.script ?? null,
       graphics: enclosureGraphicsInfo(enc?.graphics),
-      board_scad: lib ? boardScadSummary(lib.content) : 'the board could not be computed',
-      openscad: !st ? 'unknown: the 4k7 server on this computer is not reachable or older than the enclosure' : st.available ? `OpenSCAD ${st.version}${st.manifold ? '' : ' (no Manifold engine: renders are slow)'}` : `not available: ${st.reason}`,
+      board_api: b ? enclosureApiSummary(enclosureFacts(b), enc?.brief, enc?.graphics) : 'the board could not be computed',
       last_render: !enc?.script ? 'no script yet' : last && last.report.key === enclosureKey(enc) ? reportText(last.report, last.facts) : 'not rendered since the script or its graphics last changed: render_enclosure',
-      how: 'Read design_query get_guide topic "mechanics" before the first brief. 1. The brief (set_enclosure_brief): decide what you can, ask what only the user knows, in one brief; the user answers in the app. 2. The script (set_enclosure_script) against board.scad: include <board.scad>, never copy its numbers. 3. render_enclosure after every change: fix the report first, then what the pictures show. 4. propose when the report is clean.',
+      how: 'Read design_query get_guide topic "mechanics" before the first brief. 1. The brief (set_enclosure_brief): decide what you can, ask what only the user knows, in one brief; the user answers in the app. 2. The script (set_enclosure_script), JavaScript against board_api: never copy a number the board has, const pieces = [\'base\', \'lid\'];, one function per piece. 3. render_enclosure after every change: fix the report first, then what the pictures show. 4. propose when the report is clean.',
     };
   }
 

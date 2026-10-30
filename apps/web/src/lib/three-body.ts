@@ -727,7 +727,7 @@ function matingMarks(b: BoardView): THREE.Group {
   const g = new THREE.Group();
   const owned: { dispose(): void }[] = [];
   const h = b.outline.h;
-  // board.scad coordinates (y up, underside at z = 0) → the viewer's (board top at y = 0, z = board y)
+  // board coordinates (y up, underside at z = 0) → the viewer's (board top at y = 0, z = board y)
   const pt = (p: readonly number[]) => new THREE.Vector3(p[0]!, p[2]! - THICKNESS, h - p[1]!);
   const dir = (d: readonly number[]) => new THREE.Vector3(d[0]!, d[2]!, -d[1]!);
   const mat = new THREE.MeshBasicMaterial({ color: 0xff9a3c, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide });

@@ -2,7 +2,7 @@
  * Projects, imported parts, artwork and datasheets are kept on this computer by the local server
  * (tools/server/src/storage.ts), over HTTP with the access key. Nothing is saved without it.
  */
-import { SERVER_PORTS, type HouseFootprint, type PartQuery, type ScadJob, type ScadRunResult, type ScadStatus, type SupplierPart } from '@4k7/schema';
+import { SERVER_PORTS, type HouseFootprint, type PartQuery, type SupplierPart } from '@4k7/schema';
 import type { AssemblyQuote, QuoteOrder } from '@4k7/parts';
 
 export type DiskStatus = 'off' | 'connecting' | 'ok' | 'unreachable';
@@ -176,28 +176,6 @@ class Disk {
   async sourcingQuote(house: string, order: QuoteOrder): Promise<AssemblyQuote | null> {
     const r = await this.#req('POST', `sourcing/${encodeURIComponent(house)}/quote`, JSON.stringify(order), { 'content-type': 'application/json' });
     return r ? ((await r.json()) as { quote: AssemblyQuote }).quote : null;
-  }
-
-  /* -------------------------- OpenSCAD (the enclosure) ------------------------ */
-
-  /** OpenSCAD on this computer; `again`: look for it again (after installing it). Null: the server is older than the enclosure. */
-  async scadStatus(again = false): Promise<ScadStatus | null> {
-    const r = await this.#req('GET', `scad${again ? '?again=1' : ''}`);
-    return r ? ((await r.json()) as ScadStatus) : null;
-  }
-
-  /** Render a job with the user's OpenSCAD (the server runs it). */
-  async scadRender(job: ScadJob): Promise<ScadRunResult[]> {
-    const r = await this.#req('POST', 'scad/render', JSON.stringify({ files: job.files, runs: job.runs }), { 'content-type': 'application/json' });
-    if (!r) throw new DiskError('This 4k7 server cannot render enclosures yet: update it (restart the app).', 404);
-    return (await r.json()) as ScadRunResult[];
-  }
-
-  /** Run this OpenSCAD from now on (an absolute path), or look for it again (null). */
-  async scadSetBin(bin: string | null): Promise<{ ok: true; status: ScadStatus } | { ok: false; error: string }> {
-    const r = await this.#req('POST', 'scad/bin', JSON.stringify({ bin }), { 'content-type': 'application/json' });
-    if (!r) return { ok: false, error: 'This 4k7 server is older than the enclosure step: update it.' };
-    return (await r.json()) as { ok: true; status: ScadStatus } | { ok: false; error: string };
   }
 }
 
