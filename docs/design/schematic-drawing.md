@@ -1,6 +1,6 @@
 # Drawing the schematic: the agent owns the drawing
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; the agent's guide is [schematic.md](schematic.md).
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; 2026-10-29: a part placed on its own is wired to its neighbours (§2c); the agent's guide is [schematic.md](schematic.md).
 > Notes and checks are in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
@@ -39,8 +39,8 @@ authority to say where components go; the editor wires them up. So, as for the b
 
 - **`place_symbol`** pins a part's symbol centre on a page (mils from the paper's top-left, snapped
   to the 100-mil grid). An IC or connector takes the small parts at its pins with it, still wired;
-  a two-pin part placed on its own stands apart, connected by labels until the router (§5) wires
-  it. The layout flows every part nobody placed around the placed ones.
+  a two-pin part placed on its own stands apart, wired to its neighbours where that draws cleanly
+  and connected by labels where not (§2c). The layout flows every part nobody placed around the placed ones.
 - **`get_schematic`** tells the agent each page's paper and where every symbol stands, so it can
   place by reading, not by guessing from a picture.
 - **Relative constraints stay** the lighter lever, and now do what they say: the subject moves, a
@@ -140,6 +140,39 @@ two shallow steps); about 300 ms for the transaction and the view. Left as label
 flash's DI and CLK, whose pins run in another order than the MCU's (`set_symbol layout` on the flash
 wires them; the path finder does not reorder pins). The flash also stands below the crystal in its
 column, so its other lines jog.
+
+## 2c. Decision 2026-10-29: a part placed on its own is wired to its neighbours
+
+Only ICs and connectors kept their small parts wired; a resistor or capacitor the agent placed with
+`place_symbol` stood apart and was tied to its neighbours by labels, so the cleanest drawings came
+only from placing the big parts and leaving the rest to the layout. Now `place_symbol` of a two-pin
+part runs one more step (`kernel/autowire.ts`), once, as the part is placed:
+
+- **Each signal pin** (not a rail or ground: those keep the symbol that came along) is wired to the
+  nearest other piece of its net on the page, by the `wire` op's path finder: its pins, or a T onto
+  a wire of it. The nearest three pieces are tried in turn.
+- **Clean or not at all.** The path is drawn only if it crosses no wire of another net, runs through
+  no label or name, has at most three corners and no U-turn (the block wiring's test), is no longer
+  than the direct way plus 800 mils, spans no more than 4000 mils, and adds no jog or detour the net
+  did not have (`wireShape`, what SCH.JOG and SCH.DETOUR measure). Otherwise nothing is drawn, the
+  result says why for each pin ("R3.2 (LED_B: a wire would cross another)"), and the connection
+  shows as the automatic labels the drawing completes itself with (§2a), so none is left out.
+- **Labels make way**: the net labels (and their leads) at the two ends of a new wire go, as for
+  `wire`; the net's other pieces keep or get theirs.
+- **Automatic means replaceable.** The wires are ordinary stored wires and nothing re-runs the step:
+  `erase` at a pin takes the wire away and the label that appears in its place stays; `label`
+  after an `erase` puts the agent's own; `wire` draws it with `via` corners. Moving the part again
+  cuts the old wires back and wires it afresh where the new place allows.
+- Not done: an IC or connector placed after the small parts around it does not wire them (place it
+  first, as `get_schematic` and the guide say), and a two-pin part has no flip (pin 1 is the left or
+  top end), so a part is wired cleanly only when its pin 1 faces the neighbour on that net.
+
+Two synthetic placements (every IC and connector placed, then each small part one inch from the
+first pin of its net it can face, as an agent reading `get_schematic` would; the 10-part sensor
+front-end and the TPS54331 buck, `place_symbol` per part): net labels 16 → 11 and 15 → 11 (the
+automatic ones 12 → 7 and 14 → 9), wires 2 → 5 and 2 → 7, SCH findings 2 → 0 and 0 → 0. The rest
+stays labels: a pin whose neighbour lies on another row (a jog), across a wire, or whose wire
+would go round a part.
 
 ## 3. Notes and checks
 
@@ -393,9 +426,9 @@ The first plan, steps 1–3 built 2026-10-12:
   Probably: the arrangement step runs on new parts and on request, and leaves the rest alone.
 - **Ruleset in the design file.** A project's own rules make it render the same everywhere, but a
   project then disagrees with the user's rules without them noticing. Show which ruleset applies?
-- **Wires to placed parts.** A two-pin part placed on its own is connected by labels; the router
-  (step 6) should wire it to its neighbours instead. Until then, placing ICs and connectors (which
-  keep their small parts wired) gives the cleanest drawings.
+- **Wires to placed parts.** *Resolved 2026-10-29 (§2c):* a two-pin part placed on its own is wired
+  to its neighbours when that is clean. Still open: wiring the small parts that were placed before
+  the IC they serve, and a flip for two-pin parts, so pin 1 need not face the neighbour.
 - **Pictures.** Steps need images to judge; images are the most expensive input. One per step, area
   only where possible.
 - **Claude Code.** Through the local server it gets the same hints and the same ruleset

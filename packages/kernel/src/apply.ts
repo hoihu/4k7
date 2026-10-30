@@ -64,6 +64,7 @@ import { routability } from './congestion.ts';
 import { underBody } from './drc.ts';
 import { polarityOf } from './marks.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
+import { wirePlaced } from './autowire.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
 import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
 import { tuneLength } from './tune.ts';
@@ -1020,7 +1021,14 @@ function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>): Op
   const taken = !isDrawn(d, comp.sheet);
   const unitOf = unit ?? (card && unitCount(card) > 1 ? card.units![0]!.name : undefined);
   const at = moveSymbol(d, comp.sheet, comp, unitOf, page, op.x, op.y, { ...(op.orient ? { orient: op.orient } : {}), ...(op.mirror !== undefined ? { mirror: op.mirror } : {}) });
-  const notes = [taken ? `sheet ${sheet.name} is drawn as you arrange it from now on` : '', at.under ? `it lies on ${at.under}: move one of them` : ''].filter(Boolean);
+  // a two-pin part on its own is wired to its neighbours where that is clean, else labels connect it
+  const wired = twoPin ? wirePlaced(d, comp) : undefined;
+  const notes = [
+    taken ? `sheet ${sheet.name} is drawn as you arrange it from now on` : '',
+    at.under ? `it lies on ${at.under}: move one of them` : '',
+    wired?.wired.length ? `wired ${wired.wired.join(', ')}` : '',
+    wired?.labelled.length ? `connected by labels: ${wired.labelled.join('; ')}` : '',
+  ].filter(Boolean);
   return { op: op.op, effect: `${label} placed on page ${first + page - 1} at (${at.x}, ${at.y}) mils${notes.length ? `; ${notes.join('; ')}` : ''}`, ids: [comp.id] };
 }
 

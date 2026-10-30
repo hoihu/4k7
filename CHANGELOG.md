@@ -24,6 +24,9 @@ and every pull request of a release are on its [GitHub release](https://github.c
 ### Checks
 
 - **The schematic, the board and the BOM are checked against each other** (`XCHK.*`, in `get_diagnostics` and the Inspector): a symbol pin with no pad in the footprint, a pad no pin is on, a pin that matches its pad only in upper/lower case (the board would not connect it), a net left short of pads on the board, a `package` parameter the footprint does not follow (the part card's own package data wins over it), a part with no footprint that is then in neither the BOM nor the pick-and-place, and a mounting hole, plane, via group or drawn copper on a net the schematic no longer has. Each says what to change.
+### Schematic
+
+- **A small part you place is wired, not labelled**: a resistor, capacitor, LED or other two-pin part placed with `place_symbol` is wired to the nearest pin of each of its nets when the wire is clean (no crossing, no jog, no detour, short), and connected by net labels otherwise; the result says which pins got wires and why the others did not. Two example circuits placed part by part: 16 net labels down to 11 and 15 to 11, the drawing warnings 2 down to 0 and 0 to 0.
 
 ## 0.2.0 — 2026-10-25
 
