@@ -74,7 +74,7 @@ function renderSheet(d: Design, id: string, name: string, sd: SheetDrawing): She
     const connected = (p: PinView) => sym.pins.some((q) => q.x === p.x && q.y === p.y && c.pins[q.number]);
     for (const p of sym.pins) if (c.noConnect.includes(p.number) && !connected(p)) scene.noConnects.push({ x: p.x, y: p.y });
   }
-  for (const w of sd.wires) if (d.nets[w.netId]) scene.wires.push({ netId: w.netId, pts: [...w.pts] });
+  for (const w of sd.wires) if (d.nets[w.netId]) scene.wires.push({ netId: w.netId, pts: [...w.pts], ...(w.via ? { via: true } : {}) });
   for (const l of sd.labels) {
     const net = d.nets[l.netId];
     if (net) scene.labels.push({ ...l, text: net.name });

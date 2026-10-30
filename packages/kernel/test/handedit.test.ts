@@ -84,8 +84,24 @@ describe('a symbol dragged by the user', () => {
     byUser(k, [{ op: 'wire', from: 'R1.2', to: 'U1.IN1' }]);
     const s0 = sheetOf(k);
     const c = centre(s0, 'R1');
-    byUser(k, [{ op: 'place_symbol', ref: 'R1', page: 1, x: c.x - s0.pages[0]!.rect.x + 400, y: c.y - s0.pages[0]!.rect.y + 700 }]);
+    // (too far from U1 for the step that wires a part placed on its own)
+    byUser(k, [{ op: 'place_symbol', ref: 'R1', page: 1, x: c.x - s0.pages[0]!.rect.x - 4300, y: c.y - s0.pages[0]!.rect.y + 700 }]);
     expect(sheetOf(k).labels.filter((l) => l.auto && l.text === 'IN_F').length).toBe(2);
+  });
+
+  it('wires a part dragged below its neighbour from the side of its pin, not by labels', () => {
+    const k = kernel();
+    byUser(k, [{ op: 'wire', from: 'R1.2', to: 'U1.IN1' }]);
+    const s0 = sheetOf(k);
+    const c = centre(s0, 'R1');
+    const r = byUser(k, [{ op: 'place_symbol', ref: 'R1', page: 1, x: c.x - s0.pages[0]!.rect.x + 400, y: c.y - s0.pages[0]!.rect.y + 700 }]);
+    expect(r.results[0]!.effect).toContain('R1.2 to U1.IN1');
+    const s = sheetOf(k);
+    expect(s.labels.filter((l) => l.auto && l.text === 'IN_F')).toEqual([]);
+    const [low, ic] = [pin(s, 'R1', '2'), pin(s, 'U1', 'IN1')];
+    const w = wireAt(s, low)[0]!;
+    expect(w.pts[1]).toBe(low.y); // along the level of the bottom pin: going down first would have to turn back
+    expect(w.pts.slice(-2)).toEqual([ic.x, ic.y]);
   });
 
   it('leaves a connection to labels where no wire can reach (another page)', () => {

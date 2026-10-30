@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PartCard, SheetView } from '@4k7/schema';
+import { onWire } from '../src/drawing.ts';
 import { Kernel } from '../src/index.ts';
 
 /** A plain IC: two inputs on the left, an output on the right, supply on top and bottom. */
@@ -51,7 +52,7 @@ const labelsOf = (s: SheetView, net: string) => s.labels.filter((l) => l.text ==
 const sch = (k: Kernel) => k.state().diagnostics.filter((x) => x.code.startsWith('SCH.') && x.severity === 'error');
 
 describe('wire', () => {
-  it('draws an orthogonal wire between two pins of a net, leaving each outwards, and takes the labels at them away', () => {
+  it('draws an orthogonal wire between two pins of a net, straight out of each where it can, and takes the labels at them away', () => {
     const k = kernel();
     k.transact({ summary: 'move', ops: [{ op: 'place_symbol', ref: 'J2', page: 1, x: 9000, y: 2500, mirror: true }] });
     expect(labelsOf(sheetOf(k), 'OUT').length).toBeGreaterThan(0);
@@ -89,6 +90,162 @@ describe('wire', () => {
     const w = sheetOf(k).wires.find((x) => x.pts[0] === out.x && x.pts[1] === out.y)!;
     const pts = Array.from({ length: w.pts.length / 2 }, (_, i) => [w.pts[2 * i]! - page.x, w.pts[2 * i + 1]! - page.y]);
     expect(pts.some(([x, y]) => Math.abs(x! - vx) <= 50 && Math.abs(y! - 1500) <= 50)).toBe(true);
+  });
+});
+
+/**
+ * The net at a crystal's load cap, in a row at one level: R2 lying with its right pin facing C1,
+ * C1 standing with its top pin on that level, R1 lying with its left pin facing C1. Nothing wired.
+ */
+function row(connect: { pins: string[]; net: string }[] = [{ pins: ['R2.2', 'C1.1', 'R1.1'], net: 'XT' }]) {
+  const k = new Kernel();
+  const ops = [
+    { op: 'add_part', part: 'generic:R', refdes: 'R2', params: { resistance: '1k' } },
+    { op: 'add_part', part: 'generic:C', refdes: 'C1', params: { capacitance: '33p' } },
+    { op: 'add_part', part: 'generic:R', refdes: 'R1', params: { resistance: '1k' } },
+    ...connect.map((c) => ({ op: 'connect', ...c })),
+    { op: 'connect', pins: ['R2.1', 'C1.2', 'R1.2'], net: 'GND' },
+    // (turned there and back: a part the layout set off the grid comes back on it)
+    { op: 'place_symbol', ref: 'C1', page: 1, x: 5000, y: 3000, orient: 'lying' },
+    { op: 'place_symbol', ref: 'C1', page: 1, x: 5000, y: 3000, orient: 'upright' },
+    { op: 'place_symbol', ref: 'R1', page: 1, x: 5600, y: 2800, orient: 'lying' },
+    { op: 'place_symbol', ref: 'R2', page: 1, x: 4400, y: 2800, orient: 'lying' },
+    { op: 'erase', net: 'XT' },
+  ];
+  const r = k.transact({ summary: 'row', ops } as never);
+  expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+  const s = sheetOf(k);
+  const [left, cap, right] = [pinOf(s, 'R2', '2'), pinOf(s, 'C1', '1'), pinOf(s, 'R1', '1')];
+  expect([left.side, cap.side, right.side]).toEqual(['right', 'top', 'left']);
+  expect([left.y, right.y]).toEqual([cap.y, cap.y]);
+  const page = s.pages[0]!.rect;
+  return { k, left, cap, right, on: (p: { x: number; y: number }) => ({ x: p.x - page.x, y: p.y - page.y }) };
+}
+const isRun = (pts: number[], a: { x: number; y: number }, b: { x: number; y: number }) => [[a.x, a.y, b.x, b.y].join(), [b.x, b.y, a.x, a.y].join()].includes(pts.join());
+const hasRun = (k: Kernel, a: { x: number; y: number }, b: { x: number; y: number }) => sheetOf(k).wires.some((w) => isRun(w.pts, a, b));
+const detours = (k: Kernel) => k.state().diagnostics.filter((x) => x.code === 'SCH.DETOUR');
+
+describe('wire at a pin', () => {
+  it('joins a top pin from the side, straight, with no hop over it to come in from above', () => {
+    const { k, cap, right } = row();
+    const r = k.transact({ summary: 'wire', ops: [{ op: 'wire', from: 'R1.1', to: 'C1.1' }] });
+    expect(r.results[0]!.effect).toMatch(/R1\.1 → C1\.1 \(XT\), straight/);
+    expect(hasRun(k, right, cap)).toBe(true);
+    expect(detours(k)).toEqual([]);
+  });
+
+  it('leaves it that way too, and a wire from the other side makes one straight run across the pin', () => {
+    const { k, left, cap, right } = row();
+    const r = k.transact({ summary: 'wire', ops: [{ op: 'wire', from: 'C1.1', to: 'R1.1' }, { op: 'wire', from: 'C1.1', to: 'R2.2' }] });
+    expect(r.results.map((x) => x.effect)).toEqual([expect.stringMatching(/straight/), expect.stringMatching(/straight/)]);
+    expect(hasRun(k, cap, right)).toBe(true);
+    expect(hasRun(k, left, cap)).toBe(true);
+    expect(detours(k)).toEqual([]);
+  });
+
+  it('takes a corner given on a pin it starts or ends at without going round to it, in any order', () => {
+    for (const [from, to] of [['R1.1', 'C1.1'], ['C1.1', 'R1.1']] as const) {
+      for (const via of ['cap', 'right', 'cap right', 'right cap', 'cap cap']) {
+        const { k, cap, right, on } = row();
+        const r = k.transact({ summary: 'wire', ops: [{ op: 'wire', from, to, via: via.split(' ').map((v) => on(v === 'cap' ? cap : right)) }] });
+        expect(r.results[0]!.effect, `${from} via ${via}`).toMatch(/straight/);
+        expect(hasRun(k, cap, right), `${from} via ${via}`).toBe(true);
+      }
+    }
+  });
+
+  it('needs no drawing for corners on what is drawn already', () => {
+    const { k, left, cap, right, on } = row();
+    expect(k.transact({ summary: 'wire', ops: [{ op: 'wire', from: 'C1.1', to: 'R2.2' }] }).status).toBe('ok');
+    // the way traced along the wire that is there: from R2.2 past C1.1, and on to R1.1
+    const r = k.transact({ summary: 'wire', ops: [{ op: 'wire', from: 'R2.2', to: 'R1.1', via: [on(left), on(cap), on(right)] }] });
+    expect(r.results[0]!.effect).toMatch(/straight/);
+    expect(hasRun(k, cap, right)).toBe(true);
+    expect(detours(k)).toEqual([]);
+  });
+
+  it('runs through a pin of its own net in the way, which joins it, rather than hop over', () => {
+    const { k, left, right } = row();
+    const r = k.transact({ summary: 'wire', ops: [{ op: 'wire', from: 'R1.1', to: 'R2.2' }] });
+    expect(r.results[0]!.effect).toMatch(/straight/);
+    // (the clean-up keeps the run in two pieces, split at the pin it joins)
+    const xs = sheetOf(k).wires.flatMap((w) => (w.pts.every((v, i) => i % 2 === 0 || v === left.y) ? w.pts.filter((_, i) => i % 2 === 0) : []));
+    expect([Math.min(...xs), Math.max(...xs)]).toEqual([left.x, right.x]);
+    expect(sheetOf(k).labels.filter((l) => l.text === 'XT')).toEqual([]);
+    expect(k.transact({ summary: 'again', ops: [{ op: 'wire', from: 'C1.1', to: 'R1.1' }] }).results[0]!.effect).toContain('already joined');
+    expect(detours(k)).toEqual([]);
+  });
+
+  it('keeps a hump drawn through corners it was given, and says how to have it drawn plainly', () => {
+    const { k, cap, on } = row();
+    const via = [{ x: on(cap).x + 200, y: on(cap).y - 100 }, { x: on(cap).x, y: on(cap).y - 100 }];
+    expect(k.transact({ summary: 'wire', ops: [{ op: 'wire', from: 'R1.1', to: 'C1.1', via }] }).results[0]!.effect).toMatch(/3 corners/);
+    expect(detours(k).map((x) => x.message)).toEqual([expect.stringMatching(/turns back on itself .*erase it and wire it again without them/)]);
+    const r = k.transact({ summary: 'again', ops: [{ op: 'erase', net: 'XT' }, { op: 'wire', from: 'R1.1', to: 'C1.1' }] });
+    expect(r.results[1]!.effect).toMatch(/straight/);
+    expect(detours(k)).toEqual([]);
+  });
+
+  it('goes round a pin of another net in the way', () => {
+    const { k, left, cap, right } = row([{ pins: ['R2.2', 'R1.1'], net: 'XT' }, { pins: ['C1.1'], net: 'CAP' }]);
+    const r = k.transact({ summary: 'wire', ops: [{ op: 'wire', from: 'R1.1', to: 'R2.2' }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    expect(hasRun(k, left, right)).toBe(false);
+    expect(sheetOf(k).wires.filter((w) => onWire(cap.x, cap.y, w.pts))).toEqual([]);
+    expect(sch(k)).toEqual([]);
+  });
+
+  it('never runs through a part: to a pin on its far side it goes round', () => {
+    const { k } = row();
+    // C1's bottom pin to R1's far end, up on the level of C1's top pin
+    expect(k.transact({ summary: 'wire', ops: [{ op: 'wire', from: 'C1.2', to: 'R1.2' }] }).status).toBe('ok');
+    const s = sheetOf(k);
+    const [low, far] = [pinOf(s, 'C1', '2'), pinOf(s, 'R1', '2')];
+    const w = s.wires.find((x) => onWire(low.x, low.y, x.pts) && onWire(far.x, far.y, x.pts))!;
+    for (const ref of ['C1', 'R1']) {
+      const b = s.symbols.find((x) => x.refdes === ref)!.bbox;
+      for (let i = 0; i + 3 < w.pts.length; i += 2) {
+        const [x1, y1, x2, y2] = [w.pts[i]!, w.pts[i + 1]!, w.pts[i + 2]!, w.pts[i + 3]!];
+        const inX = Math.max(x1, x2) > b.x && Math.min(x1, x2) < b.x + b.w;
+        const inY = Math.max(y1, y2) > b.y && Math.min(y1, y2) < b.y + b.h;
+        expect(inX && inY, `${ref}: ${w.pts}`).toBe(false);
+      }
+    }
+  });
+
+  it('goes straight out of its pins on a run as long as a row, with no wire down the pin column', () => {
+    // the return from the end of one row of a chain to the start of the next
+    const k = new Kernel();
+    const ops = [
+      { op: 'add_part', part: 'generic:R', refdes: 'R1', params: { resistance: '1k' } },
+      { op: 'add_part', part: 'generic:R', refdes: 'R2', params: { resistance: '1k' } },
+      { op: 'connect', pins: ['R1.2', 'R2.1'], net: 'CHAIN' },
+      { op: 'connect', pins: ['R1.1'], net: 'A' },
+      { op: 'connect', pins: ['R2.2'], net: 'B' },
+      { op: 'place_symbol', ref: 'R1', page: 1, x: 7000, y: 2000, orient: 'lying' },
+      { op: 'place_symbol', ref: 'R2', page: 1, x: 2000, y: 3000, orient: 'lying' },
+      { op: 'erase', net: 'CHAIN' },
+      { op: 'wire', from: 'R1.2', to: 'R2.1' },
+    ];
+    const r = k.transact({ summary: 'row', ops } as never);
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const s = sheetOf(k);
+    const [end, begin] = [pinOf(s, 'R1', '2'), pinOf(s, 'R2', '1')];
+    const w = s.wires.find((x) => x.pts.join().includes(`${end.x},${end.y}`) && x.pts.join().includes(`${begin.x},${begin.y}`))!;
+    const pts = w.pts[0] === end.x ? w.pts : w.pts.flatMap((_, i, a) => (i % 2 ? [] : [a[a.length - 2 - i]!, a[a.length - 1 - i]!]));
+    expect([pts[2]! > end.x, pts[3]]).toEqual([true, end.y]); // out of R1 to the right
+    expect([pts.at(-4)! < begin.x, pts.at(-3)]).toEqual([true, begin.y]); // into R2 from the left
+  });
+
+  it('goes straight out of a pin when going to the side saves nothing', () => {
+    const { k, cap, on } = row();
+    // to a corner above the pin and off to the right, then R1: up first and across, not across and up
+    const r = k.transact({ summary: 'wire', ops: [{ op: 'wire', from: 'C1.1', to: 'R1.1', via: [{ x: on(cap).x + 200, y: on(cap).y - 600 }] }] });
+    expect(r.status).toBe('ok');
+    const w = sheetOf(k).wires.find((x) => x.pts.slice(0, 2).join() === `${cap.x},${cap.y}` || x.pts.slice(-2).join() === `${cap.x},${cap.y}`)!;
+    const next = w.pts.slice(0, 2).join() === `${cap.x},${cap.y}` ? w.pts.slice(2, 4) : w.pts.slice(-4, -2);
+    expect(next[0]).toBe(cap.x);
+    expect(next[1]).toBeLessThan(cap.y);
   });
 });
 

@@ -75,6 +75,52 @@ describe('the wire clean-up', () => {
     expect(sd.wires.map((w) => w.pts)).toEqual([[0, 0, 1000, 0]].map((p) => (sd.wires[0]!.pts[0] === 0 ? p : [1000, 0, 0, 0])));
   });
 
+  it('takes out the hop over a pin that a wire came into from above', () => {
+    // A faces left, B (standing) up: the wire went over B's top pin to come down onto it
+    const { d, symbols } = world([['A', 1000, 0, 'left', 'N'], ['B', 0, 0, 'top', 'N']]);
+    const hop = [1000, 0, 100, 0, 100, -100, 0, -100, 0, 0];
+    const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [...hop] }] };
+    expect(cleanWires(d, sd, symbols, area)).toBe(true);
+    expect(sd.wires.map((w) => [...w.pts].sort((p, q) => p - q))).toEqual([[0, 0, 0, 1000]]);
+    expect(cleanWires(d, sd, symbols, area)).toBe(false);
+    // given through the agent's own corners it stays what it asked for
+    const kept: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [...hop], via: true }] };
+    expect(cleanWires(d, kept, symbols, area)).toBe(false);
+  });
+
+  it('takes out that hop with a wire leaving the pin on the other side, into one straight run', () => {
+    // the screenshot: the hop between C27's top pin and Y1, the wire to R9 going on in line
+    const { d, symbols } = world([['Y', 1000, 0, 'left', 'N'], ['C', 0, 0, 'top', 'N'], ['R', -500, 0, 'right', 'N']]);
+    const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [1000, 0, 100, 0, 100, -100, 0, -100, 0, 0] }, { netId: 'N', pts: [0, 0, -500, 0] }] };
+    expect(cleanWires(d, sd, symbols, area)).toBe(true);
+    expect(sd.wires.map((w) => [...w.pts].sort((p, q) => p - q)).sort((p, q) => q[3]! - p[3]!)).toEqual([[0, 0, 0, 1000], [-500, 0, 0, 0]]);
+  });
+
+  it('takes out a hop between two top pins', () => {
+    const { d, symbols } = world([['A', 0, 0, 'top', 'N'], ['B', 1000, 0, 'top', 'N']]);
+    const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [0, 0, 0, -100, 1000, -100, 1000, 0] }] };
+    expect(cleanWires(d, sd, symbols, area)).toBe(true);
+    expect(sd.wires.map((w) => [...w.pts].sort((p, q) => p - q))).toEqual([[0, 0, 0, 1000]]);
+  });
+
+  it('does not move a corner into the side of a pin when that saves nothing', () => {
+    // up out of the pin, across, on up: moving the step to the pin would only swap one corner for another
+    const { d, symbols } = world([['A', 0, 0, 'top', 'N'], ['B', 500, -500, 'bottom', 'N']]);
+    const pts = [0, 0, 0, -100, 500, -100, 500, -500];
+    const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [...pts] }] };
+    expect(cleanWires(d, sd, symbols, area)).toBe(false);
+    expect(sd.wires[0]!.pts).toEqual(pts);
+  });
+
+  it('leaves a wire drawn straight out of its pins, back along a row, as it is', () => {
+    // the return from the end of one row of a chain to the start of the next
+    const { d, symbols } = world([['A', 3000, 0, 'right', 'N'], ['B', 0, 1000, 'left', 'N']]);
+    const pts = [3000, 0, 3100, 0, 3100, 500, -100, 500, -100, 1000, 0, 1000];
+    const sd: SheetDrawing = { pages: [area()], symbols: [], labels: [], wires: [{ netId: 'N', pts: [...pts] }] };
+    expect(cleanWires(d, sd, symbols, area)).toBe(false);
+    expect(sd.wires[0]!.pts).toEqual(pts);
+  });
+
   it('keeps a wire drawn through the agent\'s corners, and leaves other nets and plain crossings alone', () => {
     const { d, symbols } = world([['A', 0, 0, 'right', 'N'], ['B', 1000, 0, 'left', 'N'], ['C', 500, -500, 'bottom', 'M'], ['D', 500, 500, 'top', 'M']]);
     const via = { netId: 'N', pts: [0, 0, 100, 0, 100, -300, 900, -300, 900, 0, 1000, 0], via: true };

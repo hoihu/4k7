@@ -1,6 +1,6 @@
 # Drawing the schematic: the agent owns the drawing
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; 2026-10-29: a part placed on its own is wired to its neighbours (§2c); the agent's guide is [schematic.md](schematic.md).
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; 2026-10-29: a part placed on its own is wired to its neighbours (§2c); 2026-10-30: a wire joins a pin from any side (§6 step 3); the agent's guide is [schematic.md](schematic.md).
 > Notes and checks are in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
@@ -165,7 +165,7 @@ part runs one more step (`kernel/autowire.ts`), once, as the part is placed:
   cuts the old wires back and wires it afresh where the new place allows.
 - Not done: an IC or connector placed after the small parts around it does not wire them (place it
   first, as `get_schematic` and the guide say), and a two-pin part has no flip (pin 1 is the left or
-  top end), so a part is wired cleanly only when its pin 1 faces the neighbour on that net.
+  top end), so a part is wired most cleanly when its pin 1 faces the neighbour on that net.
 
 Two synthetic placements (every IC and connector placed, then each small part one inch from the
 first pin of its net it can face, as an agent reading `get_schematic` would; the 10-part sensor
@@ -391,8 +391,8 @@ bends, crossings, running through parts or text. That is the largest piece of ne
    (`kernel/drawops.ts`, `kernel/schroute.ts`):
    - `wire` joins two pins that are on one net in the netlist (`NET_MISMATCH` otherwise: a wire
      shows a connection, it never makes one), on one page. The path finder (A* on the 100-mil grids
-     through both pins) leaves and enters each pin outwards, never runs through a part, along a wire
-     of another net or onto another net's pin or wire end, crosses other wires only straight across,
+     through both pins) joins a pin from any side but the part's own (*Any side of a pin*, below),
+     never runs through a part, along a wire of another net or onto another net's pin or wire end, crosses other wires only straight across,
      and pays for bends (300), crossings (400) and running through labels or names (600); it turns on
      the target's grid so the wire does not end in a short jog. `via` forces corners. Net labels at
      the two pins are taken away. `NO_PATH` asks for corners or a move.
@@ -416,6 +416,24 @@ bends, crossings, running through parts or text. That is the largest piece of ne
      is also drawn afresh pin by pin onto what is drawn, and the cheaper drawing kept. A plain
      crossing is never a joint, a moved piece touches nothing new, so connections never change; a
      wire given `via` corners (`WireView.via`) keeps its path; a net that needs nothing keeps its wires.
+   - *Any side of a pin, 2026-10-30.* The path finder only left and entered a pin outwards, and the
+     clean-up refused anything else. So a wire from a crystal to the top pin of the load cap beside it,
+     on one level, had to hop over the pin and come down onto it (`SCH.DETOUR`). The agent saw the bump
+     and could not take it out in seven tries: a `via` on the pin came in from above too, one on what was
+     drawn already looped out and back (10 corners), a wire past a pin of its own net went round it, and
+     the clean-up could not straighten any of it. No schematic program has this rule: a pin end takes a
+     wire from any direction. (1) A pin is joined from any side but the part's own. The side costs a
+     corner, which is what it draws with the lead, so a wire still goes straight out where that is no
+     longer. (2) Corners on what is drawn at either end of a wire need no drawing. (3) `wire` runs through
+     a pin of its own net in its way, which joins it. (4) The clean-up takes the same freedom, so a hop in
+     a stored wire comes out by itself; a wire given `via` keeps its path and takes an `erase` and a new
+     `wire`, which `SCH.DETOUR` then says. (5) A run of `RETURN_LEG` or more (a chain's return from one row to the next, no hump to
+     `SCH.DETOUR`) counts the side twice, in the path finder and the clean-up: without that it drew down
+     the pin column into the part's name, on sheets redrawn after every change too. A part placed on its
+     own gets wired more often for the same reason. The golden circuits draw as before. On the user's
+     124-part design: opening it changes 5 nets of its drawing (`SCH.DETOUR` 8 → 4);
+     each of its 89 signal nets erased and wired again, pin by pin: corners 131 → 88, detours 15 → 4,
+     crossings 50 → 36, no path found 5 → 4 (one net gets two more crossings).
    - Optimize may use them at pins of parts in (or anchored to) its area, not `erase` of a net.
 4. **Import redraws the original.**
    - *Symbol pins, built 2026-10-13.* A drawing cannot look like a reference whose IC has its pins

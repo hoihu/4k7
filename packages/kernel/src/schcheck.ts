@@ -211,7 +211,9 @@ function shapeChecks(ctx: Ctx, sheet: SheetView) {
       push(ctx, 'SCH.JOG', [netRef(ctx, net), ...refs([j.pin, ...j.facing])], `${list(parts)} face each other on ${name} but are not in line: the wire jogs`);
     }
     for (const [x1, y1, x2, y2] of s.detours) {
-      push(ctx, 'SCH.DETOUR', [netRef(ctx, net), ...pinsNear(sheet, net, [[x1, y1], [x2, y2]])], `the ${name} wire turns back on itself between ${at(x1, y1)} and ${at(x2, y2)}`);
+      // (the clean-up leaves a wire drawn through corners it was given: only drawing it again helps)
+      const given = sheet.wires.some((w) => w.netId === net && w.via && segments(w.pts).some((g) => touches(g, x1, y1) && touches(g, x2, y2)));
+      push(ctx, 'SCH.DETOUR', [netRef(ctx, net), ...pinsNear(sheet, net, [[x1, y1], [x2, y2]])], `the ${name} wire turns back on itself between ${at(x1, y1)} and ${at(x2, y2)}${given ? '; it keeps the corners given to wire: to have it drawn plainly, erase it and wire it again without them' : ''}`);
     }
   }
 }

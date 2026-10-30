@@ -11,7 +11,7 @@
  * its wires; a wire drawn through the agent's corners (wire via) keeps its path.
  */
 import type { Design, PinView, Point, Rect, SheetDrawing, SymbolView } from '@4k7/schema';
-import { labelRect, textRect } from './scene.ts';
+import { RETURN_LEG, labelRect, textRect } from './scene.ts';
 import { routeWire } from './schroute.ts';
 
 type Pt = { x: number; y: number };
@@ -337,7 +337,7 @@ function straighten(pts: number[], net: string, rest: Wire[], sheet: Sheet): num
 }
 
 /**
- * Whether a run drawn anew is allowed: it leaves and enters pins outwards, runs through no part,
+ * Whether a run drawn anew is allowed: it runs through no part, not even back along a pin's lead,
  * and touches nothing but its own two ends (no pin, label or wire end on it, no run along a wire);
  * crossing a wire straight across is fine.
  */
@@ -350,10 +350,7 @@ function valid(pts: number[], was: number[], net: string, rest: Wire[], sheet: S
   const isEnd = (x: number, y: number) => (x === s.x && y === s.y) || (x === e.x && y === e.y);
   for (const [end, next] of [[P[0]!, P[1]!], [P.at(-1)!, P.at(-2)!]] as const) {
     const pin = sheet.pins.find((p) => p.x === end.x && p.y === end.y && p.net === net);
-    if (pin) {
-      const [dx, dy] = dir(end, next);
-      if (dx !== OUT[pin.side][0] || dy !== OUT[pin.side][1]) return false;
-    }
+    if (pin && wayOff(pin, end, next) === 'back') return false;
   }
   const restSegs = rest.flatMap((w) => segsOf(w.pts).map((sg) => ({ sg, net: w.netId })));
   for (const sg of segsOf(pts)) {
@@ -363,7 +360,8 @@ function valid(pts: number[], was: number[], net: string, rest: Wire[], sheet: S
     for (const o of restSegs) {
       const [x1, y1, x2, y2] = o.sg;
       if (horizontal(sg) === horizontal(o.sg)) {
-        if (overlaps(sg, o.sg)) return false;
+        // (in line with a wire of its net at its own end, and no further: one straight run with a joint)
+        if (overlaps(sg, o.sg) && !(o.net === net && endOn(sg, o.sg, isEnd))) return false;
         continue;
       }
       const hit = crossing(sg, o.sg);
@@ -376,9 +374,25 @@ function valid(pts: number[], was: number[], net: string, rest: Wire[], sheet: S
   return true;
 }
 
+/** How a run leaving a pin goes on from the pin's lead. */
+function wayOff(pin: Sheet['pins'][number], end: Pt, next: Pt): 'on' | 'side' | 'back' {
+  const [dx, dy] = dir(end, next);
+  const [ox, oy] = OUT[pin.side];
+  return dx === ox && dy === oy ? 'on' : dx === -ox && dy === -oy ? 'back' : 'side';
+}
+
 function costOf(pts: number[], net: string, rest: Wire[], sheet: Sheet): number {
   const segs = segsOf(pts);
   let c = segs.reduce((n, [x1, y1, x2, y2]) => n + Math.abs(x2 - x1) + Math.abs(y2 - y1), 0) + BEND * Math.max(0, segs.length - 1);
+  // off a pin to the side: a corner with its lead, as the router counts it. A run as long as a row
+  // (the return from one row of a chain to the next, no hump to SCH.DETOUR) counts it twice, so a
+  // wire drawn straight out of its pins and back along the row stays as it is.
+  const side = segs.some(([x1, y1, x2, y2]) => Math.abs(x2 - x1) + Math.abs(y2 - y1) >= RETURN_LEG) ? 2 * BEND : BEND;
+  const P = toPts(pts);
+  for (const [end, next] of [[P[0]!, P[1]!], [P.at(-1)!, P.at(-2)!]] as const) {
+    const pin = sheet.pins.find((p) => p.x === end.x && p.y === end.y && p.net === net);
+    if (pin && wayOff(pin, end, next) === 'side') c += side;
+  }
   for (const sg of segs) {
     for (const w of rest) for (const o of segsOf(w.pts)) if (horizontal(sg) !== horizontal(o) && strictCross(sg, o)) c += CROSS;
     for (const t of sheet.soft) if (t.net !== net && throughBox(sg, t.r)) c += SOFT;
@@ -432,6 +446,14 @@ function overlaps(a: Seg, b: Seg): boolean {
   }
   if (a[0] !== b[0]) return false;
   return Math.max(Math.min(a[1], a[3]), Math.min(b[1], b[3])) <= Math.min(Math.max(a[1], a[3]), Math.max(b[1], b[3]));
+}
+
+/** Two segments in line that share just one point, an end of the run. */
+function endOn(a: Seg, b: Seg, isEnd: (x: number, y: number) => boolean): boolean {
+  const i = horizontal(a) ? 0 : 1;
+  const lo = Math.max(Math.min(a[i]!, a[i + 2]!), Math.min(b[i]!, b[i + 2]!));
+  const hi = Math.min(Math.max(a[i]!, a[i + 2]!), Math.max(b[i]!, b[i + 2]!));
+  return lo === hi && (horizontal(a) ? isEnd(lo, a[1]) : isEnd(a[0], lo));
 }
 
 /** Where a horizontal and a vertical segment meet, ends included. */
