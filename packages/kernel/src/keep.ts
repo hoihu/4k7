@@ -8,6 +8,7 @@
  */
 import { cutoutDistance, insideBoard, padCapsule, roundPadDist, type BoardPad, type CopperLayer, type Track, type Via } from '@4k7/schema';
 import type { RouteInput } from './router.ts';
+import { trackInKeepout, viaInKeepout } from './keepgeo.ts';
 import { segDist, segSegDist } from './segments.ts';
 
 /**
@@ -112,7 +113,9 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
   };
 
   /** A track keeps its clearance from other nets' pads, from vias placed on purpose and from the edge. */
+  const keepouts = input.keepouts ?? [];
   const trackClear = (t: Track) => {
+    if (keepouts.length && trackInKeepout(keepouts, input.parts, t.layer, t.pts, t.width)) return false;
     const need = rules.clearance + t.width / 2 - EPS;
     for (const [ax, ay, bx, by] of pieces(t)) {
       if (!segEdgeOk(ax, ay, bx, by, t.width / 2)) return false;
@@ -131,7 +134,7 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
    * vias placed on purpose: the router's rules for a new via.
    */
   const viaClear = (v: Via) => {
-    if (!edgeOk(v.x, v.y, v.pad / 2)) return false;
+    if (!edgeOk(v.x, v.y, v.pad / 2) || (keepouts.length && viaInKeepout(keepouts, v.x, v.y, v.pad))) return false;
     const reach = v.pad / 2 + rules.clearance;
     for (const i of padsNear(v.x - reach, v.y - reach, v.x + reach, v.y + reach)) {
       const p = pads[i]!;

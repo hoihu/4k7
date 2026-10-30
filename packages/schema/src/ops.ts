@@ -395,6 +395,49 @@ export const RemoveCutoutOp = z.object({
   id: z.string().describe('Cutout id ("CO1"), or "all"'),
 });
 
+const keepoutLayer = z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']);
+const keepoutShape = {
+  rect: z
+    .object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() })
+    .optional()
+    .describe('The area as a rectangle (top-left corner and size, mm). With part: in the part\'s own frame (origin at the part, x right, y down, the part at rotation 0 on the top side as its footprint is drawn), so the keep-out moves and turns with it; without: on the board (origin at the board\'s top-left corner)'),
+  polygon: z
+    .array(z.object({ x_mm: z.number(), y_mm: z.number() }))
+    .min(3)
+    .max(64)
+    .optional()
+    .describe('Or the area as a polygon (corners in order, at least 3; same frame as rect)'),
+  layers: z.union([z.literal('all'), z.array(keepoutLayer).min(1)]).optional().describe('Which copper layers it holds on: "all" (default) or a list such as ["F.Cu", "In1.Cu"]. A via or a through-hole part goes through every layer'),
+  forbid: z
+    .array(z.enum(['tracks', 'vias', 'pours', 'parts']))
+    .min(1)
+    .optional()
+    .describe('What may not be in it: tracks; vias; pours (the copper fill of pours and planes, also the inner planes: cleared in it); parts (their courtyards, on the sides the layers name). Default: tracks, vias and pours'),
+};
+export const AddKeepoutOp = z
+  .object({
+    op: z.literal('add_keepout'),
+    name: z.string().min(1).max(40).optional().describe('What it is for ("antenna clearance", "no plane under L1"); drawn on the keep-out'),
+    ...keepoutShape,
+    part: componentRef.optional().describe('Attach it to this part: the area is in the part\'s frame and follows it (the antenna\'s clearance goes where the antenna goes; the part itself may stand in it)'),
+  })
+  .describe('A copper keep-out: an area where tracks, vias, pours or parts are not allowed on some layers. Use it for an antenna\'s clearance (nothing under or round it, on every layer), the plane cleared under a wide pad, a coil or a RF connector\'s centre pin, a no-via zone, a no-track zone, a no-part zone. The pours and planes are cut round it, the router and the placer keep out of it, draw_track and draw_via refuse to enter it, and DRC.KEEPOUT finds copper or parts that are in it anyway. It is not artwork: the fab files show only the cleared copper.');
+
+export const EditKeepoutOp = z
+  .object({
+    op: z.literal('edit_keepout'),
+    id: z.string().describe('Keep-out id ("KO1")'),
+    name: z.string().min(1).max(40).nullable().optional().describe('null removes the name'),
+    ...keepoutShape,
+    part: componentRef.nullable().optional().describe('Attach it to this part (rect / polygon then in its frame; give the new area with it), or null: detach (rect / polygon then on the board)'),
+  })
+  .describe('Change a keep-out: only the fields given change. Moving an attached keep-out: give rect or polygon in the part\'s frame.');
+
+export const RemoveKeepoutOp = z.object({
+  op: z.literal('remove_keepout'),
+  id: z.string().describe('Keep-out id ("KO1"), or "all"'),
+});
+
 const panelSide = z.enum(['top', 'right', 'bottom', 'left']);
 
 export const SetPanelOp = z.object({
@@ -422,6 +465,7 @@ export const PlaceOp = z.object({
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
   rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation; omit it to keep the current one'),
+  side: z.enum(['top', 'bottom']).optional().describe('The board side it is mounted on; omit it to keep the current one (top unless it was put on the bottom). On the bottom the footprint is mirrored (seen from the top), its SMD pads are on B.Cu and it shares the area with the SMD parts on the top side; through-hole parts occupy both. Putting a part on the bottom is a choice with a price: see the layout guide'),
   lock: z.boolean().optional().describe('true: lock the part exactly there (a hard pin, e.g. connectors at the edge). Default: a choice for this part, kept relative to its parent part (a cap next to its IC follows the IC) and nudged only if it must'),
   quote: z.string().optional().describe("The user's words when they asked for this placement: it is then their choice, not yours"),
 });
@@ -442,7 +486,8 @@ export const PlaceSymbolOp = z.object({
   orient: z.enum(['upright', 'lying']).optional().describe('Two-pin parts: standing or lying, e.g. a resistor in series in a signal path; omit it to keep how it is drawn'),
   mirror: z.boolean().optional().describe('ICs and connectors: pins of the left side on the right (a connector at the right edge facing the circuit); omit it to keep how it is drawn'),
   auto: z.boolean().optional().describe('true: take the part out of your drawing; it is drawn afresh in free space'),
-}).describe('Move a part on the schematic: its symbol\'s centre goes there (the move is rounded to the 100-mil grid; the result says where it ended up). The first move on a sheet makes its drawing yours: from then on it stays as you arrange it, and parts added later are drawn in free space. An IC or connector takes the small parts drawn at its pins with it, wired as before; a two-pin part goes on its own. Wires to parts that stay behind are cut back, and those connections show as net labels. Use it to make a drawing look like a reference or the user\'s sketch.');
+  rewire: z.boolean().optional().describe('true: the connections the symbol had by wire are wired again after the move (the path finder of wire; a connection with no clear path shows as a net label). The app\'s drag and turn of a symbol use it'),
+}).describe('Move a part on the schematic: its symbol\'s centre goes there (the move is rounded to the 100-mil grid; the result says where it ended up). The first move on a sheet makes its drawing yours: from then on it stays as you arrange it, and parts added later are drawn in free space. An IC or connector takes the small parts drawn at its pins with it, wired as before; a two-pin part goes on its own, and is wired to the nearest pin of each signal net it is on when that draws cleanly (no crossing, no jog, short; the result says which), else connected by net labels. Wires to parts that stay behind are cut back, and those connections show as net labels. Use it to make a drawing look like a reference or the user\'s sketch.');
 
 const pagePoint = z.object({ x: z.number(), y: z.number() }).describe('Page coordinates in mils from the paper\'s top-left corner (as get_schematic gives them)');
 
@@ -463,6 +508,12 @@ export const EraseOp = z.object({
   op: z.literal('erase'),
   pins: z.array(pinRef).optional().describe('Erase the wires and labels drawn at these pins'),
   net: netName.optional().describe('Erase every wire and label of this net'),
+  at: z.array(z.object({
+    page: z.number().int().min(1).describe('Page number as get_schematic counts them'),
+    x: z.number().describe('Mils from the paper\'s left edge'),
+    y: z.number().describe('Mils from the paper\'s top edge'),
+    what: z.enum(['wire', 'label']).describe('wire: the drawn wires that pass through this point (a wire runs between two joints, so its middle is a safe spot); label: the net labels and supply symbols standing at this point'),
+  })).max(20).optional().describe('Erase this one wire or label rather than all that is drawn at a pin (the app\'s Delete key on a selected wire or label)'),
 }).describe('Take wires and labels out of the drawing (the netlist does not change). Connections no longer drawn show as automatic labels until you draw them again (wire, label).');
 
 export const PlaceBlockOp = z.object({
@@ -486,6 +537,7 @@ export const PartPlacement = z.object({
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
   rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation (default 0): turn the part so its pins face what they connect to'),
+  side: z.enum(['top', 'bottom']).optional().describe('The board side (default: as it is now, top unless put on the bottom). A big part on the bottom is the exception: see the layout guide'),
 });
 export type PartPlacement = z.infer<typeof PartPlacement>;
 
@@ -505,7 +557,7 @@ export const RefinePlacementOp = z.object({
   op: z.literal('refine_placement'),
   parts: z.array(componentRef).optional().describe('Only these small parts (default: all the placer put down)'),
   near: z.array(componentRef).optional().describe('Only the small parts within 5 mm of these parts (e.g. the parts round an open connection)'),
-}).describe('Refine the placement of the small parts the placer put down (resistors, capacitors, diodes; not the parts you or the user placed or locked, nor connectors): each is moved up to 2 mm and turned where that untangles the ratsnest (fewer crossing lines first, then a shorter one), clear of the other parts, a decoupling cap staying at its pin. Kept only if placement_measures improve; the effect lists what moved. Routing is then out of date.');
+}).describe('Refine the placement of the small parts the placer put down (resistors, capacitors, diodes; not the parts you or the user placed or locked, nor connectors): each is moved up to 2 mm and turned where that untangles the ratsnest and eases the congestion (the score: 4 × crossing lines + ratsnest mm + 8 × congestion mm), clear of the other parts, a decoupling cap staying at its pin. Kept only if placement_measures improve; the effect lists what moved. Routing is then out of date.');
 
 export const RouteOp = z.object({
   op: z.literal('route'),
@@ -572,6 +624,19 @@ export const EditCopperOp = z.object({
   drill_mm: z.number().positive().optional().describe('Vias: the new drill'),
   size_mm: z.number().positive().optional().describe('Vias: the new pad diameter'),
 }).describe('Drawn copper: change tracks and vias in place (shift, new corners, width, layer, via size), keeping their ids, instead of erasing and drawing again. Checked at once like draw_track.');
+
+export const TuneLengthOp = z.object({
+  op: z.literal('tune_length'),
+  track: z.string().optional().describe('One of your tracks by id (t3): the meander goes into this track. Without it, net names the net and the meander goes into its longest straight stretch that has room'),
+  net: netName.optional().describe('The net to lengthen (its drawn track; with several, the one with room). Required without track'),
+  target_mm: z.number().positive().optional().describe('The length the net should have in all (its drawn copper, as get_board impedance counts it)'),
+  match: z.array(netName).min(1).optional().describe('Or make the net as long as the longest of these nets: a pair\'s other member, the other lines of a group. Without target_mm and match, a pair member is matched to its partner'),
+  tolerance_mm: z.number().min(0).optional().describe('Accept a length this close to the target. Default 0.1 mm, or the pair\'s max skew if that is smaller'),
+  gap_mm: z.number().positive().optional().describe('Gap between the meander\'s legs, edge to edge. Default 3 times the width (more where the net\'s rule keeps other signals further off); never below that or the clearance'),
+  height_mm: z.number().positive().optional().describe('The tallest a bump may be (centre line of its legs, mm). Default 4 mm, for a pair member twice the pair\'s gap (small bumps near the mismatch, as TI asks)'),
+  side: z.enum(['left', 'right']).optional().describe('Which side of the track (looking along it from its first end) the bumps go. Default: away from the pair partner, else the side with room'),
+  near: z.union([z.enum(['start', 'end']), mmPoint]).optional().describe('Where along the track: near its first or last end, or near a point [x, y]. Default: the longest straight stretch'),
+}).describe('Drawn copper: add length to a drawn track with a meander (serpentine of square bumps with 45° corners, on the track\'s own layer, legs at least 3 widths apart) until its net reaches target_mm, or matches match (the other member of a pair, or the longest of a group), within tolerance_mm. Only straight stretches of your track are used, the gap and clearance to all other copper are kept; where there is no room the op is refused and says where and what to do. The effect gives the length reached and, for a pair, the skew (IMP.SKEW holds it). Use it after the pair is drawn: tune the shorter member close to where the difference arises.');
 
 export const EraseCopperOp = z.object({
   op: z.literal('erase_copper'),
@@ -714,6 +779,7 @@ export const EditOp = z.discriminatedUnion('op', [
   DrawPairOp,
   DrawViaOp,
   EditCopperOp,
+  TuneLengthOp,
   EraseCopperOp,
   SetPlaneOp,
   SetPlaneStyleOp,
@@ -723,6 +789,9 @@ export const EditOp = z.discriminatedUnion('op', [
   RemoveViasOp,
   AddCutoutOp,
   RemoveCutoutOp,
+  AddKeepoutOp,
+  EditKeepoutOp,
+  RemoveKeepoutOp,
   AddGraphicOp,
   EditGraphicOp,
   RemoveGraphicOp,
@@ -782,7 +851,7 @@ export const QueryOp = z.discriminatedUnion('op', [
       .max(8),
     route: z.boolean().optional().describe('Also route each option for a few seconds (a trial: how many connections it closes). Slower; use it to choose between options whose ratsnest is close'),
     explore: z.boolean().optional().describe('Then improve on the best option (default true): turn its main parts, swap two of them, shift one a few mm, keeping each change that makes the ratsnest cross less and shorter; the result is one more option, with its parts to apply'),
-  }).describe('Compare arrangements of the main parts without changing the design: each is placed as propose_placement would place it (small parts round them, refined) and measured (ratsnest length, crossing ratsnest lines, overlaps, board size; with route a trial routing). Then the kernel improves on the best (explore) and adds that as an option. Lists the current placement too, then the options best first. Apply the winner with design_edit propose_placement and its parts'),
+  }).describe('Compare arrangements of the main parts without changing the design: each is placed as propose_placement would place it (small parts round them, refined) and measured (ratsnest length, crossing ratsnest lines, congestion, overlaps, board size; with route a trial routing). Then the kernel improves on the best (explore) and adds that as an option. Lists the current placement too, then the options best first. Apply the winner with design_edit propose_placement and its parts'),
   z.object({
     op: z.literal('suggest_moves'),
     parts: z.array(componentRef).optional().describe('Try these small parts (default: those at the open connections)'),

@@ -77,9 +77,18 @@ When the user wants a sheet to look like a reference, a sketch or an earlier dra
 `place_symbol` moves a part to exact page coordinates, `wire` / `label` / `erase` decide each
 connection. From the first move the sheet stays as you leave it: it is no longer redrawn after a
 change, parts added later are drawn next to their block, and connections the drawing does not show
-appear as labels. `place_block` on such a sheet draws a block afresh, together and wired, where you
+appear as labels. A small part you place wires itself to the nearest pin of each of its nets when
+that draws cleanly (no crossing, no jog, short; the result lists the wires and, for the pins left to
+labels, why): place the ICs and connectors first, then the small parts in line with the pins they
+serve, pin 1 (the left or top end) toward its neighbour. `erase` takes such a wire away and the
+label that shows in its place stays. `place_block` on such a sheet draws a block afresh, together and wired, where you
 put it (the result says what it runs into). `auto_draw` hands the sheet back to the layout. Use this only when the user asks for it:
 the drawing then no longer keeps itself tidy.
+
+The user may move parts by hand too (drag, R, F in the app). `get_schematic` marks those symbols
+`user_placed`: they are the user's decisions, like the parts they place on the board. `place_block`
+and `auto_draw` keep them where they are; arrange round them, and move one only when the drawing
+cannot do without it (then say which and why).
 
 ## 6. Symbols
 

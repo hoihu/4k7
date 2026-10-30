@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { PAGE, type LabelView, type PageView, type PaperId, type Prim, type Rect, type SheetView, type SymbolView } from '@4k7/schema';
+  import { PAGE, type LabelView, type PageView, type PaperId, type PinView, type Prim, type Rect, type SheetView, type SymbolView } from '@4k7/schema';
 
   interface Props {
     sheet: SheetView | undefined;
@@ -23,9 +23,34 @@
     /** Optimize: the area the agent is working in, drawn as a frame. */
     scopeRect?: Rect | null;
     compact?: boolean;
+    /**
+     * Hand editing: drag a symbol or swing a net label, R / F to turn or mirror the selected symbol,
+     * Delete to take a picked wire or label (or the selected parts) away. Each gesture is one of the
+     * agent's ops, issued by the app as the user's edit; the callbacks say whether it went through.
+     */
+    editable?: boolean;
+    /** A symbol dragged: its centre's new page (as the design counts them) and place, in mils from the paper's top-left. */
+    onmovesymbol?: (ref: string, spot: Spot) => Promise<boolean>;
+    /** R or F on the selected symbol, which stays where it is. */
+    onturnsymbol?: (ref: string, spot: Spot, look: { orient?: 'upright' | 'lying'; mirror?: boolean }) => Promise<boolean>;
+    /** A net label swung round its pin: the pin ("U1.3"), the net's name and the way it points. */
+    onlabeldir?: (pin: string, net: string, dir: Dir) => Promise<boolean>;
+    /** Delete on a picked wire or label: the point on it that names it. */
+    onerase?: (what: 'wire' | 'label', net: string, at: Spot) => Promise<boolean>;
+    /** Delete on selected parts. */
+    onremove?: (refs: string[]) => Promise<boolean>;
+    /** A word to the user (a key that does nothing here). */
+    onnote?: (msg: string) => void;
   }
 
-  let { sheet, designName, pageCount, paper = 'A4', overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false }: Props = $props();
+  type Dir = 'left' | 'right' | 'up' | 'down';
+  type Spot = { page: number; x: number; y: number };
+
+  let { sheet, designName, pageCount, paper = 'A4', overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false, editable = false, onmovesymbol, onturnsymbol, onlabeldir, onerase, onremove, onnote }: Props = $props();
+
+  /** The layout's grid, in mils: a dragged symbol moves in whole steps of it (keep in sync with GRID in @4k7/parts). */
+  const GRID = 100;
+  const canEdit = $derived(editable && !compact);
 
   /** Length of a supply symbol's stem, in mils (keep in sync with labelRect in the kernel). */
   const RAIL_STEM = 200;
@@ -94,15 +119,154 @@
   }
 
   /** `ref`: the part under the pointer when the press began (once captured, events target the canvas itself). */
-  let drag: { x: number; y: number; vx: number; vy: number; moved: boolean; ref: string | null; net: string | null } | null = null;
+  let drag: { x: number; y: number; vx: number; vy: number; moved: boolean; ref: string | null; net: string | null; wire: number | null; at: { x: number; y: number } } | null = null;
+
+  /* ---- hand editing: a press on a symbol or net label is an edit gesture, not a pan ---- */
+  type Edit =
+    | { kind: 'symbol'; ref: string; unit: string | undefined; sx: number; sy: number; cx: number; cy: number; dx: number; dy: number; moved: boolean }
+    | { kind: 'label'; i: number; cx: number; cy: number; dir: Dir; moved: boolean };
+  let edit = $state<Edit | null>(null);
+  /** A symbol just dropped is shown there until the sheet arrives in which it has moved (the edit takes a moment). */
+  let dropped = $state<{ ref: string; unit: string | undefined; x0: number; y0: number; dx: number; dy: number } | null>(null);
+  let droppedTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The wire or net label the last click picked: what Delete takes away. Cleared when the sheet changes (a wire's place is only good for the sheet it was picked on). */
+  let picked = $state<{ kind: 'wire'; pts: number[]; at: { x: number; y: number }; net: string; name: string } | { kind: 'label'; x: number; y: number; net: string; name: string } | null>(null);
+
+  const sameSym = (s: SymbolView, ref: string, unit: string | undefined) => s.refdes === ref && (s.unit ?? undefined) === unit;
+  const dragged = (s: SymbolView) => (edit?.kind === 'symbol' && sameSym(s, edit.ref, edit.unit) ? edit : null);
+  const droppedAt = (s: SymbolView) => (dropped && sameSym(s, dropped.ref, dropped.unit) && s.bbox.x === dropped.x0 && s.bbox.y === dropped.y0 ? dropped : null);
+  /** Where a symbol is drawn: moved by the drag, or by the drop until the sheet shows it there. */
+  const shift = (s: SymbolView) => dragged(s) ?? droppedAt(s);
+  $effect(() => {
+    void sheet;
+    picked = null;
+    if (dropped && !sheet?.symbols.some((s) => droppedAt(s))) dropped = null;
+  });
+  $effect(() => {
+    if (picked && selectedNet !== picked.net) picked = null;
+  });
+
+  /** The page a point is on, else the nearest. */
+  function pageAtPoint(x: number, y: number): PageView | undefined {
+    const gap = (p: PageView) => Math.max(p.rect.x - x, 0, x - p.rect.x - p.rect.w) + Math.max(p.rect.y - y, 0, y - p.rect.y - p.rect.h);
+    return sheet?.pages.reduce<PageView | undefined>((best, p) => (!best || gap(p) < gap(best) ? p : best), undefined);
+  }
+  /** A sheet point as a spot on its page, kept inside the page's drawing area if asked. */
+  function spotAt(x: number, y: number, keepInside = false): Spot | null {
+    const pg = pageAtPoint(x, y);
+    if (!pg) return null;
+    const m = PAGE.margin;
+    const px = x - pg.rect.x;
+    const py = y - pg.rect.y;
+    return keepInside
+      ? { page: pg.number, x: Math.min(Math.max(px, m), pg.rect.w - m), y: Math.min(Math.max(py, m), pg.rect.h - m - PAGE.title) }
+      : { page: pg.number, x: px, y: py };
+  }
+  const centreOf = (s: SymbolView) => ({ x: s.bbox.x + s.bbox.w / 2, y: s.bbox.y + s.bbox.h / 2 });
+
+  /** The pin a net label sits on: at its point, or at the far end of the short lead it stands on. */
+  function pinOfLabel(l: LabelView): { ref: string; side: PinView['side']; x: number; y: number } | null {
+    const at = (x: number, y: number) => {
+      for (const s of sheet?.symbols ?? []) for (const p of s.pins) if (p.x === x && p.y === y) return { ref: `${s.refdes}.${p.number}`, side: p.side, x, y };
+      return null;
+    };
+    const here = at(l.x, l.y);
+    if (here) return here;
+    for (const w of sheet?.wires ?? []) {
+      if (w.pts.length !== 4) continue;
+      const [x1, y1, x2, y2] = w.pts as [number, number, number, number];
+      const far = x1 === l.x && y1 === l.y ? at(x2, y2) : x2 === l.x && y2 === l.y ? at(x1, y1) : null;
+      if (far) return far;
+    }
+    return null;
+  }
+  const OUT: Record<PinView['side'], Dir> = { left: 'left', right: 'right', top: 'up', bottom: 'down' };
+  const BACK: Record<Dir, Dir> = { left: 'right', right: 'left', up: 'down', down: 'up' };
+  /** A net label that can be swung round its pin (not a supply symbol, nor one of the kernel's own, nor a name on a wire). */
+  const swingable = (l: LabelView) => l.kind === 'net' && !l.auto && l.dir !== 'on' && !!pinOfLabel(l);
+  /** The label as it is drawn while swung: at its pin, pointing where the pointer is. */
+  function swung(l: LabelView, i: number): LabelView {
+    if (edit?.kind !== 'label' || edit.i !== i || !edit.moved) return l;
+    const pin = pinOfLabel(l);
+    return pin ? { ...l, x: pin.x, y: pin.y, dir: edit.dir } : l;
+  }
+
+  /** The middle of the segment of a wire nearest to a point: a spot that names the wire (a wire runs between two joints). */
+  function midOfNearest(pts: number[], p: { x: number; y: number }): { x: number; y: number } {
+    let best = { x: pts[0]!, y: pts[1]!, d: Infinity };
+    for (let i = 0; i + 3 < pts.length; i += 2) {
+      const [x1, y1, x2, y2] = [pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!];
+      const len2 = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+      const t = len2 ? Math.min(1, Math.max(0, ((p.x - x1) * (x2 - x1) + (p.y - y1) * (y2 - y1)) / len2)) : 0;
+      const d = Math.hypot(p.x - (x1 + t * (x2 - x1)), p.y - (y1 + t * (y2 - y1)));
+      if (d < best.d) best = { x: (x1 + x2) / 2, y: (y1 + y2) / 2, d };
+    }
+    return { x: best.x, y: best.y };
+  }
+  const netName = (id: string) => sheet?.labels.find((l) => l.netId === id)?.text ?? '';
+
+  /** A click on a wire or label picks it (Delete takes it away); its net is selected with it. Clicking it again lets go. */
+  function pick(p: NonNullable<typeof picked>) {
+    const same =
+      picked?.kind === 'wire' && p.kind === 'wire'
+        ? picked.pts.join() === p.pts.join() && picked.at.x === p.at.x && picked.at.y === p.at.y
+        : picked?.kind === 'label' && p.kind === 'label' && picked.x === p.x && picked.y === p.y;
+    if (same) {
+      picked = null;
+      onselectnet?.(p.net);
+      return;
+    }
+    picked = p;
+    if (selectedNet !== p.net) onselectnet?.(p.net);
+  }
+
   function onpointerdown(e: PointerEvent) {
     if (e.button !== 0 && e.button !== 1) return;
-    const ref = (e.target as Element).closest('[data-ref]')?.getAttribute('data-ref') ?? null;
-    const net = (e.target as Element).closest('[data-net]')?.getAttribute('data-net') ?? null;
-    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false, ref, net };
+    // the keys (R, F, Delete) go to the canvas once it is clicked
+    if (e.button === 0 && canEdit) svg?.focus({ preventScroll: true });
+    const t = e.target as Element;
+    const symEl = t.closest('[data-ref]');
+    const ref = symEl?.getAttribute('data-ref') ?? null;
+    const net = t.closest('[data-net]')?.getAttribute('data-net') ?? null;
+    const labelAt = t.closest('[data-label]')?.getAttribute('data-label');
+    const wireAt = t.closest('[data-wire]')?.getAttribute('data-wire');
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    if (e.button === 0 && canEdit && ref) {
+      const p = toSvg(e);
+      edit = { kind: 'symbol', ref, unit: symEl?.getAttribute('data-unit') ?? undefined, sx: p.x, sy: p.y, cx: e.clientX, cy: e.clientY, dx: 0, dy: 0, moved: false };
+      return;
+    }
+    const li = labelAt != null ? Number(labelAt) : -1;
+    const lbl = li >= 0 ? sheet?.labels[li] : undefined;
+    if (e.button === 0 && canEdit && lbl && swingable(lbl)) {
+      edit = { kind: 'label', i: li, cx: e.clientX, cy: e.clientY, dir: lbl.dir as Dir, moved: false };
+      return;
+    }
+    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false, ref, net, wire: wireAt != null ? Number(wireAt) : null, at: toSvg(e) };
   }
   function onpointermove(e: PointerEvent) {
+    if (edit) {
+      if (Math.abs(e.clientX - edit.cx) + Math.abs(e.clientY - edit.cy) > 3) edit.moved = true;
+      if (edit.kind === 'symbol') {
+        const p = toSvg(e);
+        edit.dx = Math.round((p.x - edit.sx) / GRID) * GRID;
+        edit.dy = Math.round((p.y - edit.sy) / GRID) * GRID;
+      } else {
+        // the label points where the pointer is, seen from its pin (never back into the part)
+        const l = sheet?.labels[edit.i];
+        const pin = l && pinOfLabel(l);
+        if (pin) {
+          const p = toSvg(e);
+          const ex = p.x - pin.x;
+          const ey = p.y - pin.y;
+          if (Math.hypot(ex, ey) > 120) {
+            const dir: Dir = Math.abs(ex) > Math.abs(ey) ? (ex > 0 ? 'right' : 'left') : ey > 0 ? 'down' : 'up';
+            if (dir !== BACK[OUT[pin.side]]) edit.dir = dir;
+          }
+        }
+      }
+      return;
+    }
     if (!drag || !svg) return;
     const dx = e.clientX - drag.x;
     const dy = e.clientY - drag.y;
@@ -112,12 +276,81 @@
     vb = { ...vb, x: drag.vx - dx * s, y: drag.vy - dy * s };
   }
   function onpointerup(e: PointerEvent) {
+    if (edit) {
+      const d = edit;
+      edit = null;
+      if (d.kind === 'symbol') {
+        const s = sheet?.symbols.find((x) => sameSym(x, d.ref, d.unit));
+        if (!s) return;
+        if (!d.moved || (d.dx === 0 && d.dy === 0)) {
+          picked = null;
+          onselect?.(d.ref, e.shiftKey || e.metaKey || e.ctrlKey);
+          return;
+        }
+        const c = centreOf(s);
+        const spot = spotAt(c.x + d.dx, c.y + d.dy, true);
+        if (!spot) return;
+        dropped = { ref: d.ref, unit: d.unit, x0: s.bbox.x, y0: s.bbox.y, dx: d.dx, dy: d.dy };
+        clearTimeout(droppedTimer);
+        droppedTimer = setTimeout(() => (dropped = null), 5000);
+        if (!(selection.length === 1 && selection[0] === d.ref)) onselect?.(d.ref, false);
+        // refused: it goes back at once
+        void Promise.resolve(onmovesymbol?.(`${s.refdes}${s.unit ?? ''}`, spot)).then((went) => {
+          if (!went) dropped = null;
+        });
+      } else {
+        const l = sheet?.labels[d.i];
+        const pin = l && pinOfLabel(l);
+        if (!l || !pin) return;
+        if (!d.moved || d.dir === l.dir) pick({ kind: 'label', x: l.x, y: l.y, net: l.netId, name: l.text });
+        else void onlabeldir?.(pin.ref, l.text, d.dir);
+      }
+      return;
+    }
     if (drag && !drag.moved) {
-      if (drag.ref) onselect?.(drag.ref, e.shiftKey || e.metaKey || e.ctrlKey);
+      const w = drag.wire != null ? sheet?.wires[drag.wire] : undefined;
+      if (drag.ref) {
+        picked = null;
+        onselect?.(drag.ref, e.shiftKey || e.metaKey || e.ctrlKey);
+      } else if (w && canEdit) pick({ kind: 'wire', pts: [...w.pts], at: midOfNearest(w.pts, drag.at), net: w.netId, name: netName(w.netId) });
       else if (drag.net && onselectnet) onselectnet(drag.net);
       else onclear?.();
     }
     drag = null;
+  }
+
+  function onkeydown(e: KeyboardEvent) {
+    if (!canEdit || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+    const k = e.key;
+    if (k === 'Delete' || k === 'Backspace') {
+      if (picked) {
+        e.preventDefault();
+        const p = picked;
+        const at = p.kind === 'wire' ? spotAt(p.at.x, p.at.y) : spotAt(p.x, p.y);
+        if (at) void onerase?.(p.kind, p.name, at);
+        return;
+      }
+      const refs = selection.filter((r) => sheet?.symbols.some((s) => s.refdes === r));
+      if (refs.length) {
+        e.preventDefault();
+        void onremove?.(refs);
+      }
+      return;
+    }
+    const turn = k === 'r' || k === 'R';
+    const mirror = k === 'f' || k === 'F';
+    if (!turn && !mirror) return;
+    const refs = selection.filter((r) => sheet?.symbols.some((s) => s.refdes === r));
+    if (refs.length !== 1) return;
+    const s = sheet!.symbols.find((x) => x.refdes === refs[0])!;
+    e.preventDefault();
+    if (turn && !s.twoPin) return onnote?.(`${s.refdes} is not a two-pin part: F mirrors an IC or a connector.`);
+    if (mirror && s.twoPin) return onnote?.(`${s.refdes} is a two-pin part: R turns it standing or lying.`);
+    const c = centreOf(s);
+    const spot = spotAt(c.x, c.y);
+    if (!spot) return;
+    const look = turn ? { orient: s.rotation ? ('upright' as const) : ('lying' as const) } : { mirror: !s.mirrored };
+    void onturnsymbol?.(`${s.refdes}${s.unit ?? ''}`, spot, look);
   }
 
   const pad = 70;
@@ -174,6 +407,8 @@
   }
 </script>
 
+<!-- an interactive canvas: pointer and keyboard (R = turn, F = mirror, Delete) are the point -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <svg
   bind:this={svg}
   class="sch"
@@ -181,12 +416,15 @@
   viewBox="{vb.x} {vb.y} {vb.w} {vb.h}"
   data-bbox={sheet ? `${sheet.bbox.x},${sheet.bbox.y},${sheet.bbox.w},${sheet.bbox.h}` : undefined}
   preserveAspectRatio="xMidYMid meet"
+  class:editable={canEdit}
   role="application"
   aria-label="Schematic"
+  tabindex={canEdit ? 0 : undefined}
   {onwheel}
   {onpointerdown}
   {onpointermove}
   {onpointerup}
+  {onkeydown}
 >
   {#if sheet}
     <!-- pages: the paper, its frame and a title block (what is on the page, sheet, page n of N) -->
@@ -220,7 +458,7 @@
     <!-- wires -->
     {#each sheet.wires as w, i (i)}
       <!-- (a wide invisible stroke makes the thin wire easy to click) -->
-      <g class="net" class:hl={w.netId === selectedNet} data-net={w.netId}>
+      <g class="net" class:hl={w.netId === selectedNet} data-net={w.netId} data-wire={i}>
         {#if onselectnet}<polyline class="wire-hit" points={w.pts.join(',')} />{/if}
         <polyline class="wire" points={w.pts.join(',')} />
       </g>
@@ -230,8 +468,9 @@
     {/each}
 
     <!-- labels -->
-    {#each sheet.labels as l, i (i)}
-      <g class="net" class:hl={l.netId === selectedNet} data-net={l.netId}>
+    {#each sheet.labels as l0, i (i)}
+      {@const l = swung(l0, i)}
+      <g class="net" class:hl={l.netId === selectedNet} class:swing={canEdit && swingable(l0)} data-net={l.netId} data-label={i}>
       {#if l.kind === 'ground' || l.kind === 'rail'}
         <!-- supplies are always vertical; on a horizontal lead a stub comes first -->
         {@const sx = l.x + (l.stub === 'left' ? -1 : l.stub === 'right' ? 1 : 0) * (l.stubLen ?? 100)}
@@ -269,7 +508,8 @@
 
     <!-- symbols -->
     {#each sheet.symbols as s (s.componentId + (s.unit ?? ""))}
-      <g class="sym" data-ref={s.refdes}>
+      {@const sh = shift(s)}
+      <g class="sym" class:dragging={!!dragged(s)} data-ref={s.refdes} data-unit={s.unit} transform={sh ? `translate(${sh.dx} ${sh.dy})` : undefined}>
         <rect class="hit" x={s.bbox.x} y={s.bbox.y} width={s.bbox.w} height={s.bbox.h} />
         <g transform={s.rotation && s.origin ? `rotate(${s.rotation} ${s.origin.x} ${s.origin.y})` : undefined}>
         {#each s.prims as p, i (i)}
@@ -325,6 +565,11 @@
         <rect class="selbox" x={b.x - 20} y={b.y - 20} width={b.w + 40} height={b.h + 40} rx="50" transform={b.transform} />
       {/if}
     {/each}
+    {#if picked?.kind === 'wire'}
+      <polyline class="picked" points={picked.pts.join(',')} />
+    {:else if picked?.kind === 'label'}
+      <circle class="picked" cx={picked.x} cy={picked.y} r="110" />
+    {/if}
     {#if scopeRect}
       <rect class="scope" x={scopeRect.x} y={scopeRect.y} width={scopeRect.w} height={scopeRect.h} />
     {/if}
@@ -337,6 +582,8 @@
 <style>
   .sch { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; touch-action: none; user-select: none; }
   .sch.compact { position: static; height: 100%; }
+  /* the keys go to the canvas once it is clicked; the selection frames already show where they act */
+  .sch:focus { outline: none; }
   .page .paper { fill: var(--paper); stroke: var(--grid); stroke-width: 12; }
   .page .frame { fill: none; stroke: var(--grid); stroke-width: 10; }
   .page .title { fill: var(--sch-txt); font-size: 170px; }
@@ -358,6 +605,11 @@
   .sym .filled { fill: var(--sym-fill); }
   .sym polygon.filled { fill: var(--sym); }
   .sym .hit { fill: transparent; stroke: none; cursor: pointer; }
+  .editable .sym .hit { cursor: grab; }
+  .sym.dragging { opacity: 0.85; }
+  .editable .sym.dragging .hit { cursor: grabbing; fill: rgba(111, 181, 255, 0.18); }
+  .editable .net.swing { cursor: grab; }
+  .picked { fill: none; stroke: var(--accent); stroke-width: 34; stroke-opacity: .55; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
   /* hover highlights the part itself: brighter, slightly bolder, a soft glow */
   .sym:hover { filter: drop-shadow(0 0 20px var(--sym-glow)); }
   .sym:hover :global(line), .sym:hover :global(path), .sym:hover :global(polyline),

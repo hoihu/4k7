@@ -34,7 +34,7 @@ const TRY_MS = 800;
 /** Tries routed (the best screened), and all of it together (ms). */
 const ROUTED = 12;
 const TOTAL_MS = 15_000;
-/** A try may tangle the ratsnest this much (screen cost: crossings × 4 + mm) and still be routed: room for a path can cost a little. */
+/** A try may tangle the ratsnest this much (screen cost: 4 × crossings + mm + 8 × congestion mm) and still be routed: room for a path can cost a little. */
 const WORSE = 6;
 /** Open connections whose parts are tried when none are named. */
 const SPOTS = 4;
@@ -130,7 +130,8 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
     for (const x of over) nets.add((x as { netId: string }).netId);
     const boxes = around.map((p) => [p.courtyard.x - RIP_MM, p.courtyard.y - RIP_MM, p.courtyard.x + p.courtyard.w + RIP_MM, p.courtyard.y + p.courtyard.h + RIP_MM] as const);
     const by = (x: number, y: number) => boxes.some(([x0, y0, x1, y1]) => x >= x0 && y >= y0 && x <= x1 && y <= y1);
-    const input = boardRouteInput(w, b, { budgetMs: TRY_MS });
+    // (lines at a set impedance are not routed first in a try: it only compares placements)
+    const input = boardRouteInput(w, b, { budgetMs: TRY_MS, controlled: undefined });
     if (drawn) input.drawn = { ...input.drawn!, only: { nets: [...nets] } };
     else {
       const up = (t: { netId: string; pts: number[] }) => over.has(t) || (nets.has(t.netId) && t.pts.some((v, i) => i % 2 === 0 && by(v, t.pts[i + 1]!)));

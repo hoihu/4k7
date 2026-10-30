@@ -58,6 +58,8 @@ export interface BoardSettings {
   shape?: number[];
   /** Milled cutouts inside the board (openings, slots). */
   cutouts?: Cutout[];
+  /** Keep-outs: areas where tracks, vias, pours or parts are not allowed (add_keepout). */
+  keepouts?: Keepout[];
   /** Graphics on the silkscreen (logos, clipart, decoration). */
   graphics?: SilkGraphic[];
   /** The fabrication panel the board is made in (set_panel). Absent: single boards. */
@@ -127,6 +129,8 @@ export interface RouteHelperResult {
   timedOut?: boolean;
   /** The user stopped it: the best pass by then (nothing before the first one ended). */
   stopped?: boolean;
+  /** The lines at a set impedance routed first, and whether a pair kept together. */
+  lines?: RoutedLine[];
 }
 
 /**
@@ -172,6 +176,21 @@ export interface RouteBlockage {
   plane?: CopperLayer;
 }
 
+/**
+ * What the router did with a line at a set impedance it routes first (docs/design/impedance.md §6):
+ * a pair as one coupled track along a centre line, at the rule's width and gap, or each net alone.
+ */
+export interface RoutedLine {
+  /** The rule (Z1). */
+  id: string;
+  /** The nets (ids), a pair positive first. */
+  nets: string[];
+  /** A pair routed side by side; for a single line, routed before the other nets. */
+  coupled: boolean;
+  /** Why the two nets are routed apart (or the line was not routed first), when they are. */
+  why?: string;
+}
+
 /** A routed board as stored (see BoardSettings.copper). Pads are counted through all parts' pads in board order. */
 export interface StoredCopper {
   /** The placement, rules and net widths it was routed for. */
@@ -198,6 +217,8 @@ export interface StoredCopper {
   basis?: { board: string; nets: Record<string, string> };
   /** Copper taken over from the routing before it (incremental routing), as it lies in this one. */
   reused?: { tracks: number; vias: number };
+  /** The lines at a set impedance routed first, and whether a pair kept together. */
+  lines?: RoutedLine[];
 }
 
 export interface StoredPlacement {
@@ -233,6 +254,76 @@ export interface Cutout {
   r?: number;
   /** rect, slot: rotation, degrees clockwise. */
   angle?: number;
+}
+
+/** What a keep-out forbids: tracks, vias, copper fill (pours and planes), parts (their courtyards). */
+export type KeepoutForbid = 'tracks' | 'vias' | 'pours' | 'parts';
+export const KEEPOUT_FORBID: readonly KeepoutForbid[] = ['tracks', 'vias', 'pours', 'parts'];
+
+/**
+ * A keep-out (add_keepout): a polygon on some copper layers where some kinds of things may not
+ * be: an antenna's clearance, the plane cleared under a wide pad or a coil, a no-via zone. It is
+ * not artwork: the pours are cut round it, nothing else is written to the fab files. With `part`
+ * the polygon is in that part's own frame (origin at the part, as its footprint is drawn, turned
+ * and mirrored with it), so the keep-out follows the part when it moves.
+ */
+export interface Keepout {
+  /** "KO1", "KO2" … */
+  id: string;
+  /** What it is for ("antenna clearance"); drawn on it. */
+  name?: string;
+  /** The corners, flat x, y list in mm (board frame, or the part's). */
+  poly: number[];
+  layers: CopperLayer[] | 'all';
+  forbid: KeepoutForbid[];
+  /** Component id of the part the polygon belongs to; that part itself may stand in it. */
+  part?: string;
+}
+
+/** A keep-out placed on the board: absolute corners, the layers that exist. */
+export interface BoardKeepout {
+  id: string;
+  name?: string;
+  poly: number[];
+  layers: CopperLayer[];
+  forbid: KeepoutForbid[];
+  /** The part it follows (refdes, componentId). */
+  part?: string;
+  partId?: string;
+  /** x0, y0, x1, y1 */
+  bounds: [number, number, number, number];
+}
+
+/** The absolute keep-out on a board with these layers; `host` is where its part stands now. */
+export function placeKeepout(k: Keepout, layers: CopperLayer[], host?: { x: number; y: number; rot: number; side: 'top' | 'bottom'; refdes: string }): BoardKeepout {
+  const poly: number[] = [];
+  const a = (((host?.rot ?? 0) % 360) * Math.PI) / 180;
+  for (let i = 0; i + 1 < k.poly.length; i += 2) {
+    if (!host) {
+      poly.push(k.poly[i]!, k.poly[i + 1]!);
+      continue;
+    }
+    // (mirrored about the part's vertical axis on the bottom, then turned clockwise, y down)
+    const x = host.side === 'bottom' ? -k.poly[i]! : k.poly[i]!;
+    const y = k.poly[i + 1]!;
+    poly.push(Math.round((host.x + x * Math.cos(a) - y * Math.sin(a)) * 1000) / 1000, Math.round((host.y + x * Math.sin(a) + y * Math.cos(a)) * 1000) / 1000);
+  }
+  const xs = poly.filter((_, i) => i % 2 === 0);
+  const ys = poly.filter((_, i) => i % 2 === 1);
+  return {
+    id: k.id,
+    ...(k.name ? { name: k.name } : {}),
+    poly,
+    layers: k.layers === 'all' ? [...layers] : layers.filter((l) => (k.layers as CopperLayer[]).includes(l)),
+    forbid: [...k.forbid],
+    ...(host ? { part: host.refdes, partId: k.part } : {}),
+    bounds: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+  };
+}
+
+/** Signed distance from a point to a keep-out's area: negative inside, positive outside. */
+export function keepoutDistance(k: Pick<BoardKeepout, 'poly'>, px: number, py: number): number {
+  return -insidePolygon(k.poly, px, py);
 }
 
 /**
@@ -742,12 +833,16 @@ export interface Zone {
   layer: CopperLayer;
   rects: number[];
   shape?: ZoneShape;
+  /** Islands of the pour left out of the fill because they touched no copper of the net: how many, their area (mm²) and where the biggest is. */
+  removed?: { islands: number; area: number; at: { x: number; y: number } };
 }
 
 export type ZoneCut =
   | { k: 'circle'; x: number; y: number; d: number }
   | { k: 'rect'; x: number; y: number; w: number; h: number }
-  | { k: 'stroke'; pts: number[]; w: number };
+  | { k: 'stroke'; pts: number[]; w: number }
+  /** A closed polygon (a keep-out's area), flat x, y list. */
+  | { k: 'poly'; pts: number[] };
 
 export interface ZoneShape {
   /** Filled rectangle x0, y0, x1, y1. */
@@ -812,9 +907,10 @@ export interface BoardView {
   unrouted: UnroutedConnection[];
   /**
    * How well the placement lends itself to routing (lower is better): the ratsnest of the nets
-   * routed as tracks (not those on a dedicated plane), its length and where its lines cross.
+   * routed as tracks (not those on a dedicated plane), its length and where its lines cross, and
+   * the congestion: where those lines want more track than the layers carry (kernel congestion.ts).
    */
-  measures: { ratsnestMm: number; crossings: number };
+  measures: { ratsnestMm: number; crossings: number; congestion: { overflowMm: number; peak: number; hot: number } };
   /** Copper just routed, for the app to keep in the design (absent when it came from the design). */
   newCopper?: StoredCopper;
   /** The user stopped the routing; the copper is the best pass it had finished. */
@@ -839,6 +935,8 @@ export interface BoardView {
   shape: number[] | null;
   /** Milled cutouts, placed on this outline. */
   cutouts: BoardCutout[];
+  /** Keep-outs, placed (those attached to a part where it stands). */
+  keepouts: BoardKeepout[];
   /** Silkscreen graphics, placed on this outline. */
   graphics: BoardGraphic[];
   /** The fabrication panel, resolved for this outline (absent: none set). */
@@ -990,6 +1088,9 @@ export function boardSummary(b: BoardView, routed = true) {
         ...(m ? { plugged_from: PLUGGED_FROM[boardFacing(m.face, p.rot, p.side)] } : {}),
       };
     }),
+    ...(b.parts.some((p) => p.side === 'bottom')
+      ? { bottom_side: { parts: b.parts.filter((p) => p.side === 'bottom').map((p) => p.refdes), note: 'mounted on the bottom (mirrored, SMD pads on B.Cu): the assembly house sets up a second side for them (the cost check prices it). Nothing flips a part by itself; place side "top" brings one back' } }
+      : {}),
     ...(userPlaced(b).length ? { user_placed: { parts: userPlaced(b), note: USER_PLACED_NOTE } } : {}),
     routing: !routed
       ? 'not computed here (see the Layout view)'
@@ -1019,7 +1120,7 @@ export function boardSummary(b: BoardView, routed = true) {
         : b.routing === 'stale'
           ? 'out of date: the placement changed since the route step (route again when the placement is final)'
           : 'not routed yet (the route op, once the placement is final)',
-    placement_measures: { ratsnest_mm: b.measures.ratsnestMm, ratsnest_crossings: b.measures.crossings },
+    placement_measures: { ratsnest_mm: b.measures.ratsnestMm, ratsnest_crossings: b.measures.crossings, congestion_mm: b.measures.congestion.overflowMm, congestion_peak: b.measures.congestion.peak },
     planes: b.planes.map((p) => ({ net: b.netNames[p.netId] ?? p.netId, layer: p.layer, dedicated: p.layer !== 'F.Cu' && p.layer !== 'B.Cu', automatic: p.auto, ...(p.area ? { area_mm: p.area, ...(p.under ? { under: p.under } : {}) } : {}), ...(p.style ? { style_mm: p.style } : {}) })),
     ...(b.viaGroups.length
       ? {
@@ -1047,6 +1148,19 @@ export function boardSummary(b: BoardView, routed = true) {
     mounting_holes: b.parts.filter((p) => p.componentId.startsWith('hole:')).map((p) => ({ id: p.refdes, x: p.x, y: p.y, diameter: p.pads[0]?.drill, plated: !p.pads[0]?.npth })),
     corner_radius_mm: b.cornerRadius,
     cutouts: b.cutouts.map((c) => ({ id: c.id, shape: c.shape, x: c.x, y: c.y, ...(c.shape === 'circle' ? { diameter: c.w } : { w: c.w, h: c.h }), ...(c.r ? { corner_radius: c.r } : {}), ...(c.angle ? { angle: c.angle } : {}) })),
+    ...(b.keepouts?.length
+      ? {
+          keepouts: b.keepouts!.map((k) => ({
+            id: k.id,
+            ...(k.name ? { name: k.name } : {}),
+            forbids: k.forbid,
+            layers: k.layers,
+            bounds_mm: k.bounds.map((v) => Math.round(v * 100) / 100),
+            ...(k.poly.length > 8 ? { polygon_mm: k.poly } : {}),
+            ...(k.part ? { follows: k.part } : {}),
+          })),
+        }
+      : {}),
     silkscreen_graphics: b.graphics.map((g) => ({
       id: g.id,
       ...(g.name ? { name: g.name } : {}),
@@ -1076,7 +1190,7 @@ export function boardSummary(b: BoardView, routed = true) {
     // (drawn copper: with code and entities, which add_waiver takes for a soft rule kept on purpose)
     drc: b.diagnostics.filter((x) => !x.waivedBy).map((x) => (b.drawn ? `${x.severity} ${x.code}${x.entities.length ? ` [${x.entities.join(', ')}]` : ''}: ${x.message}` : `${x.severity}: ${x.message}`)),
     missing_footprints: b.missing,
-    ...(b.drawn ? { copper_note: 'Drawn copper: you lay every track and via (draw_track, draw_via, edit_copper, erase_copper; route nets / from, to as a helper). Planes and pours still fill round your copper. Parts move only when moved on purpose; a part moved takes the copper by it along (its pads\' tracks as far as they stay by it, and the vias they end on), the piece beyond stretches: look at the spot after a move.' } : {}),
+    ...(b.drawn ? { copper_note: 'Drawn copper: you lay every track and via (draw_track, draw_pair, draw_via, edit_copper, tune_length, erase_copper; route nets / from, to as a helper). Planes and pours still fill round your copper. Parts move only when moved on purpose; a part moved takes the copper by it along (its pads\' tracks as far as they stay by it, and the vias they end on), the piece beyond stretches: look at the spot after a move.' } : {}),
     note: 'Workflow: decide the main parts\' places and rotations (try_placements compares arrangements, propose_placement parts applies one; the placer puts the small parts round them), then fine-tune (place = a choice for a part, kept relative to its parent part, rot turns it; lock: true pins it exactly; set_board for the size; placement_measures say how the arrangement routes: shorter, fewer crossing ratsnest lines are better), then route as the last step, to 100 %. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
   };
 }

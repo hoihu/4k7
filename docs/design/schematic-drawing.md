@@ -1,6 +1,6 @@
 # Drawing the schematic: the agent owns the drawing
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; the agent's guide is [schematic.md](schematic.md).
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; 2026-10-29: a part placed on its own is wired to its neighbours (§2c); the agent's guide is [schematic.md](schematic.md).
 > Notes and checks are in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
@@ -39,8 +39,8 @@ authority to say where components go; the editor wires them up. So, as for the b
 
 - **`place_symbol`** pins a part's symbol centre on a page (mils from the paper's top-left, snapped
   to the 100-mil grid). An IC or connector takes the small parts at its pins with it, still wired;
-  a two-pin part placed on its own stands apart, connected by labels until the router (§5) wires
-  it. The layout flows every part nobody placed around the placed ones.
+  a two-pin part placed on its own stands apart, wired to its neighbours where that draws cleanly
+  and connected by labels where not (§2c). The layout flows every part nobody placed around the placed ones.
 - **`get_schematic`** tells the agent each page's paper and where every symbol stands, so it can
   place by reading, not by guessing from a picture.
 - **Relative constraints stay** the lighter lever, and now do what they say: the subject moves, a
@@ -78,8 +78,8 @@ which already stores its own geometry (`board.tracks`):
   label, or a supply symbol for a rail or ground: one op, the net decides); `erase { pins | net }`.
 - **Import** builds the netlist and redraws the original's arrangement, wires where it had wires.
 - **The checks** (§3) judge the agent's drawing, so every finding is one it can act on.
-- **Hand editing** (dragging symbols and wires in the editor) is not planned yet: later, depending on
-  how well the agent does.
+- **Hand editing** is minimal and stays inside this model (2026-10-29, §2c): gestures on the canvas
+  that issue the agent's own ops. There is no pencil, wire or trace tool, and no toolbar button.
 
 This supersedes "the kernel decides where every line goes" in §2 and the hint-based steps of §4–5;
 the router of §5 becomes the `wire` op's path finder.
@@ -140,6 +140,76 @@ two shallow steps); about 300 ms for the transaction and the view. Left as label
 flash's DI and CLK, whose pins run in another order than the MCU's (`set_symbol layout` on the flash
 wires them; the path finder does not reorder pins). The flash also stands below the crystal in its
 column, so its other lines jog.
+
+## 2c. Decision 2026-10-29: a part placed on its own is wired to its neighbours
+
+Only ICs and connectors kept their small parts wired; a resistor or capacitor the agent placed with
+`place_symbol` stood apart and was tied to its neighbours by labels, so the cleanest drawings came
+only from placing the big parts and leaving the rest to the layout. Now `place_symbol` of a two-pin
+part runs one more step (`kernel/autowire.ts`), once, as the part is placed:
+
+- **Each signal pin** (not a rail or ground: those keep the symbol that came along) is wired to the
+  nearest other piece of its net on the page, by the `wire` op's path finder: its pins, or a T onto
+  a wire of it. The nearest three pieces are tried in turn.
+- **Clean or not at all.** The path is drawn only if it crosses no wire of another net, runs through
+  no label or name, has at most three corners and no U-turn (the block wiring's test), is no longer
+  than the direct way plus 800 mils, spans no more than 4000 mils, and adds no jog or detour the net
+  did not have (`wireShape`, what SCH.JOG and SCH.DETOUR measure). Otherwise nothing is drawn, the
+  result says why for each pin ("R3.2 (LED_B: a wire would cross another)"), and the connection
+  shows as the automatic labels the drawing completes itself with (§2a), so none is left out.
+- **Labels make way**: the net labels (and their leads) at the two ends of a new wire go, as for
+  `wire`; the net's other pieces keep or get theirs.
+- **Automatic means replaceable.** The wires are ordinary stored wires and nothing re-runs the step:
+  `erase` at a pin takes the wire away and the label that appears in its place stays; `label`
+  after an `erase` puts the agent's own; `wire` draws it with `via` corners. Moving the part again
+  cuts the old wires back and wires it afresh where the new place allows.
+- Not done: an IC or connector placed after the small parts around it does not wire them (place it
+  first, as `get_schematic` and the guide say), and a two-pin part has no flip (pin 1 is the left or
+  top end), so a part is wired cleanly only when its pin 1 faces the neighbour on that net.
+
+Two synthetic placements (every IC and connector placed, then each small part one inch from the
+first pin of its net it can face, as an agent reading `get_schematic` would; the 10-part sensor
+front-end and the TPS54331 buck, `place_symbol` per part): net labels 16 → 11 and 15 → 11 (the
+automatic ones 12 → 7 and 14 → 9), wires 2 → 5 and 2 → 7, SCH findings 2 → 0 and 0 → 0. The rest
+stays labels: a pin whose neighbour lies on another row (a jog), across a wire, or whose wire
+would go round a part.
+
+## 2d. Hand editing, 2026-10-29
+
+The user can fix a small thing by hand without asking the agent. Every gesture is one of the agent's
+ops, sent by the app as the user's own transaction: validated like any op, one undo step, shown in
+the history as the user's. No gesture draws anything new; the netlist never changes except by Delete
+on a part.
+
+| Gesture | Op |
+|---|---|
+| Drag a symbol (snaps to the 100-mil grid; may cross to another page) | `place_symbol x y page rewire` |
+| `R` on a selected two-pin part: standing / lying | `place_symbol orient rewire` |
+| `F` on a selected IC or connector: mirror | `place_symbol mirror rewire` |
+| Drag a net label round its pin: it points where the pointer is | `label pin dir` |
+| Click a wire or label (it is picked and its net selected), `Delete` / `Backspace` | `erase at` |
+| `Delete` / `Backspace` on selected parts, after a confirmation | `remove` |
+
+- **Wires follow.** `place_symbol` has `rewire: true`: the pins hung together by wire before the move
+  are joined again after it, by the `wire` op's path finder (`kernel/drawops.ts rewire`), shortest
+  gap first. A connection with no clear path (or on another page) is left to the automatic label,
+  as after any move, and the result says so. Without `rewire` nothing changes for the agent.
+- **`erase at`** names one wire (the drawn wires through a point; a wire runs between two joints, so
+  the canvas sends the middle of the clicked segment) or one label (at its point), by page
+  coordinates. A label that was the only sign of a connection comes back as an automatic one.
+- **The user's decision.** A symbol moved or turned by the user carries `DrawnSymbol.by: "user"`
+  (`SymbolView.by`; `get_schematic` says `user_placed`). The kernel keeps it: `place_block` draws
+  the rest of the block afresh round it, `auto_draw` of the whole sheet turns it into a `sch_position`
+  entry (source user) the layout stands it at, and Optimize may not move it. The agent may still
+  move it with `place_symbol` when asked or when it must; the result says "it was the user's
+  placement; now yours", as on the board. Wires and labels carry no mark.
+- **Keys.** The canvas takes focus on a click (`tabindex`), so R, F and Delete act on it only, never
+  while the chat box is focused, and never with ⌘, Ctrl or Alt held (⌘R, ⌘F and the like are the
+  browser's). The canvas does not take edits while the agent works or a changeset waits for review.
+- **Limits.** The drag preview moves the symbol alone: the wires are drawn once it lands, and an IC's
+  small parts follow then. Rotation is the op's: two-pin parts stand or lie, ICs only mirror. Mirroring
+  an IC with many wires can send them the long way round; Undo is one step. A part dragged with its
+  `rewire` on a crowded sheet may leave some connections as labels.
 
 ## 3. Notes and checks
 
@@ -393,10 +463,56 @@ The first plan, steps 1–3 built 2026-10-12:
   Probably: the arrangement step runs on new parts and on request, and leaves the rest alone.
 - **Ruleset in the design file.** A project's own rules make it render the same everywhere, but a
   project then disagrees with the user's rules without them noticing. Show which ruleset applies?
-- **Wires to placed parts.** A two-pin part placed on its own is connected by labels; the router
-  (step 6) should wire it to its neighbours instead. Until then, placing ICs and connectors (which
-  keep their small parts wired) gives the cleanest drawings.
+- **Wires to placed parts.** *Resolved 2026-10-29 (§2c):* a two-pin part placed on its own is wired
+  to its neighbours when that is clean. Still open: wiring the small parts that were placed before
+  the IC they serve, and a flip for two-pin parts, so pin 1 need not face the neighbour.
 - **Pictures.** Steps need images to judge; images are the most expensive input. One per step, area
   only where possible.
 - **Claude Code.** Through the local server it gets the same hints and the same ruleset
   (`get_context`). Nothing provider-specific is planned.
+
+## 8. The drawing eval
+
+*2026-10-29.* The auto-layout and the blocks draw every sheet, so a change to either needs a measure
+of the drawings, not only tests of single cases. `packages/kernel/bench/schematic-golden.ts` builds
+twelve circuits through the kernel's ops (the two bucks, USB-C with ESD and CC resistors, an MCU
+with decoupling, crystal and SWD header, an MCU with a QSPI flash, an H-bridge, an op-amp stage, a
+bridge of four diodes and one in a package, a 555, and a 29-part board drawn plain and as five
+blocks). `schematic-eval.ts` lays each out as the app does and prints, per circuit, the `SCH.*`
+findings by id, wire segments, bends, crossings, jogs, detours, net flags against wires, supply
+symbols, pages, and the pins the drawing leaves apart from their net or joins to another one:
+
+```sh
+node --experimental-transform-types packages/kernel/bench/schematic-eval.ts [--only id,id] [--compare packages/kernel/bench/schematic-baseline.json]
+```
+
+It writes the numbers to `schematic-latest.json` (ignored by git; `--out` picks another file) and
+`--compare` shows each change against a baseline in the table. When a change to the layout is meant
+(fewer crossings for more labels, say), run it with `--out packages/kernel/bench/schematic-baseline.json`
+and commit the new baseline with the change, so the diff of that file is the effect on the drawings.
+
+`test/schematic-eval.test.ts` is the guard, one test per circuit (about 20 ms each): every part is
+drawn, every connection is a wire or a label and no wire touches another net's pin, no `SCH.*`
+finding is at the Must fix level, and segments, crossings, jogs, detours and pages are at most a tenth
+(rounded up) above the baseline, so a count of zero stays zero. Better numbers never fail it.
+
+### Known weaknesses
+
+What the first baseline shows (the circuits are small, so each is a pattern, not an accident):
+
+- **Buses and fast interfaces become labels.** The four QSPI data lines between MCU and flash, the
+  USB D+/D- through the ESD array and the gate lines of the H-bridge are all labels (net flags are
+  60 to 75 % of the drawing in these three); the QSPI labels also run into the series resistor
+  that stands between the two parts.
+- **Crystal away from its MCU.** In the MCU circuit the crystal stands to the right of the
+  MCU and its LED, joined to it by labels, while its load caps and the resistor are wired on the left.
+- **Dividers and pull-ups drawn upside down.** The bias divider of the op-amp stage and the 555's
+  timing resistor stand with the supply at the bottom (`SCH.RAIL_SIDE`); the divider is drawn as two
+  columns side by side, the case of §1.
+- **Blocks run over the page.** The 29-part board grouped into blocks needs two pages (one when drawn
+  plain) and has the only crossings of the set: I2C against each other, the feedback divider across
+  +3V3 and SW, and an I2C wire that doubles back.
+- **Switch node jog.** The inductor of a buck is not level with the regulator's switch pin
+  (`SCH.JOG` in both TPS54331 drawings).
+- **H-bridge** (all of it): the MOSFETs stand in one row at the top, the drivers in another far below,
+  and the boot lines run into the gate-drive labels (`SCH.TEXT_OVERLAP`, 7).

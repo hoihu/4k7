@@ -154,13 +154,17 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
       if (a) mustBeFree(a, `remove ${op.id}`);
       return;
     }
-    case 'place_symbol':
-      mustBeFree(resolveUnitRef(d, op.ref).comp, 'place_symbol');
+    case 'place_symbol': {
+      const c = resolveUnitRef(d, op.ref).comp;
+      mustBeFree(c, 'place_symbol');
+      if (d.drawing?.[c.sheet]?.symbols.some((s) => s.comp === c.id && s.by === 'user')) out(`place_symbol: the user put ${c.refdes} where it stands; leave it, or ask them.`);
       return;
+    }
     case 'wire':
     case 'label':
     case 'erase': {
       if (op.op === 'erase' && op.net) out('erase of a whole net reaches beyond this area; erase at pins inside it.');
+      if (op.op === 'erase' && op.at?.length) out('erase at a point is for the user; erase at pins inside the area.');
       const refs = op.op === 'wire' ? [op.from, op.to] : op.op === 'label' ? [op.pin] : op.pins ?? [];
       for (const r of refs) mayRefer(resolveUnitRef(d, r.slice(0, Math.max(0, r.indexOf('.')))).comp);
       return;

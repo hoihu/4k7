@@ -63,11 +63,13 @@ mm, e.g. round an open connection. It waits for routing.
 
 The guide tells the agent the arrangement is its own, and what a good one is for routing: an IC's
 small parts at the pins they serve, pads facing what they connect to, signal chains in order,
-ratsnest lines not crossing where they need not. Two numbers on every board, before any routing
+ratsnest lines not crossing where they need not. Three numbers on every board, before any routing
 (`BoardView.measures`, `get_board` `placement_measures`):
 
 - **ratsnest length** (mm) of the nets routed as tracks (nets on a dedicated inner plane left out),
-- **ratsnest crossings**: pairs of ratsnest lines of different nets that cross.
+- **ratsnest crossings**: pairs of ratsnest lines of different nets that cross,
+- **congestion** (mm, §11): how much track the ratsnest wants above what the layers carry, cell
+  by cell (and the worst cell's demand over its capacity).
 
 Lower is better. Moving or turning a part and reading the numbers again tells the agent whether it
 helped, before it spends a routing run on it. A move makes the routing out of date, so the board
@@ -415,6 +417,22 @@ Each step is useful alone.
     (over an unbroken plane) where it can. Supplies and ground do not pay. The check
     `PLANE.SPLIT_CROSSING` (warning, one per net and area, `splitDrc` in drc.ts) names the signals
     that still cross on the layer over the split; a slow one (an LED, a button) is waived.
+    **Etching and pour checks** (2026-10-29, all in drc.ts, run with the routed or drawn copper and on each
+    drawn op). `DRC.ACID_TRAP` (`acidDrc`, warning): two tracks of one net meeting at less than 90° (a bend, a
+    junction, or a track ending on the side of another) with nothing of the net in the wedge between them: a pad,
+    via, pour or other track of the net filling it, or a junction inside a pad or via, clears it. `DRC.NECK`
+    (`neckDrc`, warning): a track narrower than its net's width (`set_net`, its impedance rule, else the power or
+    signal width), unless it starts or ends on a pad too small for that width (a fine-pitch escape).
+    `DRC.THERMAL_SPOKES` (`thermalDrc`): a pad joined to its pour through a thermal relief has fewer than two spokes
+    (warning), or none and no track of its net on the layer (an error for a surface pad: it is cut off). Pads of a
+    plane with `thermal: false`, with thermal vias, or with a track on the layer are not counted. Thermal reliefs
+    themselves are real: the router cuts a ring round each pad and via of the pour's net, draws the spokes back
+    where no other net is in the way, and the Gerber writer clears the cuts and draws the spokes
+    (`ZoneShape.cuts`, `adds`); style, gap and spoke width are `set_plane_style`'s.
+    **Dead copper**: a pour island that touches no copper of its net is never filled (the `alive` set in
+    `planeShape`), so no floating copper reaches the Gerbers. `Zone.removed` counts the islands of 1 mm² and
+    more and `DRC.DEAD_COPPER` (info) tells the agent where the biggest was: a track or pad of another net
+    split the pour there.
 12. **Which part belongs with which** (built 2026-10-15). The placer guessed each part's parent
     (a decoupling cap: the IC whose supply pin it takes; else the biggest part sharing a signal
     net) and the agent could not say otherwise: a connector followed the regulator it feeds, a
@@ -429,22 +447,27 @@ Each step is useful alone.
     a mechanism (a dragged IC takes its parts along), but the agent decides it. Benches unchanged
     (2 and 4 layers: same board, tracks and vias).
 13. **Next.** (a) The placer's guesses softened one by one, judged on the benches: the board
-    density, the alignment snapping, the margin to the edge, satellites always at the courtyard.
-    (b) Planes in try_placements (compare split or not by trial routing).
+    density, the margin to the edge, satellites always at the courtyard (the alignment snapping
+    and the re-run of every guess on each move are done, §11). (b) Planes in try_placements
+    (compare split or not by trial routing).
 
 ## 8. Open questions
 
 - The budget. 90 s covers the benches; a real 300-part board may need more (the user can stop it
   and keep the best pass). With incremental routing (§5.5) a long first route matters less.
-- The placer moves parts a move did not touch: a 1.5 mm move of one part on the bench nudged up
-  to 20 others by 0.1–1.4 mm (the outline grew, snapping, small parts placed again). Incremental
-  routing copes (a pad that moved within its own copper keeps its tracks), but a steadier placer
-  would keep more copper and surprise the user less (§7 step 13a).
+- The placer moved parts a move did not touch (a 1.5 mm move nudged up to 20 others by 0.1–1.4 mm).
+  Fixed for the placer, §11.1: a move touches the part, the parts that follow it and what it
+  pushes into. What is left: a part placed into a dense pack still pushes a chain of neighbours
+  (each by what it must), and a main part's followers move with it by design; whether they should
+  keep their place relative to their parent after a long move is the placer's old guess
+  (`NUDGE_MM`).
 - A stopped routing is still routed again from scratch (`route` drops it); it could be kept as the
   start of an incremental route instead.
-- A better measure of routability than crossing ratsnest lines: the router's result swings with a
-  small move (one board: 211 vias placed one way, 318 refined), so a congestion estimate (where the
-  nets' boxes overlap more than the board's two layers carry) may judge small-part moves better.
+- A better measure of routability than crossing ratsnest lines: congestion (§11.2) predicts how
+  hard the router finds a placement (passes, connections left open) better than crossings do, but
+  not its vias or track length, and the vias swing with a small move whatever the measure (one
+  board: 211 vias placed one way, 318 refined). A measure that sees the escape of a pin row, or
+  the router's own cost map after a few passes, is the next candidate.
 - Should open connections block `propose` for the in-app agent too? Today the rule is in the
   Claude Code path (`propose` is its tool); the in-app agent's turn ends with the changeset whatever
   the board says.
@@ -481,6 +504,11 @@ none of them (nor the anchors and the helper mark) when the board goes back to t
   place, keeping the ids. A move shifts the tracks and vias named; the ends of other tracks on a
   moved via go along, a track end on a pad (or on a via that stays) stays and the piece next to it
   stretches.
+- `tune_length { track? | net?, target_mm? | match?, tolerance_mm?, gap_mm?, height_mm?, side?, near? }`
+  (`tune.ts`): a meander of square bumps with 45° corners into a straight stretch of a drawn track,
+  to reach a length or match a pair member or a group (docs/design/impedance.md §6); checked
+  exactly against all other copper before it is put in, refused with where and why where there is
+  no room, and checked at once like the other drawing ops.
 - `erase_copper { ids? | nets? | parts? | rect? | all? }`.
 - `route { nets? | from, to, width_mm?, fresh? }`: the router as a helper. It routes only those
   connections (nothing given: every open one), round the drawn copper, which it never moves; what
@@ -490,9 +518,13 @@ none of them (nor the anchors and the helper mark) when the board goes back to t
   connection, its whole net) and lays it again round the agent's own: for when the helper's copper
   is in the way, or should adapt to a path the agent redrew. A fresh run the user stops changes
   nothing (its best pass so far is no better than what it would take up).
+  Nets with an impedance rule are routed first, as one unit: a pair with a gap as a coupled pair
+  (one search for its centre line, the two tracks drawn either side at the rule's gap, its via
+  transitions together), a single line before the rest, so the plane under it stays whole; the
+  effect names a pair it had to route apart, and why (`RouteResult.lines`, `pairroute.ts`).
 - `design_query get_copper { nets?, rect? }` lists the drawn copper by id (and `by`).
 
-**Checked at once.** What `draw_track`, `draw_via` and `edit_copper` laid, and what a move dragged
+**Checked at once.** What `draw_track`, `draw_pair`, `draw_via`, `edit_copper` and `tune_length` laid, and what a move dragged
 along, is checked when the transaction is applied (`annotateChecks`: the copper DRC, edge, fab
 limits and the soft checks, focused on those ids, on the placement as it is; pours fill round the
 copper later and never clash). The op's effect ends in `check: clear` or names the findings, so the
@@ -559,7 +591,7 @@ the agent may), the fab's limits, parts off the board or overlapping, `DRC.UNROU
 yet", unless `propose open_connections` says why). Warnings are soft, the agent's judgement:
 `DRAW.DANGLING` (a track end meeting no copper of its net), `DRAW.ANGLE` (a piece off 45°, the
 short jog onto a pad aside), `DRC.VIA_IN_PAD` in a small part's land pattern (a via over another
-net's pad is a short anyway), `DRC.PLANE_VIAS`, `PLANE.SPLIT_CROSSING`, silkscreen.
+net's pad is a short anyway), `DRC.PLANE_VIAS`, `PLANE.SPLIT_CROSSING`, `DRC.ACID_TRAP`, `DRC.NECK`, `DRC.THERMAL_SPOKES`, silkscreen.
 
 Bench (`bench/drawn.ts`, the 128-part board of `bench/board.ts`, 3 clusters):
 
@@ -618,3 +650,208 @@ best one, computed in the board worker after routing); let the router try them i
 stuck (with the user's parts out of bounds, reported in the effect); pin and gate swaps (two
 channels of an op-amp, equivalent MCU pins), which change the schematic and need the user's say;
 and blocks as areas the parts keep to (rooms).
+
+## 11. A steadier placer, and congestion as a placement measure (2026-10-29)
+
+Two follow-ups of §8, both measured on the benches (`packages/kernel/bench/`).
+
+### 11.1 A move touches what it needs
+
+**Measure.** `bench/board.ts 2|4 1|2|3 steady 6` places the bench board, then moves six small parts
+(two-pin) and six main parts, one at a time by 1.5 mm with `place` (the user's choice), and counts
+the other parts that moved by more than 0.05 mm or turned, not counting the parts that follow the
+one moved (they move with it, by design), and the furthest any of them went.
+
+**Causes** (found by following one nudge through the placer):
+
+- *A choice and the placement disagreed.* A part the user placed keeps its spot in the ledger; the
+  placer then nudged it clear of a neighbour and stored the result. Laid out again from the stored
+  placement, the choice was applied again at the old spot, pushed the neighbour again, and so on:
+  every layout re-pushed the same parts, and each later move started from a board that was not at
+  rest.
+- *The clean-up ran on the whole board.* From a stored placement `settle` and `alignSimilar` still
+  ran over every part: `separate` snapped even the part that stayed (a user's choice, 0.05 mm off
+  its pad-1 grid), `alignSimilar` picked the line of each row or column of similar parts again (1–2
+  mm when a group changed), and parts the alignment had left 0.03 mm off the grid were snapped back
+  at the next layout, so five parts shifted on every layout, with no move at all.
+- *Followers were relaxed again.* The parts that follow a moved part (a connector's 38 small parts)
+  went through 60 relaxation steps towards their nets and the small parts of an IC were put at its
+  pins again: 1–15 mm for a 1.5 mm nudge of the parent.
+- *No room meant a jump.* A pair the separation could not pull apart went to the nearest free spot
+  (`legalize`), wherever that was, or grew the outline by 10 %. (The outline did not grow in these
+  runs; §8 named it from an earlier one.)
+
+**Fixes** (`board.ts`, `apply.ts`):
+
+- From a stored placement, the parts that moved (the part placed, its followers, new parts, those
+  off the board or in someone's way already) are *active*; every other part is held still while the
+  board is settled and aligned. A held part that an active one overlaps joins the active ones and
+  gives way; that repeats, round by round, so a nudge into a pack pushes a chain, each part by what
+  it must. Only when that finds no room are the parts in the way moved to the nearest free spot,
+  and only then is the whole board settled again (it may grow).
+- Choices are recorded where their part ended up (`choicesWhereTheyStand`; relative ones in the
+  anchor's frame; a two-pin part turned round by 180° keeps the direction chosen), and a choice
+  within 0.005 mm of the stored place is not a move. The placement shown is the stored one.
+- Parts held still are neither re-snapped nor re-aligned; `separate` snaps only what it moved.
+- Followers move with a parent that went less than 3 mm without turning exactly as it did; the
+  relaxation and the re-hugging of an IC's small parts only follow a longer move or a turn.
+- Two-pin parts that share a small net with a part that moved are tried turned by 180° (they may
+  face it the other way round now).
+
+Six moves of 1.5 mm; other parts disturbed (furthest), before → after:
+
+| | small parts moved | main parts moved |
+|---|---|---|
+| 2 layers, 3 clusters (130 parts) | 69 (7.1 mm) → **6** (2.6 mm) | 326 (10.2 mm) → **26** (5.1 mm) |
+| 4 layers, 3 clusters | 167 (10.0 mm) → **17** (8.2 mm) | 216 (17.6 mm) → **30** (3.5 mm) |
+| 2 layers, 1 cluster (56 parts) | 16 (1.5 mm) → **4** (3.0 mm) | 55 (8.4 mm) → **7** (1.4 mm) |
+
+A move takes the same time or less (160 ms against 160–320 ms on the 130-part board). Incremental
+routing profits: after the same six moves on the 56-part board (`bench/board.ts 2 1 6`) the router
+kept 157, 188, 74, 168, 147 and 206 of about 200 tracks before and 157, 189, 181, 197, 200 and 197
+after; every move now needs one pass (two of them needed two), 0.9 s in all against 1.4 s. What is
+left: a part dropped on a pack still pushes its neighbours, and a part pushed against a held one can
+jump past it (the furthest values above). `test/board.test.ts`: the buck's eleven two-pin parts moved
+in turn disturb at most six others (the placer moved 22), and the board shown is the stored
+placement.
+
+### 11.2 Congestion
+
+`congestion.ts`, RUDY-style, in milliseconds: every ratsnest line (the nets routed as tracks, as for
+the other two measures) spreads its Manhattan length evenly over its bounding box (at least 1 × 1
+mm) on a grid of 3 mm cells; a cell's capacity is the track its signal layers fit in it, the free
+area over the pitch (track + clearance), with pads and their clearance taken out on their own layer
+(a dedicated inner plane carries no signal). What counts is the demand above 40 % of the capacity
+(the router never fills a layer: vias, detours, escapes): `overflowMm` summed over the cells, with
+`peak` (the worst cell's demand over its capacity) and `hot` (cells over). It is in
+`BoardView.measures.congestion`, `get_board` `placement_measures` (`congestion_mm`,
+`congestion_peak`) and `try_placements` (`congestion_mm`, `routability`).
+
+One score for the searches, `routability` = 4 × crossings + ratsnest mm + 8 × congestion mm (lower
+is better). It is the cost of `refinePlacement` and `exploreMain` (their model keeps the grid and
+draws again only the lines a move changes: `Grid.delta`), the screening of `suggest_moves`, what
+`refine_placement` and `propose_placement` accept (a refinement is kept if the placement as the
+placer then makes it scores lower), the explore step of `try_placements` and, after the open
+connections and the placement problems, the order of its options.
+
+**Validation** (`bench/congest.ts`): the bench board placed 24–40 ways each (the main parts shifted
+and turned at random, the placer putting the small parts round them), each routed to completion, then
+Spearman's rho between each measure of the placement and what routing gave. Four sets, 124
+placements: 2 layers 1 cluster on the proposed size and squeezed to 80 %, 4 layers 1 cluster squeezed
+to 80 %, 2 layers 2 clusters squeezed to 85 %. Mean over the sets:
+
+| measure | vias | track mm | router passes | open connections |
+|---|---|---|---|---|
+| crossings | 0.44 | 0.63 | 0.43 | 0.35 |
+| ratsnest mm | 0.34 | 0.67 | 0.26 | 0.28 |
+| 4 × crossings + ratsnest mm (the old score) | 0.43 | **0.68** | 0.40 | 0.33 |
+| congestion mm | 0.32 | 0.41 | **0.52** | **0.51** |
+| routability (the old score + 8 × congestion mm) | 0.40 | 0.59 | **0.53** | **0.50** |
+
+(Open connections: the unsqueezed set routes everything, so that column is the mean of the other
+three.) Congestion is the better predictor of how hard the router finds a placement, the passes it
+needs and the connections it leaves open, and a poorer one of the track length, where the ratsnest
+stays best; no measure here predicts the vias (they swing with a small move). So the score helps
+where routing is the problem and costs a little rank correlation with track length where it is not.
+The weight 8 is a compromise: from 1 to 16, more congestion predicts passes and open connections
+better and the track length worse. Straight-line fits of the outcomes on the measures explain little
+(leave-one-out R² mostly under 0.5), so these are rankings of placements, not predictions of numbers.
+
+On the routed benches (`bench/board.ts … place`): the refined placement of the 2 layer, 2 cluster
+board routes with 124 vias instead of 131 and `try_placements` now finds an improvement on it (115
+vias and 1006 mm of track; it found none before); on the 4 layer, 3 cluster board the refined
+placement routes about the same (237 vias, 1516 mm against 232, 1465) and so does the explored one
+(204, 1266 against 202, 1249).
+
+    node --experimental-transform-types packages/kernel/bench/board.ts 2 3 steady 6
+    node --experimental-transform-types packages/kernel/bench/congest.ts 2 1 30     (env SQUEEZE=0.8)
+
+## 12. Parts on the bottom side (2026-10-29)
+
+A part's side is a placement property the agent decides: `place` takes `side` (`top` or `bottom`; omitted, the
+part keeps its side), so do the parts of `propose_placement` and `try_placements` (a trial can measure a
+board with the decoupling caps under their ICs), and `constrain layer` sets the same thing (one `layer` entry
+per part; top, the default, leaves none; a hard one is not overridden by `place`). Existing projects have no
+`layer` entries and load unchanged. The placer never flips a part itself: an automatic part stays where its
+side says. `get_board` says each part's `side` and lists the parts on the bottom (`bottom_side`), so a part
+that is there by accident is seen.
+
+**The footprint** (`mirrored`, `board.ts`): pads, pin 1 and the body's chamfered corners are mirrored about the
+footprint's vertical axis, then the part is turned clockwise by `rot` as on the top (KiCad's convention: a
+bottom footprint is the mirror image, then turned). Pin numbers stay. SMD pads are on B.Cu; through-hole pads
+on every layer. Courtyard and body are centred, so they do not change. A drop via's spot and a part's keep-out
+in the footprint's frame are mirrored the same way (`dropSpot`).
+
+**Placement.** Courtyards collide only with parts on the same side; a through-hole part takes both sides
+(`collide`). The separation, the settling, the legalizing of overlaps and the DRC (`DRC.COURTYARD_OVERLAP`)
+use that one rule, so an SMD part can sit right under an IC on the other side. Turning a part over keeps
+the rest of the placement as it is (`keepPlacement` first), and `propose_placement` sets the sides before it
+stores the agent's choices, so a part given under an IC is not pushed off it by a pass that still saw it on top.
+The congestion estimate (§11.2) takes a pad's room from the layers the pad is on (a bottom pad from B.Cu only,
+a through-hole pad from every signal layer).
+
+**Routing.** The router and the copper checks treat B.Cu pads like any outer-layer pad: a track starts on the
+pad's layer, a via takes it to another, the pour of that layer clears it. Drawn copper starts on the layer of
+the pad it leaves (`draw_track from C3.1` runs on B.Cu); turning a part over leaves its tracks where they are
+and says so, only their ends on its pads follow (mirrored).
+
+**Fab files.** Each side has its own copper, mask, paste and silkscreen file; the bottom silkscreen is written
+only when something is printed there. The files are in the board's top-view frame, as KiCad writes them
+(`FileFunction` says Bot; the viewer mirrors); text on the bottom (refdes, `add_graphic` text) is mirrored in
+the file so it reads from below. The pick-and-place has `Bottom` in the Layer column, see
+[assembly](assembly.md) §6. The STEP file hangs the part's body below the board, turned over about the vertical
+axis. The 2D view draws the parts on the bottom in the bottom copper's colour with a dashed outline; the
+Top and Bottom copper checkboxes show and hide each side's parts (pads, silkscreen, courtyards) with the layer,
+so unchecking the top copper shows the underside alone.
+
+**The cost.** A part on the bottom makes a second side at the assembly house: `bottomRefs` in the cost check
+(`parts/cost.ts`). JLCPCB's Economic assembly takes one side only (the check says why it cannot take the order),
+Standard charges the setup and the stencil for both sides (`setupBothSides`, the stencils), PCBWay is quoted by
+sides, Eurocircuits charges the second side. The numbers are each house's entry in the repo; moving the bottom
+parts to the top is one of the savings the check lists (`kind: 'side'`).
+
+**When to use it** (the agent's guide): the user asks; a dense board whose top has no room (decoupling caps
+right under the IC's pins); a quiet side for sensitive analogue parts, with the ground plane between; connectors,
+switches or a battery holder that belong on the underside. Keep the parts on the bottom together and few,
+leave connectors and large parts on top unless the design needs them below, say what was moved and why.
+
+Not done: the placer proposing a side by itself; rules for parts on the bottom of a board that stands on its
+feet (clearance to the table, in the enclosure's `lowest_bottom`); mask and paste DRC beyond what the Gerbers
+write per side; a bottom-side view of the 2D board (mirrored, as seen from below).
+## 13. Copper keep-outs (add_keepout, 2026-10-29)
+
+An antenna wants nothing under or round it, a wide pad or a coil wants the plane cleared below it,
+a sensitive node wants no via near. These are one thing: an area on some layers where some kinds of
+things may not be. Before, the guide made do with area pours that left the zone free, and said so.
+
+**The data** (`BoardSettings.keepouts`, `Keepout`): an id (`KO1`…), a polygon (a rectangle is four
+corners; flat x, y in mm), `layers` (a list or `'all'`), `forbid` (any of `tracks`, `vias`,
+`pours`, `parts`; default tracks, vias and pours) and a name for the label. With `part` the polygon
+is in that part's own frame (origin at the part, the footprint as drawn, mirrored on the bottom and
+turned with the part), so an antenna's clearance moves and turns with the antenna; the part itself,
+and its pads, may stand in it. A keep-out whose part is gone is inert. The placement turns them into
+`BoardKeepout`s on the `BoardView` (absolute corners, the layers that exist, bounds); the placement
+key includes them, so a change makes the routing out of date.
+
+**Ops** (`keepout.ts`): `add_keepout` (rect or polygon, layers, forbid, part, name), `edit_keepout`
+(only the fields given; attaching or detaching changes the frame, so the area is given again),
+`remove_keepout` (id or `all`). Refused with the reason: no area, both rect and polygon, fewer than
+three corners, a polygon with no area or crossing itself, a layer the board does not have, an
+unknown part. No buttons: the user asks, the agent adds it.
+
+**Who honours it**
+
+| What | How |
+|---|---|
+| Pours and planes (also inner planes) | `region` clears the cells in it, `planeShape` cuts the exact polygon (`ZoneCut` `poly`); islands the cut leaves are dropped as always. The Gerber writes the cut as a clear-polarity region in that layer's copper file; the keep-out itself is not artwork. |
+| The router | Tracks: cells within half a track width of it are closed on its layers (the attached part's own pads stay reachable). Vias: `viaBlocked` (a via goes through every layer). Kept copper that lies in a new keep-out is not taken over (`keep.ts`). |
+| Drawn copper | `draw_track`, `draw_pair` and `draw_via` are refused (`KEEPOUT_HIT`) with where and a fix hint; `edit_copper` is judged after the move (the effect's check). |
+| The placer | A keep-out that holds parts off is a blocker like a cutout's box, on the sides its layers name (both outer layers: a through-hole part counts on either); the attached part is exempt; `refine_placement` and `try_placements` keep out of it too. |
+| DRC.KEEPOUT (`keepoutDrc`) | Error: a track on a layer that forbids tracks, a via where vias are forbidden, a part whose courtyard lies in a zone that forbids parts. Finds kept, imported and drawn copper and locked parts; the router never makes one. |
+
+**2D view**: hatched, translucent, dashed outline and a label (id and name, what it forbids and on
+which layers), shown with the copper layers it holds on. The hatch is plain lines clipped to the area:
+a pattern fill is lost in the PNG the agent looks at. The design document's board table lists them.
+
+**Limits**: inner-layer-only keep-outs hold no parts; a polygon's bounding box is what the placer
+keeps parts out of (the check is exact); the router keeps its grid's distance, not the exact one.

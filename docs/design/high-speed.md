@@ -81,12 +81,22 @@ width, the pours keep the line's gap, and the IMP.* checks judge the copper.
 
 ## 4. Drawing them
 
-The router routes a single line at its width (necked down only into a pad too small for it), but
-the two tracks of a pair apart from each other, and it knows nothing of stubs, bends or skew. So take the copper yourself (set_copper_mode drawn;
-keep: true takes over what the router laid), draw these lines first, then let route find the rest:
-the helper routes round your lines and keeps its tracks and vias off the plane under them.
+The router routes a line at its width (necked down only into a pad too small for it) and lays
+these lines first, before the other nets, so nothing else cuts the plane under them. A pair it
+routes together: one search for the pair's centre line, the two tracks drawn either side of it at
+the rule's gap with their 45° jogs in from the pads, and where it must change layer, a via for each
+track side by side. It keeps the two nets together even where other nets find it hard (it routes
+the pair apart only if together it leaves another connection open, and then says so), and when it
+cannot (no room for the fat pair, pads that do not pair up two to four each, a via where the line
+turns, copper in the way) it routes the two nets apart and the effect says why ("routed apart, open
+pair: …"; get_board IMP.PAIR): then draw the pair yourself. It knows nothing of stubs or skew, and a
+route through parts in the line (an ESD array, a choke) is only as good as the pads allow. For the
+lines that matter most, or where the router gives up, take the copper yourself (set_copper_mode
+drawn; keep: true takes over what the router laid), draw these lines first, then let route find
+the rest: the helper routes round your lines and keeps its tracks and vias off the plane under them.
 
-- **Pairs**: draw_pair from the two pads at one end to the two at the other, positive first, with the
+- **Pairs**: route nets with both nets of the pair gives a coupled pair when it can (above);
+  draw_pair from the two pads at one end to the two at the other, positive first, with the
   centre line's corners in via. Start the centre line straight out between the two pads, across the
   line joining them, and leave room at both ends for the tracks to come together at 45° (a few times
   the pads' pitch; the op says when it is not enough). Bend 45° at a time (bend "diagonal_first").
@@ -96,9 +106,16 @@ the helper routes round your lines and keeps its tracks and vias off the plane u
 - **Lengths**: get_board impedance gives a pair's skew. The tracks differ in length where they bend
   (the outer one is longer) and at their pads: bends to the left and to the right cancel out, so
   route a pair with both. Where a difference remains, make it up close to where it arises (TI: as
-  close to the mismatched end as possible), with small bumps on the shorter track: a bump no higher
-  than twice the pair's gap, its pieces at least three times the width long, a few rather than one
-  big one (edit_copper via gives the track its new corners). Big bumps change the impedance.
+  close to the mismatched end as possible), with small bumps on the shorter track. tune_length does
+  it: tune_length net <the shorter one> alone matches a pair member to its partner (match names
+  other nets for a group; target_mm a length; near start | end | [x, y] where along the track;
+  tolerance_mm). It puts square bumps with 45° corners into a straight stretch of the track, on the
+  side away from the partner, no higher than twice the pair's gap (height_mm for a single line,
+  4 mm), the legs at least three widths apart, a few small ones rather than one big one, clear of
+  all other copper; the effect gives the length reached and the skew. If there is no room it says
+  where and why (move what is in the way, a longer straight stretch with edit_copper via, or tune
+  the other nets). Big bumps change the impedance. Tune after the pair is drawn and its vias are
+  in: a via adds length to both tracks alike.
 - **Vias**: a layer change takes the line to another plane, and its return current needs a way
   between the planes there: a ground via right beside each signal via (the check wants one within
   1.5 mm; TI allows 5 mm, closer is better), a pair's two vias side by side with one ground via each,
@@ -134,14 +151,18 @@ guidelines and the reference board, with their pictures) and follow them; say wh
   sits where the datasheet puts it, at the chip's RF pin or at the antenna's feed point, its pads in
   the line's path, so the line runs through it.
 - **The antenna** goes where its datasheet puts it, usually at a board edge or corner, with its
-  keep-out area free of copper on every layer: no pour, no tracks, no vias, no parts. The board has
-  no keep-out op yet: make the pours areas that leave the keep-out free (set_plane with rect on each
-  layer, the rest of the board covered), keep the tracks out of it (draw the copper near it yourself),
-  and check it with get_board_image. Say that it was done this way.
+  keep-out area free of copper on every layer: no pour, no tracks, no vias, no parts. Lay that
+  area down with add_keepout (see section 7): attached to the antenna part (`part`, the rectangle
+  in the part's frame, so it follows when the part moves), layers "all", forbid tracks, vias, pours
+  and parts. The area is the datasheet's drawing: its size from the antenna's body, often reaching
+  past the board edge or the module's end; a ground plane clearance under a chip antenna is the
+  same thing on the inner layers. Check it with get_board_image (the area shows hatched, with its
+  label) and DRC.KEEPOUT in drc.
 - **An RF connector** (u.FL, SMA): its datasheet's footprint, its ground pads to the plane with
   several vias right at them. A pad much wider than the line (an edge SMA's centre pin) lowers the
-  impedance there; datasheets often clear the plane under it, which the board cannot do yet: keep that
-  stretch short and say so.
+  impedance there; datasheets often clear the plane under it: add_keepout under the pad, forbid
+  pours only, on the layer(s) the plane is on (section 7). Keep that stretch short; the line
+  crossing the cleared plane reports IMP.REFERENCE, which you waive with the reason.
 
 ## 6. Before you propose
 
@@ -152,5 +173,27 @@ guidelines and the reference board, with their pictures) and follow them; say wh
 - Tell the user what to order: the stack-up by its name, and at JLCPCB impedance control with that
   stack-up selected; the lines with their impedance and widths. On 2 layers say that the fab does
   not control impedance, and the line comes out within about ±15 %.
-- Say what the board cannot do yet where it mattered: a copper keep-out for an antenna, a plane
-  cleared under a pad.
+- Say what you departed from in the datasheet's layout and why, and which keep-outs you set
+  (get_board lists them).
+
+## 7. Keep-outs
+
+add_keepout marks an area where some things may not be, on some layers. It is how an antenna's
+clearance, the plane cleared under a wide pad or a coil, a no-via zone and a no-part zone are said.
+
+- `rect` (x_mm, y_mm, width_mm, height_mm, top-left corner) or `polygon` (corners in order), in
+  millimetres on the board; with `part` they are in that part's own frame (origin at the part, the
+  footprint as drawn, x right, y down, the part at rotation 0 on top; it is mirrored and turned
+  with the part). The part may stand in it; everything else follows it.
+- `layers`: "all" (default) or a list ("F.Cu", "In1.Cu" …). A via or a through-hole part goes
+  through every layer.
+- `forbid`: tracks, vias, pours (the copper fill of pours and planes, inner planes too: the plane
+  is cut there), parts (courtyards, on the sides the layers name). Default: tracks, vias, pours.
+- Examples: antenna `part: "ANT1"`, rect round its radiating end, layers all, forbid all four. A
+  coil or a wide RF pad: `rect` under it, layers the plane's layer, forbid ["pours"]. A quiet node:
+  forbid ["vias"] near it. A mechanical no-part zone (a screw head, a connector's plug): forbid
+  ["parts"] on the side that matters.
+- The router and the placer keep out of it, draw_track / draw_pair / draw_via refuse to enter it
+  (KEEPOUT_HIT, with where), pours are cut round it, and DRC.KEEPOUT finds copper or a part that
+  is in one anyway. edit_keepout changes it, remove_keepout removes it.
+

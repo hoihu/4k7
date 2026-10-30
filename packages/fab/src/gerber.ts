@@ -3,14 +3,13 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
-import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type HousePlacement, type PanelView } from '@4k7/schema';
+import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, MASK_MARGIN, refdesHeight, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type HousePlacement, type PanelView } from '@4k7/schema';
 
 export interface FabFile {
   name: string;
   content: string;
 }
 
-const MASK_MARGIN = 0.05;
 const SILK_WIDTH = 0.15;
 const SILK_TO_PAD = 0.15;
 const f6 = (v: number) => Math.round(v * 1e6).toString();
@@ -57,6 +56,7 @@ class Gerber {
     for (const c of sh.cuts) {
       if (c.k === 'circle') this.circle(c.x, c.y, c.d);
       else if (c.k === 'rect') this.pad({ x: c.x + c.w / 2, y: c.y + c.h / 2, w: c.w, h: c.h, shape: 'rect' });
+      else if (c.k === 'poly') this.region(c.pts); // (already in clear polarity)
       else if (c.pts.length === 2) this.circle(c.pts[0]!, c.pts[1]!, c.w);
       else this.line(c.pts, c.w);
     }
@@ -226,7 +226,7 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFi
         clipped([...o, o[0]!, o[1]!]);
       }
       // refdes above the part, else below, else on the body
-      const th = Math.min(1, Math.max(0.6, Math.min(r.w, r.h) * 0.6));
+      const th = refdesHeight(r);
       const tw = textWidth(part.refdes, th);
       const spots = [
         { x: part.x, y: part.courtyard.y - th / 2 - 0.2 },
@@ -364,6 +364,13 @@ export function bom(b: BoardView, house = 'jlcpcb'): string {
  * placement in the house's frame (by refdes: the house's own footprint for it, turned and placed on
  * our pads, see HousePlacement) gets that footprint's rotation and origin instead of the board's, so
  * the house places it without turning it first.
+ *
+ * A part on the bottom side is counted the way JLCPCB and the KiCad plugins for it count one: the
+ * position in the board's own coordinates (not mirrored), the rotation as the footprint turns when the
+ * board is turned over about its horizontal axis, 180° − the rotation of the mirrored footprint on the
+ * board (KiCad's orientation of a bottom footprint; KiBot's notes on the position file). A bottom part
+ * not turned is therefore 180°. This is the convention, not something the house documents: the
+ * order's preview shows the parts as it will place them.
  */
 export function pickAndPlace(b: BoardView, placements: Record<string, HousePlacement> = {}): string {
   return csv([
@@ -371,9 +378,12 @@ export function pickAndPlace(b: BoardView, placements: Record<string, HousePlace
     ...b.parts
       .filter((p) => p.pads.some((q) => !q.drill))
       .map((p) => {
-        const at = p.side === 'top' ? placements[p.refdes] : undefined;
-        const [x, y, rot] = at ? [p.x + at.at[0], p.y + at.at[1], at.rotation] : [p.x, p.y, (360 - p.rot) % 360];
-        return [p.refdes, p.value, p.pkg, x.toFixed(3), (b.outline.h - y).toFixed(3), (((rot % 360) + 360) % 360).toFixed(0), p.side === 'top' ? 'Top' : 'Bottom'];
+        const at = placements[p.refdes];
+        const bottom = p.side === 'bottom';
+        // counter-clockwise on the board, with the footprint mirrored on the bottom (fitLand's rotation, or ours)
+        const [x, y, ccw] = at ? [p.x + at.at[0], p.y + at.at[1], at.rotation] : [p.x, p.y, 360 - p.rot];
+        const rot = bottom ? 180 - ccw : ccw;
+        return [p.refdes, p.value, p.pkg, x.toFixed(3), (b.outline.h - y).toFixed(3), (((rot % 360) + 360) % 360).toFixed(0), bottom ? 'Bottom' : 'Top'];
       }),
   ]);
 }

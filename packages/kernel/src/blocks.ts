@@ -379,7 +379,7 @@ function finish(d: Design, members: Map<string, NetPin[]>, scene: Scene, comps: 
 
 /* --------------------------------- wiring ---------------------------------- */
 
-interface Piece {
+export interface Piece {
   pins: { sym: number; pin: PinView }[];
   wires: number[];
 }
@@ -430,7 +430,7 @@ export function pieces(d: Design, scene: Scene, net: string): Piece[] {
   return [...out.values()].filter((g) => g.pins.length);
 }
 
-const boxOf = (scene: Scene, p: Piece): Rect => {
+export const boxOf = (scene: Scene, p: Piece): Rect => {
   const pts: Point[] = [...p.pins.map((x) => ({ x: x.pin.x, y: x.pin.y })), ...p.wires.flatMap((i) => endsOf(scene.wires[i]!.pts).map(([x, y]) => ({ x, y })))];
   const xs = pts.map((q) => q.x);
   const ys = pts.map((q) => q.y);
@@ -438,10 +438,10 @@ const boxOf = (scene: Scene, p: Piece): Rect => {
 };
 
 /** Manhattan gap between two boxes (0 when they overlap). */
-const gap = (a: Rect, b: Rect) => Math.max(0, a.x - (b.x + b.w), b.x - (a.x + a.w)) + Math.max(0, a.y - (b.y + b.h), b.y - (a.y + a.h));
+export const gap = (a: Rect, b: Rect) => Math.max(0, a.x - (b.x + b.w), b.x - (a.x + a.w)) + Math.max(0, a.y - (b.y + b.h), b.y - (a.y + a.h));
 
 /** Wires of other nets a path crosses. */
-function crossings(pts: number[], net: string, wires: WireView[]): number {
+export function crossings(pts: number[], net: string, wires: WireView[]): number {
   let k = 0;
   for (let i = 0; i + 3 < pts.length; i += 2) {
     const [x1, y1, x2, y2] = [pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!];
@@ -460,7 +460,7 @@ function crossings(pts: number[], net: string, wires: WireView[]): number {
   return k;
 }
 
-const lengthOf = (pts: number[]) => {
+export const lengthOf = (pts: number[]) => {
   let l = 0;
   for (let i = 0; i + 3 < pts.length; i += 2) l += Math.abs(pts[i + 2]! - pts[i]!) + Math.abs(pts[i + 3]! - pts[i + 1]!);
   return l;
@@ -471,7 +471,7 @@ const lengthOf = (pts: number[]) => {
  * more, shorter than a row (a row's return is fine). A shallow step (a pin entered from below) is
  * not one: two labels side by side would read worse.
  */
-function doublesBack(pts: number[]): boolean {
+export function doublesBack(pts: number[]): boolean {
   const runs: [number, number][] = [];
   for (let i = 0; i + 3 < pts.length; i += 2) {
     const v: [number, number] = [pts[i + 2]! - pts[i]!, pts[i + 3]! - pts[i + 1]!];

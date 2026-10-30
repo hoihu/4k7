@@ -86,6 +86,8 @@ export interface HouseFootprint {
  * counter-clockwise from its library's 0°, seen from the top, as the house's pick-and-place file
  * counts) with its origin `at` from the part's centre (mm, board axes, y down). The pick-and-place
  * file written in the house's frame gives these, so the house places its part on our pads as it is.
+ * For a part on the bottom side the footprint lies mirrored (about its vertical axis) before it is
+ * turned; the file counts that as the house does (fab's pickAndPlace).
  */
 export interface HousePlacement {
   rotation: number;

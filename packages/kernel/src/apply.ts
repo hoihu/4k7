@@ -17,6 +17,7 @@ import {
   type Rect,
   type SymbolLayout,
   type BoardPad,
+  type BoardView,
   type BoardSettings,
   type PlaneArea,
   type PlaneStyle,
@@ -59,13 +60,17 @@ import {
   roundPadDist,
 } from '@4k7/schema';
 import { autoPlanes, dropOffset, padNet, placeBoard, storedPlacement } from './board.ts';
+import { routability } from './congestion.ts';
 import { underBody } from './drc.ts';
 import { polarityOf } from './marks.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
-import { eraseOp, labelOp, wireOp } from './drawops.ts';
+import { wirePlaced } from './autowire.ts';
+import { eraseOp, labelOp, rewire, wireOp, wiredPins } from './drawops.ts';
 import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
+import { tuneLength } from './tune.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
-import { isDrawn, moveSymbol, redrawBlock, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
+import { addKeepout, editKeepout, removeKeepout } from './keepout.ts';
+import { isDrawn, moveSymbol, ownSheet, redrawBlock, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
 import { blockAssignment } from './layout.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
@@ -163,7 +168,7 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
     case 'attach':
       return attach(d, op, by);
     case 'place_symbol':
-      return placeSymbol(d, op);
+      return placeSymbol(d, op, by);
     case 'auto_draw':
       return autoDraw(d, op);
     case 'place_block':
@@ -196,6 +201,8 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return drawVia(d, op);
     case 'edit_copper':
       return editCopper(d, op);
+    case 'tune_length':
+      return tuneLength(d, op);
     case 'erase_copper':
       return eraseCopper(d, op);
     case 'set_plane':
@@ -218,6 +225,12 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
     }
     case 'add_cutout':
       return addCutout(d, op);
+    case 'add_keepout':
+      return addKeepout(d, op);
+    case 'edit_keepout':
+      return editKeepout(d, op);
+    case 'remove_keepout':
+      return removeKeepout(d, op);
     case 'set_outline':
       return setOutline(d, op);
     case 'set_panel':
@@ -928,7 +941,39 @@ function placedNow(d: Design) {
 function keepPlacement(d: Design) {
   const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
   d.board = b;
-  b.placement = storedPlacement(placedNow(d));
+  const now = placedNow(d);
+  b.placement = storedPlacement(now);
+  if (!b.drawn) choicesWhereTheyStand(d, now); // (drawn copper: the placement is frozen, nothing is nudged)
+}
+
+/**
+ * Each placement choice (soft position) where its part ended up: the placer may have nudged it
+ * clear of a neighbour or the edge, and a choice that still says the old spot would be applied
+ * again, and the nudge with it, every time the board is laid out from the stored placement.
+ */
+function choicesWhereTheyStand(d: Design, now: BoardView) {
+  const r = (v: number) => Math.round(v * 1000) / 1000;
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind !== 'position' || k.strength !== 'soft' || !k.a) continue;
+    const part = now.parts.find((p) => p.componentId === k.a);
+    const anchor = k.rel ? now.parts.find((p) => p.componentId === k.rel) : undefined;
+    if (!part || (k.rel && !anchor)) continue;
+    // (a two-pin part turned round by 180° to face what it connects to keeps the direction chosen)
+    const turned = (was: number, to: number) => (((to - was) % 360) + 360) % 360 === 180 && part.pads.length === 2 ? was : to;
+    if (!anchor) {
+      if (k.xMm !== undefined) k.xMm = part.x;
+      if (k.yMm !== undefined) k.yMm = part.y;
+      if (k.rot !== undefined) k.rot = turned(k.rot, part.rot);
+      continue;
+    }
+    const dx = part.x - anchor.x;
+    const dy = part.y - anchor.y;
+    const back = (360 - anchor.rot) % 360;
+    const [ox, oy] = back === 90 ? [-dy, dx] : back === 180 ? [-dx, -dy] : back === 270 ? [dy, -dx] : [dx, dy];
+    if (k.xMm !== undefined) k.xMm = r(ox);
+    if (k.yMm !== undefined) k.yMm = r(oy);
+    if (k.rot !== undefined) k.rot = turned(k.rot, (((part.rot - anchor.rot) % 360) + 360) % 360);
+  }
 }
 
 /**
@@ -941,7 +986,7 @@ function keepPlacement(d: Design) {
  * drawing, which is kept from then on. The page is given as the design counts pages. A
  * `sch_position` ledger entry of earlier versions on the part goes: the drawing says it now.
  */
-function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>): OpResult {
+function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>, by: 'user' | 'agent'): OpResult {
   const { comp, unit } = resolveUnitRef(d, op.ref);
   const label = `${comp.refdes}${unit ?? ''}`;
   const old = Object.values(d.ledger).filter((k) => k.kind === 'sch_position' && k.a === comp.id && (k.aUnit ?? '') === (unit ?? ''));
@@ -975,8 +1020,25 @@ function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>): Op
   }
   const taken = !isDrawn(d, comp.sheet);
   const unitOf = unit ?? (card && unitCount(card) > 1 ? card.units![0]!.name : undefined);
+  // the wires it has now, to wire again what the move cuts
+  const wiredBefore = op.rewire ? wiredPins(d, ownSheet(d, comp.sheet)) : [];
   const at = moveSymbol(d, comp.sheet, comp, unitOf, page, op.x, op.y, { ...(op.orient ? { orient: op.orient } : {}), ...(op.mirror !== undefined ? { mirror: op.mirror } : {}) });
-  const notes = [taken ? `sheet ${sheet.name} is drawn as you arrange it from now on` : '', at.under ? `it lies on ${at.under}: move one of them` : ''].filter(Boolean);
+  const mine = d.drawing![comp.sheet]!.symbols.find((s) => s.comp === comp.id && (s.unit ?? undefined) === unitOf)!;
+  const wasUsers = mine.by === 'user';
+  // a drag or turn in the app is the user's decision, kept when the agent redraws; the agent's own move is its own again
+  if (by === 'user') mine.by = 'user';
+  else delete mine.by;
+  // the user's drag joins again what was wired before; an agent's two-pin part on its own is wired to its neighbours where that is clean, else labels connect it
+  const wires = wiredBefore.length ? rewire(d, comp.sheet, wiredBefore) : undefined;
+  const wired = twoPin && !op.rewire ? wirePlaced(d, comp) : undefined;
+  const notes = [
+    taken ? `sheet ${sheet.name} is drawn as you arrange it from now on` : '',
+    at.under ? `it lies on ${at.under}: move one of them` : '',
+    wired?.wired.length ? `wired ${wired.wired.join(', ')}` : '',
+    wired?.labelled.length ? `connected by labels: ${wired.labelled.join('; ')}` : '',
+    wires ? `${wires.wired} wire${wires.wired === 1 ? '' : 's'} drawn again${wires.left ? `, ${wires.left} connection${wires.left === 1 ? '' : 's'} left to labels (no clear path)` : ''}` : '',
+    wasUsers && by === 'agent' ? "it was the user's placement; now yours" : '',
+  ].filter(Boolean);
   return { op: op.op, effect: `${label} placed on page ${first + page - 1} at (${at.x}, ${at.y}) mils${notes.length ? `; ${notes.join('; ')}` : ''}`, ids: [comp.id] };
 }
 
@@ -1102,6 +1164,7 @@ const PAST_AREA = '; it runs past the drawing area of the page: move it in, or p
 function place(d: Design, op: Extract<EditOp, { op: 'place' }>, by: 'user' | 'agent' = 'agent'): OpResult {
   const comp = resolveComponent(d, op.ref);
   if (!d.board?.placement) keepPlacement(d); // start from what the user sees
+  const flipped = op.side ? setSide(d, comp, op.side) : false;
   const now = placedNow(d);
   let rot: number | undefined = op.rot;
   let prevRel: string | undefined;
@@ -1158,7 +1221,20 @@ function place(d: Design, op: Extract<EditOp, { op: 'place' }>, by: 'user' | 'ag
   keepPlacement(d);
   const at = `(${r(op.x_mm)}, ${r(op.y_mm)}) mm${rot !== undefined ? `, ${rot}°` : ''}`;
   const overrode = wasUsers && source.type === 'agent' ? ` (it was the user's placement; now yours)` : '';
-  return { op: 'place', effect: `${op.lock ? `${comp.refdes} locked at ${at}` : `${comp.refdes} placed at ${at}${anchor ? ` (kept relative to ${anchor.refdes})` : ''}`}${overrode}`, ids: [id] };
+  return { op: 'place', effect: `${op.lock ? `${comp.refdes} locked at ${at}` : `${comp.refdes} placed at ${at}${anchor ? ` (kept relative to ${anchor.refdes})` : ''}`}${flipped ? `, on the ${op.side} side` : ''}${overrode}`, ids: [id] };
+}
+
+/**
+ * Put a part on the top or the bottom side: the `layer` constraint (one per part; top is the
+ * default, so it leaves none). Returns whether the side changed. A hard `layer` constraint of the
+ * user's is refused like constrain refuses it.
+ */
+function setSide(d: Design, comp: Component, side: 'top' | 'bottom'): boolean {
+  const had = Object.values(d.ledger).some((k) => k.kind === 'layer' && k.a === comp.id && k.value === 'bottom') ? 'bottom' : 'top';
+  if (had === side) return false;
+  const made = constrain(d, { op: 'constrain', kind: 'layer', a: comp.refdes, value: side, strength: 'soft' });
+  if (side === 'top') for (const id of made.ids ?? []) delete d.ledger[id];
+  return true;
 }
 
 /**
@@ -1253,6 +1329,8 @@ export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_p
   }
   if (op.width_mm !== undefined) setBoard(d, { op: 'set_board', width_mm: op.width_mm, height_mm: op.height_mm });
   const r = (v: number) => Math.round(v * 1000) / 1000;
+  // (the sides first: turning a part over keeps the placement as it stands, which must not hold the new choices yet)
+  for (const { p, comp } of given) if (p.side) setSide(d, comp, p.side);
   const choices = given.map(({ p, comp }) => {
     const id = nextId(d, 'k');
     d.ledger[id] = { id, kind: 'position', a: comp.id, xMm: r(p.x_mm), yMm: r(p.y_mm), rot: p.rot ?? 0, domain: 'placement', strength: 'soft', source: { type: by } };
@@ -1276,18 +1354,18 @@ export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_p
   const m = refined?.after ?? now.measures;
   return {
     op: 'propose_placement',
-    effect: `placement proposed: ${now.outline.w} × ${now.outline.h} mm${now.sizeBy === 'user' ? ' (your size)' : ''}, ${placed} parts${given.length ? `, ${given.map((g) => g.comp.refdes).join(', ')} where you put them` : ''}${forgot ? `, ${forgot} placement choice(s) forgotten` : ''}; ratsnest ${m.ratsnestMm} mm, ${m.crossings} crossing(s)${refined?.moved.length ? ` (the small parts refined: ${refined.moved.length} moved or turned, from ${refined.before.ratsnestMm} mm, ${refined.before.crossings} crossings)` : ''}`,
+    effect: `placement proposed: ${now.outline.w} × ${now.outline.h} mm${now.sizeBy === 'user' ? ' (your size)' : ''}, ${placed} parts${given.length ? `, ${given.map((g) => g.comp.refdes).join(', ')} where you put them` : ''}${forgot ? `, ${forgot} placement choice(s) forgotten` : ''}; ratsnest ${m.ratsnestMm} mm, ${m.crossings} crossing(s), congestion ${m.congestion.overflowMm} mm${refined?.moved.length ? ` (the small parts refined: ${refined.moved.length} moved or turned, from ${refined.before.ratsnestMm} mm, ${refined.before.crossings} crossings, congestion ${refined.before.congestion.overflowMm} mm)` : ''}`,
     ids: ['board', ...given.map((g) => g.comp.id)],
   };
 }
 
 /**
  * Refine the small parts the placer put down (refine.ts): moved a little and turned where that
- * untangles the ratsnest. Checked on the placement as the placer then makes it, and kept only if
- * its measures are better (fewer crossings, or as many and a shorter ratsnest). `only`: these
- * components at most.
+ * untangles the ratsnest and eases the congestion. Checked on the placement as the placer then
+ * makes it, and kept only if its measures are better (the routability score: 4 × crossings +
+ * ratsnest mm + 8 × congestion mm). `only`: these components at most.
  */
-export function refineSmallParts(d: Design, only?: Set<string>): { moved: RefineMove[]; before: { ratsnestMm: number; crossings: number }; after: { ratsnestMm: number; crossings: number } } {
+export function refineSmallParts(d: Design, only?: Set<string>): { moved: RefineMove[]; before: BoardView['measures']; after: BoardView['measures'] } {
   if (!d.board?.placement) keepPlacement(d);
   const b0 = placedNow(d);
   const before = b0.measures;
@@ -1301,7 +1379,7 @@ export function refineSmallParts(d: Design, only?: Set<string>): { moved: Refine
   for (const mv of r.moves) d.board!.placement!.parts[mv.componentId] = { x: mv.x, y: mv.y, rot: mv.rot };
   const b1 = placedNow(d);
   const after = b1.measures;
-  if (!(after.crossings < before.crossings || (after.crossings === before.crossings && after.ratsnestMm < before.ratsnestMm - 0.05))) {
+  if (!(routability(after) < routability(before) - 0.05)) {
     d.board!.placement = saved;
     return none;
   }
@@ -1342,10 +1420,10 @@ function refineStep(d: Design, op: Extract<EditOp, { op: 'refine_placement' }>):
   const mine = new Set([...refinable(b)].filter((id) => !only || only.has(id)));
   if (!mine.size) return { op: 'refine_placement', effect: 'nothing to refine: no small part the placer put down among them (parts you or the user placed or locked, and connectors, stay as they are)', ids: [] };
   const r = refineSmallParts(d, only);
-  if (!r.moved.length) return { op: 'refine_placement', effect: `no better place found for the ${mine.size} small part(s): ratsnest ${r.before.ratsnestMm} mm, ${r.before.crossings} crossing(s) as they are. If the tangle remains, move or turn the main parts (try_placements)`, ids: [] };
+  if (!r.moved.length) return { op: 'refine_placement', effect: `no better place found for the ${mine.size} small part(s): ratsnest ${r.before.ratsnestMm} mm, ${r.before.crossings} crossing(s), congestion ${r.before.congestion.overflowMm} mm as they are. If the tangle remains, move or turn the main parts (try_placements)`, ids: [] };
   return {
     op: 'refine_placement',
-    effect: `${r.moved.length} small part(s) moved or turned: ratsnest ${r.before.ratsnestMm} → ${r.after.ratsnestMm} mm, crossings ${r.before.crossings} → ${r.after.crossings}. ${refineText(r.moved)}`,
+    effect: `${r.moved.length} small part(s) moved or turned: ratsnest ${r.before.ratsnestMm} → ${r.after.ratsnestMm} mm, crossings ${r.before.crossings} → ${r.after.crossings}, congestion ${r.before.congestion.overflowMm} → ${r.after.congestion.overflowMm} mm. ${refineText(r.moved)}`,
     ids: ['board', ...r.moved.map((m) => m.componentId)],
   };
 }

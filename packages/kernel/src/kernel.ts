@@ -40,6 +40,7 @@ import {
 import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
 import { applyOp, describeConstraint, descriptionView } from './apply.ts';
 import { countDiagnostics, diagKey, runChecks, sortDiagnostics } from './checks.ts';
+import { crossChecks } from './xcheck.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, valueOf } from './doc.ts';
 import { schematicView, syncDrawing } from './drawing.ts';
@@ -109,7 +110,7 @@ export class Kernel {
       const view = schematicView(d);
       const sch = schematicChecks(d, view, this.rules);
       applyWaivers(d, sch);
-      a = { view, diagnostics: sortDiagnostics([...runChecks(d, view.constraintStatus, view.constraintWhy), ...sch]) };
+      a = { view, diagnostics: sortDiagnostics([...runChecks(d, view.constraintStatus, view.constraintWhy), ...crossChecks(d), ...sch]) };
       this.cache.set(d, a);
     }
     return a;
@@ -493,7 +494,7 @@ export class Kernel {
               const cx = sym.bbox.x + sym.bbox.w / 2;
               const cy = sym.bbox.y + sym.bbox.h / 2;
               const p = s.pages.find((pg) => cx >= pg.rect.x && cx <= pg.rect.x + pg.rect.w && cy >= pg.rect.y && cy <= pg.rect.y + pg.rect.h) ?? s.pages[0]!;
-              return { ref: `${sym.refdes}${sym.unit ?? ''}`, page: p.number, x: r(cx - p.rect.x), y: r(cy - p.rect.y), w: sym.bbox.w, h: sym.bbox.h, ...(sym.rotation ? { lying: true } : {}) };
+              return { ref: `${sym.refdes}${sym.unit ?? ''}`, page: p.number, x: r(cx - p.rect.x), y: r(cy - p.rect.y), w: sym.bbox.w, h: sym.bbox.h, ...(sym.rotation ? { lying: true } : {}), ...(sym.by ? { user_placed: true } : {}) };
             }),
           ),
           // net labels (supply symbols left out), at the pin they sit on; auto: a connection the drawing does not show yet

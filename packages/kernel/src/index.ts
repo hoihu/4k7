@@ -1,5 +1,6 @@
 export { Kernel, type KernelState } from './kernel.ts';
 export { runChecks, countDiagnostics } from './checks.ts';
+export { crossChecks } from './xcheck.ts';
 export { schematicChecks } from './schcheck.ts';
 export { layoutSchematic } from './layout.ts';
 export { computeHunks, mergeHunks } from './diff.ts';

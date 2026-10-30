@@ -1,6 +1,6 @@
 # Lines at a set impedance
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: first slice implemented (2026-10-25).
+> Part of the [architecture](../ARCHITECTURE.md). Status: first slice implemented (2026-10-25); pair routing and length tuning added (2026-10-29).
 > The agent's guide is [high-speed.md](high-speed.md) (`get_guide high_speed`).
 
 ## 1. Why
@@ -127,6 +127,45 @@ net's length and vias and a pair's skew; `get_net` gives the rule of a net.
   at one point, the positive track on its pad's side at both ends (refused where they would cross,
   or where a piece of the centre line is too short for what its ends need: the tracks coming
   together, or the inner track's corner standing back by half the pitch × tan(half the turn)).
+- **A pair routed together** (`pairroute.ts`, `RouteInput.controlled`): the maze router knows one
+  net at a time, so a pair with a gap goes as one fat track along its centre line. The two nets'
+  pads are joined in a stand-in net (the real pads relabelled to it), a virtual pad sits between
+  each two, and the search runs from one virtual pad to the other for a track `2 × width + gap` wide
+  (an outer layer or a plane layer the rule cannot be built on is shut to it). The two tracks are
+  then drawn either side of the centre line it found, as draw_pair does (mitred corners, the 45° jog
+  in from each pad, a 90° corner of the line cut into two 45° ones), and where the line changes
+  layer the pair changes together: a via for each track side by side across the line (a via pitch
+  apart; the line must run straight through the via, and the via slides along it to make room for
+  the jogs). The tracks and vias are then checked exactly against all other copper and the edge; if
+  anything fails (no way for the fat track, a short piece at a pad, copper in the way, a turn at a
+  via, pads that do not pair up two to four each) the pair is routed as two nets after all, and why
+  is recorded: `RouteResult.lines` → the route helper's effect ("USB_DP/USB_DN routed apart, open
+  pair: …") or, for the router's board, an `IMP.PAIR` info finding. The coupled copper then goes to
+  the main run as drawn copper, which also keeps the other nets off the plane under it (the `lines`
+  band above). If it leaves another net's connection open (the blockage names the pair's net), the
+  lines are routed once more with everything else and the better of the two is kept; the line's
+  entry says so. Single lines (one net) are routed before the rest the same way, so the plane under
+  them stays whole. Not in an incremental route that keeps copper (`keep`), not for one connection
+  (`route from, to`), and not for suggest_moves' trials.
+- **tune_length** (`tune.ts`): adds length to a drawn track with a meander, until its net reaches
+  `target_mm`, or `match` (the longest of the nets named; for a pair member, its partner), within
+  `tolerance_mm` (default 0.1 mm, or the pair's max skew if smaller). The meander is a row of square
+  bumps in a straight stretch of the track (horizontal, vertical or at 45°), on the track's own
+  layer, to one side: away from the partner for a pair member, else the side with more room, or
+  `side`; near `near` (the first or last end or a point), else in the longest stretch. Every corner
+  is two 45° corners (cut by one width, or half a width for a pair member; smaller bumps cut less).
+  The legs are `gap` apart edge to edge: 3 widths at least (a smaller `gap_mm` is refused), more
+  where the rule's `keep` is larger. The bumps are as tall as the room allows up to `height_mm`
+  (default 4 mm; for a pair member twice the pair's gap, TI's advice for bumps near the mismatch),
+  then as many as the missing length needs, with the height that gives exactly that. They are
+  checked exactly before they are put in: clear of all copper of other nets (pads, tracks, vias),
+  the edge and cutouts, and their own legs 3 widths from the rest of the track. Where one stretch
+  has no room for all of it the next stretch takes the rest (up to six); where nothing has, the op
+  is refused saying how much fits, where the bumps would go and what stops them, with the fixes:
+  move what is in the way, taller bumps, a smaller gap, a longer straight stretch (edit_copper via),
+  or the length on the other nets. The effect gives the length reached and, for a pair, the skew
+  against the rule's limit (IMP.SKEW; IMP.LENGTH for a maximum length); the new copper is checked
+  at once like any drawn copper.
 - **The checks** (`impedanceDrc`). Width, corners, vias and spacing are checked when a drawing op
   applies (its effect); the rest needs the pours, so `get_board` gives it.
 
@@ -142,6 +181,7 @@ net's length and vias and a pair's skew; `get_net` gives the rule of a net.
 | IMP.CORNER | warning | A turn sharper than 45° |
 | IMP.SPACING | warning | Another signal (not a supply, not a plane's net) closer than keep: twice the width, a coplanar line twice its gap (at least 0.5 mm), unless set |
 | IMP.LENGTH | warning | Longer than its max length |
+| IMP.PAIR | info | The router routed a pair as two nets, or kept it together although that left a connection open; says why (not a check of the copper) |
 
 - **calc impedance**: the solver on the board's stack-up (`DesignSummary.stackup`), F.Cu or B.Cu with
   its mask, or on a dielectric given (h, er, t); a width, a pair's width or gap, a coplanar gap, the
@@ -156,6 +196,7 @@ net's length and vias and a pair's skew; `get_net` gives the rule of a net.
 | `draw_pair` | A pair at its gap along a centre line (drawn copper) |
 | `draw_track` | A controlled net's track at its rule's width |
 | `add_vias kind fence along` | A via fence along both sides of a line |
+| `add_keepout`, `edit_keepout`, `remove_keepout` | An antenna's clearance, the plane cleared under a wide pad (pours off on that layer), a no-via or no-track zone; attachable to a part |
 | `calc impedance` | What-ifs, without changing the design |
 | `design_query get_board` | `stackup` (build-up, source, the other presets), `impedance` (geometry, lengths, vias, skew), IMP.* in drc |
 | `design_query get_net` | The net's rule |
@@ -182,10 +223,16 @@ No buttons: the user asks in words; the Layout view shows the copper as before.
 
 ## 9. Not yet
 
-- A copper keep-out (an antenna's clearance, the plane cleared under a wide pad): the guide makes do
-  with area pours and drawn copper, and says so.
-- The router routing a pair together, and keeping other nets off the plane under a line it routes in
-  the same pass (only under lines drawn or kept); length tuning as an op.
+- A copper keep-out exists now (`add_keepout`, layout.md §13: an antenna's clearance, the plane
+  cleared under a wide pad). What it does not do: IMP.REFERENCE does not know a void is meant, so a
+  line that crosses a plane cleared on purpose is reported (keep that stretch short, say why, and
+  add_waiver); the cut is a clean polygon, not tuned to a pad's size or the line's gap.
+- Pair routing beyond one chain of pad pairs: a pair that branches (a pad pair joined to two others),
+  a via where the centre line turns (the pair then goes apart, with a note), ground vias beside the
+  pair's vias (the IMP.VIA warning asks the agent for them), pairs in an incremental route that
+  keeps copper. Tuning a net's length across several tracks at once (each
+  track is tuned alone, longest first), and meanders on a pair as a whole (a trombone of both
+  tracks); serpentines that alternate sides.
 - Striplines on inner signal layers (6 layers and up; the solver has them), dispersion and losses,
   trapezoidal etching (about 1 Ω).
 - The stack-up and an impedance table in the design document and the fab outputs.

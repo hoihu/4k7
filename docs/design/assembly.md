@@ -58,6 +58,10 @@ and other part's body outline, and from the board edge and cutouts, and that is 
 pads than any other part's (so it is not read as a neighbour's mark). No spot: **DRC.SILK_POLARITY**
 (a warning) names what is in the way. It costs about a millisecond on a 130-part board.
 
+On the bottom side the marks are the same ink, printed on the bottom silkscreen (dots, bars and "+" are the same
+mirrored: pin 1's dot lies beyond the mirrored pad 1, so it reads right from below, and the chamfered corner is
+mirrored with the body). Only the refdes texts are mirrored in the file, so they read right from the board's underside.
+
 The marks are geometry in the board view (strokes and dots, board coordinates), so every picture of
 the board draws the same ink: the Gerber silkscreen (`packages/fab/src/gerber.ts`, refdes texts keep
 off the marks), the 2D view, the agent's `get_board_image` and the design document (all three
@@ -138,9 +142,18 @@ The land check of §3 already lays the house's footprint on ours: `fitLand` retu
 where its origin lies (`at`, from the part's centre). The stock check keeps both for each component on
 the top side whose land fits (`StockLine.placements`), and the export writes them (`pickAndPlace(b,
 placements)`, `fabFiles`, each copy of a panel too): that part's row gets the house's rotation and
-the origin's position. Every other part keeps the board's frame as before: no footprint read, a land
-that does not fit (the order stops there anyway), and parts on the bottom side, where how a house
-counts the rotation (seen from the bottom, mirrored) is not settled here.
+the origin's position. Every other part keeps the board's frame as before: no footprint read, and a land
+that does not fit (the order stops there anyway).
+
+A part on the bottom side is written the way JLCPCB and the KiCad plugins for it count one (2026-10-29): `Layer` Bottom,
+the position in the board's own coordinates (not mirrored) and the rotation as the part turns when the board is turned
+over about its horizontal axis, which is 180° minus the counter-clockwise rotation of the mirrored footprint on the
+board (the fit's `rotation`, or 360° minus the part's own `rot` where no footprint was read). A bottom part not turned
+is therefore 180°. This is KiBot's account of the position file (KiCad mirrors a bottom footprint, JLCPCB does not,
+and the plugins' own bottom formula is the one that is off) and the formula of the fabrication plugins, not something
+the house documents: the order's preview shows the parts as it will place them, and that is the check. The land check
+of §3 lays the house's footprint mirrored on ours for a bottom part, so its `at` and `rotation` are already for the
+bottom.
 
 On spiral2 this gives the rotations JLCPCB's engineers set: the 48 WS2812B, U6 (DFN), Q1 and U1 (SOIC)
 and Q2 (SOT-23) at 270° instead of 0°, U2 (SOT-223) and U4 at 180° instead of 270°, U5 (SOT-23-5) at
@@ -151,3 +164,33 @@ footprint's name; the fit goes by the part's own footprint, which differs betwee
 (JLCPCB's SOT-23 used to have its pins 1 and 2 along the bottom, now on the right), so it needs no
 table.
 
+
+## 7. The schematic, the board and the BOM agree
+
+The board, the BOM and the pick-and-place are all made from the board's parts, and a board part exists
+only when its component has a footprint with a pad for the pins. A mismatch between the symbol and the
+footprint therefore does not show as an error anywhere else: the pin is simply not connected on the
+board, or the part is simply not in the files. `crossChecks` (`packages/kernel/src/xcheck.ts`) holds the
+three against each other. It is a function of the design alone (the files are made from the same parts, so
+it works out what they will hold without placing the board) and runs with the ERC, so `get_diagnostics`,
+the counts, a transaction's introduced findings, the Inspector and the agent's must-fix gate all see it.
+
+| Code | Severity | When |
+|---|---|---|
+| `XCHK.PIN_NO_PAD` | error if a connected pin has none, else info | a pin of the symbol that no pad of the footprint carries (a pad carries its own number and the pins in `also`); lists the pins with their nets |
+| `XCHK.PAD_NO_PIN` | warning | a pad no pin of the symbol is on (a generated exposed pad `EP` when the card has no such pin; a hand-given pad is refused by `set_footprint`, so this is a card or package edited afterwards); a pin of type `nc` is a pin, so its pad is fine |
+| `XCHK.PIN_PAD_MAP` | error / warning | a pin that matches a pad only in upper/lower case (the generator and `padHasPin` accept it, the board's pin-to-net lookup does not: error if connected); a pin claimed by two different pads (warning) |
+| `XCHK.NET_INCOMPLETE` | error | a net with a pin on a part that is on the board whose pad is missing (the cases above): how many pads it reaches. A part with no footprint at all is reported once by `XCHK.NOT_IN_BOM`, with its nets, not once per net |
+| `XCHK.PACKAGE_MISMATCH` | warning | the component's `package` parameter and the footprint built differ: the part card's own package data wins over the parameter, or the name is not one the generator knows and the card's package was used. Fix hint: remove the parameter |
+| `XCHK.NOT_IN_BOM` | warning | a component with no usable footprint: not on the board, so in neither the BOM nor the pick-and-place. The board view's `DRC.NO_FOOTPRINT` says the same about the board; this one says what the order lacks, and why the footprint is unusable (the generator's reason) |
+| `XCHK.BOARD_NET_UNKNOWN` | warning | a mounting hole, plane, via group or drawn track or via on a net id the design no longer has (a net deleted or merged away). Stored copper is a cache and is not looked at |
+
+What is not checked:
+
+- **Do-not-populate.** `Component.dnp` exists in the model, but no op sets it and neither the board, the
+  BOM nor the pick-and-place reads it (only the capacitor-requirement check skips such a capacitor). A
+  consistency check between them would have nothing to compare, so there is none until DNP is a feature.
+- **Through-hole parts are not in the pick-and-place** (it holds parts with a pad on the surface, §6) and are
+  in the BOM with type Thru-hole; that is by design for every board with a header, so it is not a finding.
+- **A BOM line against its component.** The stock check does that (§3, [sourcing](sourcing.md)); `XCHK.*`
+  does not need the network.

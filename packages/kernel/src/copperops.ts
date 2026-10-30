@@ -9,12 +9,13 @@
  * drawn already. The app runs that search in a worker and hands the transaction its result
  * (RouteHelperResult), so the kernel stays responsive and the user can watch and stop it.
  */
-import { DEFAULT_BOARD, padHasPin, type BoardDiagnostic, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
+import { DEFAULT_BOARD, padHasPin, type BoardDiagnostic, type CopperLayer, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
 import { boardRouteInput, copperKey, placeBoard, rotate, softened, storedPlacement } from './board.ts';
 import { findNet, isPowerNet, reject, resolveComponent, resolvePins } from './doc.ts';
 import { schematicView } from './drawing.ts';
-import { copperDrc, drawnDrc, edgeDrc } from './drc.ts';
+import { acidDrc, copperDrc, drawnDrc, edgeDrc, neckDrc } from './drc.ts';
 import { padPointDist } from './keep.ts';
+import { keepoutDrc, rejectTrackInKeepout, rejectViaInKeepout } from './keepout.ts';
 import { route, type RouteProgress, type RouteResult } from './router.ts';
 import { impedanceDrc, ruleWidth } from './lines.ts';
 
@@ -39,7 +40,7 @@ function boardOf(d: Design): BoardSettings {
   return b;
 }
 
-function drawnOf(d: Design): { b: BoardSettings; dc: DrawnCopper } {
+export function drawnOf(d: Design): { b: BoardSettings; dc: DrawnCopper } {
   if (!d.board?.drawn) reject({ code: 'BOARD_INVALID', message: 'The copper is the router\'s. Draw it yourself after set_copper_mode mode "drawn".', fixHints: [{ op: 'set_copper_mode', mode: 'drawn' }] });
   const b = boardOf(d);
   return { b, dc: b.drawn! };
@@ -339,6 +340,7 @@ export function drawTrack(d: Design, op: Extract<EditOp, { op: 'draw_track' }>):
   const pts = polyline([ends[0]!, ...(op.via ?? []).map(([x, y]) => ({ x, y })), ends[1]!], op.bend);
   if (pts.length < 4) reject({ code: 'INVALID_OP', message: 'The track starts and ends at the same point.' });
   const width = op.width_mm ?? defaultWidth(d, netId!, board, layer);
+  rejectTrackInKeepout(board, layer as CopperLayer, pts, width);
   const [f, t] = ends.map((e) => e.anchor);
   const track: DrawnTrack = { id: nextId(dc, 't'), netId: netId!, layer, width, pts, ...(f ? { from: f } : {}), ...(t ? { to: t } : {}) };
   dc.tracks.push(track);
@@ -446,6 +448,7 @@ export function drawPair(d: Design, op: Extract<EditOp, { op: 'draw_pair' }>): O
     const pts = simplify(polyline([e0, a0, j0, ...corners, j1, a1, e1]));
     if (pts.length < 4) reject({ code: 'INVALID_OP', message: 'A track of the pair starts and ends at the same point.' });
     const net = nets[k]!;
+    rejectTrackInKeepout(board, layer as CopperLayer, pts, w, `The ${k === 0 ? 'positive' : 'negative'} track of the pair`);
     return { id: nextId(dc, 't'), netId: net, layer, width: w, pts, ...(e0.anchor ? { from: e0.anchor } : {}), ...(e1.anchor ? { to: e1.anchor } : {}) };
   });
   dc.tracks.push(...tracks);
@@ -465,6 +468,7 @@ export function drawVia(d: Design, op: Extract<EditOp, { op: 'draw_via' }>): OpR
   const drill = op.drill_mm ?? b.rules.viaDrill;
   const size = op.size_mm ?? Math.max(b.rules.viaPad, drill + 0.2);
   viaSize(drill, size);
+  if (b.keepouts?.length) rejectViaInKeepout(placed(d), op.at[0], op.at[1], size);
   const via: DrawnVia = { id: nextId(dc, 'v'), netId: net!.id, x: r3(op.at[0]), y: r3(op.at[1]), drill, pad: size };
   dc.vias.push(via);
   return { op: op.op, effect: `via ${via.id}: ${net!.name} at ${via.x}, ${via.y} (${drill}/${size} mm)`, ids: ['board', via.id] };
@@ -682,6 +686,7 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
       open: r.failed.filter((f) => inScope.has(f.netId)).map((f) => ({ netId: f.netId, from: label(f.a), to: label(f.b), ...(f.blockedBy?.length ? { blockedBy: f.blockedBy } : {}), ...(f.enclosed ? { enclosed: true } : {}) })),
       passes: r.passes,
       ...(r.timedOut ? { timedOut: true } : {}),
+      ...(r.lines?.length ? { lines: r.lines } : {}),
     });
     if (hooks?.onProgress) input.onProgress = (p) => hooks.onProgress!(ctx.index, p);
     if (hooks?.onBest) input.onBest = (r) => hooks.onBest!(ctx.index, helperResult(r));
@@ -704,10 +709,15 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
   const openText = open.length
     ? `; ${open.length} still open: ${open.slice(0, 8).map((f) => `${netName(d, f.netId)} ${f.from} → ${f.to}${f.blockedBy?.length ? ` (in the way: ${f.blockedBy.map((n) => netName(d, n)).join(', ')})` : f.enclosed ? ' (closed off)' : ''}`).join('; ')}${open.length > 8 ? '; …' : ''}`
     : '';
+  // the lines at a set impedance routed first: a pair kept together, or routed apart (open pair) and why
+  const lineText = (res.lines ?? []).filter((l) => l.coupled || l.why).map((l) => {
+    const nets = l.nets.map((n) => netName(d, n)).join('/');
+    return l.nets.length === 2 ? (l.coupled ? `${nets} routed as a coupled pair${l.why ? ` (${l.why})` : ''}` : `${nets} routed apart, open pair: ${l.why}`) : `${nets} ${l.coupled ? 'routed first' : `not routed first: ${l.why}`}`;
+  });
   const how = res.stopped ? (res.passes ? `, stopped by the user after ${res.passes} pass${res.passes === 1 ? '' : 'es'}: the best found by then` : ', stopped by the user before its first pass ended') : res.timedOut ? ', stopped at its time budget' : '';
   return {
     op: op.op,
-    effect: `route helper (${what}${op.fresh ? `, fresh: ${takenUp} of its own tracks and vias taken up first` : ''}): ${res.tracks.length} track(s) and ${res.vias.length} via(s) laid as drawn copper${ids.length ? ` (${ids[0]}–${ids.at(-1)})` : ''}${how}${openText}`,
+    effect: `route helper (${what}${op.fresh ? `, fresh: ${takenUp} of its own tracks and vias taken up first` : ''}): ${res.tracks.length} track(s) and ${res.vias.length} via(s) laid as drawn copper${ids.length ? ` (${ids[0]}–${ids.at(-1)})` : ''}${how}${openText}${lineText.length ? `; ${lineText.join('; ')}` : ''}`,
     ids: ['board', ...ids],
   };
 }
@@ -715,7 +725,7 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
 /* --------------------------- copper that follows -------------------------- */
 
 /** Ops that never move a part: the copper needs no following after them. */
-const STILL = new Set(['route', 'set_copper_mode', 'draw_track', 'draw_pair', 'draw_via', 'set_stackup', 'set_impedance', 'remove_impedance', 'edit_copper', 'erase_copper', 'add_waiver', 'remove_waiver', 'set_mating', 'set_polarity', 'set_enclosure_brief', 'set_enclosure_script', 'set_enclosure_graphic', 'set_value_series', 'set_paper', 'add_graphic', 'edit_graphic', 'remove_graphic', 'set_panel', 'place_symbol', 'wire', 'label', 'erase', 'auto_draw', 'describe', 'set_plane', 'set_plane_style', 'add_vias', 'remove_vias', 'rename', 'set_net']);
+const STILL = new Set(['route', 'set_copper_mode', 'draw_track', 'draw_pair', 'draw_via', 'set_stackup', 'set_impedance', 'remove_impedance', 'edit_copper', 'tune_length', 'erase_copper', 'add_waiver', 'remove_waiver', 'set_mating', 'set_polarity', 'set_enclosure_brief', 'set_enclosure_script', 'set_enclosure_graphic', 'set_value_series', 'set_paper', 'add_graphic', 'edit_graphic', 'remove_graphic', 'set_panel', 'place_symbol', 'wire', 'label', 'erase', 'auto_draw', 'describe', 'set_plane', 'set_plane_style', 'add_vias', 'remove_vias', 'rename', 'set_net']);
 
 /** Whether an op may move parts (then drawn copper follows them, see followParts). */
 export const movesParts = (op: EditOp) => !STILL.has(op.op);
@@ -1007,19 +1017,19 @@ export function followParts(d: Design, before: BoardView, after: BoardView = pla
 /* ----------------------------- checked at once ----------------------------- */
 
 /** Ops whose copper is checked when their transaction is applied (the helper's copper keeps the rules by construction). */
-export const DRAWING_OPS = new Set(['draw_track', 'draw_pair', 'draw_via', 'edit_copper']);
+export const DRAWING_OPS = new Set(['draw_track', 'draw_pair', 'draw_via', 'edit_copper', 'tune_length']);
 
 /**
  * The rules on the drawn copper with these ids, on the board as it is now (placement only: pours
  * fill round the copper later, so they never clash): other nets' copper too close or touching, the
- * edge, the fab's limits (errors), loose ends and pieces off 45°, a via in a small part's land
+ * edge, the fab's limits (errors), loose ends, pieces off 45°, acid traps, necks, a via in a small part's land
  * pattern (warnings).
  */
 export function checkCopper(d: Design, ids: Set<string>): BoardDiagnostic[] {
   if (!d.board?.drawn || !ids.size) return [];
   const b = placed(d);
   const supplies = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
-  const out = [...copperDrc(b, ids), ...edgeDrc(b, true, ids), ...drawnDrc(b, ids), ...impedanceDrc(b, ids, supplies)];
+  const out = [...copperDrc(b, ids), ...edgeDrc(b, true, ids), ...keepoutDrc(b, ids), ...drawnDrc(b, ids), ...acidDrc(b, ids), ...neckDrc(b, (id, layer) => defaultWidth(d, id, b, layer), ids), ...impedanceDrc(b, ids, supplies)];
   const fab = b.fab?.limits;
   if (fab) {
     for (const t of b.drawn?.tracks ?? []) if (ids.has(t.id) && t.width < fab.track - 0.005) out.push({ code: 'DRC.FAB_TRACK', severity: 'error', message: `Track ${t.id} is ${t.width} mm wide; ${b.fab!.house} makes ${fab.track} mm at the narrowest.`, at: { x: t.pts[0]!, y: t.pts[1]! }, entities: [t.id] });

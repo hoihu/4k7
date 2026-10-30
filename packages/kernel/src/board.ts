@@ -10,6 +10,9 @@
  *    supply pin (one cap per pin, nearest first), `near` constraints pull hard, and courtyards
  *    push each other apart.
  *  - Two-pin parts get the rotation with the shortest connections; everything snaps to 0.1 mm.
+ *  - From a stored placement only what a change touches moves: the part moved, the parts that
+ *    follow it, new parts, and the parts they push into (round by round); everything else stays
+ *    exactly where it was (no re-snapping, re-aligning or re-relaxing of the whole board).
  *  - `position` constraints (the place op, dragging) pin a part; the placer never moves it.
  *  - `layer` constraints put a part on the bottom side: its footprint is mirrored (seen from the
  *    top), its SMD pads are on B.Cu, and it shares the area with the SMD parts on the top side.
@@ -51,6 +54,7 @@ import {
   cutoutBounds,
   cutoutDistance,
   cutoutPolygon,
+  placeKeepout,
   insideBoard,
   insidePolygon,
   placeCutout,
@@ -63,15 +67,21 @@ import {
 } from '@4k7/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
 import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
-import { copperDrc, drawnDrc, edgeDrc, planeViaDrc, splitDrc } from './drc.ts';
+import { acidDrc, copperDrc, deadCopperDrc, drawnDrc, edgeDrc, neckDrc, planeViaDrc, splitDrc, thermalDrc } from './drc.ts';
+import { keepoutDrc } from './keepout.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
-import { panelView } from './panel.ts';
+import { panelTabDrc, panelView } from './panel.ts';
 import { padOfPin, pin1Chamfer, placeMarks, polarityOf } from './marks.ts';
+import { congestion, type Board as CongestionBoard } from './congestion.ts';
 import { stableJson } from './canonical.ts';
 import { route, type RouteInput, type RouteProgress } from './router.ts';
-import { impedanceDrc, pourGaps, resolveImpedance } from './lines.ts';
+import { impedanceDrc, pourGaps, resolveImpedance, ruleWidth } from './lines.ts';
 
 const SPACING = 0.3; // between courtyards
+/** Rounds a change from a stored placement may pull in more neighbours before the whole board is settled again. */
+const STEADY_ROUNDS = 30;
+/** A part's parent moved less than this (mm) and did not turn: its followers move with it as they are, no more. */
+const NUDGE_MM = 3;
 const GRID_MM = 0.1;
 
 interface Item {
@@ -97,6 +107,8 @@ interface Item {
   /** Courtyard size at rotation 0, centred. */
   cw: number;
   ch: number;
+  /** A keep-out's stand-in: the part it belongs to may stand in it. */
+  exempt?: Item;
 }
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
@@ -148,7 +160,7 @@ const CORNER: Record<BodyCorner, [number, number]> = { tl: [-1, -1], tr: [1, -1]
 const cornerAt = (x: number, y: number): BodyCorner => (y < 0 ? (x < 0 ? 'tl' : 'tr') : x < 0 ? 'bl' : 'br');
 
 /** Whether two parts compete for the same area: on the same side, or one of them goes through the board. */
-const collide = (a: Item, b: Item) => a.tht || b.tht || a.side === b.side;
+const collide = (a: Item, b: Item) => a.exempt !== b && b.exempt !== a && (a.tht || b.tht || a.side === b.side);
 
 const swapped = (rot: number) => rot % 180 !== 0;
 const extent = (it: Item) => (swapped(it.rot) ? { w: it.ch, h: it.cw } : { w: it.cw, h: it.ch });
@@ -331,21 +343,22 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }
   };
   /** Put each part with a choice where the user wants it (relative ones next to their anchor). */
-  const applyIntents = () => {
+  const applyIntents = (only?: Set<Item>) => {
     for (const it of bySize) {
       const k = it.intent;
-      if (!k) continue;
+      if (!k || (only && (!only.has(it) || k.rel))) continue; // (one kept relative to a part that is pushed away goes with it)
       const a = anchorOf(it);
       if (k.rel && !a) continue; // the anchor is gone: the part stays where it is
+      // (`only`: back to the spot, not the turn, which the two-pin parts' flipping may have changed)
       if (a) {
         const [ox, oy] = rotate(k.xMm ?? 0, k.yMm ?? 0, a.rot);
         it.x = a.x + ox;
         it.y = a.y + oy;
-        if (k.rot !== undefined) it.rot = (((a.rot + k.rot) % 360) + 360) % 360;
+        if (k.rot !== undefined && !only) it.rot = (((a.rot + k.rot) % 360) + 360) % 360;
       } else {
         if (k.xMm !== undefined) it.x = k.xMm + offset.x;
         if (k.yMm !== undefined) it.y = k.yMm + offset.y;
-        if (k.rot !== undefined) it.rot = k.rot;
+        if (k.rot !== undefined && !only) it.rot = k.rot;
       }
     }
   };
@@ -625,8 +638,13 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }
   };
 
+  // from a stored placement, a part that has not moved is on the grid as it was left (snapping it again only nudges it)
+  const rests = (it: Item) => {
+    const was = stored?.parts[it.comp.id];
+    return !!was && was.x === it.x && was.y === it.y;
+  };
   /** Final clean-up: no overlaps, inside the outline, on the grid; a proposed outline grows if it must. */
-  const settle = () => {
+  const settle = (grow = true) => {
     for (let attempt = 0; attempt < 6; attempt++) {
       for (let round = 0; round < 30; round++) {
         // stuck against the outline: spread in two dimensions now and then
@@ -634,14 +652,15 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
           separate(items, 10);
           for (const it of items) contain(it);
         }
-        separate(items, 40, true);
+        separate(items, 40, true, !!stored);
         for (const it of items) contain(it);
-        for (const it of items) if (!it.fixed) snapItem(it);
+        for (const it of items) if (!it.fixed && !rests(it)) snapItem(it);
         // settled: the spacing holds to within a grid step (what the strict separation leaves)
         if (!overlapping(items, SPACING - GRID_MM)) return;
       }
       // the parts still in the way to the nearest spot where they fit (a pair the separation
       // cannot pull apart: a small part wedged against a main part someone placed)
+      if (!grow) return; // (the caller pulls in more neighbours to push instead)
       legalize();
       if (userSize) return; // the user's size: what still overlaps shows as DRC errors
       if (!overlapping(items, SPACING - GRID_MM)) return;
@@ -650,10 +669,13 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }
   };
   /** Room for a part at (x, y): inside the outline as far as it must be (keepsIn), clear of every other part. */
-  const fits = (it: Item, x: number, y: number) => {
+  const within = (it: Item, x: number, y: number) => {
     const r = reach(it);
     if (x < r.l - 1e-6 || y < r.t - 1e-6 || x > outline.w - r.r + 1e-6 || y > outline.h - r.b + 1e-6) return false;
-    if (shape && keepsIn(it).some((p) => insidePolygon(shape, x + p.x, y + p.y) < p.need - 1e-6)) return false;
+    return !shape || !keepsIn(it).some((p) => insidePolygon(shape, x + p.x, y + p.y) < p.need - 1e-6);
+  };
+  const fits = (it: Item, x: number, y: number) => {
+    if (!within(it, x, y)) return false;
     const [ox, oy] = [it.x, it.y];
     it.x = x;
     it.y = y;
@@ -825,6 +847,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     applyIntents();
     // parts placed automatically follow their parent when it moved or turned
     const followers: Item[] = [];
+    // … those whose parent went further than a nudge, or turned, gather round it again (below)
+    const gather = new Set<Item>();
     for (const it of bySize) {
       const pa = parent.get(it);
       const was = before.get(it);
@@ -838,17 +862,20 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       it.y = pa.y + oy;
       it.rot = (it.rot + dr) % 360;
       followers.push(it);
+      if (dr || Math.hypot(pa.x - paWas.x, pa.y - paWas.y) >= NUDGE_MM || gather.has(pa)) gather.add(it);
     }
     /*
      * … and then settle in close around it again: parts pushed away earlier (something was in
      * the way) would otherwise keep that distance for good. A short relaxation towards their
-     * connections, the rest staying put, and the IC's small parts back at their pins.
+     * connections, the rest staying put, and the IC's small parts back at their pins. After a
+     * nudge of the parent they keep their distance (the relaxation moved them by whole
+     * millimetres for it).
      */
-    if (followers.length && !frozen) {
-      const still = items.filter((it) => !followers.includes(it) && !it.fixed);
+    if (gather.size && !frozen) {
+      const still = items.filter((it) => !gather.has(it) && !it.fixed);
       for (const it of still) it.fixed = true;
-      relax(followers, 60);
-      hugCaps(new Set(followers));
+      relax([...gather], 60);
+      hugCaps(gather);
       for (const it of still) it.fixed = false;
     }
     // new parts: next to what they connect to, then relaxed among the others (which stay put)
@@ -880,11 +907,70 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
       for (const it of keptStill) it.fixed = true;
     }
   }
+  // the two-pin parts that share a small net with a part that moved may want to face it the other way round
+  if (flipOnly) {
+    for (const it of [...flipOnly]) {
+      for (const { net } of padsOf(it)) {
+        if (!net || (nets.get(net)?.length ?? 0) > 4) continue;
+        for (const m of nets.get(net)!) if (isTwoPin(m.it.card)) flipOnly.add(m.it);
+      }
+    }
+  }
   flipTwoPin(flipOnly);
-  if (!frozen) settle();
+  /*
+   * From a stored placement the settling and the alignment move only the parts the change touched
+   * (moved, followers, new, off the board) and what they push into: a part that overlaps one of
+   * them joins it, round by round, and anything else stays exactly where it was.
+   */
+  const active = new Set<Item>(items);
+  let held: Item[] = [];
+  const hold = () => {
+    held = items.filter((it) => !it.fixed && !active.has(it));
+    for (const it of held) it.fixed = true;
+  };
+  const release = () => {
+    for (const it of held) it.fixed = false;
+    held = [];
+  };
+  /** A part that moved still overlaps another (not a pair of locked ones). */
+  const unresolved = () => items.some((a) => active.has(a) && items.some((o) => o !== a && !(a.fixed && o.fixed) && closer(a, o, SPACING - GRID_MM)));
+  if (stored && !frozen && flipOnly) {
+    active.clear();
+    for (const it of flipOnly) active.add(it);
+    // … and what already is off the board or in someone's way (a part turned over onto the side of another)
+    for (const it of items) if (!it.fixed && (!within(it, it.x, it.y) || items.some((o) => o !== it && closer(it, o, SPACING - GRID_MM)))) active.add(it);
+    const moved = new Set(active);
+    /** The held parts that the given ones overlap join the active ones (to give way); whether any did. */
+    const pullIn = (from: Iterable<Item>) => {
+      const size = active.size;
+      for (const a of [...from]) for (const o of items) if (!active.has(o) && !o.fixed && closer(a, o, SPACING - GRID_MM)) active.add(o);
+      return active.size > size;
+    };
+    pullIn(active);
+    for (let round = 0; round < STEADY_ROUNDS; round++) {
+      // (a part the user placed is where they put it each round: a held part it meets joins in and gives way)
+      applyIntents(moved);
+      hold();
+      settle(false);
+      release();
+      if (!unresolved() || !pullIn(active)) break;
+    }
+    if (unresolved()) {
+      // no room that way: what is still in the way goes to the nearest free spot, and only if that fails the board is settled as a whole (it may grow)
+      hold();
+      legalize();
+      release();
+      if (unresolved() && !userSize) {
+        for (const it of items) active.add(it);
+        settle();
+      }
+    }
+  } else if (!frozen) settle();
   // (drawn copper: a new part that lands on another goes to the nearest free spot; the others stay, fixed for now)
   else if (items.some((it) => !it.fixed)) legalize();
+  hold();
   alignSimilar(items, contain);
+  release();
 
   // locked parts outside a proposed outline widen it
   let w = outline.w;
@@ -918,7 +1004,25 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const cutouts = settings.cutouts ?? [];
   const cornerR = settings.cornerRadius ?? 0;
   const blocker = (id: string, x: number, y: number, cw: number, ch: number) => ({ comp: { refdes: `~${id}` }, x, y, rot: 0, fixed: true, side: 'top', tht: true, cw, ch }) as unknown as Item;
+  // keep-outs that hold parts off: their box, on the sides their layers name (one attached to a part where that part stands now, the part itself exempt)
+  const partKeepouts = (settings.keepouts ?? []).filter((k) => k.forbid.includes('parts'));
+  const keepoutBlockers = () =>
+    partKeepouts.flatMap((k) => {
+      const host = k.part ? items.find((it) => it.comp.id === k.part) : undefined;
+      if (k.part && !host) return [];
+      const bk = placeKeepout(k, layers, host && { x: host.x, y: host.y, rot: host.rot, side: host.side, refdes: host.comp.refdes });
+      const top = bk.layers.includes('F.Cu');
+      const bottom = bk.layers.includes('B.Cu');
+      if (!top && !bottom) return [];
+      const [x0, y0, x1, y1] = bk.bounds;
+      const it = blocker(k.id, (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0);
+      it.tht = top && bottom;
+      it.side = bottom && !top ? 'bottom' : 'top';
+      if (host) it.exempt = host;
+      return [it];
+    });
   const keepOuts = () => [
+    ...keepoutBlockers(),
     ...holes.map((hole) => {
       const at = holeAt(hole);
       return blocker(hole.id, at.x, at.y, keep(hole), keep(hole));
@@ -931,7 +1035,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     // a rounded corner takes a square of its radius out of the usable area
     ...(cornerR > margin && !shape ? [[0, 0], [w, 0], [0, h], [w, h]].map(([cx, cy], i) => blocker(`corner${i}`, cx === 0 ? cornerR / 2 : cx! - cornerR / 2, cy === 0 ? cornerR / 2 : cy! - cornerR / 2, cornerR, cornerR)) : []),
   ];
-  if ((holes.length || cutouts.length || cornerR > margin) && items.length && !frozen) {
+  if ((holes.length || cutouts.length || partKeepouts.length || cornerR > margin) && items.length && !frozen) {
     for (let round = 0; round < 20; round++) {
       const blockers = keepOuts();
       const all = [...items, ...blockers];
@@ -1019,6 +1123,11 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }),
     ...holeParts,
   ];
+  // keep-outs where they stand now (those attached to a part follow it; one whose part is gone is inert)
+  const boardKeepouts = (settings.keepouts ?? []).flatMap((k) => {
+    const host = k.part ? parts.find((p) => p.componentId === k.part) : undefined;
+    return k.part && !host ? [] : [placeKeepout(k, layers, host)];
+  });
   const diagnostics = placementChecks(parts, w, h, rules.edgeClearance, { outline: { w, h }, cornerRadius: cornerR, shape }, boardCutouts);
   // silkscreen graphics: wholly on the board (the real outline, not its box), and clear of parts?
   const outlineOf = { outline: { w, h }, cornerRadius: cornerR, shape };
@@ -1071,7 +1180,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const stackup = boardStackup(settings);
   const impedance = resolveImpedance(d, { layers, planes, rules, ...(settings.fab ? { fab: settings.fab } : {}), stackup });
   // (keys sorted: a design read back from its file has them in another order than one just edited)
-  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : []), ...(viaPlan.along ? [viaPlan.along] : [])] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
+  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, ...(boardKeepouts.length ? [boardKeepouts] : []), layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : []), ...(viaPlan.along ? [viaPlan.along] : [])] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   const drawn = settings.drawn ? drawnCopper(settings.drawn, parts) : null;
   const view: BoardView = {
     outline: { w, h },
@@ -1090,7 +1199,12 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     diagnostics,
     stats: { nets: 0, routed: 0, unrouted: 0, trackLength: 0, vias: 0 },
     unrouted: [],
-    measures: placementMeasures(parts, new Set(planes.filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu' && !pl.area).map((pl) => pl.netId))),
+    measures: placementMeasures(parts, new Set(planes.filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu' && !pl.area).map((pl) => pl.netId)), {
+      w,
+      h,
+      rules,
+      signal: layers.filter((l) => !planes.some((pl) => pl.layer === l && l !== 'F.Cu' && l !== 'B.Cu' && !pl.area)),
+    }),
     missing,
     netNames: Object.fromEntries(Object.values(d.nets).map((n) => [n.id, n.name])),
     routing: drawn ? 'done' : settings.routed ? (settings.routed === placementKey ? 'done' : 'stale') : 'none',
@@ -1100,6 +1214,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     cornerRadius: cornerR,
     shape,
     cutouts: boardCutouts,
+    keepouts: boardKeepouts,
     graphics: boardGraphics,
   };
   // the polarity marks, once every pad and via is where it stays
@@ -1110,8 +1225,9 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     const panel = panelView(view, settings.panel);
     view.panel = panel.view;
     view.diagnostics.push(...panel.diagnostics);
+    view.diagnostics.push(...panelTabDrc(view));
   }
-  view.diagnostics.push(...fabPlacementDrc(view));
+  view.diagnostics.push(...fabPlacementDrc(view), ...keepoutDrc(view));
   applyWaivers(d, view.diagnostics);
   return view;
 }
@@ -1156,7 +1272,7 @@ const COPPER_FORMAT = 1;
 export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean; onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
   const b = placeBoard(d, sch);
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
-  const { powerNets, planes, key, basis } = routeSetup(d, b);
+  const { powerNets, planes, netWidths, key, basis } = routeSetup(d, b);
   const pads = b.parts.flatMap((p) => p.pads);
   const kept = d.board?.copper?.key === key ? d.board.copper : null;
   // routed before for another placement on the same board: the router keeps what still holds of
@@ -1184,6 +1300,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
     passes: r.passes,
     basis,
     ...(r.reused ? { reused: r.reused } : {}),
+    ...(r.lines?.length ? { lines: r.lines } : {}),
   });
   const copper =
     kept ??
@@ -1242,7 +1359,11 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   const marked = placeMarks(routed);
   routed.parts = marked.parts;
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY'), ...marked.diagnostics, ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
+  const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY' && x.code !== 'DRC.KEEPOUT' && !x.code.startsWith('PANEL.TAB_')), ...marked.diagnostics, ...panelTabDrc(routed), ...keepoutDrc(routed), ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...acidDrc(routed), ...neckDrc(routed, (id, layer) => ruleWidth(b.impedance, id, layer) ?? netWidths[id] ?? (powerNets.has(id) ? b.rules.powerTrack : b.rules.track)), ...thermalDrc(routed), ...deadCopperDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
+  // a pair the router could not keep together: recorded, so it is not silently two lines
+  for (const l of copper.lines ?? []) {
+    if (l.nets.length === 2 && l.why) diags.push({ code: 'IMP.PAIR', severity: 'info', message: `${l.nets.map(name).join('/')} (${l.id}) ${l.coupled ? 'kept together' : 'routed apart (open pair)'}: ${l.why}.`, entities: [l.id] });
+  }
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
@@ -1309,11 +1430,13 @@ export function boardRouteInput(d: Design, b: BoardView, extra: Partial<RouteInp
     netWidths,
     ...(Object.keys(gaps).length ? { pourGaps: gaps } : {}),
     ...(lines.length ? { lines } : {}),
+    ...(b.impedance?.some((v) => v.layers.length) ? { controlled: b.impedance.filter((v) => v.layers.length).map((v) => ({ id: v.id, nets: v.nets, layers: v.layers.map((l) => ({ layer: l.layer, width: l.width, ...(l.gap !== undefined ? { gap: l.gap } : {}) })) })), netNames: b.netNames } : {}),
     planes: planes.map(({ netId, layer, area, style }) => ({ netId, layer, ...(area ? { area } : {}), ...(style ? { style } : {}) })),
     ...(b.viaGroups.length ? { vias: withGaps(planVias(d.board?.vias ?? [], b.parts, b.outline.w, b.outline.h, b.rules, (id) => d.nets[id]?.attrs.maxCurrent), gaps, b.rules.clearance) } : {}),
     cornerRadius: b.cornerRadius,
     ...(b.shape ? { shape: b.shape } : {}),
     cutouts: b.cutouts,
+    ...(b.keepouts?.length ? { keepouts: b.keepouts } : {}),
     ...(b.drawn ? { drawn: { tracks: b.drawn.tracks, vias: b.drawn.vias } } : {}),
     ...extra,
   };
@@ -1386,7 +1509,7 @@ export function copperKey(d: Design, sch: SchematicView): string {
 const NEAR_MM = 3;
 
 /** The ratsnest of the nets routed as tracks: its length and where lines of different nets cross. */
-function placementMeasures(parts: BoardPart[], planeNets: Set<string>): { ratsnestMm: number; crossings: number } {
+function placementMeasures(parts: BoardPart[], planeNets: Set<string>, board: Omit<CongestionBoard, 'pads'>): BoardView['measures'] {
   const lines = ratsnest(parts).filter((l) => !planeNets.has(l.netId));
   const len = lines.reduce((s, l) => s + Math.hypot(l.x2 - l.x1, l.y2 - l.y1), 0);
   const o = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number) => Math.sign((bx - ax) * (cy - ay) - (by - ay) * (cx - ax));
@@ -1400,7 +1523,7 @@ function placementMeasures(parts: BoardPart[], planeNets: Set<string>): { ratsne
       if (o(a.x1, a.y1, a.x2, a.y2, c.x1, c.y1) * o(a.x1, a.y1, a.x2, a.y2, c.x2, c.y2) < 0 && o(c.x1, c.y1, c.x2, c.y2, a.x1, a.y1) * o(c.x1, c.y1, c.x2, c.y2, a.x2, a.y2) < 0) crossings++;
     }
   }
-  return { ratsnestMm: Math.round(len * 10) / 10, crossings };
+  return { ratsnestMm: Math.round(len * 10) / 10, crossings, congestion: congestion({ ...board, pads: parts.flatMap((p) => p.pads) }, lines) };
 }
 
 function polyLength(pts: number[]): number {
@@ -1426,7 +1549,7 @@ function snapItem(it: Item) {
 }
 
 /** Push overlapping courtyards apart along the axis of least overlap. */
-function separate(items: Item[], passes: number, strict = false) {
+function separate(items: Item[], passes: number, strict = false, keepStill = false) {
   const sorted = [...items].sort((a, b) => natCmp(a.comp.refdes, b.comp.refdes));
   for (let pass = 0; pass < passes; pass++) {
     let moved = false;
@@ -1490,11 +1613,12 @@ function separate(items: Item[], passes: number, strict = false) {
           b.y -= sign * amount * kb;
         }
         if (strict) {
-          if (!a.fixed) {
+          // (keepStill, from a stored placement: only what moved, snapping a part that stayed would nudge a user's choice off its place)
+          if (!a.fixed && (ka > 0 || !keepStill)) {
             a.x = snap(a.x);
             a.y = snap(a.y);
           }
-          if (!b.fixed) {
+          if (!b.fixed && (kb > 0 || !keepStill)) {
             b.x = snap(b.x);
             b.y = snap(b.y);
           }

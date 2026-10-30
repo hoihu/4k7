@@ -61,6 +61,8 @@ export type RejectionCode =
   | 'ENCLOSURE_INVALID'
   | 'STACKUP_INVALID'
   | 'STACKUP_UNKNOWN'
+  /** Drawn copper that would lie in a keep-out (draw_track, draw_via, draw_pair). */
+  | 'KEEPOUT_HIT'
   /** No layer of the board can carry a line at that impedance (set_impedance). */
   | 'IMPEDANCE_IMPOSSIBLE'
   /** The route helper's results were computed for an earlier working copy (it changed meanwhile). */
@@ -190,6 +192,12 @@ export interface SymbolView {
    */
   rotation?: number;
   origin?: Point;
+  /** A two-pin part: it turns standing or lying (place_symbol orient); the others mirror. */
+  twoPin?: boolean;
+  /** An IC or connector drawn mirrored (its left pins on the right). */
+  mirrored?: boolean;
+  /** The user put it where it stands (a drag or turn in the app): their decision, which the agent's redraws keep. */
+  by?: 'user';
 }
 
 export interface LabelView {

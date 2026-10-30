@@ -75,8 +75,11 @@
     ['board', 'Board · substrate / solder mask'],
     ...(b?.layers ?? ['F.Cu', 'B.Cu']).map((l: CopperLayer): [string, string] => {
       const planes = b ? planeNames(b, l) : '';
+      // (a part's pads and silkscreen go with its side's copper: the label counts the SMD parts on the bottom)
+      const under = b?.parts.filter((p) => p.side === 'bottom' && !p.pads.some((q) => q.drill)).length ?? 0;
       const name = l === 'F.Cu' ? 'Top copper' : l === 'B.Cu' ? 'Bottom copper' : `Inner ${l.slice(2, 3)}`;
-      return [l, planes ? `${name} · ${planes} ${l === 'F.Cu' || l === 'B.Cu' ? 'pour' : 'plane'}` : name];
+      const label = planes ? `${name} · ${planes} ${l === 'F.Cu' || l === 'B.Cu' ? 'pour' : 'plane'}` : name;
+      return [l, l === 'B.Cu' && under ? `${label} · ${under} part${under === 1 ? '' : 's'}` : label];
     }),
     ['silk', 'Silkscreen'],
     ['courtyard', 'Courtyards'],
