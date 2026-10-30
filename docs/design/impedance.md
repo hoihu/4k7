@@ -156,6 +156,7 @@ net's length and vias and a pair's skew; `get_net` gives the rule of a net.
 | `draw_pair` | A pair at its gap along a centre line (drawn copper) |
 | `draw_track` | A controlled net's track at its rule's width |
 | `add_vias kind fence along` | A via fence along both sides of a line |
+| `add_keepout`, `edit_keepout`, `remove_keepout` | An antenna's clearance, the plane cleared under a wide pad (pours off on that layer), a no-via or no-track zone; attachable to a part |
 | `calc impedance` | What-ifs, without changing the design |
 | `design_query get_board` | `stackup` (build-up, source, the other presets), `impedance` (geometry, lengths, vias, skew), IMP.* in drc |
 | `design_query get_net` | The net's rule |
@@ -182,8 +183,10 @@ No buttons: the user asks in words; the Layout view shows the copper as before.
 
 ## 9. Not yet
 
-- A copper keep-out (an antenna's clearance, the plane cleared under a wide pad): the guide makes do
-  with area pours and drawn copper, and says so.
+- A copper keep-out exists now (`add_keepout`, layout.md §11: an antenna's clearance, the plane
+  cleared under a wide pad). What it does not do: IMP.REFERENCE does not know a void is meant, so a
+  line that crosses a plane cleared on purpose is reported (keep that stretch short, say why, and
+  add_waiver); the cut is a clean polygon, not tuned to a pad's size or the line's gap.
 - The router routing a pair together, and keeping other nets off the plane under a line it routes in
   the same pass (only under lines drawn or kept); length tuning as an op.
 - Striplines on inner signal layers (6 layers and up; the solver has them), dispersion and losses,

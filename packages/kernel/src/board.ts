@@ -54,6 +54,7 @@ import {
   cutoutBounds,
   cutoutDistance,
   cutoutPolygon,
+  placeKeepout,
   insideBoard,
   insidePolygon,
   placeCutout,
@@ -67,6 +68,7 @@ import {
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
 import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
 import { copperDrc, drawnDrc, edgeDrc, planeViaDrc, splitDrc } from './drc.ts';
+import { keepoutDrc } from './keepout.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelView } from './panel.ts';
 import { padOfPin, pin1Chamfer, placeMarks, polarityOf } from './marks.ts';
@@ -105,6 +107,8 @@ interface Item {
   /** Courtyard size at rotation 0, centred. */
   cw: number;
   ch: number;
+  /** A keep-out's stand-in: the part it belongs to may stand in it. */
+  exempt?: Item;
 }
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
@@ -156,7 +160,7 @@ const CORNER: Record<BodyCorner, [number, number]> = { tl: [-1, -1], tr: [1, -1]
 const cornerAt = (x: number, y: number): BodyCorner => (y < 0 ? (x < 0 ? 'tl' : 'tr') : x < 0 ? 'bl' : 'br');
 
 /** Whether two parts compete for the same area: on the same side, or one of them goes through the board. */
-const collide = (a: Item, b: Item) => a.tht || b.tht || a.side === b.side;
+const collide = (a: Item, b: Item) => a.exempt !== b && b.exempt !== a && (a.tht || b.tht || a.side === b.side);
 
 const swapped = (rot: number) => rot % 180 !== 0;
 const extent = (it: Item) => (swapped(it.rot) ? { w: it.ch, h: it.cw } : { w: it.cw, h: it.ch });
@@ -1000,7 +1004,25 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const cutouts = settings.cutouts ?? [];
   const cornerR = settings.cornerRadius ?? 0;
   const blocker = (id: string, x: number, y: number, cw: number, ch: number) => ({ comp: { refdes: `~${id}` }, x, y, rot: 0, fixed: true, side: 'top', tht: true, cw, ch }) as unknown as Item;
+  // keep-outs that hold parts off: their box, on the sides their layers name (one attached to a part where that part stands now, the part itself exempt)
+  const partKeepouts = (settings.keepouts ?? []).filter((k) => k.forbid.includes('parts'));
+  const keepoutBlockers = () =>
+    partKeepouts.flatMap((k) => {
+      const host = k.part ? items.find((it) => it.comp.id === k.part) : undefined;
+      if (k.part && !host) return [];
+      const bk = placeKeepout(k, layers, host && { x: host.x, y: host.y, rot: host.rot, side: host.side, refdes: host.comp.refdes });
+      const top = bk.layers.includes('F.Cu');
+      const bottom = bk.layers.includes('B.Cu');
+      if (!top && !bottom) return [];
+      const [x0, y0, x1, y1] = bk.bounds;
+      const it = blocker(k.id, (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0);
+      it.tht = top && bottom;
+      it.side = bottom && !top ? 'bottom' : 'top';
+      if (host) it.exempt = host;
+      return [it];
+    });
   const keepOuts = () => [
+    ...keepoutBlockers(),
     ...holes.map((hole) => {
       const at = holeAt(hole);
       return blocker(hole.id, at.x, at.y, keep(hole), keep(hole));
@@ -1013,7 +1035,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     // a rounded corner takes a square of its radius out of the usable area
     ...(cornerR > margin && !shape ? [[0, 0], [w, 0], [0, h], [w, h]].map(([cx, cy], i) => blocker(`corner${i}`, cx === 0 ? cornerR / 2 : cx! - cornerR / 2, cy === 0 ? cornerR / 2 : cy! - cornerR / 2, cornerR, cornerR)) : []),
   ];
-  if ((holes.length || cutouts.length || cornerR > margin) && items.length && !frozen) {
+  if ((holes.length || cutouts.length || partKeepouts.length || cornerR > margin) && items.length && !frozen) {
     for (let round = 0; round < 20; round++) {
       const blockers = keepOuts();
       const all = [...items, ...blockers];
@@ -1101,6 +1123,11 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     }),
     ...holeParts,
   ];
+  // keep-outs where they stand now (those attached to a part follow it; one whose part is gone is inert)
+  const boardKeepouts = (settings.keepouts ?? []).flatMap((k) => {
+    const host = k.part ? parts.find((p) => p.componentId === k.part) : undefined;
+    return k.part && !host ? [] : [placeKeepout(k, layers, host)];
+  });
   const diagnostics = placementChecks(parts, w, h, rules.edgeClearance, { outline: { w, h }, cornerRadius: cornerR, shape }, boardCutouts);
   // silkscreen graphics: wholly on the board (the real outline, not its box), and clear of parts?
   const outlineOf = { outline: { w, h }, cornerRadius: cornerR, shape };
@@ -1153,7 +1180,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const stackup = boardStackup(settings);
   const impedance = resolveImpedance(d, { layers, planes, rules, ...(settings.fab ? { fab: settings.fab } : {}), stackup });
   // (keys sorted: a design read back from its file has them in another order than one just edited)
-  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : []), ...(viaPlan.along ? [viaPlan.along] : [])] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
+  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, ...(boardKeepouts.length ? [boardKeepouts] : []), layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : []), ...(viaPlan.along ? [viaPlan.along] : [])] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   const drawn = settings.drawn ? drawnCopper(settings.drawn, parts) : null;
   const view: BoardView = {
     outline: { w, h },
@@ -1187,6 +1214,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     cornerRadius: cornerR,
     shape,
     cutouts: boardCutouts,
+    keepouts: boardKeepouts,
     graphics: boardGraphics,
   };
   // the polarity marks, once every pad and via is where it stays
@@ -1198,7 +1226,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     view.panel = panel.view;
     view.diagnostics.push(...panel.diagnostics);
   }
-  view.diagnostics.push(...fabPlacementDrc(view));
+  view.diagnostics.push(...fabPlacementDrc(view), ...keepoutDrc(view));
   applyWaivers(d, view.diagnostics);
   return view;
 }
@@ -1329,7 +1357,7 @@ export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: nu
   const marked = placeMarks(routed);
   routed.parts = marked.parts;
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY'), ...marked.diagnostics, ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
+  const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY' && x.code !== 'DRC.KEEPOUT'), ...marked.diagnostics, ...keepoutDrc(routed), ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
   const byNet = new Map<string, UnroutedConnection[]>();
   for (const u of unrouted) byNet.set(u.netId, [...(byNet.get(u.netId) ?? []), u]);
   for (const [netId, list] of byNet) {
@@ -1401,6 +1429,7 @@ export function boardRouteInput(d: Design, b: BoardView, extra: Partial<RouteInp
     cornerRadius: b.cornerRadius,
     ...(b.shape ? { shape: b.shape } : {}),
     cutouts: b.cutouts,
+    ...(b.keepouts?.length ? { keepouts: b.keepouts } : {}),
     ...(b.drawn ? { drawn: { tracks: b.drawn.tracks, vias: b.drawn.vias } } : {}),
     ...extra,
   };

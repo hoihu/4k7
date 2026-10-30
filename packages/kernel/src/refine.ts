@@ -17,6 +17,7 @@
  */
 import { cutoutDistance, insideBoard, matingOf, padHasPin, type BoardView } from '@4k7/schema';
 import { CONGESTION_WEIGHT, CROSSING_MM, Grid, boardOf } from './congestion.ts';
+import { boxInKeepout, partForbidden } from './keepgeo.ts';
 
 /** A part at an IC's pin: its distance to the pin counts this many times over. */
 const ATTACH_WEIGHT = 3;
@@ -208,6 +209,7 @@ function model(b: BoardView, planeNets: Set<string>, margin: number) {
       if (shaped && pts.some(([px, py]) => insideBoard(outline, px, py) < keep)) return false;
       if (b.cutouts.some((c) => pts.some(([px, py]) => cutoutDistance(c, px, py) < SPACING))) return false;
       const me = parts[i]!;
+      if ((b.keepouts ?? []).some((k) => k.partId !== me.p.componentId && partForbidden(k, me.p) && boxInKeepout(k, x0, y0, x1, y1))) return false;
       for (let j = 0; j < parts.length; j++) {
         if (j === i || (over.has(j) && j < i) || (among && !among.has(j))) continue;
         const o = parts[j]!;

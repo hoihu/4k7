@@ -67,6 +67,7 @@ import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { eraseOp, labelOp, wireOp } from './drawops.ts';
 import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
+import { addKeepout, editKeepout, removeKeepout } from './keepout.ts';
 import { isDrawn, moveSymbol, redrawBlock, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
 import { blockAssignment } from './layout.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
@@ -220,6 +221,12 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
     }
     case 'add_cutout':
       return addCutout(d, op);
+    case 'add_keepout':
+      return addKeepout(d, op);
+    case 'edit_keepout':
+      return editKeepout(d, op);
+    case 'remove_keepout':
+      return removeKeepout(d, op);
     case 'set_outline':
       return setOutline(d, op);
     case 'set_panel':

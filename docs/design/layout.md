@@ -793,3 +793,40 @@ leave connectors and large parts on top unless the design needs them below, say 
 Not done: the placer proposing a side by itself; rules for parts on the bottom of a board that stands on its
 feet (clearance to the table, in the enclosure's `lowest_bottom`); mask and paste DRC beyond what the Gerbers
 write per side; a bottom-side view of the 2D board (mirrored, as seen from below).
+## 13. Copper keep-outs (add_keepout, 2026-10-29)
+
+An antenna wants nothing under or round it, a wide pad or a coil wants the plane cleared below it,
+a sensitive node wants no via near. These are one thing: an area on some layers where some kinds of
+things may not be. Before, the guide made do with area pours that left the zone free, and said so.
+
+**The data** (`BoardSettings.keepouts`, `Keepout`): an id (`KO1`…), a polygon (a rectangle is four
+corners; flat x, y in mm), `layers` (a list or `'all'`), `forbid` (any of `tracks`, `vias`,
+`pours`, `parts`; default tracks, vias and pours) and a name for the label. With `part` the polygon
+is in that part's own frame (origin at the part, the footprint as drawn, mirrored on the bottom and
+turned with the part), so an antenna's clearance moves and turns with the antenna; the part itself,
+and its pads, may stand in it. A keep-out whose part is gone is inert. The placement turns them into
+`BoardKeepout`s on the `BoardView` (absolute corners, the layers that exist, bounds); the placement
+key includes them, so a change makes the routing out of date.
+
+**Ops** (`keepout.ts`): `add_keepout` (rect or polygon, layers, forbid, part, name), `edit_keepout`
+(only the fields given; attaching or detaching changes the frame, so the area is given again),
+`remove_keepout` (id or `all`). Refused with the reason: no area, both rect and polygon, fewer than
+three corners, a polygon with no area or crossing itself, a layer the board does not have, an
+unknown part. No buttons: the user asks, the agent adds it.
+
+**Who honours it**
+
+| What | How |
+|---|---|
+| Pours and planes (also inner planes) | `region` clears the cells in it, `planeShape` cuts the exact polygon (`ZoneCut` `poly`); islands the cut leaves are dropped as always. The Gerber writes the cut as a clear-polarity region in that layer's copper file; the keep-out itself is not artwork. |
+| The router | Tracks: cells within half a track width of it are closed on its layers (the attached part's own pads stay reachable). Vias: `viaBlocked` (a via goes through every layer). Kept copper that lies in a new keep-out is not taken over (`keep.ts`). |
+| Drawn copper | `draw_track`, `draw_pair` and `draw_via` are refused (`KEEPOUT_HIT`) with where and a fix hint; `edit_copper` is judged after the move (the effect's check). |
+| The placer | A keep-out that holds parts off is a blocker like a cutout's box, on the sides its layers name (both outer layers: a through-hole part counts on either); the attached part is exempt; `refine_placement` and `try_placements` keep out of it too. |
+| DRC.KEEPOUT (`keepoutDrc`) | Error: a track on a layer that forbids tracks, a via where vias are forbidden, a part whose courtyard lies in a zone that forbids parts. Finds kept, imported and drawn copper and locked parts; the router never makes one. |
+
+**2D view**: hatched, translucent, dashed outline and a label (id and name, what it forbids and on
+which layers), shown with the copper layers it holds on. The hatch is plain lines clipped to the area:
+a pattern fill is lost in the PNG the agent looks at. The design document's board table lists them.
+
+**Limits**: inner-layer-only keep-outs hold no parts; a polygon's bounding box is what the placer
+keeps parts out of (the check is exact); the router keeps its grid's distance, not the exact one.

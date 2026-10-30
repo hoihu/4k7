@@ -378,6 +378,7 @@ function zoneTexture(z: BoardView['zones'][number], w: number, h: number, drills
         ctx.arc(c.x, c.y, c.d / 2, 0, Math.PI * 2);
         ctx.fill();
       } else if (c.k === 'rect') ctx.fillRect(c.x, c.y, c.w, c.h);
+      else if (c.k === 'poly') polyFill(ctx, c.pts);
       else stroke(c.pts, c.w);
     }
     ctx.globalCompositeOperation = 'source-over';

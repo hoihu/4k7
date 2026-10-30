@@ -43,6 +43,24 @@
   /** The board outline (rounded corners) and its milled cutouts. */
   const outlinePath = $derived(board ? polyPath(boardPolygon(board.shape ? board : { ...board, cornerRadius: board.cornerRadius || 0.5 })) : '');
   const cutoutPaths = $derived(board ? board.cutouts.map((c) => polyPath(cutoutPolygon(c))) : []);
+  /*
+   * Keep-outs: the area, hatched with plain lines clipped to it (a pattern fill would not survive the
+   * PNG snapshot the agent looks at), and its label. Shown with the copper layers they hold on. Not
+   * artwork: the fab files only show the cleared pours.
+   */
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  const keepouts = $derived(
+    (board?.keepouts ?? []).filter((k) => k.layers.some((l) => show[l])).map((k) => {
+      const [x0, y0, x1, y1] = k.bounds;
+      const step = Math.max(0.8, (x1 - x0 + (y1 - y0)) / 60);
+      let hatch = '';
+      for (let c = x0 - y1; c <= x1 - y0; c += step) hatch += `M${r2(c + y0)} ${r2(y0)}L${r2(c + y1)} ${r2(y1)}`;
+      const font = Math.min(1.2, Math.max(0.5, Math.min(x1 - x0, y1 - y0) / 7));
+      const fits = x1 - x0 > 6 * font;
+      const layers = k.layers.length === board!.layers.length ? '' : ` on ${k.layers.map((l) => l.replace('.Cu', '')).join(' ')}`;
+      return { k, d: polyPath(k.poly), hatch, font, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, fits, title: `${k.id}${k.name ? ` · ${k.name}` : ''}`, what: `no ${k.forbid.join(', ')}${layers}` };
+    }),
+  );
   /** The Dimensions layer: the board's size and its mounting holes' positions and diameters. */
   const dimensions = $derived(board ? boardDimensions(board) : null);
 
@@ -308,6 +326,7 @@
                 {#each z.shape.cuts as c, ci (ci)}
                   {#if c.k === 'circle'}<circle cx={c.x} cy={c.y} r={c.d / 2} fill="black" />
                   {:else if c.k === 'rect'}<rect x={c.x} y={c.y} width={c.w} height={c.h} fill="black" />
+                  {:else if c.k === 'poly'}<path d={polyPath(c.pts)} fill="black" />
                   {:else}<path d={path(c.pts)} stroke="black" stroke-width={c.w} fill="none" stroke-linecap="round" stroke-linejoin="round" />{/if}
                 {/each}
                 {#each z.shape.adds as a, ai (ai)}<path d={path(a.pts)} stroke="white" stroke-width={a.w} fill="none" />{/each}
@@ -322,6 +341,19 @@
           {/each}
         </g>
       {/if}
+    {/each}
+
+    {#each keepouts as ko, i (ko.k.id)}
+      <!-- a keep-out: tracks, vias, pours or parts not allowed here (hatched, translucent, with its label) -->
+      <g class="keepout" data-keepout={ko.k.id}>
+        <clipPath id="ko-clip-{i}"><path d={ko.d} /></clipPath>
+        <path class="kofill" d={ko.d} />
+        <path class="kohatch" d={ko.hatch} clip-path="url(#ko-clip-{i})" />
+        <path class="koline" d={ko.d} />
+        <text class="kotext" x={ko.cx} y={ko.cy - (ko.fits ? ko.font * 0.55 : 0)} font-size={ko.font}>{ko.title}</text>
+        {#if ko.fits}<text class="kotext sub" x={ko.cx} y={ko.cy + ko.font * 0.75} font-size={ko.font * 0.8}>{ko.what}</text>{/if}
+        <title>{ko.title}: {ko.what}</title>
+      </g>
     {/each}
 
     {#if show.courtyard}
@@ -499,6 +531,12 @@
   .silkdot { fill: #e9ecef; }
   .silkmark { fill: none; stroke: #e9ecef; stroke-linecap: round; stroke-linejoin: round; }
   .ref { fill: #e9ecef; text-anchor: middle; dominant-baseline: central; font-family: var(--mono); pointer-events: none; opacity: 0.9; }
+  .keepout { pointer-events: none; }
+  .keepout .kofill { fill: #ffb02e; fill-opacity: 0.14; stroke: none; }
+  .keepout .kohatch { fill: none; stroke: #ffb02e; stroke-opacity: 0.55; stroke-width: 0.08; }
+  .keepout .koline { fill: none; stroke: #ffb02e; stroke-width: 0.12; stroke-dasharray: 0.5 0.3; }
+  .keepout text { fill: #ffd27a; stroke: none; text-anchor: middle; dominant-baseline: central; font-family: var(--mono); font-weight: 600; }
+  .keepout text.sub { font-weight: 400; fill-opacity: 0.9; }
   .court { fill: none; stroke: #d65db1; stroke-width: 0.05; stroke-dasharray: 0.3 0.2; opacity: 0.6; }
   .rats { stroke: #e9ecef; stroke-width: 0.06; opacity: 0.55; }
   .rats.hot { stroke: #fff27a; opacity: 1; stroke-width: 0.1; }

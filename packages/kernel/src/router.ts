@@ -12,7 +12,7 @@
  * grid passes follow (horizontal on F.Cu, vertical on B.Cu, vias cheap; see Style): a board
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, padCapsule, roundPadDist, type PlaneStyle, type BoardCutout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, keepoutDistance, padCapsule, roundPadDist, type PlaneStyle, type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
 import { keptCopper, type KeptCopper } from './keep.ts';
 import { segDist, segSegDist } from './segments.ts';
 
@@ -123,6 +123,11 @@ export interface RouteInput {
   /** Rounded board corners (radius) and milled cutouts: no copper within the edge clearance. */
   cornerRadius?: number;
   cutouts?: BoardCutout[];
+  /**
+   * Keep-outs: no tracks of the layers named where they forbid tracks (but near the pads of the
+   * part one is attached to), no vias where they forbid vias, the pours cleared where they forbid pours.
+   */
+  keepouts?: BoardKeepout[];
   /** A free-form outline (closed polygon): no copper outside it or within the edge clearance. */
   shape?: number[];
 }
@@ -526,6 +531,20 @@ function routeOnce(
         const [x0, y0, x1, y1] = cutoutBounds(c);
         for (let j = Math.max(0, Math.floor((y0 - keep) / G)); j <= Math.min(H - 1, Math.ceil((y1 + keep) / G)); j++) {
           for (let i = Math.max(0, Math.floor((x0 - keep) / G)); i <= Math.min(W - 1, Math.ceil((x1 + keep) / G)); i++) if (cutoutDistance(c, i * G, j * G) < keep) m[j * W + i] = EDGE;
+        }
+      }
+      // keep-outs that hold tracks off on this layer (a via class passes: vias have their own)
+      if (k === 2) continue;
+      for (const ko of input.keepouts ?? []) {
+        if (!ko.forbid.includes('tracks') || !ko.layers.includes(layers[l]!)) continue;
+        const own = input.parts.find((p) => p.componentId === ko.partId)?.pads.map((p) => padDist(p)) ?? [];
+        const reach = widths[k]! / 2 + G * 0.35;
+        const [x0, y0, x1, y1] = ko.bounds;
+        for (let j = Math.max(0, Math.floor((y0 - reach) / G)); j <= Math.min(H - 1, Math.ceil((y1 + reach) / G)); j++) {
+          for (let i = Math.max(0, Math.floor((x0 - reach) / G)); i <= Math.min(W - 1, Math.ceil((x1 + reach) / G)); i++) {
+            // (the attached part's own pads stand in it: its tracks start there)
+            if (keepoutDistance(ko, i * G, j * G) < reach && !own.some((dist) => dist(i * G, j * G) < reach + rules.clearance + G)) m[j * W + i] = EDGE;
+          }
         }
       }
     }
@@ -940,6 +959,15 @@ function routeOnce(
       for (let j = Math.max(0, Math.floor((b.y - r) / G)); j <= Math.min(H - 1, Math.ceil((b.y + b.h + r) / G)); j++) {
         for (let i = Math.max(0, Math.floor((b.x - r) / G)); i <= Math.min(W - 1, Math.ceil((b.x + b.w + r) / G)); i++) viaBlocked[j * W + i] = 1;
       }
+    }
+  }
+  // keep-outs that hold vias off (a via goes through every layer)
+  for (const ko of input.keepouts ?? []) {
+    if (!ko.forbid.includes('vias') || !ko.layers.length) continue;
+    const reach = rules.viaPad / 2 + G * 0.35;
+    const [x0, y0, x1, y1] = ko.bounds;
+    for (let j = Math.max(0, Math.floor((y0 - reach) / G)); j <= Math.min(H - 1, Math.ceil((y1 + reach) / G)); j++) {
+      for (let i = Math.max(0, Math.floor((x0 - reach) / G)); i <= Math.min(W - 1, Math.ceil((x1 + reach) / G)); i++) if (keepoutDistance(ko, i * G, j * G) < reach) viaBlocked[j * W + i] = 1;
     }
   }
   const viaFreeFor = (net: number) => (i: number) => {
@@ -1926,6 +1954,14 @@ function routeOnce(
         for (let i = Math.max(0, Math.floor((x0 - keep) / G)); i <= Math.min(W - 1, Math.ceil((x1 + keep) / G)); i++) if (cutoutDistance(c, i * G, j * G) < keep) ok[j * W + i] = 0;
       }
     }
+    // keep-outs that hold pours off on this layer: no copper fill in them
+    for (const ko of input.keepouts ?? []) {
+      if (!ko.forbid.includes('pours') || !ko.layers.includes(pl.layer)) continue;
+      const [x0, y0, x1, y1] = ko.bounds;
+      for (let j = Math.max(0, Math.floor((y0 - margin) / G)); j <= Math.min(H - 1, Math.ceil((y1 + margin) / G)); j++) {
+        for (let i = Math.max(0, Math.floor((x0 - margin) / G)); i <= Math.min(W - 1, Math.ceil((x1 + margin) / G)); i++) if (keepoutDistance(ko, i * G, j * G) < margin) ok[j * W + i] = 0;
+      }
+    }
     // split planes: an area plane only inside its rectangle; the layer's other planes round each
     // area on it, with the clearance
     for (const q of planes) {
@@ -2096,6 +2132,8 @@ function routeOnce(
         cuts.push({ k: 'rect', x: r3(co.x - cw / 2 - e), y: r3(co.y - ch / 2 - e), w: r3(cw + 2 * e), h: r3(ch + 2 * e) });
       } else cuts.push({ k: 'stroke', pts: along(co.w), w: r3(co.h + 2 * e) }); // turned: a covering oblong
     }
+    // keep-outs that hold pours off: their area is cut out, exactly
+    for (const ko of input.keepouts ?? []) if (ko.forbid.includes('pours') && ko.layers.includes(pl.layer)) cuts.push({ k: 'poly', pts: ko.poly.map(r3) });
     // a rounded or free-form outline: the pour is clipped to it, and a band of the edge
     // clearance along it is cut
     let clip: number[] | undefined;

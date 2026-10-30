@@ -57,6 +57,7 @@ class Gerber {
     for (const c of sh.cuts) {
       if (c.k === 'circle') this.circle(c.x, c.y, c.d);
       else if (c.k === 'rect') this.pad({ x: c.x + c.w / 2, y: c.y + c.h / 2, w: c.w, h: c.h, shape: 'rect' });
+      else if (c.k === 'poly') this.region(c.pts); // (already in clear polarity)
       else if (c.pts.length === 2) this.circle(c.pts[0]!, c.pts[1]!, c.w);
       else this.line(c.pts, c.w);
     }

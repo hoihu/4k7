@@ -58,6 +58,8 @@ export interface BoardSettings {
   shape?: number[];
   /** Milled cutouts inside the board (openings, slots). */
   cutouts?: Cutout[];
+  /** Keep-outs: areas where tracks, vias, pours or parts are not allowed (add_keepout). */
+  keepouts?: Keepout[];
   /** Graphics on the silkscreen (logos, clipart, decoration). */
   graphics?: SilkGraphic[];
   /** The fabrication panel the board is made in (set_panel). Absent: single boards. */
@@ -233,6 +235,76 @@ export interface Cutout {
   r?: number;
   /** rect, slot: rotation, degrees clockwise. */
   angle?: number;
+}
+
+/** What a keep-out forbids: tracks, vias, copper fill (pours and planes), parts (their courtyards). */
+export type KeepoutForbid = 'tracks' | 'vias' | 'pours' | 'parts';
+export const KEEPOUT_FORBID: readonly KeepoutForbid[] = ['tracks', 'vias', 'pours', 'parts'];
+
+/**
+ * A keep-out (add_keepout): a polygon on some copper layers where some kinds of things may not
+ * be: an antenna's clearance, the plane cleared under a wide pad or a coil, a no-via zone. It is
+ * not artwork: the pours are cut round it, nothing else is written to the fab files. With `part`
+ * the polygon is in that part's own frame (origin at the part, as its footprint is drawn, turned
+ * and mirrored with it), so the keep-out follows the part when it moves.
+ */
+export interface Keepout {
+  /** "KO1", "KO2" … */
+  id: string;
+  /** What it is for ("antenna clearance"); drawn on it. */
+  name?: string;
+  /** The corners, flat x, y list in mm (board frame, or the part's). */
+  poly: number[];
+  layers: CopperLayer[] | 'all';
+  forbid: KeepoutForbid[];
+  /** Component id of the part the polygon belongs to; that part itself may stand in it. */
+  part?: string;
+}
+
+/** A keep-out placed on the board: absolute corners, the layers that exist. */
+export interface BoardKeepout {
+  id: string;
+  name?: string;
+  poly: number[];
+  layers: CopperLayer[];
+  forbid: KeepoutForbid[];
+  /** The part it follows (refdes, componentId). */
+  part?: string;
+  partId?: string;
+  /** x0, y0, x1, y1 */
+  bounds: [number, number, number, number];
+}
+
+/** The absolute keep-out on a board with these layers; `host` is where its part stands now. */
+export function placeKeepout(k: Keepout, layers: CopperLayer[], host?: { x: number; y: number; rot: number; side: 'top' | 'bottom'; refdes: string }): BoardKeepout {
+  const poly: number[] = [];
+  const a = (((host?.rot ?? 0) % 360) * Math.PI) / 180;
+  for (let i = 0; i + 1 < k.poly.length; i += 2) {
+    if (!host) {
+      poly.push(k.poly[i]!, k.poly[i + 1]!);
+      continue;
+    }
+    // (mirrored about the part's vertical axis on the bottom, then turned clockwise, y down)
+    const x = host.side === 'bottom' ? -k.poly[i]! : k.poly[i]!;
+    const y = k.poly[i + 1]!;
+    poly.push(Math.round((host.x + x * Math.cos(a) - y * Math.sin(a)) * 1000) / 1000, Math.round((host.y + x * Math.sin(a) + y * Math.cos(a)) * 1000) / 1000);
+  }
+  const xs = poly.filter((_, i) => i % 2 === 0);
+  const ys = poly.filter((_, i) => i % 2 === 1);
+  return {
+    id: k.id,
+    ...(k.name ? { name: k.name } : {}),
+    poly,
+    layers: k.layers === 'all' ? [...layers] : layers.filter((l) => (k.layers as CopperLayer[]).includes(l)),
+    forbid: [...k.forbid],
+    ...(host ? { part: host.refdes, partId: k.part } : {}),
+    bounds: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+  };
+}
+
+/** Signed distance from a point to a keep-out's area: negative inside, positive outside. */
+export function keepoutDistance(k: Pick<BoardKeepout, 'poly'>, px: number, py: number): number {
+  return -insidePolygon(k.poly, px, py);
 }
 
 /**
@@ -747,7 +819,9 @@ export interface Zone {
 export type ZoneCut =
   | { k: 'circle'; x: number; y: number; d: number }
   | { k: 'rect'; x: number; y: number; w: number; h: number }
-  | { k: 'stroke'; pts: number[]; w: number };
+  | { k: 'stroke'; pts: number[]; w: number }
+  /** A closed polygon (a keep-out's area), flat x, y list. */
+  | { k: 'poly'; pts: number[] };
 
 export interface ZoneShape {
   /** Filled rectangle x0, y0, x1, y1. */
@@ -840,6 +914,8 @@ export interface BoardView {
   shape: number[] | null;
   /** Milled cutouts, placed on this outline. */
   cutouts: BoardCutout[];
+  /** Keep-outs, placed (those attached to a part where it stands). */
+  keepouts: BoardKeepout[];
   /** Silkscreen graphics, placed on this outline. */
   graphics: BoardGraphic[];
   /** The fabrication panel, resolved for this outline (absent: none set). */
@@ -1051,6 +1127,19 @@ export function boardSummary(b: BoardView, routed = true) {
     mounting_holes: b.parts.filter((p) => p.componentId.startsWith('hole:')).map((p) => ({ id: p.refdes, x: p.x, y: p.y, diameter: p.pads[0]?.drill, plated: !p.pads[0]?.npth })),
     corner_radius_mm: b.cornerRadius,
     cutouts: b.cutouts.map((c) => ({ id: c.id, shape: c.shape, x: c.x, y: c.y, ...(c.shape === 'circle' ? { diameter: c.w } : { w: c.w, h: c.h }), ...(c.r ? { corner_radius: c.r } : {}), ...(c.angle ? { angle: c.angle } : {}) })),
+    ...(b.keepouts?.length
+      ? {
+          keepouts: b.keepouts!.map((k) => ({
+            id: k.id,
+            ...(k.name ? { name: k.name } : {}),
+            forbids: k.forbid,
+            layers: k.layers,
+            bounds_mm: k.bounds.map((v) => Math.round(v * 100) / 100),
+            ...(k.poly.length > 8 ? { polygon_mm: k.poly } : {}),
+            ...(k.part ? { follows: k.part } : {}),
+          })),
+        }
+      : {}),
     silkscreen_graphics: b.graphics.map((g) => ({
       id: g.id,
       ...(g.name ? { name: g.name } : {}),

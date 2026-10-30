@@ -395,6 +395,49 @@ export const RemoveCutoutOp = z.object({
   id: z.string().describe('Cutout id ("CO1"), or "all"'),
 });
 
+const keepoutLayer = z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']);
+const keepoutShape = {
+  rect: z
+    .object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() })
+    .optional()
+    .describe('The area as a rectangle (top-left corner and size, mm). With part: in the part\'s own frame (origin at the part, x right, y down, the part at rotation 0 on the top side as its footprint is drawn), so the keep-out moves and turns with it; without: on the board (origin at the board\'s top-left corner)'),
+  polygon: z
+    .array(z.object({ x_mm: z.number(), y_mm: z.number() }))
+    .min(3)
+    .max(64)
+    .optional()
+    .describe('Or the area as a polygon (corners in order, at least 3; same frame as rect)'),
+  layers: z.union([z.literal('all'), z.array(keepoutLayer).min(1)]).optional().describe('Which copper layers it holds on: "all" (default) or a list such as ["F.Cu", "In1.Cu"]. A via or a through-hole part goes through every layer'),
+  forbid: z
+    .array(z.enum(['tracks', 'vias', 'pours', 'parts']))
+    .min(1)
+    .optional()
+    .describe('What may not be in it: tracks; vias; pours (the copper fill of pours and planes, also the inner planes: cleared in it); parts (their courtyards, on the sides the layers name). Default: tracks, vias and pours'),
+};
+export const AddKeepoutOp = z
+  .object({
+    op: z.literal('add_keepout'),
+    name: z.string().min(1).max(40).optional().describe('What it is for ("antenna clearance", "no plane under L1"); drawn on the keep-out'),
+    ...keepoutShape,
+    part: componentRef.optional().describe('Attach it to this part: the area is in the part\'s frame and follows it (the antenna\'s clearance goes where the antenna goes; the part itself may stand in it)'),
+  })
+  .describe('A copper keep-out: an area where tracks, vias, pours or parts are not allowed on some layers. Use it for an antenna\'s clearance (nothing under or round it, on every layer), the plane cleared under a wide pad, a coil or a RF connector\'s centre pin, a no-via zone, a no-track zone, a no-part zone. The pours and planes are cut round it, the router and the placer keep out of it, draw_track and draw_via refuse to enter it, and DRC.KEEPOUT finds copper or parts that are in it anyway. It is not artwork: the fab files show only the cleared copper.');
+
+export const EditKeepoutOp = z
+  .object({
+    op: z.literal('edit_keepout'),
+    id: z.string().describe('Keep-out id ("KO1")'),
+    name: z.string().min(1).max(40).nullable().optional().describe('null removes the name'),
+    ...keepoutShape,
+    part: componentRef.nullable().optional().describe('Attach it to this part (rect / polygon then in its frame; give the new area with it), or null: detach (rect / polygon then on the board)'),
+  })
+  .describe('Change a keep-out: only the fields given change. Moving an attached keep-out: give rect or polygon in the part\'s frame.');
+
+export const RemoveKeepoutOp = z.object({
+  op: z.literal('remove_keepout'),
+  id: z.string().describe('Keep-out id ("KO1"), or "all"'),
+});
+
 const panelSide = z.enum(['top', 'right', 'bottom', 'left']);
 
 export const SetPanelOp = z.object({
@@ -725,6 +768,9 @@ export const EditOp = z.discriminatedUnion('op', [
   RemoveViasOp,
   AddCutoutOp,
   RemoveCutoutOp,
+  AddKeepoutOp,
+  EditKeepoutOp,
+  RemoveKeepoutOp,
   AddGraphicOp,
   EditGraphicOp,
   RemoveGraphicOp,
