@@ -3,17 +3,25 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
-## Unreleased
+## 0.4.0 — 2026-10-30
+
+4k7 runs on Windows now: a download with Node inside, and your coding agent found and started from it. A cut through the enclosure now shows everything it goes through as solid.
 
 ### Windows
 
-- **A Windows download**: `4k7-windows-x64.zip`, a folder with Node inside. Unpack it and double-click `4k7.cmd`: the app opens in your browser and stops when you close the tab. It is not signed yet, so Windows may warn the first time. `npx github:hoihu/4k7` runs on Windows too.
-- **Coding agents on Windows**: Claude Code, GitHub Copilot CLI and OpenCode are found and started whether they came from npm or as a program, with no console windows, and stopping a run stops all of it.
+- **A Windows download**: `4k7-windows-x64.zip`, a folder with Node inside. Unpack it and double-click `4k7.cmd`: a console window shows for a moment, the app opens in your browser, and it stops when you close the tab. It is not signed yet, so Windows may warn the first time (More info → Run anyway). `npx github:hoihu/4k7` runs on Windows too.
+- **Coding agents on Windows**: Claude Code and GitHub Copilot CLI are found and started whether they came from npm or as a program, with no console windows, and stopping a run stops all of it. A batch file of your own around an agent is refused, and Settings says why.
+- **It is new, so tell us how it goes** on [GitHub](https://github.com/hoihu/4k7/issues): so far it has run on GitHub's Windows test machines, not on a desktop PC, and no agent has answered a real chat there. Windows on Arm has no download of its own; the x64 zip should run under emulation, untested.
+
+### Chat and agents
+
+- **On every system** the chat now gives your agent its rules in a file and your message on stdin, because a Windows command line has no room for them. Nothing looks different, but a script of your own around `claude` or `copilot` sees other arguments.
+- **OpenCode 2 does not work yet**, on any system, as in 0.3.0: a run stops with `Agent not found`. Until that is fixed, use Claude Code, Copilot CLI or an API key.
 
 ### Enclosure
 
-- **A cut shows everything it goes through solid**: the box, the board and the parts used to be hollow, with tracks, pads and the far side of the walls showing through. Now each is a flat face: a shade of orange per piece, so pieces that touch stay apart, tan for the board, grey for a part. The agent's section pictures show the same.
-- **A cut exactly on a face stays clean**: where the plane lay on a wall or on the board's top, at a round number on the slider, that face broke up into noise.
+- **A cut shows everything it goes through solid**: the box, the board and the parts used to be hollow, with tracks, pads and the far side of the walls showing through. Now each is a flat face: a shade of orange per piece, so pieces that touch stay apart, tan for the board, grey for a part. Thin copper gets no face of its own. The agent's section pictures show the same.
+- **A cut exactly on a face stays clean**: where the plane lay on a wall or on the board's top, at a round number on the slider, that face broke up into noise. Exactly on the board's top, pads still leave faint specks.
 - **No more orange flecks on the box**: uncut, its inside glinted through at shallow angles and round the holes.
 
 ### Settings

@@ -155,6 +155,37 @@
     </div>
 
     <!-- releases: written by scripts/changelog.mjs from CHANGELOG.md, do not edit -->
+    <article class="release" id="v0.4.0">
+      <header>
+        <h2><a href="#v0.4.0">0.4.0</a></h2>
+        <time datetime="2026-10-30">30 October 2026</time>
+        <a class="gh" href="https://github.com/hoihu/4k7/releases/tag/v0.4.0">Release on GitHub</a>
+      </header>
+      <div class="notes">
+        <p>4k7 runs on Windows now: a download with Node inside, and your coding agent found and started from it. A cut through the enclosure now shows everything it goes through as solid.</p>
+        <h3>Windows</h3>
+        <ul>
+          <li><b>A Windows download</b>: <code>4k7-windows-x64.zip</code>, a folder with Node inside. Unpack it and double-click <code>4k7.cmd</code>: a console window shows for a moment, the app opens in your browser, and it stops when you close the tab. It is not signed yet, so Windows may warn the first time (More info → Run anyway). <code>npx github:hoihu/4k7</code> runs on Windows too.</li>
+          <li><b>Coding agents on Windows</b>: Claude Code and GitHub Copilot CLI are found and started whether they came from npm or as a program, with no console windows, and stopping a run stops all of it. A batch file of your own around an agent is refused, and Settings says why.</li>
+          <li><b>It is new, so tell us how it goes</b> on <a href="https://github.com/hoihu/4k7/issues">GitHub</a>: so far it has run on GitHub’s Windows test machines, not on a desktop PC, and no agent has answered a real chat there. Windows on Arm has no download of its own; the x64 zip should run under emulation, untested.</li>
+        </ul>
+        <h3>Chat and agents</h3>
+        <ul>
+          <li><b>On every system</b> the chat now gives your agent its rules in a file and your message on stdin, because a Windows command line has no room for them. Nothing looks different, but a script of your own around <code>claude</code> or <code>copilot</code> sees other arguments.</li>
+          <li><b>OpenCode 2 does not work yet</b>, on any system, as in 0.3.0: a run stops with <code>Agent not found</code>. Until that is fixed, use Claude Code, Copilot CLI or an API key.</li>
+        </ul>
+        <h3>Enclosure</h3>
+        <ul>
+          <li><b>A cut shows everything it goes through solid</b>: the box, the board and the parts used to be hollow, with tracks, pads and the far side of the walls showing through. Now each is a flat face: a shade of orange per piece, so pieces that touch stay apart, tan for the board, grey for a part. Thin copper gets no face of its own. The agent’s section pictures show the same.</li>
+          <li><b>A cut exactly on a face stays clean</b>: where the plane lay on a wall or on the board’s top, at a round number on the slider, that face broke up into noise. Exactly on the board’s top, pads still leave faint specks.</li>
+          <li><b>No more orange flecks on the box</b>: uncut, its inside glinted through at shallow angles and round the holes.</li>
+        </ul>
+        <h3>Settings</h3>
+        <ul>
+          <li><b>The command for the Claude Code CLI</b> shows where the downloaded app really is. On Linux it used to show the Mac’s path.</li>
+        </ul>
+      </div>
+    </article>
     <article class="release" id="v0.3.0">
       <header>
         <h2><a href="#v0.3.0">0.3.0</a></h2>
