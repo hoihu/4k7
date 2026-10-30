@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PartCard, PartPin, Prim } from '@4k7/schema';
-import { coreOf, diodeKind, draftToCard, getBuiltinPart, isBoxSymbol, seriesPaths, symbolFor, textOffset } from '../src/index.ts';
+import { coreOf, diodeKind, draftToCard, getBuiltinPart, isBoxSymbol, seriesPaths, symbolFor, symbolFromSpec, textOffset, turnsOver } from '../src/index.ts';
 
 const pin = (number: string, name: string, type: PartPin['type'] = 'passive', description?: string): PartPin => ({ number, name, type, ...(description ? { description } : {}) });
 const card = (over: Partial<PartCard> & Pick<PartCard, 'category' | 'pins'>): PartCard => ({
@@ -111,6 +111,178 @@ describe('diodes', () => {
     expect(def.refPos.x).toBe(175);
     expect(Math.max(...lines(def.prims).flatMap((l) => [l.x1, l.x2]))).toBeLessThan(textOffset(led) - 30);
     expect(textOffset(generic('generic:R'))).toBe(100);
+  });
+});
+
+describe('mirrored', () => {
+  const nmos = card({ category: 'transistor', description: 'N-channel MOSFET', pins: [pin('1', 'G', 'in'), pin('2', 'S'), pin('3', 'D')] });
+  const glyphs: [string, PartCard][] = [
+    ['transistor', nmos],
+    ['shunt reference', card({ category: 'ic', pins: [pin('1', 'K'), pin('2', 'A'), pin('3', 'R')] })],
+    ['optocoupler', card({ category: 'ic', pins: [pin('1', 'A'), pin('2', 'K'), pin('3', 'E'), pin('4', 'C')] })],
+    ['relay', card({ category: 'other', description: 'Signal relay', pins: [pin('1', 'COIL+'), pin('2', 'COIL-'), pin('3', 'COM'), pin('4', 'NO'), pin('5', 'NC')] })],
+    ['bridge', card({ category: 'diode', pins: [{ ...pin('1', '+'), side: 'top' }, { ...pin('2', '-'), side: 'bottom' }, { ...pin('3', 'AC1'), side: 'left' }, { ...pin('4', 'AC2'), side: 'right' }] })],
+  ];
+
+  it.each(glyphs)('turns a %s over: pins, strokes, box and text, on the grid', (_, part) => {
+    const plain = symbolFor(part);
+    const over = symbolFor(part, false, { mirror: true });
+    expect(over.spec).toEqual({ mirror: true, over: true });
+    expect(turnsOver(part)).toBe(true);
+    expect(over.kind).toBe(plain.kind);
+    const side = { left: 'right', right: 'left', top: 'top', bottom: 'bottom' } as const;
+    expect(over.pins).toEqual(plain.pins.map((p) => ({ ...p, x: -p.x, side: side[p.side] })));
+    for (const p of over.pins) {
+      expect(Math.abs(p.x) % 100).toBe(0);
+      expect(p.x).toBeGreaterThanOrEqual(over.bbox.x);
+      expect(p.x).toBeLessThanOrEqual(over.bbox.x + over.bbox.w);
+    }
+    // what stood left of its symbol's middle stands right of it now, and its text grows away from the symbol
+    const middle = (def: typeof plain) => def.bbox.x + def.bbox.w / 2;
+    expect(over.refPos.x - middle(over) + plain.refPos.x - middle(plain)).toBe(0);
+    expect(over.refPos.anchor).toBe({ start: 'end', end: 'start', middle: 'middle' }[plain.refPos.anchor]);
+    expect(JSON.stringify(over.prims)).not.toBe(JSON.stringify(plain.prims));
+    expect(symbolFor(part, false, { mirror: false }).pins).toEqual(plain.pins);
+    // as stored: turned over when it says so, and as it always was when a drawing from before it says only `mirror`
+    expect(symbolFromSpec(part, over.spec!).pins).toEqual(over.pins);
+    expect(symbolFromSpec(part, { mirror: true }).pins).toEqual(plain.pins);
+  });
+
+  it('leaves `mirror` alone on what swaps its pins: a box, a crystal, a switch', () => {
+    const box = card({ category: 'ic', pins: [pin('1', 'IN', 'in'), pin('2', 'OUT', 'out')] });
+    const xtal = card({ category: 'crystal', pins: [pin('1', 'XTAL1'), pin('2', 'GND'), pin('3', 'XTAL2'), pin('4', 'GND')] });
+    for (const part of [box, xtal]) {
+      expect(turnsOver(part)).toBe(false);
+      expect(symbolFor(part, false, { mirror: true }).spec).toEqual({ mirror: true });
+      expect(symbolFromSpec(part, { mirror: true }).pins).toEqual(symbolFor(part, false, { mirror: true }).pins);
+    }
+    expect(turnsOver(generic('generic:D'))).toBe(false);
+  });
+
+  it('draws a transistor with its gate on the right, the drain and source still top and bottom', () => {
+    const over = symbolFor(nmos, false, { mirror: true });
+    expect(at(over, 'G')).toEqual(['100,400,right']);
+    expect(at(over, 'D')).toEqual(['-200,0,top']);
+    expect(at(over, 'S')).toEqual(['-200,600,bottom']);
+    expect(over.prims.filter((p) => p.t === 'line').every((p) => p.t === 'line' && p.x1 <= 100 && p.x2 <= 100)).toBe(true);
+  });
+});
+
+describe('rotated', () => {
+  const box = card({ category: 'ic', pins: [pin('1', 'IN', 'in'), pin('2', 'OUT', 'out'), pin('3', 'EN', 'in')] });
+  const powered = card({ category: 'ic', pins: [pin('1', 'IN', 'in'), pin('2', 'OUT', 'out'), pin('3', 'VCC', 'pwr_in'), pin('4', 'GND', 'pwr_in')] });
+  const xtal = card({ category: 'crystal', pins: [pin('1', 'XTAL1'), pin('2', 'GND'), pin('3', 'XTAL2'), pin('4', 'GND')] });
+  const kinds: [string, PartCard][] = [
+    ['crystal', xtal],
+    ['two-pin crystal', card({ category: 'crystal', pins: [pin('1', '1'), pin('2', '2')] })],
+    ['button', card({ category: 'other', description: 'SMD tactile switch', pins: [pin('1', 'A'), pin('2', 'B')] })],
+    ['fuse', card({ category: 'other', description: 'Fuse 2 A', pins: [pin('1', '1'), pin('2', '2')] })],
+    ['thermistor', card({ category: 'other', description: 'NTC thermistor', pins: [pin('1', '1'), pin('2', '2')] })],
+    ['gas discharge tube', card({ category: 'other', description: 'Gas discharge tube, 3 electrodes', pins: [pin('1', '1'), pin('2', '2'), pin('3', '3')] })],
+    ['choke', card({ category: 'other', description: 'Common mode choke', pins: [pin('1', '1A'), pin('2', '2A'), pin('3', '2B'), pin('4', '1B')] })],
+    ['transistor', card({ category: 'transistor', description: 'N-channel MOSFET', pins: [pin('1', 'G', 'in'), pin('2', 'S'), pin('3', 'D')] })],
+    ['shunt reference', card({ category: 'ic', pins: [pin('1', 'K'), pin('2', 'A'), pin('3', 'R')] })],
+    ['optocoupler', card({ category: 'ic', pins: [pin('1', 'A'), pin('2', 'K'), pin('3', 'E'), pin('4', 'C')] })],
+    ['relay', card({ category: 'other', description: 'Signal relay', pins: [pin('1', 'COIL+'), pin('2', 'COIL-'), pin('3', 'COM'), pin('4', 'NO'), pin('5', 'NC')] })],
+    ['bridge', card({ category: 'diode', pins: [{ ...pin('1', '+'), side: 'top' }, { ...pin('2', '-'), side: 'bottom' }, { ...pin('3', 'AC1'), side: 'left' }, { ...pin('4', 'AC2'), side: 'right' }] })],
+    ['box', box],
+    ['box with supplies', powered],
+    ['connector', generic('generic:CONN_1x2')],
+  ];
+  const TURNS = [90, 180, 270] as const;
+  const NEXT = { left: 'top', top: 'right', right: 'bottom', bottom: 'left' } as const;
+  // what the drawing covers, without its text
+  const extent = (prims: Prim[]) => {
+    const pts = prims.flatMap((p): number[][] => (p.t === 'line' ? [[p.x1, p.y1], [p.x2, p.y2]] : p.t === 'rect' ? [[p.x, p.y], [p.x + p.w, p.y + p.h]] : p.t === 'poly' ? p.pts.flatMap((v, i) => (i % 2 ? [] : [[v, p.pts[i + 1]!]])) : p.t === 'circle' ? [[p.x - p.r, p.y - p.r], [p.x + p.r, p.y + p.r]] : []));
+    const [xs, ys] = [pts.map((q) => q[0]!), pts.map((q) => q[1]!)];
+    return { left: Math.min(...xs), right: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys) };
+  };
+  const turnOf = (x: number, y: number, by: number, px: number, py: number) => (by === 90 ? [px - (y - py), py + (x - px)] : by === 180 ? [2 * px - x, 2 * py - y] : [px + (y - py), py - (x - px)]);
+
+  it.each(kinds)('turns a %s by quarters about one point: pins on the grid, their sides with them, the box round them', (_, part) => {
+    const plain = symbolFor(part);
+    const q = symbolFor(part, false, { rotated: 90 });
+    // the pivot: the one point a quarter turn leaves where it was
+    const first = plain.pins[0]!;
+    const firstQ = q.pins[0]!;
+    const px = (firstQ.x - firstQ.y + first.x + first.y) / 2;
+    const py = (firstQ.x + firstQ.y - first.x + first.y) / 2;
+    for (const by of TURNS) {
+      const def = symbolFor(part, false, { rotated: by });
+      expect(def.spec).toEqual({ rotated: by });
+      def.pins.forEach((p, i) => {
+        const o = plain.pins[i]!;
+        expect(p.number).toBe(o.number);
+        expect([p.x, p.y]).toEqual(turnOf(o.x, o.y, by, px, py));
+        expect(Math.abs(p.x) % 100).toBe(0);
+        expect(Math.abs(p.y) % 100).toBe(0);
+        expect(p.side).toBe(by === 90 ? NEXT[o.side] : by === 180 ? NEXT[NEXT[o.side]] : NEXT[NEXT[NEXT[o.side]]]);
+        expect(p.x).toBeGreaterThanOrEqual(def.bbox.x);
+        expect(p.x).toBeLessThanOrEqual(def.bbox.x + def.bbox.w);
+        expect(p.y).toBeGreaterThanOrEqual(def.bbox.y);
+        expect(p.y).toBeLessThanOrEqual(def.bbox.y + def.bbox.h);
+      });
+      expect(by === 180 ? [def.bbox.w, def.bbox.h] : [def.bbox.h, def.bbox.w]).toEqual([plain.bbox.w, plain.bbox.h]);
+      // as a stored drawing makes it again
+      expect(symbolFromSpec(part, def.spec!).pins).toEqual(def.pins);
+      expect(symbolFromSpec(part, def.spec!).prims).toEqual(def.prims);
+      // the name above the value, beside the drawing, or at the corner of a symbol with pins all round
+      expect(def.refPos.anchor).toBe(def.valuePos.anchor);
+      expect(def.refPos.x).toBe(def.valuePos.x);
+      expect(def.refPos.y).toBeLessThan(def.valuePos.y);
+      const e = extent(def.prims);
+      const sides = new Set(def.pins.map((p) => p.side));
+      if (sides.size < 4) {
+        const { x, y, anchor } = def.refPos;
+        expect(anchor === 'start' ? x > e.right : anchor === 'end' ? x < e.left : y < e.top || y > e.bottom).toBe(true);
+        const free = anchor === 'start' ? 'right' : anchor === 'end' ? 'left' : y < e.top ? 'top' : 'bottom';
+        expect(sides.has(free)).toBe(false);
+      }
+    }
+  });
+
+  it('stands a crystal up about its terminals\' middle, its case to one side, its name on the free one', () => {
+    const q = symbolFor(xtal, false, { rotated: 90 });
+    expect(at(q, 'XTAL1')).toEqual(['0,-200,top']);
+    expect(at(q, 'XTAL2')).toEqual(['0,200,bottom']);
+    expect(at(q, 'GND')).toEqual(['-200,0,left', '-200,0,left']);
+    expect(q.refPos).toMatchObject({ anchor: 'start' });
+    const half = symbolFor(xtal, false, { rotated: 180 });
+    expect(at(half, 'XTAL1')).toEqual(['200,0,right']);
+    expect(at(half, 'GND')).toEqual(['0,-200,top', '0,-200,top']);
+    expect(half.refPos).toMatchObject({ anchor: 'middle' });
+    expect(half.refPos.y).toBeGreaterThan(100);
+    const three = symbolFor(xtal, false, { rotated: 270 });
+    expect(at(three, 'XTAL1')).toEqual(['0,200,bottom']);
+    expect(at(three, 'GND')).toEqual(['200,0,right', '200,0,right']);
+    expect(three.refPos).toMatchObject({ anchor: 'end' });
+    // mirrored first, then turned
+    expect(at(symbolFor(xtal, false, { mirror: true, rotated: 90 }), 'XTAL2')).toEqual(['0,-200,top']);
+  });
+
+  it('turns the curves of a path too, keeping the path translatable', () => {
+    const choke = kinds.find(([k]) => k === 'choke')![1];
+    const path = (d: ReturnType<typeof symbolFor>) => d.prims.filter((p) => p.t === 'path').map((p) => (p.t === 'path' ? p.d : ''));
+    expect(path(symbolFor(choke))[0]).toBe('M-100,-100 a25,25 0 0 0 50,0 a25,25 0 0 0 50,0 a25,25 0 0 0 50,0 a25,25 0 0 0 50,0');
+    expect(path(symbolFor(choke, false, { rotated: 90 }))[0]).toBe('M100,-100 a25,25 0 0 0 0,50 a25,25 0 0 0 0,50 a25,25 0 0 0 0,50 a25,25 0 0 0 0,50');
+    expect(path(symbolFor(choke, false, { rotated: 180 }))[0]).toBe('M100,100 a25,25 0 0 0 -50,0 a25,25 0 0 0 -50,0 a25,25 0 0 0 -50,0 a25,25 0 0 0 -50,0');
+  });
+
+  it('leaves a mark on the symbol upright, moving with the drawing', () => {
+    const ntc = kinds.find(([k]) => k === 'thermistor')![1];
+    const mark = (d: ReturnType<typeof symbolFor>) => d.prims.find((p) => p.t === 'text');
+    expect(mark(symbolFor(ntc))).toMatchObject({ x: -185, y: 95 });
+    expect(mark(symbolFor(ntc, false, { rotated: 90 }))).toMatchObject({ x: -95, y: -185 });
+  });
+
+  it('has a box\'s pins on all sides keep its name at the corner, and one with pins on two sides put it beside them', () => {
+    const q = symbolFor(powered, false, { rotated: 90 });
+    expect(new Set(q.pins.map((p) => p.side)).size).toBe(4);
+    expect(q.refPos.anchor).toBe('end');
+    const two = symbolFor(box, false, { rotated: 90 });
+    expect(new Set(two.pins.map((p) => p.side))).toEqual(new Set(['top', 'bottom']));
+    expect(two.refPos.anchor).toBe('start');
+    expect(two.refPos.x).toBeGreaterThan(Math.max(...two.prims.map((p) => (p.t === 'rect' ? p.x : -Infinity))));
   });
 });
 

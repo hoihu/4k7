@@ -60,8 +60,8 @@ Screen space belongs to the design. Chrome has to earn its pixels.
 - **Questions** from the agent come as option buttons, not free text.
 
 - **Hand editing** (2026-10-29), kept small and agent-first: no tools, no buttons. Drag a symbol to
-  move it (its wires are drawn again), drag a net label round its pin, `R` turns a selected two-pin
-  part and `F` mirrors an IC or connector, `Delete` / `Backspace` takes a clicked wire or label away
+  move it (its wires are drawn again), drag a net label round its pin, `R` turns a selected symbol
+  and `F` mirrors it, `Delete` / `Backspace` takes a clicked wire or label away
   (a selected part, after a confirmation). Each is the agent's op as the user's own undoable edit, and a
   symbol the user placed is kept when the agent redraws ([schematic-drawing.md](schematic-drawing.md) §2c).
   Click the canvas first: the keys act on the focused canvas only.

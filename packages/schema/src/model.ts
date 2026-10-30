@@ -59,14 +59,21 @@ export interface SheetDrawing {
   labels: Omit<LabelView, 'text' | 'auto'>[];
 }
 
+/** Degrees clockwise. */
+export type QuarterTurn = 90 | 180 | 270;
+
 /** How a symbol is generated from its part card (@4k7/parts symbolFromSpec). */
 export interface SymbolSpec {
   /** uprightSymbol instead of symbolFor (a two-pin part stacked in a column). */
   upright?: boolean;
   /** Pin 2 on top (two-pin parts). */
   flip?: boolean;
-  /** Left and right pins swapped (ICs and connectors). */
+  /** Left and right pins swapped (any symbol but a two-pin part, whose `flip` does it). */
   mirror?: boolean;
+  /** With `mirror` on a part whose whole drawing turns over (a transistor, an optocoupler …): it really is. Drawings stored before 2026-10-30 say `mirror` alone on such parts, which took no notice of it. */
+  over?: boolean;
+  /** Turned clockwise, after any mirroring, from how the symbol is usually drawn (any symbol but one drawn as a two-pin part, which stands or lies by `rot`). */
+  rotated?: QuarterTurn;
   /** Pin numbers drawn first on their side (a regulator's power path). */
   first?: string[];
   /** Unit index of a split symbol. */
@@ -264,8 +271,10 @@ export interface Constraint {
   sheet?: string;
   /** For `sch_position` of a two-pin part: standing (the layout's default) or lying. */
   orient?: 'upright' | 'lying';
-  /** For `sch_position` of an IC or connector: drawn mirrored, the left side's pins on the right. */
+  /** For `sch_position`: drawn mirrored, the left side's pins on the right (a two-pin part: pin 1 at the bottom or on the right). */
   mirror?: boolean;
+  /** For `sch_position` of a symbol that is no two-pin part: turned clockwise from how it is usually drawn. */
+  rotated?: QuarterTurn;
   domain: ConstraintDomain;
   strength: 'hard' | 'soft';
   source: ConstraintSource;

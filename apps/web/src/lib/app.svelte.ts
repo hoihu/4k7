@@ -1892,8 +1892,8 @@ class AppState {
      validated like any op, and marked as the user's decision where the drawing keeps one. */
 
   /** Move or turn a symbol (place_symbol): the wires it had are drawn again, round what is there. */
-  placeSymbol(ref: string, spot: { page: number; x: number; y: number }, look: { orient?: 'upright' | 'lying'; mirror?: boolean } = {}): Promise<boolean> {
-    const what = look.orient ? `Turn ${ref} ${look.orient === 'lying' ? 'lying' : 'upright'}` : look.mirror !== undefined ? `Mirror ${ref}` : `Move ${ref}`;
+  placeSymbol(ref: string, spot: { page: number; x: number; y: number }, look: { orient?: 'upright' | 'lying'; mirror?: boolean; rotate?: 0 | 90 | 180 | 270 } = {}): Promise<boolean> {
+    const what = look.orient ? `Turn ${ref} ${look.orient === 'lying' ? 'lying' : 'upright'}` : look.rotate !== undefined ? `Turn ${ref} to ${look.rotate}°` : look.mirror !== undefined ? `Mirror ${ref}` : `Move ${ref}`;
     return this.userEdit(what, [{ op: 'place_symbol', ref, ...spot, ...look, rewire: true }]);
   }
 
