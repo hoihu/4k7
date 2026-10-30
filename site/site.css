@@ -55,10 +55,8 @@ img { max-width: 100%; }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; letter-spacing: .02em; }
 .brand svg { width: 40px; height: 20px; }
 .top nav { display: flex; align-items: center; gap: 22px; font-size: 14px; }
-.top nav a, .top nav button {
-  color: var(--muted); text-decoration: none; background: none; border: 0; padding: 0; margin: 0; font: inherit; cursor: pointer;
-}
-.top nav a:hover, .top nav button:hover, .top nav [aria-current="page"] { color: var(--text); }
+.top nav a { color: var(--muted); text-decoration: none; }
+.top nav a:hover, .top nav [aria-current="page"] { color: var(--text); }
 @media (max-width: 520px) { .top nav { gap: 15px; } .top nav .gh { display: none; } }
 
 /* ---------- buttons ---------- */

@@ -2,7 +2,8 @@
 // a ship, barely turning. The sun goes round slowly behind it, and its light sweeps the ceramic body and
 // glints along the metal leads; starlight leaves a faint blue cast on the shadowed side. A small ray caster renders into 2x2 "pixels" per character cell, which become quadrant and shade
 // glyphs (▘▀▙█ ░▒▓), drawn as shapes from an atlas so the cells join up in every browser. Plain canvas 2D,
-// no libraries. `?scene=30` on the URL freezes it at second 30 (for screenshots).
+// no libraries. `?scene=30` on the URL freezes it at second 30 (for screenshots). While a feature is open
+// (`.open` on <html>, set by index.html) the ship drifts down out of the picture, and back when it closes.
 (function () {
   'use strict';
   var canvas = document.getElementById('scene');
@@ -24,6 +25,7 @@
 
   var dpr, W, H, cw, ch, cols, rows, sw, sh, atlas;
   var g3, sub, subL, stars;
+  var away = 0;                                                       // the ship's drift: 0 in its place, 1 gone
 
   function rng(a) {
     return function () {
@@ -135,7 +137,7 @@
     // the ship: adrift, turning so little you have to watch for it
     var yaw = 0.42 + 0.1 * Math.sin(t * 0.041), pitch = -0.08 + 0.07 * Math.sin(t * 0.029), roll = 0.12 * Math.sin(t * 0.023);
     var size = Math.max(W * 0.78, Math.min(H * 0.95, W * 1.2)), LB = size * 0.26, RB = size * 0.085, LL = size * 0.5, RL = size * 0.012;
-    var CXr = W * 0.5 + 0.015 * W * Math.sin(t * 0.021), CYr = H * (H > W ? 0.82 : 0.72) + 0.012 * H * Math.sin(t * 0.017), D = size * 2.4, fpx = D;
+    var CXr = W * 0.5 + 0.015 * W * Math.sin(t * 0.021), CYr = H * (H > W ? 0.82 : 0.72) + 0.012 * H * Math.sin(t * 0.017) + away * away * (3 - 2 * away) * H * 0.5, D = size * 2.4, fpx = D;
     var cy_ = Math.cos(yaw), sy_ = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch), cr = Math.cos(roll), sr = Math.sin(roll);
     // world -> ship: undo yaw (about y), then pitch (about z), then roll (about x)
     function toShip(x, y, z, out) {
@@ -221,20 +223,30 @@
 
   // ---------- run ----------
   var t0 = performance.now(), last = 0, raf = 0, rt;
+  function wanted() { return document.documentElement.classList.contains('open') ? 1 : 0; }
+  away = wanted();                                                    // opened from a link: it is gone already
   function tick(now) {
     raf = requestAnimationFrame(tick);
-    if (now - last < 50) return;
+    var want = wanted();
+    if (now - last < (away === want ? 50 : 16)) return;                // 20 fps, smooth while it drifts
+    away = want > away ? Math.min(want, away + (now - last) / 1400) : Math.max(want, away - (now - last) / 1400);
     last = now;
     frame((now - t0) / 1000);
+  }
+  function still() {                                                   // one picture, the ship where it belongs
+    var at = frozen !== null && !isNaN(frozen) ? frozen : reduce.matches ? 40 : null;
+    if (at === null) return false;
+    away = wanted(); frame(at);
+    return true;
   }
   function start() {
     cancelAnimationFrame(raf);
     setup();
-    if (frozen !== null && !isNaN(frozen)) { frame(frozen); return; }
-    if (reduce.matches) { frame(40); return; }
+    if (still()) return;
     t0 = performance.now();
     raf = requestAnimationFrame(tick);
   }
+  new MutationObserver(still).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(start, 200); });
   reduce.addEventListener && reduce.addEventListener('change', start);
   document.addEventListener('visibilitychange', function () {
