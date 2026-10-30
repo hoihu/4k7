@@ -76,9 +76,16 @@ export function resources() {
 }
 export type Res = ReturnType<typeof resources>;
 
+/**
+ * Where a cut really clips: a hair (mm) into what the planes keep, too little to see. The slider and the
+ * scripts like round numbers, and a face exactly on a plane would come and go pixel by pixel.
+ */
+export const clippingAt = (planes: THREE.Plane[]) => planes.map((p) => new THREE.Plane(p.normal, p.constant - 0.01));
+
 /** A viewer core: renderer, lights, camera and orbit controls around one content group. */
 export function viewerCore(canvas: HTMLCanvasElement, opts: { pixelRatio?: number; background?: number } = {}) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  // (the stencil: the faces a section cuts, enclosure3d.ts)
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, stencil: true });
   renderer.setPixelRatio(opts.pixelRatio ?? Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const scene = new THREE.Scene();
@@ -115,6 +122,8 @@ export function viewerCore(canvas: HTMLCanvasElement, opts: { pixelRatio?: numbe
   let group = new THREE.Group();
   scene.add(group);
   let radius = 10;
+  /** The content hears of the clipping, to draw what a cut opens in it. */
+  const tellClipping = () => (group.userData.clipped as ((planes: THREE.Plane[]) => void) | undefined)?.(renderer.clippingPlanes);
 
   function disposeGroup(g: THREE.Group) {
     g.traverse((o) => {
@@ -221,8 +230,11 @@ export function viewerCore(canvas: HTMLCanvasElement, opts: { pixelRatio?: numbe
         camera.near = radius / 100;
         camera.far = radius * 50;
         camera.updateProjectionMatrix();
-        view('iso');
-      } else render();
+      }
+      // (after measuring: what a cut adds is not part of the content's size)
+      tellClipping();
+      if (!keepView) view('iso');
+      else render();
     },
     view,
     redraw: render,
@@ -250,7 +262,8 @@ export function viewerCore(canvas: HTMLCanvasElement, opts: { pixelRatio?: numbe
     },
     /** Cut the view: everything on the planes' negative sides is left out (a section). */
     clip(planes: THREE.Plane[]) {
-      renderer.clippingPlanes = planes;
+      renderer.clippingPlanes = clippingAt(planes);
+      tellClipping();
       render();
     },
     /** Look at `target` from `position` (the controls orbit round `target` from there). */

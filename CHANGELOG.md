@@ -10,6 +10,12 @@ and every pull request of a release are on its [GitHub release](https://github.c
 - **A Windows download**: `4k7-windows-x64.zip`, a folder with Node inside. Unpack it and double-click `4k7.cmd`: the app opens in your browser and stops when you close the tab. It is not signed yet, so Windows may warn the first time. `npx github:hoihu/4k7` runs on Windows too.
 - **Coding agents on Windows**: Claude Code, GitHub Copilot CLI and OpenCode are found and started whether they came from npm or as a program, with no console windows, and stopping a run stops all of it.
 
+### Enclosure
+
+- **A cut shows everything it goes through solid**: the box, the board and the parts used to be hollow, with tracks, pads and the far side of the walls showing through. Now each is a flat face: a shade of orange per piece, so pieces that touch stay apart, tan for the board, grey for a part. The agent's section pictures show the same.
+- **A cut exactly on a face stays clean**: where the plane lay on a wall or on the board's top, at a round number on the slider, that face broke up into noise.
+- **No more orange flecks on the box**: uncut, its inside glinted through at shallow angles and round the holes.
+
 ### Settings
 
 - **The command for the Claude Code CLI** shows where the downloaded app really is. On Linux it used to show the Mac's path.
