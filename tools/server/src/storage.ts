@@ -61,6 +61,9 @@ export interface ProjectEntry {
   size: number;
 }
 
+/** Names Windows keeps for devices, whatever the extension: a file cannot be called that there. */
+const isDeviceName = (name: string) => process.platform === 'win32' && /^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(name);
+
 /** A file name for a project called `name` (no path characters, not hidden). */
 export function projectFileName(name: string): string {
   const clean = name
@@ -69,7 +72,14 @@ export function projectFileName(name: string): string {
     .trim()
     .slice(0, 80)
     .trim();
-  return clean || 'untitled';
+  return isDeviceName(clean) ? `${clean}-` : clean || 'untitled';
+}
+
+/** A file name for a library or artwork record; only its id is read from it, nothing needs to turn it back. */
+function recordFileName(id: string): string {
+  const name = encodeURIComponent(id);
+  if (process.platform !== 'win32') return name;
+  return (isDeviceName(name) ? `%${name.charCodeAt(0).toString(16)}${name.slice(1)}` : name).replace(/\*/g, '%2A');
 }
 
 /** A project id as it may come in a URL: a file name without its extension, nothing that leaves the folder. */
@@ -81,7 +91,7 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
   const { projectsDir, dataDir } = opts;
   const projectPath = (id: string) => join(projectsDir, id + PROJECT_EXT);
   const recordDir = (store: RecordStore) => join(dataDir, store);
-  const recordPath = (store: RecordStore, id: string) => join(recordDir(store), `${encodeURIComponent(id)}.json`);
+  const recordPath = (store: RecordStore, id: string) => join(recordDir(store), `${recordFileName(id)}.json`);
   const sheetDir = join(dataDir, 'datasheets');
 
   /** An id not taken yet: "name", "name 2", "name 3"… */
@@ -236,7 +246,7 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
             if (!existsSync(file)) return notFound();
             const { name } = JSON.parse((await readBody(req)).toString('utf8')) as { name?: string };
             const to = freeId(name ?? id, id);
-            if (to !== id) renameSync(file, projectPath(to));
+            if (to !== id) renameRetrying(file, projectPath(to));
             return json(200, { id: to });
           }
         }
@@ -343,7 +353,27 @@ function writeAtomic(file: string, data: string | Buffer) {
   mkdirSync(dir, { recursive: true });
   const tmp = join(dir, `.${process.pid}-${Date.now()}.tmp`);
   writeFileSync(tmp, data);
-  renameSync(tmp, file);
+  try {
+    renameRetrying(tmp, file);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
+/**
+ * Windows refuses to rename over a file that something has open for a moment (the virus scanner, the search
+ * indexer, a sync client): wait and try again. Blocking, so that an older save can never land after a newer one.
+ */
+export function renameRetrying(from: string, to: string, rename: (from: string, to: string) => void = renameSync, platform = process.platform): void {
+  for (let wait = 50; ; wait *= 2) {
+    try {
+      return rename(from, to);
+    } catch (e) {
+      if (platform !== 'win32' || wait > 1600 || !['EPERM', 'EACCES', 'EBUSY'].includes((e as NodeJS.ErrnoException).code ?? '')) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
+    }
+  }
 }
 
 function readBody(req: IncomingMessage): Promise<Buffer> {

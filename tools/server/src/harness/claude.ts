@@ -1,10 +1,11 @@
 /**
  * Claude Code: `claude -p` with stream-json output, the 4k7 MCP endpoint as its only MCP server,
- * and the chat rules appended to its system prompt. Also runs the datasheet importer.
+ * and the chat rules appended to its system prompt. Also runs the datasheet importer. The message
+ * goes in on stdin and the rules in a file: neither fits a command line on Windows.
  */
 import { CHAT_WEB_PROMPT, INGEST_VERIFY_PROMPT, chatModePrompt, ingestPrompt, type ChatCapability, type HarnessCapability } from '@4k7/schema';
 import type { ClaudeProfile } from '../config.ts';
-import { detectCli, parseLine, type ChatJob, type Harness, type Invocation, type RunSink } from './types.ts';
+import { detectCli, parseLine, rulesFile, type ChatJob, type Harness, type Invocation, type RunSink } from './types.ts';
 
 /** Probe the Claude Code CLI. */
 export function detectClaude(bin: string, profile?: ClaudeProfile): ChatCapability {
@@ -33,6 +34,8 @@ export interface IngestJob {
   token: string;
   /** 2 = the independent verification pass. */
   pass: number;
+  /** Where the rules can be written for the CLI to read. */
+  rulesDir: string;
 }
 
 const STREAM_ARGS = ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
@@ -57,7 +60,6 @@ export class ClaudeHarness implements Harness {
     return {
       args: [
         '-p',
-        job.text,
         ...STREAM_ARGS,
         '--mcp-config',
         mcpConfig(job),
@@ -68,13 +70,14 @@ export class ClaudeHarness implements Harness {
         job.web ? 'mcp__4k7,WebFetch,WebSearch' : 'mcp__4k7',
         '--permission-mode',
         'dontAsk',
-        '--append-system-prompt',
-        job.web ? `${chatModePrompt()}\n\n${CHAT_WEB_PROMPT}` : chatModePrompt(),
+        '--append-system-prompt-file',
+        rulesFile(job.rulesDir, job.web ? `${chatModePrompt()}\n\n${CHAT_WEB_PROMPT}` : chatModePrompt()),
         ...(job.model ? ['--model', job.model] : []),
         ...(job.effort ? ['--effort', job.effort] : []),
         ...(job.session ? ['--resume', job.session] : []),
       ],
       env: childEnv(this.#profile),
+      stdin: job.text,
       ...streamReader(sink, 'chat'),
     };
   }
@@ -84,7 +87,6 @@ export class ClaudeHarness implements Harness {
     return {
       args: [
         '-p',
-        job.prompt,
         ...STREAM_ARGS,
         '--mcp-config',
         mcpConfig(job),
@@ -95,11 +97,12 @@ export class ClaudeHarness implements Harness {
         'mcp__4k7',
         '--permission-mode',
         'dontAsk',
-        '--append-system-prompt',
-        job.pass === 1 ? ingestPrompt() : `${ingestPrompt()}\n\n${INGEST_VERIFY_PROMPT}`,
+        '--append-system-prompt-file',
+        rulesFile(job.rulesDir, job.pass === 1 ? ingestPrompt() : `${ingestPrompt()}\n\n${INGEST_VERIFY_PROMPT}`),
         ...(job.model ? ['--model', job.model] : []),
       ],
       env: childEnv(this.#profile),
+      stdin: job.prompt,
       ...streamReader(sink, 'ingest'),
     };
   }
@@ -184,7 +187,7 @@ function describeTool(name = '', input: unknown): string {
   if (name === 'Read') {
     const page = /page-0*(\d+)\.txt$/.exec(i.file_path ?? '');
     if (page) return `Reading page ${page[1]}`;
-    return `Reading ${(i.file_path ?? '').split('/').pop()}`;
+    return `Reading ${(i.file_path ?? '').split(/[\\/]/).pop()}`;
   }
   if (name === 'Grep') return `Searching for “${i.pattern ?? ''}”`;
   if (name === 'Glob') return 'Listing pages';

@@ -219,12 +219,14 @@ describe('serving the app', () => {
 describe('config folder', () => {
   it('moves ~/.tracewise (the old name) to ~/.4k7 and keeps its access key', () => {
     const home = mkdtempSync(join(tmpdir(), '4k7-home-'));
-    const env = { HOME: process.env.HOME, FOURK7_HOME: process.env.FOURK7_HOME };
+    // the home folder comes from USERPROFILE on Windows
+    const env = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, FOURK7_HOME: process.env.FOURK7_HOME };
     try {
       mkdirSync(join(home, '.tracewise'));
       const accessKey = '8b1f4d2e-5c3a-4e6f-9a7b-0c1d2e3f4a5b';
       writeFileSync(join(home, '.tracewise', 'server.json'), JSON.stringify({ accessKey, claude: { unsetEnv: ['X'], env: {} } }));
       process.env.HOME = home;
+      process.env.USERPROFILE = home;
       delete process.env.FOURK7_HOME;
       expect(configDir()).toBe(join(home, '.4k7'));
       expect(existsSync(join(home, '.tracewise'))).toBe(false);
@@ -232,6 +234,8 @@ describe('config folder', () => {
       expect(JSON.parse(readFileSync(join(home, '.4k7', 'server.json'), 'utf8')).accessKey).toBe(accessKey);
     } finally {
       process.env.HOME = env.HOME;
+      if (env.USERPROFILE !== undefined) process.env.USERPROFILE = env.USERPROFILE;
+      else delete process.env.USERPROFILE;
       if (env.FOURK7_HOME !== undefined) process.env.FOURK7_HOME = env.FOURK7_HOME;
       rmSync(home, { recursive: true, force: true });
     }

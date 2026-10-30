@@ -89,7 +89,7 @@
     {#snippet hint()}
       {#if disk.status !== 'ok'}<span class="bad">Not saved: the 4k7 server is not reachable.</span>
       {:else if app.unsaved}<span class="bad">Not saved yet.</span>
-      {:else if app.projectId}<code>{disk.projectsDir}/{app.projectId}.twd.json</code> · saved as you work{/if}
+      {:else if app.projectId}<code>{disk.projectFile(app.projectId)}</code> · saved as you work{/if}
     {/snippet}
   </Field>
   <Field label="Conversation">

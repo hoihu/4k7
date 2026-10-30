@@ -30,7 +30,7 @@ import { CopilotHarness } from './harness/copilot.ts';
 import { OpenCodeHarness } from './harness/opencode.ts';
 import type { Harness } from './harness/types.ts';
 import { appDir, configDir, configPath, DEV_APP, inCheckout, loadConfig } from './config.ts';
-import { openBrowser } from './launch.ts';
+import { mcpCommand, openBrowser } from './launch.ts';
 import { createMcpServer, mcpHttpHandler, VERSION } from './mcp.ts';
 import { checkForUpdate } from './update.ts';
 import { storageHandler } from './storage.ts';
@@ -74,9 +74,11 @@ async function main() {
       idleTimer = null;
     } else idle(IDLE_MS);
   };
+  const command = mcpCommand();
   const server = new LocalServer({
     accessKey: cfg.accessKey,
     log,
+    ...(command ? { mcpCommand: command } : {}),
     ...(inCheckout() ? { devPorts: [Number(new URL(DEV_APP).port)] } : {}),
     ...(serve && idleExit ? { onTab } : {}),
   });
@@ -115,6 +117,7 @@ async function main() {
 
   log(`v${VERSION} on 127.0.0.1:${port} · access key in ${configPath()} · projects in ${cfg.projectsDir}`);
   for (const h of harnesses) log(`app chat via ${h.name}: ${h.available ? `yes (${h.version})` : `no, ${h.reason}`}`);
+  if (command) log(`Claude Code starts this server with: ${command}`);
   const p = cfg.claude;
   if (p.configDir || p.unsetEnv.length) {
     log(`claude profile: ${p.configDir ? `CLAUDE_CONFIG_DIR=${p.configDir}` : 'default config'}${p.unsetEnv.length ? `, without ${p.unsetEnv.join(', ')}` : ''}`);

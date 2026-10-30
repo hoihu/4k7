@@ -1,10 +1,15 @@
 #!/usr/bin/env node
-// Stand-in for `claude -p ... --output-format stream-json` in tests. It connects to the MCP
-// server given in --mcp-config exactly like Claude Code would, calls one tool, and streams output.
+// Stand-in for `claude -p ... --output-format stream-json` in tests. It reads the message from stdin and its
+// rules from --append-system-prompt-file, connects to the MCP server given in --mcp-config exactly like Claude
+// Code would, calls one tool, and streams output.
+import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 const require = createRequire(import.meta.url);
-const { Client } = await import(require.resolve('@modelcontextprotocol/sdk/client/index.js'));
-const { StreamableHTTPClientTransport } = await import(require.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js'));
+const load = (id) => import(pathToFileURL(require.resolve(id)).href);
+const { Client } = await load('@modelcontextprotocol/sdk/client/index.js');
+const { StreamableHTTPClientTransport } = await load('@modelcontextprotocol/sdk/client/streamableHttp.js');
 
 const args = process.argv.slice(2);
 if (args[0] === '--version') {
@@ -16,8 +21,17 @@ const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const session = arg('--resume') ?? 'sess-1234';
 const cfg = JSON.parse(arg('--mcp-config'));
 const tw = cfg.mcpServers['4k7'];
+let message = '';
+for await (const chunk of process.stdin) message += chunk;
+const rules = readFileSync(arg('--append-system-prompt-file'), 'utf8');
 
 out({ type: 'system', subtype: 'init', session_id: session, mcp_servers: [{ name: '4k7', status: 'connected' }] });
+if (message.startsWith('please hang')) {
+  // until it is stopped; the second kind has started a program of its own, which keeps the output open, like npm's opencode
+  if (message.includes('child')) spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], { stdio: 'inherit' });
+  setInterval(() => {}, 1000);
+  await new Promise(() => {});
+}
 
 const client = new Client({ name: 'claude-code', version: 'fake' });
 await client.connect(new StreamableHTTPClientTransport(new URL(tw.url), { requestInit: { headers: tw.headers } }));
@@ -35,10 +49,10 @@ const flags = {
   permission: arg('--permission-mode'),
   model: args.includes('--model') ? arg('--model') : null,
   effort: arg('--effort') ?? null,
-  prompt: arg('-p'),
-  appended: (arg('--append-system-prompt') ?? '').slice(0, 40),
+  prompt: message,
+  appended: rules.slice(0, 40),
   instructionsLength: instructions.length,
-  verify: (arg('--append-system-prompt') ?? '').includes('independent verification pass'),
+  verify: rules.includes('independent verification pass'),
   files: (await import('node:fs')).readdirSync('.').sort(),
   env: {
     configDir: process.env.CLAUDE_CONFIG_DIR ?? null,

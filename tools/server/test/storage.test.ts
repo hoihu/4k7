@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { projectFileName, storageHandler } from '../src/storage.ts';
+import { projectFileName, renameRetrying, storageHandler } from '../src/storage.ts';
 
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 const cleanups: (() => void)[] = [];
@@ -136,5 +136,47 @@ describe('storage on this computer', () => {
     expect(await (await api('storage')).json()).toMatchObject({ projectsDir });
     expect((await api('reveal', { method: 'POST' })).status).toBe(204);
     expect(revealed).toEqual([projectsDir]);
+  });
+});
+
+describe('files on Windows', () => {
+  const asWindows = () => {
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    cleanups.push(() => Object.defineProperty(process, 'platform', { value: platform }));
+  };
+
+  it('does not call a project after a device', () => {
+    if (process.platform !== 'win32') expect(projectFileName('NUL')).toBe('NUL');
+    asWindows();
+    expect(projectFileName('NUL')).toBe('NUL-');
+    expect(projectFileName('com1.v2')).toBe('com1.v2-');
+    expect(projectFileName('console')).toBe('console');
+  });
+
+  it('keeps records with a device name or a star in their name', async () => {
+    const { api, dataDir } = await start();
+    asWindows();
+    for (const id of ['aux', 'a*b']) {
+      expect((await api(`records/artwork/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ id }) })).status).toBe(204);
+      expect(await (await api(`records/artwork/${encodeURIComponent(id)}`)).json()).toEqual({ id });
+    }
+    expect(readdirSync(join(dataDir, 'artwork')).sort()).toEqual(['%61ux.json', 'a%2Ab.json']);
+  });
+
+  it('tries a rename again while something has the file open', () => {
+    const busy = (code: string) => Object.assign(new Error(code), { code });
+    let calls = 0;
+    const flaky = () => {
+      if (++calls < 3) throw busy('EPERM');
+    };
+    renameRetrying('a', 'b', flaky, 'win32');
+    expect(calls).toBe(3);
+
+    // only there, and only for that
+    calls = 0;
+    expect(() => renameRetrying('a', 'b', flaky, 'darwin')).toThrow('EPERM');
+    expect(calls).toBe(1);
+    expect(() => renameRetrying('a', 'b', () => { throw busy('ENOENT'); }, 'win32')).toThrow('ENOENT');
   });
 });

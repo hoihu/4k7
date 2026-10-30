@@ -34,17 +34,32 @@ export async function launchApp(opts: LaunchOptions = {}): Promise<void> {
   mkdirSync(configDir(), { recursive: true, mode: 0o700 });
   const logFile = openSync(join(configDir(), 'server.log'), 'a', 0o600);
   // the CLI's default command (serve and open the app), stopping by itself; its output goes to the log
-  const child = spawn(process.execPath, [opts.script ?? process.argv[1]!, '--idle-exit'], { detached: true, stdio: ['ignore', 'ignore', logFile], env: process.env });
+  const child = spawn(process.execPath, [opts.script ?? process.argv[1]!, '--idle-exit'], { detached: true, windowsHide: true, stdio: ['ignore', 'ignore', logFile], env: process.env });
   child.on('error', (e) => log(`could not start the server: ${e.message}`));
   child.unref();
   log(`server started (pid ${child.pid}); it opens the app and stops when the tab is closed`);
 }
 
+/** Open a link in the browser, or a folder in the file manager. FOURK7_NO_OPEN: neither, it is only logged. */
 export function openBrowser(url: string, log: (msg: string) => void) {
-  const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
+  if (process.env.FOURK7_NO_OPEN) return log(`open ${url}`);
+  // on Windows a folder's path is no argument for cmd: it may hold an &
+  const windows = /^https?:/.test(url) ? ['cmd', ['/c', 'start', '', url]] : ['explorer', [url]];
+  const [cmd, args] = (process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? windows : ['xdg-open', [url]]) as [string, string[]];
   try {
-    spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => log(`could not open a browser; open ${url}`)).unref();
+    // cmd's window stays hidden; explorer's is the point
+    spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: cmd === 'cmd' }).on('error', () => log(`could not open a browser; open ${url}`)).unref();
   } catch {
     log(`could not open a browser; open ${url}`);
   }
+}
+
+/**
+ * How Claude Code starts this server, for the app's Settings: the launcher of the download, wherever it was put
+ * (it says where in FOURK7_LAUNCHER). None when run another way; the app knows that command from its build.
+ * On Windows the launcher is a batch file, which takes cmd to start.
+ */
+export function mcpCommand(launcher = process.env.FOURK7_LAUNCHER, platform = process.platform): string | undefined {
+  if (!launcher) return undefined;
+  return platform === 'win32' ? `cmd /c "${launcher}" mcp` : `${/\s/.test(launcher) ? `"${launcher}"` : launcher} mcp`;
 }

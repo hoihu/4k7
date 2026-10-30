@@ -3,6 +3,17 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
+## Unreleased
+
+### Windows
+
+- **A Windows download**: `4k7-windows-x64.zip`, a folder with Node inside. Unpack it and double-click `4k7.cmd`: the app opens in your browser and stops when you close the tab. It is not signed yet, so Windows may warn the first time. `npx github:hoihu/4k7` runs on Windows too.
+- **Coding agents on Windows**: Claude Code, GitHub Copilot CLI and OpenCode are found and started whether they came from npm or as a program, with no console windows, and stopping a run stops all of it.
+
+### Settings
+
+- **The command for the Claude Code CLI** shows where the downloaded app really is. On Linux it used to show the Mac's path.
+
 ## 0.3.0 — 2026-10-30
 
 The enclosure needs nothing installed now: the agent writes it as a script that the app runs itself. Schematics are drawn as framed functional blocks with the proper symbol for each part, and you can fix a drawing by hand. The board gets copper keep-outs, pairs routed together, length tuning and more of the checks a fab makes, and what goes to the assembly house says more: polarity marks on the silkscreen, each land held against the part the house buys, and the pick-and-place in the house's own frame.

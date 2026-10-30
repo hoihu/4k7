@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   bundles:
-    # macOS for hdiutil (the DMGs); the Linux archives are built on the same run
+    # macOS for hdiutil (the DMGs); the Linux and Windows archives are built on the same run
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +37,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          files="build/4k7-macos-arm64.dmg build/4k7-macos-x64.dmg build/4k7-linux-x64.tar.gz build/4k7-linux-arm64.tar.gz"
+          files="build/4k7-macos-arm64.dmg build/4k7-macos-x64.dmg build/4k7-linux-x64.tar.gz build/4k7-linux-arm64.tar.gz build/4k7-windows-x64.zip"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload --clobber "$GITHUB_REF_NAME" $files
           else

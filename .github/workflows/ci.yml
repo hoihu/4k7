@@ -23,3 +23,50 @@ jobs:
       - run: node dist/4k7pcb.js --version
       # the package as the npm registry would serve it: the tarball installed on its own, and the app served from it
       - run: npm run check:package
+
+  # the tests, and the package as `npx github:hoihu/4k7` builds and installs it, on Windows
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: node dist/4k7pcb.js --version
+      - run: npm run check:package
+
+  # the Windows download, built where the release builds it, then started on Windows
+  windows-download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: node scripts/bundle.mjs --target win-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-download
+          path: build/4k7-windows-x64.zip
+          retention-days: 3
+
+  windows-download-check:
+    needs: windows-download
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-download
+      # a real Claude Code as npm installs it, a batch file: that it is found and started is the point
+      - run: npm install -g @anthropic-ai/claude-code
+      - run: Expand-Archive 4k7-windows-x64.zip -DestinationPath unpacked
+      - run: node scripts/check-download.mjs unpacked/4k7/4k7.cmd --agent "Claude Code"

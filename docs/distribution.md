@@ -19,6 +19,7 @@ Nothing is published to the npm registry: npm installs straight from the GitHub 
 |---|---|
 | `4k7-macos-arm64.dmg`, `4k7-macos-x64.dmg` | A `4k7.app`: double-click opens the app in the browser |
 | `4k7-linux-x64.tar.gz`, `4k7-linux-arm64.tar.gz` | A folder with a `4k7` launcher script (and a `.desktop` file) |
+| `4k7-windows-x64.zip` | A folder with a `4k7.cmd` launcher: double-click opens the app in the browser |
 
 Each holds the package exactly as npm would install it (`dist/` and the runtime dependencies,
 without sourcemaps and pdf.js's browser builds; `lib/`), the official Node binary of the major in
@@ -47,15 +48,41 @@ window: the app is the browser tab, as with npx.
 
 The launchers pass arguments through, so the CLI commands work from the download too:
 `/Applications/4k7.app/Contents/MacOS/4k7 mcp` is what the app's Settings show for
-`claude mcp add`, and `--no-open`, `--version` and `--help` behave as with `4k7pcb`.
+`claude mcp add`, and `--no-open`, `--version` and `--help` behave as with `4k7pcb`. There is one
+build of the app for all of them, so that command comes from the running server: each launcher says
+where it is in `FOURK7_LAUNCHER`, wherever the user put it.
 
 **Not signed.** The Mac app carries only an ad-hoc signature (without it macOS refuses the bundle
 outright on Apple silicon). Gatekeeper therefore warns that it cannot check the app for malware:
 System Settings → Privacy & Security → Open Anyway, once. Signing and notarizing needs an Apple
-Developer ID (99 USD/year) and a `notarytool` step in the workflow. Linux needs nothing.
+Developer ID (99 USD/year) and a `notarytool` step in the workflow. Linux needs nothing. On Windows,
+`4k7.cmd` is unsigned too (`node.exe` beside it is signed by the OpenJS Foundation): SmartScreen may
+warn the first time, More info → Run anyway. Signing needs a code-signing certificate and a step in
+the workflow.
+
+**Windows.** The launcher is a batch file, so a double-click shows a console window for as long as it
+takes Node to start the server in the background; nothing else shows one (`windowsHide` on everything
+the server starts). What is different there, all of it in `tools/server/src`:
+
+- An agent installed with npm is a batch file (`claude.cmd`), which Node starts only through cmd.exe, so
+  `claude-bin.ts` reads npm's shim and starts what it runs. A batch file that is not one of npm's, pnpm's or
+  yarn's is refused (the agent shows as unavailable, with the reason).
+- A command line holds 32,767 characters and the chat rules alone are 53,000. So on every system
+  the message goes in on stdin and the rules in a file (`~/.4k7/claude-workspace/rules/`, named after their
+  content): `--append-system-prompt-file` for Claude Code, `{file:…}` in the config for OpenCode. Copilot has
+  no such option, so rules and message both go in on stdin.
+- Stopping a run ends the whole process tree (`taskkill /t /f`): there are no signals to ask with.
+- Saving retries for a moment when Windows refuses to replace a file that the virus scanner or a sync client
+  has open. Windows has no file modes, so `~/.4k7/server.json` (the access key) relies on the user
+  profile being private, as it is by default.
+
+`npm run dev` needs a POSIX shell (`scripts/dev.sh`): Git Bash or WSL. `npm run server` and `npm run build` do not.
+CI runs the tests on Windows, builds the zip on Linux, and starts it on Windows with a real Claude Code
+installed by npm (`scripts/check-download.mjs`). Nothing tests a real desktop session: that the browser opens
+and the console window closes needs a person.
 
 **Release.** `.github/workflows/release.yml` runs on a `v*` tag: typecheck, tests, the bundles
-(on a macOS runner, for `hdiutil`), then a GitHub release with the four files attached
+(on a macOS runner, for `hdiutil`), then a GitHub release with the five files attached
 (`gh release create`; a tag with a `-` is a pre-release). The release's notes are the version's
 section of `CHANGELOG.md`, followed by GitHub's list of the pull requests since the last release. The
 site links to `https://github.com/hoihu/4k7/releases/latest/download/<file>`, which always resolves

@@ -7,7 +7,7 @@
  *   datasheet folder and a single tool, submit_part, whose answers the tab checks.
  * Every run gets its own bearer token, and the token decides which tools it sees.
  */
-import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,6 +15,7 @@ import { createInterface } from 'node:readline';
 import { AGENT_EFFORTS, type ChatEvent, type HarnessId, type TabToServer, type TokenCount } from '@4k7/schema';
 import type { LocalServer, ChatMessage } from './server.ts';
 import type { ClaudeProfile } from './config.ts';
+import { spawnCli, stopCli } from './claude-bin.ts';
 import { secretsMatch, type McpMode } from './mcp.ts';
 import { download, isPdf, MAX_PDF_BYTES, pdfName } from './download.ts';
 import { prepareDatasheet } from './pdf.ts';
@@ -43,7 +44,7 @@ export interface ChatRunnerOptions {
 }
 
 interface Run {
-  child: ReturnType<typeof spawn> | null;
+  child: ChildProcess | null;
   token: string;
   mode: McpMode;
   done: boolean;
@@ -93,6 +94,10 @@ export class ChatRunner {
     return `http://127.0.0.1:${this.#opts.server.port}/mcp`;
   }
 
+  get #rulesDir(): string {
+    return join(this.#opts.workDir, 'rules');
+  }
+
   #emit(id: string, event: ChatEvent) {
     this.#opts.server.sendToTab({ type: 'chat_event', id, event });
   }
@@ -109,7 +114,7 @@ export class ChatRunner {
     this.#runs.set(msg.id, run);
     this.#opts.log?.(`chat ${msg.id}: started ${harness.id} (${msg.session ? `resume ${msg.session.slice(0, 8)}` : 'new session'})`);
     const effort = AGENT_EFFORTS.find((e) => e === msg.effort);
-    const job: ChatJob = { text: msg.text, session: msg.session, ...(msg.model ? { model: msg.model } : {}), ...(effort ? { effort } : {}), web: !!msg.web, mcpUrl: this.#mcpUrl(), token };
+    const job: ChatJob = { text: msg.text, session: msg.session, ...(msg.model ? { model: msg.model } : {}), ...(effort ? { effort } : {}), web: !!msg.web, mcpUrl: this.#mcpUrl(), token, rulesDir: this.#rulesDir };
     void (async () => {
       let done = await this.#spawn(msg.id, run, harness, this.#opts.workDir, (sink) => harness.chat(job, sink));
       // Copilot refuses an effort level for models without one (its default "auto" among them) before it starts: ask again without
@@ -153,10 +158,18 @@ export class ChatRunner {
     const run: Run = { child: null, token, mode: 'ingest', done: false, cancelled: false };
     this.#runs.set(msg.id, run);
     const dir = join(this.#opts.ingestDir ?? join(this.#opts.workDir, '..', 'ingest'), msg.id.replace(/[^\w-]/g, '_'));
+    // on Windows something may still have a file open for a moment (the virus scanner); a leftover folder is no failure
+    const clear = () => {
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+      } catch (e) {
+        this.#opts.log?.(`ingest ${msg.id}: ${(e as Error).message}`);
+      }
+    };
     const fail = (error: string) => {
       run.done = true;
       this.#runs.delete(msg.id);
-      rmSync(dir, { recursive: true, force: true });
+      clear();
       this.#emit(msg.id, { kind: 'done', ok: false, error });
       this.#opts.log?.(`ingest ${msg.id}: ${error}`);
     };
@@ -175,7 +188,7 @@ export class ChatRunner {
       if (data.byteLength > MAX_PDF_BYTES) return fail(`The PDF is larger than ${MAX_PDF_BYTES >> 20} MB.`);
       if (!isPdf(data)) return fail('That is not a PDF file.');
       if (run.cancelled) return fail('Stopped.');
-      rmSync(dir, { recursive: true, force: true });
+      clear();
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       const pages = await prepareDatasheet(dir, data);
       this.#emit(msg.id, { kind: 'status', text: `Datasheet: ${pages} pages, ${(data.byteLength / 1048576).toFixed(1)} MB` });
@@ -197,7 +210,7 @@ export class ChatRunner {
       if (passes > 1) this.#emit(msg.id, { kind: 'pass', n, of: passes });
       this.#opts.log?.(`ingest ${msg.id}: pass ${n}/${passes} for ${msg.mpn}`);
       done = await this.#spawn(msg.id, run, this.#claude, dir, (sink) =>
-        this.#claude.ingest({ prompt, ...(msg.model ? { model: msg.model } : {}), mcpUrl: this.#mcpUrl(), token, pass: n }, sink),
+        this.#claude.ingest({ prompt, ...(msg.model ? { model: msg.model } : {}), mcpUrl: this.#mcpUrl(), token, pass: n, rulesDir: this.#rulesDir }, sink),
       );
       cost += done.costUsd ?? 0;
       if (!done.ok) {
@@ -205,7 +218,7 @@ export class ChatRunner {
         break;
       }
     }
-    rmSync(dir, { recursive: true, force: true });
+    clear();
     this.#end(msg.id, run, { ...done, ...(cost ? { costUsd: cost } : {}) });
   }
 
@@ -224,8 +237,15 @@ export class ChatRunner {
       finish,
       log: (m) => this.#opts.log?.(`${label}: ${m}`),
     };
-    const inv = invoke(sink);
-    const child = spawn(harness.bin, inv.args, { cwd, env: inv.env, stdio: [inv.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    let inv: Invocation;
+    let child: ChildProcess;
+    try {
+      inv = invoke(sink);
+      child = spawnCli(harness.bin, inv.args, { cwd, env: inv.env, stdio: [inv.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    } catch (e) {
+      // its rules could not be written, or Windows refused the program right away
+      return Promise.resolve({ kind: 'done', ok: false, error: `Could not start ${harness.name}: ${(e as Error).message}` });
+    }
     run.child = child;
     if (inv.stdin !== undefined) {
       child.stdin!.on('error', () => {}); // the CLI may exit before reading it; 'close' reports why
@@ -243,7 +263,7 @@ export class ChatRunner {
     });
     child.on('close', (code, signal) => {
       void (async () => {
-        if (!signal && !outcome) await inv.close?.(code).catch((e: Error) => sink.log(e.message));
+        if (!signal && !run.cancelled && !outcome) await inv.close?.(code).catch((e: Error) => sink.log(e.message));
         finish({
           kind: 'done',
           ok: false,
@@ -262,8 +282,8 @@ export class ChatRunner {
     r.cancelled = true;
     const child = r.child;
     if (!child) return; // still preparing; the job stops itself before spawning
-    child.kill('SIGINT');
-    setTimeout(() => child.exitCode === null && child.kill('SIGKILL'), 3000).unref();
+    stopCli(child, 'SIGINT');
+    setTimeout(() => child.exitCode === null && stopCli(child, 'SIGKILL'), 3000).unref();
   }
 
   stopAll() {

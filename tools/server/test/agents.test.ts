@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { HarnessCapability, HarnessId } from '@4k7/schema';
-import { Agents, binFor, CopilotHarness, findBin, OpenCodeHarness } from '../src/index.ts';
+import { Agents, binFor, commandFor, CopilotHarness, detectClaude, findBin, OpenCodeHarness, shimTarget } from '../src/index.ts';
 
-const fake = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.url));
+/** A stand-in CLI: on Windows behind an npm shim, like a real agent installed with npm. */
+const fake = (name: string) => fileURLToPath(new URL(`./${process.platform === 'win32' ? name.replace('.mjs', '.cmd') : name}`, import.meta.url));
 const restore: (() => void)[] = [];
 afterEach(() => restore.splice(0).forEach((r) => r()));
 
@@ -20,8 +21,9 @@ function setEnv(k: string, v: string | undefined) {
 /** A folder with an executable script that is not an agent (it fails --version). */
 function notAnAgent(): string {
   const dir = mkdtempSync(join(tmpdir(), 'tw-bins-'));
-  const file = join(dir, 'copilot');
-  writeFileSync(file, '#!/bin/sh\nexit 3\n');
+  const windows = process.platform === 'win32';
+  const file = join(dir, windows ? 'copilot.cmd' : 'copilot');
+  writeFileSync(file, windows ? '@exit /b 3\r\n' : '#!/bin/sh\nexit 3\n');
   chmodSync(file, 0o755);
   return file;
 }
@@ -86,5 +88,48 @@ describe('the agents’ programs', () => {
     expect(findBin('copilot', join(file, '..'))).toBe(file);
     expect(findBin('copilot', '/nonexistent')).toBeNull();
     expect(findBin(file)).toBe(file);
+  });
+});
+
+describe('npm shims', () => {
+  // as npm writes them (cmd-shim), for a script with a node shebang and for a program
+  const npmShim = (target: string) => `@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n) ELSE (\r\n  SET "_prog=node"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${target}" %*\r\n`;
+
+  it('tells what they run', () => {
+    expect(shimTarget(npmShim('node_modules\\@anthropic-ai\\claude-code\\cli.js'))).toEqual({ path: 'node_modules\\@anthropic-ai\\claude-code\\cli.js', node: true });
+    // a script without an extension, which only the shim says is one for node
+    expect(shimTarget(npmShim('node_modules\\opencode-ai\\bin\\opencode'))).toEqual({ path: 'node_modules\\opencode-ai\\bin\\opencode', node: true });
+    expect(shimTarget('@ECHO off\r\nSETLOCAL\r\nCALL :find_dp0\r\n"%dp0%\\node_modules\\x\\bin\\x.exe"   %*\r\n')).toEqual({ path: 'node_modules\\x\\bin\\x.exe', node: false });
+    // pnpm's: "%~dp0" instead, and two lines naming the script
+    expect(shimTarget('@SETLOCAL\r\n@IF EXIST "%~dp0\\node.exe" (\r\n  "%~dp0\\node.exe"  "%~dp0\\global\\5\\x\\cli.js" %*\r\n) ELSE (\r\n  node  "%~dp0\\global\\5\\x\\cli.js" %*\r\n)\r\n')).toEqual({ path: 'global\\5\\x\\cli.js', node: true });
+  });
+
+  it('are nothing to run when they are something else', () => {
+    expect(shimTarget('@echo off\r\nset FOO=1\r\nclaude %*\r\n')).toBeNull();
+    // a script for sh
+    expect(shimTarget('IF EXIST "%dp0%\\sh.exe" (\r\n  SET "_prog=%dp0%\\sh.exe"\r\n)\r\n"%_prog%"  "%dp0%\\node_modules\\x\\bin\\x.sh" %*\r\n')).toBeNull();
+  });
+
+  describe.runIf(process.platform === 'win32')('on Windows', () => {
+    /** A CLI as npm installs it, in a folder of its own with a space in its name; prints its arguments as its version. */
+    function installed(): string {
+      const dir = mkdtempSync(join(tmpdir(), 'tw npm '));
+      mkdirSync(join(dir, 'node_modules', 'x'), { recursive: true });
+      writeFileSync(join(dir, 'node_modules', 'x', 'cli.js'), 'console.log(JSON.stringify(process.argv.slice(2)));\n');
+      writeFileSync(join(dir, 'x.cmd'), npmShim('node_modules\\x\\cli.js'));
+      return dir;
+    }
+
+    it('starts what the shim runs, found by its name on the PATH', () => {
+      const dir = installed();
+      setEnv('PATH', `${dir};${process.env.PATH}`);
+      expect(commandFor('x')).toMatchObject({ args: [join(dir, 'node_modules', 'x', 'cli.js')] });
+      expect(detectClaude('x').available).toBe(true);
+      expect(detectClaude(join(dir, 'x.cmd'))).toMatchObject({ available: true, version: '["--version"]' });
+    });
+
+    it('says what to do about a batch file it cannot start', () => {
+      expect(detectClaude(notAnAgent())).toMatchObject({ available: false, reason: expect.stringContaining('batch file') });
+    });
   });
 });

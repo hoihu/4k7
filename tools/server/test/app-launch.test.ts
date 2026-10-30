@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { SERVER_PORTS } from '@4k7/schema';
 import { candidateDirs, checkForUpdate, compareVersions, extendPathFor, LocalServer } from '../src/index.ts';
 import { serves4k7 } from '../src/app.ts';
-import { launchApp } from '../src/launch.ts';
+import { launchApp, mcpCommand } from '../src/launch.ts';
 
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
@@ -89,6 +89,18 @@ describe('finding claude outside a terminal', () => {
   });
 });
 
+describe('the command for Claude Code', () => {
+  it('is the launcher of the download, wherever it was put', () => {
+    expect(mcpCommand('/Applications/4k7.app/Contents/MacOS/4k7', 'darwin')).toBe('/Applications/4k7.app/Contents/MacOS/4k7 mcp');
+    expect(mcpCommand('/home/me/my apps/4k7/4k7', 'linux')).toBe('"/home/me/my apps/4k7/4k7" mcp');
+    expect(mcpCommand('C:\\Users\\me\\4k7\\4k7.cmd', 'win32')).toBe('cmd /c "C:\\Users\\me\\4k7\\4k7.cmd" mcp');
+  });
+
+  it('is left to the app when not started by a launcher', () => {
+    expect(mcpCommand('', 'darwin')).toBeUndefined();
+  });
+});
+
 describe('idle exit', () => {
   it('tells when the first tab connects and when the last one leaves', async () => {
     const events: boolean[] = [];
@@ -117,13 +129,14 @@ describe('idle exit', () => {
 
 describe('4k7pcb app', () => {
   it('starts the server detached when none runs, and only opens the link when one does', async () => {
-    // a stub `open`/`xdg-open` so no browser appears; its own home so the real config is untouched
+    // a stub `open`/`xdg-open` so no browser appears (Windows opens it through cmd, so no browser at all there); its own home so the real config is untouched
+    const windows = process.platform === 'win32';
     const stub = mkdtempSync(join(tmpdir(), 'tw-stub-'));
     for (const name of ['open', 'xdg-open']) {
       writeFileSync(join(stub, name), `#!/bin/sh\necho "$1" >> "${stub}/opened"\n`);
       chmodSync(join(stub, name), 0o755);
     }
-    const env = { PATH: process.env.PATH, FOURK7_HOME: process.env.FOURK7_HOME, FOURK7_ACCESS_KEY: process.env.FOURK7_ACCESS_KEY, FOURK7_NO_UPDATE_CHECK: process.env.FOURK7_NO_UPDATE_CHECK };
+    const env = { PATH: process.env.PATH, FOURK7_HOME: process.env.FOURK7_HOME, FOURK7_ACCESS_KEY: process.env.FOURK7_ACCESS_KEY, FOURK7_NO_UPDATE_CHECK: process.env.FOURK7_NO_UPDATE_CHECK, FOURK7_NO_OPEN: process.env.FOURK7_NO_OPEN };
     cleanups.push(() => {
       for (const [k, v] of Object.entries(env)) if (v === undefined) delete process.env[k];
       else process.env[k] = v;
@@ -132,6 +145,7 @@ describe('4k7pcb app', () => {
     process.env.FOURK7_HOME = join(stub, 'home');
     process.env.FOURK7_ACCESS_KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
     process.env.FOURK7_NO_UPDATE_CHECK = '1';
+    if (windows) process.env.FOURK7_NO_OPEN = '1';
 
     const before = new Set<number>();
     for (const p of SERVER_PORTS) if (await serves4k7(p)) before.add(p);
@@ -157,16 +171,20 @@ describe('4k7pcb app', () => {
       for (const p of SERVER_PORTS) if (!before.has(p) && (await serves4k7(p))) port = p;
     }
     expect(port).not.toBeNull();
-    for (let i = 0; i < 50 && !existsSync(join(stub, 'opened')); i++) await new Promise((r) => setTimeout(r, 100));
-    expect(readFileSync(join(stub, 'opened'), 'utf8')).toContain('/0cd22f19-30de-4d39-9287-ab0123456789');
+    if (!windows) {
+      for (let i = 0; i < 50 && !existsSync(join(stub, 'opened')); i++) await new Promise((r) => setTimeout(r, 100));
+      expect(readFileSync(join(stub, 'opened'), 'utf8')).toContain('/0cd22f19-30de-4d39-9287-ab0123456789');
+    }
 
     // launched again: the running server is reused and only the link opens
     const again: string[] = [];
     await launchApp({ ...launch, log: (m) => again.push(m) });
     expect(again[0]).toMatch(/already running/);
-    const opened = () => readFileSync(join(stub, 'opened'), 'utf8').trim().split('\n');
-    for (let i = 0; i < 50 && opened().length < 2; i++) await new Promise((r) => setTimeout(r, 100));
-    expect(opened()).toHaveLength(2);
+    if (!windows) {
+      const opened = () => readFileSync(join(stub, 'opened'), 'utf8').trim().split('\n');
+      for (let i = 0; i < 50 && opened().length < 2; i++) await new Promise((r) => setTimeout(r, 100));
+      expect(opened()).toHaveLength(2);
+    }
     expect(readFileSync(join(stub, 'home', 'server.log'), 'utf8')).toContain('on 127.0.0.1:');
   });
 });

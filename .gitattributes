@@ -1,0 +1,4 @@
+# The same text in every checkout, on Windows too.
+* text=auto eol=lf
+# cmd.exe reads these.
+*.cmd text eol=crlf

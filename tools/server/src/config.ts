@@ -124,5 +124,5 @@ export function saveConfig(patch: Record<string, unknown>): void {
 }
 
 export function expandHome(p: string): string {
-  return p.replace(/^~(?=$|\/)/, homedir()).replace(/^\$HOME(?=$|\/)/, homedir());
+  return p.replace(/^~(?=$|[\\/])/, homedir()).replace(/^\$HOME(?=$|[\\/])/, homedir());
 }

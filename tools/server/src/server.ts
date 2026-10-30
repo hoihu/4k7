@@ -39,6 +39,8 @@ export interface LocalServerOptions {
   devPorts?: readonly number[];
   /** Called when a tab connects (true) or the connected tab goes away (false). */
   onTab?: (connected: boolean) => void;
+  /** How Claude Code starts this server, when the app cannot know from its build (the downloaded app). */
+  mcpCommand?: string;
   log?: (msg: string) => void;
 }
 
@@ -264,6 +266,7 @@ export class LocalServer {
             chat: this.#chat,
             harnesses: this.#harnesses,
             ...(this.#update ? { update: this.#update } : {}),
+            ...(this.#opts.mcpCommand ? { mcpCommand: this.#opts.mcpCommand } : {}),
           } satisfies ServerToTab),
         );
         if (first) this.#opts.onTab?.(true);

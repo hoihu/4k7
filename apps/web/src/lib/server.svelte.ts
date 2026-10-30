@@ -40,6 +40,8 @@ class ServerClient {
   harnesses = $state<HarnessCapability[]>([]);
   /** A newer release of the app than the server runs (the downloaded app does not update itself). */
   update = $state<UpdateInfo | null>(null);
+  /** How Claude Code starts this server, when it knows better than this build (the downloaded app, wherever it was put). */
+  mcpCommand = $state<string | null>(null);
   #chatListeners = new Map<string, (e: ChatEvent) => void>();
 
   #ws: WebSocket | null = null;
@@ -133,6 +135,7 @@ class ServerClient {
           // servers before the other agents: Claude Code only
           this.harnesses = msg.harnesses ?? (msg.chat ? [{ id: 'claude-code', name: 'Claude Code', ...msg.chat }] : []);
           if (msg.update) this.update = msg.update;
+          this.mcpCommand = msg.mcpCommand ?? null;
           this.status = 'connected';
           this.error = null;
           this.#onConnected?.(this.#accessKey, port);

@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { SERVER_PROTOCOL, type ChatEvent, type HarnessCapability, type ServerToTab } from '@4k7/schema';
 import { ChatRunner, CopilotHarness, LocalServer, OpenCodeHarness, mcpHttpHandler } from '../src/index.ts';
+import { rulesFile } from '../src/harness/types.ts';
 
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
-const fake = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.url));
+/** A stand-in CLI: on Windows behind an npm shim, like a real agent installed with npm. */
+const fake = (name: string) => fileURLToPath(new URL(`./${process.platform === 'win32' ? name.replace('.mjs', '.cmd') : name}`, import.meta.url));
 const cleanups: (() => unknown)[] = [];
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
@@ -57,6 +59,17 @@ async function setup() {
     });
   return { server, welcome, pushed, calls, send, opencode };
 }
+
+describe('the rules of a run', () => {
+  it('are one file per text, written once and whole', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tw-rules-'));
+    const a = rulesFile(join(dir, 'rules'), 'rule one\n"two"');
+    expect(readFileSync(a, 'utf8')).toBe('rule one\n"two"');
+    expect(rulesFile(join(dir, 'rules'), 'rule one\n"two"')).toBe(a);
+    expect(rulesFile(join(dir, 'rules'), 'other rules')).not.toBe(a);
+    expect(readdirSync(join(dir, 'rules')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
+});
 
 const text = (es: ChatEvent[]) => es.filter((e) => e.kind === 'text').map((e) => (e as { text: string }).text).join('');
 const flagsOf = (es: ChatEvent[]) => {
