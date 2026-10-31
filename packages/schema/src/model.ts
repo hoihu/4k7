@@ -90,6 +90,8 @@ export interface DrawnSymbol {
   with?: string;
   /** The user put it here (a drag or turn in the app): their decision, which the agent's redraws (place_block, auto_draw) keep. */
   by?: 'user';
+  /** The user put its name or value where they stand (a drag in the app): their decision, which place_text auto keeps. */
+  textBy?: 'user';
   spec: SymbolSpec;
   /** Where the symbol's own origin is. */
   x: number;

@@ -24,13 +24,15 @@
     scopeRect?: Rect | null;
     compact?: boolean;
     /**
-     * Hand editing: drag a symbol or swing a net label, R / F to turn or mirror the selected symbol,
-     * Delete to take a picked wire or label (or the selected parts) away. Each gesture is one of the
+     * Hand editing: drag a symbol or a part's name or value, swing a net label, R / F to turn or mirror the
+     * selected symbol, Delete to take a picked wire or label (or the selected parts) away. Each gesture is one of the
      * agent's ops, issued by the app as the user's edit; the callbacks say whether it went through.
      */
     editable?: boolean;
     /** A symbol dragged: its centre's new page (as the design counts them) and place, in mils from the paper's top-left. */
     onmovesymbol?: (ref: string, spot: Spot) => Promise<boolean>;
+    /** A part's name or value dragged (with Shift both): where it goes, in mils from the top-left of the paper the part stands on. */
+    onmovetext?: (ref: string, at: { name?: { x: number; y: number }; value?: { x: number; y: number } }) => Promise<boolean>;
     /** R or F on the selected symbol, which stays where it is. */
     onturnsymbol?: (ref: string, spot: Spot, look: { orient?: 'upright' | 'lying'; mirror?: boolean; rotate?: 0 | 90 | 180 | 270 }) => Promise<boolean>;
     /** A net label swung round its pin: the pin ("U1.3"), the net's name and the way it points. */
@@ -46,10 +48,12 @@
   type Dir = 'left' | 'right' | 'up' | 'down';
   type Spot = { page: number; x: number; y: number };
 
-  let { sheet, designName, pageCount, paper = 'A4', overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false, editable = false, onmovesymbol, onturnsymbol, onlabeldir, onerase, onremove, onnote }: Props = $props();
+  let { sheet, designName, pageCount, paper = 'A4', overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false, editable = false, onmovesymbol, onmovetext, onturnsymbol, onlabeldir, onerase, onremove, onnote }: Props = $props();
 
   /** The layout's grid, in mils: a dragged symbol moves in whole steps of it (keep in sync with GRID in @4k7/parts). */
   const GRID = 100;
+  /** A dragged name or value moves in whole steps of this, finer than the wires' grid so it fits between them. */
+  const TEXT_STEP = 25;
   const canEdit = $derived(editable && !compact);
 
   /** Length of a supply symbol's stem, in mils (keep in sync with labelRect in the kernel). */
@@ -121,13 +125,17 @@
   /** `ref`: the part under the pointer when the press began (once captured, events target the canvas itself). */
   let drag: { x: number; y: number; vx: number; vy: number; moved: boolean; ref: string | null; net: string | null; wire: number | null; at: { x: number; y: number } } | null = null;
 
-  /* ---- hand editing: a press on a symbol or net label is an edit gesture, not a pan ---- */
+  /* ---- hand editing: a press on a symbol, its text or a net label is an edit gesture, not a pan ---- */
+  type TextPick = 'name' | 'value' | 'both';
   type Edit =
     | { kind: 'symbol'; ref: string; unit: string | undefined; sx: number; sy: number; cx: number; cy: number; dx: number; dy: number; moved: boolean }
+    | { kind: 'text'; ref: string; unit: string | undefined; which: TextPick; sx: number; sy: number; cx: number; cy: number; dx: number; dy: number; moved: boolean }
     | { kind: 'label'; i: number; cx: number; cy: number; dir: Dir; moved: boolean };
   let edit = $state<Edit | null>(null);
   /** A symbol just dropped is shown there until the sheet arrives in which it has moved (the edit takes a moment). */
   let dropped = $state<{ ref: string; unit: string | undefined; x0: number; y0: number; dx: number; dy: number } | null>(null);
+  /** A part's text just dropped, likewise, until the sheet arrives in which it stands somewhere else. */
+  let droppedText = $state<{ ref: string; unit: string | undefined; which: TextPick; at: string; dx: number; dy: number } | null>(null);
   let droppedTimer: ReturnType<typeof setTimeout> | undefined;
   /** The wire or net label the last click picked: what Delete takes away. Cleared when the sheet changes (a wire's place is only good for the sheet it was picked on). */
   let picked = $state<{ kind: 'wire'; pts: number[]; at: { x: number; y: number }; net: string; name: string } | { kind: 'label'; x: number; y: number; net: string; name: string } | null>(null);
@@ -137,10 +145,18 @@
   const droppedAt = (s: SymbolView) => (dropped && sameSym(s, dropped.ref, dropped.unit) && s.bbox.x === dropped.x0 && s.bbox.y === dropped.y0 ? dropped : null);
   /** Where a symbol is drawn: moved by the drag, or by the drop until the sheet shows it there. */
   const shift = (s: SymbolView) => dragged(s) ?? droppedAt(s);
+  const textPlace = (s: SymbolView) => `${s.refPos.x},${s.refPos.y},${s.valuePos.x},${s.valuePos.y}`;
+  const textDroppedAt = (s: SymbolView) => (droppedText && sameSym(s, droppedText.ref, droppedText.unit) && textPlace(s) === droppedText.at ? droppedText : null);
+  /** How far a part's name or value is drawn from where it stands: moved by the drag, or by the drop until the sheet shows it there. */
+  function textShift(s: SymbolView, which: 'name' | 'value') {
+    const by = edit?.kind === 'text' && sameSym(s, edit.ref, edit.unit) ? edit : textDroppedAt(s);
+    return by && (by.which === 'both' || by.which === which) ? by : null;
+  }
   $effect(() => {
     void sheet;
     picked = null;
     if (dropped && !sheet?.symbols.some((s) => droppedAt(s))) dropped = null;
+    if (droppedText && !sheet?.symbols.some((s) => textDroppedAt(s))) droppedText = null;
   });
   $effect(() => {
     if (picked && selectedNet !== picked.net) picked = null;
@@ -230,9 +246,14 @@
     const net = t.closest('[data-net]')?.getAttribute('data-net') ?? null;
     const labelAt = t.closest('[data-label]')?.getAttribute('data-label');
     const wireAt = t.closest('[data-wire]')?.getAttribute('data-wire');
+    const textAt = t.closest('[data-text]')?.getAttribute('data-text') as 'name' | 'value' | null | undefined;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     if (e.button === 0 && canEdit && ref) {
       const p = toSvg(e);
+      if (textAt) {
+        edit = { kind: 'text', ref, unit: symEl?.getAttribute('data-unit') ?? undefined, which: e.shiftKey ? 'both' : textAt, sx: p.x, sy: p.y, cx: e.clientX, cy: e.clientY, dx: 0, dy: 0, moved: false };
+        return;
+      }
       edit = { kind: 'symbol', ref, unit: symEl?.getAttribute('data-unit') ?? undefined, sx: p.x, sy: p.y, cx: e.clientX, cy: e.clientY, dx: 0, dy: 0, moved: false };
       return;
     }
@@ -247,10 +268,11 @@
   function onpointermove(e: PointerEvent) {
     if (edit) {
       if (Math.abs(e.clientX - edit.cx) + Math.abs(e.clientY - edit.cy) > 3) edit.moved = true;
-      if (edit.kind === 'symbol') {
+      if (edit.kind === 'symbol' || edit.kind === 'text') {
         const p = toSvg(e);
-        edit.dx = Math.round((p.x - edit.sx) / GRID) * GRID;
-        edit.dy = Math.round((p.y - edit.sy) / GRID) * GRID;
+        const step = edit.kind === 'text' ? TEXT_STEP : GRID;
+        edit.dx = Math.round((p.x - edit.sx) / step) * step;
+        edit.dy = Math.round((p.y - edit.sy) / step) * step;
       } else {
         // the label points where the pointer is, seen from its pin (never back into the part)
         const l = sheet?.labels[edit.i];
@@ -279,7 +301,32 @@
     if (edit) {
       const d = edit;
       edit = null;
-      if (d.kind === 'symbol') {
+      if (d.kind === 'text') {
+        const s = sheet?.symbols.find((x) => sameSym(x, d.ref, d.unit));
+        if (!s) return;
+        if (!d.moved || (d.dx === 0 && d.dy === 0)) {
+          picked = null;
+          onselect?.(d.ref, e.shiftKey || e.metaKey || e.ctrlKey);
+          return;
+        }
+        // it stays inside the frame of the page its part stands on
+        const c = centreOf(s);
+        const pg = pageAtPoint(c.x, c.y);
+        if (!pg) return;
+        const m = PAGE.margin;
+        const spot = (p: SymbolView['refPos'], lines: string[]) => {
+          const b = textBox(p, lines);
+          const [px, py] = [p.x - pg.rect.x, p.y - pg.rect.y];
+          return { x: px + Math.min(Math.max(d.dx, pg.rect.x + m - b.x), pg.rect.x + pg.rect.w - m - b.x - b.width), y: py + Math.min(Math.max(d.dy, pg.rect.y + m - b.y), pg.rect.y + pg.rect.h - m - PAGE.title - b.y - b.height) };
+        };
+        droppedText = { ref: d.ref, unit: d.unit, which: d.which, at: textPlace(s), dx: d.dx, dy: d.dy };
+        clearTimeout(droppedTimer);
+        droppedTimer = setTimeout(() => (droppedText = dropped = null), 5000);
+        // refused: it goes back at once
+        void Promise.resolve(onmovetext?.(`${s.refdes}${s.unit ?? ''}`, { ...(d.which !== 'value' ? { name: spot(s.refPos, [`${s.refdes}${s.unit ?? ''}`]) } : {}), ...(d.which !== 'name' ? { value: spot(s.valuePos, s.valueLines ?? [s.value]) } : {}) })).then((went) => {
+          if (!went) droppedText = null;
+        });
+      } else if (d.kind === 'symbol') {
         const s = sheet?.symbols.find((x) => sameSym(x, d.ref, d.unit));
         if (!s) return;
         if (!d.moved || (d.dx === 0 && d.dy === 0)) {
@@ -292,7 +339,7 @@
         if (!spot) return;
         dropped = { ref: d.ref, unit: d.unit, x0: s.bbox.x, y0: s.bbox.y, dx: d.dx, dy: d.dy };
         clearTimeout(droppedTimer);
-        droppedTimer = setTimeout(() => (dropped = null), 5000);
+        droppedTimer = setTimeout(() => (droppedText = dropped = null), 5000);
         if (!(selection.length === 1 && selection[0] === d.ref)) onselect?.(d.ref, false);
         // refused: it goes back at once
         void Promise.resolve(onmovesymbol?.(`${s.refdes}${s.unit ?? ''}`, spot)).then((went) => {
@@ -350,6 +397,12 @@
     // a two-pin part stands or lies and keeps which end is which, so turning it twice gives back what was there; the others go round by quarters
     const look = !turn ? { mirror: !s.mirrored } : s.twoPin ? { orient: s.rotation ? ('upright' as const) : ('lying' as const), mirror: !!s.mirrored } : { rotate: (((s.rotated ?? 0) + 90) % 360) as 0 | 90 | 180 | 270 };
     void onturnsymbol?.(`${s.refdes}${s.unit ?? ''}`, spot, look);
+  }
+
+  /** What takes a press on a part's text, between the letters too (keep in sync with textRect in the kernel). */
+  function textBox(p: SymbolView['refPos'], lines: string[]) {
+    const width = Math.max(...lines.map((l) => l.length)) * 50 + 20;
+    return { x: p.anchor === 'end' ? p.x - width : p.anchor === 'middle' ? p.x - width / 2 : p.x, y: p.y - 80, width, height: 100 + 85 * (lines.length - 1) };
   }
 
   const pad = 70;
@@ -508,6 +561,8 @@
     <!-- symbols -->
     {#each sheet.symbols as s (s.componentId + (s.unit ?? ""))}
       {@const sh = shift(s)}
+      {@const nameBy = textShift(s, 'name')}
+      {@const valueBy = textShift(s, 'value')}
       <g class="sym" class:dragging={!!dragged(s)} data-ref={s.refdes} data-unit={s.unit} transform={sh ? `translate(${sh.dx} ${sh.dy})` : undefined}>
         <rect class="hit" x={s.bbox.x} y={s.bbox.y} width={s.bbox.w} height={s.bbox.h} />
         <g transform={s.rotation && s.origin ? `rotate(${s.rotation} ${s.origin.x} ${s.origin.y})` : undefined}>
@@ -547,10 +602,16 @@
             {:else}<text class="pin-no" x={p.x + 22} y={p.y - 70}>{p.number}</text>{/if}
           {/if}
         {/each}
-        <text class="ref" x={s.refPos.x} y={s.refPos.y} text-anchor={s.refPos.anchor}>{s.refdes}{s.unit ?? ''}</text>
-        <text class="val" x={s.valuePos.x} y={s.valuePos.y} text-anchor={s.valuePos.anchor}>
-          {#each s.valueLines ?? [s.value] as line, li (li)}<tspan x={s.valuePos.x} dy={li === 0 ? 0 : 85}>{line}</tspan>{/each}
-        </text>
+        <g data-text="name" class:moving={!!nameBy} transform={nameBy ? `translate(${nameBy.dx} ${nameBy.dy})` : undefined}>
+          {#if canEdit}<rect class="text-hit" {...textBox(s.refPos, [`${s.refdes}${s.unit ?? ''}`])} />{/if}
+          <text class="ref" x={s.refPos.x} y={s.refPos.y} text-anchor={s.refPos.anchor}>{s.refdes}{s.unit ?? ''}</text>
+        </g>
+        <g data-text="value" class:moving={!!valueBy} transform={valueBy ? `translate(${valueBy.dx} ${valueBy.dy})` : undefined}>
+          {#if canEdit}<rect class="text-hit" {...textBox(s.valuePos, s.valueLines ?? [s.value])} />{/if}
+          <text class="val" x={s.valuePos.x} y={s.valuePos.y} text-anchor={s.valuePos.anchor}>
+            {#each s.valueLines ?? [s.value] as line, li (li)}<tspan x={s.valuePos.x} dy={li === 0 ? 0 : 85}>{line}</tspan>{/each}
+          </text>
+        </g>
       </g>
     {/each}
 
@@ -584,7 +645,7 @@
 {/if}
 
 <style>
-  .sch { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; touch-action: none; user-select: none; }
+  .sch { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; touch-action: none; -webkit-user-select: none; user-select: none; }
   .sch.compact { position: static; height: 100%; }
   /* the keys go to the canvas once it is clicked; the selection frames already show where they act */
   .sch:focus { outline: none; }
@@ -610,6 +671,9 @@
   .sym polygon.filled { fill: var(--sym); }
   .sym .hit { fill: transparent; stroke: none; cursor: pointer; }
   .editable .sym .hit { cursor: grab; }
+  .sym .text-hit { fill: transparent; stroke: none; }
+  .editable .sym .text-hit { cursor: grab; }
+  .sym .moving { opacity: 0.85; }
   .sym.dragging { opacity: 0.85; }
   .editable .sym.dragging .hit { cursor: grabbing; fill: rgba(111, 181, 255, 0.18); }
   .editable .net.swing { cursor: grab; }
@@ -617,7 +681,7 @@
   /* hover highlights the part itself: brighter, slightly bolder, a soft glow */
   .sym:hover { filter: drop-shadow(0 0 20px var(--sym-glow)); }
   .sym:hover :global(line), .sym:hover :global(path), .sym:hover :global(polyline),
-  .sym:hover rect:not(.hit), .sym:hover polygon, .sym:hover circle { stroke: var(--sym-hover); stroke-width: 16; }
+  .sym:hover rect:not(.hit):not(.text-hit), .sym:hover polygon, .sym:hover circle { stroke: var(--sym-hover); stroke-width: 16; }
   .sym:hover .filled { fill: var(--sym-fill-hover); }
   .sym:hover polygon.filled { fill: var(--sym-hover); }
   .sym:hover .ref, .sym:hover .val, .sym:hover .sym-t { fill: var(--sym-hover); }

@@ -1,6 +1,6 @@
 # Drawing the schematic: the agent owns the drawing
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; 2026-10-29: a part placed on its own is wired to its neighbours (§2c); 2026-10-30: a wire joins a pin from any side, and a wire a part is put down on goes round it (§6 step 3); the agent's guide is [schematic.md](schematic.md).
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; 2026-10-29: a part placed on its own is wired to its neighbours (§2c); 2026-10-30: a wire joins a pin from any side, and a wire a part is put down on goes round it (§6 step 3), names and values (§2e); the agent's guide is [schematic.md](schematic.md).
 > Notes and checks are in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
@@ -187,6 +187,7 @@ on a part.
 | `R` on a selected two-pin part: standing / lying, which end is which stays | `place_symbol orient mirror rewire` |
 | `R` on any other selected symbol: a quarter turn clockwise | `place_symbol rotate rewire` |
 | `F` on a selected symbol: mirror (a two-pin part's ends swap, where it stands) | `place_symbol mirror rewire` |
+| Drag a part's name or value (in steps of 25 mils, on the part's page), with Shift both together | `place_text name value` |
 | Drag a net label round its pin: it points where the pointer is | `label pin dir` |
 | Click a wire or label (it is picked and its net selected), `Delete` / `Backspace` | `erase at` |
 | `Delete` / `Backspace` on selected parts, after a confirmation | `remove` |
@@ -215,6 +216,65 @@ on a part.
   small parts follow then. A turned or mirrored symbol stays where it stands, so a tall IC turned may
   lie on its neighbours (the result says so), and its wires can go the long way round; Undo is one
   step. A part dragged with its `rewire` on a crowded sheet may leave some connections as labels.
+
+## 2e. Names and values, 2026-10-30
+
+On the user's 124-part design two 27 Ω resistors lying in the rows of a USB pair stood with a name
+through the wire above and a value through the wire of the next row. A lying part's name and value
+are a stack 185 mils high above it, and rows stand 100 or 200 mils apart. Nothing could fix it: the
+text stood where the symbol has it, the agent had no lever, `SCH.TEXT_OVERLAP` looked at labels only
+(though its title says names and values too), and a press on the text dragged the part.
+
+The split is the one of the rest of the drawing: the agent and the user decide, the kernel does the
+geometry (`kernel/parttext.ts`).
+
+- **`place_text`** moves a part's name and value and nothing else, stored in the drawing as they always
+  were (`DrawnSymbol.ref`, `.value`). Three ways, one at a time:
+  - `at` and/or `arrange`: a side (`above`, `below`, `left`, `right`) and `stacked` or `side_by_side`,
+    what is left out staying as it is. The kernel works out the spot, slides along that side to keep
+    clear, and says what the text still runs into if nothing is clear. Side by side, the name ends where
+    the value begins, so a part renamed or given a longer value grows away from the other text.
+  - `name` and/or `value`: exact spots for one part, each on its own (page mils, y the baseline). A text
+    must stay inside the frame of the page its part stands on, or the page would grow.
+  - `auto`: only text that runs into something moves, to the nearest clear spot, inside its block's
+    frame. Clear text never moves, so it can run again after any change. Of a part, some, a sheet or
+    every sheet the agent arranged.
+- **What counts as in the way**: any wire (the part's own too), another part's drawing and its text, a
+  label or supply symbol, the part's own leads and pin numbers, a block's title, the page's frame, and
+  a wire between a part and its text: a pair beyond a neighbour's wire reads as the neighbour's. Text
+  boxes are `textRect`'s: 50 mils per character plus 20, 80 above the baseline and 20 below.
+- **The nearest spot** is the cheapest: the side it is on 0, the far side 130, a side across 260; the
+  other arrangement 110; half a mil per mil of slide along the side. So a pair goes side by side
+  before it changes sides, and slides a little before either.
+- **The layout does it by itself.** `layoutSheet` ends with `clearTexts`, so a sheet nobody arranged keeps its
+  text clear after every change, and a sheet taken over starts clear. Only text moves, inside the block
+  frames, so the wires, pages and frames stay what they were: the golden circuits' numbers do not
+  change (§8). A stored drawing is left alone (§2a): text moves there only when asked. On a sheet the
+  layout draws, `auto` does nothing and says so; the other ways take the sheet over, as any drawing op.
+- **The check.** `SCH.TEXT_OVERLAP` now reports a name or value that runs into a wire, a part, its own pin
+  or another part's text (two texts in each other's way once), with `place_text auto` as its fix on a
+  stored drawing. Optimize's `overlaps` measure counts those of the parts it may move, and it may use
+  `place_text` on the parts in its area, anchored ones too: their text moves, they do not.
+- **The user's decision.** Text the user dragged carries `DrawnSymbol.textBy: "user"` (`SymbolView.textBy`;
+  `get_schematic` says `text_user_placed`). `auto` leaves it and says what it still runs into, Optimize may
+  not move it, and the agent's other ways may, saying "was the user's placement; now yours".
+- **`get_schematic`** lists where the text stands only with `texts: true`: it doubles the output (11 k to
+  22 k characters on the 124-part design), and most calls never need it.
+- **What happens to it.** A part moved (`place_symbol`, a drag, a page moving) takes its text along. A
+  part turned or mirrored into a new symbol, or drawn afresh (`place_block`, `auto_draw`, a card that draws
+  it differently), gets its text back where the symbol has it, the mark gone; a two-pin part whose ends
+  swap keeps it. So a sheet given back to the layout loses it, as it loses its wires and labels.
+- **The canvas.** A press on a name or value and a move drags that text: a transparent box
+  (`rect.text-hit`, `textRect`'s) takes the press between the letters too, and the text moves in steps of
+  25 mils from where it stood, so it keeps its column and fits between wires. Shift at the press takes
+  the other text along. A click selects the part, as before, and the part's own box still drags the part.
+
+On copies of the user's designs, `place_text auto`: the 124-part one 11 findings of part text → 0 (R7
+side by side above, R8 side by side below, the crystal's name beside its value, five LEDs' text above
+them beside their supply pin), and a flash's text moved below it, off the rail name that ran into it;
+the 27-part one 3 → 0, one of them a lying capacitor whose second value line stood on its own lead. The
+130-part one the layout draws: 3 → 0 by itself. The pass adds about 4 ms to a redraw of that sheet, the
+check about 5 ms, on 20 to 40 ms for the view.
 
 ## 3. Notes and checks
 

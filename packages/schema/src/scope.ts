@@ -25,7 +25,7 @@ export interface ScopeMeasures {
   jogs: number;
   /** Wires that turn, step sideways and turn back the way they came. */
   detours: number;
-  /** Supply symbols and labels that run into a wire of another net, another label or a part. */
+  /** Supply symbols and labels that run into a wire of another net, another label or a part, and names and values of the movable parts that run into a wire, a part or other text. */
   overlaps: number;
   /** Length of those nets' wires, in inches. */
   wireIn: number;
