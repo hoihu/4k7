@@ -5,7 +5,8 @@
 import { footprintFor, packageOf } from '@4k7/parts';
 import { autoTabs, type BoardPad, type BoardSettings, type BoardView, type Component, type Constraint, type CopperLayer, type Cutout, DEFAULT_PANEL, type Design, type EditOp, type FabLimits, fabPresets, type FabProfile, findFabPreset, type HoleCorner, type MountingHole, type OpResult, padHasPin, PANEL_SIDES, type PanelSettings, type PanelSide, type PlaneArea, type PlaneStyle, pointBounds, raiseRules, roundPadDist, type RuleKey, ruleLimit, type SilkGraphic, textFigures, unknownGlyphs, VIA_PITCH, viaCurrentFor, type ViaGroup, viasForCurrent } from '@4k7/schema';
 import { findArtwork, listArtwork } from './artwork.ts';
-import { autoPlanes, dropOffset, keepPlacement, padNet, placedOf, storedPlacement } from './board.ts';
+import { dropOffset, keepPlacement, placedOf, storedPlacement } from './board.ts';
+import { autoPlanes, padNet } from './placer.ts';
 import { routability } from './congestion.ts';
 import { boardCopy, cardOf, findNet, madeBy, nextId, pinLabel, reject, resolveComponent, resolvePins } from './doc.ts';
 import { underBody } from './drc.ts';

@@ -391,7 +391,7 @@ function routeOnce(
   const grid = passGrid({ input, pads, owner, order, deadline, planeOnly, early, history, style, kept, progress });
   const finder = passSearch(grid);
   const lay = passTracks(grid, finder);
-  const pouring = passPours(grid, finder, lay);
+  const pouring = passPours(grid);
   const dropper = passDrops(grid, finder, lay, pouring);
   const { rules, layers, W, H, N, L, netNum, numOf, padNet, widths, trackClass, maps, viaAt, viaNear, VIA_SPACING, stampVia, fixedMap, keptTracks, keptVias, escapes, ownCopper, escapeOf, offCentre, find, groupCells, union, tracks, vias, failed } = grid;
   const { clock, cost, from, goal, seenAt, DX, DY, STEP, freeFor, viaBlocked, viaFreeFor, deepestCells, search, corridor, widen } = finder;

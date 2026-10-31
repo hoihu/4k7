@@ -17,7 +17,7 @@ import {
   type OpResult,
   type Stackup,
 } from '@4k7/schema';
-import { settingsPlanes } from './board.ts';
+import { settingsPlanes } from './placer.ts';
 import { boardCopy, closest, findNet, isGroundNet, natCmp, reject } from './doc.ts';
 import { impedanceText, resolveRule, type LineBoard } from './lines.ts';
 

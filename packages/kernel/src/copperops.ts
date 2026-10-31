@@ -10,7 +10,8 @@
  * (RouteHelperResult), so the kernel stays responsive and the user can watch and stop it.
  */
 import { DEFAULT_BOARD, padHasPin, type Diagnostic, type CopperLayer, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
-import { boardRouteInput, copperKey, placedOf, rotate, softened, storedPlacement } from './board.ts';
+import { boardRouteInput, copperKey, placedOf, softened, storedPlacement } from './board.ts';
+import { rotate } from './placer.ts';
 import { boardCopy, findNet, isPowerNet, reject, resolveComponent, resolvePins } from './doc.ts';
 import { acidDrc, copperDrc, drawnDrc, edgeDrc, neckDrc } from './drc.ts';
 import { polyLength, r3 } from './geom.ts';

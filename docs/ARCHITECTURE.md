@@ -182,7 +182,7 @@ flowchart LR
 | Component | Responsibility |
 |---|---|
 | `packages/schema` | The design's types, ops, queries and results, with their zod schemas and the agent's guides |
-| `packages/kernel` | Transactions, proposals and undo; the schematic's auto-layout and drawing; the placer, the router, pours; ERC, DRC and the drawing checks |
+| `packages/kernel` | Transactions, proposals and undo (`kernel.ts`); the ops by what they change (`apply.ts` hands them to `netops`, `partops`, `sheetops`, `drawops`, `boardops`, `copperops`, `lineops`, `keepout`, `enclosureops`); the schematic's auto-layout and drawing; the placer (`placer.ts`), the router (`router.ts`, a pass in stages: `routegrid`, `routesearch`, `routetracks`, `routepours`, `routedrops`); ERC, DRC and the drawing checks |
 | `packages/parts` | The library: symbols, footprints, 3D bodies, packages, sourcing and costs |
 | `packages/fab` | Gerber, drill, BOM, pick-and-place, STEP, enclosure facts |
 | `packages/agent` | Provider adapters, the agent loop, tools |

@@ -5,10 +5,8 @@
 import { boardPolygon, cutoutBounds, cutoutDistance, keepoutDistance, padCapsule, type Zone, type ZoneShape } from '@4k7/schema';
 import { r3, segDist } from './geom.ts';
 import { G, islandsOf, type PassGrid, type Plane } from './routegrid.ts';
-import { type PassSearch } from './routesearch.ts';
-import { type PassTracks } from './routetracks.ts';
 
-export function passPours(grid: PassGrid, finder: PassSearch, lay: PassTracks) {
+export function passPours(grid: PassGrid) {
   const { input, pads, rules, W, H, N, layerIdx, netNum, numOf, padNet, padDist, cornerR, shaped, inside, groupCells, tracks, vias, solidPads } = grid;
   /*
    * Planes and pours. Inner planes are dedicated to their net (no tracks there); pours on outer

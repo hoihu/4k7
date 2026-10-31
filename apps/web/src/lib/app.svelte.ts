@@ -433,7 +433,8 @@ class AppState {
 
   async refresh() {
     this.rev++;
-    this.boardCounts = null;
+    // (in the Layout view they stay until the board is laid again, a moment later)
+    if (this.view !== 'lay') this.boardCounts = null;
     this.k = await this.kernel.state();
     this.designParts = await this.kernel.designParts();
     const ids = new Set(this.k.proposal?.hunks.map((h) => h.id) ?? []);
@@ -479,6 +480,7 @@ class AppState {
       (msg) => {
         this.boardBusy = false;
         this.routeProgress = null;
+        this.boardCounts = null;
         this.flash(`Board layout failed: ${msg}`);
       },
       (p) => (this.routeProgress = p),
