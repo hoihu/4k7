@@ -163,6 +163,20 @@ export const SetPolarityOp = z.object({
   pin: z.string().optional().describe('The pin it marks, by number (default: the pin named K or +, else pin 1)'),
 }).describe('Which way round a part goes, when its pin names do not say it (DRC.POLARITY_UNKNOWN): the board marks it on the silkscreen so the assembler places it right. Read it off the datasheet (the cathode band, the + terminal, pin 1).');
 
+export const SetPinDescriptionsOp = z.object({
+  op: z.literal('set_pin_descriptions'),
+  ref: componentRef.describe('A component using the part, e.g. "J2"; applies to every component of that part'),
+  pins: z
+    .array(
+      z.object({
+        pin: z.string().min(1).describe('A pin number, or a name several pins share (GND): each of them gets the text'),
+        description: z.string().trim().min(1).describe('What the pin does, in a few words, e.g. "Configuration channel". Replaces its text; the alternate functions an import noted ("alt: …") stay unless you give them yourself'),
+      }),
+    )
+    .min(1)
+    .describe('Only the pins to change; the others keep their text'),
+}).describe('What a part\'s pins do, as the pin table in Parts and unconnected-pin errors show it. Goes back to the library part once accepted, so a part already in the library needs no new import. From the datasheet\'s pin table (read_datasheet); where it has none, from the standard the part follows, and say so. On a switch, a text saying which pins are joined inside ("internally connected to B") also decides how its symbol is drawn.');
+
 export const SetMatingOp = z.object({
   op: z.literal('set_mating'),
   ref: componentRef.describe('A component using the part, e.g. "J1"; applies to every component of that part'),
@@ -830,6 +844,7 @@ export const EditOp = z.discriminatedUnion('op', [
   DescribeOp,
   SetMatingOp,
   SetPolarityOp,
+  SetPinDescriptionsOp,
   SetEnclosureBriefOp,
   SetEnclosureScriptOp,
   SetEnclosureGraphicOp,

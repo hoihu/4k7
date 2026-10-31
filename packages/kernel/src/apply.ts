@@ -11,7 +11,7 @@ import { setEnclosureBrief, setEnclosureGraphic, setEnclosureScript } from './en
 import { addKeepout, editKeepout, removeKeepout } from './keepout.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
 import { addPart, addSheet, connect, constrain, disconnect, moveToSheet, noConnect, remove, rename, setNet, setParam } from './netops.ts';
-import { renamePart, setFootprint, setMating, setPackageDefaults, setPolarity, setSymbol, setValueSeries } from './partops.ts';
+import { renamePart, setFootprint, setMating, setPackageDefaults, setPinDescriptions, setPolarity, setSymbol, setValueSeries } from './partops.ts';
 import { autoDraw, describe, placeBlock, placeSymbol, setPaper } from './sheetops.ts';
 import { tuneLength } from './tune.ts';
 
@@ -62,6 +62,8 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return setMating(d, op);
     case 'set_polarity':
       return setPolarity(d, op);
+    case 'set_pin_descriptions':
+      return setPinDescriptions(d, op);
     case 'set_enclosure_brief':
       return setEnclosureBrief(d, op);
     case 'set_enclosure_script':
