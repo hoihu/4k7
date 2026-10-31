@@ -11,7 +11,7 @@ type Shape =
   | { kind: 'seg'; ax: number; ay: number; bx: number; by: number; r: number }
   | { kind: 'rect'; x0: number; y0: number; x1: number; y1: number };
 
-interface Item {
+export interface CopperItem {
   net: string;
   layer: CopperLayer;
   shape: Shape;
@@ -40,7 +40,7 @@ export const copperName = (b: Pick<BoardView, 'netNames'>, kind: 'track' | 'via'
  * involve these drawn tracks and vias (by id), e.g. what an op just drew.
  */
 export function copperDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
-  const items: Item[] = [];
+  const items: CopperItem[] = [];
   for (const p of b.parts) {
     for (const pad of p.pads) {
       const layers = pad.drill ? b.layers : pad.layers;
@@ -126,10 +126,10 @@ const ROW_MM = 1;
  * from these drawn tracks and vias (by id). Pad-to-pad spacing is the footprint's and the placer's
  * business.
  */
-function closePairs(items: Item[], c: number, focus?: Set<string>): [Item, Item, number][] {
+export function closePairs(items: CopperItem[], c: number, focus?: Set<string>): [CopperItem, CopperItem, number][] {
   const before = (a: number, b: number) => items[a]!.bb[0] < items[b]!.bb[0] || (items[a]!.bb[0] === items[b]!.bb[0] && a < b);
-  const pour = (it: Item) => it.shape.kind === 'rect' && it.track;
-  const asks = (it: Item, pours: Set<string>) => (focus ? !!it.id && focus.has(it.id) : !pour(it) || pours.size > 1);
+  const pour = (it: CopperItem) => it.shape.kind === 'rect' && it.track;
+  const asks = (it: CopperItem, pours: Set<string>) => (focus ? !!it.id && focus.has(it.id) : !pour(it) || pours.size > 1);
   const hits: [number, number, number][] = [];
   const byLayer = new Map<CopperLayer, number[]>();
   items.forEach((it, i) => {
@@ -162,7 +162,7 @@ function closePairs(items: Item[], c: number, focus?: Set<string>): [Item, Item,
           if (asks(B, pours) && before(b, a)) continue;
           const [l, m] = before(a, b) ? [A, B] : [B, A];
           if (m.bb[0] > l.bb[2] + c || m.bb[1] > l.bb[3] + c || l.bb[1] > m.bb[3] + c) continue;
-          const gap = distance(l.shape, m.shape);
+          const gap = shapeGap(l.shape, m.shape);
           if (gap < c - EPS) hits.push(before(a, b) ? [a, b, gap] : [b, a, gap]);
         }
       }
@@ -176,14 +176,14 @@ const padShape = (pad: BoardPad): Shape =>
   pad.shape === 'round' ? { kind: 'seg', ...padCapsule(pad) } : { kind: 'rect', x0: pad.x - pad.w / 2, y0: pad.y - pad.h / 2, x1: pad.x + pad.w / 2, y1: pad.y + pad.h / 2 };
 
 /** The gap between the copper of two pads (0 where they touch). */
-export const padGap = (a: BoardPad, b: BoardPad) => Math.max(0, distance(padShape(a), padShape(b)));
+export const padGap = (a: BoardPad, b: BoardPad) => Math.max(0, shapeGap(padShape(a), padShape(b)));
 
 function centre(s: Shape) {
   return s.kind === 'seg' ? { x: (s.ax + s.bx) / 2, y: (s.ay + s.by) / 2 } : { x: (s.x0 + s.x1) / 2, y: (s.y0 + s.y1) / 2 };
 }
 
 /** Gap between two shapes (negative/zero when they touch). */
-function distance(a: Shape, b: Shape): number {
+export function shapeGap(a: Shape, b: Shape): number {
   if (a.kind === 'seg' && b.kind === 'seg') return segSegDist(a.ax, a.ay, a.bx, a.by, b.ax, b.ay, b.bx, b.by) - a.r - b.r;
   if (a.kind === 'rect' && b.kind === 'rect') {
     const dx = Math.max(a.x0 - b.x1, b.x0 - a.x1, 0);

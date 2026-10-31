@@ -19,7 +19,16 @@ and every pull request of a release are on its [GitHub release](https://github.c
 - **A wire no longer stays hidden behind a part**: put a part down on a wire, by dragging it or through the agent, and the wire goes round it. Only the stretch behind the part moves, and what it connects stays connected. Wires already behind a part come out when the drawing opens. One that cannot get round, because a pin of its own lies under the part, stays until you move the part off it.
 - **A wire no longer turns into labels by running over a pin** of a part drawn off the wire's grid: it now goes round that pin.
 - **Move a power symbol**: drag a rail or ground symbol to another spot on its page. It stands there on a wire from the pin or wire it stood on, still pointing its own way, so you can clear it off a wire or a name. A click still selects its net. A spot on a part or on another net is refused. The agent can do the same (`move_supply`).
+- **Editing a big schematic is faster still**: on a design of 120 parts, a symbol dragged is redrawn in about two thirds of the time, and **R** and **F** in about half.
 - **Label or wire, per net**: select a net, and its panel has a **label** row. *label · no wires* puts a label or power symbol at every pin and takes the wires away. *no label · wires* joins the pins by wires, keeping a label only where no wire can go (another page or sheet, no clear path), and a power net keeps one symbol. *automatic* draws the net afresh, wired where that is clean. The choice holds when parts move or a block is redrawn, and the agent keeps to it. As with any hand edit, the sheet then stays as drawn instead of being redrawn after every change.
+
+### Layout
+
+- **A part dragged is settled in a third of the time**: the board is ready again about half a second after the drop on a design of 120 parts with drawn copper, where it took a second and a half.
+- **A click selects, whatever the zoom**: a hand that wobbled by one pixel on a click could move the part and add a step to undo when the board was zoomed out. Now a press only becomes a drag after a few pixels, as on the schematic.
+- **⌘R reloads the page again** with a part selected, where it turned the part; **⌘L** no longer locks it either.
+- **A drag that is refused goes back at once**, where it stayed where it was dropped for five seconds. The same for a silkscreen graphic and a panel's tab.
+- **The errors and warnings in the header count the board's checks too**, once the board is laid. A click there opens the list they are in.
 
 ### Coding agents
 

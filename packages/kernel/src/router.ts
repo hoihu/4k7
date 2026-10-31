@@ -403,7 +403,7 @@ function connections(pads: BoardPad[]): Conn[] {
  * The 4-connected islands of the cells that are set, numbered as a scan from the top left meets
  * them, and their sizes. By runs along the rows, joined from row to row.
  */
-function islandsOf(ok: Uint8Array, W: number, H: number): { island: Int32Array; sizes: number[] } {
+export function islandsOf(ok: Uint8Array, W: number, H: number): { island: Int32Array; sizes: number[] } {
   const island = new Int32Array(W * H).fill(-1);
   const runs: number[] = []; // start cell and end cell (past it) of each run
   const parent: number[] = [];
@@ -431,9 +431,7 @@ function islandsOf(ok: Uint8Array, W: number, H: number): { island: Int32Array; 
       // the runs above that it touches
       while (a < first && runs[2 * a + 1]! - (row - W) <= start) a++;
       for (let b = a; b < first && runs[2 * b]! - (row - W) < i; b++) {
-        // (the lower run number stays the root: the one a scan meets first)
-        const [x, y] = [find(b), find(r)];
-        if (x !== y) parent[Math.max(x, y)] = Math.min(x, y);
+        parent[find(r)] = find(b);
       }
     }
     above = first;
