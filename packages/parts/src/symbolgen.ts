@@ -36,6 +36,8 @@ export interface SymbolPin {
   side: PinSide;
   showName: boolean;
   showNumber: boolean;
+  /** Its name runs along the pin, into the body (a connector's, on top or at the bottom: its pins stay close). */
+  nameAlong?: boolean;
 }
 
 export interface SymbolDef {
@@ -579,21 +581,28 @@ function slotsFor(card: PartCard, first: string[], mirror: boolean, unit?: numbe
 function box(card: PartCard, first: string[], mirror: boolean, unit?: number): SymbolDef {
   const sides = slotsFor(card, first, mirror, unit);
   const isConn = card.category === 'connector';
-  const showNames = !isConn;
-  const labelLen = (slots: Slot[]) => (showNames ? Math.max(0, ...slots.map((s) => (s ? s[0]!.name.length : 0))) : 0);
+  // a connector's pins are often only numbered: a name that says no more than the number is left out, as is a lone pin's (a test point's)
+  const named = (p: PartPin) => !isConn || (card.pins.length > 1 && p.name !== p.number);
+  const labelLen = (slots: Slot[]) => Math.max(0, ...slots.map((s) => (s && named(s[0]!) ? s[0]!.name.length : 0)));
+  // on top and at the bottom a connector keeps its close pitch: the names run along the pins, into the body, beside the names of its other pins
+  const along = (slots: Slot[]) => (isConn && labelLen(slots) ? labelLen(slots) * CHAR_W + 30 : 0);
+  const [alongTop, alongBottom] = [along(sides.top), along(sides.bottom)];
+  const beside = (slots: Slot[]) => (alongTop + alongBottom && labelLen(slots) ? ceilGrid(labelLen(slots) * CHAR_W + 50) : 0);
+  const [besideLeft, besideRight] = [beside(sides.left), beside(sides.right)];
 
   const topPad = sides.top.length ? 200 : 100;
   const botPad = sides.bottom.length ? 200 : 100;
   const rows = Math.max(sides.left.length, sides.right.length, 1);
-  const h = topPad + (rows - 1) * GRID + botPad;
+  const h = Math.max(topPad + (rows - 1) * GRID + botPad, ceilGrid(alongTop + alongBottom));
 
-  const tbLabel = Math.max(labelLen(sides.top), labelLen(sides.bottom));
+  const tbLabel = isConn ? 0 : Math.max(labelLen(sides.top), labelLen(sides.bottom));
   const tbPitch = Math.max(GRID, ceilGrid(tbLabel * CHAR_W + 60));
   const tbCount = Math.max(sides.top.length, sides.bottom.length);
   const wSides = ceilGrid((labelLen(sides.left) + labelLen(sides.right)) * CHAR_W + 160);
   // generated (MCU) layouts only need the bottom stacks to fit; hand-made cards keep their spacing
   const tbWidth = card.symbolLayout || card.units?.length ? tbCount * tbPitch + GRID : (tbCount + 1) * tbPitch;
-  const w = Math.max(isConn ? 200 : 400, wSides, tbWidth);
+  const wBeside = besideLeft + besideRight ? (besideLeft || GRID) + (tbCount - 1) * GRID + (besideRight || GRID) : 0;
+  const w = Math.max(isConn ? 200 : 400, wSides, tbWidth, wBeside);
 
   const prims: Prim[] = [{ t: 'rect', x: 0, y: 0, w, h, fill: true }];
   const pins: SymbolPin[] = [];
@@ -602,13 +611,13 @@ function box(card: PartCard, first: string[], mirror: boolean, unit?: number): S
     prims.push({ t: 'line', x1: x, y1: y, x2: bx, y2: by });
     // stacked pins share the position; only the first shows its name (numbers would collide)
     slot.forEach((p, i) =>
-      pins.push({ number: p.number, name: p.name, x, y, side, showName: showNames && i === 0, showNumber: slot.length === 1 }),
+      pins.push({ number: p.number, name: p.name, x, y, side, showName: named(p) && i === 0, showNumber: slot.length === 1, ...(isConn && named(p) && (side === 'top' || side === 'bottom') ? { nameAlong: true } : {}) }),
     );
   };
 
   sides.left.forEach((slot, i) => add(slot, 'left', -PIN_LEN, topPad + i * GRID, 0, topPad + i * GRID));
   sides.right.forEach((slot, i) => add(slot, 'right', w + PIN_LEN, topPad + i * GRID, w, topPad + i * GRID));
-  const tbStart = (n: number) => ceilGrid((w - (n - 1) * tbPitch) / 2 - GRID / 2);
+  const tbStart = (n: number) => (wBeside ? besideLeft || GRID : ceilGrid((w - (n - 1) * tbPitch) / 2 - GRID / 2));
   sides.top.forEach((slot, i) => {
     const x = tbStart(sides.top.length) + i * tbPitch;
     add(slot, 'top', x, -PIN_LEN, x, 0);

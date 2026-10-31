@@ -623,6 +623,15 @@ bends, crossings, running through parts or text. That is the largest piece of ne
      (`remakeSymbols`) and the sync cuts back wires to pins that moved, so those connections show as
      labels. Like `set_footprint`, a committed custom layout goes back to the library part
      (`adoptParts` in the web app), so later designs draw the part the same way.
+   - *Connector pin names, built 2026-10-31.* A connector drew numbers only, whatever its pins were
+     called, so an imported USB-C receptacle said nothing about them. It now shows a name that says
+     more than the number, as an IC does (`box` in `symbolgen.ts`; a header's "1", "2" and a lone
+     pin's name stay out). On top and at the bottom the close pitch stays: the names run along the
+     pins (`nameAlong`, as other schematic programs draw them) and those pins stand beside the names
+     on the sides. On a stored drawing the box keeps its corner on the pins' side (`current`), so
+     the side pins do not move, and `followPins` carries what hangs only on the pins that moved
+     aside, also when the connector is mirrored later; a wire that also reaches another part is cut
+     back, so that connection shows as a label.
 
 The first plan, steps 1–3 built 2026-10-12:
 

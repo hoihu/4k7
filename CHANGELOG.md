@@ -7,6 +7,7 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ### Schematic
 
+- **A connector shows its pins' names**: an imported connector such as a USB-C receptacle now draws each pin's name in its symbol, next to the number, as an IC does. A plain numbered header or a single test point stays as it was. Names on the top or bottom run along the pins, and those pins move aside to make room; in a drawing you already have, the wires that hang only on those pins go with them, so a bar joining the grounds stays one bar.
 - **A part's name and value keep off the wires**: where a sheet is drawn by the layout they now step aside by themselves when they would run into a wire, a part or a label, going side by side where a stack does not fit between two wires. **Text stays readable** now reports names and values too, so a drawing that has this shows it in the list; on a sheet you or the agent arranged nothing moves until you ask.
 - **Drag a name or value to move it**: only that text moves, in steps of 25 mils, and with **Shift** its partner goes along. A click on it still selects the part.
 - **The agent can fine-tune them**: `place_text` puts a part's name and value on any side, stacked or side by side, at exact spots, or with `auto` moves only what runs into something. It does this as the last step on a sheet it arranged, and it leaves the text you dragged alone.

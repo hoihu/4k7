@@ -585,7 +585,7 @@
           {@const along = (s.rotated === 90 || s.rotated === 270) && (p.side === 'top' || p.side === 'bottom')}
           {@const inward = p.side === 'top' ? 1 : -1}
           {#if p.showName}
-            {#if along}<text class="pin-n" transform="rotate(-90 {p.x + 25} {p.y + inward * 230})" x={p.x + 25} y={p.y + inward * 230} text-anchor={p.side === 'top' ? 'end' : 'start'}>{p.name}</text>
+            {#if along || (p.nameAlong && (p.side === 'top' || p.side === 'bottom'))}<text class="pin-n" transform="rotate(-90 {p.x + 25} {p.y + inward * 230})" x={p.x + 25} y={p.y + inward * 230} text-anchor={p.side === 'top' ? 'end' : 'start'}>{p.name}</text>
             {:else if p.side === 'left'}<text class="pin-n" x={p.x + 230} y={p.y + 25}>{p.name}</text>
             {:else if p.side === 'right'}<text class="pin-n" x={p.x - 230} y={p.y + 25} text-anchor="end">{p.name}</text>
             {:else if p.side === 'top'}<text class="pin-n" x={p.x} y={p.y + 300} text-anchor="middle">{p.name}</text>

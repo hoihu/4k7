@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PartCard, PartPin, Prim } from '@4k7/schema';
-import { coreOf, diodeKind, draftToCard, getBuiltinPart, isBoxSymbol, seriesPaths, symbolFor, symbolFromSpec, textOffset, turnsOver } from '../src/index.ts';
+import { coreOf, diodeKind, draftToCard, getBuiltinPart, isBoxSymbol, seriesPaths, symbolFor, symbolFromSpec, textOffset, turnsOver, type SymbolDef, type SymbolPin } from '../src/index.ts';
 
 const pin = (number: string, name: string, type: PartPin['type'] = 'passive', description?: string): PartPin => ({ number, name, type, ...(description ? { description } : {}) });
 const card = (over: Partial<PartCard> & Pick<PartCard, 'category' | 'pins'>): PartCard => ({
@@ -15,6 +15,109 @@ const generic = (id: string) => getBuiltinPart(id)!;
 const lines = (prims: Prim[]) => prims.filter((p): p is Extract<Prim, { t: 'line' }> => p.t === 'line');
 const solids = (prims: Prim[]) => prims.filter((p) => p.t === 'poly' && p.closed && p.fill);
 const at = (def: ReturnType<typeof symbolFor>, name: string) => def.pins.filter((p) => p.name === name).map((p) => `${p.x},${p.y},${p.side}`);
+
+describe('connectors', () => {
+  // as an import lays it out: the supply first on the left, then the signals, the grounds along the bottom
+  const usbc = card({
+    category: 'connector',
+    refPrefix: 'J',
+    pins: [pin('1', 'GND_A1', 'pwr_in'), pin('2', 'GND_B12', 'pwr_in'), pin('3', 'VBUS_A4', 'pwr_in'), pin('5', 'CC1_A5', 'bidir'), pin('6', 'SBU2_B8', 'bidir'), pin('15', 'GND_A12', 'pwr_in'), pin('16', 'GND_B1', 'pwr_in'), pin('17', 'SHELL')],
+    symbolLayout: { left: [['3'], null, ['5'], ['6'], ['17']], right: [], top: [], bottom: [['1'], ['15'], ['16'], ['2']] },
+  });
+  const numbered = (c: PartCard): PartCard => ({ ...c, pins: c.pins.map((p) => ({ ...p, name: p.number })) });
+  const CH = 42; // what a character of pin text takes at its font size
+  /** Where a pin's name stands inside the body, as the canvas draws it. */
+  const nameBox = (p: SymbolPin) => {
+    const len = p.name.length * CH;
+    if (p.nameAlong) return p.side === 'bottom' ? { x0: p.x - 30, x1: p.x + 30, y0: p.y - 230 - len, y1: p.y - 230 } : { x0: p.x - 30, x1: p.x + 30, y0: p.y + 230, y1: p.y + 230 + len };
+    return p.side === 'left' ? { x0: p.x + 230, x1: p.x + 230 + len, y0: p.y - 30, y1: p.y + 30 } : { x0: p.x - 230 - len, x1: p.x - 230, y0: p.y - 30, y1: p.y + 30 };
+  };
+  const clashes = (def: SymbolDef) => {
+    const boxes = def.pins.filter((p) => p.showName).map((p) => [p.name, nameBox(p)] as const);
+    const body = def.prims[0] as Extract<Prim, { t: 'rect' }>;
+    const out = boxes.filter(([, b]) => b.x0 < body.x || b.x1 > body.x + body.w || b.y0 < body.y || b.y1 > body.y + body.h).map(([n]) => `${n} leaves the body`);
+    boxes.forEach(([a, p], i) => boxes.slice(i + 1).forEach(([b, q]) => {
+      if (p.x0 < q.x1 && q.x0 < p.x1 && p.y0 < q.y1 && q.y0 < p.y1) out.push(`${a} on ${b}`);
+    }));
+    return out;
+  };
+
+  it('shows the names of its pins next to their numbers, as an IC does', () => {
+    const def = symbolFor(usbc);
+    expect(def.pins.filter((p) => p.showName).map((p) => p.name).sort()).toEqual(usbc.pins.map((p) => p.name).sort());
+    expect(def.pins.every((p) => p.showNumber)).toBe(true);
+  });
+
+  it('a pin only numbered shows nothing more, so a header stays exactly as it was; a mix shows the real names', () => {
+    for (const n of [2, 3, 4, 5, 6, 8, 10]) {
+      const def = symbolFor(generic(`generic:CONN_1x${n}`));
+      expect(def.pins.some((p) => p.showName)).toBe(false);
+      expect((def.prims[0] as Extract<Prim, { t: 'rect' }>).w).toBe(200);
+      expect(def.pins.every((p) => !p.nameAlong)).toBe(true);
+    }
+    const mixed = symbolFor(card({ category: 'connector', pins: [pin('1', '1'), pin('2', 'SHIELD')] }));
+    expect(mixed.pins.filter((p) => p.showName).map((p) => p.name)).toEqual(['SHIELD']);
+  });
+
+  it('a lone pin (a test point) shows no name: there is no other to tell it from', () => {
+    const tp = symbolFor(card({ category: 'connector', pins: [pin('1', 'TP')] }));
+    expect(tp.pins[0]!.showName).toBe(false);
+    expect((tp.prims[0] as Extract<Prim, { t: 'rect' }>).w).toBe(200);
+  });
+
+  it('other parts are drawn as they were', () => {
+    const ic = card({ category: 'ic', pins: [pin('1', 'VIN', 'pwr_in'), pin('2', 'GND', 'pwr_in'), pin('3', 'EN', 'in'), pin('4', 'OUT', 'out')] });
+    const def = symbolFor(ic);
+    expect(def.pins.every((p) => p.showName && !p.nameAlong)).toBe(true);
+    // the wide pitch that fits a name across the pin
+    expect((def.prims[0] as Extract<Prim, { t: 'rect' }>).w).toBe(600);
+  });
+
+  it('names at the bottom run along their pins, which keep their close pitch, beside the names on the left', () => {
+    const def = symbolFor(usbc);
+    const bottom = def.pins.filter((p) => p.side === 'bottom');
+    expect(bottom.every((p) => p.nameAlong)).toBe(true);
+    expect(bottom[1]!.x - bottom[0]!.x).toBe(100);
+    expect(def.pins.filter((p) => p.side === 'left').some((p) => p.nameAlong)).toBe(false);
+    expect(clashes(def)).toEqual([]);
+  });
+
+  it('mirrored, the bottom pins stand clear of the names on the right', () => {
+    expect(clashes(symbolFor(usbc, false, { mirror: true }))).toEqual([]);
+  });
+
+  it('with names on both sides, the pins at the bottom fit between them', () => {
+    const both = card({
+      category: 'connector',
+      pins: [pin('1', 'SIGNAL_LEFT'), pin('2', 'SIGNAL_RIGHT'), pin('3', 'GND_A1'), pin('4', 'GND_B1')],
+      symbolLayout: { left: [['1']], right: [['2']], top: [], bottom: [['3'], ['4']] },
+    });
+    expect(clashes(symbolFor(both))).toEqual([]);
+  });
+
+  it('a short connector gets the depth its names need, also with pins on top', () => {
+    const short = card({
+      category: 'connector',
+      pins: [pin('1', 'SIGNAL'), pin('2', 'GND_CHASSIS'), pin('3', 'VBUS_CONTACT')],
+      symbolLayout: { left: [['1']], right: [], top: [['3']], bottom: [['2']] },
+    });
+    const def = symbolFor(short);
+    expect(def.pins.find((p) => p.number === '3')!.nameAlong).toBe(true);
+    expect(clashes(def)).toEqual([]);
+  });
+
+  it('the pins on the sides stand where they did without names, so existing wires still end on them', () => {
+    const was = symbolFor(numbered(usbc)).pins.filter((p) => p.side === 'left');
+    const now = symbolFor(usbc).pins.filter((p) => p.side === 'left');
+    expect(now.map((p) => [p.number, p.x, p.y])).toEqual(was.map((p) => [p.number, p.x, p.y]));
+  });
+
+  it('turned, the name of a pin that comes to lie on a side reads across as usual', () => {
+    const def = symbolFor(usbc, false, { rotated: 90 });
+    for (const p of def.pins.filter((q) => q.number === '1' || q.number === '2')) expect(p.side === 'left' || p.side === 'right').toBe(true);
+    expect(def.pins.find((p) => p.number === '3')!.side).toBe('top');
+  });
+});
 
 describe('capacitors', () => {
   it('draws a polarised capacitor with a hollow plus plate, a solid minus plate and a + by the plus pin', () => {
