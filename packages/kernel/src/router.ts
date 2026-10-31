@@ -13,6 +13,7 @@
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
 import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, keepoutDistance, padCapsule, roundPadDist, type PlaneStyle, type RoutedLine, type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
+import { Heap } from './heap.ts';
 import { keptCopper, type KeptCopper } from './keep.ts';
 import { routeLines } from './pairroute.ts';
 import { segDist, segSegDist } from './segments.ts';
@@ -2903,61 +2904,4 @@ function simplify(pts: number[]): number[] {
     out.push(x, y);
   }
   return out;
-}
-
-/** Binary min-heap of (state, priority), in typed arrays that grow as needed. */
-class Heap {
-  private s = new Int32Array(1024);
-  private p = new Float64Array(1024);
-  size = 0;
-  push(state: number, prio: number) {
-    if (this.size === this.s.length) {
-      const s = new Int32Array(this.s.length * 2);
-      s.set(this.s);
-      this.s = s;
-      const p = new Float64Array(this.p.length * 2);
-      p.set(this.p);
-      this.p = p;
-    }
-    const s = this.s;
-    const p = this.p;
-    // move the hole up rather than swapping entries
-    let i = this.size++;
-    while (i > 0) {
-      const up = (i - 1) >> 1;
-      if (p[up]! <= prio) break;
-      s[i] = s[up]!;
-      p[i] = p[up]!;
-      i = up;
-    }
-    s[i] = state;
-    p[i] = prio;
-  }
-  /** Priority of the entry returned by the last pop(). */
-  lastPrio = 0;
-  pop(): number {
-    const s = this.s;
-    const p = this.p;
-    const top = s[0]!;
-    this.lastPrio = p[0]!;
-    const n = --this.size;
-    if (n > 0) {
-      // the last entry sinks from the top, the hole moving down
-      const ls = s[n]!;
-      const lp = p[n]!;
-      let i = 0;
-      for (;;) {
-        let c = 2 * i + 1;
-        if (c >= n) break;
-        if (c + 1 < n && p[c + 1]! < p[c]!) c++;
-        if (p[c]! >= lp) break;
-        s[i] = s[c]!;
-        p[i] = p[c]!;
-        i = c;
-      }
-      s[i] = ls;
-      p[i] = lp;
-    }
-    return top;
-  }
 }

@@ -6,7 +6,7 @@ import type { Component, Design, EditOp, LabelView, OptimizeScope, Rect, Schemat
 import { resolveUnitRef } from './apply.ts';
 import { RejectError, componentsSorted, natCmp, netMembers, reject } from './doc.ts';
 import { RETURN_LEG, textRect, tw } from './scene.ts';
-import { schematicView } from './drawing.ts';
+import { viewOf } from './drawing.ts';
 import { blockAssignment } from './layout.ts';
 import { textOverlaps } from './parttext.ts';
 
@@ -172,7 +172,7 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
       return;
     }
     case 'move_supply': {
-      const pg = schematicView(d).sheets.find((s) => s.id === sc.scope.sheet)?.pages.find((p) => p.number === op.page)?.rect;
+      const pg = viewOf(d).sheets.find((s) => s.id === sc.scope.sheet)?.pages.find((p) => p.number === op.page)?.rect;
       const r = sc.scope.rect;
       const inArea = (x: number, y: number) => !!pg && pg.x + x >= r.x && pg.x + x <= r.x + r.w && pg.y + y >= r.y && pg.y + y <= r.y + r.h;
       if (!inArea(op.x, op.y) || !inArea(op.to.x, op.to.y)) out('move_supply: the symbol and the spot it goes to must both be inside this area.');

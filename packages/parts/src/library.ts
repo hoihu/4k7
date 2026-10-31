@@ -339,14 +339,20 @@ export function mpnBase(mpn: string): string {
 }
 
 const userParts = new Map<string, PartCard>();
+let userPartsRevision = 0;
 
 export function registerUserParts(cards: PartCard[]): void {
   for (const c of cards) userParts.set(c.id, c);
+  userPartsRevision++;
 }
 
 export function unregisterUserPart(id: string): void {
   userParts.delete(id);
+  userPartsRevision++;
 }
+
+/** Bumped when the user's parts change: anything worked out from a card looked up here may differ. */
+export const partsRevision = () => userPartsRevision;
 
 export function listUserParts(): PartCard[] {
   return [...userParts.values()].sort((a, b) => a.id.localeCompare(b.id));

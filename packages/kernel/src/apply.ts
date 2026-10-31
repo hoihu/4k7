@@ -60,7 +60,7 @@ import {
   padHasPin,
   roundPadDist,
 } from '@4k7/schema';
-import { autoPlanes, dropOffset, padNet, placeBoard, storedPlacement } from './board.ts';
+import { autoPlanes, dropOffset, padNet, placedOf, storedPlacement } from './board.ts';
 import { routability } from './congestion.ts';
 import { underBody } from './drc.ts';
 import { polarityOf } from './marks.ts';
@@ -72,7 +72,7 @@ import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setC
 import { tuneLength } from './tune.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
 import { addKeepout, editKeepout, removeKeepout } from './keepout.ts';
-import { isDrawn, moveSymbol, ownSheet, redrawBlock, redrawParts, releaseSheet, remakeSymbols, schematicView, syncDrawing } from './drawing.ts';
+import { isDrawn, moveSymbol, ownSheet, redrawBlock, redrawParts, releaseSheet, remakeSymbols, syncDrawing, viewOf } from './drawing.ts';
 import { blockAssignment } from './layout.ts';
 import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
@@ -716,7 +716,7 @@ function editGraphic(d: Design, op: Extract<EditOp, { op: 'edit_graphic' }>): Op
   const changes: string[] = [];
   if (op.anchor && op.anchor !== (g.anchor ?? 'top_left')) {
     // keep its place unless a new x/y is given: re-measure the centre from the new anchor
-    const { w, h } = placedNow(d).outline;
+    const { w, h } = placedOf(d).outline;
     const at = (a: string) => [a.endsWith('left') ? 0 : a.endsWith('right') ? w : w / 2, a.startsWith('top') ? 0 : a.startsWith('bottom') ? h : h / 2];
     const [ox, oy] = at(g.anchor ?? 'top_left');
     const [nx, ny] = at(op.anchor);
@@ -844,7 +844,7 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
       const name = `${comp.refdes}.${pad!.number}`;
       if (!op.at) reject({ code: 'INVALID_OP', message: `add_vias kind "drop" needs at: each via's centre (mm), right beside ${name}, at least ${r3(size / 2 + b.rules.clearance)} mm off its edge (get_component gives the pad's position and size).` });
       // the spots against the board as it stands now: beside the pad, clear of it and of every other pad
-      const board = placedNow(d);
+      const board = placedOf(d);
       const part = board.parts.find((p) => p.componentId === comp.id);
       const here = part?.pads.find((p) => p.number === pad!.number);
       if (!part || !here) reject({ code: 'BOARD_INVALID', message: `${comp.refdes} is not on the board yet (propose_placement first).` });
@@ -938,16 +938,11 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
   return { op: 'add_vias', effect: `${group.id}: ${what}`, ids: ['board'] };
 }
 
-/** The board as placed now (for ops that record where parts are). */
-function placedNow(d: Design) {
-  return placeBoard(d, schematicView(d));
-}
-
 /** Store the current placement, so later layouts start from it. */
 function keepPlacement(d: Design) {
   const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
   d.board = b;
-  const now = placedNow(d);
+  const now = placedOf(d);
   b.placement = storedPlacement(now);
   if (!b.drawn) choicesWhereTheyStand(d, now); // (drawn copper: the placement is frozen, nothing is nudged)
 }
@@ -1005,7 +1000,7 @@ function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>, by:
   const card = cardOf(d, comp.part);
   const twoPin = !!card && isTwoPin(card);
   syncDrawing(d); // parts added earlier in this transaction are drawn first
-  const view = schematicView(d);
+  const view = viewOf(d);
   const sheet = view.sheets.find((s) => s.id === comp.sheet)!;
   const drawnTwoPin = twoPin || !!sheet.symbols.find((s) => s.componentId === comp.id && (unit === undefined || s.unit === unit))?.twoPin;
   if (op.orient && !drawnTwoPin) reject({ code: 'INVALID_OP', message: `orient is for two-pin parts; ${label} is drawn by its symbol: give it rotate (0, 90, 180 or 270 degrees clockwise from how it is usually drawn).` });
@@ -1106,7 +1101,7 @@ function placeBlock(d: Design, op: Extract<EditOp, { op: 'place_block' }>, by: '
     reject({ code: 'INVALID_OP', message: `place_block needs x and y (the centre of the block's frame, mils from the paper's top-left corner), or auto: true. design_query get_schematic shows the blocks, their frames and the pages.` });
   }
   syncDrawing(d); // parts added earlier in this transaction are drawn first
-  const view = schematicView(d);
+  const view = viewOf(d);
   // the sheets the block has parts on (the ones put with it included)
   const on = view.sheets.filter((s) => blockAssignment(d, s.id)?.blocks.some((b) => b.title === title));
   if (!on.length) reject({ code: 'INVALID_OP', message: `Block "${title}" has no parts drawn on any sheet.` });
@@ -1131,7 +1126,7 @@ function placeBlock(d: Design, op: Extract<EditOp, { op: 'place_block' }>, by: '
   if (isDrawn(d, sheet.id)) {
     const at = redrawBlock(d, sheet.id, title, page, x, y);
     // what it runs into: the agent's sheet stays as the agent puts it
-    const frames = schematicView(d).sheets.find((s) => s.id === sheet.id)?.blocks ?? [];
+    const frames = viewOf(d).sheets.find((s) => s.id === sheet.id)?.blocks ?? [];
     const mine = frames.find((b) => b.title === title);
     const into = mine ? frames.filter((b) => b !== mine && overlaps(b.rect, mine.rect)).map((b) => `"${b.title}"`) : [];
     const clash = at.under
@@ -1152,7 +1147,7 @@ function placeBlock(d: Design, op: Extract<EditOp, { op: 'place_block' }>, by: '
   d.ledger[id] = { id, kind: 'sch_block', key: title, sheet: sheet.id, page, x, y, domain: 'schematic', strength: 'soft', source: { type: by } };
   // where it ended up: a block that would lie on one placed before it moved aside, or flows with
   // the others when its page has no room
-  const now = schematicView(d).sheets.find((s) => s.id === sheet.id)!;
+  const now = viewOf(d).sheets.find((s) => s.id === sheet.id)!;
   const frame = now.blocks?.find((b) => b.title === title);
   if (!frame) return { op: 'place_block', effect: `block "${title}" placed on page ${first + page - 1} at (${x}, ${y}) mils`, ids: [id] };
   const c = { x: frame.rect.x + frame.rect.w / 2, y: frame.rect.y + frame.rect.h / 2 };
@@ -1182,7 +1177,7 @@ function place(d: Design, op: Extract<EditOp, { op: 'place' }>, by: 'user' | 'ag
   const comp = resolveComponent(d, op.ref);
   if (!d.board?.placement) keepPlacement(d); // start from what the user sees
   const flipped = op.side ? setSide(d, comp, op.side) : false;
-  const now = placedNow(d);
+  const now = placedOf(d);
   let rot: number | undefined = op.rot;
   let prevRel: string | undefined;
   let wasUsers = false;
@@ -1281,7 +1276,7 @@ function attach(d: Design, op: Extract<EditOp, { op: 'attach' }>, by: 'user' | '
     pin = { number: pins[0]!.pin.number, label: pinLabel(pins[0]!) };
   }
   if (!d.board?.placement) keepPlacement(d); // start from what the user sees
-  const before = placedNow(d).parts.find((p) => p.componentId === comp.id);
+  const before = placedOf(d).parts.find((p) => p.componentId === comp.id);
   for (const k of Object.values(d.ledger)) if (k.kind === 'belongs' && k.a === comp.id) delete d.ledger[k.id];
   const id = nextId(d, 'k');
   d.ledger[id] = { id, kind: 'belongs', a: comp.id, ...(to ? { b: to.id } : {}), ...(pin ? { key: pin.number } : {}), domain: 'placement', strength: 'soft', source: { type: by } };
@@ -1290,7 +1285,7 @@ function attach(d: Design, op: Extract<EditOp, { op: 'attach' }>, by: 'user' | '
   let kept = '';
   if (own && (madeBy(own) === 'user' || own.strength === 'hard')) {
     kept = own.strength === 'hard' ? ' (locked: it stays where it is)' : " (the user's placement: it stays where it is)";
-    const anchor = to && placedNow(d).parts.find((p) => p.componentId === to.id);
+    const anchor = to && placedOf(d).parts.find((p) => p.componentId === to.id);
     if (own.strength === 'soft' && before) {
       const r = (v: number) => Math.round(v * 1000) / 1000;
       if (anchor) {
@@ -1357,7 +1352,7 @@ export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_p
   delete b.placement;
   delete b.routed;
   d.board = b;
-  const now = placedNow(d);
+  const now = placedOf(d);
   b.placement = storedPlacement(now);
   // each choice where its part ended up (the board fitted round the arrangement may have moved it over)
   for (const k of choices) {
@@ -1384,7 +1379,7 @@ export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_p
  */
 export function refineSmallParts(d: Design, only?: Set<string>): { moved: RefineMove[]; before: BoardView['measures']; after: BoardView['measures'] } {
   if (!d.board?.placement) keepPlacement(d);
-  const b0 = placedNow(d);
+  const b0 = placedOf(d);
   const before = b0.measures;
   const movable = new Set([...refinable(b0)].filter((id) => !only || only.has(id)));
   const none = { moved: [], before, after: before };
@@ -1394,7 +1389,7 @@ export function refineSmallParts(d: Design, only?: Set<string>): { moved: Refine
   if (!r.moves.length) return none;
   const saved = structuredClone(d.board!.placement!);
   for (const mv of r.moves) d.board!.placement!.parts[mv.componentId] = { x: mv.x, y: mv.y, rot: mv.rot };
-  const b1 = placedNow(d);
+  const b1 = placedOf(d);
   const after = b1.measures;
   if (!(routability(after) < routability(before) - 0.05)) {
     d.board!.placement = saved;
@@ -1424,7 +1419,7 @@ function refineText(moves: RefineMove[]): string {
 /** refine_placement: the small parts refined, all of them or those given (parts) or near some (near). */
 function refineStep(d: Design, op: Extract<EditOp, { op: 'refine_placement' }>): OpResult {
   if (!d.board?.placement) keepPlacement(d);
-  const b = placedNow(d);
+  const b = placedOf(d);
   if (!b.parts.length) reject({ code: 'BOARD_INVALID', message: 'Nothing to refine: the board has no parts.' });
   let only: Set<string> | undefined;
   if (op.parts) only = new Set(op.parts.map((r) => resolveComponent(d, r).id));
@@ -1448,7 +1443,7 @@ function refineStep(d: Design, op: Extract<EditOp, { op: 'refine_placement' }>):
 /** The route step: route the board as placed now (the board view routes while this placement stays). */
 function routeStep(d: Design): OpResult {
   if (!d.board?.placement) keepPlacement(d);
-  const now = placedNow(d);
+  const now = placedOf(d);
   if (!now.parts.length) reject({ code: 'BOARD_INVALID', message: 'Nothing to route: the board has no parts.' });
   d.board!.routed = now.placementKey;
   // a routing the user stopped is routed again from the start
@@ -1798,7 +1793,7 @@ function setPaper(d: Design, op: Extract<EditOp, { op: 'set_paper' }>): OpResult
   if (op.size === DEFAULT_PAPER) delete d.paper;
   else d.paper = op.size;
   syncDrawing(d); // stored drawings: the pages take the new size
-  const pages = schematicView(d).sheets.reduce((n, s) => n + s.pages.length, 0);
+  const pages = viewOf(d).sheets.reduce((n, s) => n + s.pages.length, 0);
   return { op: 'set_paper', effect: `schematic paper: ${op.size} landscape (${PAPERS[op.size].mm.w} × ${PAPERS[op.size].mm.h} mm), ${pages} page${pages === 1 ? '' : 's'}`, ids: ['paper'] };
 }
 

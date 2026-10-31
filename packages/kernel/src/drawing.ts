@@ -9,6 +9,7 @@
  */
 import { DEFAULT_PAPER, PAGE, paperOf, type BlockView, type Component, type Design, type DrawnSymbol, type LabelView, type PageView, type PartCard, type PinView, type QuarterTurn, type Rect, type SchematicView, type SheetDrawing, type SheetView, type SymbolSpec, type SymbolView, type WireView } from '@4k7/schema';
 import { GRID, isTwoPin, specMirrors, symbolFor, symbolFromSpec, unitCount, uprightSymbol } from '@4k7/parts';
+import { drawingInputs, Memo } from './derive.ts';
 import { cardOf, componentsSorted, natCmp, nextId } from './doc.ts';
 import { PAGE_GAP, blockAssignment, drawnWith, evaluateConstraints, layoutSheetOf, pageName, pagesBBox, symbolKey } from './layout.ts';
 import { FRAME_PAD, frameAround, pieces } from './blocks.ts';
@@ -17,24 +18,15 @@ import { addJunctions, crowding, deco, labelForPin, labelRect, leadEnd, makeSymb
 
 /* ---------------------------------- view ----------------------------------- */
 
-/** The schematic as the canvas shows it: each sheet's stored drawing, or the auto-layout's. */
-export function schematicView(d: Design): SchematicView {
-  const sheets = Object.values(d.sheets).sort((a, b) => a.order - b.order);
-  const views = sheets.map((s) => {
-    const sd = d.drawing?.[s.id];
-    return sd ? renderSheet(d, s.id, s.name, sd) : layoutSheetOf(d, s.id);
-  });
-  // pages are numbered through the whole design, as on a printout
-  let n = 0;
-  for (const v of views) for (const p of v.pages) p.number = ++n;
-  const { status, why } = evaluateConstraints(d, views);
-  for (const k of Object.values(d.ledger)) {
-    if (status[k.id] !== 'violated' || !['left_of', 'right_of', 'above', 'below'].includes(k.kind)) continue;
-    const sheet = d.components[k.a ?? '']?.sheet;
-    if (sheet && d.drawing?.[sheet]) why[k.id] = `sheet ${d.sheets[sheet]!.name} is drawn as arranged, and an order only guides the auto-layout: move the part with place_symbol, or let the layout redraw the sheet with auto_draw`;
-  }
-  // what the app's R and F keys and get_schematic need to know: a two-pin part turns, and which way round each symbol is
-  for (const v of views) {
+/** Sheets as drawn, by what they are drawn from: an edit changes one sheet or none. */
+const drawnSheets = new Memo<SheetView>('sheet', 24);
+
+/** A sheet as drawn: its stored drawing, or the auto-layout's. Pages numbered within the sheet. */
+function sheetOf(d: Design, s: Design['sheets'][string], inputs: string): SheetView {
+  const sd = d.drawing?.[s.id];
+  return drawnSheets.get(`${inputs}|${s.id}|${sd ? JSON.stringify(sd) : ''}`, () => {
+    const v = sd ? renderSheet(d, s.id, s.name, sd) : layoutSheetOf(d, s.id);
+    // what the app's R and F keys and get_schematic need to know: a two-pin part turns, and which way round each symbol is
     for (const sym of v.symbols) {
       const card = cardOf(d, d.components[sym.componentId]?.part ?? '');
       const spec = symbolMaking(sym)?.spec;
@@ -42,6 +34,24 @@ export function schematicView(d: Design): SchematicView {
       if (card && spec && isMirrored(card, spec, sym.rotation)) sym.mirrored = true;
       if (spec?.rotated) sym.rotated = spec.rotated;
     }
+    return v;
+  });
+}
+
+/** The schematic as the canvas shows it. Shared with whoever else asks (derive.ts): read it, and take a copy to write into it. */
+export function viewOf(d: Design): SchematicView {
+  const inputs = drawingInputs(d);
+  // pages are numbered through the whole design, as on a printout
+  let n = 0;
+  const views = Object.values(d.sheets)
+    .sort((a, b) => a.order - b.order)
+    .map((s) => sheetOf(d, s, inputs))
+    .map((v) => ({ ...v, pages: v.pages.map((p) => ({ ...p, number: ++n })) }));
+  const { status, why } = evaluateConstraints(d, views);
+  for (const k of Object.values(d.ledger)) {
+    if (status[k.id] !== 'violated' || !['left_of', 'right_of', 'above', 'below'].includes(k.kind)) continue;
+    const sheet = d.components[k.a ?? '']?.sheet;
+    if (sheet && d.drawing?.[sheet]) why[k.id] = `sheet ${d.sheets[sheet]!.name} is drawn as arranged, and an order only guides the auto-layout: move the part with place_symbol, or let the layout redraw the sheet with auto_draw`;
   }
   return { paper: d.paper ?? DEFAULT_PAPER, sheets: views, constraintStatus: status, ...(Object.keys(why).length ? { constraintWhy: why } : {}) };
 }
@@ -416,7 +426,29 @@ export function syncDrawing(d: Design): void {
   if (!Object.keys(d.drawing).length) delete d.drawing;
 }
 
+/**
+ * What a sync makes of a sheet, by what the sheet is drawn from: its text, or null when it stays as
+ * it is. An edit asks for a sync many times, mostly with nothing to do. (Not "what a sync left is in
+ * step": a second sync can still straighten a wire the first left with a jog.)
+ */
+const synced = new Memo<string | false>('synced sheet', 16);
+
+/** Keep a stored drawing in step with the netlist. In place: callers hold on to the sheet's drawing. */
 export function syncSheet(d: Design, sheetId: string): void {
+  const sd = d.drawing![sheetId]!;
+  const before = JSON.stringify(sd);
+  const key = `${drawingInputs(d)}|${sheetId}|${before}`;
+  let worked = false;
+  const after = synced.get(key, () => {
+    worked = true;
+    bringInStep(d, sheetId);
+    const text = JSON.stringify(sd);
+    return text !== before && text;
+  });
+  if (!worked && after) Object.assign(sd, JSON.parse(after));
+}
+
+function bringInStep(d: Design, sheetId: string): void {
   const sd = d.drawing![sheetId]!;
   const comps = componentsSorted(d).filter((c) => c.sheet === sheetId && cardOf(d, c.part));
   // symbols: a component that is gone, on another sheet, drawn from another card or with other units leaves

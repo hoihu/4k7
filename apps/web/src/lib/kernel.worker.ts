@@ -38,7 +38,7 @@ const methods = {
   /** Copper the board worker routed, kept with the design (true: the committed design took it, save it). */
   keepCopper: (copper: StoredCopper) => kernel.keepCopper(copper),
   /** The working copy's part cards (the design's own copies, e.g. with a footprint the agent gave). */
-  designParts: () => kernel.draftDesign().parts,
+  designParts: () => kernel.draftParts(),
   /** Imported parts, so the agent can find and place them. */
   registerParts: (cards: PartCard[]) => registerUserParts(cards),
   unregisterPart: (id: string) => unregisterUserPart(id),

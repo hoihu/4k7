@@ -1198,7 +1198,7 @@ describe('vias placed on purpose (add_vias)', () => {
     expect(r.status === 'ok' && r.results[1]!.effect).toContain('GND pour on F.Cu, under U1, C1, C3; it no longer pours the whole layer');
     const b = routed(k);
     const top = b.planes.find((p) => p.layer === 'F.Cu')!;
-    expect(top.under?.sort()).toEqual(['C1', 'C3', 'U1']);
+    expect([...top.under!].sort()).toEqual(['C1', 'C3', 'U1']);
     const zone = b.zones.find((z) => z.layer === 'F.Cu')!;
     expect(zone.shape!.outline).toEqual(top.area);
     expect(top.area![2] - top.area![0]).toBeLessThan(b.outline.w);

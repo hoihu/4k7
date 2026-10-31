@@ -567,20 +567,110 @@ export function outlinePolygon(w: number, h: number, r: number): number[] {
   return roundedBox(w / 2, h / 2, w / 2, h / 2, Math.min(r, Math.min(w, h) / 2), 0, 10);
 }
 
+/** The distance from a point to edge i of a polygon (from corner i - 1 to corner i). */
+function edgeDistance(poly: number[], n: number, i: number, px: number, py: number): number {
+  const j = i === 0 ? n - 1 : i - 1;
+  const [xi, yi, xj, yj] = [poly[2 * i]!, poly[2 * i + 1]!, poly[2 * j]!, poly[2 * j + 1]!];
+  const dx = xj - xi;
+  const dy = yj - yi;
+  const l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((px - xi) * dx + (py - yi) * dy) / l2)) : 0;
+  return Math.hypot(px - (xi + t * dx), py - (yi + t * dy));
+}
+
+/** Whether edge i of a polygon crosses the ray from a point to the right. */
+function rayCrosses(poly: number[], n: number, i: number, px: number, py: number): boolean {
+  const j = i === 0 ? n - 1 : i - 1;
+  const [xi, yi, xj, yj] = [poly[2 * i]!, poly[2 * i + 1]!, poly[2 * j]!, poly[2 * j + 1]!];
+  return yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+}
+
+/** Polygons with fewer corners than this are searched edge by edge. */
+const TREE_FROM = 32;
+/** What a box may be off by when a branch is passed over (rounding, not geometry), mm. */
+const TREE_SLACK = 1e-9;
+
+/**
+ * A big polygon's edges as a binary tree of boxes: an edge's neighbours in the list are its
+ * neighbours on the outline, so the boxes are tight. Four numbers per node (x0, y0, x1, y1); the
+ * children of node k are 2k + 1 and 2k + 2, halving the range of edges.
+ */
+const polygonTrees = new WeakMap<number[], Float64Array>();
+
+function polygonTree(poly: number[]): Float64Array {
+  let tree = polygonTrees.get(poly);
+  if (tree) return tree;
+  const n = poly.length / 2;
+  const boxes = new Float64Array(16 * n); // (a range halved until it is one edge: fewer than 4n nodes)
+  const fill = (k: number, lo: number, hi: number): void => {
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    if (hi - lo === 1) {
+      const j = lo === 0 ? n - 1 : lo - 1;
+      x0 = Math.min(poly[2 * lo]!, poly[2 * j]!);
+      x1 = Math.max(poly[2 * lo]!, poly[2 * j]!);
+      y0 = Math.min(poly[2 * lo + 1]!, poly[2 * j + 1]!);
+      y1 = Math.max(poly[2 * lo + 1]!, poly[2 * j + 1]!);
+    } else {
+      const mid = (lo + hi) >> 1;
+      fill(2 * k + 1, lo, mid);
+      fill(2 * k + 2, mid, hi);
+      for (const c of [2 * k + 1, 2 * k + 2]) {
+        x0 = Math.min(x0, boxes[4 * c]!);
+        y0 = Math.min(y0, boxes[4 * c + 1]!);
+        x1 = Math.max(x1, boxes[4 * c + 2]!);
+        y1 = Math.max(y1, boxes[4 * c + 3]!);
+      }
+    }
+    boxes.set([x0, y0, x1, y1], 4 * k);
+  };
+  fill(0, 0, n);
+  polygonTrees.set(poly, (tree = boxes));
+  return tree;
+}
+
 /** Signed distance from a point to a polygon's edge: positive inside, negative outside. */
 export function insidePolygon(poly: number[], px: number, py: number): number {
+  const n = poly.length / 2;
   let inside = false;
   let best = Infinity;
-  const n = poly.length / 2;
-  for (let i = 0, j = n - 1; i < n; j = i++) {
-    const [xi, yi, xj, yj] = [poly[2 * i]!, poly[2 * i + 1]!, poly[2 * j]!, poly[2 * j + 1]!];
-    if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
-    const dx = xj - xi;
-    const dy = yj - yi;
-    const l2 = dx * dx + dy * dy;
-    const t = l2 ? Math.max(0, Math.min(1, ((px - xi) * dx + (py - yi) * dy) / l2)) : 0;
-    best = Math.min(best, Math.hypot(px - (xi + t * dx), py - (yi + t * dy)));
+  if (n < TREE_FROM) {
+    for (let i = 0; i < n; i++) {
+      if (rayCrosses(poly, n, i, px, py)) inside = !inside;
+      best = Math.min(best, edgeDistance(poly, n, i, px, py));
+    }
+    return inside ? best : -best;
   }
+  // a free-form board's outline has hundreds of corners and is asked about thousands of points
+  const tree = polygonTree(poly);
+  const away = (k: number) => Math.hypot(Math.max(tree[4 * k]! - px, 0, px - tree[4 * k + 2]!), Math.max(tree[4 * k + 1]! - py, 0, py - tree[4 * k + 3]!));
+  const nearest = (k: number, lo: number, hi: number): void => {
+    if (hi - lo === 1) {
+      best = Math.min(best, edgeDistance(poly, n, lo, px, py));
+      return;
+    }
+    const mid = (lo + hi) >> 1;
+    const [a, b] = [away(2 * k + 1), away(2 * k + 2)];
+    // the nearer side first: then the other is mostly passed over
+    if (a <= b) {
+      if (a - TREE_SLACK <= best) nearest(2 * k + 1, lo, mid);
+      if (b - TREE_SLACK <= best) nearest(2 * k + 2, mid, hi);
+    } else {
+      if (b - TREE_SLACK <= best) nearest(2 * k + 2, mid, hi);
+      if (a - TREE_SLACK <= best) nearest(2 * k + 1, lo, mid);
+    }
+  };
+  const crossings = (k: number, lo: number, hi: number): void => {
+    if (py < tree[4 * k + 1]! || py > tree[4 * k + 3]! || px > tree[4 * k + 2]! + TREE_SLACK) return;
+    if (hi - lo === 1) {
+      if (rayCrosses(poly, n, lo, px, py)) inside = !inside;
+      return;
+    }
+    const mid = (lo + hi) >> 1;
+    crossings(2 * k + 1, lo, mid);
+    crossings(2 * k + 2, mid, hi);
+  };
+  crossings(0, 0, n);
+  nearest(0, 0, n);
   return inside ? best : -best;
 }
 

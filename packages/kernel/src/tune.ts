@@ -6,8 +6,9 @@
  * further off), clear of all other copper. IMP.SKEW and IMP.LENGTH are the checks that hold the result.
  */
 import type { Design, DrawnTrack, EditOp, ImpedanceView, OpResult } from '@4k7/schema';
+import { placedOf } from './board.ts';
 import { firstClash, nearBox } from './copperclear.ts';
-import { drawnOf, placementOf } from './copperops.ts';
+import { drawnOf } from './copperops.ts';
 import { findNet, reject } from './doc.ts';
 import { DEFAULT_SKEW, keepOf, trackLength } from './lines.ts';
 import { segSegDist } from './segments.ts';
@@ -112,7 +113,7 @@ function selfClash(pts: number[], from: number, to: number, width: number, gap: 
 
 export function tuneLength(d: Design, op: Extract<EditOp, { op: 'tune_length' }>): OpResult {
   const { b, dc } = drawnOf(d);
-  const board = placementOf(d);
+  const board = placedOf(d);
   const name = (id: string) => d.nets[id]?.name ?? id;
   const netByName = (n: string) => {
     const net = findNet(d, n);

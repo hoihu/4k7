@@ -500,12 +500,18 @@ function costOf(pts: number[], net: string, rest: Wire[], sheet: Sheet): number 
 
 /* -------------------------------- geometry -------------------------------- */
 
+/** A run's segments. (Runs are not changed once made, and this is asked of every wire for every run tried.) */
+const segsOfRun = new WeakMap<number[], Seg[]>();
+
 function segsOf(pts: number[]): Seg[] {
-  const out: Seg[] = [];
+  let out = segsOfRun.get(pts);
+  if (out) return out;
+  out = [];
   for (let i = 0; i + 3 < pts.length; i += 2) {
     const s: Seg = [pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!];
     if (s[0] !== s[2] || s[1] !== s[3]) out.push(s);
   }
+  segsOfRun.set(pts, out);
   return out;
 }
 
@@ -563,9 +569,10 @@ function crossing(a: Seg, b: Seg): Pt | null {
 
 /** A crossing straight across, away from both segments' ends. */
 function strictCross(a: Seg, b: Seg): boolean {
-  const p = crossing(a, b);
-  if (!p) return false;
-  return ![a, b].some((s) => (p.x === s[0] && p.y === s[1]) || (p.x === s[2] && p.y === s[3]));
+  const [h, v] = horizontal(a) ? [a, b] : [b, a];
+  const [x, y] = [v[0], h[1]];
+  // (a slanted lead, on a part drawn at 45°, is never crossed straight across)
+  return v[0] === v[2] && x > Math.min(h[0], h[2]) && x < Math.max(h[0], h[2]) && y > Math.min(v[1], v[3]) && y < Math.max(v[1], v[3]);
 }
 
 /** Whether an axis-aligned segment runs through the inside of a box (its edge does not count). */

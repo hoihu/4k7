@@ -24,7 +24,8 @@ const rows = [
   { op: 'connect', pins: ['J1.6', 'J2.6'], net: 'BOTTOM' },
 ];
 
-const sheetOf = (k: Kernel): SheetView => k.state().view.sheets[0]!;
+// (a copy: these tests move text in it, and the kernel shares its view)
+const sheetOf = (k: Kernel): SheetView => structuredClone(k.state().view.sheets[0]!);
 const sym = (k: Kernel, ref: string) => sheetOf(k).symbols.find((s) => s.refdes === ref)!;
 const edit = (k: Kernel, ops: unknown[], by?: 'user') => k.transact({ summary: 'edit', ops } as never, by);
 function ok(k: Kernel, ops: unknown[], by?: 'user') {

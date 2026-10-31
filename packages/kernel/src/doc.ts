@@ -45,9 +45,11 @@ export function requireCard(d: Design, c: Component): PartCard {
 
 /* -------------------------------- sorting --------------------------------- */
 
-/** Natural sort for reference designators and names: R2 < R10. */
+const NATURAL = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+
+/** Natural sort for reference designators and names: R2 < R10. (One collator: localeCompare with options makes one per call, and this runs tens of thousands of times per edit.) */
 export function natCmp(a: string, b: string): number {
-  return a.localeCompare(b, 'en', { numeric: true, sensitivity: 'base' }) || (a < b ? -1 : a > b ? 1 : 0);
+  return NATURAL.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0);
 }
 
 export function componentsSorted(d: Design): Component[] {

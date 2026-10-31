@@ -10,6 +10,7 @@
  */
 import type { PinView, Point, Rect, SymbolView, WireView } from '@4k7/schema';
 import { GRID } from '@4k7/parts';
+import { Heap } from './heap.ts';
 import { RETURN_LEG } from './scene.ts';
 
 export interface RouteInput {
@@ -235,30 +236,36 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, side: number, came?: [number,
     for (let j = j0; j < j1; j++) onV[id(i, j)] = 1;
   }
   // an edge along a drawn segment, or over a pin, that lies between lattice points (by row and column: this is asked for every step of the search)
-  const byLine = (segs: [number, number, number][]) => {
-    const out = new Map<number, [number, number][]>();
-    for (const [at, a, b] of segs) out.set(at, [...(out.get(at) ?? []), [a, b]]);
+  const byLine = (segs: [number, number, number][], index: Map<number, number>, lines: number) => {
+    const out: [number, number][][] = Array.from({ length: lines }, () => []);
+    for (const [at, a, b] of segs) {
+      const n = index.get(at);
+      if (n !== undefined) out[n]!.push([a, b]);
+    }
     return out;
   };
-  const [rowsOfWire, columnsOfWire] = [byLine([...wireH, ...pinsOnRow]), byLine([...wireV, ...pinsOnColumn])];
+  const [rowsOfWire, columnsOfWire] = [byLine([...wireH, ...pinsOnRow], yi, ny), byLine([...wireV, ...pinsOnColumn], xi, nx)];
+  const overLine = (line: [number, number][], p: number, q: number) => {
+    for (let n = 0; n < line.length; n++) if (line[n]![0] < q && line[n]![1] > p) return true;
+    return false;
+  };
   const alongWire = (i: number, j: number, di: number, dj: number) => {
-    if (dj === 0) {
-      const [p, q] = [Math.min(xs[i]!, xs[i + di]!), Math.max(xs[i]!, xs[i + di]!)];
-      return !!rowsOfWire.get(ys[j]!)?.some(([x0, x1]) => x0 < q && x1 > p);
-    }
-    const [p, q] = [Math.min(ys[j]!, ys[j + dj]!), Math.max(ys[j]!, ys[j + dj]!)];
-    return !!columnsOfWire.get(xs[i]!)?.some(([y0, y1]) => y0 < q && y1 > p);
+    if (dj === 0) return rowsOfWire[j]!.length > 0 && overLine(rowsOfWire[j]!, Math.min(xs[i]!, xs[i + di]!), Math.max(xs[i]!, xs[i + di]!));
+    return columnsOfWire[i]!.length > 0 && overLine(columnsOfWire[i]!, Math.min(ys[j]!, ys[j + dj]!), Math.max(ys[j]!, ys[j + dj]!));
   };
 
   // the heuristic: the distance to the nearest goal point or wire
   const goalPts = B.pts;
   const toSeg = (x: number, y: number, [x1, y1, x2, y2]: Seg) => Math.abs(x - Math.min(Math.max(x, Math.min(x1, x2)), Math.max(x1, x2))) + Math.abs(y - Math.min(Math.max(y, Math.min(y1, y2)), Math.max(y1, y2)));
+  const toGoal = new Float64Array(nx * ny).fill(-1);
   const h = (i: number, j: number) => {
+    const n = id(i, j);
+    if (toGoal[n]! >= 0) return toGoal[n]!;
     const [x, y] = [xs[i]!, ys[j]!];
     let best = Infinity;
     for (const p of goalPts) best = Math.min(best, Math.abs(x - p.x) + Math.abs(y - p.y));
     for (const s of B.segs) best = Math.min(best, toSeg(x, y, s));
-    return best;
+    return (toGoal[n] = best);
   };
   // turn on a goal's grid rather than the start's, so the wire does not end in a short jog
   const aim = B.pts[0] ?? (B.segs[0] ? { x: B.segs[0][0], y: B.segs[0][1] } : undefined);
@@ -332,51 +339,4 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, side: number, came?: [number,
     path.push({ x: xs[node % nx]!, y: ys[Math.floor(node / nx)]! });
   }
   return path.reverse();
-}
-
-/** A binary min-heap of states by priority. */
-class Heap {
-  private items: number[] = [];
-  private keys: number[] = [];
-  get size() {
-    return this.items.length;
-  }
-  push(item: number, key: number) {
-    const a = this.items;
-    const k = this.keys;
-    a.push(item);
-    k.push(key);
-    let i = a.length - 1;
-    while (i > 0) {
-      const p = (i - 1) >> 1;
-      if (k[p]! <= k[i]!) break;
-      [a[p], a[i]] = [a[i]!, a[p]!];
-      [k[p], k[i]] = [k[i]!, k[p]!];
-      i = p;
-    }
-  }
-  pop(): number {
-    const a = this.items;
-    const k = this.keys;
-    const top = a[0]!;
-    const lastA = a.pop()!;
-    const lastK = k.pop()!;
-    if (a.length) {
-      a[0] = lastA;
-      k[0] = lastK;
-      let i = 0;
-      for (;;) {
-        const l = 2 * i + 1;
-        const r = l + 1;
-        let m = i;
-        if (l < a.length && k[l]! < k[m]!) m = l;
-        if (r < a.length && k[r]! < k[m]!) m = r;
-        if (m === i) break;
-        [a[m], a[i]] = [a[i]!, a[m]!];
-        [k[m], k[i]] = [k[i]!, k[m]!];
-        i = m;
-      }
-    }
-    return top;
-  }
 }

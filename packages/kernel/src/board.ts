@@ -66,7 +66,9 @@ import {
   boardStackup,
 } from '@4k7/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
-import { applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
+import { boardInputs, Memo } from './derive.ts';
+import { applyWaivers, cardOf, clone, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
+import { viewOf } from './drawing.ts';
 import { acidDrc, copperDrc, deadCopperDrc, drawnDrc, edgeDrc, neckDrc, planeViaDrc, splitDrc, thermalDrc } from './drc.ts';
 import { keepoutDrc } from './keepout.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
@@ -164,6 +166,23 @@ const collide = (a: Item, b: Item) => a.exempt !== b && b.exempt !== a && (a.tht
 
 const swapped = (rot: number) => rot % 180 !== 0;
 const extent = (it: Item) => (swapped(it.rot) ? { w: it.ch, h: it.cw } : { w: it.cw, h: it.ch });
+
+/** Placements by what they are worked out from: an edit asks several times for the same one, and for the one before it. */
+const placements = new Memo<BoardView>('placement', 4);
+
+/**
+ * The board as placed now. Shared with whoever else asks (derive.ts): read it, and take a copy to
+ * write into it. (Worked out from a copy of the design: the view holds on to the rules, the drawn
+ * copper and more, and ops go on to change those in place.)
+ */
+export function placedOf(d: Design): BoardView {
+  return placements.get(boardInputs(d), () => {
+    const { enclosure: _e, board, ...rest } = d;
+    const { copper: _c, ...settings } = board ?? {};
+    const own = clone({ ...rest, ...(board ? { board: settings } : {}) }) as Design;
+    return placeBoard(own, viewOf(own));
+  });
+}
 
 export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const settings = d.board ?? DEFAULT_BOARD;
@@ -1269,8 +1288,8 @@ const COPPER_FORMAT = 1;
  * board is routed (to completion if it can be: that may take a while) and the result comes back
  * as `newCopper` for the app to keep.
  */
-export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean; onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
-  const b = placeBoard(d, sch);
+export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean; onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void; placed?: BoardView } = {}): BoardView {
+  const b = opts.placed ?? placeBoard(d, sch);
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
   const { powerNets, planes, netWidths, key, basis } = routeSetup(d, b);
   const pads = b.parts.flatMap((p) => p.pads);
@@ -1501,8 +1520,8 @@ function routeSetup(d: Design, b: BoardView) {
 }
 
 /** The key copper routed for this design's board now would be kept under (see BoardSettings.copper). */
-export function copperKey(d: Design, sch: SchematicView): string {
-  return routeSetup(d, placeBoard(d, sch)).key;
+export function copperKey(d: Design): string {
+  return routeSetup(d, placedOf(d)).key;
 }
 
 /** Parts this close (mm) to where a connection is blocked are named with it. */
