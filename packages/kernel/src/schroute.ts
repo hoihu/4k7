@@ -27,7 +27,7 @@ export interface RouteInput {
   soft: Rect[];
   /** Where the wire may go (the page's drawing area). */
   bounds: Rect;
-  /** Spots the wire must not reach moving this way (a label: not through its text). */
+  /** Spots the wire must not reach moving this way, nor leave the opposite way (a label: not through its text). */
   forbid?: Map<string, [number, number]>;
   /** Pins of the wire's own net: it runs through their ends, which joins them, rather than hop over. */
   through?: Point[];
@@ -292,9 +292,12 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, side: number, came?: [number,
       }
     }
     const c = cost[st]!;
+    // (a spot it sets off from: out the way it may not come in is through the same text or symbol)
+    const notOut = prev[st]! < 0 ? r.forbid?.get(key(xs[i]!, ys[j]!)) : undefined;
     for (let k = 0; k < 4; k++) {
       const [di, dj] = DIRS[k]!;
       if (din < 4 && DIRS[din]![0] === -di && DIRS[din]![1] === -dj) continue; // no turning back
+      if (notOut && di === -notOut[0] && dj === -notOut[1]) continue;
       const i2 = i + di;
       const j2 = j + dj;
       if (i2 < 0 || j2 < 0 || i2 >= nx || j2 >= ny) continue;

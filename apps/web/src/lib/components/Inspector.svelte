@@ -210,7 +210,7 @@
     id: string;
     name: string;
     kind: 'ground' | 'supply' | 'signal';
-    attrs: { voltage?: number; maxCurrent?: number; external?: boolean; trackWidth?: number };
+    attrs: { voltage?: number; maxCurrent?: number; external?: boolean; trackWidth?: number; drawAs?: 'label' | 'wire' };
     pins: string[];
     track: { width_mm: number; why: string; suggested_mm?: number; for_current_a?: number; rules: { signal_mm: number; power_mm: number } };
   }
@@ -246,6 +246,14 @@
     if ((net.attrs.maxCurrent ?? null) === (v.trim() ? a : null)) return;
     void app.userEdit(`${net.name} current ${v.trim() ? `${a} A` : 'unset'}`, [{ op: 'set_net', net: net.name, max_current: v.trim() ? a : null }]);
   }
+
+  /** Force how the schematic draws it: labels, wires, or back to what draws best. */
+  function setDrawAs(v: string) {
+    if (!net) return;
+    void app.userEdit(`${net.name}: ${v === 'label' ? 'labels, no wires' : v === 'wire' ? 'wires, no labels' : 'label automatic'}`, [{ op: 'set_net', net: net.name, draw_as: v || null }]);
+  }
+  /** Forced to wires, and a label shows all the same: no wire can go there. */
+  const labelStays = $derived(!!net && net.attrs.drawAs === 'wire' && net.kind === 'signal' && !!app.k?.view.sheets.some((s) => s.labels.some((l) => l.netId === net!.id)));
 
   const diags = $derived(app.k?.diagnostics ?? []);
   const open = $derived(diags.filter((d) => !d.waivedBy));
@@ -358,6 +366,14 @@
         <dl class="kv">
           <dt>Net</dt><dd><b>{net.name}</b> <span class="tag">{net.kind}</span></dd>
           {#if net.attrs.voltage !== undefined}<dt>voltage</dt><dd>{net.attrs.voltage} V{net.attrs.external ? ' · from outside' : ''}</dd>{/if}
+          <dt title="Whether the schematic shows this net by labels or by wires">label</dt>
+          <dd>
+            <select class="pkgsel mono" value={net.attrs.drawAs ?? ''} disabled={!!app.k?.proposal || app.running} title={app.k?.proposal ? 'Review the pending changes first' : app.running ? 'The agent is working' : 'Label: a label or supply symbol at every pin, no wires between them. No label: wires, and a label only where no wire can go. A sheet with such a net is kept as drawn, and the net stays that way.'} onchange={(e) => setDrawAs((e.currentTarget as HTMLSelectElement).value)}>
+              <option value="">automatic</option>
+              <option value="label">label · no wires</option>
+              <option value="wire">no label · wires</option>
+            </select>
+          </dd>
           <dt>current</dt>
           <dd>
             <input class="cur mono" placeholder="max A" value={net.attrs.maxCurrent ?? ''} disabled={!!app.k?.proposal} title="The most current this net carries; it suggests the track width" onchange={(e) => setCurrent((e.currentTarget as HTMLInputElement).value)} /> A
@@ -372,6 +388,11 @@
             </select>
           </dd>
         </dl>
+        {#if labelStays}
+          <p class="note">A label stays where no wire can go: another page or sheet, or no clear path.</p>
+        {:else if net.attrs.drawAs === 'wire' && net.kind !== 'signal'}
+          <p class="note">A supply keeps one symbol on each wired piece.</p>
+        {/if}
         {#if net.track.suggested_mm && net.track.suggested_mm > net.track.width_mm}
           <p class="note warn">For {net.track.for_current_a} A this net needs about {net.track.suggested_mm} mm (1 oz copper, 10 °C rise); it has {net.track.width_mm} mm.
             <button class="link" disabled={!!app.k?.proposal} onclick={() => setTrack(String(net!.track.suggested_mm))}>Use {net.track.suggested_mm} mm</button></p>

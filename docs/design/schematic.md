@@ -105,6 +105,16 @@ how the symbol ends up, not "swap it" or "turn it further": `get_schematic` show
 and `lying`, and the result says where a small symbol's pins went, or that nothing changed. Wires to
 the symbol are cut back: `wire` them again.
 
+A supply symbol that stands on a wire or a name: `move_supply` puts it elsewhere on its page, on a wire
+from what it stood on (`get_schematic` lists them under `supplies`). It still points its own way.
+
+`set_net draw_as` decides wire or label for a whole net and keeps it, whatever is redrawn later: `label`
+puts a label or supply symbol at every pin and no wire between them, `wire` joins the pins by wires
+and leaves a label only where no wire can go, and a supply keeps one symbol per piece. `null` lifts it,
+and the net is drawn afresh. The user sets this in the net panel, as `get_schematic` shows under
+`forced_nets`: leave it, or ask them. While it holds, what goes against it (`wire`, `label`, `erase` on
+that net) is refused.
+
 The user may move parts by hand too (drag, R, F in the app). `get_schematic` marks those symbols
 `user_placed`: they are the user's decisions, like the parts they place on the board. `place_block`
 and `auto_draw` keep them where they are; arrange round them, and move one only when the drawing

@@ -1,6 +1,6 @@
 # Drawing the schematic: the agent owns the drawing
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; 2026-10-29: a part placed on its own is wired to its neighbours (§2c); 2026-10-30: a wire joins a pin from any side, and a wire a part is put down on goes round it (§6 step 3), names and values (§2e); the agent's guide is [schematic.md](schematic.md).
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; 2026-10-29: a part placed on its own is wired to its neighbours (§2c); 2026-10-30: a wire joins a pin from any side, and a wire a part is put down on goes round it (§6 step 3), names and values (§2e), supply symbols move and a net can be forced to labels or wires (§2f); the agent's guide is [schematic.md](schematic.md).
 > Notes and checks are in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
@@ -189,6 +189,7 @@ on a part.
 | `F` on a selected symbol: mirror (a two-pin part's ends swap, where it stands) | `place_symbol mirror rewire` |
 | Drag a part's name or value (in steps of 25 mils, on the part's page), with Shift both together | `place_text name value` |
 | Drag a net label round its pin: it points where the pointer is | `label pin dir` |
+| Drag a supply symbol (on the grid of its pin, on its page) | `move_supply page x y to` |
 | Click a wire or label (it is picked and its net selected), `Delete` / `Backspace` | `erase at` |
 | `Delete` / `Backspace` on selected parts, after a confirmation | `remove` |
 
@@ -275,6 +276,68 @@ them beside their supply pin), and a flash's text moved below it, off the rail n
 the 27-part one 3 → 0, one of them a lying capacitor whose second value line stood on its own lead. The
 130-part one the layout draws: 3 → 0 by itself. The pass adds about 4 ms to a redraw of that sheet, the
 check about 5 ms, on 20 to 40 ms for the view.
+
+## 2f. Decision 2026-10-30: supply symbols move, and a net can be forced to labels or wires
+
+Two more levers on how a sheet reads, for a user who sees that a rail symbol stands on a wire, that
+a long wire would read better as two labels, or two labels side by side as a short wire. Both are
+the agent's ops too.
+
+**`move_supply`** (`kernel/drawops.ts`) moves one supply symbol to a spot on its page, named by the
+point it stands at (as `erase at`; `get_schematic` lists them under `supplies`). It stands there on
+a wire from what it stood on: the pins and wires joined to its old spot, a bar's included, so the
+symbol of a bar moves and the bar stays. What led only to the old spot is cut back by the sync. The
+way a symbol points never changes (§1), and the wire never runs through it: the path finder's
+`forbid`, which holds for the way out of a spot as well as the way in (the clean-up may draw a piece
+afresh from the symbol), and which the clean-up's straightening keeps to too (`valid`). The spot is
+put on the grid of the pin, so a wire straight out of the pin stays straight. A spot on a part or on
+a wire or pin of another net is refused, as is one with no clear path: the symbol stays, and the
+canvas puts it back. An automatic symbol (§2a) can be moved like any other, and stands where it is
+put for good. Labels carry no mark (§2d), so a redraw of its block draws the symbol afresh, and a
+turn or mirror of its part cuts its wire back like any other (§2d), so the symbol goes back to the
+pin. A part put down on its wire is like one put down on any wire (§6 step 3): the wire goes round,
+keeping to `forbid`, and the symbol stays. In the canvas the whole symbol is the handle (its lines
+alone are hard to hit), a click selects its net as before, and the drag stops at the page's edge,
+because a wire stays on its page.
+
+**`set_net draw_as`** forces how a net is drawn, in the net panel as *label: automatic / label · no
+wires / no label · wires*:
+
+- `label`: no wire joins two pins, and each pin has a label or supply symbol of its own (stored, so it
+  can be swung or dragged). A lead from one pin to its own symbol stays.
+- `wire`: every pin on a page is joined by wires, however they run: the user asked for it, so none of
+  the tests that send a wire back to labels applies. No label is stored. Where no wire can go (another
+  page or sheet, no clear path) the automatic labels show the connection (§2a): the picture never
+  leaves one out, and the panel says so. A supply keeps one symbol per drawn piece, because a rail with
+  none could not be read.
+- `null`: no longer forced, and drawn afresh by the rule of §2c: wired where that is clean, labels
+  where not (a supply: a symbol at each pin).
+
+It is kept in the net's attributes, not done once, because a force the next `place_block` or `auto_draw`
+undoes is none, the same reason `by: "user"` exists. `kernel/netdraw.ts` draws every forced net its
+way again after every transaction, so a part added, moved or turned, or a block drawn afresh, cannot
+undo it. It is cheap: nothing runs without a forced net, and a net already drawn that way changes
+nothing. A part put down on a forced wire sends it round like any wire (§2d), and a wire one of its
+pins lands on, which goes, is drawn again where another net's would fall to labels. All of this
+happens on stored drawings. Drawing a forced net on the layout's own view after every change would
+mean a second way to draw a sheet, so a sheet with a forced net is taken over like any other sheet
+edited by hand, and `auto_draw` redraws it but keeps it stored, and says so. While a
+net is forced, `wire` on a `label` net, `label` on a `wire` net and `erase` on either are refused with
+how to lift it: the kernel would only draw them back, and the agent would believe the result.
+
+Not done: a name added to a wire that stays. `label` here means labels instead of wires, the wire or
+label choice of §2a; the agent can still put a label at a pin of a wired net that is not forced.
+
+Tried on a copy of the user's 124-part design: each of its 94 nets forced to labels and to wires, and
+each of its 84 supply symbols moved up and aside. No connection lost, no pin joined to another net, no
+drawing changed by a later edit. A force takes about as long as any edit there (about 0.25 s), up to 1 s for a rail with many pins forced
+to wires, most of it one tidy-up after all the wires are in. Twelve stored projects open exactly as
+before. The symbols moved by ten offsets (639 moves; 201 refused, for a part, a wire or the page's edge,
+none for lack of a path) leave no wire through a symbol, where 43 ran through one before `forbid` held
+for the way out. With wires going round a part (§6 step 3), a part put down on a forced net's wire (255
+drops) or a moved symbol's (133): no connection lost, every symbol where it was put, and the drawing
+opens as it was. In 14 of the 255 the forced net falls back to an automatic label, a crowded spot
+leaving no way through.
 
 ## 3. Notes and checks
 
@@ -580,7 +643,8 @@ The first plan, steps 1–3 built 2026-10-12:
    (placed cells fixed on their page, the rest flowing past them), `orient` lying and `mirror` on
    placed parts, Optimize may use `place_symbol` on movable parts.
 4. **Orientation and supply hints** (`orient` for parts the layout places, `supply_side`,
-   `net_style`): small changes in the layout, big effect on readability.
+   `net_style`): small changes in the layout, big effect on readability. *`net_style` built
+   2026-10-30 as `set_net draw_as`, `supply_side` as `move_supply` (§2f).*
 5. **Blocks drive placement** (`block`, `block_order`, from `describe`). The agent's arrangement
    step after it builds a circuit. *Built 2026-10-26 as §2b:* the description's blocks and
    `place_block` instead of hints.

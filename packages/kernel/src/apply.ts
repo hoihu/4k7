@@ -66,7 +66,8 @@ import { underBody } from './drc.ts';
 import { polarityOf } from './marks.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { wirePlaced } from './autowire.ts';
-import { eraseOp, labelOp, rewire, textOp, wireOp, wiredPins } from './drawops.ts';
+import { eraseOp, labelOp, moveSupplyOp, rewire, textOp, wireOp, wiredPins } from './drawops.ts';
+import { drawNet } from './netdraw.ts';
 import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
 import { tuneLength } from './tune.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
@@ -182,6 +183,8 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return labelOp(d, op);
     case 'erase':
       return eraseOp(d, op);
+    case 'move_supply':
+      return moveSupplyOp(d, op);
     case 'propose_placement':
       return proposePlacement(d, op, by);
     case 'refine_placement':
@@ -1067,8 +1070,13 @@ function autoDraw(d: Design, op: Extract<EditOp, { op: 'auto_draw' }>): OpResult
     return { op: op.op, effect: [done.length ? `${done.join(', ')} drawn afresh in free space` : '', rest.length ? `${rest.join(', ')}: drawn by the layout already` : ''].filter(Boolean).join('; '), ids: comps.map((c) => c.id) };
   }
   const targets = byName ? [byName] : Object.values(d.sheets);
-  const released = targets.filter((s) => releaseSheet(d, s.id)).map((s) => s.name);
-  return { op: op.op, effect: released.length ? `${released.join(', ')}: drawn by the auto-layout again, afresh after every change` : `${targets.map((s) => s.name).join(', ')}: drawn by the auto-layout already`, ids: targets.map((s) => s.id) };
+  const released = targets.filter((s) => releaseSheet(d, s.id));
+  // a sheet with a net forced to be drawn one way is stored again once the layout has drawn it
+  const forcedOn = (id: string) => Object.values(d.nets).filter((n) => n.attrs.drawAs && Object.values(d.components).some((c) => c.sheet === id && Object.values(c.pins).includes(n.id))).map((n) => n.name);
+  const freed = released.filter((s) => !forcedOn(s.id).length).map((s) => s.name);
+  const kept = released.filter((s) => forcedOn(s.id).length).map((s) => `${s.name}: drawn afresh by the auto-layout, then kept as drawn, because ${forcedOn(s.id).join(', ')} is forced to be drawn one way (set_net draw_as)`);
+  const said = [freed.length ? `${freed.join(', ')}: drawn by the auto-layout again, afresh after every change` : '', ...kept].filter(Boolean).join('; ');
+  return { op: op.op, effect: said || `${targets.map((s) => s.name).join(', ')}: drawn by the auto-layout already`, ids: targets.map((s) => s.id) };
 }
 
 /**
@@ -2155,6 +2163,12 @@ function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpResult {
       a.trackWidth = Math.round(op.track_mm * 1000) / 1000;
     }
     changes.push(`track ${op.track_mm === null ? 'default' : `${a.trackWidth} mm`}`);
+  }
+  if (op.draw_as !== undefined && (op.draw_as ?? undefined) !== a.drawAs) {
+    if (op.draw_as === null) delete a.drawAs;
+    else a.drawAs = op.draw_as;
+    const left = drawNet(d, net.id, op.draw_as ?? 'auto');
+    changes.push(op.draw_as === 'label' ? 'drawn by labels, no wires' : op.draw_as === 'wire' ? `drawn by wires, no labels${left ? ` (${left} left where no wire can go: another page or sheet, or no clear path)` : ''}` : 'drawn as it draws best');
   }
   return { op: 'set_net', effect: `net ${net.name}: ${changes.join(', ') || 'no change'}`, ids: [net.id] };
 }

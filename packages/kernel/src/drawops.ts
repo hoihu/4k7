@@ -1,16 +1,18 @@
 /**
  * The agent's drawing ops (docs/design/schematic-drawing.md §2a): wire two pins, put a net label or
- * supply symbol at a pin, erase what is drawn at pins or of a net. They change only how the
- * netlist is drawn: a wire joins pins that are on one net already. The first one on a sheet takes
- * it over from the auto-layout, like place_symbol.
+ * supply symbol at a pin, move a supply symbol, erase what is drawn at pins or of a net. They change
+ * only how the netlist is drawn: a wire joins pins that are on one net already. The first one on a
+ * sheet takes it over from the auto-layout, like place_symbol.
  */
 import type { Component, Design, EditOp, LabelView, OpResult, PinView, Rect, SheetDrawing, SheetView, SymbolView } from '@4k7/schema';
+import { GRID } from '@4k7/parts';
 import { resolveUnitRef } from './apply.ts';
 import { RejectError, cardOf, natCmp, pinLabel, reject, resolvePins, type PinHandle } from './doc.ts';
 import { drawingArea, groups, isDrawn, joinedWires, onWire, ownSheet, pageAt, pinsOf, schematicView, symbolOf, syncDrawing, syncSheet } from './drawing.ts';
 import { clashWords, clearTexts, placeTexts, textBox, textClashes, within, type TextArrange, type TextClash, type TextSide } from './parttext.ts';
-import { deco, labelRect, leadEnd, textRect, type Dir } from './scene.ts';
+import { deco, labelRect, leadEnd, supplyDir, textRect, type Dir } from './scene.ts';
 import { routeWire } from './schroute.ts';
+import { NOT_INTO } from './wireclean.ts';
 
 /** How far a lead runs out of a pin before a label that points across it (a horizontal label on a top pin). */
 const LEAD = 200;
@@ -24,6 +26,14 @@ interface Spot {
 
 const OUT: Record<PinView['side'], Dir> = { left: 'left', right: 'right', top: 'up', bottom: 'down' };
 const BACK: Record<string, Dir> = { left: 'right', right: 'left', up: 'down', down: 'up' };
+
+/** Refuse an edit of a net forced to be drawn one way (set_net draw_as) that the kernel would only draw back. `as`: the way it goes against; all: either. */
+function refuseForced(d: Design, netId: string, as: 'label' | 'wire' | 'all'): void {
+  const net = d.nets[netId];
+  const forced = net?.attrs.drawAs;
+  if (!forced || (as !== 'all' && as !== forced)) return;
+  reject({ code: 'INVALID_OP', message: `${net!.name} is set to be drawn ${forced === 'label' ? 'by labels, with no wires' : 'by wires, with no labels'} (the net panel, set_net draw_as), so this would not stay. Set it back to automatic first (draw_as: null).`, fixHints: [{ op: 'set_net', net: net!.name, draw_as: null }] });
+}
 
 /** Where a pin reference is drawn on its sheet (all of them for a name several pins share), the sheet taken over. */
 function spotsOf(d: Design, ref: string): { sheet: string; sd: SheetDrawing; spots: Spot[] } {
@@ -67,6 +77,7 @@ export function wireOp(d: Design, op: Extract<EditOp, { op: 'wire' }>): OpResult
   if (na !== nb) {
     reject({ code: 'NET_MISMATCH', message: `The netlist has ${la} on ${d.nets[na]!.name} and ${lb} on ${d.nets[nb]!.name}. A wire only shows a connection the netlist has: connect them first if they belong together.` });
   }
+  refuseForced(d, na, 'label');
   if (A.sheet !== B.sheet) reject({ code: 'INVALID_OP', message: `${la} and ${lb} are on different sheets; their net connects them by name. Put a label at each (label).` });
   const sd = A.sd;
   // the closest pair of pins of the two references, on one page
@@ -172,20 +183,22 @@ export function rewire(d: Design, sheetId: string, before: PinKey[][]): { wired:
 }
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 
-/** Take away what is drawn at a pin as its label: labels on it, and a lead from it that only ends in a label. */
-export function clearPinLabels(sd: SheetDrawing, pin: PinView): number {
+/** Take away what is drawn at a pin as its label: labels on it, and a lead from it that only ends in a label (a wire to another pin is no lead, whatever stands there). */
+export function clearPinLabels(sd: SheetDrawing, pin: PinView, symbols: SymbolView[]): number {
   const at = (x: number, y: number) => x === pin.x && y === pin.y;
   const before = sd.labels.length + sd.wires.length;
+  const farEnd = (w: SheetDrawing['wires'][number]): [number, number] | null => {
+    const [x1, y1, x2, y2] = [w.pts[0]!, w.pts[1]!, w.pts.at(-2)!, w.pts.at(-1)!];
+    return at(x1, y1) ? [x2, y2] : at(x2, y2) ? [x1, y1] : null;
+  };
   const leads = sd.wires.filter((w) => {
-    if (w.pts.length !== 4) return false;
-    const [x1, y1, x2, y2] = w.pts as [number, number, number, number];
-    const far = at(x1, y1) ? [x2, y2] : at(x2, y2) ? [x1, y1] : null;
+    const far = farEnd(w);
     if (!far) return false;
-    const [fx, fy] = far as [number, number];
+    const [fx, fy] = far;
     const others = sd.wires.filter((o) => o !== w && onWire(fx, fy, o.pts)).length;
-    return !others && sd.labels.some((l) => l.x === fx && l.y === fy);
+    return !others && sd.labels.some((l) => l.x === fx && l.y === fy) && !symbols.some((s) => s.pins.some((p) => p.x === fx && p.y === fy));
   });
-  const ends = new Set(leads.map((w) => (at(w.pts[0]!, w.pts[1]!) ? `${w.pts[2]},${w.pts[3]}` : `${w.pts[0]},${w.pts[1]}`)));
+  const ends = new Set(leads.map((w) => farEnd(w)!.join()));
   sd.wires = sd.wires.filter((w) => !leads.includes(w));
   sd.labels = sd.labels.filter((l) => !at(l.x, l.y) && !ends.has(`${l.x},${l.y}`));
   return before - sd.labels.length - sd.wires.length;
@@ -196,8 +209,9 @@ export function labelOp(d: Design, op: Extract<EditOp, { op: 'label' }>): OpResu
   const { sheet, sd, spots } = spotsOf(d, op.pin);
   const s = spots[0]!;
   const net = d.nets[s.net]!;
+  refuseForced(d, net.id, 'wire');
   const out = OUT[s.pin.side];
-  clearPinLabels(sd, s.pin);
+  clearPinLabels(sd, s.pin, sd.symbols.map((x) => symbolOf(d, x)!));
   const type = cardOf(d, s.h.comp.part)?.pins.find((p) => p.number === s.pin.number)?.type;
   const add = (l: LabelView) => {
     const { text: _t, auto: _a, ...stored } = l;
@@ -246,6 +260,7 @@ export function eraseOp(d: Design, op: Extract<EditOp, { op: 'erase' }>): OpResu
     const { sheet, sd, spots } = spotsOf(d, ref);
     sheets.add(sheet);
     for (const s of spots) {
+      refuseForced(d, s.net, 'all');
       count(sd, () => {
         const at = (x: number, y: number) => x === s.pin.x && y === s.pin.y;
         sd.wires = sd.wires.filter((w) => !onWire(s.pin.x, s.pin.y, w.pts));
@@ -264,6 +279,7 @@ export function eraseOp(d: Design, op: Extract<EditOp, { op: 'erase' }>): OpResu
       const sd = ownSheet(d, sh!.id);
       sheets.add(sh!.id);
       const [w, l] = [wires, labels];
+      for (const v of a.what === 'wire' ? sd.wires.filter((o) => onWire(x, y, o.pts)) : sd.labels.filter((o) => o.x === x && o.y === y)) refuseForced(d, v.netId, 'all');
       count(sd, () => {
         if (a.what === 'wire') sd.wires = sd.wires.filter((v) => !onWire(x, y, v.pts));
         else sd.labels = sd.labels.filter((v) => !(v.x === x && v.y === y));
@@ -274,6 +290,7 @@ export function eraseOp(d: Design, op: Extract<EditOp, { op: 'erase' }>): OpResu
   if (op.net) {
     const net = Object.values(d.nets).find((n) => n.name === op.net);
     if (!net) reject({ code: 'REF_UNKNOWN', message: `No net ${op.net}.` });
+    refuseForced(d, net!.id, 'all');
     const on = new Set(Object.values(d.components).filter((c) => Object.values(c.pins).includes(net!.id)).map((c) => c.sheet));
     for (const sheet of on) {
       const sd = ownSheet(d, sheet);
@@ -286,6 +303,68 @@ export function eraseOp(d: Design, op: Extract<EditOp, { op: 'erase' }>): OpResu
   }
   for (const s of sheets) syncSheet(d, s);
   return { op: 'erase', effect: `erased ${wires} wire${wires === 1 ? '' : 's'} and ${labels} label${labels === 1 ? '' : 's'}; the connections they showed appear as automatic labels until you draw them again`, ids: [...sheets] };
+}
+
+/**
+ * Move one supply symbol to another spot on its page: it stands there on a wire from what it stood
+ * on (the pins and wires joined to its old spot), found by the path finder and coming in from
+ * anywhere but through the symbol. What led only to the old spot is cut back by the sync.
+ */
+export function moveSupplyOp(d: Design, op: Extract<EditOp, { op: 'move_supply' }>): OpResult {
+  syncDrawing(d);
+  const view = schematicView(d);
+  const sh = view.sheets.find((x) => x.pages.some((p) => p.number === op.page));
+  if (!sh) reject({ code: 'INVALID_OP', message: `There is no page ${op.page}.` });
+  const index = sh!.pages.findIndex((p) => p.number === op.page);
+  const pg = sh!.pages[index]!.rect;
+  const li = sh!.labels.findIndex((l) => l.kind !== 'net' && Math.abs(l.x - pg.x - op.x) <= 1 && Math.abs(l.y - pg.y - op.y) <= 1);
+  if (li < 0) reject({ code: 'INVALID_OP', message: `No supply symbol stands at (${op.x}, ${op.y}) on page ${op.page}. design_query get_schematic lists them under supplies.` });
+  const old = sh!.labels[li]!;
+  const net = d.nets[old.netId]!;
+  // (an automatic symbol and its lead are in the view only)
+  const viewPins = pinsOf(d, sh!.symbols);
+  const stood = groups(viewPins, sh!.wires, sh!.labels).find((g) => g.labels.includes(li))!;
+  const keys = new Set(stood.pins.map((i) => viewPins[i]!).filter((p) => p.net === net.id).map((p) => `${p.comp.id}.${p.pin.number}`));
+  const sd = ownSheet(d, sh!.id);
+  sd.labels = sd.labels.filter((l) => !(l.netId === net.id && l.x === old.x && l.y === old.y));
+  syncSheet(d, sh!.id);
+  const page = sd.pages[index]!;
+  const area = drawingArea(page);
+  const views = sd.symbols.map((s) => symbolOf(d, s)!);
+  const pins = pinsOf(d, views);
+  const mine = pins.filter((p) => keys.has(`${p.comp.id}.${p.pin.number}`));
+  // on the grid of its pin, so a wire straight out of the pin stays straight
+  const [ax, ay] = [mine[0]?.pin.x ?? 0, mine[0]?.pin.y ?? 0];
+  const to = { x: ax + Math.round((page.x + op.to.x - ax) / GRID) * GRID, y: ay + Math.round((page.y + op.to.y - ay) / GRID) * GRID };
+  const spot = `(${to.x - page.x}, ${to.y - page.y})`;
+  if (to.x < area.x || to.x > area.x + area.w || to.y < area.y || to.y > area.y + area.h) reject({ code: 'INVALID_OP', message: `${spot} is outside the drawing area of page ${op.page}: a supply symbol stays on its page.` });
+  const on = views.find((s) => to.x > s.bbox.x && to.x < s.bbox.x + s.bbox.w && to.y > s.bbox.y && to.y < s.bbox.y + s.bbox.h);
+  if (on) reject({ code: 'INVALID_OP', message: `A ${net.name} symbol goes beside ${on.refdes}${on.unit ?? ''}, not on it: ${spot} on page ${op.page} is on the part.` });
+  const other = sd.wires.find((w) => w.netId !== net.id && onWire(to.x, to.y, w.pts))?.netId ?? pins.find((p) => p.pin.x === to.x && p.pin.y === to.y && p.net !== net.id)?.net;
+  if (other !== undefined) reject({ code: 'INVALID_OP', message: `A ${net.name} symbol there would look connected to ${other ? d.nets[other]?.name ?? other : 'an unconnected pin'}: ${spot} on page ${op.page} is on it.` });
+  const wires = [...new Set(mine.flatMap((p) => joinedWires(sd.wires, net.id, p.pin.x, p.pin.y)))].map((i) => sd.wires[i]!.pts);
+  const dir = supplyDir(net)!;
+  // on what it stood on already, a wire has nothing to join
+  if (!mine.some((p) => p.pin.x === to.x && p.pin.y === to.y) && !wires.some((w) => onWire(to.x, to.y, w))) {
+    const pts = routeWire({
+      from: mine.map((p) => ({ x: p.pin.x, y: p.pin.y })),
+      fromWires: wires,
+      to: [to],
+      toWires: [],
+      via: [],
+      wires: sd.wires,
+      symbols: views,
+      soft: softBoxes(d, sd, net.id),
+      bounds: area,
+      forbid: new Map([[`${to.x},${to.y}`, NOT_INTO[dir]!]]),
+    });
+    if (!pts) reject({ code: 'NO_PATH', message: `No clear path for the ${net.name} symbol's wire to ${spot}: parts or wires of other nets are in the way. Try a spot nearer to it.` });
+    sd.wires.push({ netId: net.id, pts: pts! });
+  }
+  const { text: _t, ...label } = deco(net, to.x, to.y, dir);
+  sd.labels.push(label);
+  syncSheet(d, sh!.id);
+  return { op: 'move_supply', effect: `${net.name} symbol moved to ${spot} on page ${op.page}, on a wire from what it stood on`, ids: [sh!.id] };
 }
 
 const WORDS: Record<TextArrange, string> = { stacked: 'stacked', side_by_side: 'side by side' };

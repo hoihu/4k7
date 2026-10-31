@@ -6,6 +6,7 @@ import type { Component, Design, EditOp, LabelView, OptimizeScope, Rect, Schemat
 import { resolveUnitRef } from './apply.ts';
 import { RejectError, componentsSorted, natCmp, netMembers, reject } from './doc.ts';
 import { RETURN_LEG, textRect, tw } from './scene.ts';
+import { schematicView } from './drawing.ts';
 import { blockAssignment } from './layout.ts';
 import { textOverlaps } from './parttext.ts';
 
@@ -170,6 +171,13 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
       for (const r of refs) mayRefer(resolveUnitRef(d, r.slice(0, Math.max(0, r.indexOf('.')))).comp);
       return;
     }
+    case 'move_supply': {
+      const pg = schematicView(d).sheets.find((s) => s.id === sc.scope.sheet)?.pages.find((p) => p.number === op.page)?.rect;
+      const r = sc.scope.rect;
+      const inArea = (x: number, y: number) => !!pg && pg.x + x >= r.x && pg.x + x <= r.x + r.w && pg.y + y >= r.y && pg.y + y <= r.y + r.h;
+      if (!inArea(op.x, op.y) || !inArea(op.to.x, op.to.y)) out('move_supply: the symbol and the spot it goes to must both be inside this area.');
+      return;
+    }
     case 'place_text': {
       const refs = [...(op.ref ? [op.ref] : []), ...(op.refs ?? [])];
       if (!refs.length) out('place_text of a whole sheet reaches beyond this area; give ref or refs (parts inside it).');
@@ -197,7 +205,7 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
       return;
     }
     default:
-      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol, place_text, place_block, wire, label, erase at pins, auto_draw with refs and set_symbol on parts inside the area.`);
+      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol, place_text, place_block, wire, label, erase at pins, move_supply, auto_draw with refs and set_symbol on parts inside the area.`);
   }
 }
 

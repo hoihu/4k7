@@ -9,6 +9,7 @@ import {
   emptyDesign,
   type Design,
   type DesignSummary,
+  type LabelView,
   type Diagnostic,
   type DiagnosticCounts,
   type HistoryEntry,
@@ -45,6 +46,7 @@ import { crossChecks } from './xcheck.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, valueOf } from './doc.ts';
 import { schematicView, syncDrawing } from './drawing.ts';
+import { keepForcedNets } from './netdraw.ts';
 import { blockAssignment } from './layout.ts';
 import { copperKey, layoutBoard, placeBoard, planePlan } from './board.ts';
 import type { RouteProgress } from './router.ts';
@@ -219,6 +221,7 @@ export class Kernel {
     gcNets(work);
     gcParts(work);
     syncDrawing(work);
+    keepForcedNets(work);
     if (drawn.size) annotateChecks(work, results, drawn);
     if (this.scoped && circuitSignature(work) !== this.scoped.circuit) {
       return this.rejected({ opIndex: tx.ops.length - 1, code: 'OUT_OF_SCOPE', message: 'This would change the circuit (parts, values or connections). Optimize only changes how an area is drawn.' }, !!tx.dry_run);
@@ -332,6 +335,7 @@ export class Kernel {
     } else {
       ({ design: next, notes } = mergeHunks(this.committed, this.draft, ids));
       syncDrawing(next);
+      keepForcedNets(next);
     }
     const entry: HistoryEntry = {
       id: this.historySeq++,
@@ -482,6 +486,14 @@ export class Kernel {
         // what the agent needs to place parts: each page's paper and where every symbol stands on it
         const view = this.analyse(d).view;
         const r = (v: number) => Math.round(v);
+        /** The pin a label stands on ("U1.3"), if any, and its page. */
+        const where = (s: SheetView, l: LabelView) => {
+          const sym = s.symbols.find((x) => x.pins.some((p) => p.x === l.x && p.y === l.y));
+          const pin = sym?.pins.find((p) => p.x === l.x && p.y === l.y);
+          const pg = s.pages.find((p) => l.x >= p.rect.x && l.x <= p.rect.x + p.rect.w && l.y >= p.rect.y && l.y <= p.rect.y + p.rect.h) ?? s.pages[0]!;
+          return { pin: sym && pin ? `${sym.refdes}${sym.unit ?? ''}.${pin.name === pin.number ? pin.number : pin.name}` : undefined, pg };
+        };
+        const forced = Object.values(d.nets).filter((n) => n.attrs.drawAs).map((n) => ({ net: n.name, draw_as: n.attrs.drawAs }));
         return {
           coordinates: 'mils from the top-left corner of the page\'s paper, x to the right, y down; a symbol\'s x/y is its centre',
           labels_note: 'net labels; auto: true is a connection your drawing does not show, labelled by the kernel until you wire it (wire) or label it (label)',
@@ -500,18 +512,26 @@ export class Kernel {
               return { ref: `${sym.refdes}${sym.unit ?? ''}`, page: p.number, x: r(cx - p.rect.x), y: r(cy - p.rect.y), w: sym.bbox.w, h: sym.bbox.h, ...(sym.rotation ? { lying: true } : {}), ...(sym.rotated ? { rotated: sym.rotated } : {}), ...(sym.mirrored ? { mirrored: true } : {}), ...(sym.by ? { user_placed: true } : {}), ...(sym.textBy ? { text_user_placed: true } : {}), ...(q.texts ? { name: text(sym.refPos), value: text(sym.valuePos) } : {}) };
             }),
           ),
-          // net labels (supply symbols left out), at the pin they sit on; auto: a connection the drawing does not show yet
+          // net labels, at the pin they sit on; auto: a connection the drawing does not show yet
           labels: view.sheets.flatMap((s) =>
             s.labels
               .filter((l) => l.kind === 'net')
               .map((l) => {
-                const sym = s.symbols.find((x) => x.pins.some((p) => p.x === l.x && p.y === l.y));
-                const pin = sym?.pins.find((p) => p.x === l.x && p.y === l.y);
-                const pg = s.pages.find((p) => l.x >= p.rect.x && l.x <= p.rect.x + p.rect.w && l.y >= p.rect.y && l.y <= p.rect.y + p.rect.h) ?? s.pages[0]!;
-                const at = sym && pin ? `${sym.refdes}${sym.unit ?? ''}.${pin.name === pin.number ? pin.number : pin.name}` : `page ${pg.number} (${r(l.x - pg.rect.x)}, ${r(l.y - pg.rect.y)})`;
+                const { pin, pg } = where(s, l);
+                const at = pin ?? `page ${pg.number} (${r(l.x - pg.rect.x)}, ${r(l.y - pg.rect.y)})`;
                 return { net: l.text, at, dir: l.dir, ...(l.auto ? { auto: true } : {}) };
               }),
           ),
+          // supply symbols, where they stand (move_supply)
+          supplies: view.sheets.flatMap((s) =>
+            s.labels
+              .filter((l) => l.kind !== 'net')
+              .map((l) => {
+                const { pin, pg } = where(s, l);
+                return { net: l.text, page: pg.number, x: r(l.x - pg.rect.x), y: r(l.y - pg.rect.y), ...(pin ? { at: pin } : {}), ...(l.auto ? { auto: true } : {}) };
+              }),
+          ),
+          ...(forced.length ? { forced_nets: forced } : {}),
         };
       }
       case 'get_copper': {

@@ -174,6 +174,11 @@ export interface NetAttrs {
   maxCurrent?: number;
   /** Track width on the board (mm), the user's choice; absent: the signal or power width of the rules. */
   trackWidth?: number;
+  /**
+   * How the schematic draws the net, forced (set_net draw_as): a label at every pin and no wire
+   * between them, or wires and no label where a wire can go. Absent: whatever draws best.
+   */
+  drawAs?: 'label' | 'wire';
 }
 
 /**

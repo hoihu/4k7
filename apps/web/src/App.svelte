@@ -189,6 +189,7 @@
             onmovetext={(ref, at) => app.placeText(ref, at)}
             onturnsymbol={(ref, spot, look) => app.placeSymbol(ref, spot, look)}
             onlabeldir={(pin, net, dir) => app.labelAt(pin, net, dir)}
+            onmovesupply={(net, from, to) => app.moveSupply(net, from, to)}
             onerase={(what, net, at) => app.eraseDrawn(what, net, at)}
             onremove={(refs) => app.removeParts(refs)}
             onnote={(m) => app.flash(m)}
@@ -223,7 +224,7 @@
             </div>
           {/if}
           <div class="status">
-            <span>click = reference · shift-click = add · drag a part, text or label = move it · shift-drag text = both · drag the sheet = pan · wheel = zoom · R / F turn · ⌫ delete</span>
+            <span>click = reference · shift-click = add · drag a part, text, label or supply symbol = move it · shift-drag text = both · drag the sheet = pan · wheel = zoom · R / F turn · ⌫ delete</span>
             <span class="sp mono">{app.selection.join(' ') || '—'}</span>
           </div>
         </div>
