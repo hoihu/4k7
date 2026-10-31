@@ -725,7 +725,7 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
 /* --------------------------- copper that follows -------------------------- */
 
 /** Ops that never move a part: the copper needs no following after them. */
-const STILL = new Set(['route', 'set_copper_mode', 'draw_track', 'draw_pair', 'draw_via', 'set_stackup', 'set_impedance', 'remove_impedance', 'edit_copper', 'tune_length', 'erase_copper', 'add_waiver', 'remove_waiver', 'set_mating', 'set_polarity', 'set_enclosure_brief', 'set_enclosure_script', 'set_enclosure_graphic', 'set_value_series', 'set_paper', 'add_graphic', 'edit_graphic', 'remove_graphic', 'set_panel', 'place_symbol', 'wire', 'label', 'erase', 'move_supply', 'auto_draw', 'describe', 'set_plane', 'set_plane_style', 'add_vias', 'remove_vias', 'rename', 'set_net']);
+const STILL = new Set(['route', 'set_copper_mode', 'draw_track', 'draw_pair', 'draw_via', 'set_stackup', 'set_impedance', 'remove_impedance', 'edit_copper', 'tune_length', 'erase_copper', 'add_waiver', 'remove_waiver', 'set_mating', 'set_polarity', 'set_enclosure_brief', 'set_enclosure_script', 'set_enclosure_graphic', 'set_value_series', 'set_paper', 'add_graphic', 'edit_graphic', 'remove_graphic', 'set_panel', 'place_symbol', 'place_text', 'wire', 'label', 'erase', 'move_supply', 'auto_draw', 'describe', 'set_plane', 'set_plane_style', 'add_vias', 'remove_vias', 'rename', 'set_net']);
 
 /** Whether an op may move parts (then drawn copper follows them, see followParts). */
 export const movesParts = (op: EditOp) => !STILL.has(op.op);

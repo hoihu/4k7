@@ -526,6 +526,24 @@ export const MoveSupplyOp = z.object({
   to: pagePoint.describe('Where the foot of its stem goes, on the same page'),
 }).describe('Move one supply symbol (a rail or ground) to another spot on its page: it stands there on a wire the kernel draws from what it stood on (its pin, or the wires joined to it), and the old lead goes. It still points its own way (rails up, ground down), and the wire never comes in through it. The netlist does not change. Refused on a part, on a wire or pin of another net, or with no clear path. The app\'s drag of a supply symbol uses it. Use it to clear a symbol out of the way of a wire or a name; a redraw of its block draws the symbol afresh.');
 
+const textSpot = z.object({
+  x: z.number().describe('Mils from the left edge of the paper of the page the part stands on'),
+  y: z.number().describe('Mils from the top edge of that paper: the baseline of the text'),
+  anchor: z.enum(['start', 'middle', 'end']).optional().describe('Which part of the text stands at x: its left end (start), its middle or its right end (end). Omit it to keep the one it has'),
+});
+
+export const PlaceTextOp = z.object({
+  op: z.literal('place_text'),
+  ref: componentRef.optional().describe('The part, or one unit of a split symbol ("U3B")'),
+  refs: z.array(componentRef).optional().describe('Several parts at once, for at, arrange or auto'),
+  sheet: z.string().optional().describe('With auto and no ref or refs: only this sheet (omit it for every sheet you arranged)'),
+  at: z.enum(['above', 'below', 'left', 'right']).optional().describe('The side of the symbol the name and value go on. Omit it to keep the side they are on'),
+  arrange: z.enum(['stacked', 'side_by_side']).optional().describe('stacked: the value under the name; side_by_side: name and value on one line, which needs a line\'s height only, so it fits between two wires 200 mils apart. Omit it to keep how they stand'),
+  name: textSpot.optional().describe('The exact spot of the name (the reference designator), for one part'),
+  value: textSpot.optional().describe('The exact spot of the value, for one part'),
+  auto: z.boolean().optional().describe('true: only text that runs into a wire, a part, a label or other text moves, to the nearest clear spot round its part, side by side where that is what fits; text the user put somewhere stays'),
+}).describe('Put a part\'s name and value where they read best, without moving the part: the last step of drawing a sheet, and whenever SCH.TEXT_OVERLAP says a name or value runs into something. Give at and/or arrange and the kernel works out the spot, sliding along that side to keep clear; or name and/or value for exact spots, each on its own; or auto. The result says what the text still runs into. It changes no wire and no part. On a sheet the auto-layout draws, at, arrange, name and value make the drawing yours, like place_symbol, and auto changes nothing, because the layout keeps its text clear itself. A moved part takes its text along; a part turned or drawn afresh gets its text back where the symbol has it.');
+
 export const PlaceBlockOp = z.object({
   op: z.literal('place_block'),
   block: z.string().min(1).describe('The block\'s title, as in the description (describe) and get_schematic'),
@@ -780,6 +798,7 @@ export const EditOp = z.discriminatedUnion('op', [
   LabelOp,
   EraseOp,
   MoveSupplyOp,
+  PlaceTextOp,
   AutoDrawOp,
   PlaceBlockOp,
   ProposePlacementOp,
@@ -840,7 +859,10 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_ledger') }),
   z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
   z.object({ op: z.literal('get_fab_profiles') }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses'),
-  z.object({ op: z.literal('get_schematic') }).describe('Schematic drawing: each page (number, name, paper size in mils, drawn by the auto-layout or as you arranged it), the functional blocks (title, page, centre and size of the frame, their parts; guessed: parts in no block that the layout drew with it), where each symbol stands (centre and size in mils from the paper\'s top-left) and the net labels with the pins they sit on (auto: a connection your drawing does not show yet)'),
+  z.object({
+    op: z.literal('get_schematic'),
+    texts: z.boolean().optional().describe('true: also where each part\'s name and value stand, for exact spots with place_text'),
+  }).describe('Schematic drawing: each page (number, name, paper size in mils, drawn by the auto-layout or as you arranged it), the functional blocks (title, page, centre and size of the frame, their parts; guessed: parts in no block that the layout drew with it), where each symbol stands (centre and size in mils from the paper\'s top-left) and the net labels with the pins they sit on (auto: a connection your drawing does not show yet)'),
   z.object({
     op: z.literal('get_copper'),
     nets: z.array(netName).optional().describe('Only these nets'),

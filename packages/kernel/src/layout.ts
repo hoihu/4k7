@@ -19,6 +19,7 @@ import { GRID, isTwoPin, symbolFor, turnsOver, unitCount, uprightSymbol } from '
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, valueOf, type NetPin } from './doc.ts';
 import { drawBlock, FRAME_PAD, FRAME_TITLE, type BlockNode } from './blocks.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
+import { clearTexts } from './parttext.ts';
 import { tidyWires } from './tidy.ts';
 import {
   addJunctions,
@@ -436,6 +437,7 @@ function layoutSheet(ctx: Ctx, sheetId: string, sheetName: string): SheetView {
   const { scene, pages } = laid;
   tidyWires(scene);
   addJunctions(scene);
+  clearTexts({ ...scene, pages });
   const bb = pagesBBox(pages);
   return { id: sheetId, name: sheetName, bbox: bb, pages, ...scene };
 }

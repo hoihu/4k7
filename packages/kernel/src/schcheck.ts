@@ -6,6 +6,7 @@
  */
 import { type Design, type Diagnostic, type EditOp, type LabelView, type PinView, type SchematicRule, type SchematicView, type SheetView, type SymbolView } from '@4k7/schema';
 import { cardOf, natCmp } from './doc.ts';
+import { clashWords, textOverlaps } from './parttext.ts';
 import { supplyDir } from './scene.ts';
 import { labelOverlaps, segments, touches, wireCrossings, wireShape, type PinOn } from './scope.ts';
 
@@ -194,6 +195,13 @@ function overlapChecks(ctx: Ctx, sheet: SheetView) {
     };
     const text = message();
     push(ctx, 'SCH.TEXT_OVERLAP', entities, text);
+  }
+  // a part's own name and value; on a sheet the layout draws it has found no clear spot for them
+  const drawn = !!ctx.d.drawing?.[sheet.id];
+  for (const c of textOverlaps(sheet)) {
+    const { sym, which, hit } = c;
+    const on = hit.on === 'wire' ? netRef(ctx, hit.net) : (hit.on === 'symbol' && hit.sym !== sym) || hit.on === 'text' ? hit.sym.refdes : '';
+    push(ctx, 'SCH.TEXT_OVERLAP', [sym.refdes, `${sym.refdes}.${which}`, ...(on ? [on] : [])], clashWords(c, (id) => netName(ctx, id)), drawn ? [{ op: 'place_text', ref: `${sym.refdes}${sym.unit ?? ''}`, auto: true }] : undefined);
   }
 }
 

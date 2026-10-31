@@ -8,6 +8,7 @@ import { RejectError, componentsSorted, natCmp, netMembers, reject } from './doc
 import { RETURN_LEG, textRect, tw } from './scene.ts';
 import { schematicView } from './drawing.ts';
 import { blockAssignment } from './layout.ts';
+import { textOverlaps } from './parttext.ts';
 
 export interface ResolvedScope {
   scope: OptimizeScope;
@@ -69,7 +70,7 @@ export function resolveScope(d: Design, view: SchematicView, scope: OptimizeScop
     anchored: [...anchored].flatMap(([id, why]) => (byComp.get(id) ?? []).map((s) => ({ ref: refOf(s), why }))).sort((a, b) => natCmp(a.ref, b.ref)),
     context,
     boundaryNets: [...boundary].map((n) => d.nets[n]?.name ?? n).sort(natCmp),
-    measures: measure(sheet, nets),
+    measures: measure(sheet, nets, free),
   };
   return { scope, free, anchored, nets, info };
 }
@@ -177,6 +178,16 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
       if (!inArea(op.x, op.y) || !inArea(op.to.x, op.to.y)) out('move_supply: the symbol and the spot it goes to must both be inside this area.');
       return;
     }
+    case 'place_text': {
+      const refs = [...(op.ref ? [op.ref] : []), ...(op.refs ?? [])];
+      if (!refs.length) out('place_text of a whole sheet reaches beyond this area; give ref or refs (parts inside it).');
+      for (const r of refs) {
+        const c = resolveUnitRef(d, r).comp;
+        mayRefer(c);
+        if (!op.auto && d.drawing?.[c.sheet]?.symbols.some((s) => s.comp === c.id && s.textBy === 'user')) out(`place_text: the user put ${c.refdes}'s name or value where they stand; leave them, or ask them.`);
+      }
+      return;
+    }
     case 'auto_draw':
       if (!op.refs?.length) out('auto_draw of a whole sheet redraws more than this area; give refs (parts inside it) to redraw only those.');
       for (const r of op.refs ?? []) mustBeFree(resolveUnitRef(d, r).comp, 'auto_draw');
@@ -194,7 +205,7 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
       return;
     }
     default:
-      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol, place_block, wire, label, erase at pins, move_supply, auto_draw with refs and set_symbol on parts inside the area.`);
+      out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol, place_text, place_block, wire, label, erase at pins, move_supply, auto_draw with refs and set_symbol on parts inside the area.`);
   }
 }
 
@@ -245,8 +256,8 @@ export function wireCrossings(sheet: SheetView, nets: Set<string>): { net: strin
   return out;
 }
 
-/** Wire crossings, the wires' shape, wire length and net labels of the given nets on a sheet. */
-export function measure(sheet: SheetView, nets: Set<string>): ScopeMeasures {
+/** Wire crossings, the wires' shape, wire length and net labels of the given nets on a sheet; the overlaps with those of the names and values of `parts` (component ids). */
+export function measure(sheet: SheetView, nets: Set<string>, parts: ReadonlySet<string> = new Set()): ScopeMeasures {
   const mine = sheet.wires.filter((w) => nets.has(w.netId)).map((w) => ({ net: w.netId, segs: segments(w.pts) }));
   const mils = mine.reduce((n, w) => n + w.segs.reduce((m, [x1, y1, x2, y2]) => m + Math.abs(x2 - x1) + Math.abs(y2 - y1), 0), 0);
   const labels = sheet.labels.filter((l) => l.kind === 'net' && nets.has(l.netId)).length;
@@ -257,7 +268,7 @@ export function measure(sheet: SheetView, nets: Set<string>): ScopeMeasures {
     shape.jogs += s.jogs.length;
     shape.detours += s.detours.length;
   }
-  return { crossings: wireCrossings(sheet, nets).length, ...shape, overlaps: labelOverlaps(sheet, nets).length, wireIn: Math.round(mils / 100) / 10, labels };
+  return { crossings: wireCrossings(sheet, nets).length, ...shape, overlaps: labelOverlaps(sheet, nets).length + (parts.size ? textOverlaps(sheet, parts).length : 0), wireIn: Math.round(mils / 100) / 10, labels };
 }
 
 /* -------------------------------- overlaps -------------------------------- */
@@ -266,17 +277,17 @@ export function measure(sheet: SheetView, nets: Set<string>): ScopeMeasures {
  * Strict overlap; a zero-width rect is a line, so two lines overlap only where they cross, except
  * that two lines on the same line overlap where they run along each other.
  */
-const meets = (a: Rect, b: Rect) => {
+export const meets = (a: Rect, b: Rect) => {
   const along = (p: number, q: number, lp: number, lq: number, both: boolean) => (both ? p <= q + lq && q <= p + lp : p < q + lq && q < p + lp);
   return along(a.x, b.x, a.w, b.w, a.w === 0 && b.w === 0) && along(a.y, b.y, a.h, b.h, a.h === 0 && b.h === 0);
 };
-const line = (x1: number, y1: number, x2: number, y2: number): Rect => ({ x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) });
+export const line = (x1: number, y1: number, x2: number, y2: number): Rect => ({ x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) });
 
 /**
  * What a label draws, as the canvas draws it: the head (a flag; a rail's arrow and name; ground
  * bars) and, for a supply, the lines leading to it (stub, stem).
  */
-function labelParts(l: LabelView): { r: Rect; head: boolean }[] {
+export function labelParts(l: LabelView): { r: Rect; head: boolean }[] {
   // a name on its wire: the letters (72 high, baseline 30 above the wire), not the room kept for it
   if (l.kind === 'net' && l.dir === 'on') return [{ r: { x: l.x - tw(l.text) / 2, y: l.y - 85, w: tw(l.text), h: 60 }, head: true }];
   // a flag, as the canvas draws it: tw(text) + 110 along the lead, 45 to each side (labelRect is the room kept for it)

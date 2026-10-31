@@ -37,6 +37,7 @@ import {
   viasForCurrent,
   enclosureGraphicsInfo,
   boardStackup,
+  type SymbolView,
 } from '@4k7/schema';
 import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
 import { applyOp, describeConstraint, descriptionView } from './apply.ts';
@@ -281,7 +282,7 @@ export class Kernel {
     const sheet = view.sheets.find((x) => x.id === s.sc.scope.sheet);
     return {
       ripple: sheet ? ripple(s.sheet, s.pos, sheet, s.sc) : [],
-      measures: sheet ? measure(sheet, s.sc.nets) : s.sc.info.measures,
+      measures: sheet ? measure(sheet, s.sc.nets, s.sc.free) : s.sc.info.measures,
       baseline: s.sc.info.measures,
     };
   }
@@ -496,7 +497,7 @@ export class Kernel {
         return {
           coordinates: 'mils from the top-left corner of the page\'s paper, x to the right, y down; a symbol\'s x/y is its centre',
           labels_note: 'net labels; auto: true is a connection your drawing does not show, labelled by the kernel until you wire it (wire) or label it (label)',
-          symbols_note: 'mirrored: true is how the symbol stands now (its left pins on the right; a two-pin part with pin 1 at the bottom or, lying, on the right); to swap it, give place_symbol mirror the opposite of this. rotated: degrees clockwise from how it is usually drawn (place_symbol rotate), lying: a two-pin part lying (place_symbol orient)',
+          symbols_note: 'mirrored: true is how the symbol stands now (its left pins on the right; a two-pin part with pin 1 at the bottom or, lying, on the right); to swap it, give place_symbol mirror the opposite of this. rotated: degrees clockwise from how it is usually drawn (place_symbol rotate), lying: a two-pin part lying (place_symbol orient). text_user_placed: the user put its name or value where they stand. With texts: true, name and value say where its text stands (place_text moves them): y is the baseline, anchor which part of the text stands at x',
           drawing_area: { margin: PAGE.margin, title_block: `${PAGE.title} high, at the bottom` },
           pages: view.sheets.flatMap((s) =>
             s.pages.map((p) => ({ page: p.number, sheet: s.name, name: p.name, w: p.rect.w, h: p.rect.h, ...(p.oversized ? { oversized: true } : {}), drawn: d.drawing?.[s.id] ? 'as you arranged it' : 'by the auto-layout, afresh after every change' })),
@@ -507,7 +508,8 @@ export class Kernel {
               const cx = sym.bbox.x + sym.bbox.w / 2;
               const cy = sym.bbox.y + sym.bbox.h / 2;
               const p = s.pages.find((pg) => cx >= pg.rect.x && cx <= pg.rect.x + pg.rect.w && cy >= pg.rect.y && cy <= pg.rect.y + pg.rect.h) ?? s.pages[0]!;
-              return { ref: `${sym.refdes}${sym.unit ?? ''}`, page: p.number, x: r(cx - p.rect.x), y: r(cy - p.rect.y), w: sym.bbox.w, h: sym.bbox.h, ...(sym.rotation ? { lying: true } : {}), ...(sym.rotated ? { rotated: sym.rotated } : {}), ...(sym.mirrored ? { mirrored: true } : {}), ...(sym.by ? { user_placed: true } : {}) };
+              const text = (t: SymbolView['refPos']) => ({ x: r(t.x - p.rect.x), y: r(t.y - p.rect.y), anchor: t.anchor });
+              return { ref: `${sym.refdes}${sym.unit ?? ''}`, page: p.number, x: r(cx - p.rect.x), y: r(cy - p.rect.y), w: sym.bbox.w, h: sym.bbox.h, ...(sym.rotation ? { lying: true } : {}), ...(sym.rotated ? { rotated: sym.rotated } : {}), ...(sym.mirrored ? { mirrored: true } : {}), ...(sym.by ? { user_placed: true } : {}), ...(sym.textBy ? { text_user_placed: true } : {}), ...(q.texts ? { name: text(sym.refPos), value: text(sym.valuePos) } : {}) };
             }),
           ),
           // net labels, at the pin they sit on; auto: a connection the drawing does not show yet

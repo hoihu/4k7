@@ -186,6 +186,7 @@
             onclear={() => app.clearSelection()}
             editable={!app.running && !app.k?.proposal}
             onmovesymbol={(ref, spot) => app.placeSymbol(ref, spot)}
+            onmovetext={(ref, at) => app.placeText(ref, at)}
             onturnsymbol={(ref, spot, look) => app.placeSymbol(ref, spot, look)}
             onlabeldir={(pin, net, dir) => app.labelAt(pin, net, dir)}
             onmovesupply={(net, from, to) => app.moveSupply(net, from, to)}
@@ -223,7 +224,7 @@
             </div>
           {/if}
           <div class="status">
-            <span>click = reference · shift-click = add · drag a part, label or supply symbol = move it · drag the sheet = pan · wheel = zoom · R / F turn · ⌫ delete</span>
+            <span>click = reference · shift-click = add · drag a part, text, label or supply symbol = move it · shift-drag text = both · drag the sheet = pan · wheel = zoom · R / F turn · ⌫ delete</span>
             <span class="sp mono">{app.selection.join(' ') || '—'}</span>
           </div>
         </div>

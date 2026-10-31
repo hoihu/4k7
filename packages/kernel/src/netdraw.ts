@@ -1,5 +1,5 @@
 /**
- * A net forced to be drawn one way (docs/design/schematic-drawing.md §2e; set_net draw_as, the
+ * A net forced to be drawn one way (docs/design/schematic-drawing.md §2f; set_net draw_as, the
  * app's net panel). Everything happens on stored drawings: a sheet with such a net is taken over
  * from the auto-layout, and after every transaction the kernel draws the net that way again, so a
  * block redrawn, a part added or moved, or a hand edit elsewhere does not undo it.

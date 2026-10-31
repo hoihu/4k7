@@ -4,10 +4,12 @@
  * only how the netlist is drawn: a wire joins pins that are on one net already. The first one on a
  * sheet takes it over from the auto-layout, like place_symbol.
  */
-import type { Design, EditOp, LabelView, OpResult, PinView, Rect, SheetDrawing, SymbolView } from '@4k7/schema';
+import type { Component, Design, EditOp, LabelView, OpResult, PinView, Rect, SheetDrawing, SheetView, SymbolView } from '@4k7/schema';
 import { GRID } from '@4k7/parts';
-import { RejectError, cardOf, pinLabel, reject, resolvePins, type PinHandle } from './doc.ts';
-import { drawingArea, groups, joinedWires, onWire, ownSheet, pageAt, pinsOf, schematicView, symbolOf, syncDrawing, syncSheet } from './drawing.ts';
+import { resolveUnitRef } from './apply.ts';
+import { RejectError, cardOf, natCmp, pinLabel, reject, resolvePins, type PinHandle } from './doc.ts';
+import { drawingArea, groups, isDrawn, joinedWires, onWire, ownSheet, pageAt, pinsOf, schematicView, symbolOf, syncDrawing, syncSheet } from './drawing.ts';
+import { clashWords, clearTexts, placeTexts, textBox, textClashes, within, type TextArrange, type TextClash, type TextSide } from './parttext.ts';
 import { deco, labelRect, leadEnd, supplyDir, textRect, type Dir } from './scene.ts';
 import { routeWire } from './schroute.ts';
 import { NOT_INTO } from './wireclean.ts';
@@ -363,4 +365,112 @@ export function moveSupplyOp(d: Design, op: Extract<EditOp, { op: 'move_supply' 
   sd.labels.push(label);
   syncSheet(d, sh!.id);
   return { op: 'move_supply', effect: `${net.name} symbol moved to ${spot} on page ${op.page}, on a wire from what it stood on`, ids: [sh!.id] };
+}
+
+const WORDS: Record<TextArrange, string> = { stacked: 'stacked', side_by_side: 'side by side' };
+const symRef = (s: SymbolView) => `${s.refdes}${s.unit ?? ''}`;
+
+/**
+ * Where a part's name and value stand (place_text, parttext.ts): only their positions change. A
+ * sheet the layout draws keeps its text clear itself, so auto leaves it alone; the other ways take
+ * it over, as any drawing op does. Text the user put somewhere is theirs: auto leaves it, and the
+ * agent's other ways say so.
+ */
+export function textOp(d: Design, op: Extract<EditOp, { op: 'place_text' }>, by: 'user' | 'agent'): OpResult {
+  syncDrawing(d); // parts added earlier in this transaction are drawn first
+  const exact = op.name || op.value;
+  if ([exact, op.at || op.arrange, op.auto].filter(Boolean).length !== 1) {
+    reject({ code: 'INVALID_OP', message: 'place_text takes one of: at and/or arrange (the kernel works out the spot), name and/or value (exact spots, for one part), auto: true (only text that runs into something moves).' });
+  }
+  const picks = [...(op.ref ? [op.ref] : []), ...(op.refs ?? [])].map((r) => resolveUnitRef(d, r));
+  if (op.auto) return autoTexts(d, op, picks);
+  if (!picks.length) reject({ code: 'INVALID_OP', message: 'place_text needs ref (or refs): the part whose name and value move.' });
+  if (exact && picks.length > 1) reject({ code: 'INVALID_OP', message: 'Exact spots (name, value) are for one part at a time.' });
+  const notes: string[] = [];
+  for (const id of new Set(picks.map((p) => p.comp.sheet))) {
+    if (isDrawn(d, id)) continue;
+    notes.push(`sheet ${d.sheets[id]?.name ?? id} is drawn as you arrange it from now on`);
+    ownSheet(d, id);
+  }
+  const view = schematicView(d);
+  const done: string[] = [];
+  for (const { comp, unit } of picks) {
+    const sheet = view.sheets.find((s) => s.id === comp.sheet)!;
+    const syms = sheet.symbols.filter((s) => s.componentId === comp.id && (unit === undefined || s.unit === unit));
+    if (!syms.length) reject({ code: 'INVALID_OP', message: `${comp.refdes}${unit ?? ''} is not drawn on its sheet.` });
+    if (exact && syms.length > 1) reject({ code: 'INVALID_OP', message: `${comp.refdes} is drawn as units: give one of them (${syms.map(symRef).join(', ')}).` });
+    for (const sym of syms) {
+      let clashes: TextClash[];
+      if (exact) {
+        sym.refPos = op.name ? textAt(sheet, sym, 'name', op.name) : sym.refPos;
+        sym.valuePos = op.value ? textAt(sheet, sym, 'value', op.value) : sym.valuePos;
+        clashes = textClashes(sheet, sym);
+        done.push(`${symRef(sym)}: ${[op.name ? `name at (${op.name.x}, ${op.name.y})` : '', op.value ? `value at (${op.value.x}, ${op.value.y})` : ''].filter(Boolean).join(', ')}`);
+      } else {
+        const to = placeTexts(sheet, sym, { ...(op.at ? { side: op.at as TextSide } : {}), ...(op.arrange ? { arrange: op.arrange } : {}) });
+        clashes = to.clashes;
+        done.push(`${symRef(sym)}: name and value ${WORDS[to.arrange]} ${to.side === 'above' || to.side === 'below' ? to.side : `on the ${to.side}`}`);
+      }
+      const stored = storeText(d, comp, sym);
+      const wasUsers = stored.textBy === 'user';
+      if (by === 'user') stored.textBy = 'user';
+      else delete stored.textBy;
+      if (wasUsers && by === 'agent') notes.push(`${symRef(sym)}'s text was the user's placement; now yours`);
+      for (const c of clashes) notes.push(clashWords(c, (n) => d.nets[n]?.name ?? n));
+    }
+  }
+  return { op: op.op, effect: `${done.join('; ')}${notes.length ? `; ${notes.join('; ')}` : ''}`, ids: picks.map((p) => p.comp.id) };
+}
+
+/** An exact spot of a part's text as canvas coordinates; it stays inside the frame of the page the part stands on, or it is refused. */
+function textAt(sheet: SheetView, sym: SymbolView, which: 'name' | 'value', at: { x: number; y: number; anchor?: SymbolView['refPos']['anchor'] | undefined }): SymbolView['refPos'] {
+  const c = { x: sym.bbox.x + sym.bbox.w / 2, y: sym.bbox.y + sym.bbox.h / 2 };
+  const page = sheet.pages[pageAt(sheet.pages.map((p) => p.rect), c)]!;
+  const area = drawingArea(page.rect);
+  const pos = { x: Math.round(page.rect.x + at.x), y: Math.round(page.rect.y + at.y), anchor: at.anchor ?? (which === 'name' ? sym.refPos : sym.valuePos).anchor };
+  if (!within(area, textBox(sym, which, pos))) {
+    reject({ code: 'INVALID_OP', message: `${symRef(sym)}'s ${which} at (${at.x}, ${at.y}) would leave the drawing area of page ${page.number}, where the part stands: x from ${area.x - page.rect.x} to ${area.x - page.rect.x + area.w}, y from ${area.y - page.rect.y} to ${area.y - page.rect.y + area.h}. Move the part first (place_symbol).` });
+  }
+  return pos;
+}
+
+/** A symbol's text as it stands in the view goes into the stored drawing. */
+function storeText(d: Design, comp: Component, sym: SymbolView) {
+  const stored = d.drawing![comp.sheet]!.symbols.find((s) => s.comp === comp.id && (s.unit ?? undefined) === (sym.unit ?? undefined))!;
+  stored.ref = { ...sym.refPos };
+  stored.value = { ...sym.valuePos };
+  return stored;
+}
+
+/** Text that runs into something goes to the nearest clear spot: of the given parts, a sheet, or every sheet the agent arranged. */
+function autoTexts(d: Design, op: Extract<EditOp, { op: 'place_text' }>, picks: { comp: Component; unit?: string }[]): OpResult {
+  const named = op.sheet !== undefined ? Object.values(d.sheets).find((s) => s.name.toLowerCase() === op.sheet!.toLowerCase()) : undefined;
+  if (op.sheet !== undefined && !named) reject({ code: 'REF_UNKNOWN', message: `No sheet "${op.sheet}".`, candidates: Object.values(d.sheets).map((s) => s.name) });
+  const ids = picks.length ? [...new Set(picks.map((p) => p.comp.sheet))] : named ? [named.id] : Object.values(d.sheets).sort((a, b) => a.order - b.order).map((s) => s.id);
+  const picked = (s: SymbolView) => !picks.length || picks.some((p) => p.comp.id === s.componentId && (p.unit === undefined || p.unit === s.unit));
+  const view = schematicView(d);
+  const moved: string[] = [];
+  const stuck: string[] = [];
+  const kept: string[] = [];
+  const touched: string[] = [];
+  const clash = (c: TextClash) => clashWords(c, (n) => d.nets[n]?.name ?? n);
+  for (const id of ids.filter((x) => isDrawn(d, x))) {
+    const sheet = view.sheets.find((s) => s.id === id)!;
+    const r = clearTexts(sheet, (s) => !s.textBy && picked(s));
+    for (const m of r.moved) {
+      storeText(d, d.components[m.sym.componentId]!, m.sym);
+      moved.push(`${symRef(m.sym)} ${WORDS[m.arrange]} ${m.side === 'above' || m.side === 'below' ? m.side : `on the ${m.side}`}`);
+      touched.push(m.sym.componentId);
+    }
+    stuck.push(...r.stuck.map(clash));
+    for (const s of sheet.symbols) if (s.textBy && picked(s)) kept.push(...textClashes(sheet, s).map(clash));
+  }
+  const byLayout = ids.filter((x) => !isDrawn(d, x)).map((x) => d.sheets[x]?.name ?? x);
+  const parts = [
+    moved.length ? `moved ${moved.sort(natCmp).join(', ')}` : 'no name or value moved',
+    stuck.length ? `no clear spot: ${stuck.join('; ')}` : '',
+    kept.length ? `left where the user put them: ${kept.join('; ')}` : '',
+    byLayout.length ? `drawn by the auto-layout, which keeps its text clear itself: ${byLayout.join(', ')}` : '',
+  ].filter(Boolean);
+  return { op: op.op, effect: parts.join('; '), ids: touched };
 }
