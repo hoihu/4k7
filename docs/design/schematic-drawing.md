@@ -329,9 +329,8 @@ Not done: a name added to a wire that stays. `label` here means labels instead o
 label choice of §2a; the agent can still put a label at a pin of a wired net that is not forced.
 
 Tried on a copy of the user's 124-part design: each of its 94 nets forced to labels and to wires, and
-each of its 84 supply symbols moved up and aside (76 moved, the others refused for landing on a part
-or a wire). No connection lost, no pin joined to another net, no drawing changed by a later edit. A
-force takes about as long as any edit there (about 0.25 s), up to 1 s for a rail with many pins forced
+each of its 84 supply symbols moved up and aside. No connection lost, no pin joined to another net, no
+drawing changed by a later edit. A force takes about as long as any edit there (about 0.25 s), up to 1 s for a rail with many pins forced
 to wires, most of it one tidy-up after all the wires are in. Twelve stored projects open exactly as
 before. The symbols moved by ten offsets (639 moves; 201 refused, for a part, a wire or the page's edge,
 none for lack of a path) leave no wire through a symbol, where 43 ran through one before `forbid` held
