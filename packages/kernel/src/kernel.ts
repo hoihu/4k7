@@ -155,12 +155,17 @@ export class Kernel {
     return placedOf(this.draft);
   }
 
+  /** What the board worker lays the board from (layoutBoard): to send on, not to change. */
+  boardRequest(): { design: Design; placed: BoardView } {
+    return { design: this.draft, placed: placedOf(this.draft) };
+  }
+
   /** The board of the working copy: placement, routing and DRC (computed on demand, cached). `follow` follows the routing, if it routes (see layoutBoard). */
   board(follow: { onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
     const d = this.draft;
     let b = this.boards.get(d);
     if (!b) {
-      b = layoutBoard(d, this.analyse(d).view, { ...follow, placed: placedOf(d) });
+      b = layoutBoard(d, placedOf(d), follow);
       this.boards.set(d, b);
     }
     return b;

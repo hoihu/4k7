@@ -1291,13 +1291,12 @@ function hash(s: string): string {
 const COPPER_FORMAT = 1;
 
 /**
- * Place; route and check the copper when the route step was taken for this placement (or `route`).
+ * The board as placed (`b`): routed and its copper checked when the route step was taken for this placement (or `route`).
  * Copper the design keeps for this placement (`board.copper`) is used as it is; otherwise the
  * board is routed (to completion if it can be: that may take a while) and the result comes back
  * as `newCopper` for the app to keep.
  */
-export function layoutBoard(d: Design, sch: SchematicView, opts: { budgetMs?: number; route?: boolean; onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void; placed?: BoardView } = {}): BoardView {
-  const b = opts.placed ?? placeBoard(d, sch);
+export function layoutBoard(d: Design, b: BoardView, opts: { budgetMs?: number; route?: boolean; onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
   if (!b.parts.length || (b.routing !== 'done' && !opts.route)) return b;
   const { powerNets, planes, netWidths, key, basis } = routeSetup(d, b);
   const pads = b.parts.flatMap((p) => p.pads);

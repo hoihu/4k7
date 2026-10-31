@@ -444,15 +444,20 @@ class AppState {
     if (!this.board || this.boardRev !== this.rev) void this.refreshBoard();
   }
 
-  /** Recompute the board in the board worker: placement first (fast), then routing and DRC. */
+  /** The board anew: its placement from the kernel at once, then routing, pours and DRC in the board worker. */
   async refreshBoard() {
     const rev = this.rev;
-    const design = await this.kernel.draftDesign();
+    const request = await this.kernel.boardRequest().catch((e: Error) => {
+      this.flash(`Board layout failed: ${e.message}`);
+      return null;
+    });
+    if (!request) return;
     this.boardBusy = true;
     this.boardStage = 'placed';
     this.routeProgress = null;
     this.boards.compute(
-      design,
+      request.design,
+      request.placed,
       (stage, board) => {
         this.routeProgress = null;
         const { newCopper, ...shown } = board;
