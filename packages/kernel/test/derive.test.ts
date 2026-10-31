@@ -7,7 +7,7 @@ import { viewOf } from '../src/drawing.ts';
 import { closePairs, shapeGap, type CopperItem } from '../src/drc.ts';
 import { pointSegDist } from '../src/geom.ts';
 import { Kernel } from '../src/kernel.ts';
-import { islandsOf } from '../src/router.ts';
+import { islandsOf } from '../src/routegrid.ts';
 import { buckTransaction } from './fixtures.ts';
 
 const buck = () => {
