@@ -17,6 +17,16 @@ export const GRID = 100;
 export const PIN_LEN = 200;
 /** Approximate advance width of one character of pin/label text, in mils. */
 export const CHAR_W = 50;
+/** Line height of stacked value text, in mils. */
+export const TEXT_LINE = 85;
+/** Length of a supply symbol's stem, in mils. */
+export const RAIL_STEM = 200;
+
+/** The box a symbol's name or value takes, from its anchor point (a rough one: what the kernel keeps clear, and what takes a press on the canvas). */
+export function textRect(p: { x: number; y: number; anchor: 'start' | 'middle' | 'end' }, lines: string[]): { x: number; y: number; w: number; h: number } {
+  const w = Math.max(...lines.map((l) => l.length * CHAR_W)) + 20;
+  return { x: p.anchor === 'end' ? p.x - w : p.anchor === 'middle' ? p.x - w / 2 : p.x, y: p.y - 80, w, h: 100 + TEXT_LINE * (lines.length - 1) };
+}
 
 export interface SymbolPin {
   number: string;

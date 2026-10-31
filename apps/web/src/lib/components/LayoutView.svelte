@@ -215,7 +215,7 @@
 <section class="lay" class:nochat={!app.chatOpen}>
   <div class="col chatcol">{#if app.chatOpen}<Chat /><Splitter pane="chat" />{/if}</div>
   <div class="col canvas">
-    {#if mode === 'panel' && b?.panel}<div class="stagep"><PanelCanvas board={b} ontabs={(tabs) => void app.userEdit('Panel tabs', [{ op: 'set_panel', tabs }])} /></div>
+    {#if mode === 'panel' && b?.panel}<div class="stagep"><PanelCanvas board={b} ontabs={(tabs) => app.userEdit('Panel tabs', [{ op: 'set_panel', tabs }])} /></div>
     {:else if mode === 'panel' && b?.parts.length}<div class="blank"><p><b>No panel yet.</b> A panel holds copies of the board in a frame, milled apart except at tabs with mouse bites. Make one in the side panel, or ask the agent.</p></div>{/if}
     {#if mode === '3d' && b}<Board3DView bind:this={view3d} board={b} from={from2d} onready={() => (show2d = false)} />{/if}
     <div class="stage2d" class:hidden={!show2d || mode === 'panel'}>
@@ -229,10 +229,10 @@
       onselect={(r, add) => app.toggleSelect(r, add)}
       onclear={() => ((app.selection = []), (marker = null))}
       onhovernet={(n) => (hotNet = n)}
-      onplace={(ref, x, y, rot) => void app.userEdit(`Place ${ref}`, [{ op: 'place', ref, x_mm: x, y_mm: y, rot }])}
+      onplace={(ref, x, y, rot) => app.userEdit(`Place ${ref}`, [{ op: 'place', ref, x_mm: x, y_mm: y, rot }])}
       onlock={toggleLock}
       onflip={flip}
-      ongraphic={(id, dx, dy) => void app.userEdit(`Move ${id}`, [{ op: 'edit_graphic', id, dx_mm: dx, dy_mm: dy }])}
+      ongraphic={(id, dx, dy) => app.userEdit(`Move ${id}`, [{ op: 'edit_graphic', id, dx_mm: dx, dy_mm: dy }])}
     />
     </div>
     <!-- one row: the pending bar goes on a line of its own when the tools leave no room, never under them -->

@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { GRID, RAIL_STEM, textRect } from '@4k7/parts';
   import { PAGE, type LabelView, type PageView, type PaperId, type PinView, type Prim, type Rect, type SheetView, type SymbolView } from '@4k7/schema';
+  import { Dropped, SvgView, pastDrag, plainKey, type Pan } from '../canvas.svelte.ts';
 
   interface Props {
     sheet: SheetView | undefined;
@@ -52,80 +54,50 @@
 
   let { sheet, designName, pageCount, paper = 'A4', overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false, editable = false, onmovesymbol, onmovetext, onturnsymbol, onlabeldir, onmovesupply, onerase, onremove, onnote }: Props = $props();
 
-  /** The layout's grid, in mils: a dragged symbol moves in whole steps of it (keep in sync with GRID in @4k7/parts). */
-  const GRID = 100;
   /** A dragged name or value moves in whole steps of this, finer than the wires' grid so it fits between them. */
   const TEXT_STEP = 25;
   const canEdit = $derived(editable && !compact);
 
-  /** Length of a supply symbol's stem, in mils (keep in sync with labelRect in the kernel). */
-  const RAIL_STEM = 200;
-
-  let svg: SVGSVGElement | undefined = $state();
-  let vb = $state({ x: 0, y: 0, w: 1000, h: 1000 });
+  const view = new SvgView({ x: 0, y: 0, w: 1000, h: 1000 }, 300, 200000, updateZoom);
   let fittedFor = '';
   let zoomPct = $state(100);
 
   function fit() {
     if (!sheet) return;
     const b = sheet.bbox;
-    vb = { x: b.x, y: b.y, w: Math.max(b.w, 2000), h: Math.max(b.h, 1400) };
-    if (b.w < 2000) vb.x = b.x - (2000 - b.w) / 2;
-    if (b.h < 1400) vb.y = b.y - (1400 - b.h) / 2;
+    view.vb = { x: b.w < 2000 ? b.x - (2000 - b.w) / 2 : b.x, y: b.h < 1400 ? b.y - (1400 - b.h) / 2 : b.y, w: Math.max(b.w, 2000), h: Math.max(b.h, 1400) };
     updateZoom();
   }
 
   /** Follow the design as it grows until the user pans or zooms; switching sheets always refits. */
-  let userMoved = false;
   let lastSheet = '';
   $effect(() => {
     const key = sheet ? `${sheet.id}:${sheet.bbox.x},${sheet.bbox.y},${sheet.bbox.w},${sheet.bbox.h}` : '';
     if (sheet && sheet.id !== lastSheet) {
       lastSheet = sheet.id;
-      userMoved = false;
+      view.userMoved = false;
     }
-    if (key !== fittedFor && !userMoved) {
+    if (key !== fittedFor && !view.userMoved) {
       fittedFor = key;
       fit();
     }
   });
 
-  /** The area on screen, in sheet coordinates (the view box is fitted into the element, so one side shows more). */
+  /** The area on screen, in sheet coordinates. */
   export function getVisibleRect(): Rect | null {
-    const r = svg?.getBoundingClientRect();
-    if (!r || r.width <= 0 || r.height <= 0) return null;
-    const aspect = r.width / r.height;
-    const w = aspect > vb.w / vb.h ? vb.h * aspect : vb.w;
-    const h = aspect > vb.w / vb.h ? vb.h : vb.w / aspect;
-    return { x: Math.round(vb.x + vb.w / 2 - w / 2), y: Math.round(vb.y + vb.h / 2 - h / 2), w: Math.round(w), h: Math.round(h) };
+    const r = view.visibleRect();
+    return r && { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) };
   }
 
   function updateZoom() {
-    if (!svg || !sheet) return;
-    const r = svg.getBoundingClientRect();
-    const scale = Math.min(r.width / vb.w, r.height / vb.h);
+    if (!view.svg || !sheet) return;
+    const r = view.svg.getBoundingClientRect();
+    const scale = Math.min(r.width / view.vb.w, r.height / view.vb.h);
     zoomPct = Math.round(scale * 1000); // 100% = 1 px per mil × 10
   }
 
-  function toSvg(e: { clientX: number; clientY: number }) {
-    const m = svg!.getScreenCTM()!.inverse();
-    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m);
-    return { x: p.x, y: p.y };
-  }
-
-  function onwheel(e: WheelEvent) {
-    e.preventDefault();
-    const p = toSvg(e);
-    const f = Math.exp(Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 60) * 0.004);
-    const w = Math.min(Math.max(vb.w * f, 300), 200000);
-    const k = w / vb.w;
-    vb = { x: p.x - (p.x - vb.x) * k, y: p.y - (p.y - vb.y) * k, w, h: vb.h * k };
-    userMoved = true;
-    updateZoom();
-  }
-
   /** `ref`: the part under the pointer when the press began (once captured, events target the canvas itself). */
-  let drag: { x: number; y: number; vx: number; vy: number; moved: boolean; ref: string | null; net: string | null; wire: number | null; at: { x: number; y: number } } | null = null;
+  let drag: (Pan & { ref: string | null; net: string | null; wire: number | null; at: { x: number; y: number } }) | null = null;
 
   /* ---- hand editing: a press on a symbol, its text or a net label is an edit gesture, not a pan ---- */
   type TextPick = 'name' | 'value' | 'both';
@@ -136,10 +108,9 @@
     | { kind: 'supply'; i: number; sx: number; sy: number; cx: number; cy: number; dx: number; dy: number; moved: boolean };
   let edit = $state<Edit | null>(null);
   /** A symbol just dropped is shown there until the sheet arrives in which it has moved (the edit takes a moment). */
-  let dropped = $state<{ ref: string; unit: string | undefined; x0: number; y0: number; dx: number; dy: number } | null>(null);
+  const dropped = new Dropped<{ ref: string; unit: string | undefined; x0: number; y0: number; dx: number; dy: number }>();
   /** A part's text just dropped, likewise, until the sheet arrives in which it stands somewhere else. */
-  let droppedText = $state<{ ref: string; unit: string | undefined; which: TextPick; at: string; dx: number; dy: number } | null>(null);
-  let droppedTimer: ReturnType<typeof setTimeout> | undefined;
+  const droppedText = new Dropped<{ ref: string; unit: string | undefined; which: TextPick; at: string; dx: number; dy: number }>();
   /** A supply symbol just dropped, shown there until the edit has gone through or been refused. */
   let droppedSupply = $state<{ i: number; dx: number; dy: number } | null>(null);
   /** The wire or net label the last click picked: what Delete takes away. Cleared when the sheet changes (a wire's place is only good for the sheet it was picked on). */
@@ -147,11 +118,17 @@
 
   const sameSym = (s: SymbolView, ref: string, unit: string | undefined) => s.refdes === ref && (s.unit ?? undefined) === unit;
   const dragged = (s: SymbolView) => (edit?.kind === 'symbol' && sameSym(s, edit.ref, edit.unit) ? edit : null);
-  const droppedAt = (s: SymbolView) => (dropped && sameSym(s, dropped.ref, dropped.unit) && s.bbox.x === dropped.x0 && s.bbox.y === dropped.y0 ? dropped : null);
+  const droppedAt = (s: SymbolView) => {
+    const d = dropped.value;
+    return d && sameSym(s, d.ref, d.unit) && s.bbox.x === d.x0 && s.bbox.y === d.y0 ? d : null;
+  };
   /** Where a symbol is drawn: moved by the drag, or by the drop until the sheet shows it there. */
   const shift = (s: SymbolView) => dragged(s) ?? droppedAt(s);
   const textPlace = (s: SymbolView) => `${s.refPos.x},${s.refPos.y},${s.valuePos.x},${s.valuePos.y}`;
-  const textDroppedAt = (s: SymbolView) => (droppedText && sameSym(s, droppedText.ref, droppedText.unit) && textPlace(s) === droppedText.at ? droppedText : null);
+  const textDroppedAt = (s: SymbolView) => {
+    const d = droppedText.value;
+    return d && sameSym(s, d.ref, d.unit) && textPlace(s) === d.at ? d : null;
+  };
   /** How far a part's name or value is drawn from where it stands: moved by the drag, or by the drop until the sheet shows it there. */
   function textShift(s: SymbolView, which: 'name' | 'value') {
     const by = edit?.kind === 'text' && sameSym(s, edit.ref, edit.unit) ? edit : textDroppedAt(s);
@@ -160,8 +137,8 @@
   $effect(() => {
     void sheet;
     picked = null;
-    if (dropped && !sheet?.symbols.some((s) => droppedAt(s))) dropped = null;
-    if (droppedText && !sheet?.symbols.some((s) => textDroppedAt(s))) droppedText = null;
+    if (dropped.value && !sheet?.symbols.some((s) => droppedAt(s))) dropped.clear();
+    if (droppedText.value && !sheet?.symbols.some((s) => textDroppedAt(s))) droppedText.clear();
   });
   $effect(() => {
     if (picked && selectedNet !== picked.net) picked = null;
@@ -255,7 +232,7 @@
   function onpointerdown(e: PointerEvent) {
     if (e.button !== 0 && e.button !== 1) return;
     // the keys (R, F, Delete) go to the canvas once it is clicked
-    if (e.button === 0 && canEdit) svg?.focus({ preventScroll: true });
+    if (e.button === 0 && canEdit) view.svg?.focus({ preventScroll: true });
     const t = e.target as Element;
     const symEl = t.closest('[data-ref]');
     const ref = symEl?.getAttribute('data-ref') ?? null;
@@ -265,7 +242,7 @@
     const textAt = t.closest('[data-text]')?.getAttribute('data-text') as 'name' | 'value' | null | undefined;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     if (e.button === 0 && canEdit && ref) {
-      const p = toSvg(e);
+      const p = view.toSvg(e);
       if (textAt) {
         edit = { kind: 'text', ref, unit: symEl?.getAttribute('data-unit') ?? undefined, which: e.shiftKey ? 'both' : textAt, sx: p.x, sy: p.y, cx: e.clientX, cy: e.clientY, dx: 0, dy: 0, moved: false };
         return;
@@ -280,17 +257,17 @@
       return;
     }
     if (e.button === 0 && canEdit && lbl && lbl.kind !== 'net') {
-      const p = toSvg(e);
+      const p = view.toSvg(e);
       edit = { kind: 'supply', i: li, sx: p.x, sy: p.y, cx: e.clientX, cy: e.clientY, dx: 0, dy: 0, moved: false };
       return;
     }
-    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false, ref, net, wire: wireAt != null ? Number(wireAt) : null, at: toSvg(e) };
+    drag = { ...view.panStart(e), ref, net, wire: wireAt != null ? Number(wireAt) : null, at: view.toSvg(e) };
   }
   function onpointermove(e: PointerEvent) {
     if (edit) {
-      if (Math.abs(e.clientX - edit.cx) + Math.abs(e.clientY - edit.cy) > 3) edit.moved = true;
+      if (pastDrag({ x: edit.cx, y: edit.cy }, e)) edit.moved = true;
       if (edit.kind !== 'label') {
-        const p = toSvg(e);
+        const p = view.toSvg(e);
         const step = edit.kind === 'text' ? TEXT_STEP : GRID;
         edit.dx = Math.round((p.x - edit.sx) / step) * step;
         edit.dy = Math.round((p.y - edit.sy) / step) * step;
@@ -299,7 +276,7 @@
         const l = sheet?.labels[edit.i];
         const pin = l && pinOfLabel(l);
         if (pin) {
-          const p = toSvg(e);
+          const p = view.toSvg(e);
           const ex = p.x - pin.x;
           const ey = p.y - pin.y;
           if (Math.hypot(ex, ey) > 120) {
@@ -310,13 +287,7 @@
       }
       return;
     }
-    if (!drag || !svg) return;
-    const dx = e.clientX - drag.x;
-    const dy = e.clientY - drag.y;
-    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = userMoved = true;
-    const r = svg.getBoundingClientRect();
-    const s = Math.max(vb.w / r.width, vb.h / r.height);
-    vb = { ...vb, x: drag.vx - dx * s, y: drag.vy - dy * s };
+    if (drag && view.svg) view.panTo(drag, e);
   }
   function onpointerup(e: PointerEvent) {
     if (edit) {
@@ -340,13 +311,7 @@
           const [px, py] = [p.x - pg.rect.x, p.y - pg.rect.y];
           return { x: px + Math.min(Math.max(d.dx, pg.rect.x + m - b.x), pg.rect.x + pg.rect.w - m - b.x - b.width), y: py + Math.min(Math.max(d.dy, pg.rect.y + m - b.y), pg.rect.y + pg.rect.h - m - PAGE.title - b.y - b.height) };
         };
-        droppedText = { ref: d.ref, unit: d.unit, which: d.which, at: textPlace(s), dx: d.dx, dy: d.dy };
-        clearTimeout(droppedTimer);
-        droppedTimer = setTimeout(() => (droppedText = dropped = null), 5000);
-        // refused: it goes back at once
-        void Promise.resolve(onmovetext?.(`${s.refdes}${s.unit ?? ''}`, { ...(d.which !== 'value' ? { name: spot(s.refPos, [`${s.refdes}${s.unit ?? ''}`]) } : {}), ...(d.which !== 'name' ? { value: spot(s.valuePos, s.valueLines ?? [s.value]) } : {}) })).then((went) => {
-          if (!went) droppedText = null;
-        });
+        droppedText.show({ ref: d.ref, unit: d.unit, which: d.which, at: textPlace(s), dx: d.dx, dy: d.dy }, Promise.resolve(onmovetext?.(`${s.refdes}${s.unit ?? ''}`, { ...(d.which !== 'value' ? { name: spot(s.refPos, [`${s.refdes}${s.unit ?? ''}`]) } : {}), ...(d.which !== 'name' ? { value: spot(s.valuePos, s.valueLines ?? [s.value]) } : {}) })).then((went) => !!went));
       } else if (d.kind === 'symbol') {
         const s = sheet?.symbols.find((x) => sameSym(x, d.ref, d.unit));
         if (!s) return;
@@ -358,14 +323,8 @@
         const c = centreOf(s);
         const spot = spotAt(c.x + d.dx, c.y + d.dy, true);
         if (!spot) return;
-        dropped = { ref: d.ref, unit: d.unit, x0: s.bbox.x, y0: s.bbox.y, dx: d.dx, dy: d.dy };
-        clearTimeout(droppedTimer);
-        droppedTimer = setTimeout(() => (droppedText = dropped = null), 5000);
         if (!(selection.length === 1 && selection[0] === d.ref)) onselect?.(d.ref, false);
-        // refused: it goes back at once
-        void Promise.resolve(onmovesymbol?.(`${s.refdes}${s.unit ?? ''}`, spot)).then((went) => {
-          if (!went) dropped = null;
-        });
+        dropped.show({ ref: d.ref, unit: d.unit, x0: s.bbox.x, y0: s.bbox.y, dx: d.dx, dy: d.dy }, Promise.resolve(onmovesymbol?.(`${s.refdes}${s.unit ?? ''}`, spot)).then((went) => !!went));
       } else if (d.kind === 'supply') {
         const l = sheet?.labels[d.i];
         if (!l) return;
@@ -400,7 +359,7 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (!canEdit || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+    if (!canEdit || !plainKey(e)) return;
     const k = e.key;
     if (k === 'Delete' || k === 'Backspace') {
       if (picked) {
@@ -432,10 +391,10 @@
     void onturnsymbol?.(`${s.refdes}${s.unit ?? ''}`, spot, look);
   }
 
-  /** What takes a press on a part's text, between the letters too (keep in sync with textRect in the kernel). */
+  /** What takes a press on a part's text, between the letters too. */
   function textBox(p: SymbolView['refPos'], lines: string[]) {
-    const width = Math.max(...lines.map((l) => l.length)) * 50 + 20;
-    return { x: p.anchor === 'end' ? p.x - width : p.anchor === 'middle' ? p.x - width / 2 : p.x, y: p.y - 80, width, height: 100 + 85 * (lines.length - 1) };
+    const { x, y, w, h } = textRect(p, lines);
+    return { x, y, width: w, height: h };
   }
 
   const pad = 70;
@@ -495,17 +454,17 @@
 <!-- an interactive canvas: pointer and keyboard (R = turn, F = mirror, Delete) are the point -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <svg
-  bind:this={svg}
+  bind:this={view.svg}
   class="sch"
   class:compact
-  viewBox="{vb.x} {vb.y} {vb.w} {vb.h}"
+  viewBox="{view.vb.x} {view.vb.y} {view.vb.w} {view.vb.h}"
   data-bbox={sheet ? `${sheet.bbox.x},${sheet.bbox.y},${sheet.bbox.w},${sheet.bbox.h}` : undefined}
   preserveAspectRatio="xMidYMid meet"
   class:editable={canEdit}
   role="application"
   aria-label="Schematic"
   tabindex={canEdit ? 0 : undefined}
-  {onwheel}
+  onwheel={view.onwheel}
   {onpointerdown}
   {onpointermove}
   {onpointerup}
@@ -679,7 +638,7 @@
   {/if}
 </svg>
 {#if !compact}
-  <div class="zoom mono">{zoomPct}% <button class="ib" onclick={() => { userMoved = false; fit(); }} title="Fit to view">⤢</button></div>
+  <div class="zoom mono">{zoomPct}% <button class="ib" onclick={() => { view.userMoved = false; fit(); }} title="Fit to view">⤢</button></div>
 {/if}
 
 <style>

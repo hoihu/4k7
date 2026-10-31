@@ -1,5 +1,6 @@
 <script lang="ts">
   import { boardPolygon, type BoardView, type PanelSide, type PanelTab, type PanelView } from '@4k7/schema';
+  import { Dropped, SvgView, linePath as path, pastDrag, polyPath, zonePath, type Pan } from '../canvas.svelte.ts';
 
   /**
    * The fabrication panel (mm, top view): the frame and the copies, the milled channels between
@@ -8,8 +9,8 @@
    */
   interface Props {
     board: BoardView;
-    /** The panel's new tab list (set_panel tabs). */
-    ontabs?: (tabs: PanelTab[]) => void;
+    /** The panel's new tab list (set_panel tabs). Says whether the edit went through. */
+    ontabs?: (tabs: PanelTab[]) => Promise<boolean>;
   }
   let { board, ontabs }: Props = $props();
 
@@ -19,39 +20,19 @@
   const H = $derived(board.outline.h);
   const poly = $derived(boardPolygon(board));
 
-  const polyPath = (pts: number[]) => pts.reduce((d, v, i) => (i % 2 ? `${d} ${v}` : `${d}${i ? ' L' : 'M'} ${v}`), '') + ' Z';
-  const path = (pts: number[]) => pts.reduce((d, v, i) => d + (i % 2 ? `,${v}` : `${i ? ' L' : 'M'}${v}`), '');
-  const zonePath = (r: number[]) => {
-    let d = '';
-    for (let i = 0; i + 3 < r.length; i += 4) d += `M${r[i]},${r[i + 1]}h${r[i + 2]}v${r[i + 3]}h${-r[i + 2]!}z`;
-    return d;
-  };
   const material = $derived(panel.edges.map(polyPath).join(' '));
   const outline = $derived(polyPath(poly));
 
   /* view: fitted to the panel, wheel zooms, drag pans */
-  let svg: SVGSVGElement | undefined = $state();
-  let vb = $state({ x: -5, y: -5, w: 100, h: 80 });
+  const view = new SvgView({ x: -5, y: -5, w: 100, h: 80 }, 2, 3000);
   let fitted = '';
   $effect(() => {
     const key = `${panel.w}x${panel.h}`;
     if (key === fitted) return;
     fitted = key;
     const m = Math.max(panel.w, panel.h) * 0.06 + 2;
-    vb = { x: -m, y: -m, w: panel.w + 2 * m, h: panel.h + 2 * m };
+    view.vb = { x: -m, y: -m, w: panel.w + 2 * m, h: panel.h + 2 * m };
   });
-  function toSvg(e: { clientX: number; clientY: number }) {
-    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg!.getScreenCTM()!.inverse());
-    return { x: p.x, y: p.y };
-  }
-  function onwheel(e: WheelEvent) {
-    e.preventDefault();
-    const p = toSvg(e);
-    const f = Math.exp(Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 60) * 0.004);
-    const w = Math.min(Math.max(vb.w * f, 2), 3000);
-    const k = w / vb.w;
-    vb = { x: p.x - (p.x - vb.x) * k, y: p.y - (p.y - vb.y) * k, w, h: vb.h * k };
-  }
 
   /* where the board edge is along a line across a side (board coordinates) */
   const vertical = (side: PanelSide) => side === 'top' || side === 'bottom';
@@ -117,12 +98,12 @@
   let hover = $state<{ k: number; side: PanelSide; at: number } | null>(null);
   let hoverTab = $state<number | null>(null);
   let tabDrag = $state<{ i: number; sx: number; sy: number; at: number; moved: boolean } | null>(null);
-  let pan: { x: number; y: number; vx: number; vy: number; moved: boolean } | null = null;
-  /** After an edit, the tabs as asked for, shown until the panel arrives with them (or a while passes). */
-  let pending = $state<{ was: string; ghost: { side: PanelSide; at: number }[] } | null>(null);
+  let pan: Pan | null = null;
+  /** After an edit, the tabs as asked for, shown until the panel arrives with them. */
+  const pending = new Dropped<{ was: string; ghost: { side: PanelSide; at: number }[] }>();
   const tabsKey = $derived(JSON.stringify(s.tabs));
   $effect(() => {
-    if (pending && pending.was !== tabsKey) pending = null;
+    if (pending.value && pending.value.was !== tabsKey) pending.clear();
   });
   // a new panel renumbers its tabs: the one under the pointer is found again on the next move
   $effect(() => {
@@ -130,9 +111,7 @@
     hoverTab = null;
   });
   function commit(tabs: PanelTab[], ghost: { side: PanelSide; at: number }[]) {
-    pending = { was: tabsKey, ghost };
-    setTimeout(() => (pending = null), 5000);
-    ontabs?.(tabs);
+    pending.show({ was: tabsKey, ghost }, ontabs?.(tabs));
   }
 
   /** Along-the-side position of a dragged tab, from the pointer. */
@@ -156,24 +135,19 @@
       tabDrag = { i, sx: e.clientX, sy: e.clientY, at: st.at, moved: false };
       return;
     }
-    pan = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false };
+    pan = view.panStart(e);
   }
   function onpointermove(e: PointerEvent) {
-    const p = toSvg(e);
+    const p = view.toSvg(e);
     if (tabDrag) {
-      if (Math.abs(e.clientX - tabDrag.sx) + Math.abs(e.clientY - tabDrag.sy) > 3) tabDrag.moved = true;
+      if (pastDrag({ x: tabDrag.sx, y: tabDrag.sy }, e)) tabDrag.moved = true;
       // it stops short of another tab on its side
       const at = dragAt(tabDrag.i, p.x, p.y);
       if (tabDrag.moved && !clashes(panel.tabs[tabDrag.i]!.side, at, panel.tabs[tabDrag.i]!.src)) tabDrag.at = at;
       return;
     }
     if (pan) {
-      const dx = e.clientX - pan.x;
-      const dy = e.clientY - pan.y;
-      if (Math.abs(dx) + Math.abs(dy) > 3) pan.moved = true;
-      const r = svg!.getBoundingClientRect();
-      const k = Math.max(vb.w / r.width, vb.h / r.height);
-      vb = { ...vb, x: pan.vx - dx * k, y: pan.vy - dy * k };
+      view.panTo(pan, e);
       return;
     }
     const tab = (e.target as Element).closest('[data-tab]')?.getAttribute('data-tab');
@@ -205,7 +179,7 @@
     if (tabDrag?.moved) {
       const t = panel.tabs[tabDrag.i]!;
       out.push({ side: t.side, at: tabDrag.at });
-    } else if (pending) out.push(...pending.ghost);
+    } else if (pending.value) out.push(...pending.value.ghost);
     else if (hover) out.push({ side: hover.side, at: hover.at });
     return out;
   });
@@ -216,14 +190,14 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <svg
-  bind:this={svg}
+  bind:this={view.svg}
   class="panel"
   class:adding={!!hover}
-  viewBox="{vb.x} {vb.y} {vb.w} {vb.h}"
+  viewBox="{view.vb.x} {view.vb.y} {view.vb.w} {view.vb.h}"
   preserveAspectRatio="xMidYMid meet"
   role="application"
   aria-label="Fabrication panel"
-  {onwheel}
+  onwheel={view.onwheel}
   {onpointerdown}
   {onpointermove}
   {onpointerup}
