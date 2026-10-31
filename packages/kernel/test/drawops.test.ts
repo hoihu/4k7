@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { PartCard, SheetView } from '@4k7/schema';
+import type { PartCard, SheetView, SymbolView } from '@4k7/schema';
 import { onWire } from '../src/drawing.ts';
 import { Kernel } from '../src/index.ts';
+import { routeWire } from '../src/schroute.ts';
 
 /** A plain IC: two inputs on the left, an output on the right, supply on top and bottom. */
 const ic: PartCard = {
@@ -193,6 +194,26 @@ describe('wire at a pin', () => {
     expect(hasRun(k, left, right)).toBe(false);
     expect(sheetOf(k).wires.filter((w) => onWire(cap.x, cap.y, w.pts))).toEqual([]);
     expect(sch(k)).toEqual([]);
+  });
+
+  it('does not run over a pin off its grid', () => {
+    // a box's edge is a lane for a wire, and the wire's grid has no line through the pin on it
+    const part = (x: number, y: number, side: 'top' | 'left', bbox: SymbolView['bbox']): SymbolView => ({ componentId: 'P', refdes: 'P', value: '', bbox, prims: [], pins: [{ number: '1', name: '1', x, y, side, showName: false, showNumber: false }], refPos: { x: -5000, y: -5000, anchor: 'start' }, valuePos: { x: -5000, y: -5000, anchor: 'start' } });
+    const route = (x: number, y: number, s: SymbolView, through?: { x: number; y: number }[]) => routeWire({ from: [{ x: 0, y: 0 }], fromWires: [], to: [{ x, y }], toWires: [], via: [], wires: [], symbols: [s], soft: [], bounds: { x: -1000, y: -1000, w: 3000, h: 3000 }, ...(through ? { through } : {}) })!;
+    const over = (pts: number[], x: number, y: number) => {
+      for (let i = 0; i + 3 < pts.length; i += 2) {
+        const [x1, y1, x2, y2] = [pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!];
+        if (x >= Math.min(x1, x2) && x <= Math.max(x1, x2) && y >= Math.min(y1, y2) && y <= Math.max(y1, y2)) return true;
+      }
+      return false;
+    };
+    const top = part(480, 0, 'top', { x: 430, y: 0, w: 100, h: 200 });
+    const left = part(0, 480, 'left', { x: 0, y: 430, w: 200, h: 100 });
+    expect(over(route(1000, 0, top), 480, 0)).toBe(false);
+    expect(over(route(0, 1000, left), 0, 480)).toBe(false);
+    // a pin of the wire's own net it may run through, which joins it
+    expect(route(1000, 0, top, [{ x: 480, y: 0 }])).toEqual([0, 0, 1000, 0]);
+    expect(route(0, 1000, left, [{ x: 0, y: 480 }])).toEqual([0, 0, 0, 1000]);
   });
 
   it('never runs through a part: to a pin on its far side it goes round', () => {

@@ -1,6 +1,6 @@
 # Drawing the schematic: the agent owns the drawing
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; 2026-10-29: a part placed on its own is wired to its neighbours (§2c); 2026-10-30: a wire joins a pin from any side (§6 step 3), supply symbols move and a net can be forced to labels or wires (§2e); the agent's guide is [schematic.md](schematic.md).
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft. 2026-10-12: steps 1–3 of the first plan built (§6). 2026-10-13: the agent owns the whole drawing (§2a), notes and checks replace the ruleset text (§3), the stored drawing and the drawing ops built (§6 steps 2 and 3). 2026-10-25: functional blocks, the board's split (§2b), built 2026-10-26; 2026-10-29: a part placed on its own is wired to its neighbours (§2c); 2026-10-30: a wire joins a pin from any side, and a wire a part is put down on goes round it (§6 step 3), supply symbols move and a net can be forced to labels or wires (§2e); the agent's guide is [schematic.md](schematic.md).
 > Notes and checks are in `packages/schema/src/rules.ts` (see [schematic-rules.md](schematic-rules.md)).
 
 ## 1. Why
@@ -196,6 +196,10 @@ on a part.
   are joined again after it, by the `wire` op's path finder (`kernel/drawops.ts rewire`), shortest
   gap first. A connection with no clear path (or on another page) is left to the automatic label,
   as after any move, and the result says so. Without `rewire` nothing changes for the agent.
+- **Wires make way.** A wire the symbol is put down on goes round it, for the agent's `place_symbol` too
+  (§6 step 3, *Wires behind a part*). One with a pin of its own under the symbol stays until the symbol
+  moves on, and the result says so. A wire a pin of the symbol lands on goes, as a wire to another net
+  always does: the drag wires it again, and for the agent labels show the connection.
 - **`erase at`** names one wire (the drawn wires through a point; a wire runs between two joints, so
   the canvas sends the middle of the clicked segment) or one label (at its point), by page
   coordinates. A label that was the only sign of a connection comes back as an automatic one.
@@ -513,6 +517,30 @@ bends, crossings, running through parts or text. That is the largest piece of ne
      124-part design: opening it changes 5 nets of its drawing (`SCH.DETOUR` 8 → 4);
      each of its 89 signal nets erased and wired again, pin by pin: corners 131 → 88, detours 15 → 4,
      crossings 50 → 36, no path found 5 → 4 (one net gets two more crossings).
+   - *Wires behind a part, 2026-10-30.* A move takes along the wires of what it moves and leaves all
+     others where they are, so a part put down on a wire hid it for good: on the user's design, after a
+     few drags, RUN ran down the outline of U4's body and SWDIO in at its top and out at its bottom, and
+     nothing looked at them again. The path finder never draws through a box, so a run through one comes
+     from a part put down on it (or the layout: three of its wires on that design run across a small part).
+     (1) The clean-up takes such a run (`behindPart`; a box, like the path finder, so a wire across a lead
+     counts and one in the air of an IC's box moves too; a slanted lead is the part's own). It keeps what
+     it has up to the box at either end, on its grid, and the path finder joins that and the rest of the
+     piece again (`goRound`): the wire keeps its course and only what stood behind the part moves. The usual
+     tidying follows and takes the hump's U-turn out where a plainer drawing is cheaper. Being the clean-up,
+     it runs for every op and as a stored drawing opens. (2) A wire given `via` gives way too and no longer
+     keeps those corners: they were for a drawing that has changed. (3) Where it cannot get round (a pin of
+     its own under the part, which then lies on another) it stays, the result says "still run behind it",
+     and the next move that leaves a way clears it. (4) A pin between the lattice's lines (a part off the
+     wire's grid) did not stop the path finder: its wire ran over the pin, the sync took it out as a wire to
+     another net, and the connection fell to labels. Such a pin now blocks the run over it. A wire along a
+     box's edge stays: that is the path finder's own lane, and a box has air round its body. The golden
+     circuits, the 45° bridge and the user's other designs draw as before. On the 124-part design: opening it
+     moves RUN and SWDIO only, runs through a part 3 → 0, the SCH counts unchanged. U4 dragged in the app
+     (WebKit) onto SWCLK and SWDIO and back: 3 → 0 at each stop. Each of its parts turned, mirrored and dragged
+     twice, from the opened design (496 gestures): one ends with a wire through a box in 24 where it did in 493,
+     and but for one these are as before (a pin of the wire under a part, or the lead of a supply symbol that
+     a mirrored part's end now sends into its neighbour); labels never more, the SCH counts within 2%, about
+     6% slower (some 30 ms of a small part's 550).
    - Optimize may use them at pins of parts in (or anchored to) its area, not `erase` of a net.
 4. **Import redraws the original.**
    - *Symbol pins, built 2026-10-13.* A drawing cannot look like a reference whose IC has its pins

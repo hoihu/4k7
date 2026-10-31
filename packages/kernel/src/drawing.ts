@@ -12,7 +12,7 @@ import { GRID, isTwoPin, specMirrors, symbolFor, symbolFromSpec, unitCount, upri
 import { cardOf, componentsSorted, natCmp, nextId } from './doc.ts';
 import { PAGE_GAP, blockAssignment, drawnWith, evaluateConstraints, layoutSheetOf, pageName, pagesBBox, symbolKey } from './layout.ts';
 import { FRAME_PAD, frameAround, pieces } from './blocks.ts';
-import { cleanWires } from './wireclean.ts';
+import { behindPart, cleanWires } from './wireclean.ts';
 import { addJunctions, crowding, deco, labelForPin, labelRect, leadEnd, makeSymbol, rotateSymbol, symbolMaking, textRect, type Dir, type Scene } from './scene.ts';
 
 /* ---------------------------------- view ----------------------------------- */
@@ -810,11 +810,13 @@ export function addPages(d: Design, sd: SheetDrawing, count: number): void {
  * or standing (two-pin parts), turned (the others) or mirrored. An IC or connector takes the small
  * parts drawn at its pins with it, still wired; a two-pin part goes alone. Wires to what stays are
  * cut back; the connections they made show as labels until the agent wires them again.
- * The move is a whole number of grid steps, so the drawing stays on the grid. Returns where the
- * symbol's centre ended up (page coordinates), whether its look changed, the sides of its pins if it
- * has few, and the symbol that now lies under it, if any.
+ * Wires it is put down on go round it (the clean-up). The move is a whole number of grid steps, so
+ * the drawing stays on the grid. Returns where the symbol's centre ended up (page coordinates), whether
+ * its look changed, the sides of its pins if it has few, the symbol that now lies under it, if any, and
+ * the nets of the wires it was put down on: those that went round it, and those with no clear way that
+ * still run behind it.
  */
-export function moveSymbol(d: Design, sheetId: string, comp: Component, unit: string | undefined, page: number, x: number, y: number, look: Look): { x: number; y: number; relooked: boolean; pins: string; under?: string } {
+export function moveSymbol(d: Design, sheetId: string, comp: Component, unit: string | undefined, page: number, x: number, y: number, look: Look): { x: number; y: number; relooked: boolean; pins: string; under?: string; round: string[]; behind: string[] } {
   const sd = ownSheet(d, sheetId);
   const i = sd.symbols.findIndex((s) => s.comp === comp.id && (s.unit ?? undefined) === unit);
   if (i < 0) throw new Error(`${comp.refdes}${unit ?? ''} is not on its sheet`);
@@ -882,12 +884,22 @@ export function moveSymbol(d: Design, sheetId: string, comp: Component, unit: st
     l.x += dx;
     l.y += dy;
   });
+  const went = [...moving].map((j) => sd.symbols[j]!);
+  const boxes = went.map((s) => s.bbox);
+  const netsBehind = () => new Set(sd.wires.filter((w) => behindPart(w.pts, boxes)).map((w) => w.netId));
+  const names = (nets: string[]) => nets.map((n) => d.nets[n]?.name ?? n).sort(natCmp);
+  // what it was put down on: its own wires are cut back or go with it, not round it
+  const own = new Set(went.flatMap((s) => Object.values(d.components[s.comp]!.pins)));
+  const landedOn = [...netsBehind()].filter((n) => !own.has(n));
   syncSheet(d, sheetId);
+  const behind = netsBehind();
+  // (a wire one of its pins lands on is gone: that pin is on another net, and labels show the connection)
+  const round = landedOn.filter((n) => !behind.has(n) && sd.wires.some((w) => w.netId === n));
   const moved = sd.symbols.find((s) => s.comp === comp.id && (s.unit ?? undefined) === unit)!;
   const under = sd.symbols.find((s) => s !== moved && hits(s.bbox, moved.bbox));
   const at = centre(moved.bbox);
   const pg = sd.pages[pageAt(sd.pages, at)]!;
-  return { x: Math.round(at.x - pg.x), y: Math.round(at.y - pg.y), relooked: !!relook, pins: pinSides(symbolOf(d, moved)!), ...(under ? { under: `${d.components[under.comp]!.refdes}${under.unit ?? ''}` } : {}) };
+  return { x: Math.round(at.x - pg.x), y: Math.round(at.y - pg.y), relooked: !!relook, pins: pinSides(symbolOf(d, moved)!), ...(under ? { under: `${d.components[under.comp]!.refdes}${under.unit ?? ''}` } : {}), round: names(round), behind: names([...behind]) };
 }
 
 /** Where a small symbol's pins are ("left XTAL2, right XTAL1, bottom GND"); empty for one with many. */

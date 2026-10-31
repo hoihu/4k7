@@ -85,6 +85,11 @@ label that shows in its place stays. `place_block` on such a sheet draws a block
 put it (the result says what it runs into). `auto_draw` hands the sheet back to the layout. Use this only when the user asks for it:
 the drawing then no longer keeps itself tidy.
 
+A wire you put a part down on goes round it by itself and the result names its net. One with a pin of its
+own under the part stays behind it ("still run behind it"): the part lies on another, so move one of them.
+A wire one of the part's pins lands on goes, as a wire to another net always does, and labels show that
+connection: wire it again, or put the part down a step further.
+
 `wire` joins a pin from any side and runs through a pin of its own net, so a wire along the top of a
 standing part ends on its top pin or goes on through it. Leave `via` out unless you want a way of your
 own: a wire drawn through your corners keeps its exact path and is not tidied. When one has a step or a

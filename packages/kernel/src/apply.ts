@@ -1042,6 +1042,8 @@ function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' }>, by:
     asked && !at.relooked ? `it is ${asked} already, so that changed nothing${op.mirror !== undefined ? `: mirror ${!op.mirror} draws it the other way round` : ''}` : asked && !op.orient ? `now ${asked}` : '',
     at.relooked && at.pins ? `pins: ${at.pins}` : '',
     at.under ? `it lies on ${at.under}: move one of them` : '',
+    at.round.length ? `wires of ${at.round.join(', ')} moved round it` : '',
+    at.behind.length ? `wires of ${at.behind.join(', ')} still run behind it (no clear way round: a pin of theirs may lie under it)` : '',
     wired?.wired.length ? `wired ${wired.wired.join(', ')}` : '',
     wired?.labelled.length ? `connected by labels: ${wired.labelled.join('; ')}` : '',
     wires ? `${wires.wired} wire${wires.wired === 1 ? '' : 's'} drawn again${wires.left ? `, ${wires.left} connection${wires.left === 1 ? '' : 's'} left to labels (no clear path)` : ''}` : '',
