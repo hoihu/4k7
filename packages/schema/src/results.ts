@@ -200,6 +200,8 @@ export interface SymbolView {
   mirrored?: boolean;
   /** The user put it where it stands (a drag or turn in the app): their decision, which the agent's redraws keep. */
   by?: 'user';
+  /** The user put its name or value where they stand (a drag in the app): their decision, which place_text auto keeps. */
+  textBy?: 'user';
 }
 
 export interface LabelView {

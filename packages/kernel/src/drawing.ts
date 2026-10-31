@@ -67,6 +67,7 @@ export function symbolOf(d: Design, s: DrawnSymbol): SymbolView | undefined {
   if (s.rot) rotateSymbol(sym, def, s.x, s.y, s.rot);
   if (s.unit) sym.unit = s.unit;
   if (s.by) sym.by = s.by;
+  if (s.textBy) sym.textBy = s.textBy;
   sym.bbox = { ...s.bbox };
   sym.refPos = { ...s.ref };
   sym.valuePos = { ...s.value };

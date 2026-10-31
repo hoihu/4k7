@@ -1897,6 +1897,11 @@ class AppState {
     return this.userEdit(what, [{ op: 'place_symbol', ref, ...spot, ...look, rewire: true }]);
   }
 
+  /** Move a part's name or value (place_text): only the text moves, and it stays the user's. */
+  placeText(ref: string, at: { name?: { x: number; y: number }; value?: { x: number; y: number } }): Promise<boolean> {
+    return this.userEdit(`Move ${ref}'s ${[at.name ? 'name' : '', at.value ? 'value' : ''].filter(Boolean).join(' and ')}`, [{ op: 'place_text', ref, ...at }]);
+  }
+
   /** Point a net label another way round its pin (label). */
   labelAt(pin: string, net: string, dir: 'left' | 'right' | 'up' | 'down'): Promise<boolean> {
     return this.userEdit(`Label ${net} ${dir} at ${pin}`, [{ op: 'label', pin, dir }]);

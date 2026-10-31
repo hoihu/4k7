@@ -69,6 +69,7 @@ pair of labels instead. Your levers:
   pins, mirror a part, or split the block).
 - No part guessed into the wrong block, no part in none.
 - The drawing warnings (SCH.*): text running into something, a jog, a pull-up hanging.
+- On a sheet you arranged, the names and values come last (§6).
 - Say in your reply what you grouped and what you moved, in a sentence or two.
 
 ## 5. Drawing a sheet exactly
@@ -109,7 +110,33 @@ The user may move parts by hand too (drag, R, F in the app). `get_schematic` mar
 and `auto_draw` keep them where they are; arrange round them, and move one only when the drawing
 cannot do without it (then say which and why).
 
-## 6. Symbols
+## 6. Names and values, last
+
+A sheet the layout draws keeps each part's name and value clear by itself: there is nothing to do
+there, and moving text by hand would make the drawing yours. On a sheet you arranged the text stays
+where the symbol has it, so finish with it, once the parts and wires are where they belong:
+
+- `place_text auto` (every sheet you arranged, or `sheet`, or `ref` / `refs`) moves only text that runs
+  into a wire, a part, a label or other text, to the nearest clear spot beside its part, inside its
+  block's frame. It tries the side the text is on first, then side by side, then the other sides, and
+  slides along a side to pass a wire or a pin. The result lists what moved and what has no clear spot,
+  and `SCH.TEXT_OVERLAP` names what is still in the way.
+- Then look at the page and judge how it reads. `at` (`above`, `below`, `left`, `right`) and `arrange`
+  (`stacked`, `side_by_side`) say what you want and the kernel works out the spot; what you leave out
+  stays as it is. The usual reasons: a part lying between two wires 200 mils apart has room for one
+  line, not for a stack, so its name and value go side by side; a row of parts reads best with the text
+  of all of them on one side (`refs`); a pair on the far side of a neighbour's wire reads as the
+  neighbour's, which is why the kernel never puts a wire between a part and its text.
+- `name` and `value` give one part's texts exact spots, each on its own, for what the other ways do not
+  reach. `get_schematic texts: true` says where the text stands now. y is the baseline: a line of text
+  takes 80 mils above it and 20 below, and 50 mils per character. Keep them close to the part.
+- `get_schematic` marks text the user dragged `text_user_placed`: `auto` leaves it, and move it only
+  when asked.
+
+Nothing but the text moves. A part you move takes its text along; a part you turn or draw afresh gets
+it back where the symbol has it, so do this after the moves.
+
+## 7. Symbols
 
 Every part is drawn as its usual symbol, made from its card: an electrolytic capacitor with a
 hollow plus plate and a solid minus plate, an inductor with its core, a Schottky, Zener or TVS diode

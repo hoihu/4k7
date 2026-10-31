@@ -66,7 +66,7 @@ import { underBody } from './drc.ts';
 import { polarityOf } from './marks.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { wirePlaced } from './autowire.ts';
-import { eraseOp, labelOp, rewire, wireOp, wiredPins } from './drawops.ts';
+import { eraseOp, labelOp, rewire, textOp, wireOp, wiredPins } from './drawops.ts';
 import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, routeDrawn, setCopperMode, type OpContext } from './copperops.ts';
 import { tuneLength } from './tune.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
@@ -170,6 +170,8 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return attach(d, op, by);
     case 'place_symbol':
       return placeSymbol(d, op, by);
+    case 'place_text':
+      return textOp(d, op, by);
     case 'auto_draw':
       return autoDraw(d, op);
     case 'place_block':

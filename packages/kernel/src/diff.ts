@@ -208,7 +208,11 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     };
     const moved = [...wb].filter(([k, v]) => wa.has(k) && wa.get(k) !== v).map(([k]) => ref(k)).sort(natCmp);
     const added = [...wb.keys()].filter((k) => !wa.has(k)).map(ref).sort(natCmp);
-    const details = [moved.length ? `moved: ${moved.join(', ')}` : '', a && added.length ? `drawn in free space: ${added.join(', ')}` : ''].filter(Boolean);
+    // a part's text as it stands to the part, so a moved part's does not count
+    const texts = (x: typeof a) => new Map((x?.symbols ?? []).map((s) => [`${s.comp}#${s.unit ?? ''}`, JSON.stringify([s.ref.x - s.x, s.ref.y - s.y, s.ref.anchor, s.value.x - s.x, s.value.y - s.y, s.value.anchor])]));
+    const [ta, tb] = [texts(a), texts(b)];
+    const text = [...tb].filter(([k, v]) => ta.has(k) && ta.get(k) !== v && wa.get(k) === wb.get(k)).map(([k]) => ref(k)).sort(natCmp);
+    const details = [moved.length ? `moved: ${moved.join(', ')}` : '', text.length ? `name or value moved: ${text.join(', ')}` : '', a && added.length ? `drawn in free space: ${added.join(', ')}` : ''].filter(Boolean);
     const title = !a ? `schematic ${sheet}: arranged by the agent from here on` : !b ? `schematic ${sheet}: drawn by the auto-layout again` : `schematic ${sheet}: drawing`;
     hunks.push({ id: `drawing:${id}`, kind: 'drawing', change: 'change', entityId: id, title, details: details.length ? details : ['wires and labels'] });
   }

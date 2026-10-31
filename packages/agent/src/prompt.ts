@@ -80,6 +80,6 @@ export function formatReview(found: Diagnostic[]): string {
   return [
     '[kernel review] Before you finish, look over the schematic you changed (get_schematic_image of the page, if you have it). The drawing checks found these where there were none before the turn:',
     ...found.slice(0, 12).map((d) => `- ${d.code} ${d.entities.join(',')}: ${d.message}${d.fixHints?.length ? ` Suggested: ${JSON.stringify(d.fixHints)}` : ''}`),
-    'Judge how it reads, as an engineer would draw it: a pull-up stands above its wire with the rail on top, even if a wire crosses it; a pull-down hangs below. Fix what reads badly (constrain arrangement up/down for a part at a pin, place_symbol on a sheet you arranged), check the result, then finish. Leave what is right as it is and say why in one sentence; this review comes once per turn.',
+    'Judge how it reads, as an engineer would draw it: a pull-up stands above its wire with the rail on top, even if a wire crosses it; a pull-down hangs below. Fix what reads badly (constrain arrangement up/down for a part at a pin, place_symbol on a sheet you arranged, place_text for a name or value in the way), check the result, then finish. Leave what is right as it is and say why in one sentence; this review comes once per turn.',
   ].join('\n');
 }

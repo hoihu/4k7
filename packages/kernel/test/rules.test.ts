@@ -88,7 +88,7 @@ level: off
 
 /** A vertical two-pin part with its pins at (x, top) and (x, top + 400). */
 const vertical = (ref: string, x: number, top: number) =>
-  ({ componentId: ref, refdes: ref, value: '', bbox: { x: x - 100, y: top, w: 200, h: 400 }, prims: [], pins: [{ number: '1', name: '1', x, y: top, side: 'top', showName: false, showNumber: false }, { number: '2', name: '2', x, y: top + 400, side: 'bottom', showName: false, showNumber: false }], refPos: { x, y: top, anchor: 'start' }, valuePos: { x, y: top, anchor: 'start' } }) as SymbolView;
+  ({ componentId: ref, refdes: ref, value: '', bbox: { x: x - 100, y: top, w: 200, h: 400 }, prims: [], pins: [{ number: '1', name: '1', x, y: top, side: 'top', showName: false, showNumber: false }, { number: '2', name: '2', x, y: top + 400, side: 'bottom', showName: false, showNumber: false }], refPos: { x: x + 120, y: top + 190, anchor: 'start' }, valuePos: { x: x + 120, y: top + 275, anchor: 'start' } }) as SymbolView;
 const sheet = (s: Partial<SheetView>): SheetView => ({ id: 's', name: 'Main', bbox: { x: 0, y: 0, w: 0, h: 0 }, pages: [], symbols: [], wires: [], labels: [], junctions: [], noConnects: [], ...s });
 const view = (s: SheetView): SchematicView => ({ paper: 'A4', sheets: [s], constraintStatus: {} });
 /** A design that knows the nets the sheets use: FB and SW are signals, VIN a rail, GND ground. */
