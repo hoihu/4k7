@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { PartCard, SheetView } from '@4k7/schema';
-import { onWire } from '../src/drawing.ts';
+import { groups, onWire, pinsOf } from '../src/drawing.ts';
 import { Kernel } from '../src/index.ts';
+import { NOT_INTO, behindPart } from '../src/wireclean.ts';
 
 /** Moving a supply symbol (move_supply) and forcing how a net is drawn (set_net draw_as). */
 
@@ -117,6 +118,27 @@ describe('a supply symbol moved', () => {
     const pts = w.pts[0] === foot.x && w.pts[1] === foot.y ? w.pts : [...w.pts].reverse().flatMap((_, i, a) => (i % 2 ? [] : [a[i + 1]!, a[i]!]));
     expect(pts.slice(0, 2)).toEqual([foot.x, foot.y]);
     expect(pts[3]!).toBeGreaterThanOrEqual(foot.y); // from the foot not up through the symbol
+  });
+
+  it('keeps its wire out of the symbol however the clean-up draws it', () => {
+    const k = kernel();
+    const symbols = sheetOf(k).labels.filter((l) => l.kind !== 'net');
+    expect(symbols.length).toBeGreaterThan(2);
+    for (const l of symbols) {
+      for (const [dx, dy] of [[300, 300], [300, -300], [0, 800], [1200, 0]] as const) {
+        const r = k.transact({ summary: 'move', ops: [move(sheetOf(k), l, dx, dy)] } as never, 'user');
+        if (r.status === 'ok') {
+          const s = sheetOf(k);
+          const spot = { x: l.x + dx, y: l.y + dy };
+          const moved = s.labels.find((x) => x.netId === l.netId && x.x === spot.x && x.y === spot.y);
+          expect(moved, `${l.text} by ${dx},${dy}`).toBeDefined();
+          const no = NOT_INTO[moved!.stub ?? moved!.dir]!;
+          const ways = wiresOf(s, l.netId).flatMap((w) => [w.pts.slice(0, 4), [...w.pts.slice(-2), ...w.pts.slice(-4, -2)]]).filter((e) => e[0] === spot.x && e[1] === spot.y);
+          for (const e of ways) expect(Math.sign(e[0]! - e[2]!) === no[0] && Math.sign(e[1]! - e[3]!) === no[1], `${l.text} by ${dx},${dy}: ${e}`).toBe(false);
+        }
+        k.reject();
+      }
+    }
   });
 
   it('leaves no wire behind when it is moved again, or back onto its pin', () => {
@@ -524,6 +546,86 @@ describe('a forced net and a partial accept', () => {
 });
 
 /** Two sheets: a net that goes on to the other sheet keeps a label there. */
+describe('a part put down on the wire', () => {
+  /** A free resistor put down across the longest straight run of a wire: its body on the run, or one of its pins. */
+  function putOn(k: Kernel, wire: { pts: number[] }, how: 'body' | 'pin', rewire = true) {
+    const runs = wire.pts.slice(0, -2).flatMap((_, i) => (i % 2 ? [] : [wire.pts.slice(i, i + 4)]));
+    const [x1, y1, x2, y2] = runs.sort((a, b) => Math.abs(b[2]! - b[0]!) + Math.abs(b[3]! - b[1]!) - Math.abs(a[2]! - a[0]!) - Math.abs(a[3]! - a[1]!))[0]!;
+    expect(Math.abs(x2! - x1!) + Math.abs(y2! - y1!), 'a run long enough').toBeGreaterThanOrEqual(800);
+    const flat = y1 === y2;
+    const off = how === 'pin' ? 200 : 0; // (half its length, from its middle to a pin)
+    const pg = sheetOf(k).pages[0]!.rect;
+    const r = byUser(k, [{ op: 'place_symbol', ref: 'R9', page: 1, x: (x1! + x2!) / 2 - pg.x + (flat ? 0 : off), y: (y1! + y2!) / 2 - pg.y + (flat ? off : 0), orient: flat ? 'upright' : 'lying', rewire }]);
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    if (how === 'pin') expect(sheetOf(k).symbols.find((x) => x.refdes === 'R9')!.pins.some((p) => (flat ? p.y === y1 : p.x === x1)), 'a pin on the run').toBe(true);
+    return r.results[0]!.effect;
+  }
+  /** Whether what is drawn joins these spots of a net. */
+  const joined = (k: Kernel, spots: { x: number; y: number }[]) => {
+    const s = sheetOf(k);
+    const pins = pinsOf(k.committedDesign(), s.symbols);
+    const seen = groups(pins, s.wires, s.labels).filter((g) => spots.some((p) => g.pins.some((i) => pins[i]!.pin.x === p.x && pins[i]!.pin.y === p.y) || g.labels.some((i) => s.labels[i]!.x === p.x && s.labels[i]!.y === p.y)));
+    return seen.length === 1;
+  };
+  const free = { op: 'add_part', part: 'generic:R', refdes: 'R9', params: { resistance: '1k' } };
+
+  for (const forced of [undefined, 'label', 'wire'] as const) {
+    it(`of a moved symbol${forced ? ` of a net forced to ${forced}s` : ''}: the wire goes round it, and the symbol stays where it was put`, () => {
+      for (const [dx, dy] of [[0, -1000], [1200, 0]] as const) {
+        const k = kernel(free);
+        if (forced) expect(byUser(k, [{ op: 'set_net', net: '+5V', draw_as: forced }]).status).toBe('ok');
+        const l = forced === 'wire' ? labelsOf(sheetOf(k), '+5V')[0]! : vcc(k);
+        expect(byUser(k, [move(sheetOf(k), l, dx, dy)]).status).toBe('ok');
+        const spot = { x: l.x + dx, y: l.y + dy };
+        const pinOf = sheetOf(k).symbols.flatMap((x) => x.pins).find((p) => p.x === l.x && p.y === l.y)!;
+        const wire = sheetOf(k).wires.find((w) => w.netId === l.netId && onWire(spot.x, spot.y, w.pts))!;
+        expect(putOn(k, wire, 'body')).toMatch(/wires of \+5V moved round it/);
+        const s = sheetOf(k);
+        const moved = labelsOf(s, '+5V').find((x) => x.x === spot.x && x.y === spot.y);
+        expect(moved).toMatchObject({ kind: 'rail', dir: 'up' });
+        expect(joined(k, [spot, pinOf])).toBe(true);
+        const box = s.symbols.find((x) => x.refdes === 'R9')!.bbox;
+        expect(s.wires.filter((w) => behindPart(w.pts, [box]))).toEqual([]);
+        // and from the side or below, not through the symbol
+        const into = s.wires.filter((w) => w.netId === l.netId).flatMap((w) => [w.pts.slice(0, 4), [...w.pts.slice(-2), ...w.pts.slice(-4, -2)]]).filter((e) => e[0] === spot.x && e[1] === spot.y);
+        expect(into.length).toBeGreaterThan(0);
+        const no = NOT_INTO.up!;
+        for (const e of into) expect(Math.sign(e[0]! - e[2]!) === no[0] && Math.sign(e[1]! - e[3]!) === no[1], `${dx},${dy}: ${e}`).toBe(false);
+        expect(errors(k)).toEqual([]);
+        // and it opens as it is
+        const again = new Kernel();
+        again.load(JSON.parse(JSON.stringify(k.committedDesign())));
+        expect(again.committedDesign().drawing).toEqual(k.committedDesign().drawing);
+      }
+    });
+  }
+
+  it('of a net forced to wires: it goes round it, and a pin landed on it is wired again, no label showing', () => {
+    // (the drag wires again what a pin landed on, for any net; the agent's move leaves that to the force)
+    for (const [how, rewire] of [['body', true], ['pin', true], ['pin', false]] as const) {
+      // (its pin on a net of its own: a wire it lands on is then a wire to another net, and goes)
+      const k = kernel(free, { op: 'add_part', part: 'generic:R', refdes: 'R8', params: { resistance: '1k' } }, { op: 'connect', pins: ['R9.1', 'R8.1'], net: 'SPARE' });
+      const id = netOf(k, 'BIAS').id;
+      byUser(k, [{ op: 'set_net', net: 'BIAS', draw_as: 'wire' }]);
+      // (far from U1, for a long wire to put it on)
+      const r2 = standing(k, 'R2');
+      expect(byUser(k, [{ op: 'place_symbol', ref: 'R2', page: 1, x: r2.x - 4300, y: r2.y + 700, rewire: true }]).status).toBe('ok');
+      const ends = () => [pin(sheetOf(k), 'U1', 'IN2'), pin(sheetOf(k), 'R2', '1')];
+      expect(joined(k, ends())).toBe(true);
+      const effect = putOn(k, wiresOf(sheetOf(k), id).sort((a, b) => b.pts.length - a.pts.length)[0]!, how, rewire);
+      if (how === 'body') expect(effect).toMatch(/wires of BIAS moved round it/);
+      const s = sheetOf(k);
+      expect(labelsOf(s, 'BIAS')).toEqual([]);
+      expect(joined(k, ends())).toBe(true);
+      const box = s.symbols.find((x) => x.refdes === 'R9')!;
+      expect(s.wires.filter((w) => w.netId === id && behindPart(w.pts, [box.bbox]))).toEqual([]);
+      // no wire of it left on a pin of the part
+      for (const p of box.pins) expect(s.wires.some((w) => w.netId === id && onWire(p.x, p.y, w.pts))).toBe(false);
+      expect(errors(k)).toEqual([]);
+    }
+  });
+});
+
 describe('a net on two sheets', () => {
   it('is forced on both', () => {
     const k = kernel({ op: 'add_sheet', name: 'Two' }, { op: 'move_to_sheet', refs: ['R2'], sheet: 'Two' });

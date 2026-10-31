@@ -216,6 +216,19 @@ describe('wire at a pin', () => {
     expect(route(0, 1000, left, [{ x: 0, y: 480 }])).toEqual([0, 0, 0, 1000]);
   });
 
+  it('leaves a spot no way it may not reach it: a rail symbol is not run through from either end', () => {
+    const route = (from: { x: number; y: number }, to: { x: number; y: number }, fromWires: number[][] = []) => routeWire({ from: [from], fromWires, to: [to], toWires: [], via: [], wires: [], symbols: [], soft: [], bounds: { x: -2000, y: -2000, w: 4000, h: 4000 }, forbid: new Map([['0,0', [0, 1]]]) });
+    const [foot, above] = [{ x: 0, y: 0 }, { x: 0, y: -500 }];
+    // not down onto the foot, and so not up off it
+    expect(route(above, foot)).not.toEqual([0, -500, 0, 0]);
+    const off = route(foot, above)!;
+    expect(off.slice(0, 2)).toEqual([0, 0]);
+    expect(off[3]!).toBeGreaterThanOrEqual(0);
+    // nor from the end of a wire it stands on
+    const on = route({ x: 500, y: 0 }, above, [[0, 0, 500, 0]])!;
+    expect(on.slice(0, 2).join()).not.toBe('0,0');
+  });
+
   it('never runs through a part: to a pin on its far side it goes round', () => {
     const { k } = row();
     // C1's bottom pin to R1's far end, up on the level of C1's top pin
