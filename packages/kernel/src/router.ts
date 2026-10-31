@@ -399,6 +399,62 @@ function connections(pads: BoardPad[]): Conn[] {
   return out;
 }
 
+/**
+ * The 4-connected islands of the cells that are set, numbered as a scan from the top left meets
+ * them, and their sizes. By runs along the rows, joined from row to row.
+ */
+function islandsOf(ok: Uint8Array, W: number, H: number): { island: Int32Array; sizes: number[] } {
+  const island = new Int32Array(W * H).fill(-1);
+  const runs: number[] = []; // start cell and end cell (past it) of each run
+  const parent: number[] = [];
+  const find = (r: number): number => {
+    let root = r;
+    while (parent[root] !== root) root = parent[root]!;
+    while (parent[r] !== root) [parent[r], r] = [root, parent[r]!];
+    return root;
+  };
+  let above = 0; // the first run of the row above
+  for (let j = 0; j < H; j++) {
+    const row = j * W;
+    const first = runs.length / 2;
+    let a = above;
+    for (let i = 0; i < W; ) {
+      if (!ok[row + i]) {
+        i++;
+        continue;
+      }
+      const start = i;
+      while (i < W && ok[row + i]) i++;
+      const r = runs.length / 2;
+      runs.push(row + start, row + i);
+      parent.push(r);
+      // the runs above that it touches
+      while (a < first && runs[2 * a + 1]! - (row - W) <= start) a++;
+      for (let b = a; b < first && runs[2 * b]! - (row - W) < i; b++) {
+        // (the lower run number stays the root: the one a scan meets first)
+        const [x, y] = [find(b), find(r)];
+        if (x !== y) parent[Math.max(x, y)] = Math.min(x, y);
+      }
+    }
+    above = first;
+  }
+  const idOf = new Map<number, number>();
+  const sizes: number[] = [];
+  for (let r = 0; r < runs.length / 2; r++) {
+    const root = find(r);
+    let id = idOf.get(root);
+    if (id === undefined) {
+      id = sizes.length;
+      idOf.set(root, id);
+      sizes.push(0);
+    }
+    island.fill(id, runs[2 * r]!, runs[2 * r + 1]!);
+    sizes[id]! += runs[2 * r + 1]! - runs[2 * r]!;
+  }
+  return { island, sizes };
+}
+
+
 function routeOnce(
   input: RouteInput,
   pads: BoardPad[],
@@ -438,7 +494,16 @@ function routeOnce(
   const widths = [rules.track, rules.powerTrack, rules.viaPad];
   const trackClass = (w: number) => widths.findIndex((x, i) => i !== 2 && x === w);
   for (const w of Object.values(input.netWidths ?? {})) if (w > 0 && trackClass(w) < 0) widths.push(w);
-  const maps = widths.map(() => Array.from({ length: L }, () => new Int32Array(N)));
+  /*
+   * Drawn copper with nothing asked of the router: no search runs, what is wanted is the pours and
+   * what the copper joins. The clearance maps and the costs are all for the search, but for the
+   * signal width's, which says where a pad's escape ends (its cell counts as the pad's copper), and
+   * the via's when stitching vias look for their spots.
+   */
+  const searching = !input.drawn || !!input.drawn.only?.nets?.length || !!input.drawn.only?.pairs?.length || order.length > 0 || planeOnly.length > 0;
+  const stitching = !!input.vias?.fill?.length || !!input.vias?.along?.length;
+  const CLASSES = searching ? widths.map((_, k) => k) : stitching ? [0, 2] : [0];
+  const maps = widths.map((_, k) => (CLASSES.includes(k) ? Array.from({ length: L }, () => new Int32Array(N)) : []));
 
   // the coarse grid (see corridor): the coarse cell of grid point (i, j) is crow[j] + ccol[i]
   const CW = Math.ceil(W / COARSE);
@@ -455,7 +520,7 @@ function routeOnce(
   };
   /** Mark cells within `reach(k)` of a shape; dist(x, y) is the distance from a point to it. */
   const stamp = (l: number, net: number, x0: number, y0: number, x1: number, y1: number, extra: number, dist: (x: number, y: number) => number) => {
-    for (let k = 0; k < widths.length; k++) {
+    for (const k of CLASSES) {
       const reach = rules.clearance + extra + widths[k]! / 2 + G * 0.1;
       const i0 = Math.max(0, Math.floor((x0 - reach) / G));
       const i1 = Math.min(W - 1, Math.ceil((x1 + reach) / G));
@@ -533,24 +598,27 @@ function routeOnce(
   // (every pass, width class, layer and plane reads it)
   const edgeField = shaped ? insideField(input, W, H) : null;
   const inside = (x: number, y: number) => edgeField![Math.round(y / G) * W + Math.round(x / G)]!;
-  for (let k = 0; k < widths.length; k++) {
+  for (const k of CLASSES) {
     const keep = rules.edgeClearance + widths[k]! / 2;
+    // (alike on every layer: worked out on the first)
+    const edge = maps[k]![0]!;
+    for (let j = 0; j < H; j++) {
+      for (let i = 0; i < W; i++) {
+        const x = i * G;
+        const y = j * G;
+        if (x < keep || y < keep || x > input.outline.w - keep || y > input.outline.h - keep) edge[j * W + i] = EDGE;
+        else if (shaped && inside(x, y) < keep) edge[j * W + i] = EDGE;
+      }
+    }
+    for (const c of input.cutouts ?? []) {
+      const [x0, y0, x1, y1] = cutoutBounds(c);
+      for (let j = Math.max(0, Math.floor((y0 - keep) / G)); j <= Math.min(H - 1, Math.ceil((y1 + keep) / G)); j++) {
+        for (let i = Math.max(0, Math.floor((x0 - keep) / G)); i <= Math.min(W - 1, Math.ceil((x1 + keep) / G)); i++) if (cutoutDistance(c, i * G, j * G) < keep) edge[j * W + i] = EDGE;
+      }
+    }
+    for (let l = 1; l < L; l++) maps[k]![l]!.set(edge);
     for (let l = 0; l < L; l++) {
       const m = maps[k]![l]!;
-      for (let j = 0; j < H; j++) {
-        for (let i = 0; i < W; i++) {
-          const x = i * G;
-          const y = j * G;
-          if (x < keep || y < keep || x > input.outline.w - keep || y > input.outline.h - keep) m[j * W + i] = EDGE;
-          else if (shaped && inside(x, y) < keep) m[j * W + i] = EDGE;
-        }
-      }
-      for (const c of input.cutouts ?? []) {
-        const [x0, y0, x1, y1] = cutoutBounds(c);
-        for (let j = Math.max(0, Math.floor((y0 - keep) / G)); j <= Math.min(H - 1, Math.ceil((y1 + keep) / G)); j++) {
-          for (let i = Math.max(0, Math.floor((x0 - keep) / G)); i <= Math.min(W - 1, Math.ceil((x1 + keep) / G)); i++) if (cutoutDistance(c, i * G, j * G) < keep) m[j * W + i] = EDGE;
-        }
-      }
       // keep-outs that hold tracks off on this layer (a via class passes: vias have their own)
       if (k === 2) continue;
       for (const ko of input.keepouts ?? []) {
@@ -579,10 +647,10 @@ function routeOnce(
   for (const pl of input.planes ?? []) {
     const l = layerIdx.get(pl.layer);
     if (l === undefined || OUTER.has(pl.layer)) continue;
-    for (let k = 0; k < widths.length; k++) if (k !== 2) maps[k]![l]!.fill(EDGE);
+    for (const k of CLASSES) if (k !== 2) maps[k]![l]!.fill(EDGE);
   }
   // the signal map with pads, keep-outs and the edge only: what no rip-up can clear (for the probe)
-  const fixedMap = maps[0]!.map((m) => m.slice());
+  const fixedMap = searching ? maps[0]!.map((m) => m.slice()) : [];
   // the copper kept from the routing before: after fixedMap (a later pass may route its nets
   // again), before the escapes (they keep clear of it)
   const keptTracks = kept ? kept.pieces.flatMap((pc) => pc.tracks.map((i) => kept.tracks[i]!)) : [];
@@ -603,7 +671,7 @@ function routeOnce(
     for (let q = 0; q + 3 < t.pts.length; q += 2) {
       const [ax, ay, bx, by] = [t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!];
       const dist = segDist(ax, ay, bx, by);
-      for (let k = 0; k < widths.length; k++) {
+      for (const k of CLASSES) {
         if (planeLayers.has(l) && k !== 2) continue;
         const reach = rules.clearance + t.width / 2 + ln.h + widths[k]! / 2 + G * 0.1;
         const m = maps[k]![l]!;
@@ -735,7 +803,7 @@ function routeOnce(
    * pad that it touches. A track there should run through the pad centre (straight along the pad
    * or diagonally at it), not half over the pad's edge.
    */
-  const touch = [0, 1].map((k) => {
+  const touch = (searching ? [0, 1] : []).map((k) => {
     const out = new Int32Array(L * N);
     const r = widths[k]! / 2;
     pads.forEach((p, idx) => {
@@ -758,7 +826,7 @@ function routeOnce(
   const offMiddle = new Float32Array(L * N);
   // the gaps (vertical: pins stacked along y, so the gap runs along x), for recentring in straighten
   const gaps: { vertical: boolean; mid: number; x0: number; x1: number; y0: number; y1: number; layers: number[] }[] = [];
-  for (const part of input.parts) {
+  for (const part of searching ? input.parts : []) {
     if (part.pads.length <= 3) continue;
     for (const a of part.pads) {
       for (const vertical of [false, true]) {
@@ -961,7 +1029,7 @@ function routeOnce(
    * of a small part (between a resistor's pads), unless the board allows vias in pads.
    */
   const viaBlocked = new Uint8Array(N);
-  if (!rules.viaInPad) {
+  if ((searching || stitching) && !rules.viaInPad) {
     const reach = rules.viaPad / 2 + rules.clearance;
     pads.forEach((p) => {
       const d = padDist(p);
@@ -1959,12 +2027,18 @@ function routeOnce(
     const ok = new Uint8Array(N);
     const look = planeLook(pl);
     const keep = look.edge + margin;
-    for (let j = 0; j < H; j++) {
-      for (let i = 0; i < W; i++) {
-        const x = i * G;
-        const y = j * G;
-        ok[j * W + i] = x >= keep && y >= keep && x <= input.outline.w - keep && y <= input.outline.h - keep && (!shaped || inside(x, y) >= keep) ? 1 : 0;
-      }
+    // (cells inside the box round the outline by rows: this is millions of cells, for every pour)
+    let [i0, i1] = [W, -1];
+    for (let i = 0; i < W; i++) {
+      if (i * G < keep || i * G > input.outline.w - keep) continue;
+      i0 = Math.min(i0, i);
+      i1 = i;
+    }
+    for (let j = 0; j < H && i0 <= i1; j++) {
+      const y = j * G;
+      if (y < keep || y > input.outline.h - keep) continue;
+      if (!shaped) ok.fill(1, j * W + i0, j * W + i1 + 1);
+      else for (let i = i0; i <= i1; i++) if (inside(i * G, y) >= keep) ok[j * W + i] = 1;
     }
     for (const c of input.cutouts ?? []) {
       const [x0, y0, x1, y1] = cutoutBounds(c);
@@ -1987,11 +2061,23 @@ function routeOnce(
       if (q.layer !== pl.layer || !q.area) continue;
       const [a0, b0, a1, b1] = q.area;
       const grow = q === pl ? -margin : areaGap(q) + margin;
+      let [ai0, ai1] = [W, -1];
+      for (let i = 0; i < W; i++) {
+        if (i * G < a0 - grow || i * G > a1 + grow) continue;
+        ai0 = Math.min(ai0, i);
+        ai1 = i;
+      }
       for (let j = 0; j < H; j++) {
-        for (let i = 0; i < W; i++) {
-          const within = i * G >= a0 - grow && i * G <= a1 + grow && j * G >= b0 - grow && j * G <= b1 + grow;
-          if (within !== (q === pl)) ok[j * W + i] = 0;
-        }
+        const inRow = ai0 <= ai1 && j * G >= b0 - grow && j * G <= b1 + grow;
+        const row = j * W;
+        if (q === pl) {
+          // only inside its rectangle
+          if (!inRow) ok.fill(0, row, row + W);
+          else {
+            ok.fill(0, row, row + ai0);
+            ok.fill(0, row + ai1 + 1, row + W);
+          }
+        } else if (inRow) ok.fill(0, row + ai0, row + ai1 + 1);
       }
     }
     const clearAround = (x0: number, y0: number, x1: number, y1: number, extra: number, dist: (x: number, y: number) => number) => {
@@ -2044,26 +2130,7 @@ function routeOnce(
       });
     }
     // islands (4-connected)
-    const island = new Int32Array(N).fill(-1);
-    const sizes: number[] = [];
-    for (let c0 = 0; c0 < N; c0++) {
-      if (!ok[c0] || island[c0]! >= 0) continue;
-      const id = sizes.length;
-      let n = 0;
-      const stack = [c0];
-      island[c0] = id;
-      while (stack.length) {
-        const c = stack.pop()!;
-        n++;
-        const x = c % W;
-        for (const nb of [x > 0 ? c - 1 : -1, x < W - 1 ? c + 1 : -1, c - W, c + W]) {
-          if (nb < 0 || nb >= N || !ok[nb] || island[nb]! >= 0) continue;
-          island[nb] = id;
-          stack.push(nb);
-        }
-      }
-      sizes.push(n);
-    }
+    const { island, sizes } = islandsOf(ok, W, H);
     // islands touched by the net's copper on this layer (pads, tracks) and by its vias
     const touched = new Set<number>();
     for (const [r, cells] of groupCells) {

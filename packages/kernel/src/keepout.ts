@@ -6,7 +6,6 @@
  * them, and DRC.KEEPOUT finds what is in one anyway.
  */
 import {
-  DEFAULT_BOARD,
   KEEPOUT_FORBID,
   type BoardDiagnostic,
   type BoardKeepout,
@@ -20,7 +19,7 @@ import {
   type OpResult,
 } from '@4k7/schema';
 import { copperName } from './drc.ts';
-import { reject, resolveComponent } from './doc.ts';
+import { boardCopy, reject, resolveComponent } from './doc.ts';
 import { boxInKeepout, partForbidden, properCross, trackInKeepout, viaInKeepout } from './keepgeo.ts';
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
@@ -178,7 +177,7 @@ function describe(k: Keepout, b: BoardSettings, d: Design): string {
 }
 
 export function addKeepout(d: Design, op: Extract<EditOp, { op: 'add_keepout' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const poly = cornersOf(op);
   if (!poly) reject({ code: 'BOARD_INVALID', message: 'A keep-out needs its area: rect (x_mm, y_mm, width_mm, height_mm) or polygon (corners).' });
   const list = [...(b.keepouts ?? [])];
@@ -197,7 +196,7 @@ export function addKeepout(d: Design, op: Extract<EditOp, { op: 'add_keepout' }>
 }
 
 export function editKeepout(d: Design, op: Extract<EditOp, { op: 'edit_keepout' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const list = [...(b.keepouts ?? [])];
   const i = list.findIndex((k) => k.id.toUpperCase() === op.id.toUpperCase());
   if (i < 0) reject({ code: 'REF_UNKNOWN', message: `No keep-out "${op.id}".`, candidates: list.map((k) => k.id) });
@@ -226,7 +225,7 @@ export function editKeepout(d: Design, op: Extract<EditOp, { op: 'edit_keepout' 
 }
 
 export function removeKeepout(d: Design, op: Extract<EditOp, { op: 'remove_keepout' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const before = b.keepouts ?? [];
   const keep = op.id.toLowerCase() === 'all' ? [] : before.filter((k) => k.id.toUpperCase() !== op.id.toUpperCase());
   if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: `No keep-out "${op.id}".`, candidates: before.map((k) => k.id) });

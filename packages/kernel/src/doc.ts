@@ -1,7 +1,7 @@
 /**
  * Low-level design document helpers: ids, lookups, reference resolution.
  */
-import { paramSpecs, type Component, type Constraint, type Design, type Net, type ParamSpec, type PartCard, type PartPin, type Rejection } from '@4k7/schema';
+import { DEFAULT_BOARD, paramSpecs, type BoardSettings, type Component, type Constraint, type Design, type Net, type ParamSpec, type PartCard, type PartPin, type Rejection } from '@4k7/schema';
 import { SYMBOL_PARAMS, getBuiltinPart, readsParams, seriesPaths } from '@4k7/parts';
 
 export class RejectError extends Error {
@@ -16,6 +16,25 @@ export function reject(r: Omit<Rejection, 'opIndex'>): never {
 
 export function clone<T>(v: T): T {
   return structuredClone(v);
+}
+
+/** A copy of board settings. The copper kept with them is shared: thousands of numbers, a cache that is replaced, never changed in place. */
+function copyBoard(board: BoardSettings): BoardSettings {
+  if (!board.copper) return structuredClone(board);
+  const b = structuredClone({ ...board, copper: null }) as unknown as BoardSettings;
+  b.copper = board.copper;
+  return b;
+}
+
+/** The board settings to change: a copy, which the op puts in place when it has done. */
+export const boardCopy = (d: Design): BoardSettings => copyBoard(d.board ?? DEFAULT_BOARD);
+
+/** A copy of a design to work on (see copyBoard). */
+export function workCopy(d: Design): Design {
+  if (!d.board?.copper) return structuredClone(d);
+  const work = structuredClone({ ...d, board: null }) as unknown as Design;
+  work.board = copyBoard(d.board);
+  return work;
 }
 
 export function nextId(d: Design, prefix: string): string {

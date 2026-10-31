@@ -44,13 +44,14 @@ import { applyOp, describeConstraint, descriptionView } from './apply.ts';
 import { countDiagnostics, diagKey, runChecks, sortDiagnostics } from './checks.ts';
 import { crossChecks } from './xcheck.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
-import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, valueOf } from './doc.ts';
+import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, valueOf, workCopy } from './doc.ts';
+import { Memo, drawingInputs } from './derive.ts';
 import { syncDrawing, viewOf } from './drawing.ts';
 import { keepForcedNets } from './netdraw.ts';
 import { blockAssignment } from './layout.ts';
 import { copperKey, layoutBoard, placedOf, planePlan } from './board.ts';
 import type { RouteProgress } from './router.ts';
-import { DRAWING_OPS, HELPER_TX_MS, annotateChecks, followParts, movesParts, type HelperHooks } from './copperops.ts';
+import { HELPER_TX_MS, annotateChecks, drawsCopper, followParts, movesParts, type HelperHooks } from './copperops.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 import { MIN_FREE, circuitSignature, guardOp, measure, positions, resolveScope, ripple, widenScope, type ResolvedScope } from './scope.ts';
 import { schematicChecks } from './schcheck.ts';
@@ -80,6 +81,9 @@ export interface KernelState {
   /** The design description (describe), or null while none is written. */
   description: DescriptionView | null;
 }
+
+/** The SCH checks read the drawing and nothing of the board: a part moved there leaves them as they were. */
+const schematicFindings = new Memo<Diagnostic[]>('schematic checks', 4);
 
 export class Kernel {
   private committed: Design;
@@ -111,7 +115,8 @@ export class Kernel {
     let a = this.cache.get(d);
     if (!a) {
       const view = viewOf(d);
-      const sch = schematicChecks(d, view, this.rules);
+      // (copies: the waivers are marked on them)
+      const sch = schematicFindings.get(`${JSON.stringify(this.rules)}|${drawingInputs(d)}|${JSON.stringify(d.drawing ?? null)}`, () => schematicChecks(d, view, this.rules)).map((x) => ({ ...x }));
       applyWaivers(d, sch);
       a = { view, diagnostics: sortDiagnostics([...runChecks(d, view.constraintStatus, view.constraintWhy), ...crossChecks(d), ...sch]) };
       this.cache.set(d, a);
@@ -194,7 +199,7 @@ export class Kernel {
       return this.rejected({ opIndex: 0, code: 'STALE', message: 'The design changed while the route helper searched; search again on it as it is now.' }, !!tx.dry_run);
     }
     const before = this.analyse(this.draft).diagnostics;
-    const work = clone(this.draft);
+    const work = workCopy(this.draft);
     const results = [];
     // drawn copper: what each op drew, edited or moved, checked once the transaction is applied
     const drawn = new Map<number, string[]>();
@@ -216,7 +221,7 @@ export class Kernel {
             if (f.note) r.effect += `; ${f.note}`;
             drawn.set(i, f.ids);
           }
-        } else if (work.board?.drawn && DRAWING_OPS.has(op.op)) drawn.set(i, (r.ids ?? []).filter((id) => /^[tv]\d+$/.test(id)));
+        } else if (work.board?.drawn && drawsCopper(op)) drawn.set(i, (r.ids ?? []).filter((id) => /^[tv]\d+$/.test(id)));
         results.push(r);
       } catch (e) {
         if (e instanceof RejectError) return this.rejected({ opIndex: i, ...e.rejection }, !!tx.dry_run);

@@ -169,6 +169,10 @@ const extent = (it: Item) => (swapped(it.rot) ? { w: it.ch, h: it.cw } : { w: it
 
 /** Placements by what they are worked out from: an edit asks several times for the same one, and for the one before it. */
 const placements = new Memo<BoardView>('placement', 4);
+/** How much of a silkscreen graphic is off the board, and how deep its figures lie in each other. */
+const silkFacts = new Memo<{ off: number; depth: number[] }>('silkscreen graphic', 8);
+/** The panel: of the outline and the panel's settings, not of where the parts stand. */
+const panels = new Memo<ReturnType<typeof panelView>>('panel', 4);
 
 /**
  * The board as placed now. Shared with whoever else asks (derive.ts): read it, and take a copy to
@@ -1150,13 +1154,17 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   const diagnostics = placementChecks(parts, w, h, rules.edgeClearance, { outline: { w, h }, cornerRadius: cornerR, shape }, boardCutouts);
   // silkscreen graphics: wholly on the board (the real outline, not its box), and clear of parts?
   const outlineOf = { outline: { w, h }, cornerRadius: cornerR, shape };
+  const outlineKey = JSON.stringify([w, h, cornerR, shape, boardCutouts]);
   for (const g of boardGraphics) {
     const label = `Silkscreen graphic ${g.id}${g.name ? ` (${g.name})` : ''}`;
     const pts = g.polys.flatMap((p) => p.map((_, i) => i).filter((i) => i % 2 === 0).map((i) => [p[i]!, p[i + 1]!] as const));
-    const off = pts.filter(([x, y]) => insideBoard(outlineOf, x, y) < 0 || boardCutouts.some((c) => cutoutDistance(c, x, y) < 0));
-    g.inside = off.length === 0;
-    if (!g.inside) diagnostics.push({ code: 'DRC.SILK_OUTSIDE', severity: 'warning', message: `${label} reaches past the board outline${boardCutouts.length ? ' or into a cutout' : ''} (${Math.round((100 * off.length) / pts.length)} % of its contour); that part is not printed. Move or shrink it (edit_graphic).`, entities: [g.id] });
-    const depth = figureDepths(g.polys);
+    // (a traced picture has tens of thousands of points, and neither changes when a part moves)
+    const { off, depth } = silkFacts.get(`${outlineKey}|${JSON.stringify(g.polys)}`, () => ({
+      off: pts.filter(([x, y]) => insideBoard(outlineOf, x, y) < 0 || boardCutouts.some((c) => cutoutDistance(c, x, y) < 0)).length,
+      depth: figureDepths(g.polys),
+    }));
+    g.inside = off === 0;
+    if (!g.inside) diagnostics.push({ code: 'DRC.SILK_OUTSIDE', severity: 'warning', message: `${label} reaches past the board outline${boardCutouts.length ? ' or into a cutout' : ''} (${Math.round((100 * off) / pts.length)} % of its contour); that part is not printed. Move or shrink it (edit_graphic).`, entities: [g.id] });
     const inInk = (x: number, y: number) => g.polys.reduce((n, p, k) => n + (pointInPolygon(p, x, y) ? 1 : 0) * (depth[k]! % 2 === 0 ? 1 : -1), 0) > 0;
     g.over = parts
       .filter((p) => {
@@ -1241,7 +1249,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   view.parts = marked.parts;
   view.diagnostics.push(...marked.diagnostics);
   if (settings.panel && parts.length) {
-    const panel = panelView(view, settings.panel);
+    const panel = panels.get(JSON.stringify([view.outline, view.cornerRadius, view.shape, settings.panel]), () => panelView(view, settings.panel!));
     view.panel = panel.view;
     view.diagnostics.push(...panel.diagnostics);
     view.diagnostics.push(...panelTabDrc(view));

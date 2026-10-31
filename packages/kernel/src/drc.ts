@@ -97,35 +97,81 @@ export function copperDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] 
       }
     }
   }
+  // what is close enough to look at: leftmost first, as the findings are listed
   const out: BoardDiagnostic[] = [];
   const seen = new Set<string>();
-  const sorted = items.map((it, i) => ({ it, i })).sort((p, q) => p.it.bb[0] - q.it.bb[0]);
-  for (let m = 0; m < sorted.length; m++) {
-    const A = sorted[m]!.it;
-    for (let n = m + 1; n < sorted.length; n++) {
-      const B = sorted[n]!.it;
-      if (B.bb[0] > A.bb[2] + c) break; // sweep on x
-      if (A.layer !== B.layer || A.net === B.net) continue;
-      if (!A.track && !B.track) continue; // pad-to-pad spacing is the footprint's and the placer's business
-      if (focus && !(A.id && focus.has(A.id)) && !(B.id && focus.has(B.id))) continue;
-      if (B.bb[1] > A.bb[3] + c || A.bb[1] > B.bb[3] + c) continue;
-      const gap = distance(A.shape, B.shape);
-      if (gap >= c - EPS) continue;
-      const nets = [A.net, B.net].sort().join('|');
-      const at = centre(A.shape);
-      const key = `${nets}@${Math.round(at.x)},${Math.round(at.y)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({
-        code: gap <= 0 ? 'DRC.SHORT' : 'DRC.CLEARANCE',
-        severity: 'error',
-        message: gap <= 0 ? `${A.what} touches ${B.what} on ${A.layer} (short).` : `${A.what} is ${gap.toFixed(2)} mm from ${B.what} on ${A.layer} (min ${c} mm).`,
-        at,
-        entities: [A.part, B.part, A.id, B.id].filter((x): x is string => !!x),
-      });
-    }
+  for (const [A, B, gap] of closePairs(items, c, focus)) {
+    const nets = [A.net, B.net].sort().join('|');
+    const at = centre(A.shape);
+    const key = `${nets}@${Math.round(at.x)},${Math.round(at.y)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      code: gap <= 0 ? 'DRC.SHORT' : 'DRC.CLEARANCE',
+      severity: 'error',
+      message: gap <= 0 ? `${A.what} touches ${B.what} on ${A.layer} (short).` : `${A.what} is ${gap.toFixed(2)} mm from ${B.what} on ${A.layer} (min ${c} mm).`,
+      at,
+      entities: [A.part, B.part, A.id, B.id].filter((x): x is string => !!x),
+    });
   }
   return [...viaIssues, ...out];
+}
+
+/** Rows of the broad phase, mm. */
+const ROW_MM = 1;
+
+/**
+ * The pairs of items of different nets on one layer that are closer than `c`, with their gap, the
+ * leftmost first (each pair as leftmost, other). A pour is thousands of rectangles of one net, so
+ * per layer the items are listed by row of the board, and only what is not a pour's rectangle goes
+ * looking for its neighbours; rectangles only look for those of another net's pour. `focus`: only
+ * from these drawn tracks and vias (by id). Pad-to-pad spacing is the footprint's and the placer's
+ * business.
+ */
+function closePairs(items: Item[], c: number, focus?: Set<string>): [Item, Item, number][] {
+  const before = (a: number, b: number) => items[a]!.bb[0] < items[b]!.bb[0] || (items[a]!.bb[0] === items[b]!.bb[0] && a < b);
+  const pour = (it: Item) => it.shape.kind === 'rect' && it.track;
+  const asks = (it: Item, pours: Set<string>) => (focus ? !!it.id && focus.has(it.id) : !pour(it) || pours.size > 1);
+  const hits: [number, number, number][] = [];
+  const byLayer = new Map<CopperLayer, number[]>();
+  items.forEach((it, i) => {
+    const list = byLayer.get(it.layer);
+    if (list) list.push(i);
+    else byLayer.set(it.layer, [i]);
+  });
+  const lastAsker = new Int32Array(items.length).fill(-1);
+  for (const list of byLayer.values()) {
+    const pours = new Set(list.filter((i) => pour(items[i]!)).map((i) => items[i]!.net));
+    let [y0, y1] = [Infinity, -Infinity];
+    for (const i of list) {
+      y0 = Math.min(y0, items[i]!.bb[1]);
+      y1 = Math.max(y1, items[i]!.bb[3]);
+    }
+    const rowOf = (y: number) => Math.floor((y - y0) / ROW_MM);
+    const rows: number[][] = Array.from({ length: rowOf(y1) + 1 }, () => []);
+    for (const i of list) for (let r = rowOf(items[i]!.bb[1]); r <= rowOf(items[i]!.bb[3]); r++) rows[r]!.push(i);
+    for (const a of list) {
+      const A = items[a]!;
+      if (!asks(A, pours)) continue;
+      const [from, to] = [Math.max(0, rowOf(A.bb[1] - c)), Math.min(rows.length - 1, rowOf(A.bb[3] + c))];
+      for (let r = from; r <= to; r++) {
+        for (const b of rows[r]!) {
+          if (lastAsker[b] === a || b === a) continue;
+          lastAsker[b] = a;
+          const B = items[b]!;
+          if (A.net === B.net || (!A.track && !B.track)) continue;
+          // (two that both ask: the one further left takes it)
+          if (asks(B, pours) && before(b, a)) continue;
+          const [l, m] = before(a, b) ? [A, B] : [B, A];
+          if (m.bb[0] > l.bb[2] + c || m.bb[1] > l.bb[3] + c || l.bb[1] > m.bb[3] + c) continue;
+          const gap = distance(l.shape, m.shape);
+          if (gap < c - EPS) hits.push(before(a, b) ? [a, b, gap] : [b, a, gap]);
+        }
+      }
+    }
+  }
+  hits.sort((p, q) => (p[0] === q[0] ? (before(p[1], q[1]) ? -1 : 1) : before(p[0], q[0]) ? -1 : 1));
+  return hits.map(([l, m, gap]) => [items[l]!, items[m]!, gap]);
 }
 
 const padShape = (pad: BoardPad): Shape =>

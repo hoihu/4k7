@@ -11,7 +11,7 @@
  */
 import { DEFAULT_BOARD, padHasPin, type BoardDiagnostic, type CopperLayer, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
 import { boardRouteInput, copperKey, placedOf, rotate, softened, storedPlacement } from './board.ts';
-import { findNet, isPowerNet, reject, resolveComponent, resolvePins } from './doc.ts';
+import { boardCopy, findNet, isPowerNet, reject, resolveComponent, resolvePins } from './doc.ts';
 import { acidDrc, copperDrc, drawnDrc, edgeDrc, neckDrc } from './drc.ts';
 import { padPointDist } from './keep.ts';
 import { keepoutDrc, rejectTrackInKeepout, rejectViaInKeepout } from './keepout.ts';
@@ -28,7 +28,7 @@ const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /** The board settings to change (a copy), with the placement stored so the parts stay where they are. */
 function boardOf(d: Design): BoardSettings {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   if (!b.placement) {
     d.board = b;
     b.placement = storedPlacement(placedOf(d));
@@ -720,11 +720,87 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
 
 /* --------------------------- copper that follows -------------------------- */
 
-/** Ops that never move a part: the copper needs no following after them. */
-const STILL = new Set(['route', 'set_copper_mode', 'draw_track', 'draw_pair', 'draw_via', 'set_stackup', 'set_impedance', 'remove_impedance', 'edit_copper', 'tune_length', 'erase_copper', 'add_waiver', 'remove_waiver', 'set_mating', 'set_polarity', 'set_enclosure_brief', 'set_enclosure_script', 'set_enclosure_graphic', 'set_value_series', 'set_paper', 'add_graphic', 'edit_graphic', 'remove_graphic', 'set_panel', 'place_symbol', 'place_text', 'wire', 'label', 'erase', 'move_supply', 'auto_draw', 'describe', 'set_plane', 'set_plane_style', 'add_vias', 'remove_vias', 'rename', 'set_net']);
+/**
+ * What drawn copper needs after each op, an entry per op so a new one has to say. `follow`: the op
+ * may move parts, and the copper by them goes along (followParts). `check`: it drew or changed
+ * copper, checked once its transaction is applied (annotateChecks; the helper's copper keeps the
+ * rules by construction). null: nothing.
+ */
+const COPPER_AFTER: Record<EditOp['op'], 'follow' | 'check' | null> = {
+  add_part: 'follow',
+  remove: 'follow',
+  set_param: 'follow',
+  rename: null,
+  connect: 'follow',
+  disconnect: 'follow',
+  no_connect: 'follow',
+  set_net: null,
+  add_sheet: 'follow',
+  move_to_sheet: 'follow',
+  constrain: 'follow',
+  remove_constraint: 'follow',
+  add_waiver: null,
+  remove_waiver: null,
+  set_symbol: 'follow',
+  set_footprint: 'follow',
+  set_mating: null,
+  set_polarity: null,
+  set_enclosure_brief: null,
+  set_enclosure_script: null,
+  set_enclosure_graphic: null,
+  rename_part: 'follow',
+  describe: null,
+  set_package_defaults: 'follow',
+  set_value_series: null,
+  set_paper: null,
+  set_board: 'follow',
+  set_fab_profile: 'follow',
+  place: 'follow',
+  attach: 'follow',
+  place_symbol: null,
+  place_text: null,
+  auto_draw: null,
+  place_block: 'follow',
+  wire: null,
+  label: null,
+  erase: null,
+  move_supply: null,
+  propose_placement: 'follow',
+  refine_placement: 'follow',
+  route: null,
+  set_copper_mode: null,
+  set_stackup: null,
+  set_impedance: null,
+  remove_impedance: null,
+  draw_pair: 'check',
+  draw_track: 'check',
+  draw_via: 'check',
+  edit_copper: 'check',
+  tune_length: 'check',
+  erase_copper: null,
+  set_plane: null,
+  set_plane_style: null,
+  add_hole: 'follow',
+  add_vias: null,
+  remove_vias: null,
+  add_cutout: 'follow',
+  remove_cutout: 'follow',
+  add_keepout: 'follow',
+  edit_keepout: 'follow',
+  remove_keepout: 'follow',
+  set_outline: 'follow',
+  set_panel: null,
+  add_graphic: null,
+  edit_graphic: null,
+  remove_graphic: null,
+  remove_hole: 'follow',
+};
 
 /** Whether an op may move parts (then drawn copper follows them, see followParts). */
-export const movesParts = (op: EditOp) => !STILL.has(op.op);
+export const movesParts = (op: EditOp) => COPPER_AFTER[op.op] === 'follow';
+
+/** Whether an op's copper is checked when its transaction is applied. */
+export const drawsCopper = (op: EditOp) => COPPER_AFTER[op.op] === 'check';
 
 interface Move {
   part: BoardPart;
@@ -1008,9 +1084,6 @@ export function followParts(d: Design, before: BoardView, after: BoardView = pla
 }
 
 /* ----------------------------- checked at once ----------------------------- */
-
-/** Ops whose copper is checked when their transaction is applied (the helper's copper keeps the rules by construction). */
-export const DRAWING_OPS = new Set(['draw_track', 'draw_pair', 'draw_via', 'edit_copper', 'tune_length']);
 
 /**
  * The rules on the drawn copper with these ids, on the board as it is now (placement only: pours

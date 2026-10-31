@@ -34,7 +34,6 @@ import {
   type DescriptionView,
   type ESeries,
   type ValueSeries,
-  DEFAULT_BOARD,
   DEFAULT_PAPER,
   PAGE,
   PAPERS,
@@ -78,6 +77,7 @@ import { boardOutline, pathFigures, pathPolygon } from './outline.ts';
 import { findArtwork, listArtwork } from './artwork.ts';
 import { GRID, footprintFor, packageOf, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOptions, planUnits, searchParts, standardPackage, unitCount } from '@4k7/parts';
 import {
+  boardCopy,
   allocRefdes,
   cardOf,
   closest,
@@ -220,7 +220,7 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
     case 'add_vias':
       return addVias(d, op);
     case 'remove_vias': {
-      const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+      const b = boardCopy(d);
       const before = b.vias ?? [];
       const keep = op.id.toLowerCase() === 'all' ? [] : before.filter((g) => g.id.toUpperCase() !== op.id.toUpperCase());
       if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: `No via group "${op.id}".`, candidates: before.map((g) => g.id) });
@@ -246,7 +246,7 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
     case 'edit_graphic':
       return editGraphic(d, op);
     case 'remove_graphic': {
-      const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+      const b = boardCopy(d);
       const before = b.graphics ?? [];
       const keep = op.id.toLowerCase() === 'all' ? [] : before.filter((g) => g.id.toUpperCase() !== op.id.toUpperCase());
       if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: `No silkscreen graphic "${op.id}".`, candidates: before.map((g) => g.id) });
@@ -256,7 +256,7 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return { op: 'remove_graphic', effect: `removed ${before.length - keep.length} silkscreen graphic(s)`, ids: ['board'] };
     }
     case 'remove_cutout': {
-      const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+      const b = boardCopy(d);
       const before = b.cutouts ?? [];
       const keep = op.id.toLowerCase() === 'all' ? [] : before.filter((c) => c.id.toUpperCase() !== op.id.toUpperCase());
       if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: `No cutout "${op.id}".`, candidates: before.map((c) => c.id) });
@@ -266,7 +266,7 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return { op: 'remove_cutout', effect: `removed ${before.length - keep.length} cutout(s)`, ids: ['board'] };
     }
     case 'remove_hole': {
-      const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+      const b = boardCopy(d);
       const before = b.holes ?? [];
       const keep = op.id.toLowerCase() === 'all' ? [] : before.filter((h) => h.id.toUpperCase() !== op.id.toUpperCase());
       if (keep.length === before.length) reject({ code: 'REF_UNKNOWN', message: `No mounting hole "${op.id}".`, candidates: before.map((h) => h.id) });
@@ -287,7 +287,7 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
 /* --------------------------------- board ---------------------------------- */
 
 function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const out: string[] = [];
   const size = (key: 'width' | 'height', v: number | null | undefined) => {
     if (v === undefined) return;
@@ -363,7 +363,7 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(
 
 /** Choose the manufacturer: a preset, an imported set of limits, or none. */
 function setFabProfile(d: Design, op: Extract<EditOp, { op: 'set_fab_profile' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const imported = op.house !== undefined || op.tier !== undefined || op.limits !== undefined || op.source_url !== undefined;
   if ([op.preset !== undefined, op.none === true, imported].filter(Boolean).length !== 1) {
     reject({ code: 'FAB_INVALID', message: 'set_fab_profile needs exactly one of: preset ("jlcpcb", "pcbway", "eurocircuits/6C" …), none: true, or an import (house, tier, source_url and limits).' });
@@ -437,7 +437,7 @@ function setFabProfile(d: Design, op: Extract<EditOp, { op: 'set_fab_profile' }>
 
 /** Choose the net of a copper plane (or pour) per layer, or go back to automatic planes. */
 function setPlane(d: Design, op: Extract<EditOp, { op: 'set_plane' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   if (op.auto) {
     delete b.planes;
     d.board = b;
@@ -488,7 +488,7 @@ function setPlane(d: Design, op: Extract<EditOp, { op: 'set_plane' }>): OpResult
 
 /** Shape a plane: the gap round an area plane, its clearance and edge pull-back, thermal reliefs. */
 function setPlaneStyle(d: Design, op: Extract<EditOp, { op: 'set_plane_style' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const net = findNet(d, op.net);
   if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${op.net}".`, candidates: Object.values(d.nets).map((n) => n.name) });
   const planes: NonNullable<BoardSettings['planes']> = b.planes ?? autoPlanes(d, b.layers).map(({ netId, layer }) => ({ netId, layer }));
@@ -531,7 +531,7 @@ function setPlaneStyle(d: Design, op: Extract<EditOp, { op: 'set_plane_style' }>
 
 /** A free-form board outline (an SVG path or points, scaled to the size asked for), or back to a rectangle. */
 function setOutline(d: Design, op: Extract<EditOp, { op: 'set_outline' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   d.board = b;
   if (op.rectangle) {
     delete b.shape;
@@ -558,7 +558,7 @@ function setOutline(d: Design, op: Extract<EditOp, { op: 'set_outline' }>): OpRe
 
 /** The fabrication panel: changes only what the op gives; the first one starts from the defaults. */
 function setPanel(d: Design, op: Extract<EditOp, { op: 'set_panel' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   d.board = b;
   if (op.none) {
     if (!b.panel) reject({ code: 'BOARD_INVALID', message: 'There is no panel to remove.' });
@@ -609,7 +609,7 @@ function setPanel(d: Design, op: Extract<EditOp, { op: 'set_panel' }>): OpResult
 
 /** A milled cutout: a rectangle, circle or slot, positioned from an anchor point. */
 function addCutout(d: Design, op: Extract<EditOp, { op: 'add_cutout' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const cutouts = [...(b.cutouts ?? [])];
   let id = '';
   for (let i = 1; ; i++) if (!cutouts.some((c) => c.id === `CO${i}`)) {
@@ -670,7 +670,7 @@ function addGraphic(d: Design, op: Extract<EditOp, { op: 'add_graphic' }>): OpRe
   const polys = figs.map((p) => p.map((v, i) => (i % 2 === 0 ? r3((v - (x0 + x1) / 2) * sx) : r3((v - (y0 + y1) / 2) * sy))));
   const [w, h] = [r3(bw * sx), r3(bh * sy)];
   if (Math.max(w, h) < 0.5) reject({ code: 'BOARD_INVALID', message: `The graphic would be ${w} × ${h} mm; silkscreen needs at least about 1 mm to be readable (give width_mm or height_mm).` });
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const graphics = [...(b.graphics ?? [])];
   let id = '';
   for (let i = 1; ; i++) if (!graphics.some((g) => g.id === `G${i}`)) {
@@ -708,7 +708,7 @@ function addGraphic(d: Design, op: Extract<EditOp, { op: 'add_graphic' }>): OpRe
 
 /** Move, resize, turn or restyle a silkscreen graphic (a drag in the layout view moves it by dx/dy). */
 function editGraphic(d: Design, op: Extract<EditOp, { op: 'edit_graphic' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const graphics = b.graphics ?? [];
   const g = graphics.find((x) => x.id.toUpperCase() === op.id.toUpperCase());
   if (!g) reject({ code: 'REF_UNKNOWN', message: `No silkscreen graphic "${op.id}".`, candidates: graphics.map((x) => x.id) });
@@ -769,7 +769,7 @@ function editGraphic(d: Design, op: Extract<EditOp, { op: 'edit_graphic' }>): Op
 
 /** Mounting holes: at fixed positions or anchored to corners (they follow the board size). */
 function addHole(d: Design, op: Extract<EditOp, { op: 'add_hole' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   if (op.diameter_mm < 0.5 || op.diameter_mm > 10) reject({ code: 'BOARD_INVALID', message: `A ${op.diameter_mm} mm hole is outside 0.5–10 mm.` });
   const hasXY = op.x_mm !== undefined && op.y_mm !== undefined;
   if (!op.corner && !hasXY) reject({ code: 'BOARD_INVALID', message: 'add_hole needs a corner or x_mm and y_mm.' });
@@ -809,7 +809,7 @@ function addHole(d: Design, op: Extract<EditOp, { op: 'add_hole' }>): OpResult {
 /** Vias placed on purpose: thermal vias in a pad, at given spots, stitching over an area, a fence round one. */
 function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
   const r3 = (v: number) => Math.round(v * 1000) / 1000;
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const drill = op.drill_mm ?? b.rules.viaDrill;
   const size = op.size_mm ?? Math.max(b.rules.viaPad, drill + 0.2);
   if (size < drill + 0.1) reject({ code: 'BOARD_INVALID', message: `A ${size} mm via pad round a ${drill} mm drill leaves no copper ring; give size_mm at least ${drill + 0.1} mm.` });
@@ -940,7 +940,7 @@ function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
 
 /** Store the current placement, so later layouts start from it. */
 function keepPlacement(d: Design) {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   d.board = b;
   const now = placedOf(d);
   b.placement = storedPlacement(now);
@@ -1348,7 +1348,7 @@ export function proposePlacement(d: Design, op: Extract<EditOp, { op: 'propose_p
     d.ledger[id] = { id, kind: 'position', a: comp.id, xMm: r(p.x_mm), yMm: r(p.y_mm), rot: p.rot ?? 0, domain: 'placement', strength: 'soft', source: { type: by } };
     return d.ledger[id]!;
   });
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   delete b.placement;
   delete b.routed;
   d.board = b;
