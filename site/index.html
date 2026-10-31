@@ -171,8 +171,8 @@
   </ul>
 
   <section class="feature" id="p-schematic" style="--band:var(--yellow)" hidden>
-    <h2>It asks first, then reads the datasheets.</h2>
-    <p>A part it doesn't know comes straight from the manufacturer's datasheet: the agent reads the PDF, and you get the symbol, the land pattern and the pin functions. It designs from the datasheet's typical application and design procedure, and tells you which page each choice came from.</p>
+    <h2>Direct Datasheet Part Import</h2>
+    <p>Just tell the agent which part it should use (or let it propose one) and then it will automatically download the datasheet, extract the correct land pattern and the pin mapping, and create a 3D model as well. The datasheet stays beside the imported part, so you can look up details later on if needed. The agent can even read application guidelines from the datasheet, e.g. recommended layouts or reference implementations.</p>
     <figure class="two">
       <img data-src="/shots/ask.webp" width="2300" height="1800" alt="The chat with the prompt, the agent's two questions and the answers, four datasheet imports and the summary; beside it the schematic of the 5 V buck converter.">
       <img data-src="/shots/datasheet.webp" width="2880" height="1800" alt="The Parts view: the TPS54560 regulator imported from its datasheet, with its symbol, land pattern and pin table, next to the datasheet open at the typical application.">
@@ -185,8 +185,8 @@
   </section>
 
   <section class="feature" id="p-board" data-prompt="Looks right. Lay out the board." style="--band:var(--violet)" hidden>
-    <h2>A board laid out the way the datasheet says.</h2>
-    <p>The agent places the parts that matter, the placer arranges the rest, and the router keeps going until every connection is made. Around the regulator it follows the datasheet's layout example: a tight input loop, a short switch node, vias under the thermal pad.</p>
+    <h2>Intuitive Board Layout with amazing 2D / 3D views and artworks</h2>
+    <p>Let the agent propose the best positions. Manually pin the positions of key components on the PCB. Then the agent does the rest for you. But this is not the end: Create artistic silkscreens on request! Why not add snowflakes for example? Or let the agent design crazy outlines of the PCB - why not a Christmas tree shape for your next project?</p>
     <figure>
       <video muted loop playsinline preload="none" poster="/shots/board.webp" data-src="/shots/board.mp4" width="2208" height="1380" aria-label="The Layout view: 48 LEDs on a spiral above the power supply and the RP2040, all nets routed. One click turns the drawing into the board in 3D, and back."></video>
     </figure>
@@ -198,8 +198,8 @@
   </section>
 
   <section class="feature" id="p-enclosure" data-prompt="Now the case." style="--band:var(--red)" hidden>
-    <h2>Then the box around it.</h2>
-    <p>You agree a brief with the agent: printer, material, pieces, the look. It writes the enclosure as a script around your board, renders it in the app and fixes what the checks find: a part in the way, a plug that can't reach its opening, no room under the lid.</p>
+    <h2>Fully integrated Enclosure design</h2>
+    <p>With a few easy prompts, design a fitting enclosure for your PCB. Not only a simple box, but anything that belongs to your project, for example: a desktop holder, an optical waveguide, decorations on the lid etc. You can even do cuts along an axis to inspect details and margins. Or add reinforcement ribs with a simple additional prompt if the design is too weak. The agent has full control of the design using a scripted version of Manifold 3D, so there are almost no restrictions.</p>
     <figure>
       <video muted loop playsinline preload="none" poster="/shots/enclosure.webp" data-src="/shots/enclosure.mp4" width="2208" height="1380" aria-label="The Enclosure view in 3D: the lamp's box is turned, opened, its pieces lifted apart, closed, and cut through to show the walls, the light baffle and the LEDs."></video>
     </figure>
@@ -211,8 +211,8 @@
   </section>
 
   <section class="feature" id="p-order" data-prompt="What will ten of these cost?" style="--band:var(--gold)" hidden>
-    <h2>Priced at three board houses before you order.</h2>
-    <p>Pick JLCPCB, PCBWay or Eurocircuits. 4k7 checks live stock for the number of boards you want, prices the assembly with every fee, and offers parts in stock, or cheaper, a click away. Ask the agent and it goes through the design for savings.</p>
+    <h2>Check against popular manufacturers before you make your final order</h2>
+    <p>When ordering PCBs or assembled PCBAs, the surprise comes when you see the costs. Sometimes, easy adjustments to the design save a LOT of $$$. 4k7 gives you an overview of 3 popular manufacturing services and tries to summarize how much it would cost to produce the PCB. It's an approximation, but 4k7 is able to propose changes to designs if it makes sense.</p>
     <figure class="three">
       <img data-src="/shots/cost-jlcpcb.webp" width="580" height="1280" alt="Cost at JLCPCB for 10 boards, from Economic to Standard assembly, with every fee listed.">
       <img data-src="/shots/cost-pcbway.webp" width="580" height="1280" alt="Cost at PCBWay for 10 boards, from its live quote.">
