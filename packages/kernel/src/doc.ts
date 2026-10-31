@@ -95,6 +95,25 @@ export function resolveComponent(d: Design, ref: string): Component {
   return c;
 }
 
+/** "U3" or one unit of a split symbol, "U3B". */
+export function resolveUnitRef(d: Design, ref: string): { comp: Component; unit?: string } {
+  const direct = findComponent(d, ref);
+  if (direct) return { comp: direct };
+  const m = /^(.*\d)([A-Z])$/i.exec(ref.trim());
+  const comp = m ? findComponent(d, m[1]!) : undefined;
+  const units = comp ? cardOf(d, comp.part)?.units ?? [] : [];
+  const unit = m ? units.find((u) => u.name === m[2]!.toUpperCase()) : undefined;
+  if (comp && unit) return { comp, unit: unit.name };
+  if (comp) {
+    reject({
+      code: 'REF_UNKNOWN',
+      message: units.length ? `${comp.refdes} has units ${units.map((u) => u.name).join(', ')}, not "${m![2]}".` : `${comp.refdes} is drawn as one symbol; split it first (set_symbol style "units") to place units separately.`,
+      candidates: units.map((u) => `${comp.refdes}${u.name}`),
+    });
+  }
+  return { comp: resolveComponent(d, ref) };
+}
+
 export function allocRefdes(d: Design, prefix: string): string {
   const used = new Set(Object.values(d.components).map((c) => c.refdes));
   for (let i = 1; ; i++) if (!used.has(`${prefix}${i}`)) return `${prefix}${i}`;

@@ -12,7 +12,7 @@
  * grid passes follow (horizontal on F.Cu, vertical on B.Cu, vias cheap; see Style): a board
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, keepoutDistance, padCapsule, roundPadDist, type PlaneStyle, type RoutedLine, type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, keepoutDistance, padCapsule, roundPadDist, type PlaneStyle, type RoutedLine, type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
 import { r3, reversePts, segDist, segmentsOf, segSegDist } from './geom.ts';
 import { Heap } from './heap.ts';
 import { keptCopper, type KeptCopper } from './keep.ts';

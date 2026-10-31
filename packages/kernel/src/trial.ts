@@ -8,7 +8,7 @@
  * agent applies the winner.
  */
 import type { BoardView, Design, PartPlacement, SchematicView } from '@4k7/schema';
-import { proposePlacement } from './apply.ts';
+import { proposePlacement } from './boardops.ts';
 import { layoutBoard, placeBoard } from './board.ts';
 import { routability } from './congestion.ts';
 import { exploreMain } from './refine.ts';

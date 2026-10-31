@@ -67,7 +67,7 @@ import {
 } from '@4k7/schema';
 import { footprintFor, isTwoPin, packageOf, type Footprint } from '@4k7/parts';
 import { boardInputs, Memo } from './derive.ts';
-import { applyWaivers, cardOf, clone, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
+import { applyWaivers, boardCopy, cardOf, clone, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
 import { viewOf } from './drawing.ts';
 import { acidDrc, copperDrc, deadCopperDrc, drawnDrc, edgeDrc, neckDrc, planeViaDrc, splitDrc, thermalDrc } from './drc.ts';
 import { polyLength, r3 } from './geom.ts';
@@ -1265,6 +1265,45 @@ export function storedPlacement(b: BoardView): StoredPlacement {
     outline: { ...b.outline },
     parts: Object.fromEntries(b.parts.filter((p) => !p.componentId.startsWith('hole:')).map((p) => [p.componentId, { x: p.x, y: p.y, rot: p.rot }])),
   };
+}
+
+/** Store the current placement, so later layouts start from it. */
+export function keepPlacement(d: Design) {
+  const b = boardCopy(d);
+  d.board = b;
+  const now = placedOf(d);
+  b.placement = storedPlacement(now);
+  if (!b.drawn) choicesWhereTheyStand(d, now); // (drawn copper: the placement is frozen, nothing is nudged)
+}
+
+/**
+ * Each placement choice (soft position) where its part ended up: the placer may have nudged it
+ * clear of a neighbour or the edge, and a choice that still says the old spot would be applied
+ * again, and the nudge with it, every time the board is laid out from the stored placement.
+ */
+function choicesWhereTheyStand(d: Design, now: BoardView) {
+  const r = (v: number) => Math.round(v * 1000) / 1000;
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind !== 'position' || k.strength !== 'soft' || !k.a) continue;
+    const part = now.parts.find((p) => p.componentId === k.a);
+    const anchor = k.rel ? now.parts.find((p) => p.componentId === k.rel) : undefined;
+    if (!part || (k.rel && !anchor)) continue;
+    // (a two-pin part turned round by 180° to face what it connects to keeps the direction chosen)
+    const turned = (was: number, to: number) => (((to - was) % 360) + 360) % 360 === 180 && part.pads.length === 2 ? was : to;
+    if (!anchor) {
+      if (k.xMm !== undefined) k.xMm = part.x;
+      if (k.yMm !== undefined) k.yMm = part.y;
+      if (k.rot !== undefined) k.rot = turned(k.rot, part.rot);
+      continue;
+    }
+    const dx = part.x - anchor.x;
+    const dy = part.y - anchor.y;
+    const back = (360 - anchor.rot) % 360;
+    const [ox, oy] = back === 90 ? [-dy, dx] : back === 180 ? [-dx, -dy] : back === 270 ? [dy, -dx] : [dx, dy];
+    if (k.xMm !== undefined) k.xMm = r(ox);
+    if (k.yMm !== undefined) k.yMm = r(oy);
+    if (k.rot !== undefined) k.rot = turned(k.rot, (((part.rot - anchor.rot) % 360) + 360) % 360);
+  }
 }
 
 /** Whether a point lies inside a closed polygon (flat x, y list), even-odd. */

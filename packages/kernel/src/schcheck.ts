@@ -9,7 +9,7 @@ import { cardOf, natCmp } from './doc.ts';
 import { clashWords, textOverlaps } from './parttext.ts';
 import { supplyDir } from './scene.ts';
 import { segmentsOf } from './geom.ts';
-import { labelOverlaps, touches, wireCrossings, wireShape, type PinOn } from './scope.ts';
+import { labelOverlaps, touches, wireCrossings, wireShape, type PinOn } from './sheetmeasures.ts';
 
 interface Ctx {
   d: Design;

@@ -2,6 +2,7 @@
  * Scene building blocks shared by the schematic layouts: geometry containers, symbol
  * placement, net decorations and extent estimates.
  */
+import { PAGE } from '@4k7/schema';
 import type { BlockView, Component, Design, LabelView, Net, PinType, PinView, Point, Prim, Rect, SymbolSpec, SymbolView, WireView } from '@4k7/schema';
 import { CHAR_W, GRID, RAIL_STEM, TEXT_LINE, textRect, readsParams, symbolFromSpec, textOffset, type SymbolDef } from '@4k7/parts';
 import { cardOf, isGroundNet, isPowerNet, valueLinesOf, valueOf } from './doc.ts';
@@ -111,6 +112,9 @@ export function labelRect(l: LabelView): Rect {
 }
 
 export { textRect };
+
+/** A page's drawing area: inside its margins, above the title strip. */
+export const drawingArea = (p: Rect): Rect => ({ x: p.x + PAGE.margin, y: p.y + PAGE.margin, w: p.w - 2 * PAGE.margin, h: p.h - 2 * PAGE.margin - PAGE.title });
 
 export function sceneBBox(s: Scene): Rect {
   let minX = Infinity,

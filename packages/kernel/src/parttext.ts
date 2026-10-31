@@ -5,11 +5,10 @@
  */
 import type { LabelView, Prim, Rect, SheetView, SymbolView } from '@4k7/schema';
 import { natCmp } from './doc.ts';
-import { drawingArea } from './drawing.ts';
 import { grow } from './geom.ts';
-import { LINE, textRect } from './scene.ts';
+import { drawingArea, LINE, textRect } from './scene.ts';
 import { segmentsOf } from './geom.ts';
-import { labelParts, line, meets, type OverlapHit } from './scope.ts';
+import { labelParts, line, meets, type OverlapHit } from './sheetmeasures.ts';
 
 type TextPos = SymbolView['refPos'];
 export type TextSide = 'above' | 'below' | 'left' | 'right';

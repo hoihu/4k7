@@ -18,7 +18,7 @@ import {
   type Severity,
 } from '@4k7/schema';
 import { seriesPaths } from '@4k7/parts';
-import { sameValue, describeConstraint } from './apply.ts';
+import { sameValue, describeConstraint } from './netops.ts';
 import { allocRefdes, applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 
 const DRIVERS = new Set(['out', 'bidir', 'tri', 'pwr_out', 'oc', 'passive']);

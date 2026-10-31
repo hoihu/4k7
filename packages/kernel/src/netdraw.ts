@@ -9,8 +9,8 @@ import { wireNet } from './autowire.ts';
 import { boxOf, gap, pieces, type Piece } from './blocks.ts';
 import { cardOf } from './doc.ts';
 import { softBoxes } from './drawops.ts';
-import { drawingArea, groups, ownSheet, pageAt, pinsOf, symbolOf, syncSheet } from './drawing.ts';
-import { deco, labelForPin, supplyDir, supplyStubs, type Scene } from './scene.ts';
+import { groups, ownSheet, pageAt, pinsOf, symbolOf, syncSheet } from './drawing.ts';
+import { deco, drawingArea, labelForPin, type Scene, supplyDir, supplyStubs } from './scene.ts';
 import { routeWire } from './schroute.ts';
 
 const views = (d: Design, sheet: string) => d.drawing![sheet]!.symbols.map((s) => symbolOf(d, s)!);

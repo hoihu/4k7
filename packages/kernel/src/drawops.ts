@@ -6,11 +6,10 @@
  */
 import type { Component, Design, EditOp, LabelView, OpResult, PinView, Rect, SheetDrawing, SheetView, SymbolView } from '@4k7/schema';
 import { GRID } from '@4k7/parts';
-import { resolveUnitRef } from './apply.ts';
-import { RejectError, cardOf, clone, natCmp, pinLabel, reject, resolvePins, type PinHandle } from './doc.ts';
-import { drawingArea, groups, isDrawn, joinedWires, onWire, ownSheet, pageAt, pinsOf, symbolOf, syncDrawing, syncSheet, viewOf } from './drawing.ts';
+import { RejectError, cardOf, clone, natCmp, pinLabel, reject, resolvePins, resolveUnitRef, type PinHandle } from './doc.ts';
+import { groups, isDrawn, joinedWires, onWire, ownSheet, pageAt, pinsOf, symbolOf, syncDrawing, syncSheet, viewOf } from './drawing.ts';
 import { clashWords, clearTexts, placeTexts, textBox, textClashes, within, type TextArrange, type TextClash, type TextSide } from './parttext.ts';
-import { deco, labelRect, leadEnd, supplyDir, textRect, type Dir } from './scene.ts';
+import { deco, type Dir, drawingArea, labelRect, leadEnd, supplyDir, textRect } from './scene.ts';
 import { routeWire } from './schroute.ts';
 import { NOT_INTO } from './wireclean.ts';
 

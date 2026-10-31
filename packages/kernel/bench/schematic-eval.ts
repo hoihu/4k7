@@ -13,7 +13,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { PAPERS, type Design, type SheetView } from '@4k7/schema';
 import { segmentsOf, type Seg } from '../src/geom.ts';
-import { touches, wireCrossings, wireShape } from '../src/scope.ts';
+import { touches, wireCrossings, wireShape } from '../src/sheetmeasures.ts';
 import { build, GOLDEN, type Golden } from './schematic-golden.ts';
 
 export interface Score {

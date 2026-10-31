@@ -4,7 +4,7 @@
  */
 import { cutoutDistance, insideBoard, padCapsule, roundPadDist } from '@4k7/schema';
 import type { Diagnostic, BoardPad, BoardPart, BoardView, CopperLayer, Track } from '@4k7/schema';
-import { idOf, pointSegDist, segDist, segmentsOf, segSegDist } from './geom.ts';
+import { idOf, segDist, segmentsOf, segSegDist } from './geom.ts';
 import { padPointDist, padSegDist } from './keep.ts';
 
 type Shape =

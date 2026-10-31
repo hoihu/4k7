@@ -15,7 +15,7 @@ import { grow, onSegment, overlap, reversePts } from './geom.ts';
 import { PAGE_GAP, blockAssignment, drawnWith, evaluateConstraints, layoutSheetOf, pageName, pagesBBox, symbolKey } from './layout.ts';
 import { FRAME_PAD, frameAround, pieces } from './blocks.ts';
 import { behindPart, cleanWires } from './wireclean.ts';
-import { addJunctions, crowding, deco, labelForPin, labelRect, leadEnd, makeSymbol, rotateSymbol, symbolMaking, textRect, type Dir, type Scene } from './scene.ts';
+import { addJunctions, crowding, deco, type Dir, drawingArea, labelForPin, labelRect, makeSymbol, rotateSymbol, type Scene, symbolMaking, textRect } from './scene.ts';
 
 /* ---------------------------------- view ----------------------------------- */
 
@@ -703,7 +703,6 @@ function freeSpotNear(d: Design, sd: SheetDrawing, bb: Rect, near: Rect): { dx: 
 }
 
 const grid = (v: number) => Math.ceil(v / GRID) * GRID;
-export const drawingArea = (p: Rect): Rect => ({ x: p.x + PAGE.margin, y: p.y + PAGE.margin, w: p.w - 2 * PAGE.margin, h: p.h - 2 * PAGE.margin - PAGE.title });
 const centre = (r: Rect) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
 const inside = (r: Rect, p: { x: number; y: number }) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 

@@ -41,7 +41,9 @@ import {
   type SymbolView,
 } from '@4k7/schema';
 import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
-import { applyOp, describeConstraint, descriptionView } from './apply.ts';
+import { applyOp } from './apply.ts';
+import { describeConstraint } from './netops.ts';
+import { descriptionView } from './sheetops.ts';
 import { diagKey, runChecks, sortDiagnostics } from './checks.ts';
 import { crossChecks } from './xcheck.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
