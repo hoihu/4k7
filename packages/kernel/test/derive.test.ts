@@ -4,6 +4,7 @@ import { insidePolygon, type CopperLayer, type Design } from '@4k7/schema';
 import { checkDerived, Memo } from '../src/derive.ts';
 import { placedOf } from '../src/board.ts';
 import { viewOf } from '../src/drawing.ts';
+import { workCopy } from '../src/doc.ts';
 import { closePairs, shapeGap, type CopperItem } from '../src/drc.ts';
 import { pointSegDist } from '../src/geom.ts';
 import { Kernel } from '../src/kernel.ts';
@@ -118,6 +119,59 @@ describe('the view and the placement of a design', () => {
     const at = before.drawn!.vias[0]!.x;
     d.board!.drawn!.vias[0]!.x = at + 1;
     expect(before.drawn!.vias[0]!.x).toBe(at);
+  });
+});
+
+describe('what a placement shares with what is remembered', () => {
+  it('a check of the panel waived and brought back shows again', () => {
+    const k = buck();
+    const ok = (ops: unknown[]) => expect(k.transact({ summary: 'x', ops } as never).status).toBe('ok');
+    ok([{ op: 'set_board', width_mm: 40, height_mm: 30 }, { op: 'set_panel', tabs: [{ side: 'left', at: 0.5 }] }]);
+    k.accept();
+    const check = () => k.boardPlacement().diagnostics.find((x) => x.code.startsWith('PANEL.'))!;
+    const { code, entities } = check();
+    expect(check().waivedBy).toBeUndefined();
+    ok([{ op: 'add_waiver', code, entities, reason: 'for this test' }]);
+    k.accept();
+    const waiver = Object.keys(k.draftDesign().waivers).at(-1)!;
+    expect(check().waivedBy).toBe(waiver);
+    ok([{ op: 'remove_waiver', id: waiver }]);
+    k.accept();
+    expect(check().waivedBy).toBeUndefined();
+  });
+
+  it('a check waived on the placement stays as it is when the board is laid', () => {
+    const k = buck();
+    const found = k.boardPlacement().diagnostics.find((x) => x.entities.length);
+    if (!found) return;
+    expect(k.transact({ summary: 'x', ops: [{ op: 'add_waiver', code: found.code, entities: found.entities, reason: 'for this test' }] }).status).toBe('ok');
+    k.accept();
+    checkDerived(true);
+    const placed = k.boardPlacement().diagnostics.find((x) => x.code === found.code);
+    expect(placed?.waivedBy).toBeTruthy();
+    expect(() => k.board()).not.toThrow();
+  });
+
+  it('copper taken over from the router holds on to nothing of the copper kept with the board', () => {
+    const k = buck();
+    expect(k.transact({ summary: 'x', ops: [{ op: 'route' }] }).status).toBe('ok');
+    k.accept();
+    expect(k.keepCopper(k.board().newCopper!)).toBe(true);
+    const kept = () => JSON.stringify(k.committedDesign().board!.copper);
+    const before = kept();
+    // a dry run: an op that takes the copper over and one that moves parts without copying the board first
+    const r = k.transact({ summary: 'x', dry_run: true, ops: [{ op: 'set_copper_mode', mode: 'drawn' }, { op: 'refine_placement' }] });
+    expect(r.status).toBe('ok');
+    expect(kept()).toBe(before);
+    // what the take-over makes shares no array with what it took
+    expect(k.transact({ summary: 'x', ops: [{ op: 'set_copper_mode', mode: 'drawn' }] }).status).toBe('ok');
+    const d = k.draftDesign();
+    expect(d.board!.drawn!.tracks.length).toBeGreaterThan(0);
+    checkDerived(true);
+    const work = workCopy(d);
+    expect(Object.isFrozen(work.board!.copper)).toBe(true);
+    expect(k.transact({ summary: 'x', ops: [{ op: 'refine_placement' }] }).status).toBe('ok');
+    expect(kept()).toBe(before);
   });
 });
 

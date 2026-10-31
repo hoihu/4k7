@@ -180,7 +180,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   if (settings.panel && parts.length) {
     const panel = panels.get(JSON.stringify([view.outline, view.cornerRadius, view.shape, settings.panel]), () => panelView(view, settings.panel!));
     view.panel = panel.view;
-    view.diagnostics.push(...panel.diagnostics);
+    // (copies: waivers are marked on these, and the panel is remembered without them)
+    view.diagnostics.push(...panel.diagnostics.map((x) => ({ ...x })));
     view.diagnostics.push(...panelTabDrc(view));
   }
   view.diagnostics.push(...fabPlacementDrc(view), ...keepoutDrc(view));
@@ -353,7 +354,7 @@ export function layoutBoard(d: Design, b: BoardView, opts: { budgetMs?: number; 
   const marked = placeMarks(routed);
   routed.parts = marked.parts;
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY' && x.code !== 'DRC.KEEPOUT' && !x.code.startsWith('PANEL.TAB_')), ...marked.diagnostics, ...panelTabDrc(routed), ...keepoutDrc(routed), ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...acidDrc(routed), ...neckDrc(routed, (id, layer) => ruleWidth(b.impedance, id, layer) ?? netWidths[id] ?? (powerNets.has(id) ? b.rules.powerTrack : b.rules.track)), ...thermalDrc(routed), ...deadCopperDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
+  const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY' && x.code !== 'DRC.KEEPOUT' && !x.code.startsWith('PANEL.TAB_')).map((x) => ({ ...x })), ...marked.diagnostics, ...panelTabDrc(routed), ...keepoutDrc(routed), ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...acidDrc(routed), ...neckDrc(routed, (id, layer) => ruleWidth(b.impedance, id, layer) ?? netWidths[id] ?? (powerNets.has(id) ? b.rules.powerTrack : b.rules.track)), ...thermalDrc(routed), ...deadCopperDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
   // a pair the router could not keep together: recorded, so it is not silently two lines
   for (const l of copper.lines ?? []) {
     if (l.nets.length === 2 && l.why) diags.push({ code: 'IMP.PAIR', severity: 'info', message: `${l.nets.map(name).join('/')} (${l.id}) ${l.coupled ? 'kept together' : 'routed apart (open pair)'}: ${l.why}.`, entities: [l.id] });

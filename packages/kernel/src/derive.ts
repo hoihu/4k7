@@ -28,6 +28,9 @@ function deepFreeze<T>(v: T): T {
   return v;
 }
 
+/** What copies share and nobody is to write to: frozen when asked to check. */
+export const sharedData = <T>(v: T): T => (checking ? deepFreeze(v) : v);
+
 /** Where two texts of the same result part, for the message of a failed check. */
 function firstDifference(a: string, b: string): string {
   let i = 0;

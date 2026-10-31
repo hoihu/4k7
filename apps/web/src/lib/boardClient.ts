@@ -64,6 +64,15 @@ export class BoardClient {
     this.#worker.postMessage({ id, design, placed });
   }
 
+  /** No board can be laid for the design as it is (its placement failed): whoever waits for one hears so. */
+  fail(): void {
+    this.#worker?.terminate();
+    this.#worker = null;
+    this.#busy = false;
+    this.#best = null;
+    this.#flush(null);
+  }
+
   /**
    * Stop the routing under way: the worker is ended (a running route cannot be told to stop) and
    * the best result it had is returned, to be kept in the design. Null if nothing was routing.

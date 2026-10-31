@@ -3,6 +3,7 @@
  */
 import { DEFAULT_BOARD, paramSpecs, type BoardSettings, type Component, type Constraint, type Design, type Net, type ParamSpec, type PartCard, type PartPin, type Rejection } from '@4k7/schema';
 import { SYMBOL_PARAMS, getBuiltinPart, readsParams, seriesPaths } from '@4k7/parts';
+import { sharedData } from './derive.ts';
 
 export class RejectError extends Error {
   constructor(public rejection: Omit<Rejection, 'opIndex'>) {
@@ -22,7 +23,7 @@ export function clone<T>(v: T): T {
 function copyBoard(board: BoardSettings): BoardSettings {
   if (!board.copper) return structuredClone(board);
   const b = structuredClone({ ...board, copper: null }) as unknown as BoardSettings;
-  b.copper = board.copper;
+  b.copper = sharedData(board.copper);
   return b;
 }
 

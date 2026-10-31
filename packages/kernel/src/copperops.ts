@@ -290,7 +290,7 @@ export function setCopperMode(d: Design, op: Extract<EditOp, { op: 'set_copper_m
     // (the stubs and vias of add_vias groups stay theirs: the groups lay them)
     const stubs = new Set(before.tracks.map((t) => JSON.stringify(t)));
     // (the router's copper counts as the helper's: route fresh may lay it again)
-    for (const t of current.tracks) if (!stubs.has(JSON.stringify(t))) dc.tracks.push(anchored(before, { ...t, id: nextId(dc, 't'), by: 'helper' }));
+    for (const t of current.tracks) if (!stubs.has(JSON.stringify(t))) dc.tracks.push(anchored(before, { ...t, pts: [...t.pts], id: nextId(dc, 't'), by: 'helper' })); // (its own points: drawn copper is moved in place, and the kept copper is shared with other copies of the design)
     for (const v of current.vias) if (!v.group) dc.vias.push({ ...v, id: nextId(dc, 'v'), by: 'helper' });
   }
   b.drawn = dc;

@@ -454,6 +454,10 @@ class AppState {
   async refreshBoard() {
     const rev = this.rev;
     const request = await this.kernel.boardRequest().catch((e: Error) => {
+      this.boardBusy = false;
+      this.routeProgress = null;
+      this.boardCounts = null;
+      this.boards.fail();
       this.flash(`Board layout failed: ${e.message}`);
       return null;
     });
