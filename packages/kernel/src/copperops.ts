@@ -13,6 +13,7 @@ import { DEFAULT_BOARD, padHasPin, type Diagnostic, type CopperLayer, type Board
 import { boardRouteInput, copperKey, placedOf, rotate, softened, storedPlacement } from './board.ts';
 import { boardCopy, findNet, isPowerNet, reject, resolveComponent, resolvePins } from './doc.ts';
 import { acidDrc, copperDrc, drawnDrc, edgeDrc, neckDrc } from './drc.ts';
+import { polyLength, r3 } from './geom.ts';
 import { padPointDist } from './keep.ts';
 import { keepoutDrc, rejectTrackInKeepout, rejectViaInKeepout } from './keepout.ts';
 import { route, type RouteProgress, type RouteResult } from './router.ts';
@@ -24,7 +25,6 @@ const HELPER_BUDGET_MS = 30_000;
 const FOLLOW_MM = 1;
 /** Findings of the check named in an op's effect (the rest: get_board). */
 const CHECK_SHOWN = 4;
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /** The board settings to change (a copy), with the placement stored so the parts stay where they are. */
 function boardOf(d: Design): BoardSettings {
@@ -316,7 +316,6 @@ function anchored(board: BoardView, t: DrawnTrack): DrawnTrack {
   return { ...t, ...(from ? { from } : {}), ...(to ? { to } : {}) };
 }
 
-const trackLength = (pts: number[]) => pts.reduce((s, _, i) => (i >= 2 && i % 2 === 0 ? s + Math.hypot(pts[i]! - pts[i - 2]!, pts[i + 1]! - pts[i - 1]!) : s), 0);
 
 export function drawTrack(d: Design, op: Extract<EditOp, { op: 'draw_track' }>): OpResult {
   const { b, dc } = drawnOf(d);
@@ -341,7 +340,7 @@ export function drawTrack(d: Design, op: Extract<EditOp, { op: 'draw_track' }>):
   const track: DrawnTrack = { id: nextId(dc, 't'), netId: netId!, layer, width, pts, ...(f ? { from: f } : {}), ...(t ? { to: t } : {}) };
   dc.tracks.push(track);
   d.board = b;
-  return { op: op.op, effect: `track ${track.id}: ${netName(d, netId!)} on ${layer}, ${width} mm, ${pts.length / 2 - 1} piece(s), ${r3(trackLength(pts))} mm`, ids: ['board', track.id] };
+  return { op: op.op, effect: `track ${track.id}: ${netName(d, netId!)} on ${layer}, ${width} mm, ${pts.length / 2 - 1} piece(s), ${r3(polyLength(pts))} mm`, ids: ['board', track.id] };
 }
 
 /**
@@ -449,7 +448,7 @@ export function drawPair(d: Design, op: Extract<EditOp, { op: 'draw_pair' }>): O
   });
   dc.tracks.push(...tracks);
   d.board = b;
-  const [lp, ln] = tracks.map((t) => r3(trackLength(t.pts)));
+  const [lp, ln] = tracks.map((t) => r3(polyLength(t.pts)));
   return {
     op: op.op,
     effect: `pair ${netName(d, nets[0]!)}/${netName(d, nets[1]!)} on ${layer}: ${tracks[0]!.id} ${lp} mm, ${tracks[1]!.id} ${ln} mm (${r3(Math.abs(lp! - ln!))} mm apart in length), ${w} mm wide, ${gap} mm apart${lay ? ` (${rule!.id}: ${lay.ohms} Ω)` : rule ? '' : '; no impedance rule for these nets (set_impedance)'}`,

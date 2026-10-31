@@ -4,7 +4,7 @@
  */
 import { cutoutDistance, insideBoard, padCapsule, roundPadDist } from '@4k7/schema';
 import type { Diagnostic, BoardPad, BoardPart, BoardView, CopperLayer, Track } from '@4k7/schema';
-import { segDist } from './segments.ts';
+import { idOf, pointSegDist, segDist, segmentsOf, segSegDist } from './geom.ts';
 import { padPointDist, padSegDist } from './keep.ts';
 
 type Shape =
@@ -27,8 +27,6 @@ interface Item {
 
 const EPS = 0.005;
 
-/** A drawn track's or via's id (router copper has none). */
-const idOf = (x: object): string | undefined => (x as { id?: string }).id;
 
 /** How a track or via is named in a finding: by its id where it is drawn copper. */
 export const copperName = (b: Pick<BoardView, 'netNames'>, kind: 'track' | 'via', x: { netId: string }) => {
@@ -186,7 +184,7 @@ function centre(s: Shape) {
 
 /** Gap between two shapes (negative/zero when they touch). */
 function distance(a: Shape, b: Shape): number {
-  if (a.kind === 'seg' && b.kind === 'seg') return segSeg(a.ax, a.ay, a.bx, a.by, b.ax, b.ay, b.bx, b.by) - a.r - b.r;
+  if (a.kind === 'seg' && b.kind === 'seg') return segSegDist(a.ax, a.ay, a.bx, a.by, b.ax, b.ay, b.bx, b.by) - a.r - b.r;
   if (a.kind === 'rect' && b.kind === 'rect') {
     const dx = Math.max(a.x0 - b.x1, b.x0 - a.x1, 0);
     const dy = Math.max(a.y0 - b.y1, b.y0 - a.y1, 0);
@@ -194,24 +192,6 @@ function distance(a: Shape, b: Shape): number {
   }
   const [s, r] = a.kind === 'seg' ? [a, b as Extract<Shape, { kind: 'rect' }>] : [b as Extract<Shape, { kind: 'seg' }>, a];
   return segRect(s.ax, s.ay, s.bx, s.by, r) - s.r;
-}
-
-function pointSeg(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const l2 = dx * dx + dy * dy;
-  const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
-  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
-}
-
-function segsCross(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number): boolean {
-  const o = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) => Math.sign((qx - px) * (ry - py) - (qy - py) * (rx - px));
-  return o(ax, ay, bx, by, cx, cy) * o(ax, ay, bx, by, dx, dy) < 0 && o(cx, cy, dx, dy, ax, ay) * o(cx, cy, dx, dy, bx, by) < 0;
-}
-
-function segSeg(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number): number {
-  if (segsCross(ax, ay, bx, by, cx, cy, dx, dy)) return 0;
-  return Math.min(pointSeg(ax, ay, cx, cy, dx, dy), pointSeg(bx, by, cx, cy, dx, dy), pointSeg(cx, cy, ax, ay, bx, by), pointSeg(dx, dy, ax, ay, bx, by));
 }
 
 export function segRect(ax: number, ay: number, bx: number, by: number, r: { x0: number; y0: number; x1: number; y1: number }): number {
@@ -224,7 +204,7 @@ export function segRect(ax: number, ay: number, bx: number, by: number, r: { x0:
     [r.x0, r.y1, r.x0, r.y0],
   ];
   let best = Infinity;
-  for (const [cx, cy, dx, dy] of edges) best = Math.min(best, segSeg(ax, ay, bx, by, cx, cy, dx, dy));
+  for (const [cx, cy, dx, dy] of edges) best = Math.min(best, segSegDist(ax, ay, bx, by, cx, cy, dx, dy));
   return best;
 }
 
@@ -428,25 +408,19 @@ export function drawnDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
     const lands = (x: number, y: number) =>
       pads.some(({ pad }) => pad.netId === t.netId && (pad.drill || pad.layers.includes(t.layer)) && padPointDist(pad, x, y) <= t.width / 2 + EPS) ||
       b.vias.some((v) => v.netId === t.netId && Math.hypot(v.x - x, v.y - y) <= (v.pad + t.width) / 2 + EPS) ||
-      b.tracks.some((o) => (o as { id?: string }).id !== id && o.netId === t.netId && o.layer === t.layer && pieces(o).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(x, y) <= (o.width + t.width) / 2 + EPS)) ||
+      b.tracks.some((o) => (o as { id?: string }).id !== id && o.netId === t.netId && o.layer === t.layer && segmentsOf(o.pts).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(x, y) <= (o.width + t.width) / 2 + EPS)) ||
       // (a pour: as filled, or where it will fill when only the placement is known, as for the check of an op)
       (b.zones.length ? b.zones.some((z) => z.netId === t.netId && z.layer === t.layer && inRects(z.rects, x, y)) : b.planes.some((pl) => pl.netId === t.netId && pl.layer === t.layer && (!pl.area || (x >= pl.area[0] && y >= pl.area[1] && x <= pl.area[2] && y <= pl.area[3]))));
     for (const [x, y, which] of [[t.pts[0]!, t.pts[1]!, 'start'], [t.pts.at(-2)!, t.pts.at(-1)!, 'end']] as const) {
       if (!lands(x, y)) out.push({ code: 'DRAW.DANGLING', severity: 'warning', message: `Track ${id} (${name(t.netId)}, ${t.layer}): its ${which} at ${x.toFixed(2)}, ${y.toFixed(2)} meets no copper of its net.`, at: { x, y }, entities: [id] });
     }
-    const odd = pieces(t).find(([ax, ay, bx, by]) => {
+    const odd = segmentsOf(t.pts).find(([ax, ay, bx, by]) => {
       const a = (Math.atan2(by - ay, bx - ax) * 180) / Math.PI;
       const r = Math.abs(a / 45 - Math.round(a / 45)) * 45;
       return Math.hypot(bx - ax, by - ay) > 0.25 && r > 0.5; // (not the short jog onto a pad)
     });
     if (odd) out.push({ code: 'DRAW.ANGLE', severity: 'warning', message: `Track ${id} (${name(t.netId)}) has a piece off the 45° directions (${odd.map((v) => v.toFixed(2)).join(', ')}); edit_copper with bend sets 45° corners.`, at: { x: (odd[0] + odd[2]) / 2, y: (odd[1] + odd[3]) / 2 }, entities: [id] });
   }
-  return out;
-}
-
-function pieces(t: { pts: number[] }): [number, number, number, number][] {
-  const out: [number, number, number, number][] = [];
-  for (let q = 0; q + 3 < t.pts.length; q += 2) out.push([t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!]);
   return out;
 }
 
@@ -476,7 +450,7 @@ export function acidDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
   };
   const all: { t: Track; a: [number, number]; b: [number, number] }[] = [];
   for (const t of b.tracks) {
-    for (const [ax, ay, bx, by] of pieces(t)) {
+    for (const [ax, ay, bx, by] of segmentsOf(t.pts)) {
       if (Math.hypot(bx - ax, by - ay) < 1e-6) continue;
       all.push({ t, a: [ax, ay], b: [bx, by] });
       at(t, ax, ay).arms.push({ dx: bx - ax, dy: by - ay, w: t.width, id: idOf(t) });
@@ -587,7 +561,7 @@ export function thermalDrc(b: BoardView): Diagnostic[] {
         // (a pad the pour does not reach has no ring: no pour a little way out from it)
         if (![[-1, 0], [1, 0], [0, -1], [0, 1]].some(([dx, dy]) => inRects(z.rects, pad.x + dx! * (pad.w / 2 + 0.5), pad.y + dy! * (pad.h / 2 + 0.5)))) continue;
         const spokes = z.shape.adds.filter((a) => Math.abs(a.pts[0]! - pad.x) < 0.002 && Math.abs(a.pts[1]! - pad.y) < 0.002).length;
-        if (spokes >= 2 || b.tracks.some((t) => t.netId === z.netId && t.layer === z.layer && pieces(t).some(([ax, ay, bx, by]) => padSegDist(pad, ax, ay, bx, by) < EPS))) continue;
+        if (spokes >= 2 || b.tracks.some((t) => t.netId === z.netId && t.layer === z.layer && segmentsOf(t.pts).some(([ax, ay, bx, by]) => padSegDist(pad, ax, ay, bx, by) < EPS))) continue;
         const cut = spokes === 0 && !pad.drill;
         out.push({
           code: 'DRC.THERMAL_SPOKES',

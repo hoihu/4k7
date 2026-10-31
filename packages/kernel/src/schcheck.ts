@@ -8,7 +8,8 @@ import { type Design, type Diagnostic, type EditOp, type LabelView, type PinView
 import { cardOf, natCmp } from './doc.ts';
 import { clashWords, textOverlaps } from './parttext.ts';
 import { supplyDir } from './scene.ts';
-import { labelOverlaps, segments, touches, wireCrossings, wireShape, type PinOn } from './scope.ts';
+import { segmentsOf } from './geom.ts';
+import { labelOverlaps, touches, wireCrossings, wireShape, type PinOn } from './scope.ts';
 
 interface Ctx {
   d: Design;
@@ -62,7 +63,7 @@ function pinNear(sheet: SheetView, netId: string, x0: number, y0: number): Pin |
     for (const s of sheet.symbols) for (const p of s.pins) if (p.x === x && p.y === y) return { sym: s, pin: p };
     return undefined;
   };
-  const segs = sheet.wires.filter((w) => w.netId === netId).flatMap((w) => segments(w.pts));
+  const segs = sheet.wires.filter((w) => w.netId === netId).flatMap((w) => segmentsOf(w.pts));
   const seen = new Set<string>();
   const queue: [number, number][] = [[x0, y0]];
   while (queue.length) {
@@ -138,7 +139,7 @@ function supplyChecks(ctx: Ctx, sheet: SheetView) {
 function orthogonalChecks(ctx: Ctx, sheet: SheetView) {
   const slanted = new Set(sheet.symbols.filter((s) => (s.rotation ?? 0) % 90 !== 0).flatMap((s) => s.pins.map((p) => `${p.x},${p.y}`)));
   for (const w of sheet.wires) {
-    for (const [x1, y1, x2, y2] of segments(w.pts)) {
+    for (const [x1, y1, x2, y2] of segmentsOf(w.pts)) {
       if (x1 === x2 || y1 === y2 || slanted.has(`${x1},${y1}`) || slanted.has(`${x2},${y2}`)) continue;
       push(ctx, 'SCH.ORTHOGONAL', [netRef(ctx, w.netId), ...pinsNear(sheet, w.netId, [[x1, y1], [x2, y2]])], `a wire of ${netName(ctx, w.netId)} runs diagonally from ${at(x1, y1)} to ${at(x2, y2)}`);
     }
@@ -155,7 +156,7 @@ function danglingChecks(ctx: Ctx, sheet: SheetView) {
     if (w.pts.length < 4) return;
     const ends: [number, number][] = [[w.pts[0]!, w.pts[1]!], [w.pts.at(-2)!, w.pts.at(-1)!]];
     for (const [x, y] of ends) {
-      const onWire = sheet.wires.some((o, j) => j !== i && o.netId === w.netId && segments(o.pts).some((s) => touches(s, x, y)));
+      const onWire = sheet.wires.some((o, j) => j !== i && o.netId === w.netId && segmentsOf(o.pts).some((s) => touches(s, x, y)));
       if (points.has(`${x},${y}`) || onWire) continue;
       // the part the wire comes from, at its other end
       const from = pinsNear(sheet, w.netId, ends.filter(([ox, oy]) => ox !== x || oy !== y));
@@ -220,7 +221,7 @@ function shapeChecks(ctx: Ctx, sheet: SheetView) {
     }
     for (const [x1, y1, x2, y2] of s.detours) {
       // (the clean-up leaves a wire drawn through corners it was given: only drawing it again helps)
-      const given = sheet.wires.some((w) => w.netId === net && w.via && segments(w.pts).some((g) => touches(g, x1, y1) && touches(g, x2, y2)));
+      const given = sheet.wires.some((w) => w.netId === net && w.via && segmentsOf(w.pts).some((g) => touches(g, x1, y1) && touches(g, x2, y2)));
       push(ctx, 'SCH.DETOUR', [netRef(ctx, net), ...pinsNear(sheet, net, [[x1, y1], [x2, y2]])], `the ${name} wire turns back on itself between ${at(x1, y1)} and ${at(x2, y2)}${given ? '; it keeps the corners given to wire: to have it drawn plainly, erase it and wire it again without them' : ''}`);
     }
   }

@@ -7,6 +7,7 @@
  * its own pad than any other part's; DRC.SILK_POLARITY says when there was no room.
  */
 import { bodyOutline, cutoutDistance, insideBoard, padPins, roundPadDist, type Diagnostic, type BoardPad, type BoardPart, type BoardView, type BodyCorner, type PartCard, type PolarityKind, type PolarityMark } from '@4k7/schema';
+import { pointSegDist } from './geom.ts';
 
 export interface Polarity {
   kind: PolarityKind;
@@ -138,13 +139,7 @@ class Grid {
 }
 
 const rectDist = (p: { x: number; y: number; w: number; h: number }, x: number, y: number) => Math.hypot(Math.max(Math.abs(x - p.x) - p.w / 2, 0), Math.max(Math.abs(y - p.y) - p.h / 2, 0));
-const segDist = (s: Seg, x: number, y: number) => {
-  const dx = s.x1 - s.x0;
-  const dy = s.y1 - s.y0;
-  const l2 = dx * dx + dy * dy;
-  const t = l2 ? Math.max(0, Math.min(1, ((x - s.x0) * dx + (y - s.y0) * dy) / l2)) : 0;
-  return Math.hypot(x - (s.x0 + t * dx), y - (s.y0 + t * dy));
-};
+const segDist = (s: Seg, x: number, y: number) => pointSegDist(x, y, s.x0, s.y0, s.x1, s.y1);
 
 /** Points along a shape's ink with the ink's half width there. */
 function samples(s: Shape): { x: number; y: number; r: number }[] {

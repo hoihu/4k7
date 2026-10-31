@@ -22,6 +22,7 @@ import {
   type PanelView,
 } from '@4k7/schema';
 import { segRect } from './drc.ts';
+import { r3 } from './geom.ts';
 
 /** Clipper's precision: decimal places (µm). */
 const PREC = 3;
@@ -41,7 +42,6 @@ const rect = (x0: number, y0: number, x1: number, y1: number): PathD => [
   { x: x1, y: y1 },
   { x: x0, y: y1 },
 ];
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /** Where the edges of these polygons cross an axis-parallel line: x = u (vertical) or y = u. */
 function lineHits(polys: PathsD, vertical: boolean, u: number): number[] {

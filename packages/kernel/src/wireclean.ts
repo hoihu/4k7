@@ -14,16 +14,11 @@
 import type { Design, PinView, Point, Rect, SheetDrawing, SymbolView } from '@4k7/schema';
 import { GRID } from '@4k7/parts';
 import { RETURN_LEG, labelRect, textRect } from './scene.ts';
-import { routeWire } from './schroute.ts';
+import { BEND, CROSS, SOFT, routeWire } from './schroute.ts';
 
 type Pt = { x: number; y: number };
 type Wire = { netId: string; pts: number[]; via?: boolean };
 type Seg = [number, number, number, number];
-
-/** What one more corner, a crossing and running through text cost against length (as the router counts). */
-const BEND = 300;
-const CROSS = 400;
-const SOFT = 600;
 
 const key = (x: number, y: number) => `${x},${y}`;
 const OUT: Record<PinView['side'], [number, number]> = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] };

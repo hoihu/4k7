@@ -6,8 +6,10 @@
 import type { LabelView, Prim, Rect, SheetView, SymbolView } from '@4k7/schema';
 import { natCmp } from './doc.ts';
 import { drawingArea } from './drawing.ts';
+import { grow } from './geom.ts';
 import { LINE, textRect } from './scene.ts';
-import { labelParts, line, meets, segments, type OverlapHit } from './scope.ts';
+import { segmentsOf } from './geom.ts';
+import { labelParts, line, meets, type OverlapHit } from './scope.ts';
 
 type TextPos = SymbolView['refPos'];
 export type TextSide = 'above' | 'below' | 'left' | 'right';
@@ -51,7 +53,6 @@ const union = (rs: Rect[]): Rect => {
   return { x, y, w: Math.max(...rs.map((r) => r.x + r.w)) - x, h: Math.max(...rs.map((r) => r.y + r.h)) - y };
 };
 export const within = (a: Rect, r: Rect) => r.x >= a.x && r.y >= a.y && r.x + r.w <= a.x + a.w && r.y + r.h <= a.y + a.h;
-const grow = (r: Rect, by: number): Rect => ({ x: r.x - by, y: r.y - by, w: r.w + 2 * by, h: r.h + 2 * by });
 
 /** What a symbol draws, as text sees it. */
 interface Body {
@@ -141,7 +142,7 @@ interface Field {
 
 function fieldOf(sheet: TextDrawing): Field {
   return {
-    wires: sheet.wires.flatMap((w) => segments(w.pts).map(([x1, y1, x2, y2]) => ({ net: w.netId, r: line(x1, y1, x2, y2) }))),
+    wires: sheet.wires.flatMap((w) => segmentsOf(w.pts).map(([x1, y1, x2, y2]) => ({ net: w.netId, r: line(x1, y1, x2, y2) }))),
     labels: sheet.labels.map((label) => ({ label, rs: labelParts(label).map((p) => p.r) })),
     bodies: sheet.symbols.map((sym) => {
       const b = bodyOf(sym);

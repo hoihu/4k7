@@ -19,6 +19,7 @@ import { GRID, isTwoPin, symbolFor, turnsOver, unitCount, uprightSymbol } from '
 import { cardOf, circuitSuppliedNets, componentsSorted, connectorRole, isGroundNet, isPowerNet, natCmp, netMembers, valueOf, type NetPin } from './doc.ts';
 import { drawBlock, FRAME_PAD, FRAME_TITLE, type BlockNode } from './blocks.ts';
 import { flowCell, planFlow, type FlowPlan } from './flow.ts';
+import { overlap } from './geom.ts';
 import { clearTexts } from './parttext.ts';
 import { tidyWires } from './tidy.ts';
 import {
@@ -853,7 +854,7 @@ function paginate(d: Design, rows: CellRow[], placed: Placed[] = []): { scene: S
         break;
       }
       // the line at the left of the drawing area, lowered until it clears the placed cells
-      const clash = (y: number) => boxes.some((b) => hits({ x: PAGE.margin - CELL_GAP / 2, y: PAGE.margin + y - CELL_GAP / 2, w: line.bbox.w + CELL_GAP, h: h + CELL_GAP }, b));
+      const clash = (y: number) => boxes.some((b) => overlap({ x: PAGE.margin - CELL_GAP / 2, y: PAGE.margin + y - CELL_GAP / 2, w: line.bbox.w + CELL_GAP, h: h + CELL_GAP }, b));
       let y = set.used;
       while (y + h <= DRAW_H && clash(y)) y += GRID;
       if (y + h > DRAW_H) {
@@ -947,7 +948,7 @@ function fixPlaced(placed: Placed[], area: Rect): { fixed: Fixed[]; flow: Cell[]
       // within the drawing area, or flows with the others when the page has none
       const others = fixed.filter((f) => f.page === page).map((f) => f.box);
       // (where the kernel picks the spot, it keeps the room between blocks)
-      const clear = (ox: number, oy: number, gap = 0) => !others.some((o) => hits({ x: o.x - gap, y: o.y - gap, w: o.w + 2 * gap, h: o.h + 2 * gap }, { x: bb.x + ox, y: bb.y + oy, w: bb.w, h: bb.h }));
+      const clear = (ox: number, oy: number, gap = 0) => !others.some((o) => overlap({ x: o.x - gap, y: o.y - gap, w: o.w + 2 * gap, h: o.h + 2 * gap }, { x: bb.x + ox, y: bb.y + oy, w: bb.w, h: bb.h }));
       const within = (ox: number, oy: number) => bb.x + ox >= area.x && bb.y + oy >= area.y && bb.x + ox + bb.w <= area.x + area.w && bb.y + oy + bb.h <= area.y + area.h;
       if (!clear(dx, dy)) {
         let found: [number, number] | undefined;
@@ -1026,7 +1027,7 @@ function packPages(d: Design, cells: Cell[], placed: Placed[]): { scene: Scene; 
       const spots = ys.flatMap((y) => xs.map((x) => ({ x, y }))).sort((a, b) => a.y - b.y || a.x - b.x);
       const fits = spots.find(({ x, y }) => {
         const r = { x, y, w: bb.w, h: bb.h };
-        return x + bb.w <= area.x + area.w && y + bb.h <= area.y + area.h && !obstacles.some((o) => hits({ x: o.x - BLOCK_GAP + 1, y: o.y - BLOCK_GAP + 1, w: o.w + 2 * BLOCK_GAP - 2, h: o.h + 2 * BLOCK_GAP - 2 }, r));
+        return x + bb.w <= area.x + area.w && y + bb.h <= area.y + area.h && !obstacles.some((o) => overlap({ x: o.x - BLOCK_GAP + 1, y: o.y - BLOCK_GAP + 1, w: o.w + 2 * BLOCK_GAP - 2, h: o.h + 2 * BLOCK_GAP - 2 }, r));
       });
       if (!fits) continue;
       const dx = snapTo(fits.x - bb.x);
@@ -1897,7 +1898,6 @@ function buildCell(ctx: Ctx, plan: AnchorPlan): Scene {
   return scene;
 }
 
-const hits = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 /**
  * A part's name and value stand outside a top corner, over that side's pin leads. A rising
@@ -1906,7 +1906,7 @@ const hits = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b
  */
 function clearName(scene: Scene, sym: SymbolView): void {
   const texts = () => [textRect(sym.refPos, [sym.refdes]), textRect(sym.valuePos, sym.valueLines ?? [sym.value])];
-  const clash = () => texts().some((t) => scene.labels.some((l) => hits(t, labelRect(l))) || scene.symbols.some((o) => o !== sym && hits(t, o.bbox)));
+  const clash = () => texts().some((t) => scene.labels.some((l) => overlap(t, labelRect(l))) || scene.symbols.some((o) => o !== sym && overlap(t, o.bbox)));
   if (!clash()) return;
   const body = { x: sym.bbox.x + 200, w: sym.bbox.w - 400 };
   const at = sym.refPos.anchor === 'end' ? 'left' : sym.refPos.anchor === 'start' ? 'right' : 'middle';
@@ -2176,7 +2176,7 @@ export function evaluateConstraints(d: Design, sheets: SheetView[]): { status: S
       status[k.id] = Math.abs(dx) <= GRID && Math.abs(dy) <= GRID ? 'ok' : 'violated';
       if (status[k.id] === 'violated') {
         const asked = { x: pg.rect.x + (k.x ?? 0) - frame.rect.w / 2, y: pg.rect.y + (k.y ?? 0) - frame.rect.h / 2, w: frame.rect.w, h: frame.rect.h };
-        const on = s.blocks!.find((b) => b !== frame && hits(b.rect, asked));
+        const on = s.blocks!.find((b) => b !== frame && overlap(b.rect, asked));
         why[k.id] = on ? `there it would lie on block "${on.title}", so it moved aside; put one of them elsewhere` : `it does not fit there`;
       }
       continue;
@@ -2194,7 +2194,7 @@ export function evaluateConstraints(d: Design, sheets: SheetView[]): { status: S
       const dy = sym.bbox.y + sym.bbox.h / 2 - (pg.rect.y + (k.y ?? 0));
       status[k.id] = Math.abs(dx) <= GRID / 2 && Math.abs(dy) <= GRID / 2 ? 'ok' : 'violated';
       // there, but on top of another part (two placements in one spot, or a part placed over one the layout put first)
-      const under = s.symbols.find((o) => o !== sym && hits(o.bbox, sym.bbox));
+      const under = s.symbols.find((o) => o !== sym && overlap(o.bbox, sym.bbox));
       if (under) {
         status[k.id] = 'violated';
         why[k.id] = `${ref(k.a, k.aUnit)} lies on ${under.refdes}${under.unit ?? ''}; move one of them`;

@@ -13,10 +13,10 @@
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
 import { boardPolygon, cutoutBounds, cutoutDistance, insideBoard, keepoutDistance, padCapsule, roundPadDist, type PlaneStyle, type RoutedLine, type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type Track, type Via, type Zone, type ZoneShape, type RouteBlockage } from '@4k7/schema';
+import { r3, reversePts, segDist, segmentsOf, segSegDist } from './geom.ts';
 import { Heap } from './heap.ts';
 import { keptCopper, type KeptCopper } from './keep.ts';
 import { routeLines } from './pairroute.ts';
-import { segDist, segSegDist } from './segments.ts';
 
 const G = 0.1; // grid pitch, mm
 const MULTI = -1; // near copper of two nets: nobody may route here
@@ -541,13 +541,6 @@ function routeOnce(
     // a drilled hole is copper on every layer
     if (p.drill && p.layers.length < L) for (let l = 0; l < L; l++) stamp(l, net, p.x - p.w / 2, p.y - p.h / 2, p.x + p.w / 2, p.y + p.h / 2, 0, padDist(p));
   };
-  const segDist = (ax: number, ay: number, bx: number, by: number) => (x: number, y: number) => {
-    const dx = bx - ax;
-    const dy = by - ay;
-    const len2 = dx * dx + dy * dy;
-    const t = len2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / len2)) : 0;
-    return Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
-  };
   const stampSeg = (l: number, net: number, ax: number, ay: number, bx: number, by: number, width: number) =>
     stamp(l, net, Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by), width / 2, segDist(ax, ay, bx, by));
   // vias keep a minimum spacing from every other via (same net too: drills must not crowd);
@@ -690,7 +683,7 @@ function routeOnce(
   /** Segments of a net (width w, on layer l) keep the clearance from the kept copper of other nets. */
   const clearOfKept = (netId: string, l: number, w: number, segs: [number, number, number, number][]) =>
     segs.every(([ax, ay, bx, by]) =>
-      keptTracks.every((t) => t.netId === netId || t.layer !== layers[l] || pieceList(t.pts).every(([cx, cy, dx, dy]) => segSegDist(ax, ay, bx, by, cx, cy, dx, dy) >= rules.clearance + (w + t.width) / 2 - 1e-3)) &&
+      keptTracks.every((t) => t.netId === netId || t.layer !== layers[l] || segmentsOf(t.pts).every(([cx, cy, dx, dy]) => segSegDist(ax, ay, bx, by, cx, cy, dx, dy) >= rules.clearance + (w + t.width) / 2 - 1e-3)) &&
       keptVias.every((v) => v.netId === netId || segDist(ax, ay, bx, by)(v.x, v.y) >= rules.clearance + (w + v.pad) / 2 - 1e-3),
     );
 
@@ -1698,7 +1691,7 @@ function routeOnce(
     // points along the track every 0.05 mm, with how far along it they are
     const at: { x: number; y: number; s: number }[] = [];
     let s0 = 0;
-    for (const [ax, ay, bx, by] of pieceList(pts)) {
+    for (const [ax, ay, bx, by] of segmentsOf(pts)) {
       const len = Math.hypot(bx - ax, by - ay);
       const n = Math.max(1, Math.ceil(len / 0.05));
       for (let i = at.length ? 1 : 0; i <= n; i++) at.push({ x: ax + ((bx - ax) * i) / n, y: ay + ((by - ay) * i) / n, s: s0 + (len * i) / n });
@@ -1717,7 +1710,7 @@ function routeOnce(
     if (i1 - i0 < 2 || !at.slice(i0, i1 + 1).every(cellOk)) return null;
     const [d0, d1] = [at[i0]!.s, at[i1]!.s];
     const mid = cutPts(pts, d0, d1);
-    if (!clearOf(net, l, wide, pieceList(mid))) return null;
+    if (!clearOf(net, l, wide, segmentsOf(mid))) return null;
     return [
       ...(d0 > 1e-6 ? [{ l, pts: cutPts(pts, 0, d0), width: narrow }] : []),
       { l, pts: mid, width: wide },
@@ -2561,7 +2554,7 @@ function routeOnce(
       // (the distance along the track to the next spot, and to where the piece starts)
       let next = 0;
       let at = 0;
-      for (const [ax, ay, bx, by] of pieceList(t.pts)) {
+      for (const [ax, ay, bx, by] of segmentsOf(t.pts)) {
         const len = Math.hypot(bx - ax, by - ay);
         if (len < 1e-6) continue;
         const [ux, uy] = [(bx - ax) / len, (by - ay) / len];
@@ -2615,7 +2608,7 @@ function routeOnce(
       const r0 = v.pad / 2 - 0.01;
       const onPad = (p: BoardPad) => (p.shape === 'round' ? roundPadDist(p, v.x, v.y) <= -r0 : Math.abs(v.x - p.x) <= p.w / 2 - r0 && Math.abs(v.y - p.y) <= p.h / 2 - r0);
       const onCopper = tie
-        ? layers.filter((layer, l) => !pieces.some(({ rg }) => rg.l === l) && (tracks.some((t) => t.netId === v.netId && t.layer === layer && pieceList(t.pts).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(v.x, v.y) <= t.width / 2 - r0)) || pads.some((p, q) => padNet[q] === net && (p.drill || p.layers.includes(layer)) && onPad(p)))).length
+        ? layers.filter((layer, l) => !pieces.some(({ rg }) => rg.l === l) && (tracks.some((t) => t.netId === v.netId && t.layer === layer && segmentsOf(t.pts).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(v.x, v.y) <= t.width / 2 - r0)) || pads.some((p, q) => padNet[q] === net && (p.drill || p.layers.includes(layer)) && onPad(p)))).length
         : 0;
       if (pieces.length + onCopper < 2 || !(onCopper || pieces.some(({ rg, at }) => at === rg.main || rg.touched.has(at)))) continue;
       stampVia(net, v.x, v.y, v.pad);
@@ -2838,7 +2831,6 @@ function routeOnce(
   }
 }
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /** The part of a polyline (flat x, y list) between distances d0 and d1 along it. */
 function cutPts(pts: number[], d0: number, d1: number): number[] {
@@ -2929,20 +2921,6 @@ function insideField(input: RouteInput, W: number, H: number): Float32Array {
   for (let c = 0; c < W * H; c++) if (near[c]! < FIELD_FAR) f[c] = f[c]! > 0 ? near[c]! : -near[c]!;
   fields.set(input, f);
   return f;
-}
-
-/** The pieces (segments) of a flat polyline: x0, y0, x1, y1 each. */
-function pieceList(pts: number[]): [number, number, number, number][] {
-  const out: [number, number, number, number][] = [];
-  for (let q = 0; q + 3 < pts.length; q += 2) out.push([pts[q]!, pts[q + 1]!, pts[q + 2]!, pts[q + 3]!]);
-  return out;
-}
-
-/** A flat polyline, back to front. */
-function reversePts(pts: number[]): number[] {
-  const out: number[] = [];
-  for (let i = pts.length - 2; i >= 0; i -= 2) out.push(pts[i]!, pts[i + 1]!);
-  return out;
 }
 
 /** Drop collinear points and duplicates from a flat polyline. */

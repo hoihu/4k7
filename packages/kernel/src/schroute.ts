@@ -10,6 +10,7 @@
  */
 import type { PinView, Point, Rect, SymbolView, WireView } from '@4k7/schema';
 import { GRID } from '@4k7/parts';
+import { segmentsOf, type Seg } from './geom.ts';
 import { Heap } from './heap.ts';
 import { RETURN_LEG } from './scene.ts';
 
@@ -34,20 +35,15 @@ export interface RouteInput {
   through?: Point[];
 }
 
-const BEND = 300;
-const CROSS = 400;
-const SOFT = 600;
+/** What one more corner, a crossing and running through text cost against length. */
+export const BEND = 300;
+export const CROSS = 400;
+export const SOFT = 600;
 
 const OUT: Record<PinView['side'], [number, number]> = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] };
 const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const key = (x: number, y: number) => `${x},${y}`;
 
-type Seg = [number, number, number, number];
-const segsOf = (pts: number[]): Seg[] => {
-  const out: Seg[] = [];
-  for (let k = 0; k + 3 < pts.length; k += 2) out.push([pts[k]!, pts[k + 1]!, pts[k + 2]!, pts[k + 3]!]);
-  return out;
-};
 
 /** One leg's ends: points (a pin's way out or in comes from the pin there) and wires to start or end anywhere on. */
 interface Ends {
@@ -64,8 +60,8 @@ export function routeWire(r: RouteInput): number[] | null {
 }
 
 function pathOf(r: RouteInput, side: number): number[] | null {
-  const from: Ends = { pts: r.from, segs: r.fromWires.flatMap(segsOf) };
-  const to: Ends = { pts: r.to, segs: r.toWires.flatMap(segsOf) };
+  const from: Ends = { pts: r.from, segs: r.fromWires.flatMap(segmentsOf) };
+  const to: Ends = { pts: r.to, segs: r.toWires.flatMap(segmentsOf) };
   // it sets off from the last corner on what is drawn at its start (a pin itself, the wires joined
   // to it) and is done at the first on what is drawn at its end: the way along those is there already
   const via = r.via.slice(r.via.findLastIndex((p) => reaches(from, p)) + 1);
@@ -84,7 +80,7 @@ function pathOf(r: RouteInput, side: number): number[] | null {
 
 /** A run as long as a row, on a wire that leaves a pin to the side at either end. */
 function offSideOfLong(r: RouteInput, pts: number[]): boolean {
-  if (!segsOf(pts).some(([x1, y1, x2, y2]) => Math.abs(x2 - x1) + Math.abs(y2 - y1) >= RETURN_LEG)) return false;
+  if (!segmentsOf(pts).some(([x1, y1, x2, y2]) => Math.abs(x2 - x1) + Math.abs(y2 - y1) >= RETURN_LEG)) return false;
   const off = (x: number, y: number, nx: number, ny: number) => {
     const pin = r.symbols.flatMap((s) => s.pins).find((p) => p.x === x && p.y === y);
     return !!pin && (Math.sign(nx - x) !== OUT[pin.side][0] || Math.sign(ny - y) !== OUT[pin.side][1]);
@@ -217,7 +213,7 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, side: number, came?: [number,
   const wireH: [number, number, number][] = []; // y, x0, x1
   const wireV: [number, number, number][] = []; // x, y0, y1
   for (const w of r.wires) {
-    for (const [x1, y1, x2, y2] of segsOf(w.pts)) {
+    for (const [x1, y1, x2, y2] of segmentsOf(w.pts)) {
       if (y1 === y2 && x1 !== x2) wireH.push([y1, Math.min(x1, x2), Math.max(x1, x2)]);
       else if (x1 === x2 && y1 !== y2) wireV.push([x1, Math.min(y1, y2), Math.max(y1, y2)]);
       for (const n of [nodeAt({ x: x1, y: y1 }), nodeAt({ x: x2, y: y2 })]) if (n >= 0 && !free(n)) blocked[n] = 1;

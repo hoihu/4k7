@@ -6,7 +6,7 @@
 import { fabRuleIssues, MASK_MARGIN } from '@4k7/schema';
 import type { Diagnostic, BoardPad, BoardView, CopperLayer } from '@4k7/schema';
 import { padGap } from './drc.ts';
-import { segSegDist } from './segments.ts';
+import { segSegDist } from './geom.ts';
 
 interface Hole {
   x: number;

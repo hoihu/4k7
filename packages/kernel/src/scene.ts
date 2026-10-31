@@ -5,6 +5,7 @@
 import type { BlockView, Component, Design, LabelView, Net, PinType, PinView, Point, Prim, Rect, SymbolSpec, SymbolView, WireView } from '@4k7/schema';
 import { CHAR_W, GRID, RAIL_STEM, TEXT_LINE, textRect, readsParams, symbolFromSpec, textOffset, type SymbolDef } from '@4k7/parts';
 import { cardOf, isGroundNet, isPowerNet, valueLinesOf, valueOf } from './doc.ts';
+import { overlap } from './geom.ts';
 
 /* --------------------------------- scene ---------------------------------- */
 
@@ -280,7 +281,6 @@ export function labelForPin(net: Net, pin: PinView, type?: PinType, stub = 100):
   return { label: deco(net, pin.x, pin.y, dir, stub, 0, type), wires: [] };
 }
 
-const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 /** How much a label would run into: other symbols (than the one at index `own`), labels, and wires of other nets crossing its box. */
 export function crowding(scene: Scene, label: LabelView, own: number): number {

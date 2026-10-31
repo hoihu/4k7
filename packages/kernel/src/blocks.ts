@@ -9,6 +9,7 @@
 import type { Component, Design, LabelView, PinView, Point, Rect, WireView } from '@4k7/schema';
 import { GRID, isTwoPin } from '@4k7/parts';
 import { cardOf, isPowerNet, natCmp, type NetPin } from './doc.ts';
+import { grow, onSegment, overlap } from './geom.ts';
 import { routeWire } from './schroute.ts';
 import { RETURN_LEG, crowding, emptyScene, labelForPin, labelRect, mergeScene, sceneBBox, textRect, translateScene, type Scene } from './scene.ts';
 
@@ -56,8 +57,6 @@ interface Port {
 }
 
 const snap = (v: number) => Math.round(v / GRID) * GRID;
-const hits = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-const grow = (r: Rect, m: number): Rect => ({ x: r.x - m, y: r.y - m, w: r.w + 2 * m, h: r.h + 2 * m });
 const union = (a: Rect, b: Rect): Rect => {
   const x = Math.min(a.x, b.x);
   const y = Math.min(a.y, b.y);
@@ -272,7 +271,7 @@ export function drawBlock(d: Design, members: Map<string, NetPin[]>, nodes: Bloc
       const column = placedIn.get(key) ?? [];
       for (let guard = 0; guard < 200; guard++) {
         const r = { x: 0, y: b.y + dy, w: 1, h: b.h };
-        const clash = column.filter((c) => hits(grow(c, ROW_GAP / 2 - 1), { ...r, x: c.x }));
+        const clash = column.filter((c) => overlap(grow(c, ROW_GAP / 2 - 1), { ...r, x: c.x }));
         if (!clash.length) break;
         dy = snap(Math.max(...clash.map((c) => c.y + c.h)) + ROW_GAP - b.y);
       }
@@ -384,10 +383,8 @@ export interface Piece {
   wires: number[];
 }
 
-const onSeg = (x: number, y: number, x1: number, y1: number, x2: number, y2: number) =>
-  x >= Math.min(x1, x2) && x <= Math.max(x1, x2) && y >= Math.min(y1, y2) && y <= Math.max(y1, y2) && (x2 - x1) * (y - y1) === (y2 - y1) * (x - x1);
 const onWire = (x: number, y: number, pts: number[]) => {
-  for (let i = 0; i + 3 < pts.length; i += 2) if (onSeg(x, y, pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!)) return true;
+  for (let i = 0; i + 3 < pts.length; i += 2) if (onSegment(x, y, pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!)) return true;
   return false;
 };
 const endsOf = (pts: number[]): [number, number][] => [[pts[0]!, pts[1]!], [pts.at(-2)!, pts.at(-1)!]];
@@ -619,7 +616,7 @@ function barSupplies(scene: Scene): void {
         ...scene.symbols.flatMap((sym) => [sym.bbox, textRect(sym.refPos, [sym.refdes]), textRect(sym.valuePos, sym.valueLines ?? [sym.value])]),
         ...scene.labels.filter((l) => !mine.includes(l)).map(labelRect),
       ];
-      if (others.some((b) => hits(b, r))) return false;
+      if (others.some((b) => overlap(b, r))) return false;
       return !scene.wires.some((w) => {
         if (w.netId === net) return false;
         for (let i = 0; i + 3 < w.pts.length; i += 2) {
@@ -636,7 +633,7 @@ function barSupplies(scene: Scene): void {
       return ![
         ...scene.symbols.flatMap((sym) => [sym.bbox, textRect(sym.refPos, [sym.refdes]), textRect(sym.valuePos, sym.valueLines ?? [sym.value])]),
         ...scene.labels.filter((o) => !mine.includes(o)).map(labelRect),
-      ].some((b) => hits(b, r));
+      ].some((b) => overlap(b, r));
     };
     let run: LabelView[] = [list[0]!];
     const flush = () => {

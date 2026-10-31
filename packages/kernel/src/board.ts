@@ -70,6 +70,7 @@ import { boardInputs, Memo } from './derive.ts';
 import { applyWaivers, cardOf, clone, componentsSorted, isGroundNet, isPowerNet, madeBy, natCmp, valueOf } from './doc.ts';
 import { viewOf } from './drawing.ts';
 import { acidDrc, copperDrc, deadCopperDrc, drawnDrc, edgeDrc, neckDrc, planeViaDrc, splitDrc, thermalDrc } from './drc.ts';
+import { polyLength, r3 } from './geom.ts';
 import { keepoutDrc } from './keepout.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { panelTabDrc, panelView } from './panel.ts';
@@ -113,7 +114,6 @@ interface Item {
   exempt?: Item;
 }
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const snap = (v: number) => Math.round(v / GRID_MM) * GRID_MM;
 
 /** A local point rotated clockwise (y down) by a multiple of 90°. */
@@ -1550,12 +1550,6 @@ function placementMeasures(parts: BoardPart[], planeNets: Set<string>, board: Om
     }
   }
   return { ratsnestMm: Math.round(len * 10) / 10, crossings, congestion: congestion({ ...board, pads: parts.flatMap((p) => p.pads) }, lines) };
-}
-
-function polyLength(pts: number[]): number {
-  let len = 0;
-  for (let i = 0; i + 3 < pts.length; i += 2) len += Math.hypot(pts[i + 2]! - pts[i]!, pts[i + 3]! - pts[i + 1]!);
-  return len;
 }
 
 /**

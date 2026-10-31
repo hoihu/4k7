@@ -62,6 +62,7 @@ import {
 import { autoPlanes, dropOffset, padNet, placedOf, storedPlacement } from './board.ts';
 import { routability } from './congestion.ts';
 import { underBody } from './drc.ts';
+import { overlap, r3 } from './geom.ts';
 import { polarityOf } from './marks.ts';
 import { refinable, refinePlacement, type RefineMove } from './refine.ts';
 import { wirePlaced } from './autowire.ts';
@@ -616,7 +617,6 @@ function addCutout(d: Design, op: Extract<EditOp, { op: 'add_cutout' }>): OpResu
     id = `CO${i}`;
     break;
   }
-  const r3 = (v: number) => Math.round(v * 1000) / 1000;
   let c: Cutout;
   if (op.shape === 'circle') {
     const dia = op.diameter_mm ?? op.width_mm;
@@ -666,7 +666,6 @@ function addGraphic(d: Design, op: Extract<EditOp, { op: 'add_graphic' }>): OpRe
   if (!(bw > 0) || !(bh > 0)) reject({ code: 'BOARD_INVALID', message: 'The graphic has no area.' });
   const sx = text ? 1 : op.width_mm ? op.width_mm / bw : op.height_mm ? op.height_mm / bh : 1;
   const sy = text ? 1 : op.height_mm ? op.height_mm / bh : op.width_mm ? op.width_mm / bw : 1;
-  const r3 = (v: number) => Math.round(v * 1000) / 1000;
   const polys = figs.map((p) => p.map((v, i) => (i % 2 === 0 ? r3((v - (x0 + x1) / 2) * sx) : r3((v - (y0 + y1) / 2) * sy))));
   const [w, h] = [r3(bw * sx), r3(bh * sy)];
   if (Math.max(w, h) < 0.5) reject({ code: 'BOARD_INVALID', message: `The graphic would be ${w} × ${h} mm; silkscreen needs at least about 1 mm to be readable (give width_mm or height_mm).` });
@@ -712,7 +711,6 @@ function editGraphic(d: Design, op: Extract<EditOp, { op: 'edit_graphic' }>): Op
   const graphics = b.graphics ?? [];
   const g = graphics.find((x) => x.id.toUpperCase() === op.id.toUpperCase());
   if (!g) reject({ code: 'REF_UNKNOWN', message: `No silkscreen graphic "${op.id}".`, candidates: graphics.map((x) => x.id) });
-  const r3 = (v: number) => Math.round(v * 1000) / 1000;
   const changes: string[] = [];
   if (op.anchor && op.anchor !== (g.anchor ?? 'top_left')) {
     // keep its place unless a new x/y is given: re-measure the centre from the new anchor
@@ -808,7 +806,6 @@ function addHole(d: Design, op: Extract<EditOp, { op: 'add_hole' }>): OpResult {
 
 /** Vias placed on purpose: thermal vias in a pad, at given spots, stitching over an area, a fence round one. */
 function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpResult {
-  const r3 = (v: number) => Math.round(v * 1000) / 1000;
   const b = boardCopy(d);
   const drill = op.drill_mm ?? b.rules.viaDrill;
   const size = op.size_mm ?? Math.max(b.rules.viaPad, drill + 0.2);
@@ -1128,7 +1125,7 @@ function placeBlock(d: Design, op: Extract<EditOp, { op: 'place_block' }>, by: '
     // what it runs into: the agent's sheet stays as the agent puts it
     const frames = viewOf(d).sheets.find((s) => s.id === sheet.id)?.blocks ?? [];
     const mine = frames.find((b) => b.title === title);
-    const into = mine ? frames.filter((b) => b !== mine && overlaps(b.rect, mine.rect)).map((b) => `"${b.title}"`) : [];
+    const into = mine ? frames.filter((b) => b !== mine && overlap(b.rect, mine.rect)).map((b) => `"${b.title}"`) : [];
     const clash = at.under
       ? `; it lies on ${at.under}: move one of them`
       : !mine
@@ -1168,7 +1165,6 @@ function placeBlock(d: Design, op: Extract<EditOp, { op: 'place_block' }>, by: '
   };
 }
 
-const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 /** A block's frame runs past the drawing area of its page (inside the margins, above the title strip). */
 const pastArea = (r: Rect, page: Rect) => r.x < page.x + PAGE.margin || r.y < page.y + PAGE.margin || r.x + r.w > page.x + page.w - PAGE.margin || r.y + r.h > page.y + page.h - PAGE.margin - PAGE.title;
 const PAST_AREA = '; it runs past the drawing area of the page: move it in, or put it on a page of its own';
@@ -1718,7 +1714,6 @@ function setEnclosureGraphic(d: Design, op: Extract<EditOp, { op: 'set_enclosure
   if (!(w > 0) || !(h > 0)) reject({ code: 'ENCLOSURE_INVALID', message: 'The graphic has no area.' });
   const points = figs.reduce((n, p) => n + p.length / 2, 0);
   if (points > MAX_GRAPHIC_POINTS) reject({ code: 'ENCLOSURE_INVALID', message: `The graphic has ${points} points, more than ${MAX_GRAPHIC_POINTS}: trace the picture with larger dots, or simplify the SVG.` });
-  const r3 = (v: number) => Math.round(v * 1000) / 1000;
   const g: EnclosureGraphic = {
     name: op.name,
     mode,

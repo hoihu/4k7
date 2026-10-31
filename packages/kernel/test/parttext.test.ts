@@ -4,7 +4,7 @@ import { Kernel } from '../src/index.ts';
 import { movesParts } from '../src/copperops.ts';
 import { bodyOf, clashWords, clearTexts, placeTexts, textOverlaps, within } from '../src/parttext.ts';
 import { textRect } from '../src/scene.ts';
-import { segments } from '../src/scope.ts';
+import { segmentsOf } from '../src/geom.ts';
 
 /**
  * The drawing it was asked for: two resistors lying in neighbouring rows of two connectors, with a
@@ -58,7 +58,7 @@ function scene() {
 }
 
 const crossesWire = (s: SheetView, r: Rect) =>
-  s.wires.some((w) => segments(w.pts).some(([x1, y1, x2, y2]) => Math.max(x1, x2) >= r.x && Math.min(x1, x2) <= r.x + r.w && Math.max(y1, y2) > r.y && Math.min(y1, y2) < r.y + r.h));
+  s.wires.some((w) => segmentsOf(w.pts).some(([x1, y1, x2, y2]) => Math.max(x1, x2) >= r.x && Math.min(x1, x2) <= r.x + r.w && Math.max(y1, y2) > r.y && Math.min(y1, y2) < r.y + r.h));
 const boxes = (s: SymbolView) => [textRect(s.refPos, [s.refdes]), textRect(s.valuePos, s.valueLines ?? [s.value])];
 /** What must not change when only text moves. */
 const drawn = (k: Kernel) => JSON.stringify({ wires: sheetOf(k).wires, labels: sheetOf(k).labels, parts: sheetOf(k).symbols.map((s) => [s.refdes, s.bbox, s.pins, s.rotation ?? 0]) });

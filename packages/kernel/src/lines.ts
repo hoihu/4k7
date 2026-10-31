@@ -23,8 +23,8 @@ import {
   type Stackup,
   type Track,
 } from '@4k7/schema';
+import { idOf, polyLength, r3, segDist, segmentsOf } from './geom.ts';
 import { analyse, gapFor, sideGapFor, widthFor, type Section } from './impedance.ts';
-import { segDist } from './segments.ts';
 
 /** What working the rules out needs of the board. */
 export interface LineBoard {
@@ -40,7 +40,6 @@ export const DEFAULT_SKEW = 0.5;
 /** A ground via within this distance of a line's via carries its return current between the planes (mm, centre to centre). */
 export const RETURN_VIA_MM = 1.5;
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const OUTER = new Set<CopperLayer>(['F.Cu', 'B.Cu']);
 
 /* ------------------------------ working it out ----------------------------- */
@@ -218,20 +217,13 @@ export function impedanceText(v: ImpedanceView, name: (id: string) => string): s
 
 /* ------------------------------ on the copper ------------------------------ */
 
-const idOf = (x: object): string | undefined => (x as { id?: string }).id;
 
-function pieces(t: { pts: number[] }): [number, number, number, number][] {
-  const out: [number, number, number, number][] = [];
-  for (let q = 0; q + 3 < t.pts.length; q += 2) out.push([t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!]);
-  return out;
-}
-
-export const trackLength = (t: { pts: number[] }) => pieces(t).reduce((s, [ax, ay, bx, by]) => s + Math.hypot(bx - ax, by - ay), 0);
+export const trackLength = (t: { pts: number[] }) => polyLength(t.pts);
 
 /** Points along a track every `step` mm: where, and the unit direction there. */
 function samples(t: Track, step: number): { x: number; y: number; ux: number; uy: number }[] {
   const out: { x: number; y: number; ux: number; uy: number }[] = [];
-  for (const [ax, ay, bx, by] of pieces(t)) {
+  for (const [ax, ay, bx, by] of segmentsOf(t.pts)) {
     const len = Math.hypot(bx - ax, by - ay);
     if (len < 1e-6) continue;
     const [ux, uy] = [(bx - ax) / len, (by - ay) / len];
@@ -306,7 +298,7 @@ export function impedanceDrc(b: BoardView, focus?: Set<string>, quiet: Set<strin
   const gapsAlong = (t: Track, partner: Track[], skip: (x: number, y: number) => boolean) =>
     samples(t, 0.2)
       .filter((s) => !skip(s.x, s.y))
-      .map((s) => Math.min(Infinity, ...partner.map((o) => Math.min(...pieces(o).map(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(s.x, s.y))) - (t.width + o.width) / 2)));
+      .map((s) => Math.min(Infinity, ...partner.map((o) => Math.min(...segmentsOf(o.pts).map(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(s.x, s.y))) - (t.width + o.width) / 2)));
   /** The gap a pair's track keeps to its partner most of the way (the median), or undefined where it mostly has none near. */
   const usualGap = (gaps: number[], reach: number) => {
     const near = gaps.filter((g) => g < reach).sort((a, b) => a - b);
@@ -357,7 +349,7 @@ export function impedanceDrc(b: BoardView, focus?: Set<string>, quiet: Set<strin
         }
       }
       // sharp corners: a line bends by 45° at a time
-      const ps = pieces(t).filter(([ax, ay, bx, by]) => Math.hypot(bx - ax, by - ay) > 0.1);
+      const ps = segmentsOf(t.pts).filter(([ax, ay, bx, by]) => Math.hypot(bx - ax, by - ay) > 0.1);
       for (let q = 1; q < ps.length; q++) {
         const [a, c] = [ps[q - 1]!, ps[q]!];
         const turn = Math.abs(Math.atan2((a[2] - a[0]) * (c[3] - c[1]) - (a[3] - a[1]) * (c[2] - c[0]), (a[2] - a[0]) * (c[2] - c[0]) + (a[3] - a[1]) * (c[3] - c[1])));
@@ -403,7 +395,7 @@ export function impedanceDrc(b: BoardView, focus?: Set<string>, quiet: Set<strin
           const off = t.width / 2 + lay.side + 0.15;
           for (const sgn of [1, -1]) {
             const [qx, qy] = [p.x - sgn * p.uy * off, p.y + sgn * p.ux * off];
-            if (partner.some((o) => pieces(o).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(qx, qy) <= o.width / 2 + lay.side! + 0.15))) continue;
+            if (partner.some((o) => segmentsOf(o.pts).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(qx, qy) <= o.width / 2 + lay.side! + 0.15))) continue;
             const n = netAt(t.layer, qx, qy);
             if (n === null || !planeNets.has(n)) {
               missing += 0.2;
@@ -431,7 +423,7 @@ export function impedanceDrc(b: BoardView, focus?: Set<string>, quiet: Set<strin
         if (nearEnd(p.x, p.y, 1)) continue;
         for (const o of others) {
           if (told.has(o.netId)) continue;
-          const dd = Math.min(...pieces(o).map(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(p.x, p.y))) - (t.width + o.width) / 2;
+          const dd = Math.min(...segmentsOf(o.pts).map(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(p.x, p.y))) - (t.width + o.width) / 2;
           if (dd < keep - 1e-3) {
             told.add(o.netId);
             out.push({ code: 'IMP.SPACING', severity: 'warning', message: `${label}: ${name(o.netId)} runs ${f2(Math.max(0, dd))} mm from ${what(t)} of ${name(t.netId)} at ${xy(p.x, p.y)} on ${t.layer}; keep other signals ${f2(keep)} mm away from it (crosstalk), or put ground between them.`, at: at(p.x, p.y), entities: [...ids(t), `net:${name(o.netId)}`] });

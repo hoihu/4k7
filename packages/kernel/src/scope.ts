@@ -5,6 +5,7 @@
 import type { Component, Design, EditOp, LabelView, OptimizeScope, Rect, SchematicView, ScopeInfo, ScopeMeasures, SheetView, SymbolView } from '@4k7/schema';
 import { resolveUnitRef } from './apply.ts';
 import { RejectError, componentsSorted, natCmp, netMembers, reject } from './doc.ts';
+import { overlap, segmentsOf, type Seg } from './geom.ts';
 import { RETURN_LEG, textRect, tw } from './scene.ts';
 import { viewOf } from './drawing.ts';
 import { blockAssignment } from './layout.ts';
@@ -43,7 +44,7 @@ export function resolveScope(d: Design, view: SchematicView, scope: OptimizeScop
     if (syms.every((s) => inside(scope.rect, s.bbox))) {
       if (hard.has(id)) anchored.set(id, 'a hard constraint in the ledger fixes it');
       else free.add(id);
-    } else if (syms.some((s) => centreIn(scope.rect, s.bbox) || overlaps(scope.rect, s.bbox))) {
+    } else if (syms.some((s) => centreIn(scope.rect, s.bbox) || overlap(scope.rect, s.bbox))) {
       anchored.set(id, syms.every((s) => !inside(scope.rect, s.bbox) && centreIn(scope.rect, s.bbox)) ? 'cut by the edge of the area' : 'partly outside the area');
     } else {
       context++;
@@ -87,12 +88,12 @@ export function widenScope(d: Design, view: SchematicView, scope: OptimizeScope)
   const r = scope.rect;
   const nets = new Set<string>();
   for (const w of sheet.wires) {
-    for (const [x1, y1, x2, y2] of segments(w.pts)) {
-      if (overlaps(r, { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) })) nets.add(w.netId);
+    for (const [x1, y1, x2, y2] of segmentsOf(w.pts)) {
+      if (overlap(r, { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) })) nets.add(w.netId);
     }
   }
   for (const l of sheet.labels) if (l.x >= r.x && l.x <= r.x + r.w && l.y >= r.y && l.y <= r.y + r.h) nets.add(l.netId);
-  const ids = new Set(sheet.symbols.filter((s) => overlaps(r, s.bbox)).map((s) => s.componentId));
+  const ids = new Set(sheet.symbols.filter((s) => overlap(r, s.bbox)).map((s) => s.componentId));
   const members = netMembers(d);
   for (const n of nets) {
     const pins = members.get(n) ?? [];
@@ -109,10 +110,6 @@ export function widenScope(d: Design, view: SchematicView, scope: OptimizeScope)
 
 const WIDEN_MAX_PINS = 8;
 const WIDEN_PAD = 100;
-
-function overlaps(a: Rect, b: Rect): boolean {
-  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-}
 
 /* --------------------------------- guard ---------------------------------- */
 
@@ -223,14 +220,6 @@ export function circuitSignature(d: Design): string {
 
 /* -------------------------------- measures -------------------------------- */
 
-export type Seg = [number, number, number, number];
-
-export function segments(pts: number[]): Seg[] {
-  const out: Seg[] = [];
-  for (let i = 0; i + 3 < pts.length; i += 2) out.push([pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!]);
-  return out;
-}
-
 /** Two segments cross in their interiors (touching ends and T-joints are junctions, not crossings). */
 function cross(a: Seg, b: Seg): boolean {
   const o = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) => Math.sign((qx - px) * (ry - py) - (qy - py) * (rx - px));
@@ -246,10 +235,10 @@ export function wireCrossings(sheet: SheetView, nets: Set<string>): { net: strin
   const out: { net: string; other: string }[] = [];
   for (const w of sheet.wires) {
     if (!nets.has(w.netId)) continue;
-    const segs = segments(w.pts);
+    const segs = segmentsOf(w.pts);
     for (const o of sheet.wires) {
       if (o.netId === w.netId || (nets.has(o.netId) && o.netId < w.netId)) continue;
-      const os = segments(o.pts);
+      const os = segmentsOf(o.pts);
       for (const a of segs) for (const b of os) if (cross(a, b)) out.push({ net: w.netId, other: o.netId });
     }
   }
@@ -258,7 +247,7 @@ export function wireCrossings(sheet: SheetView, nets: Set<string>): { net: strin
 
 /** Wire crossings, the wires' shape, wire length and net labels of the given nets on a sheet; the overlaps with those of the names and values of `parts` (component ids). */
 export function measure(sheet: SheetView, nets: Set<string>, parts: ReadonlySet<string> = new Set()): ScopeMeasures {
-  const mine = sheet.wires.filter((w) => nets.has(w.netId)).map((w) => ({ net: w.netId, segs: segments(w.pts) }));
+  const mine = sheet.wires.filter((w) => nets.has(w.netId)).map((w) => ({ net: w.netId, segs: segmentsOf(w.pts) }));
   const mils = mine.reduce((n, w) => n + w.segs.reduce((m, [x1, y1, x2, y2]) => m + Math.abs(x2 - x1) + Math.abs(y2 - y1), 0), 0);
   const labels = sheet.labels.filter((l) => l.kind === 'net' && nets.has(l.netId)).length;
   const shape = { bends: 0, jogs: 0, detours: 0 };
@@ -330,7 +319,7 @@ export interface Overlap {
  * price. Each label is reported once, with the first thing it hits, however much it hits.
  */
 export function labelOverlaps(sheet: SheetView, nets: Set<string>): Overlap[] {
-  const wires = sheet.wires.flatMap((w) => segments(w.pts).map(([x1, y1, x2, y2]) => ({ net: w.netId, r: line(x1, y1, x2, y2) })));
+  const wires = sheet.wires.flatMap((w) => segmentsOf(w.pts).map(([x1, y1, x2, y2]) => ({ net: w.netId, r: line(x1, y1, x2, y2) })));
   const texts = sheet.symbols.flatMap((s) => [{ sym: s, which: 'name' as const, r: textRect(s.refPos, [s.refdes]) }, { sym: s, which: 'value' as const, r: textRect(s.valuePos, s.valueLines ?? [s.value]) }]);
   const parts = sheet.labels.map((l) => ({ l, parts: labelParts(l) }));
   const out: Overlap[] = [];
@@ -408,7 +397,7 @@ export interface Jog {
  *   so the wire has to step across (two resistors of a divider side by side instead of stacked).
  */
 export function wireShape(sheet: SheetView, net: string): { bends: number; jogs: Jog[]; detours: Seg[] } {
-  const segs = sheet.wires.filter((w) => w.netId === net).flatMap((w) => segments(w.pts)).filter(([x1, y1, x2, y2]) => x1 !== x2 || y1 !== y2);
+  const segs = sheet.wires.filter((w) => w.netId === net).flatMap((w) => segmentsOf(w.pts)).filter(([x1, y1, x2, y2]) => x1 !== x2 || y1 !== y2);
   if (!segs.length) return { bends: 0, jogs: [], detours: [] };
   // what a wire can be attached to: a pin, or a supply symbol / net flag standing at its end
   const pinAt = new Set(sheet.symbols.flatMap((s) => s.pins.map((p) => key(p.x, p.y))));

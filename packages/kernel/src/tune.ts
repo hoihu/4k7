@@ -10,10 +10,9 @@ import { placedOf } from './board.ts';
 import { firstClash, nearBox } from './copperclear.ts';
 import { drawnOf } from './copperops.ts';
 import { findNet, reject } from './doc.ts';
+import { pointSegDist, r3, segmentsOf, segSegDist } from './geom.ts';
 import { DEFAULT_SKEW, keepOf, trackLength } from './lines.ts';
-import { segSegDist } from './segments.ts';
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const f2 = (v: number) => String(Math.round(v * 100) / 100);
 const SQ2 = Math.SQRT2;
 /** A bump's corners are cut by this many widths (a pair member's: half as many); smaller bumps cut less, down to CHAMFER_MIN. */
@@ -267,7 +266,7 @@ export function tuneLength(d: Design, op: Extract<EditOp, { op: 'tune_length' }>
         if (!op.side && partnerTracks.length) {
           const mx = slot.ax + (slot.ux * slot.len) / 2;
           const my = slot.ay + (slot.uy * slot.len) / 2;
-          const near = partnerTracks.map((t) => ({ t, dd: Math.min(...pieces(t).map(([ax, ay, bx, by]) => segDistTo(ax, ay, bx, by, mx, my))) })).sort((a, e) => a.dd - e.dd)[0]!;
+          const near = partnerTracks.map((t) => ({ t, dd: Math.min(...segmentsOf(t.pts).map(([ax, ay, bx, by]) => pointSegDist(mx, my, ax, ay, bx, by))) })).sort((a, e) => a.dd - e.dd)[0]!;
           const q = nearestPoint(near.t.pts, mx, my);
           const lat = (q.x - mx) * -slot.uy + (q.y - my) * slot.ux;
           sides = lat > 0 ? [-1, 1] : [1, -1];
@@ -356,23 +355,10 @@ export function tuneLength(d: Design, op: Extract<EditOp, { op: 'tune_length' }>
 }
 
 /** The piece list of a polyline. */
-function pieces(t: { pts: number[] }): [number, number, number, number][] {
-  const out: [number, number, number, number][] = [];
-  for (let q = 0; q + 3 < t.pts.length; q += 2) out.push([t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!]);
-  return out;
-}
-
-const segDistTo = (ax: number, ay: number, bx: number, by: number, x: number, y: number) => {
-  const [dx, dy] = [bx - ax, by - ay];
-  const l2 = dx * dx + dy * dy;
-  const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
-  return Math.hypot(ax + t * dx - x, ay + t * dy - y);
-};
-
 /** The point of a polyline nearest to (x, y). */
 function nearestPoint(pts: number[], x: number, y: number): { x: number; y: number } {
   let best = { x: pts[0]!, y: pts[1]!, d: Infinity };
-  for (const [ax, ay, bx, by] of pieces({ pts })) {
+  for (const [ax, ay, bx, by] of segmentsOf(pts)) {
     const [dx, dy] = [bx - ax, by - ay];
     const l2 = dx * dx + dy * dy;
     const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;

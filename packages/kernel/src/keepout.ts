@@ -20,9 +20,9 @@ import {
 } from '@4k7/schema';
 import { copperName } from './drc.ts';
 import { boardCopy, reject, resolveComponent } from './doc.ts';
+import { idOf, r3 } from './geom.ts';
 import { boxInKeepout, partForbidden, properCross, trackInKeepout, viaInKeepout } from './keepgeo.ts';
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /** Default for a keep-out that does not say what it forbids: the copper. */
 const COPPER_FORBID: KeepoutForbid[] = ['tracks', 'vias', 'pours'];
@@ -40,7 +40,6 @@ const boardLayers = (n: number): CopperLayer[] => (n === 4 ? ['F.Cu', 'In1.Cu', 
 export function keepoutDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
   const out: Diagnostic[] = [];
   if (!b.keepouts?.length) return out;
-  const idOf = (x: object) => (x as { id?: string }).id;
   const inFocus = (x: object) => !focus || focus.has(idOf(x) ?? '');
   const label = (k: BoardKeepout) => `keep-out ${k.id}${k.name ? ` (${k.name})` : ''}`;
   const seen = new Set<string>();
