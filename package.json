@@ -50,6 +50,7 @@
     "prepublishOnly": "npm run typecheck && npm test && npm run check:package",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:derived": "CHECK_DERIVED=1 vitest run --testTimeout=60000",
     "typecheck": "tsc -p tsconfig.json --noEmit && npm run check -w @4k7/web",
     "server": "node --watch tools/server/src/main.ts --serve"
   },

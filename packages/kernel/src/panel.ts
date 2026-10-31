@@ -15,13 +15,14 @@ import {
   RAIL_MARK_OFFSET,
   TAB_KEEPOUT,
   TOOLING_HOLE,
-  type BoardDiagnostic,
+  type Diagnostic,
   type BoardView,
   type PanelSettings,
   type PanelSide,
   type PanelView,
 } from '@4k7/schema';
 import { segRect } from './drc.ts';
+import { r3 } from './geom.ts';
 
 /** Clipper's precision: decimal places (µm). */
 const PREC = 3;
@@ -41,7 +42,6 @@ const rect = (x0: number, y0: number, x1: number, y1: number): PathD => [
   { x: x1, y: y1 },
   { x: x0, y: y1 },
 ];
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /** Where the edges of these polygons cross an axis-parallel line: x = u (vertical) or y = u. */
 function lineHits(polys: PathsD, vertical: boolean, u: number): number[] {
@@ -71,10 +71,10 @@ function inside(p: PathD, x: number, y: number): boolean {
 
 type Outline = { outline: { w: number; h: number }; cornerRadius?: number; shape?: number[] | null };
 
-export function panelView(board: Outline, s: PanelSettings): { view: PanelView; diagnostics: BoardDiagnostic[] } {
+export function panelView(board: Outline, s: PanelSettings): { view: PanelView; diagnostics: Diagnostic[] } {
   const { w, h } = board.outline;
   const poly = boardPolygon(board);
-  const diagnostics: BoardDiagnostic[] = [];
+  const diagnostics: Diagnostic[] = [];
   const gap = s.gap;
   const lead = (side: PanelSide) => s.rails[side] + (s.rails[side] > 0 ? gap : 0);
   const W = r3(lead('left') + s.cols * w + (s.cols - 1) * gap + lead('right'));
@@ -220,7 +220,7 @@ function tabHolds(t: { x: number; y: number; w: number; h: number }, board: Path
  * A part is its body and pads. Pours are left out (they reach to the edge clearance everywhere).
  * The tab is taken at the side of the bounding box, which is where it starts on a rectangle.
  */
-export function panelTabDrc(b: BoardView): BoardDiagnostic[] {
+export function panelTabDrc(b: BoardView): Diagnostic[] {
   const panel = b.panel;
   if (!panel) return [];
   const { w, h } = b.outline;
@@ -231,7 +231,7 @@ export function panelTabDrc(b: BoardView): BoardDiagnostic[] {
     const ys = [p.body.y, p.body.y + p.body.h, ...p.pads.flatMap((q) => [q.y - q.h / 2, q.y + q.h / 2])];
     return { p, x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
   });
-  const out: BoardDiagnostic[] = [];
+  const out: Diagnostic[] = [];
   const sides = new Set<PanelSide>();
   for (const i of used) {
     const t = panel.settings.tabs[i];

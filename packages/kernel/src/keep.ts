@@ -7,9 +7,9 @@
  * the router as it lies (RouteInput.keep), which then routes only the connections left open.
  */
 import { cutoutDistance, insideBoard, padCapsule, roundPadDist, type BoardPad, type CopperLayer, type Track, type Via } from '@4k7/schema';
+import { segDist, segmentsOf, segSegDist } from './geom.ts';
 import type { RouteInput } from './router.ts';
 import { trackInKeepout, viaInKeepout } from './keepgeo.ts';
-import { segDist, segSegDist } from './segments.ts';
 
 /**
  * Kept copper of one net that joins pads: the pads (indices into all parts' pads in order), its
@@ -50,12 +50,6 @@ export function padSegDist(p: BoardPad, ax: number, ay: number, bx: number, by: 
 }
 
 /** Each piece (segment) of a track: x0, y0, x1, y1. */
-function pieces(t: Track): [number, number, number, number][] {
-  const out: [number, number, number, number][] = [];
-  for (let q = 0; q + 3 < t.pts.length; q += 2) out.push([t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!]);
-  return out;
-}
-
 
 /**
  * The copper of `before` that still holds on the board `input` describes (its parts, planes,
@@ -117,7 +111,7 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
   const trackClear = (t: Track) => {
     if (keepouts.length && trackInKeepout(keepouts, input.parts, t.layer, t.pts, t.width)) return false;
     const need = rules.clearance + t.width / 2 - EPS;
-    for (const [ax, ay, bx, by] of pieces(t)) {
+    for (const [ax, ay, bx, by] of segmentsOf(t.pts)) {
       if (!segEdgeOk(ax, ay, bx, by, t.width / 2)) return false;
       for (const i of padsNear(Math.min(ax, bx) - need, Math.min(ay, by) - need, Math.max(ax, bx) + need, Math.max(ay, by) + need)) {
         const p = pads[i]!;
@@ -180,11 +174,11 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
     const lands = (t: Track, x: number, y: number) =>
       (padsOf.get(t.netId) ?? []).some((i) => onLayer(pads[i]!, t.layer) && padPointDist(pads[i]!, x, y) <= t.width / 2) ||
       (viasOf.get(t.netId) ?? []).some((v) => Math.hypot(v.x - x, v.y - y) <= (v.pad + t.width) / 2) ||
-      (tracksOf.get(t.netId) ?? []).some((o) => o !== t && o.layer === t.layer && pieces(o).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(x, y) <= o.width / 2 + EPS));
+      (tracksOf.get(t.netId) ?? []).some((o) => o !== t && o.layer === t.layer && segmentsOf(o.pts).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(x, y) <= o.width / 2 + EPS));
     tracks = tracks.filter((t) => lands(t, t.pts[0]!, t.pts[1]!) && lands(t, t.pts.at(-2)!, t.pts.at(-1)!));
     vias = vias.filter((v) => {
       const joined =
-        (tracksOf.get(v.netId) ?? []).filter((t) => tracks.includes(t) && pieces(t).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(v.x, v.y) <= (v.pad + t.width) / 2)).length +
+        (tracksOf.get(v.netId) ?? []).filter((t) => tracks.includes(t) && segmentsOf(t.pts).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(v.x, v.y) <= (v.pad + t.width) / 2)).length +
         (padsOf.get(v.netId) ?? []).filter((i) => padPointDist(pads[i]!, v.x, v.y) <= v.pad / 2).length;
       return joined >= (dropOk(v) ? 1 : 2);
     });
@@ -217,7 +211,7 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
     };
     const boxes = ts.map(box);
     ts.forEach((t, ti) => {
-      const segs = pieces(t);
+      const segs = segmentsOf(t.pts);
       padIdx.forEach((pi, k) => {
         const p = pads[pi]!;
         if (onLayer(p, t.layer) && segs.some(([ax, ay, bx, by]) => padSegDist(p, ax, ay, bx, by) <= t.width / 2)) join(k, P + ti);
@@ -227,7 +221,7 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
         const [a, b] = [boxes[ti]!, boxes[tj]!];
         if (o.layer !== t.layer || a[0] > b[2] || b[0] > a[2] || a[1] > b[3] || b[1] > a[3]) continue;
         const gap = (t.width + o.width) / 2;
-        if (segs.some(([ax, ay, bx, by]) => pieces(o).some(([cx, cy, dx, dy]) => segSegDist(ax, ay, bx, by, cx, cy, dx, dy) <= gap))) join(P + ti, P + tj);
+        if (segs.some(([ax, ay, bx, by]) => segmentsOf(o.pts).some(([cx, cy, dx, dy]) => segSegDist(ax, ay, bx, by, cx, cy, dx, dy) <= gap))) join(P + ti, P + tj);
       }
       allVias.forEach((v, vi) => {
         if (segs.some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(v.x, v.y) <= (v.pad + t.width) / 2)) join(P + ti, P + T + vi);

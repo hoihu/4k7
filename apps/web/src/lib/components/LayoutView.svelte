@@ -1,6 +1,6 @@
 <script lang="ts">
   import { boardStep, fabFiles, panelFabFiles, zip } from '@4k7/fab';
-  import { planeNames, userPlaced, whose, type BoardDiagnostic, type CopperLayer, type HousePlacement } from '@4k7/schema';
+  import { planeNames, userPlaced, whose, type Diagnostic, type CopperLayer, type HousePlacement } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
   import BoardCanvas from './BoardCanvas.svelte';
@@ -129,7 +129,6 @@
   // (routing runs after the placement shows: until its result is in, it is "routing…")
   const routing = $derived(b?.routing === 'done' && app.boardBusy && app.boardStage !== 'routed');
   const nParts = $derived(b?.parts.filter((p) => !p.componentId.startsWith('hole:')).length ?? 0);
-  let checksOpen = $state(false);
   let allChecks = $state(false);
   let waivedOpen = $state(false);
   // The check whose full message is shown; others stay clamped to two lines.
@@ -206,7 +205,7 @@
     app.flash(`Exported the board and ${step.parts} part${step.parts === 1 ? '' : 's'} as STEP${without}`);
   }
 
-  function focus(d: BoardDiagnostic) {
+  function focus(d: Diagnostic) {
     marker = d.at ?? null;
     app.selection = d.entities.filter((e) => b?.parts.some((p) => p.refdes === e));
   }
@@ -215,7 +214,7 @@
 <section class="lay" class:nochat={!app.chatOpen}>
   <div class="col chatcol">{#if app.chatOpen}<Chat /><Splitter pane="chat" />{/if}</div>
   <div class="col canvas">
-    {#if mode === 'panel' && b?.panel}<div class="stagep"><PanelCanvas board={b} ontabs={(tabs) => void app.userEdit('Panel tabs', [{ op: 'set_panel', tabs }])} /></div>
+    {#if mode === 'panel' && b?.panel}<div class="stagep"><PanelCanvas board={b} ontabs={(tabs) => app.userEdit('Panel tabs', [{ op: 'set_panel', tabs }])} /></div>
     {:else if mode === 'panel' && b?.parts.length}<div class="blank"><p><b>No panel yet.</b> A panel holds copies of the board in a frame, milled apart except at tabs with mouse bites. Make one in the side panel, or ask the agent.</p></div>{/if}
     {#if mode === '3d' && b}<Board3DView bind:this={view3d} board={b} from={from2d} onready={() => (show2d = false)} />{/if}
     <div class="stage2d" class:hidden={!show2d || mode === 'panel'}>
@@ -229,10 +228,10 @@
       onselect={(r, add) => app.toggleSelect(r, add)}
       onclear={() => ((app.selection = []), (marker = null))}
       onhovernet={(n) => (hotNet = n)}
-      onplace={(ref, x, y, rot) => void app.userEdit(`Place ${ref}`, [{ op: 'place', ref, x_mm: x, y_mm: y, rot }])}
+      onplace={(ref, x, y, rot) => app.userEdit(`Place ${ref}`, [{ op: 'place', ref, x_mm: x, y_mm: y, rot }])}
       onlock={toggleLock}
       onflip={flip}
-      ongraphic={(id, dx, dy) => void app.userEdit(`Move ${id}`, [{ op: 'edit_graphic', id, dx_mm: dx, dy_mm: dy }])}
+      ongraphic={(id, dx, dy) => app.userEdit(`Move ${id}`, [{ op: 'edit_graphic', id, dx_mm: dx, dy_mm: dy }])}
     />
     </div>
     <!-- one row: the pending bar goes on a line of its own when the tools leave no room, never under them -->
@@ -311,8 +310,8 @@
             </div>
           {/if}
         {/if}
-        <h4><button class="fold" aria-expanded={checksOpen} onclick={() => (checksOpen = !checksOpen)}><span class="chev">{checksOpen ? '▾' : '▸'}</span>Checks <span class="tag err">{errors}</span> <span class="tag warn">{warnings}</span></button></h4>
-        {#if checksOpen}
+        <h4><button class="fold" aria-expanded={app.checksOpen} onclick={() => (app.checksOpen = !app.checksOpen)}><span class="chev">{app.checksOpen ? '▾' : '▸'}</span>Checks <span class="tag err">{errors}</span> <span class="tag warn">{warnings}</span></button></h4>
+        {#if app.checksOpen}
         {#if !openChecks.length}<p class="muted small">No problems found.</p>{/if}
         <ul class="diags">
           {#each allChecks ? openChecks : openChecks.slice(0, CHECKS_SHOWN) as d, i (i)}

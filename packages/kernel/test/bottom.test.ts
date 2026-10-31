@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardPart, BoardView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
-import { describeConstraint } from '../src/apply.ts';
+import { describeConstraint } from '../src/netops.ts';
 import { Grid } from '../src/congestion.ts';
 import { buckTransaction } from './fixtures.ts';
 

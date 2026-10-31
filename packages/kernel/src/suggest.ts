@@ -15,6 +15,7 @@ import { applyOp } from './apply.ts';
 import { boardRouteInput, placeBoard } from './board.ts';
 import { checkCopper, followParts } from './copperops.ts';
 import { RejectError, clone, resolveComponent } from './doc.ts';
+import { r3 } from './geom.ts';
 import { padPointDist, padSegDist } from './keep.ts';
 import { screenMoves } from './refine.ts';
 import { route } from './router.ts';
@@ -50,7 +51,6 @@ export interface SuggestQuery {
   max?: number;
 }
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /** How far a point is from a part's courtyard (0 inside). */
 const fromPart = (p: BoardPart, x: number, y: number) => Math.hypot(Math.max(p.courtyard.x - x, 0, x - p.courtyard.x - p.courtyard.w), Math.max(p.courtyard.y - y, 0, y - p.courtyard.y - p.courtyard.h));

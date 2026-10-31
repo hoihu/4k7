@@ -2,9 +2,11 @@
  * Scene building blocks shared by the schematic layouts: geometry containers, symbol
  * placement, net decorations and extent estimates.
  */
+import { PAGE } from '@4k7/schema';
 import type { BlockView, Component, Design, LabelView, Net, PinType, PinView, Point, Prim, Rect, SymbolSpec, SymbolView, WireView } from '@4k7/schema';
-import { CHAR_W, GRID, readsParams, symbolFromSpec, textOffset, type SymbolDef } from '@4k7/parts';
+import { CHAR_W, GRID, RAIL_STEM, TEXT_LINE, textRect, readsParams, symbolFromSpec, textOffset, type SymbolDef } from '@4k7/parts';
 import { cardOf, isGroundNet, isPowerNet, valueLinesOf, valueOf } from './doc.ts';
+import { overlap } from './geom.ts';
 
 /* --------------------------------- scene ---------------------------------- */
 
@@ -88,8 +90,8 @@ export function labelRect(l: LabelView): Rect {
     // vertical supply symbol, possibly after a horizontal stub
     const sx = l.x + (l.stub === 'left' ? -1 : l.stub === 'right' ? 1 : 0) * (l.stubLen ?? 100);
     const half = l.kind === 'ground' ? 80 : Math.max(80, w / 2);
-    // ground: bars 150 deep; rail: 200 stem + arrow + name
-    const h = (l.kind === 'ground' ? 260 : 400) + (l.rise ?? 0);
+    // ground: bars 150 deep; rail: stem + arrow + name
+    const h = (l.kind === 'ground' ? 260 : RAIL_STEM + 200) + (l.rise ?? 0);
     const sym: Rect = l.dir === 'up' ? { x: sx - half, y: l.y - h, w: 2 * half, h } : { x: sx - half, y: l.y, w: 2 * half, h };
     const x0 = Math.min(sym.x, l.x);
     const x1 = Math.max(sym.x + sym.w, l.x);
@@ -109,11 +111,10 @@ export function labelRect(l: LabelView): Rect {
   }
 }
 
-/** The box a symbol's reference or value text takes, from its anchor point. */
-export function textRect(p: SymbolView['refPos'], lines: string[]): Rect {
-  const w = Math.max(...lines.map(tw)) + 20;
-  return { x: p.anchor === 'end' ? p.x - w : p.anchor === 'middle' ? p.x - w / 2 : p.x, y: p.y - 80, w, h: 100 + LINE * (lines.length - 1) };
-}
+export { textRect };
+
+/** A page's drawing area: inside its margins, above the title strip. */
+export const drawingArea = (p: Rect): Rect => ({ x: p.x + PAGE.margin, y: p.y + PAGE.margin, w: p.w - 2 * PAGE.margin, h: p.h - 2 * PAGE.margin - PAGE.title });
 
 export function sceneBBox(s: Scene): Rect {
   let minX = Infinity,
@@ -200,7 +201,7 @@ export function makeSymbol(d: Design, c: Component, def: SymbolDef, ox: number, 
 }
 
 /** Line height of stacked value text, in mils. */
-export const LINE = 85;
+export const LINE = TEXT_LINE;
 
 /** Widest half-body of a neighbouring two-pin part (capacitor plates, 80) plus clear air. */
 const NEXT_BODY = 140;
@@ -284,7 +285,6 @@ export function labelForPin(net: Net, pin: PinView, type?: PinType, stub = 100):
   return { label: deco(net, pin.x, pin.y, dir, stub, 0, type), wires: [] };
 }
 
-const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 /** How much a label would run into: other symbols (than the one at index `own`), labels, and wires of other nets crossing its box. */
 export function crowding(scene: Scene, label: LabelView, own: number): number {

@@ -6,7 +6,7 @@
  */
 import { cutoutDistance, insideBoard, type BoardCutout, type BoardPart, type CopperLayer, type Track, type Via } from '@4k7/schema';
 import { padPointDist, padSegDist } from './keep.ts';
-import { segDist, segSegDist } from './segments.ts';
+import { segDist, segSegDist } from './geom.ts';
 
 /** The board's shape and rules, as the router and the board view both carry them. */
 export interface Geometry {

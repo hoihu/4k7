@@ -1,5 +1,6 @@
 <script lang="ts">
   import { boardPolygon, bodyOutline, cutoutPolygon, type BoardView, type CopperLayer } from '@4k7/schema';
+  import { Dropped, SvgView, linePath as path, pastDrag, plainKey, points, polyPath, zonePath, type Pan } from '../canvas.svelte.ts';
   import { boardDimensions, dimPaths } from '../dimensions.ts';
   import type { TopView } from '../three-body.ts';
 
@@ -13,33 +14,30 @@
     onselect?: (refdes: string, additive: boolean) => void;
     onclear?: () => void;
     onhovernet?: (netId: string | null) => void;
-    /** Drag or rotate a part: the user's choice for it (the place op). A drag keeps the rotation. */
-    onplace?: (refdes: string, x: number, y: number, rot?: number) => void;
+    /** Drag or rotate a part: the user's choice for it (the place op). A drag keeps the rotation. Says whether the edit went through. */
+    onplace?: (refdes: string, x: number, y: number, rot?: number) => Promise<boolean>;
     /** L on a selected part: lock it where it is, or unlock it. */
     onlock?: (refdes: string) => void;
     /** F on a selected part: flip it to the other side of the board. */
     onflip?: (refdes: string) => void;
-    /** A silkscreen graphic dragged by dx, dy (mm). */
-    ongraphic?: (id: string, dx: number, dy: number) => void;
+    /** A silkscreen graphic dragged by dx, dy (mm). Says whether the edit went through. */
+    ongraphic?: (id: string, dx: number, dy: number) => Promise<boolean>;
   }
   let { board, show, selection = [], hotNet = null, marker = null, onselect, onclear, onhovernet, onplace, onlock, onflip, ongraphic }: Props = $props();
 
   /* dragging a silkscreen graphic: like a part, it stays where it was dropped until the board shows it there */
-  let gfxDrag = $state<{ id: string; sx: number; sy: number; dx: number; dy: number; moved: boolean } | null>(null);
-  let gfxDropped = $state<{ id: string; x0: number; y0: number; dx: number; dy: number } | null>(null);
+  let gfxDrag = $state<{ id: string; at: { x: number; y: number }; sx: number; sy: number; dx: number; dy: number; moved: boolean } | null>(null);
+  const gfxDropped = new Dropped<{ id: string; x0: number; y0: number; dx: number; dy: number }>();
   const gfxStill = (id: string) => {
     const g = board?.graphics?.find((x) => x.id === id);
-    return !!g && !!gfxDropped && Math.abs(g.bounds[0] - gfxDropped.x0) < 1e-6 && Math.abs(g.bounds[1] - gfxDropped.y0) < 1e-6;
+    const d = gfxDropped.value;
+    return !!g && !!d && Math.abs(g.bounds[0] - d.x0) < 1e-6 && Math.abs(g.bounds[1] - d.y0) < 1e-6;
   };
   $effect(() => {
-    if (gfxDropped && !gfxStill(gfxDropped.id)) gfxDropped = null;
+    if (gfxDropped.value && !gfxStill(gfxDropped.value.id)) gfxDropped.clear();
   });
-  const gfxOffset = (id: string) => (gfxDrag?.id === id ? gfxDrag : gfxDropped?.id === id && gfxStill(id) ? gfxDropped : null);
+  const gfxOffset = (id: string) => (gfxDrag?.id === id ? gfxDrag : gfxDropped.value?.id === id && gfxStill(id) ? gfxDropped.value : null);
 
-  /** A closed polygon (flat x, y list) as SVG path data. */
-  const polyPath = (pts: number[]) => pts.reduce((d, v, i) => (i % 2 ? `${d} ${v}` : `${d}${i ? ' L' : 'M'} ${v}`), '') + ' Z';
-  /** A flat x, y list as SVG points. */
-  const points = (pts: number[]) => pts.reduce((d, v, i) => (i % 2 ? `${d},${v}` : `${d}${i ? ' ' : ''}${v}`), '');
   /** The board outline (rounded corners) and its milled cutouts. */
   const outlinePath = $derived(board ? polyPath(boardPolygon(board.shape ? board : { ...board, cornerRadius: board.cornerRadius || 0.5 })) : '');
   const cutoutPaths = $derived(board ? board.cutouts.map((c) => polyPath(cutoutPolygon(c))) : []);
@@ -64,40 +62,36 @@
   /** The Dimensions layer: the board's size and its mounting holes' positions and diameters. */
   const dimensions = $derived(board ? boardDimensions(board) : null);
 
-  /** Part being dragged: offset in mm, snapped to 0.1 mm. */
-  let partDrag = $state<{ ref: string; sx: number; sy: number; dx: number; dy: number; moved: boolean } | null>(null);
+  /** Part being dragged: offset in mm, snapped to 0.1 mm, from when the press has become a drag (`at`: where it began on screen). */
+  let partDrag = $state<{ ref: string; at: { x: number; y: number }; sx: number; sy: number; dx: number; dy: number; moved: boolean } | null>(null);
   const snap = (v: number) => Math.round(v * 10) / 10;
   /**
    * A part just dropped: shown where it was dropped until a board arrives in which it has moved
-   * (the edit and the placement take a moment, and boards computed before the edit may still
-   * come in; without this it would flash back to its old place meanwhile). If it never moves
-   * (the edit was refused), it goes back after a while.
+   * (boards computed before the edit may still come in).
    */
-  let dropped = $state<{ ref: string; fromX: number; fromY: number; dx: number; dy: number } | null>(null);
-  let droppedTimer: ReturnType<typeof setTimeout> | undefined;
+  const dropped = new Dropped<{ ref: string; fromX: number; fromY: number; dx: number; dy: number }>();
   const stillAtOld = (ref: string) => {
     const p = board?.parts.find((x) => x.refdes === ref);
-    return !!p && !!dropped && Math.abs(p.x - dropped.fromX) < 1e-6 && Math.abs(p.y - dropped.fromY) < 1e-6;
+    const d = dropped.value;
+    return !!p && !!d && Math.abs(p.x - d.fromX) < 1e-6 && Math.abs(p.y - d.fromY) < 1e-6;
   };
   $effect(() => {
     // the part has moved in the board: the drop is done
-    if (dropped && !stillAtOld(dropped.ref)) dropped = null;
+    if (dropped.value && !stillAtOld(dropped.value.ref)) dropped.clear();
   });
-  const offset = (ref: string) => (partDrag?.ref === ref ? partDrag : dropped?.ref === ref && stillAtOld(ref) ? dropped : null);
+  const offset = (ref: string) => (partDrag?.ref === ref ? partDrag : dropped.value?.ref === ref && stillAtOld(ref) ? dropped.value : null);
 
-  let svg: SVGSVGElement | undefined = $state();
-  let vb = $state({ x: -2, y: -2, w: 40, h: 30 });
+  const view = new SvgView({ x: -2, y: -2, w: 40, h: 30 }, 2, 2000, viewMoved);
   let cw = $state(0);
   let ch = $state(0);
   /** One screen pixel in mm, so markers keep their size at any zoom. */
-  const px = $derived(cw && ch ? 1 / Math.min(cw / vb.w, ch / vb.h) : vb.w / 800);
+  const px = $derived(cw && ch ? 1 / Math.min(cw / view.vb.w, ch / view.vb.h) : view.vb.w / 800);
   /** How a part got where it is: the placer's, the user's choice, the agent's, or locked. */
   const stateOf = (p: BoardView['parts'][number]) => (p.locked ? 'locked' : p.intent ? (p.by === 'agent' ? 'agent' : 'choice') : 'free');
   const markTitle = (p: BoardView['parts'][number]) =>
     `${p.locked ? `Locked here${p.by === 'agent' ? ' by the agent' : ''}` : p.by === 'agent' ? 'Placed by the agent' : 'Your placement'}${!p.locked && p.intent?.anchor ? `, kept relative to ${p.intent.anchor}` : ''}`;
   const centreOf = (ref: string) => board?.parts.find((x) => x.refdes === ref);
   let fittedFor = '';
-  let userMoved = false;
   /**
    * Zooming or panning: pours are drawn from their cells instead of their exact (masked) shape
    * until the view rests. A mask is drawn again on every frame, which WebKit (Safari) makes slow.
@@ -113,54 +107,33 @@
   $effect(() => {
     if (!board) return;
     const key = `${board.outline.w}x${board.outline.h}`;
-    if (key !== fittedFor && !userMoved) {
+    if (key !== fittedFor && !view.userMoved) {
       fittedFor = key;
       // room around the board for the dimensions (shown or not, so turning them on does not move the view)
       const m = Math.max(Math.max(board.outline.w, board.outline.h) * 0.08 + 2, (dimensions?.extent ?? 0) + 1);
-      vb = { x: -m, y: -m, w: board.outline.w + 2 * m, h: board.outline.h + 2 * m };
+      view.vb = { x: -m, y: -m, w: board.outline.w + 2 * m, h: board.outline.h + 2 * m };
     }
   });
 
   /** The area shown (for the 3D view to start from): centre and visible height, mm. */
   export function getView(): TopView {
-    const r = svg?.getBoundingClientRect();
-    const aspect = r && r.height > 0 ? r.width / r.height : vb.w / vb.h;
+    const { vb } = view;
+    const aspect = view.aspect();
     // the view box is fitted into the element ("meet"): the visible height is the view box's, or more
     const visH = aspect > vb.w / vb.h ? vb.h : vb.w / aspect;
     return { cx: vb.x + vb.w / 2, cy: vb.y + vb.h / 2, visH };
   }
   /** The area on screen, in board coordinates (mm). */
   export function getVisibleRect(): { x: number; y: number; w: number; h: number } | null {
-    const r = svg?.getBoundingClientRect();
-    if (!r || r.width <= 0 || r.height <= 0) return null;
-    const aspect = r.width / r.height;
-    const w = aspect > vb.w / vb.h ? vb.h * aspect : vb.w;
-    const h = aspect > vb.w / vb.h ? vb.h : vb.w / aspect;
-    return { x: vb.x + vb.w / 2 - w / 2, y: vb.y + vb.h / 2 - h / 2, w, h };
+    return view.visibleRect();
   }
   /** Show this area (coming back from the 3D view). */
   export function setView(v: TopView) {
-    const r = svg?.getBoundingClientRect();
-    const aspect = r && r.height > 0 ? r.width / r.height : vb.w / vb.h;
-    vb = { x: v.cx - (v.visH * aspect) / 2, y: v.cy - v.visH / 2, w: v.visH * aspect, h: v.visH };
-    userMoved = true;
+    const aspect = view.aspect();
+    view.vb = { x: v.cx - (v.visH * aspect) / 2, y: v.cy - v.visH / 2, w: v.visH * aspect, h: v.visH };
+    view.userMoved = true;
   }
 
-  function toSvg(e: { clientX: number; clientY: number }) {
-    const m = svg!.getScreenCTM()!.inverse();
-    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m);
-    return { x: p.x, y: p.y };
-  }
-  function onwheel(e: WheelEvent) {
-    e.preventDefault();
-    const p = toSvg(e);
-    const f = Math.exp(Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 60) * 0.004);
-    const w = Math.min(Math.max(vb.w * f, 2), 2000);
-    const k = w / vb.w;
-    vb = { x: p.x - (p.x - vb.x) * k, y: p.y - (p.y - vb.y) * k, w, h: vb.h * k };
-    userMoved = true;
-    viewMoved();
-  }
   /** Bottom-side parts are drawn first, so the top side lies over them. */
   const partsInOrder = $derived(board ? [...board.parts.filter((p) => p.side === 'bottom'), ...board.parts.filter((p) => p.side !== 'bottom')] : []);
   /**
@@ -172,81 +145,61 @@
       const c = board?.parts.find((p) => p.refdes === ref)?.courtyard;
       return c ? c.w * c.h : Infinity;
     };
-    const refs = document.elementsFromPoint(e.clientX, e.clientY).flatMap((el) => (svg?.contains(el) ? [el.closest('[data-ref]')?.getAttribute('data-ref')] : [])).filter((r): r is string => !!r);
+    const refs = document.elementsFromPoint(e.clientX, e.clientY).flatMap((el) => (view.svg?.contains(el) ? [el.closest('[data-ref]')?.getAttribute('data-ref')] : [])).filter((r): r is string => !!r);
     if (!refs.length) return (e.target as Element).closest('[data-ref]')?.getAttribute('data-ref') ?? null;
     return refs.reduce((a, r) => (area(r) < area(a) ? r : a));
   }
-  let drag: { x: number; y: number; vx: number; vy: number; moved: boolean; ref: string | null } | null = null;
+  let drag: (Pan & { ref: string | null }) | null = null;
   function onpointerdown(e: PointerEvent) {
     if (e.button !== 0 && e.button !== 1) return;
     const at = e.button === 0 ? refAt(e) : null;
     const ref = onplace ? at : null;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     if (ref) {
-      const p = toSvg(e);
-      partDrag = { ref, sx: p.x, sy: p.y, dx: 0, dy: 0, moved: false };
+      const p = view.toSvg(e);
+      partDrag = { ref, at: { x: e.clientX, y: e.clientY }, sx: p.x, sy: p.y, dx: 0, dy: 0, moved: false };
       return;
     }
     const gfx = e.button === 0 && ongraphic ? (e.target as Element).closest('[data-gfx]')?.getAttribute('data-gfx') : null;
     if (gfx) {
-      const p = toSvg(e);
-      gfxDrag = { id: gfx, sx: p.x, sy: p.y, dx: 0, dy: 0, moved: false };
+      const p = view.toSvg(e);
+      gfxDrag = { id: gfx, at: { x: e.clientX, y: e.clientY }, sx: p.x, sy: p.y, dx: 0, dy: 0, moved: false };
       return;
     }
-    drag = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y, moved: false, ref: at };
+    drag = { ...view.panStart(e), ref: at };
   }
   function onpointermove(e: PointerEvent) {
-    if (gfxDrag) {
-      const p = toSvg(e);
-      gfxDrag.dx = snap(p.x - gfxDrag.sx);
-      gfxDrag.dy = snap(p.y - gfxDrag.sy);
-      if (Math.abs(gfxDrag.dx) + Math.abs(gfxDrag.dy) >= 0.2) gfxDrag.moved = true;
+    // (a click's wobble is no drag, whatever the zoom: a pixel can be more than the grid)
+    const held = gfxDrag ?? partDrag;
+    if (held) {
+      if (pastDrag(held.at, e)) held.moved = true;
+      if (held.moved) {
+        const p = view.toSvg(e);
+        held.dx = snap(p.x - held.sx);
+        held.dy = snap(p.y - held.sy);
+      }
       return;
     }
-    if (partDrag) {
-      const p = toSvg(e);
-      const dx = snap(p.x - partDrag.sx);
-      const dy = snap(p.y - partDrag.sy);
-      if (Math.abs(dx) + Math.abs(dy) >= 0.2) partDrag.moved = true;
-      partDrag.dx = dx;
-      partDrag.dy = dy;
-      return;
-    }
-    if (!drag || !svg) {
+    if (!drag || !view.svg) {
       const net = (e.target as Element).closest('[data-net]')?.getAttribute('data-net') ?? null;
       onhovernet?.(net);
       return;
     }
-    const dx = e.clientX - drag.x;
-    const dy = e.clientY - drag.y;
-    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = userMoved = true;
-    const r = svg.getBoundingClientRect();
-    const s = Math.max(vb.w / r.width, vb.h / r.height);
-    vb = { ...vb, x: drag.vx - dx * s, y: drag.vy - dy * s };
-    viewMoved();
+    view.panTo(drag, e);
   }
   function onpointerup(e: PointerEvent) {
     if (gfxDrag) {
       const d = gfxDrag;
       gfxDrag = null;
       const g = board?.graphics?.find((x) => x.id === d.id);
-      if (d.moved && g) {
-        gfxDropped = { id: d.id, x0: g.bounds[0], y0: g.bounds[1], dx: d.dx, dy: d.dy };
-        setTimeout(() => gfxDropped?.id === d.id && (gfxDropped = null), 5000);
-        ongraphic?.(d.id, d.dx, d.dy);
-      }
+      if (d.moved && (d.dx || d.dy) && g) gfxDropped.show({ id: d.id, x0: g.bounds[0], y0: g.bounds[1], dx: d.dx, dy: d.dy }, ongraphic?.(d.id, d.dx, d.dy));
       return;
     }
     if (partDrag) {
       const d = partDrag;
       partDrag = null;
       const part = board?.parts.find((p) => p.refdes === d.ref);
-      if (d.moved && part && board) {
-        dropped = { ref: d.ref, fromX: part.x, fromY: part.y, dx: d.dx, dy: d.dy };
-        clearTimeout(droppedTimer);
-        droppedTimer = setTimeout(() => (dropped = null), 5000);
-        onplace?.(d.ref, Math.round((part.x + d.dx) * 1000) / 1000, Math.round((part.y + d.dy) * 1000) / 1000);
-      }
+      if (d.moved && (d.dx || d.dy) && part && board) dropped.show({ ref: d.ref, fromX: part.x, fromY: part.y, dx: d.dx, dy: d.dy }, onplace?.(d.ref, Math.round((part.x + d.dx) * 1000) / 1000, Math.round((part.y + d.dy) * 1000) / 1000));
       else onselect?.(d.ref, e.shiftKey || e.metaKey || e.ctrlKey);
       return;
     }
@@ -258,13 +211,14 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    if (!plainKey(e)) return;
     if ((e.key === 'r' || e.key === 'R') && selection.length === 1 && onplace) {
       const part = board?.parts.find((p) => p.refdes === selection[0]);
       if (!part) return;
       e.preventDefault();
-      onplace(part.refdes, part.x, part.y, (part.rot + 90) % 360);
+      void onplace(part.refdes, part.x, part.y, (part.rot + 90) % 360);
     }
-    if ((e.key === 'f' || e.key === 'F') && selection.length === 1 && onflip && !e.metaKey && !e.ctrlKey) {
+    if ((e.key === 'f' || e.key === 'F') && selection.length === 1 && onflip) {
       e.preventDefault();
       onflip(selection[0]!);
     }
@@ -279,14 +233,8 @@
   const order: CopperLayer[] = ['B.Cu', 'In2.Cu', 'In1.Cu', 'F.Cu'];
   const anyCopper = $derived(order.some((l) => show[l]));
   const tracksOn = (l: CopperLayer) => board?.tracks.filter((t) => t.layer === l) ?? [];
-  const zonePath = (r: number[]) => {
-    let d = '';
-    for (let i = 0; i + 3 < r.length; i += 4) d += `M${r[i]},${r[i + 1]}h${r[i + 2]}v${r[i + 3]}h${-r[i + 2]!}z`;
-    return d;
-  };
   /** Each pour's cells as one path (thousands of them: built once per board, not on every frame). */
   const zonePaths = $derived(new Map(board?.zones.map((z) => [z, zonePath(z.rects)])));
-  const path = (pts: number[]) => pts.reduce((s, v, i) => s + (i % 2 ? `,${v}` : `${i ? ' L' : 'M'}${v}`), '');
   /** Drawn copper's id (t3, v1): shown on hover, so the user can name it to the agent. */
   const copperId = (x: object) => (x as { id?: string }).id;
 </script>
@@ -294,16 +242,16 @@
 <!-- an interactive canvas: pointer and keyboard (R = rotate, L = lock, F = flip) are the point -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <svg
-  bind:this={svg}
+  bind:this={view.svg}
   bind:clientWidth={cw}
   bind:clientHeight={ch}
   class="board"
   class:placing={show.placement}
-  viewBox="{vb.x} {vb.y} {vb.w} {vb.h}"
+  viewBox="{view.vb.x} {view.vb.y} {view.vb.w} {view.vb.h}"
   preserveAspectRatio="xMidYMid meet"
   role="application"
   aria-label="Board layout"
-  {onwheel}
+  onwheel={view.onwheel}
   {onpointerdown}
   {onpointermove}
   {onpointerup}

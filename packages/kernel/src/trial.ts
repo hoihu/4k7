@@ -8,7 +8,7 @@
  * agent applies the winner.
  */
 import type { BoardView, Design, PartPlacement, SchematicView } from '@4k7/schema';
-import { proposePlacement } from './apply.ts';
+import { proposePlacement } from './boardops.ts';
 import { layoutBoard, placeBoard } from './board.ts';
 import { routability } from './congestion.ts';
 import { exploreMain } from './refine.ts';
@@ -125,7 +125,8 @@ export function tryPlacements(d: Design, sch: SchematicView, candidates: TrialCa
       if (e instanceof RejectError) return { option: i + 1, name, error: e.rejection.message };
       throw e;
     }
-    const b = route ? layoutBoard(work, sch, { route: true, budgetMs }) : placeBoard(work, sch);
+    const placed = placeBoard(work, sch);
+    const b = route ? layoutBoard(work, placed, { route: true, budgetMs }) : placed;
     // the board fitted round the arrangement may move it over as a whole; beyond that, the main
     // parts the placer had to move away from where they were asked to go (an overlap, the edge)
     const at = c.parts.flatMap((p) => {

@@ -14,6 +14,8 @@ export interface Diagnostic {
   message: string;
   /** Entity references: "U1", "U1.BOOT", "net:+3V3", or a constraint id. */
   entities: string[];
+  /** On the board: where to look (mm). */
+  at?: { x: number; y: number };
   /** Ops that would resolve the problem, when the kernel can tell. */
   fixHints?: EditOp[];
   /** Datasheet / library reference backing the check. */
@@ -27,6 +29,17 @@ export interface DiagnosticCounts {
   warnings: number;
   infos: number;
   waived: number;
+}
+
+export function countDiagnostics(ds: Diagnostic[]): DiagnosticCounts {
+  const c: DiagnosticCounts = { errors: 0, warnings: 0, infos: 0, waived: 0 };
+  for (const x of ds) {
+    if (x.waivedBy) c.waived++;
+    else if (x.severity === 'error') c.errors++;
+    else if (x.severity === 'warning') c.warnings++;
+    else c.infos++;
+  }
+  return c;
 }
 
 /* ------------------------------ transactions ------------------------------ */

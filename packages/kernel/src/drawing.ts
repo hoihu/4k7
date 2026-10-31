@@ -9,32 +9,25 @@
  */
 import { DEFAULT_PAPER, PAGE, paperOf, type BlockView, type Component, type Design, type DrawnSymbol, type LabelView, type PageView, type PartCard, type PinView, type QuarterTurn, type Rect, type SchematicView, type SheetDrawing, type SheetView, type SymbolSpec, type SymbolView, type WireView } from '@4k7/schema';
 import { GRID, isTwoPin, specMirrors, symbolFor, symbolFromSpec, unitCount, uprightSymbol } from '@4k7/parts';
+import { drawingInputs, Memo } from './derive.ts';
 import { cardOf, componentsSorted, natCmp, nextId } from './doc.ts';
+import { grow, onSegment, overlap, reversePts } from './geom.ts';
 import { PAGE_GAP, blockAssignment, drawnWith, evaluateConstraints, layoutSheetOf, pageName, pagesBBox, symbolKey } from './layout.ts';
 import { FRAME_PAD, frameAround, pieces } from './blocks.ts';
 import { behindPart, cleanWires } from './wireclean.ts';
-import { addJunctions, crowding, deco, labelForPin, labelRect, leadEnd, makeSymbol, rotateSymbol, symbolMaking, textRect, type Dir, type Scene } from './scene.ts';
+import { addJunctions, crowding, deco, type Dir, drawingArea, labelForPin, labelRect, makeSymbol, rotateSymbol, type Scene, symbolMaking, textRect } from './scene.ts';
 
 /* ---------------------------------- view ----------------------------------- */
 
-/** The schematic as the canvas shows it: each sheet's stored drawing, or the auto-layout's. */
-export function schematicView(d: Design): SchematicView {
-  const sheets = Object.values(d.sheets).sort((a, b) => a.order - b.order);
-  const views = sheets.map((s) => {
-    const sd = d.drawing?.[s.id];
-    return sd ? renderSheet(d, s.id, s.name, sd) : layoutSheetOf(d, s.id);
-  });
-  // pages are numbered through the whole design, as on a printout
-  let n = 0;
-  for (const v of views) for (const p of v.pages) p.number = ++n;
-  const { status, why } = evaluateConstraints(d, views);
-  for (const k of Object.values(d.ledger)) {
-    if (status[k.id] !== 'violated' || !['left_of', 'right_of', 'above', 'below'].includes(k.kind)) continue;
-    const sheet = d.components[k.a ?? '']?.sheet;
-    if (sheet && d.drawing?.[sheet]) why[k.id] = `sheet ${d.sheets[sheet]!.name} is drawn as arranged, and an order only guides the auto-layout: move the part with place_symbol, or let the layout redraw the sheet with auto_draw`;
-  }
-  // what the app's R and F keys and get_schematic need to know: a two-pin part turns, and which way round each symbol is
-  for (const v of views) {
+/** Sheets as drawn, by what they are drawn from: an edit changes one sheet or none. */
+const drawnSheets = new Memo<SheetView>('sheet', 24);
+
+/** A sheet as drawn: its stored drawing, or the auto-layout's. Pages numbered within the sheet. */
+function sheetOf(d: Design, s: Design['sheets'][string], inputs: string): SheetView {
+  const sd = d.drawing?.[s.id];
+  return drawnSheets.get(`${inputs}|${s.id}|${sd ? JSON.stringify(sd) : ''}`, () => {
+    const v = sd ? renderSheet(d, s.id, s.name, sd) : layoutSheetOf(d, s.id);
+    // what the app's R and F keys and get_schematic need to know: a two-pin part turns, and which way round each symbol is
     for (const sym of v.symbols) {
       const card = cardOf(d, d.components[sym.componentId]?.part ?? '');
       const spec = symbolMaking(sym)?.spec;
@@ -42,6 +35,24 @@ export function schematicView(d: Design): SchematicView {
       if (card && spec && isMirrored(card, spec, sym.rotation)) sym.mirrored = true;
       if (spec?.rotated) sym.rotated = spec.rotated;
     }
+    return v;
+  });
+}
+
+/** The schematic as the canvas shows it. Shared with whoever else asks (derive.ts): read it, and take a copy to write into it. */
+export function viewOf(d: Design): SchematicView {
+  const inputs = drawingInputs(d);
+  // pages are numbered through the whole design, as on a printout
+  let n = 0;
+  const views = Object.values(d.sheets)
+    .sort((a, b) => a.order - b.order)
+    .map((s) => sheetOf(d, s, inputs))
+    .map((v) => ({ ...v, pages: v.pages.map((p) => ({ ...p, number: ++n })) }));
+  const { status, why } = evaluateConstraints(d, views);
+  for (const k of Object.values(d.ledger)) {
+    if (status[k.id] !== 'violated' || !['left_of', 'right_of', 'above', 'below'].includes(k.kind)) continue;
+    const sheet = d.components[k.a ?? '']?.sheet;
+    if (sheet && d.drawing?.[sheet]) why[k.id] = `sheet ${d.sheets[sheet]!.name} is drawn as arranged, and an order only guides the auto-layout: move the part with place_symbol, or let the layout redraw the sheet with auto_draw`;
   }
   return { paper: d.paper ?? DEFAULT_PAPER, sheets: views, constraintStatus: status, ...(Object.keys(why).length ? { constraintWhy: why } : {}) };
 }
@@ -176,14 +187,8 @@ export const pinsOf = (d: Design, symbols: SymbolView[]): PinAt[] =>
     return s.pins.map((pin) => ({ sym: i, pin, comp, net: comp.pins[pin.number] ?? null }));
   });
 
-/** Whether (x, y) lies on the segment, ends included. */
-function onSeg(x: number, y: number, x1: number, y1: number, x2: number, y2: number): boolean {
-  if (x < Math.min(x1, x2) || x > Math.max(x1, x2) || y < Math.min(y1, y2) || y > Math.max(y1, y2)) return false;
-  return (x2 - x1) * (y - y1) === (y2 - y1) * (x - x1);
-}
-
 export function onWire(x: number, y: number, pts: number[]): boolean {
-  for (let i = 0; i + 3 < pts.length; i += 2) if (onSeg(x, y, pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!)) return true;
+  for (let i = 0; i + 3 < pts.length; i += 2) if (onSegment(x, y, pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!)) return true;
   return pts.length === 2 && pts[0] === x && pts[1] === y;
 }
 
@@ -416,7 +421,29 @@ export function syncDrawing(d: Design): void {
   if (!Object.keys(d.drawing).length) delete d.drawing;
 }
 
+/**
+ * What a sync makes of a sheet, by what the sheet is drawn from: its text, or null when it stays as
+ * it is. An edit asks for a sync many times, mostly with nothing to do. (Not "what a sync left is in
+ * step": a second sync can still straighten a wire the first left with a jog.)
+ */
+const synced = new Memo<string | false>('synced sheet', 16);
+
+/** Keep a stored drawing in step with the netlist. In place: callers hold on to the sheet's drawing. */
 export function syncSheet(d: Design, sheetId: string): void {
+  const sd = d.drawing![sheetId]!;
+  const before = JSON.stringify(sd);
+  const key = `${drawingInputs(d)}|${sheetId}|${before}`;
+  let worked = false;
+  const after = synced.get(key, () => {
+    worked = true;
+    bringInStep(d, sheetId);
+    const text = JSON.stringify(sd);
+    return text !== before && text;
+  });
+  if (!worked && after) Object.assign(sd, JSON.parse(after));
+}
+
+function bringInStep(d: Design, sheetId: string): void {
   const sd = d.drawing![sheetId]!;
   const comps = componentsSorted(d).filter((c) => c.sheet === sheetId && cardOf(d, c.part));
   // symbols: a component that is gone, on another sheet, drawn from another card or with other units leaves
@@ -537,11 +564,11 @@ function pruneLoose(sd: SheetDrawing, pins: PinAt[]): boolean {
   const stopOn = (wi: number, ax: number, ay: number, bx: number, by: number): [number, number] | undefined => {
     const w = sd.wires[wi]!;
     const cand: [number, number][] = [];
-    for (const p of pins) if (onSeg(p.pin.x, p.pin.y, ax, ay, bx, by)) cand.push([p.pin.x, p.pin.y]);
-    for (const l of sd.labels) if (onSeg(l.x, l.y, ax, ay, bx, by)) cand.push([l.x, l.y]);
+    for (const p of pins) if (onSegment(p.pin.x, p.pin.y, ax, ay, bx, by)) cand.push([p.pin.x, p.pin.y]);
+    for (const l of sd.labels) if (onSegment(l.x, l.y, ax, ay, bx, by)) cand.push([l.x, l.y]);
     sd.wires.forEach((o, j) => {
       if (j === wi || o.netId !== w.netId) return;
-      for (const [x, y] of ends(o)) if (onSeg(x, y, ax, ay, bx, by)) cand.push([x, y]);
+      for (const [x, y] of ends(o)) if (onSegment(x, y, ax, ay, bx, by)) cand.push([x, y]);
     });
     const far = cand.filter(([x, y]) => x !== ax || y !== ay);
     far.sort((p, q) => Math.abs(p[0] - bx) + Math.abs(p[1] - by) - (Math.abs(q[0] - bx) + Math.abs(q[1] - by)));
@@ -569,12 +596,6 @@ function pruneLoose(sd: SheetDrawing, pins: PinAt[]): boolean {
   const before = sd.wires.length;
   sd.wires = sd.wires.filter((w) => w.pts.length >= 4 && (w.pts[0] !== w.pts.at(-2) || w.pts[1] !== w.pts.at(-1) || w.pts.length > 4));
   return changed || sd.wires.length !== before;
-}
-
-function reversePts(pts: number[]): number[] {
-  const out: number[] = [];
-  for (let i = pts.length - 2; i >= 0; i -= 2) out.push(pts[i]!, pts[i + 1]!);
-  return out;
 }
 
 /* ------------------------------- new parts --------------------------------- */
@@ -647,7 +668,7 @@ function freeSpot(d: Design, sd: SheetDrawing, bb: Rect): { dx: number; dy: numb
     for (let dy = dy0; bb.y + dy + bb.h <= area.y + area.h; dy += GRID) {
       for (let dx = dx0; bb.x + dx + bb.w <= area.x + area.w; dx += GRID) {
         const r = { x: bb.x + dx, y: bb.y + dy, w: bb.w, h: bb.h };
-        if (!taken.some((t) => hits(t, r))) return { dx, dy };
+        if (!taken.some((t) => overlap(t, r))) return { dx, dy };
       }
     }
   }
@@ -675,18 +696,15 @@ function freeSpotNear(d: Design, sd: SheetDrawing, bb: Rect, near: Rect): { dx: 
       const r = { x: bb.x + dx, y: bb.y + dy, w: bb.w, h: bb.h };
       const g = gapTo(r);
       if (best && g >= best.gap) continue;
-      if (!taken.some((t) => hits(t, r))) best = { dx, dy, gap: g };
+      if (!taken.some((t) => overlap(t, r))) best = { dx, dy, gap: g };
     }
   }
   return best && { dx: best.dx, dy: best.dy };
 }
 
 const grid = (v: number) => Math.ceil(v / GRID) * GRID;
-export const drawingArea = (p: Rect): Rect => ({ x: p.x + PAGE.margin, y: p.y + PAGE.margin, w: p.w - 2 * PAGE.margin, h: p.h - 2 * PAGE.margin - PAGE.title });
 const centre = (r: Rect) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
 const inside = (r: Rect, p: { x: number; y: number }) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
-const hits = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-const grow = (r: Rect, m: number): Rect => ({ x: r.x - m, y: r.y - m, w: r.w + 2 * m, h: r.h + 2 * m });
 
 /** The boxes what is drawn takes: symbols with their text, labels, wires. */
 function boxes(d: Design, sd: Pick<SheetDrawing, 'symbols' | 'wires' | 'labels'>): Rect[] {
@@ -897,7 +915,7 @@ export function moveSymbol(d: Design, sheetId: string, comp: Component, unit: st
   // (a wire one of its pins lands on is gone: that pin is on another net, and labels show the connection)
   const round = landedOn.filter((n) => !behind.has(n) && sd.wires.some((w) => w.netId === n));
   const moved = sd.symbols.find((s) => s.comp === comp.id && (s.unit ?? undefined) === unit)!;
-  const under = sd.symbols.find((s) => s !== moved && hits(s.bbox, moved.bbox));
+  const under = sd.symbols.find((s) => s !== moved && overlap(s.bbox, moved.bbox));
   const at = centre(moved.bbox);
   const pg = sd.pages[pageAt(sd.pages, at)]!;
   return { x: Math.round(at.x - pg.x), y: Math.round(at.y - pg.y), relooked: !!relook, pins: pinSides(symbolOf(d, moved)!), ...(under ? { under: `${d.components[under.comp]!.refdes}${under.unit ?? ''}` } : {}), round: names(round), behind: names([...behind]) };
@@ -1009,7 +1027,7 @@ export function redrawBlock(d: Design, sheetId: string, title: string, page: num
   sd.labels.push(...frozen.labels);
   syncSheet(d, sheetId);
   const area = { ...frame, x: frame.x + dx, y: frame.y + dy };
-  const under = sd.symbols.find((s) => !ids.has(s.comp) && hits(s.bbox, area));
+  const under = sd.symbols.find((s) => !ids.has(s.comp) && overlap(s.bbox, area));
   const pg = sd.pages[pageAt(sd.pages, centre(area))]!;
   return { x: Math.round(area.x + area.w / 2 - pg.x), y: Math.round(area.y + area.h / 2 - pg.y), frame: area, page: pg, ...(under ? { under: `${d.components[under.comp]!.refdes}${under.unit ?? ''}` } : {}) };
 }

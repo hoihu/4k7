@@ -6,7 +6,8 @@
  * as a minus. Each is placed clear of copper, holes, the board edge and the other marks, and nearer
  * its own pad than any other part's; DRC.SILK_POLARITY says when there was no room.
  */
-import { bodyOutline, cutoutDistance, insideBoard, padPins, roundPadDist, type BoardDiagnostic, type BoardPad, type BoardPart, type BoardView, type BodyCorner, type PartCard, type PolarityKind, type PolarityMark } from '@4k7/schema';
+import { bodyOutline, cutoutDistance, insideBoard, padPins, roundPadDist, type Diagnostic, type BoardPad, type BoardPart, type BoardView, type BodyCorner, type PartCard, type PolarityKind, type PolarityMark } from '@4k7/schema';
+import { pointSegDist } from './geom.ts';
 
 export interface Polarity {
   kind: PolarityKind;
@@ -138,13 +139,7 @@ class Grid {
 }
 
 const rectDist = (p: { x: number; y: number; w: number; h: number }, x: number, y: number) => Math.hypot(Math.max(Math.abs(x - p.x) - p.w / 2, 0), Math.max(Math.abs(y - p.y) - p.h / 2, 0));
-const segDist = (s: Seg, x: number, y: number) => {
-  const dx = s.x1 - s.x0;
-  const dy = s.y1 - s.y0;
-  const l2 = dx * dx + dy * dy;
-  const t = l2 ? Math.max(0, Math.min(1, ((x - s.x0) * dx + (y - s.y0) * dy) / l2)) : 0;
-  return Math.hypot(x - (s.x0 + t * dx), y - (s.y0 + t * dy));
-};
+const segDist = (s: Seg, x: number, y: number) => pointSegDist(x, y, s.x0, s.y0, s.x1, s.y1);
 
 /** Points along a shape's ink with the ink's half width there. */
 function samples(s: Shape): { x: number; y: number; r: number }[] {
@@ -274,7 +269,7 @@ const MARK_NAME: Record<PolarityKind, string> = { pin1: 'pin-1 dot', cathode: 'c
  * bigger size first. Returns the parts with their marks and a DRC.SILK_POLARITY warning for each
  * part that got none.
  */
-export function placeMarks(view: BoardView): { parts: BoardPart[]; diagnostics: BoardDiagnostic[] } {
+export function placeMarks(view: BoardView): { parts: BoardPart[]; diagnostics: Diagnostic[] } {
   const grids = { top: new Grid(), bottom: new Grid() };
   for (const side of ['top', 'bottom'] as const) {
     const g = grids[side];
@@ -311,7 +306,7 @@ export function placeMarks(view: BoardView): { parts: BoardPart[]; diagnostics: 
       g.add({ x0: v.x - r, y0: v.y - r, x1: v.x + r, y1: v.y + r, owner: null, pad: false, label: `the via at ${round2(v.x)}, ${round2(v.y)}`, dist: (x, y) => Math.hypot(x - v.x, y - v.y) - r });
     }
   }
-  const diagnostics: BoardDiagnostic[] = [];
+  const diagnostics: Diagnostic[] = [];
   const marks = new Map<string, PolarityMark>();
   const order = view.parts.filter((p) => p.mark).sort((a, b) => a.refdes.localeCompare(b.refdes, 'en', { numeric: true }));
   for (const p of order) {

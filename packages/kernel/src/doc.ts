@@ -1,8 +1,9 @@
 /**
  * Low-level design document helpers: ids, lookups, reference resolution.
  */
-import { paramSpecs, type Component, type Constraint, type Design, type Net, type ParamSpec, type PartCard, type PartPin, type Rejection } from '@4k7/schema';
+import { DEFAULT_BOARD, paramSpecs, type BoardSettings, type Component, type Constraint, type Design, type Net, type ParamSpec, type PartCard, type PartPin, type Rejection } from '@4k7/schema';
 import { SYMBOL_PARAMS, getBuiltinPart, readsParams, seriesPaths } from '@4k7/parts';
+import { sharedData } from './derive.ts';
 
 export class RejectError extends Error {
   constructor(public rejection: Omit<Rejection, 'opIndex'>) {
@@ -16,6 +17,25 @@ export function reject(r: Omit<Rejection, 'opIndex'>): never {
 
 export function clone<T>(v: T): T {
   return structuredClone(v);
+}
+
+/** A copy of board settings. The copper kept with them is shared: thousands of numbers, a cache that is replaced, never changed in place. */
+function copyBoard(board: BoardSettings): BoardSettings {
+  if (!board.copper) return structuredClone(board);
+  const b = structuredClone({ ...board, copper: null }) as unknown as BoardSettings;
+  b.copper = sharedData(board.copper);
+  return b;
+}
+
+/** The board settings to change: a copy, which the op puts in place when it has done. */
+export const boardCopy = (d: Design): BoardSettings => copyBoard(d.board ?? DEFAULT_BOARD);
+
+/** A copy of a design to work on (see copyBoard). */
+export function workCopy(d: Design): Design {
+  if (!d.board?.copper) return structuredClone(d);
+  const work = structuredClone({ ...d, board: null }) as unknown as Design;
+  work.board = copyBoard(d.board);
+  return work;
 }
 
 export function nextId(d: Design, prefix: string): string {
@@ -45,9 +65,11 @@ export function requireCard(d: Design, c: Component): PartCard {
 
 /* -------------------------------- sorting --------------------------------- */
 
-/** Natural sort for reference designators and names: R2 < R10. */
+const NATURAL = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+
+/** Natural sort for reference designators and names: R2 < R10. (One collator: localeCompare with options makes one per call, and this runs tens of thousands of times per edit.) */
 export function natCmp(a: string, b: string): number {
-  return a.localeCompare(b, 'en', { numeric: true, sensitivity: 'base' }) || (a < b ? -1 : a > b ? 1 : 0);
+  return NATURAL.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0);
 }
 
 export function componentsSorted(d: Design): Component[] {
@@ -72,6 +94,25 @@ export function resolveComponent(d: Design, ref: string): Component {
     });
   }
   return c;
+}
+
+/** "U3" or one unit of a split symbol, "U3B". */
+export function resolveUnitRef(d: Design, ref: string): { comp: Component; unit?: string } {
+  const direct = findComponent(d, ref);
+  if (direct) return { comp: direct };
+  const m = /^(.*\d)([A-Z])$/i.exec(ref.trim());
+  const comp = m ? findComponent(d, m[1]!) : undefined;
+  const units = comp ? cardOf(d, comp.part)?.units ?? [] : [];
+  const unit = m ? units.find((u) => u.name === m[2]!.toUpperCase()) : undefined;
+  if (comp && unit) return { comp, unit: unit.name };
+  if (comp) {
+    reject({
+      code: 'REF_UNKNOWN',
+      message: units.length ? `${comp.refdes} has units ${units.map((u) => u.name).join(', ')}, not "${m![2]}".` : `${comp.refdes} is drawn as one symbol; split it first (set_symbol style "units") to place units separately.`,
+      candidates: units.map((u) => `${comp.refdes}${u.name}`),
+    });
+  }
+  return { comp: resolveComponent(d, ref) };
 }
 
 export function allocRefdes(d: Design, prefix: string): string {

@@ -17,8 +17,8 @@ import {
   type OpResult,
   type Stackup,
 } from '@4k7/schema';
-import { settingsPlanes } from './board.ts';
-import { closest, findNet, isGroundNet, natCmp, reject } from './doc.ts';
+import { settingsPlanes } from './placer.ts';
+import { boardCopy, closest, findNet, isGroundNet, natCmp, reject } from './doc.ts';
 import { impedanceText, resolveRule, type LineBoard } from './lines.ts';
 
 /** What working the rules out needs, from the board's settings. */
@@ -46,7 +46,7 @@ function rulesText(d: Design): string {
 const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^-|-$/g, '');
 
 export function setStackup(d: Design, op: Extract<EditOp, { op: 'set_stackup' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const fits = stackupPresets().filter((s) => s.copper.length === b.layers).map((s) => s.id);
   const imported = op.house !== undefined || op.name !== undefined || op.copper_mm !== undefined || op.dielectric !== undefined || op.source_url !== undefined || op.mask !== undefined;
   if ([op.preset !== undefined, op.none === true, imported].filter(Boolean).length !== 1) {
@@ -106,7 +106,7 @@ export function setStackup(d: Design, op: Extract<EditOp, { op: 'set_stackup' }>
 }
 
 export function setImpedance(d: Design, op: Extract<EditOp, { op: 'set_impedance' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const names = Object.values(d.nets).map((n) => n.name);
   const nets = op.nets.map((n) => {
     const net = findNet(d, n);
@@ -173,7 +173,7 @@ export function setImpedance(d: Design, op: Extract<EditOp, { op: 'set_impedance
 }
 
 export function removeImpedance(d: Design, op: Extract<EditOp, { op: 'remove_impedance' }>): OpResult {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   const rules = b.impedance ?? [];
   const name = netName(d);
   if (op.id.toLowerCase() === 'all') {

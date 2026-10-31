@@ -104,9 +104,19 @@
     }
     return o;
   });
-  const counts = $derived(app.k?.counts);
+  // (the board's checks too, once it is laid for the design as it is now)
+  const counts = $derived.by(() => {
+    const [c, b] = [app.k?.counts, app.boardCounts];
+    return c && b ? { errors: c.errors + b.errors, warnings: c.warnings + b.warnings } : c;
+  });
+  const someIn = (c?: { errors: number; warnings: number } | null) => !!c && c.errors + c.warnings > 0;
 
   function openIssues() {
+    if (someIn(app.boardCounts) && (app.view === 'lay' || !someIn(app.k?.counts))) {
+      app.view = 'lay';
+      app.checksOpen = true;
+      return;
+    }
     app.view = 'sch';
     app.tab = 'issues';
     pane = 'insp';
@@ -126,7 +136,7 @@
     </nav>
     <div class="right">
       {#if counts && (counts.errors > 0 || counts.warnings > 0)}
-        <button class="chipbtn" onclick={openIssues} title="Open issues">
+        <button class="chipbtn" onclick={openIssues} title={app.boardCounts ? `Open issues: ${app.k?.counts.errors} errors and ${app.k?.counts.warnings} warnings on the schematic, ${app.boardCounts.errors} and ${app.boardCounts.warnings} on the board` : 'Open issues'}>
           <span class="n e"><i></i>{counts.errors}</span><span class="n w"><i></i>{counts.warnings}</span>
         </button>
       {/if}

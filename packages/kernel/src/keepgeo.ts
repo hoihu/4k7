@@ -4,10 +4,9 @@
  * it without a cycle.
  */
 import { keepoutDistance, roundPadDist, type BoardKeepout, type BoardPad, type BoardPart, type CopperLayer, type KeepoutForbid } from '@4k7/schema';
-import { segSegDist } from './segments.ts';
+import { r3, segSegDist } from './geom.ts';
 
 const EPS = 0.005;
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const outer = (l: CopperLayer) => l === 'F.Cu' || l === 'B.Cu';
 
 /** Distance from a point to a pad's copper (0 inside). */

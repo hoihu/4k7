@@ -31,7 +31,7 @@ Three things from one session, 2026-10-13:
 | Checked by | The measures, the open connections, a picture (`get_board_image`), the DRC | Tests, benches (`packages/kernel/bench/`) |
 
 Placement was already the agent's: a `position` constraint pins a part and the placer never moves
-it (`board.ts`, header). What changes is how it is told to use it (§4), what it can see (§3), and
+it (`placer.ts`, header). What changes is how it is told to use it (§4), what it can see (§3), and
 that routing becomes a job the agent finishes, not a step it triggers (§5). Copper the agent draws
 itself (tracks, rip-up of a net) is the next step (§7, steps 5–6).
 
@@ -776,7 +776,7 @@ per part; top, the default, leaves none; a hard one is not overridden by `place`
 side says. `get_board` says each part's `side` and lists the parts on the bottom (`bottom_side`), so a part
 that is there by accident is seen.
 
-**The footprint** (`mirrored`, `board.ts`): pads, pin 1 and the body's chamfered corners are mirrored about the
+**The footprint** (`mirrored`, `placer.ts`): pads, pin 1 and the body's chamfered corners are mirrored about the
 footprint's vertical axis, then the part is turned clockwise by `rot` as on the top (KiCad's convention: a
 bottom footprint is the mirror image, then turned). Pin numbers stay. SMD pads are on B.Cu; through-hole pads
 on every layer. Courtyard and body are centred, so they do not change. A drop via's spot and a part's keep-out

@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: draft v0.1, 2026-09-25. Name **4k7**.
+> Status: draft v0.1, 2026-09-25; §3.5, §3.8, §3.9 and §4 brought up to what is built on 2026-10-31. Name **4k7**.
 
 ## 1. Goals and non-goals
 
@@ -26,7 +26,7 @@ LLMs are good at **intent** ("decouple each VDD pin with 100 nF placed close to 
 
 ```
   ┌───────────────┐   typed ops (JSON)    ┌──────────────────────────┐
-  │  AI agent     │ ────────────────────▶ │  Design kernel (WASM)    │
+  │  AI agent     │ ────────────────────▶ │  Design kernel           │
   │  (user's LLM) │ ◀──────────────────── │  validate · solve · check│
   └───────────────┘  diffs + diagnostics  └──────────────────────────┘
           ▲                                          │
@@ -51,8 +51,8 @@ always as a **constraint** that the solvers respect, never as raw primitives. On
 ## 3. Principles
 
 ### 3.1 One operation catalogue, many front-ends
-Every capability is defined **once** as a typed operation in `packages/ops-schema` (JSON Schema plus
-docs plus examples). Code generation produces:
+Every capability is defined **once** as a typed operation in `packages/schema` (zod, with the tool
+definitions generated from it). That gives:
 
 - the tool definitions for the in-app agent,
 - the MCP server surface (for external agents through the relay),
@@ -117,8 +117,8 @@ ghost-overlay diff on the canvas, and a diagnostics delta (`+0 errors, −3 warn
 - **Review** (default): each changeset waits for accept/reject. Hunks can be accepted one by one.
 - **Step**: the AI proposes a plan first, and each step needs approval.
 
-The design history is an op log on top of a CRDT document, so undo, branching ("try a 2-layer
-variant"), and comparing branches are cheap.
+The design history is the kernel's undo stack of committed designs, with an entry per commit. Branching
+("try a 2-layer variant") and an op log on top of a CRDT are not built.
 
 ### 3.6 Parts from datasheets, generated deterministically
 The LLM reads the datasheet, but **never draws pads**. It extracts *parameters* (pin table, package
@@ -135,19 +135,20 @@ box) and a confidence score, and is cross-checked. See [part-ingest.md](design/p
 Details: [ai-loop.md](design/ai-loop.md).
 
 ### 3.8 Local-first
-The document is a **CRDT** (Automerge 3 recommended; Yjs as fallback). Projects are files on the
-user's computer, one per project, written by the local server (`tools/server/src/storage.ts`), as are
-part libraries, artwork and datasheets (`~/.4k7`). Settings and API keys live in IndexedDB; keys are
-encrypted with a non-extractable WebCrypto key. Export writes a **canonical, deterministic JSON text** form
-(`*.twd` bundle) that diffs well in git. The same CRDT later gives us real-time collaboration.
+Projects are files on the user's computer, one per project, written by the local server
+(`tools/server/src/storage.ts`) as **canonical, deterministic JSON** (`*.twd.json`) that diffs well in
+git, as are part libraries, artwork and datasheets (`~/.4k7`). Settings and API keys live in IndexedDB;
+keys are encrypted with a non-extractable WebCrypto key. Real-time collaboration (a CRDT underneath) is
+for later.
 The user's schematic notes and check levels live with the settings in IndexedDB, not in the project.
 
 ### 3.9 Quality is measured
-An **agent eval harness** (`evals/`) runs task scripts against golden designs, for example
-"add a USB-C PD sink for 20 V", "fan out this BGA on 6 layers", "import this datasheet". It scores them
-on ERC/DRC cleanliness, constraint satisfaction, part-extraction accuracy, op count and token cost.
-It runs in CI for kernel changes and against each supported model. We publish a model
-compatibility table so users know which BYO models work well.
+The kernel's benches (`packages/kernel/bench`) measure the router, the schematic drawing against a
+baseline, and what an edit costs on a saved design (`edits.ts`, which also snapshots what edits produce,
+to compare two versions of the code). Planned: an **agent eval harness** that runs task scripts against
+golden designs, for example "add a USB-C PD sink for 20 V", "fan out this BGA on 6 layers", "import this
+datasheet", scored on ERC/DRC cleanliness, constraint satisfaction, part-extraction accuracy, op count
+and token cost, with a model compatibility table so users know which BYO models work well.
 
 ## 4. Components
 
@@ -155,56 +156,74 @@ compatibility table so users know which BYO models work well.
 flowchart LR
   subgraph Browser["Browser tab"]
     direction TB
-    UI["apps/web<br/>UI shell · chat · review · settings"]
-    R["Renderer<br/>WebGPU / WebGL2"]
-    AG["packages/agent<br/>agent loop · providers · MCP client"]
-    ING["packages/ingest<br/>pdf.js · extraction · cross-checks"]
-    subgraph W["Web Worker"]
-      K["crates/kernel (WASM)<br/>design graph · ops · ERC/DRC"]
-      L["crates/layout (WASM)<br/>sch auto-layout · placer · router"]
-      PG["crates/partgen (WASM)<br/>symbol · footprint · 3D"]
-    end
+    UI["apps/web<br/>Svelte 5 · chat · review · SVG canvases · three.js"]
+    AG["packages/agent<br/>agent loop · providers"]
+    KW["kernel worker<br/>packages/kernel"]
+    BW["board worker<br/>routing · pours · DRC"]
+    OW["helper, trial, enclosure workers"]
     DB[("IndexedDB<br/>settings · keys")]
   end
   LLM["User's AI provider<br/>(cloud or local)"]
-  MCP["User MCP servers<br/>(HTTP)"]
-  BR["tools/server<br/>(optional local relay)"]
+  BR["tools/server<br/>local server"]
+  FS[("project files<br/>~/Documents/4k7")]
   EXT["External agents<br/>Claude Code, Cursor…"]
 
-  UI <--> K
-  UI --> R
-  K --> R
+  UI <--> KW
+  UI <--> BW
+  UI <--> OW
   UI <--> AG
-  AG <--> K
   AG <--> LLM
-  AG <--> MCP
-  ING --> AG
-  ING --> PG
-  K <--> DB
-  AG <-. WebSocket .-> BR
-  BR <-. stdio MCP .-> MCPL["Local stdio MCP servers"]
+  UI <--> DB
+  UI <-. WebSocket .-> BR
+  BR <--> FS
   EXT <-. MCP .-> BR
 ```
 
-| Component | Language | Responsibility |
-|---|---|---|
-| `crates/kernel` | Rust → WASM | Design graph, op execution and transactions, undo/op log, CRDT binding, ERC/DRC/semantic checks, geometry (polygons, clearance, copper pours), fab output writers |
-| `crates/layout` | Rust → WASM | Schematic auto-layout (functional grouping + layered orthogonal routing), placement solver (constraints + force-directed + simulated annealing), router (topological/push-and-shove, diff-pairs, length tuning), pour/plane generation |
-| `crates/partgen` | Rust → WASM | Parametric generators: IPC-7351 land patterns for common package families, symbol generator, 3D body (STEP/GLB) generator |
-| `packages/ops-schema` | JSON Schema + TS | Single source of truth for ops, results, diagnostics. Codegen for all front-ends |
-| `packages/agent` | TS | Provider adapters, agent loop, verification loop, hint parser, MCP client, recipe runtime, token/cost budget |
-| `packages/ingest` | TS | pdf.js text/image extraction, page classification, prompts for structured extraction, cross-checks, provenance |
-| `apps/web` | TS (SvelteKit or React + Vite) | Workspaces (see [ui.md](design/ui.md)): schematic = chat + canvas + inspector with inline changeset review; layout = full canvas + command bar; parts; settings |
-| Renderer | TS + WGSL | Shared scene graph with layers, instanced primitives, SDF text. Schematic and board views. 3D (three.js) later |
-| `tools/server` | TS (Node/Deno, `npx`) | Local relay: MCP server for external agents, proxy for stdio MCP servers and CORS-blocked providers |
-| `evals/` | TS + Rust | Golden designs, task scripts, scoring, model compatibility report |
+| Component | Responsibility |
+|---|---|
+| `packages/schema` | The design's types, ops, queries and results, with their zod schemas and the agent's guides |
+| `packages/kernel` | Transactions, proposals and undo (`kernel.ts`); the ops by what they change (`apply.ts` hands them to `netops`, `partops`, `sheetops`, `drawops`, `boardops`, `copperops`, `lineops`, `keepout`, `enclosureops`); the schematic's auto-layout and drawing; the placer (`placer.ts`), the router (`router.ts`, a pass in stages: `routegrid`, `routesearch`, `routetracks`, `routepours`, `routedrops`); ERC, DRC and the drawing checks |
+| `packages/parts` | The library: symbols, footprints, 3D bodies, packages, sourcing and costs |
+| `packages/fab` | Gerber, drill, BOM, pick-and-place, STEP, enclosure facts |
+| `packages/agent` | Provider adapters, the agent loop, tools |
+| `apps/web` | The tab: workspaces ([ui.md](design/ui.md)), SVG canvases on one kit (`lib/canvas.svelte.ts`), three.js for 3D |
+| `tools/server` | The local server: serves the app, reads and writes the project files, MCP for external agents, the coding agents the chat runs on |
 
-### Why Rust → WASM for the kernel
-DRC, routing and polygon operations are CPU-heavy and must be exactly right. Rust gives predictable
-performance, strong typing of geometry (integer nanometre units, no float drift), a mature
-computational-geometry ecosystem (`geo`, `i_overlay`, `clipper2` ports, `rstar`), and the same code
-runs natively in CI and in the evals. The kernel runs in a **Web Worker**, so the UI never blocks.
-Multi-threaded routing uses `wasm-bindgen-rayon` (needs cross-origin isolation, COOP/COEP headers).
+### How an edit runs
+
+Both editors are one pipeline: the netlist and the user's intent (the ledger) go through a solver into
+stored geometry, from which a view and the checks are derived.
+
+| | Schematic | Board |
+|---|---|---|
+| Solver | auto-layout, wire path finder (`layout.ts`, `schroute.ts`) | placer, router (`board.ts`, `router.ts`) |
+| Stored | `Design.drawing` | `board.placement`, `board.drawn`, `board.copper` (a cache) |
+| View | `viewOf`, a `SheetView` per sheet | `placedOf`, then `layoutBoard`: a `BoardView` |
+| Checks | ERC, `SCH.*` | `DRC.*`, `IMP.*`, `PANEL.*` |
+
+The solvers stay separate: an orthogonal mil lattice and a 0.1 mm clearance grid at 45° are different
+problems. What is common is how they are driven:
+
+- **An edit works on a copy, which a commit puts in place.** `transact` copies the working design, applies
+  the ops and brings the drawing in step. With nothing pending the working copy *is* the committed design,
+  so committing, undoing and redoing keep what was worked out for it.
+- **What is derived goes through one door** (`derive.ts`): `viewOf` and `placedOf` remember results by the
+  text of their inputs, a key that leaves out only what cannot change the result. What they return is
+  shared and not to be written to. `npm run test:derived` works every remembered result out again and
+  compares, and freezes it, so a key that leaves out too much or a caller that writes into a result fails.
+- **What drawn copper needs after an op is said per op** (`COPPER_AFTER`), so a new op has to say.
+- **One kind of finding** (`Diagnostic`), wherever it comes from.
+- **The board worker lays, the kernel worker places**: the tab shows the placement from the kernel at
+  once and hands it on with the design; the worker does the routing, pours and DRC. Drawn copper with
+  nothing asked of the router runs no search, only the pours and what the copper joins.
+
+### The kernel is TypeScript
+
+The kernel runs in a **Web Worker**, so the UI never blocks. It was planned as Rust compiled to WASM and
+stayed TypeScript: it sits behind an RPC (`apps/web/src/lib/kernel.worker.ts`), and where edits were slow
+(measured 2026-10-31), the time went to working out the same results again and again, not to the speed of
+the language. The canvases are SVG for the same reason: 9,000 nodes pan and zoom at full frame rate.
+Revisit both on designs far larger than the 120-part boards measured.
 
 ## 5. One AI turn, end to end
 
@@ -310,6 +329,6 @@ Next after layout (draft 2026-10-15): **the enclosure**. The agent agrees a brie
 | Datasheet extraction errors (wrong pin → dead board) | Parameters only, two-pass/two-model agreement, provenance, deterministic generators, mandatory human confirm for low-confidence fields, cross-check against distributor data via MCP |
 | Router quality vs. commercial tools | Start with topological/push-and-shove for typical 2–6 layer boards; AI supplies routing *strategy* (order, layers, escape patterns) as constraints; manual waivers for hard cases |
 | Weak BYO models make bad decisions | Kernel refuses invalid ops; semantic ERC; eval-based model compatibility table; recommend model per role |
-| Browser limits (CORS, memory, threads) | Direct-browser APIs where available (Anthropic, OpenAI, Gemini, local servers with CORS on); relay for the rest; WASM64/memory64 when available; chunked geometry |
+| Browser limits (CORS, memory, threads) | Direct-browser APIs where available (Anthropic, OpenAI, Gemini, local servers with CORS on); the local server for the rest |
 | Token cost on large designs | Compact, queryable design context (the agent *queries* the design with ops rather than receiving it all), summaries per sheet, prompt caching |
 | Scope | Strict milestone gates; the eval harness decides "done" |

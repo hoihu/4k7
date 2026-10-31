@@ -16,6 +16,7 @@
  */
 import type { BoardPad, BoardPart, CopperLayer, RoutedLine, Track, Via } from '@4k7/schema';
 import { firstClash, type Geometry } from './copperclear.ts';
+import { r3 } from './geom.ts';
 import type { RouteInput, RouteResult } from './router.ts';
 
 type Rule = NonNullable<RouteInput['controlled']>[number];
@@ -25,7 +26,6 @@ interface Pt {
   y: number;
 }
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 /** A centre line's end is the virtual pad's centre, found within this of it, mm. */
 const AT = 0.15;
 /** Passes of a stand-in search (it routes one connection: more passes do not help). */

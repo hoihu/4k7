@@ -28,7 +28,8 @@ export class BoardClient {
   /** The running request's best routing so far (see stop). */
   #best: StoredCopper | null = null;
 
-  compute(design: Design, onStage: (stage: BoardStage, board: BoardView) => void, onError: (msg: string) => void, onProgress?: (p: RouteProgress) => void): void {
+  /** Lay the board from its placement, which shows at once. */
+  compute(design: Design, placed: BoardView, onStage: (stage: BoardStage, board: BoardView) => void, onError: (msg: string) => void, onProgress?: (p: RouteProgress) => void): void {
     if (this.#busy && this.#worker) {
       this.#worker.terminate();
       this.#worker = null;
@@ -59,7 +60,17 @@ export class BoardClient {
         this.#flush(e.data.board!);
       }
     };
-    this.#worker.postMessage({ id, design });
+    onStage('placed', placed);
+    this.#worker.postMessage({ id, design, placed });
+  }
+
+  /** No board can be laid for the design as it is (its placement failed): whoever waits for one hears so. */
+  fail(): void {
+    this.#worker?.terminate();
+    this.#worker = null;
+    this.#busy = false;
+    this.#best = null;
+    this.#flush(null);
   }
 
   /**

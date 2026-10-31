@@ -6,11 +6,10 @@
  */
 import type { Component, Design, EditOp, LabelView, OpResult, PinView, Rect, SheetDrawing, SheetView, SymbolView } from '@4k7/schema';
 import { GRID } from '@4k7/parts';
-import { resolveUnitRef } from './apply.ts';
-import { RejectError, cardOf, natCmp, pinLabel, reject, resolvePins, type PinHandle } from './doc.ts';
-import { drawingArea, groups, isDrawn, joinedWires, onWire, ownSheet, pageAt, pinsOf, schematicView, symbolOf, syncDrawing, syncSheet } from './drawing.ts';
+import { RejectError, cardOf, clone, natCmp, pinLabel, reject, resolvePins, resolveUnitRef, type PinHandle } from './doc.ts';
+import { groups, isDrawn, joinedWires, onWire, ownSheet, pageAt, pinsOf, symbolOf, syncDrawing, syncSheet, viewOf } from './drawing.ts';
 import { clashWords, clearTexts, placeTexts, textBox, textClashes, within, type TextArrange, type TextClash, type TextSide } from './parttext.ts';
-import { deco, labelRect, leadEnd, supplyDir, textRect, type Dir } from './scene.ts';
+import { deco, type Dir, drawingArea, labelRect, leadEnd, supplyDir, textRect } from './scene.ts';
 import { routeWire } from './schroute.ts';
 import { NOT_INTO } from './wireclean.ts';
 
@@ -270,7 +269,7 @@ export function eraseOp(d: Design, op: Extract<EditOp, { op: 'erase' }>): OpResu
   }
   // one wire or label, where the page coordinates point
   if (op.at?.length) {
-    const view = schematicView(d);
+    const view = viewOf(d);
     for (const a of op.at) {
       const sh = view.sheets.find((x) => x.pages.some((p) => p.number === a.page));
       if (!sh) reject({ code: 'INVALID_OP', message: `There is no page ${a.page}.` });
@@ -312,7 +311,7 @@ export function eraseOp(d: Design, op: Extract<EditOp, { op: 'erase' }>): OpResu
  */
 export function moveSupplyOp(d: Design, op: Extract<EditOp, { op: 'move_supply' }>): OpResult {
   syncDrawing(d);
-  const view = schematicView(d);
+  const view = viewOf(d);
   const sh = view.sheets.find((x) => x.pages.some((p) => p.number === op.page));
   if (!sh) reject({ code: 'INVALID_OP', message: `There is no page ${op.page}.` });
   const index = sh!.pages.findIndex((p) => p.number === op.page);
@@ -392,7 +391,7 @@ export function textOp(d: Design, op: Extract<EditOp, { op: 'place_text' }>, by:
     notes.push(`sheet ${d.sheets[id]?.name ?? id} is drawn as you arrange it from now on`);
     ownSheet(d, id);
   }
-  const view = schematicView(d);
+  const view = clone(viewOf(d)); // (the texts are moved in it, then stored)
   const done: string[] = [];
   for (const { comp, unit } of picks) {
     const sheet = view.sheets.find((s) => s.id === comp.sheet)!;
@@ -448,7 +447,7 @@ function autoTexts(d: Design, op: Extract<EditOp, { op: 'place_text' }>, picks: 
   if (op.sheet !== undefined && !named) reject({ code: 'REF_UNKNOWN', message: `No sheet "${op.sheet}".`, candidates: Object.values(d.sheets).map((s) => s.name) });
   const ids = picks.length ? [...new Set(picks.map((p) => p.comp.sheet))] : named ? [named.id] : Object.values(d.sheets).sort((a, b) => a.order - b.order).map((s) => s.id);
   const picked = (s: SymbolView) => !picks.length || picks.some((p) => p.comp.id === s.componentId && (p.unit === undefined || p.unit === s.unit));
-  const view = schematicView(d);
+  const view = clone(viewOf(d)); // (the texts are moved in it, then stored)
   const moved: string[] = [];
   const stuck: string[] = [];
   const kept: string[] = [];

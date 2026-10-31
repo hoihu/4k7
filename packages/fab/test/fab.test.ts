@@ -48,7 +48,7 @@ describe('fab outputs', () => {
   });
 
   it('routes a slotted hole from one end to the other, and draws its pad oval', () => {
-    const b = board();
+    const b = structuredClone(board()); // (its pad is changed below; the kernel shares what it placed)
     const part = b.parts.find((p) => p.pads.some((q) => q.drill))!;
     const pad = part.pads.find((q) => q.drill)!;
     Object.assign(pad, { x: 10, y: 5, w: 1.1, h: 2.2, shape: 'round', drill: 0.6, slot: { w: 0.6, h: 1.7 } });

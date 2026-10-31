@@ -10,7 +10,6 @@ import {
   type Component,
   type Design,
   type Diagnostic,
-  type DiagnosticCounts,
   type EditOp,
   type Net,
   type PartCard,
@@ -19,7 +18,7 @@ import {
   type Severity,
 } from '@4k7/schema';
 import { seriesPaths } from '@4k7/parts';
-import { sameValue, describeConstraint } from './apply.ts';
+import { sameValue, describeConstraint } from './netops.ts';
 import { allocRefdes, applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 
 const DRIVERS = new Set(['out', 'bidir', 'tri', 'pwr_out', 'oc', 'passive']);
@@ -54,17 +53,6 @@ export function sortDiagnostics(ds: Diagnostic[]): Diagnostic[] {
     return !seen.has(k) && !!seen.add(k);
   });
   return once.sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.code.localeCompare(b.code) || natCmp(a.entities.join(','), b.entities.join(',')));
-}
-
-export function countDiagnostics(ds: Diagnostic[]): DiagnosticCounts {
-  const c: DiagnosticCounts = { errors: 0, warnings: 0, infos: 0, waived: 0 };
-  for (const x of ds) {
-    if (x.waivedBy) c.waived++;
-    else if (x.severity === 'error') c.errors++;
-    else if (x.severity === 'warning') c.warnings++;
-    else c.infos++;
-  }
-  return c;
 }
 
 export function diagKey(x: Diagnostic): string {

@@ -30,6 +30,7 @@ import {
   resolveChecks,
   type CheckSettings,
   DEFAULT_BOARD,
+  countDiagnostics,
   fabPresets,
   fabSummary,
   trackWidthFor,
@@ -40,17 +41,20 @@ import {
   type SymbolView,
 } from '@4k7/schema';
 import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
-import { applyOp, describeConstraint, descriptionView } from './apply.ts';
-import { countDiagnostics, diagKey, runChecks, sortDiagnostics } from './checks.ts';
+import { applyOp } from './apply.ts';
+import { describeConstraint } from './netops.ts';
+import { descriptionView } from './sheetops.ts';
+import { diagKey, runChecks, sortDiagnostics } from './checks.ts';
 import { crossChecks } from './xcheck.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
-import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, valueOf } from './doc.ts';
-import { schematicView, syncDrawing } from './drawing.ts';
+import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, valueOf, workCopy } from './doc.ts';
+import { Memo, drawingInputs } from './derive.ts';
+import { syncDrawing, viewOf } from './drawing.ts';
 import { keepForcedNets } from './netdraw.ts';
 import { blockAssignment } from './layout.ts';
-import { copperKey, layoutBoard, placeBoard, planePlan } from './board.ts';
+import { copperKey, layoutBoard, placedOf, planePlan } from './board.ts';
 import type { RouteProgress } from './router.ts';
-import { DRAWING_OPS, HELPER_TX_MS, annotateChecks, followParts, movesParts, placementOf, type HelperHooks } from './copperops.ts';
+import { HELPER_TX_MS, annotateChecks, drawsCopper, followParts, movesParts, type HelperHooks } from './copperops.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 import { MIN_FREE, circuitSignature, guardOp, measure, positions, resolveScope, ripple, widenScope, type ResolvedScope } from './scope.ts';
 import { schematicChecks } from './schcheck.ts';
@@ -81,6 +85,9 @@ export interface KernelState {
   description: DescriptionView | null;
 }
 
+/** The SCH checks read the drawing and nothing of the board: a part moved there leaves them as they were. */
+const schematicFindings = new Memo<Diagnostic[]>('schematic checks', 4);
+
 export class Kernel {
   private committed: Design;
   private draft: Design;
@@ -102,7 +109,7 @@ export class Kernel {
   constructor(design?: Design) {
     this.committed = design ? migrate(clone(design)) : emptyDesign();
     syncDrawing(this.committed);
-    this.draft = clone(this.committed);
+    this.draft = this.committed;
   }
 
   /* ------------------------------ analysis -------------------------------- */
@@ -110,8 +117,9 @@ export class Kernel {
   private analyse(d: Design): Analysis {
     let a = this.cache.get(d);
     if (!a) {
-      const view = schematicView(d);
-      const sch = schematicChecks(d, view, this.rules);
+      const view = viewOf(d);
+      // (copies: the waivers are marked on them)
+      const sch = schematicFindings.get(`${JSON.stringify(this.rules)}|${drawingInputs(d)}|${JSON.stringify(d.drawing ?? null)}`, () => schematicChecks(d, view, this.rules)).map((x) => ({ ...x }));
       applyWaivers(d, sch);
       a = { view, diagnostics: sortDiagnostics([...runChecks(d, view.constraintStatus, view.constraintWhy), ...crossChecks(d), ...sch]) };
       this.cache.set(d, a);
@@ -135,6 +143,11 @@ export class Kernel {
     return clone(this.draft);
   }
 
+  /** The working copy's part cards. */
+  draftParts(): Design['parts'] {
+    return clone(this.draft.parts);
+  }
+
   /** The working copy and its revision, together (for the route helper's worker: see HelperHooks.rev). */
   draftSnapshot(): { design: Design; rev: number } {
     return { design: clone(this.draft), rev: this.rev };
@@ -142,7 +155,12 @@ export class Kernel {
 
   /** Placement only (fast): parts, outline, ratsnest and placement checks. */
   boardPlacement(): BoardView {
-    return placeBoard(this.draft, this.analyse(this.draft).view);
+    return placedOf(this.draft);
+  }
+
+  /** What the board worker lays the board from (layoutBoard): to send on, not to change. */
+  boardRequest(): { design: Design; placed: BoardView } {
+    return { design: this.draft, placed: placedOf(this.draft) };
   }
 
   /** The board of the working copy: placement, routing and DRC (computed on demand, cached). `follow` follows the routing, if it routes (see layoutBoard). */
@@ -150,7 +168,7 @@ export class Kernel {
     const d = this.draft;
     let b = this.boards.get(d);
     if (!b) {
-      b = layoutBoard(d, this.analyse(d).view, follow);
+      b = layoutBoard(d, placedOf(d), follow);
       this.boards.set(d, b);
     }
     return b;
@@ -164,7 +182,7 @@ export class Kernel {
   keepCopper(copper: StoredCopper): boolean {
     let committed = false;
     for (const d of this.draft === this.committed ? [this.draft] : [this.draft, this.committed]) {
-      if (!d.board || copperKey(d, this.analyse(d).view) !== copper.key) continue;
+      if (!d.board || copperKey(d) !== copper.key) continue;
       d.board.copper = copper;
       this.boards.delete(d);
       if (d === this.committed) committed = true;
@@ -189,7 +207,7 @@ export class Kernel {
       return this.rejected({ opIndex: 0, code: 'STALE', message: 'The design changed while the route helper searched; search again on it as it is now.' }, !!tx.dry_run);
     }
     const before = this.analyse(this.draft).diagnostics;
-    const work = clone(this.draft);
+    const work = workCopy(this.draft);
     const results = [];
     // drawn copper: what each op drew, edited or moved, checked once the transaction is applied
     const drawn = new Map<number, string[]>();
@@ -201,17 +219,17 @@ export class Kernel {
       try {
         if (this.scoped) guardOp(work, op, this.scoped.sc);
         // (drawn copper follows the parts an op moves)
-        const placed = work.board?.drawn && movesParts(op) ? (placedNow ?? placementOf(work)) : null;
+        const placed = work.board?.drawn && movesParts(op) ? (placedNow ?? placedOf(work)) : null;
         if (!work.board?.drawn) placedNow = null;
         const r = applyOp(work, op, by, { index: i, deadline, ...(helper ? { helper } : {}) });
         if (placed) {
-          placedNow = placementOf(work);
+          placedNow = placedOf(work);
           const f = followParts(work, placed, placedNow);
           if (f) {
             if (f.note) r.effect += `; ${f.note}`;
             drawn.set(i, f.ids);
           }
-        } else if (work.board?.drawn && DRAWING_OPS.has(op.op)) drawn.set(i, (r.ids ?? []).filter((id) => /^[tv]\d+$/.test(id)));
+        } else if (work.board?.drawn && drawsCopper(op)) drawn.set(i, (r.ids ?? []).filter((id) => /^[tv]\d+$/.test(id)));
         results.push(r);
       } catch (e) {
         if (e instanceof RejectError) return this.rejected({ opIndex: i, ...e.rejection }, !!tx.dry_run);
@@ -301,19 +319,24 @@ export class Kernel {
   }
 
   private diffSummary(d: Design) {
-    const hunks = computeHunks(this.committed, d);
+    const hunks = d === this.committed ? [] : computeHunks(this.committed, d);
     const pick = (c: string) => hunks.filter((h) => h.change === c).map((h) => h.title);
     return { added: pick('add'), removed: pick('remove'), changed: pick('change') };
   }
 
   /* ------------------------------ proposals ------------------------------- */
 
+  /** What is pending. (With nothing pending the working copy is the committed design: an edit works on a copy, so neither changes under the other.) */
+  private hunks() {
+    return this.draft === this.committed ? [] : computeHunks(this.committed, this.draft);
+  }
+
   hasPending(): boolean {
-    return computeHunks(this.committed, this.draft).length > 0;
+    return this.hunks().length > 0;
   }
 
   proposal(): Proposal | null {
-    const hunks = computeHunks(this.committed, this.draft);
+    const hunks = this.hunks();
     if (!hunks.length) return null;
     return {
       hunks,
@@ -324,14 +347,14 @@ export class Kernel {
 
   /** Commit the pending changes. `hunkIds` selects a subset; omitted = all. */
   accept(hunkIds?: string[], by: 'user' | 'agent' = 'agent', summary?: string): { entry: HistoryEntry | null; notes: string[] } {
-    const hunks = computeHunks(this.committed, this.draft);
+    const hunks = this.hunks();
     if (!hunks.length) return { entry: null, notes: [] };
     const ids = new Set(hunkIds ?? hunks.map((h) => h.id));
     const selected = hunks.filter((h) => ids.has(h.id));
     let next: Design;
     let notes: string[] = [];
     if (selected.length === hunks.length) {
-      next = clone(this.draft);
+      next = this.draft;
     } else {
       ({ design: next, notes } = mergeHunks(this.committed, this.draft, ids));
       syncDrawing(next);
@@ -348,14 +371,14 @@ export class Kernel {
     this.redoStack = [];
     this.history.push(entry);
     this.committed = next;
-    this.draft = clone(next);
+    this.draft = next;
     this.rev++;
     this.pendingSummaries = [];
     return { entry, notes };
   }
 
   reject(): void {
-    this.draft = clone(this.committed);
+    this.draft = this.committed;
     this.rev++;
     this.pendingSummaries = [];
   }
@@ -365,7 +388,7 @@ export class Kernel {
     if (!last) return null;
     this.redoStack.push({ design: this.committed, entry: last.entry });
     this.committed = last.design;
-    this.draft = clone(last.design);
+    this.draft = last.design;
     this.rev++;
     this.pendingSummaries = [];
     this.history = this.history.filter((h) => h.id !== last.entry.id);
@@ -377,7 +400,7 @@ export class Kernel {
     if (!next) return null;
     this.undoStack.push({ design: this.committed, entry: next.entry });
     this.committed = next.design;
-    this.draft = clone(next.design);
+    this.draft = next.design;
     this.rev++;
     this.pendingSummaries = [];
     this.history.push(next.entry);
@@ -690,7 +713,7 @@ export class Kernel {
   load(design: Design): void {
     this.committed = migrate(clone(design));
     syncDrawing(this.committed);
-    this.draft = clone(this.committed);
+    this.draft = this.committed;
     this.rev++;
     this.undoStack = [];
     this.redoStack = [];

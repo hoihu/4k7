@@ -12,7 +12,8 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { PAPERS, type Design, type SheetView } from '@4k7/schema';
-import { segments, touches, wireCrossings, wireShape, type Seg } from '../src/scope.ts';
+import { segmentsOf, type Seg } from '../src/geom.ts';
+import { touches, wireCrossings, wireShape } from '../src/sheetmeasures.ts';
 import { build, GOLDEN, type Golden } from './schematic-golden.ts';
 
 export interface Score {
@@ -71,7 +72,7 @@ export function connectivity(d: Design, sheetViews: SheetView[]): { unconnected:
         const list = pinsOf.get(netId) ?? [];
         list.push({ ref: `${s.refdes}.${p.name === p.number ? p.number : p.name}`, sheet, x: p.x, y: p.y });
         pinsOf.set(netId, list);
-        for (const w of sheet.wires) if (w.netId !== netId && segments(w.pts).some((g) => touches(g, p.x, p.y))) shorts.push(`${s.refdes}.${p.number} on a wire of ${d.nets[w.netId]?.name}`);
+        for (const w of sheet.wires) if (w.netId !== netId && segmentsOf(w.pts).some((g) => touches(g, p.x, p.y))) shorts.push(`${s.refdes}.${p.number} on a wire of ${d.nets[w.netId]?.name}`);
       }
     }
   }
@@ -81,7 +82,7 @@ export function connectivity(d: Design, sheetViews: SheetView[]): { unconnected:
     const sheets = [...new Set(pins.map((p) => p.sheet))];
     const items = [
       ...pins.map((p) => ({ sheet: p.sheet, segs: [[p.x, p.y, p.x, p.y]] as Seg[] })),
-      ...sheets.flatMap((sheet) => sheet.wires.filter((w) => w.netId === netId).map((w) => ({ sheet, segs: segments(w.pts) }))),
+      ...sheets.flatMap((sheet) => sheet.wires.filter((w) => w.netId === netId).map((w) => ({ sheet, segs: segmentsOf(w.pts) }))),
     ];
     const up = items.map((_, i) => i);
     const find = (i: number): number => (up[i] === i ? i : (up[i] = find(up[i]!)));
@@ -124,7 +125,7 @@ export function score(g: Golden, k = build(g)): Score {
     const nets = new Set(sheet.wires.map((w) => w.netId));
     s.wires += sheet.wires.length;
     for (const w of sheet.wires) {
-      for (const [x1, y1, x2, y2] of segments(w.pts)) {
+      for (const [x1, y1, x2, y2] of segmentsOf(w.pts)) {
         s.segments++;
         s.wireLen += (Math.abs(x2 - x1) + Math.abs(y2 - y1)) / 100;
       }

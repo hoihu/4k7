@@ -10,10 +10,10 @@
 import type { Component, Design, PinView, Rect, SheetDrawing, SheetView, SymbolView } from '@4k7/schema';
 import { boxOf, crossings, doublesBack, gap, lengthOf, pieces } from './blocks.ts';
 import { clearPinLabels, softBoxes } from './drawops.ts';
-import { drawingArea, pageAt, symbolOf, syncSheet } from './drawing.ts';
-import { deco, type Scene } from './scene.ts';
+import { pageAt, symbolOf, syncSheet } from './drawing.ts';
+import { deco, drawingArea, type Scene } from './scene.ts';
 import { routeWire } from './schroute.ts';
-import { wireShape } from './scope.ts';
+import { wireShape } from './sheetmeasures.ts';
 
 /** The farthest a pin is wired to its neighbour, and how much longer than the direct way the wire may be. */
 const REACH = 4000;

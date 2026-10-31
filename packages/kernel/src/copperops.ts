@@ -9,11 +9,12 @@
  * drawn already. The app runs that search in a worker and hands the transaction its result
  * (RouteHelperResult), so the kernel stays responsive and the user can watch and stop it.
  */
-import { DEFAULT_BOARD, padHasPin, type BoardDiagnostic, type CopperLayer, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
-import { boardRouteInput, copperKey, placeBoard, rotate, softened, storedPlacement } from './board.ts';
-import { findNet, isPowerNet, reject, resolveComponent, resolvePins } from './doc.ts';
-import { schematicView } from './drawing.ts';
+import { DEFAULT_BOARD, padHasPin, type Diagnostic, type CopperLayer, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
+import { boardRouteInput, copperKey, placedOf, softened, storedPlacement } from './board.ts';
+import { rotate } from './placer.ts';
+import { boardCopy, findNet, isPowerNet, reject, resolveComponent, resolvePins } from './doc.ts';
 import { acidDrc, copperDrc, drawnDrc, edgeDrc, neckDrc } from './drc.ts';
+import { polyLength, r3 } from './geom.ts';
 import { padPointDist } from './keep.ts';
 import { keepoutDrc, rejectTrackInKeepout, rejectViaInKeepout } from './keepout.ts';
 import { route, type RouteProgress, type RouteResult } from './router.ts';
@@ -25,16 +26,13 @@ const HELPER_BUDGET_MS = 30_000;
 const FOLLOW_MM = 1;
 /** Findings of the check named in an op's effect (the rest: get_board). */
 const CHECK_SHOWN = 4;
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
-
-const placed = (d: Design) => placeBoard(d, schematicView(d));
 
 /** The board settings to change (a copy), with the placement stored so the parts stay where they are. */
 function boardOf(d: Design): BoardSettings {
-  const b: BoardSettings = structuredClone(d.board ?? DEFAULT_BOARD);
+  const b = boardCopy(d);
   if (!b.placement) {
     d.board = b;
-    b.placement = storedPlacement(placed(d));
+    b.placement = storedPlacement(placedOf(d));
   }
   d.board = b;
   return b;
@@ -278,11 +276,10 @@ export function setCopperMode(d: Design, op: Extract<EditOp, { op: 'set_copper_m
     return { op: op.op, effect: `copper back to the router (${n} drawn tracks and vias dropped); route lays it`, ids: ['board'] };
   }
   if (d.board?.drawn) return { op: op.op, effect: 'the copper is drawn already', ids: [] };
-  const sch = schematicView(d);
-  const before = placeBoard(d, sch);
+  const before = placedOf(d);
   const copper = d.board?.copper;
   // the router's copper, if it is for the board as it is now (else nothing to start from)
-  const current = op.keep !== false && copper && !copper.stopped && before.routing === 'done' && copperKey(d, sch) === copper.key ? copper : null;
+  const current = op.keep !== false && copper && !copper.stopped && before.routing === 'done' && copperKey(d) === copper.key ? copper : null;
   const b = boardOf(d);
   // the parts stay exactly where they are shown now (from here on the placement only changes on purpose)
   b.placement = storedPlacement(before);
@@ -293,7 +290,7 @@ export function setCopperMode(d: Design, op: Extract<EditOp, { op: 'set_copper_m
     // (the stubs and vias of add_vias groups stay theirs: the groups lay them)
     const stubs = new Set(before.tracks.map((t) => JSON.stringify(t)));
     // (the router's copper counts as the helper's: route fresh may lay it again)
-    for (const t of current.tracks) if (!stubs.has(JSON.stringify(t))) dc.tracks.push(anchored(before, { ...t, id: nextId(dc, 't'), by: 'helper' }));
+    for (const t of current.tracks) if (!stubs.has(JSON.stringify(t))) dc.tracks.push(anchored(before, { ...t, pts: [...t.pts], id: nextId(dc, 't'), by: 'helper' })); // (its own points: drawn copper is moved in place, and the kept copper is shared with other copies of the design)
     for (const v of current.vias) if (!v.group) dc.vias.push({ ...v, id: nextId(dc, 'v'), by: 'helper' });
   }
   b.drawn = dc;
@@ -320,11 +317,10 @@ function anchored(board: BoardView, t: DrawnTrack): DrawnTrack {
   return { ...t, ...(from ? { from } : {}), ...(to ? { to } : {}) };
 }
 
-const trackLength = (pts: number[]) => pts.reduce((s, _, i) => (i >= 2 && i % 2 === 0 ? s + Math.hypot(pts[i]! - pts[i - 2]!, pts[i + 1]! - pts[i - 1]!) : s), 0);
 
 export function drawTrack(d: Design, op: Extract<EditOp, { op: 'draw_track' }>): OpResult {
   const { b, dc } = drawnOf(d);
-  const board = placed(d);
+  const board = placedOf(d);
   const ends = [op.from, op.to].map((e) => endOf(d, board, dc, e));
   const padNets = ends.flatMap((e) => (e.pad ? [{ ref: e.ref!, net: e.pad.netId }] : []));
   for (const p of padNets) if (!p.net) reject({ code: 'PIN_UNCONNECTED', message: `${p.ref} is not connected in the netlist; a track there would join nothing.` });
@@ -345,7 +341,7 @@ export function drawTrack(d: Design, op: Extract<EditOp, { op: 'draw_track' }>):
   const track: DrawnTrack = { id: nextId(dc, 't'), netId: netId!, layer, width, pts, ...(f ? { from: f } : {}), ...(t ? { to: t } : {}) };
   dc.tracks.push(track);
   d.board = b;
-  return { op: op.op, effect: `track ${track.id}: ${netName(d, netId!)} on ${layer}, ${width} mm, ${pts.length / 2 - 1} piece(s), ${r3(trackLength(pts))} mm`, ids: ['board', track.id] };
+  return { op: op.op, effect: `track ${track.id}: ${netName(d, netId!)} on ${layer}, ${width} mm, ${pts.length / 2 - 1} piece(s), ${r3(polyLength(pts))} mm`, ids: ['board', track.id] };
 }
 
 /**
@@ -357,7 +353,7 @@ export function drawTrack(d: Design, op: Extract<EditOp, { op: 'draw_track' }>):
  */
 export function drawPair(d: Design, op: Extract<EditOp, { op: 'draw_pair' }>): OpResult {
   const { b, dc } = drawnOf(d);
-  const board = placed(d);
+  const board = placedOf(d);
   const from = op.from.map((e) => endOf(d, board, dc, e)) as [End, End];
   const to = op.to.map((e) => endOf(d, board, dc, e)) as [End, End];
   for (const e of [...from, ...to]) if (e.pad && !e.pad.netId) reject({ code: 'PIN_UNCONNECTED', message: `${e.ref} is not connected in the netlist; a track there would join nothing.` });
@@ -453,7 +449,7 @@ export function drawPair(d: Design, op: Extract<EditOp, { op: 'draw_pair' }>): O
   });
   dc.tracks.push(...tracks);
   d.board = b;
-  const [lp, ln] = tracks.map((t) => r3(trackLength(t.pts)));
+  const [lp, ln] = tracks.map((t) => r3(polyLength(t.pts)));
   return {
     op: op.op,
     effect: `pair ${netName(d, nets[0]!)}/${netName(d, nets[1]!)} on ${layer}: ${tracks[0]!.id} ${lp} mm, ${tracks[1]!.id} ${ln} mm (${r3(Math.abs(lp! - ln!))} mm apart in length), ${w} mm wide, ${gap} mm apart${lay ? ` (${rule!.id}: ${lay.ohms} Ω)` : rule ? '' : '; no impedance rule for these nets (set_impedance)'}`,
@@ -468,7 +464,7 @@ export function drawVia(d: Design, op: Extract<EditOp, { op: 'draw_via' }>): OpR
   const drill = op.drill_mm ?? b.rules.viaDrill;
   const size = op.size_mm ?? Math.max(b.rules.viaPad, drill + 0.2);
   viaSize(drill, size);
-  if (b.keepouts?.length) rejectViaInKeepout(placed(d), op.at[0], op.at[1], size);
+  if (b.keepouts?.length) rejectViaInKeepout(placedOf(d), op.at[0], op.at[1], size);
   const via: DrawnVia = { id: nextId(dc, 'v'), netId: net!.id, x: r3(op.at[0]), y: r3(op.at[1]), drill, pad: size };
   dc.vias.push(via);
   return { op: op.op, effect: `via ${via.id}: ${net!.name} at ${via.x}, ${via.y} (${drill}/${size} mm)`, ids: ['board', via.id] };
@@ -501,7 +497,7 @@ export function editCopper(d: Design, op: Extract<EditOp, { op: 'edit_copper' }>
   if (forTracks && !tracks.length) reject({ code: 'INVALID_OP', message: 'via, bend, width_mm and layer change tracks; ids names only vias.' });
   if (forVias && !vias.length) reject({ code: 'INVALID_OP', message: 'drill_mm and size_mm change vias; ids names only tracks.' });
   if (op.via && tracks.length !== 1) reject({ code: 'INVALID_OP', message: 'New corners (via) are for one track at a time.' });
-  const board = placed(d);
+  const board = placedOf(d);
   if (op.layer) trackLayer(board, op.layer);
   const did: string[] = [];
   const along: string[] = [];
@@ -629,7 +625,7 @@ export const HELPER_TX_MS = 40_000;
 /** The route helper on drawn copper: paths for the named open connections, added as drawn copper. */
 export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx: OpContext = { index: 0 }): OpResult {
   const { b, dc } = drawnOf(d);
-  let board = placed(d);
+  let board = placedOf(d);
   if (!board.parts.length) reject({ code: 'BOARD_INVALID', message: 'Nothing to route: the board has no parts.' });
   if (!!op.from !== !!op.to) reject({ code: 'INVALID_OP', message: 'route from needs to, and to needs from.' });
   const only: { nets?: string[]; pairs?: [BoardPad, BoardPad][] } = {};
@@ -663,7 +659,7 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
     takenUp = dc.tracks.filter(mine).length + dc.vias.filter(mine).length;
     dc.tracks = dc.tracks.filter((t) => !mine(t));
     dc.vias = dc.vias.filter((v) => !mine(v));
-    board = placed(d);
+    board = placedOf(d);
     if (op.from) {
       delete only.pairs;
       only.nets = scoped;
@@ -724,14 +720,87 @@ export function routeDrawn(d: Design, op: Extract<EditOp, { op: 'route' }>, ctx:
 
 /* --------------------------- copper that follows -------------------------- */
 
-/** Ops that never move a part: the copper needs no following after them. */
-const STILL = new Set(['route', 'set_copper_mode', 'draw_track', 'draw_pair', 'draw_via', 'set_stackup', 'set_impedance', 'remove_impedance', 'edit_copper', 'tune_length', 'erase_copper', 'add_waiver', 'remove_waiver', 'set_mating', 'set_polarity', 'set_enclosure_brief', 'set_enclosure_script', 'set_enclosure_graphic', 'set_value_series', 'set_paper', 'add_graphic', 'edit_graphic', 'remove_graphic', 'set_panel', 'place_symbol', 'place_text', 'wire', 'label', 'erase', 'move_supply', 'auto_draw', 'describe', 'set_plane', 'set_plane_style', 'add_vias', 'remove_vias', 'rename', 'set_net']);
+/**
+ * What drawn copper needs after each op, an entry per op so a new one has to say. `follow`: the op
+ * may move parts, and the copper by them goes along (followParts). `check`: it drew or changed
+ * copper, checked once its transaction is applied (annotateChecks; the helper's copper keeps the
+ * rules by construction). null: nothing.
+ */
+const COPPER_AFTER: Record<EditOp['op'], 'follow' | 'check' | null> = {
+  add_part: 'follow',
+  remove: 'follow',
+  set_param: 'follow',
+  rename: null,
+  connect: 'follow',
+  disconnect: 'follow',
+  no_connect: 'follow',
+  set_net: null,
+  add_sheet: 'follow',
+  move_to_sheet: 'follow',
+  constrain: 'follow',
+  remove_constraint: 'follow',
+  add_waiver: null,
+  remove_waiver: null,
+  set_symbol: 'follow',
+  set_footprint: 'follow',
+  set_mating: null,
+  set_polarity: null,
+  set_enclosure_brief: null,
+  set_enclosure_script: null,
+  set_enclosure_graphic: null,
+  rename_part: 'follow',
+  describe: null,
+  set_package_defaults: 'follow',
+  set_value_series: null,
+  set_paper: null,
+  set_board: 'follow',
+  set_fab_profile: 'follow',
+  place: 'follow',
+  attach: 'follow',
+  place_symbol: null,
+  place_text: null,
+  auto_draw: null,
+  place_block: 'follow',
+  wire: null,
+  label: null,
+  erase: null,
+  move_supply: null,
+  propose_placement: 'follow',
+  refine_placement: 'follow',
+  route: null,
+  set_copper_mode: null,
+  set_stackup: null,
+  set_impedance: null,
+  remove_impedance: null,
+  draw_pair: 'check',
+  draw_track: 'check',
+  draw_via: 'check',
+  edit_copper: 'check',
+  tune_length: 'check',
+  erase_copper: null,
+  set_plane: null,
+  set_plane_style: null,
+  add_hole: 'follow',
+  add_vias: null,
+  remove_vias: null,
+  add_cutout: 'follow',
+  remove_cutout: 'follow',
+  add_keepout: 'follow',
+  edit_keepout: 'follow',
+  remove_keepout: 'follow',
+  set_outline: 'follow',
+  set_panel: null,
+  add_graphic: null,
+  edit_graphic: null,
+  remove_graphic: null,
+  remove_hole: 'follow',
+};
 
 /** Whether an op may move parts (then drawn copper follows them, see followParts). */
-export const movesParts = (op: EditOp) => !STILL.has(op.op);
+export const movesParts = (op: EditOp) => COPPER_AFTER[op.op] === 'follow';
 
-/** The placement, for following parts that an op moves (with drawn copper only). */
-export const placementOf = placed;
+/** Whether an op's copper is checked when its transaction is applied. */
+export const drawsCopper = (op: EditOp) => COPPER_AFTER[op.op] === 'check';
 
 interface Move {
   part: BoardPart;
@@ -849,7 +918,7 @@ function keepContacts(contacts: Contact[], touch: (t: DrawnTrack) => void, moved
  * tracks would be on the wrong layer): the note says so. Returns a note for the op's effect and the
  * ids moved (to check them), or null when no drawn copper had to follow.
  */
-export function followParts(d: Design, before: BoardView, after: BoardView = placed(d)): { note: string; ids: string[] } | null {
+export function followParts(d: Design, before: BoardView, after: BoardView = placedOf(d)): { note: string; ids: string[] } | null {
   // (ids: what followed, and the copper where a moved, turned or new part now stands: checked after the transaction)
   const dc = d.board?.drawn;
   if (!dc || (!dc.tracks.length && !dc.vias.length)) return null;
@@ -1016,18 +1085,15 @@ export function followParts(d: Design, before: BoardView, after: BoardView = pla
 
 /* ----------------------------- checked at once ----------------------------- */
 
-/** Ops whose copper is checked when their transaction is applied (the helper's copper keeps the rules by construction). */
-export const DRAWING_OPS = new Set(['draw_track', 'draw_pair', 'draw_via', 'edit_copper', 'tune_length']);
-
 /**
  * The rules on the drawn copper with these ids, on the board as it is now (placement only: pours
  * fill round the copper later, so they never clash): other nets' copper too close or touching, the
  * edge, the fab's limits (errors), loose ends, pieces off 45°, acid traps, necks, a via in a small part's land
  * pattern (warnings).
  */
-export function checkCopper(d: Design, ids: Set<string>): BoardDiagnostic[] {
+export function checkCopper(d: Design, ids: Set<string>): Diagnostic[] {
   if (!d.board?.drawn || !ids.size) return [];
-  const b = placed(d);
+  const b = placedOf(d);
   const supplies = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const out = [...copperDrc(b, ids), ...edgeDrc(b, true, ids), ...keepoutDrc(b, ids), ...drawnDrc(b, ids), ...acidDrc(b, ids), ...neckDrc(b, (id, layer) => defaultWidth(d, id, b, layer), ids), ...impedanceDrc(b, ids, supplies)];
   const fab = b.fab?.limits;

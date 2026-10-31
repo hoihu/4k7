@@ -4,7 +4,7 @@
  */
 import { openQuestions, planeStyleText, scriptPieces, type Component, type Design, type DrawnCopper, type Hunk } from '@4k7/schema';
 import { layoutText } from '@4k7/parts';
-import { describeConstraint } from './apply.ts';
+import { describeConstraint } from './netops.ts';
 import { clone, gcNets, gcParts, natCmp, valueOf } from './doc.ts';
 
 const netName = (d: Design, id?: string) => (id ? d.nets[id]?.name ?? '?' : '∅');

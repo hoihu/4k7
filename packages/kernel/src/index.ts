@@ -1,5 +1,7 @@
 export { Kernel, type KernelState } from './kernel.ts';
-export { runChecks, countDiagnostics } from './checks.ts';
+export { layoutBoard } from './board.ts';
+export { runChecks } from './checks.ts';
+export { countDiagnostics } from '@4k7/schema';
 export { crossChecks } from './xcheck.ts';
 export { schematicChecks } from './schcheck.ts';
 export { layoutSchematic } from './layout.ts';
