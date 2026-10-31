@@ -2,7 +2,7 @@
 // adrift in space with the sun going round behind it, but ray-traced per pixel in a WebGL fragment shader: a ceramic body
 // with painted bands, tinned leads that glint, a sun with a soft limb and a corona, hashed stars. No libraries. The ship
 // is smaller than in bg.js. `?scene=30` freezes it at second 30, `?size=0.6` scales the ship (1 = bg.js's size).
-// Without WebGL it loads bg.js instead.
+// `data-ship="none"` on the canvas (or `?ship=none`) leaves the ship out. Without WebGL it loads bg.js instead.
 (function () {
   'use strict';
   var canvas = document.getElementById('scene');
@@ -13,6 +13,7 @@
   var q = new URLSearchParams(location.search);
   var frozen = q.get('scene'); frozen = frozen === null ? null : parseFloat(frozen);
   var SCALE = parseFloat(q.get('size') || '0.58');
+  var noShip = canvas.dataset.ship === 'none' || q.get('ship') === 'none';   // the sky alone: sun and stars
 
   var VS = 'attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }';
   var FS = [
@@ -161,6 +162,7 @@
     gl.uniform2f(U.uRes, canvas.width, canvas.height); gl.uniform1f(U.uDpr, dpr); gl.uniform1f(U.uTime, t);
     gl.uniform2f(U.uSun, SX, SY); gl.uniform1f(U.uSunR, rs); gl.uniform3f(U.uLight, LX * ln, LY * ln, LZ * ln);
     gl.uniform2f(U.uCenter, CX, CY); gl.uniform1f(U.uF, D); gl.uniform1f(U.uD, D);
+    if (noShip) { RB = 0; LL = -1; D = 1; gl.uniform1f(U.uD, D); }      // a reach below zero: every pixel is sky
     gl.uniform1f(U.uLB, LB); gl.uniform1f(U.uRB, RB); gl.uniform1f(U.uLL, LL); gl.uniform1f(U.uRL, RL); gl.uniform1f(U.uFade, 1);
     gl.uniformMatrix3fv(U.uRot, false, m);
     gl.drawArrays(gl.TRIANGLES, 0, 3);

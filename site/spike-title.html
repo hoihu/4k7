@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#121211">
+<title>4k7 — AI design of schematic, layout and enclosure</title>
+<meta name="description" content="Describe a project in a sentence. 4k7 asks what it needs to know, imports the parts from their datasheets, draws the schematic, lays out the board, designs a 3D-printable enclosure and prices the order at JLCPCB, PCBWay and Eurocircuits. Free and MIT licensed; alpha.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/site.css">
+<style>
+  /* SPIKE: the page as a long read. A big title, the download, then the four features one under the other with
+     their pictures. The sky of bg3d.js behind it, without the resistor; the sun is low behind the title. */
+  #scene { position: fixed; inset: 0; z-index: 0; opacity: 0; transition: opacity 3s ease; pointer-events: none; }
+  #scene.live { opacity: .9; }
+  .shade { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(180deg, rgba(18, 18, 17, 0) 0, rgba(18, 18, 17, .55) 55vh, rgba(18, 18, 17, .85) 100vh); }
+
+  main { position: relative; z-index: 2; }
+  .hero { text-align: center; padding: clamp(40px, 11vh, 120px) 20px 24px; }
+  .hero h1 {
+    max-width: 980px; margin: 0 auto; font-size: clamp(36px, 6.2vw, 78px); line-height: 1.04; font-weight: 700; letter-spacing: -.03em;
+    text-shadow: 0 2px 30px #121211, 0 0 6px #121211;
+  }
+  .hero h1 .name { color: var(--ink-gold); }
+  .hero h1 .bands { display: inline-flex; gap: .09em; margin: 0 .12em 0 .18em; vertical-align: -.05em; }
+  .hero h1 .bands i { display: block; width: .09em; height: .68em; border-radius: .02em; }
+  .hero .sub { max-width: 700px; margin: 22px auto 0; font-size: clamp(17px, 1.6vw, 21px); line-height: 1.45; color: #d8d4c9; text-shadow: 0 1px 14px #121211, 0 0 4px #121211; }
+  .hero .sub b { color: var(--text); font-weight: 600; }
+  .hero .install { margin-top: 34px; }
+
+  /* a feature: the prompt that opens it as a line of chat, the words, the picture */
+  .feature { width: min(1040px, 100% - 40px); margin: clamp(56px, 9vh, 110px) auto 0; text-shadow: 0 1px 14px #121211, 0 0 4px #121211; }
+  .feature .you { display: inline-flex; align-items: center; gap: 10px; margin: 0 0 14px; padding: 8px 14px 8px 10px; border-radius: 999px; background: var(--ui-bg); border: 1px solid var(--ui-line); color: var(--ui-text); font-size: 14px; text-shadow: none; }
+  .feature .you::before { content: "You"; font: 500 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ui-muted); }
+  .feature .step { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; font: 500 12px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  .feature .step::before { content: ""; width: 4px; height: 14px; border-radius: 1px; background: var(--band); box-shadow: 0 0 10px var(--band); }
+  .feature h2 { margin: 0 0 8px; font-size: clamp(24px, 3vw, 34px); line-height: 1.2; letter-spacing: -.02em; }
+  .feature > p { max-width: 760px; margin: 0 0 18px; color: #d8d4c9; font-size: 16.5px; line-height: 1.55; }
+  .feature figure { --ar: 1.6; display: flex; align-items: flex-start; gap: 12px; margin: 0; }
+  .feature figure > * { flex: 1 1 0; min-width: 0; height: auto; border: 1px solid var(--ui-line); border-radius: 10px; background: var(--ui-bg); box-shadow: 0 30px 70px -30px rgba(0, 0, 0, .9); }
+  .feature figure.two > :first-child { flex-grow: 1.28; }
+  .feature figure.two > :last-child { flex-grow: 1.6; }
+  .feature figure.three { max-width: 880px; }
+  .feature .facts { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 16px 0 0; padding: 0; list-style: none; font-size: 13.5px; color: var(--muted); }
+  .feature .facts li { display: inline-flex; align-items: center; gap: 8px; }
+  .feature .facts li::before { content: ""; width: 4px; height: 13px; border-radius: 1px; background: var(--band); flex: none; }
+  .feature .note { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
+  .again { text-align: center; padding: clamp(60px, 10vh, 120px) 20px 40px; }
+  .again p { margin: 0 0 18px; color: #d8d4c9; font-size: 17px; }
+  @media (max-width: 720px) {
+    .feature figure { flex-direction: column; align-items: stretch; }
+    .feature figure > * { flex: none; width: 100%; }
+    .feature figure.three { flex-direction: row; overflow-x: auto; scroll-snap-type: x mandatory; }
+    .feature figure.three > * { width: 78%; scroll-snap-align: center; }
+    .feature .facts { flex-direction: column; gap: 7px; }
+  }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="resistor-mini" viewBox="0 0 80 40">
+    <rect x="0" y="18" width="80" height="4" fill="#8f887d"/>
+    <rect x="14" y="7" width="52" height="26" rx="9" fill="#d9c69f"/>
+    <rect x="22" y="7" width="6" height="26" fill="#f2c230"/>
+    <rect x="32" y="7" width="6" height="26" fill="#7a3fb0"/>
+    <rect x="42" y="7" width="6" height="26" fill="#d6382f"/>
+    <rect x="54" y="7" width="6" height="26" fill="#d7a63a"/>
+  </symbol>
+</svg>
+
+<canvas id="scene" data-ship="none" aria-hidden="true"></canvas>
+<div class="shade" aria-hidden="true"></div>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/">
+      <svg aria-hidden="true"><use href="#resistor-mini"/></svg>
+      4k7 <span class="pill">alpha</span>
+    </a>
+    <nav aria-label="Main">
+      <a href="#schematic">Features</a>
+      <a href="/faq">FAQ</a>
+      <a href="/changelog">Changelog</a>
+      <a class="gh" href="https://github.com/hoihu/4k7">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <h1><span class="name">4k7</span><span class="bands" aria-hidden="true"><i style="background:var(--yellow)"></i><i style="background:var(--violet)"></i><i style="background:var(--red)"></i><i style="background:var(--gold)"></i></span>AI design of schematic, layout and enclosure.</h1>
+    <p class="sub">Describe a project in a sentence; get a board you can order and the box around it. <b>Designed from scratch, MIT licensed.</b></p>
+    <div class="install" id="download">
+      <a class="dl dl-main" href="https://github.com/hoihu/4k7/releases/latest/download/4k7-macos-arm64.dmg" data-os="mac-arm64">Download for Mac <small>Apple silicon</small></a>
+      <span class="others">also:
+        <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-macos-x64.dmg" data-os="mac-x64">Mac (Intel)</a> ·
+        <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-windows-x64.zip" data-os="windows-x64">Windows (x64)</a> ·
+        <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-linux-x64.tar.gz" data-os="linux-x64">Linux (x64)</a> ·
+        <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-linux-arm64.tar.gz" data-os="linux-arm64">Linux (arm64)</a> ·
+        <a href="https://github.com/hoihu/4k7">source</a>
+      </span>
+    </div>
+  </section>
+
+  <section class="feature" id="schematic" style="--band:var(--yellow)">
+    <p class="you">Design me a USB NeoPixel spiral lamp, with a case.</p>
+    <p class="step">Schematic</p>
+    <h2>It asks first, then reads the datasheets.</h2>
+    <p>A part it doesn't know comes straight from the manufacturer's datasheet: the agent reads the PDF, and you get the symbol, the land pattern and the pin functions. It designs from the datasheet's typical application and design procedure, and tells you which page each choice came from.</p>
+    <figure class="two">
+      <img src="/shots/ask.webp" width="2300" height="1800" alt="The chat with the prompt, the agent's two questions and the answers, four datasheet imports and the summary; beside it the schematic of the 5 V buck converter.">
+      <img src="/shots/datasheet.webp" width="2880" height="1800" loading="lazy" alt="The Parts view: the TPS54560 regulator imported from its datasheet, with its symbol, land pattern and pin table, next to the datasheet open at the typical application.">
+    </figure>
+    <ul class="facts">
+      <li>Symbol and land pattern from the PDF</li>
+      <li>Application notes, cited by page</li>
+      <li>Sheets that draw themselves, checked on every change</li>
+    </ul>
+  </section>
+
+  <section class="feature" id="board" style="--band:var(--violet)">
+    <p class="you">Looks right. Lay out the board.</p>
+    <p class="step">Board</p>
+    <h2>A board laid out the way the datasheet says.</h2>
+    <p>The agent places the parts that matter, the placer arranges the rest, and the router keeps going until every connection is made. Around the regulator it follows the datasheet's layout example: a tight input loop, a short switch node, vias under the thermal pad.</p>
+    <figure>
+      <video muted loop playsinline preload="metadata" poster="/shots/board.webp" src="/shots/board.mp4" width="2208" height="1380" aria-label="The Layout view: 48 LEDs on a spiral above the power supply and the RP2040, all nets routed. One click turns the drawing into the board in 3D, and back."></video>
+    </figure>
+    <ul class="facts">
+      <li>Placement and routing, to the last connection</li>
+      <li>Inner planes, pours, set impedance</li>
+      <li>Gerber, drill, BOM, pick-and-place, STEP</li>
+    </ul>
+  </section>
+
+  <section class="feature" id="enclosure" style="--band:var(--red)">
+    <p class="you">Now the case.</p>
+    <p class="step">Enclosure</p>
+    <h2>Then the box around it.</h2>
+    <p>You agree a brief with the agent: printer, material, pieces, the look. It writes the enclosure as a script around your board, renders it in the app and fixes what the checks find: a part in the way, a plug that can't reach its opening, no room under the lid.</p>
+    <figure>
+      <video muted loop playsinline preload="metadata" poster="/shots/enclosure.webp" src="/shots/enclosure.mp4" width="2208" height="1380" aria-label="The Enclosure view in 3D: the lamp's box is turned, opened, its pieces lifted apart, closed, and cut through to show the walls, the light baffle and the LEDs."></video>
+    </figure>
+    <ul class="facts">
+      <li>A JavaScript script you can read and edit</li>
+      <li>Checked against the board and every plug</li>
+      <li>3MF print plate, or one STL per piece</li>
+    </ul>
+  </section>
+
+  <section class="feature" id="order" style="--band:var(--gold)">
+    <p class="you">What will ten of these cost?</p>
+    <p class="step">Order</p>
+    <h2>Priced at three board houses before you order.</h2>
+    <p>Pick JLCPCB, PCBWay or Eurocircuits. 4k7 checks live stock for the number of boards you want, prices the assembly with every fee, and offers parts in stock, or cheaper, a click away. Ask the agent and it goes through the design for savings.</p>
+    <figure class="three">
+      <img src="/shots/cost-jlcpcb.webp" width="580" height="1280" loading="lazy" alt="Cost at JLCPCB for 10 boards, from Economic to Standard assembly, with every fee listed.">
+      <img src="/shots/cost-pcbway.webp" width="580" height="1280" loading="lazy" alt="Cost at PCBWay for 10 boards, from its live quote.">
+      <img src="/shots/cost-eurocircuits.webp" width="580" height="1280" loading="lazy" alt="Cost at Eurocircuits for 10 boards, with every fee listed.">
+    </figure>
+    <ul class="facts">
+      <li>Live stock and prices</li>
+      <li>Every assembly fee, itemised</li>
+      <li>Replacements and cheaper values in one click</li>
+    </ul>
+    <p class="note">The same 10 boards, checked live on 26 October 2026. None of the totals includes the bare boards.</p>
+  </section>
+
+  <section class="again">
+    <p>Free and open source. Runs in your browser, on your own computer, with your coding-agent plan or an API key.</p>
+    <div class="install">
+      <a class="dl dl-main" href="https://github.com/hoihu/4k7/releases/latest/download/4k7-macos-arm64.dmg" data-os="mac-arm64">Download for Mac <small>Apple silicon</small></a>
+      <span class="others">also:
+        <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-macos-x64.dmg" data-os="mac-x64">Mac (Intel)</a> ·
+        <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-windows-x64.zip" data-os="windows-x64">Windows (x64)</a> ·
+        <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-linux-x64.tar.gz" data-os="linux-x64">Linux (x64)</a> ·
+        <a href="https://github.com/hoihu/4k7/releases/latest/download/4k7-linux-arm64.tar.gz" data-os="linux-arm64">Linux (arm64)</a> ·
+        <a href="https://github.com/hoihu/4k7">source</a>
+      </span>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div><span class="bands-mini"><i style="background:var(--yellow)"></i><i style="background:var(--violet)"></i><i style="background:var(--red)"></i><i style="background:var(--gold)"></i></span>4k7<span class="tag"> · yellow, violet, red, gold: 4.7 kΩ ±5 %</span></div>
+    <div><a href="https://github.com/hoihu/4k7">GitHub</a><a href="https://github.com/hoihu/4k7/releases">Releases</a><a href="/changelog">Changelog</a><a href="/faq">FAQ</a></div>
+  </div>
+</footer>
+
+<script src="/bg3d.js" defer></script>
+<script>
+  // the main button offers the file for this computer (as index.html)
+  (function () {
+    var ua = navigator.userAgent;
+    var os = /Windows/.test(ua) ? 'windows-x64' : /Linux/.test(ua) && !/Android/.test(ua) ? (/aarch64|arm64/.test(ua) ? 'linux-arm64' : 'linux-x64') : /Mac/.test(ua) ? 'mac-arm64' : null;
+    if (!os) return;
+    document.querySelectorAll('.install').forEach(function (box) {
+      var main = box.querySelector('.dl-main'), pick = box.querySelector('.others a[data-os="' + os + '"]');
+      if (!main || !pick) return;
+      var href = main.href, label = main.innerHTML;
+      main.href = pick.href; main.innerHTML = 'Download for ' + pick.textContent.replace(/ \((.*)\)/, ' <small>$1</small>');
+      pick.href = href; pick.textContent = label.replace(/<small>(.*)<\/small>/, '($1)').replace('Download for ', '');
+    });
+  })();
+  // the clips play while they are on screen, and not with reduced motion
+  (function () {
+    var still = matchMedia('(prefers-reduced-motion: reduce)'), clips = document.querySelectorAll('video');
+    if (still.matches) { clips.forEach(function (v) { v.controls = true; }); return; }
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) e.target.play().catch(function () {}); else e.target.pause(); });
+    }, { threshold: 0.35 });
+    clips.forEach(function (v) { io.observe(v); });
+  })();
+</script>
+</body>
+</html>
