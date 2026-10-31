@@ -191,13 +191,21 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, side: number, came?: [number,
   const soft = new Uint8Array(nx * ny);
   const through = new Set((r.through ?? []).map(nodeAt));
   const free = (n: number) => start[n] || goal[n] || through.has(n);
+  // a pin between the lattice's lines (a part drawn off the wire's grid) is in the way of a run over it, like a wire along that run
+  const pinsOnRow: [number, number, number][] = []; // y, x, x
+  const pinsOnColumn: [number, number, number][] = []; // x, y, y
   for (const s of r.symbols) {
     const [i0, i1] = span(xs, s.bbox.x + 1, s.bbox.x + s.bbox.w - 1);
     const [j0, j1] = span(ys, s.bbox.y + 1, s.bbox.y + s.bbox.h - 1);
     for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) blocked[id(i, j)] = 1;
     for (const p of s.pins) {
       const n = nodeAt(p);
-      if (n >= 0 && !free(n)) blocked[n] = 1;
+      if (n >= 0) {
+        if (!free(n)) blocked[n] = 1;
+      } else if (!r.through?.some((q) => q.x === p.x && q.y === p.y)) {
+        if (yi.has(p.y)) pinsOnRow.push([p.y, p.x, p.x]);
+        else if (xi.has(p.x)) pinsOnColumn.push([p.x, p.y, p.y]);
+      }
     }
   }
   for (const box of r.soft) {
@@ -226,13 +234,13 @@ function routeLeg(r: RouteInput, A: Ends, B: Ends, side: number, came?: [number,
     const [j0, j1] = span(ys, y0 + 1, y1 - 1);
     for (let j = j0; j < j1; j++) onV[id(i, j)] = 1;
   }
-  // an edge along a drawn segment that lies between lattice points (by row and column: this is asked for every step of the search)
+  // an edge along a drawn segment, or over a pin, that lies between lattice points (by row and column: this is asked for every step of the search)
   const byLine = (segs: [number, number, number][]) => {
     const out = new Map<number, [number, number][]>();
     for (const [at, a, b] of segs) out.set(at, [...(out.get(at) ?? []), [a, b]]);
     return out;
   };
-  const [rowsOfWire, columnsOfWire] = [byLine(wireH), byLine(wireV)];
+  const [rowsOfWire, columnsOfWire] = [byLine([...wireH, ...pinsOnRow]), byLine([...wireV, ...pinsOnColumn])];
   const alongWire = (i: number, j: number, di: number, dj: number) => {
     if (dj === 0) {
       const [p, q] = [Math.min(xs[i]!, xs[i + di]!), Math.max(xs[i]!, xs[i + di]!)];

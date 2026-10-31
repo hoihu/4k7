@@ -669,3 +669,166 @@ describe('erase at a point', () => {
     expect(none.rejection?.code).toBe('INVALID_OP');
   });
 });
+
+describe('a symbol put down on a wire', () => {
+  /** Two connectors far apart, wired straight on SIG; U1 stands aside. */
+  function long() {
+    const k = new Kernel();
+    const d = k.committedDesign();
+    d.parts[ic.id] = ic;
+    k.load(d);
+    const r = k.transact({
+      summary: 'circuit',
+      ops: [
+        { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J1' },
+        { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J2' },
+        { op: 'add_part', part: 'acme:IC', refdes: 'U1' },
+        { op: 'connect', pins: ['J1.1', 'J2.1'], net: 'SIG' },
+        { op: 'place_symbol', ref: 'J1', page: 1, x: 2000, y: 3000 },
+        { op: 'place_symbol', ref: 'J2', page: 1, x: 8000, y: 3000, mirror: true },
+        { op: 'place_symbol', ref: 'U1', page: 1, x: 5000, y: 6000 },
+        { op: 'wire', from: 'J1.1', to: 'J2.1' },
+      ],
+    } as never);
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    k.accept();
+    return k;
+  }
+  /** Whether a wire runs through the part's box. */
+  const through = (s: SheetView, ref: string) => {
+    const b = sym(s, ref).bbox;
+    return s.wires.filter((w) => {
+      for (let i = 0; i + 3 < w.pts.length; i += 2) {
+        const [x1, y1, x2, y2] = [w.pts[i]!, w.pts[i + 1]!, w.pts[i + 2]!, w.pts[i + 3]!];
+        const [ax, bx, ay, by] = [Math.min(x1, x2), Math.max(x1, x2), Math.min(y1, y2), Math.max(y1, y2)];
+        if (ay === by ? ay > b.y && ay < b.y + b.h && Math.max(ax, b.x) < Math.min(bx, b.x + b.w) : ax > b.x && ax < b.x + b.w && Math.max(ay, b.y) < Math.min(by, b.y + b.h)) return true;
+      }
+      return false;
+    });
+  };
+  /** Where U1's centre goes for the SIG wire to run through its box: on a row without side pins, or on the row of one. */
+  function onto(s: SheetView, row: 'free' | 'pin') {
+    const [w, u, c, pg] = [s.wires[0]!, sym(s, 'U1'), centre(s, 'U1'), s.pages[0]!.rect];
+    const rows = new Set(u.pins.filter((p) => p.side === 'left' || p.side === 'right').map((p) => p.y));
+    const y = row === 'pin' ? [...rows][0]! : Array.from({ length: 20 }, (_, i) => u.bbox.y + 300 + 100 * i).find((v) => !rows.has(v))!;
+    return { x: (w.pts[0]! + w.pts.at(-2)!) / 2 - pg.x, y: c.y - y + w.pts[1]! - pg.y };
+  }
+  const joinsTheConnectors = (s: SheetView) => {
+    const [a, b] = [pin(s, 'J1', '1'), pin(s, 'J2', '1')];
+    const net = s.wires[0]!.netId;
+    expect(s.wires.filter((w) => w.netId === net).length).toBe(1);
+    const w = s.wires.find((x) => x.netId === net)!;
+    expect([`${w.pts[0]},${w.pts[1]}`, `${w.pts.at(-2)},${w.pts.at(-1)}`].sort()).toEqual([`${a.x},${a.y}`, `${b.x},${b.y}`].sort());
+    expect(s.labels.filter((l) => l.auto && l.text === 'SIG')).toEqual([]);
+  };
+
+  it('sends the wire round the part when the user drags it there', () => {
+    const k = long();
+    const s0 = sheetOf(k);
+    expect(s0.wires.length).toBe(1);
+    const r = byUser(k, [{ op: 'place_symbol', ref: 'U1', page: 1, ...onto(s0, 'free'), rewire: true }]);
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    expect(r.results[0]!.effect).toMatch(/wires of SIG moved round it/);
+    const s = sheetOf(k);
+    expect(through(s, 'U1')).toEqual([]);
+    joinsTheConnectors(s);
+    expect(k.state().diagnostics.filter((x) => x.code === 'SCH.DANGLING')).toEqual([]);
+  });
+
+  it('sends it round when the part\'s pin lands on the wire, too', () => {
+    const k = long();
+    const s0 = sheetOf(k);
+    const r = byUser(k, [{ op: 'place_symbol', ref: 'U1', page: 1, ...onto(s0, 'pin'), rewire: true }]);
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const s = sheetOf(k);
+    expect(through(s, 'U1')).toEqual([]);
+    joinsTheConnectors(s);
+  });
+
+  it('does the same when the agent moves the part there', () => {
+    const k = long();
+    const s0 = sheetOf(k);
+    const r = k.transact({ summary: 'move', ops: [{ op: 'place_symbol', ref: 'U1', page: 1, ...onto(s0, 'free') }] } as never);
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    expect(r.results[0]!.effect).toMatch(/wires of SIG moved round it/);
+    expect(through(sheetOf(k), 'U1')).toEqual([]);
+    joinsTheConnectors(sheetOf(k));
+  });
+
+  it('keeps the wire up to the part: only what stood behind it moves', () => {
+    const k = long();
+    const s0 = sheetOf(k);
+    byUser(k, [{ op: 'place_symbol', ref: 'U1', page: 1, ...onto(s0, 'free'), rewire: true }]);
+    const s = sheetOf(k);
+    const b = sym(s, 'U1').bbox;
+    const y = s0.wires[0]!.pts[1]!;
+    const [xs, ys] = [s.wires[0]!.pts.filter((_, i) => i % 2 === 0), s.wires[0]!.pts.filter((_, i) => i % 2 === 1)];
+    // a hump just past the part: four corners, no further out than a grid step or two
+    expect(s.wires[0]!.pts.length).toBe(12);
+    expect(Math.min(...xs.slice(1, -1))).toBeGreaterThanOrEqual(b.x - 100);
+    expect(Math.max(...xs.slice(1, -1))).toBeLessThanOrEqual(b.x + b.w + 100);
+    expect(s.wires[0]!.pts[1]).toBe(y);
+    expect(s.wires[0]!.pts.at(-1)).toBe(y);
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(b.y - 200);
+  });
+
+  it('says so when a pin of the wire lies under the part, and sets it free when the part moves on', () => {
+    const k = long();
+    const s0 = sheetOf(k);
+    const a = pin(s0, 'J2', '1');
+    const [c, pg] = [centre(s0, 'U1'), s0.pages[0]!.rect];
+    const u = sym(s0, 'U1');
+    // U1 over J2's pin, on a row of its own without pins
+    const rows = new Set(u.pins.filter((p) => p.side === 'left' || p.side === 'right').map((p) => p.y));
+    const row = Array.from({ length: 20 }, (_, i) => u.bbox.y + 300 + 100 * i).find((v) => !rows.has(v))!;
+    const r = byUser(k, [{ op: 'place_symbol', ref: 'U1', page: 1, x: a.x - pg.x, y: c.y - row + a.y - pg.y, rewire: true }]);
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    expect(r.results[0]!.effect).toMatch(/wires of SIG still run behind it/);
+    expect(through(sheetOf(k), 'U1').length).toBe(1);
+    const off = byUser(k, [{ op: 'place_symbol', ref: 'U1', page: 1, x: 5000, y: 6000, rewire: true }]);
+    expect(off.status, JSON.stringify(off.rejection)).toBe('ok');
+    expect(through(sheetOf(k), 'U1')).toEqual([]);
+    joinsTheConnectors(sheetOf(k));
+  });
+
+  it('does not say a wire of its own went round it: that one is cut back', () => {
+    const k = long();
+    const wired = k.transact({ summary: 'more', ops: [
+      { op: 'add_part', part: 'acme:IC', refdes: 'U2' },
+      { op: 'place_symbol', ref: 'U2', page: 1, x: 2000, y: 6000 },
+      { op: 'connect', pins: ['U2.3', 'U1.1'], net: 'OWN' },
+      { op: 'wire', from: 'U2.3', to: 'U1.1' },
+    ] } as never);
+    expect(wired.status, JSON.stringify(wired.rejection)).toBe('ok');
+    k.accept();
+    const s0 = sheetOf(k);
+    const [c, pg] = [centre(s0, 'U1'), s0.pages[0]!.rect];
+    // over where its pin was, so that for a moment its wire ends inside its box
+    const r = k.transact({ summary: 'move', ops: [{ op: 'place_symbol', ref: 'U1', page: 1, x: c.x - pg.x - 300, y: c.y - pg.y }] } as never);
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    expect(r.results[0]!.effect).not.toMatch(/round it/);
+    expect(r.results[0]!.effect).not.toMatch(/behind it/);
+    expect(through(sheetOf(k), 'U1')).toEqual([]);
+  });
+
+  it('does not say a wire went round it when its pin landed on that wire: labels show that connection', () => {
+    const k = long();
+    const r = k.transact({ summary: 'move', ops: [{ op: 'place_symbol', ref: 'U1', page: 1, ...onto(sheetOf(k), 'pin') }] } as never);
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    expect(r.results[0]!.effect).not.toMatch(/round it/);
+    const s = sheetOf(k);
+    expect(through(s, 'U1')).toEqual([]);
+    expect(s.labels.filter((l) => l.auto && l.text === 'SIG').length).toBeGreaterThan(0);
+  });
+
+  it('is undone with the move', () => {
+    const k = long();
+    const s0 = sheetOf(k);
+    const before = s0.wires[0]!.pts;
+    byUser(k, [{ op: 'place_symbol', ref: 'U1', page: 1, ...onto(s0, 'free'), rewire: true }]);
+    expect(sheetOf(k).wires[0]!.pts).not.toEqual(before);
+    k.undo();
+    expect(sheetOf(k).wires[0]!.pts).toEqual(before);
+    expect(through(sheetOf(k), 'U1')).toEqual([]);
+  });
+});

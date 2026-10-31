@@ -6,11 +6,13 @@
  * together again as a tree: one way between any two of its pins and labels (the shortest pieces
  * kept), nothing that leads nowhere. Then each run between two joints loses its U-turns and steps
  * where a straighter way is clear. A piece still drawn badly (a U-turn left, or loops) is also drawn afresh the way a person would, from pin to pin onto what is drawn
- * already, and the cleaner of the two is kept. What is connected never changes: a wire joins only
- * where an end touches, and a moved piece touches nothing new. A net that needs none of this keeps
- * its wires; a wire drawn through the agent's corners (wire via) keeps its path.
+ * already, and the cleaner of the two is kept. A run through a part (the part was put down on it)
+ * goes round the part. What is connected never changes: a wire joins only where an end touches, and
+ * a moved piece touches nothing new. A net that needs none of this keeps its wires; a wire drawn
+ * through the agent's corners (wire via) keeps its path, unless a part now stands on it.
  */
 import type { Design, PinView, Point, Rect, SheetDrawing, SymbolView } from '@4k7/schema';
+import { GRID } from '@4k7/parts';
 import { RETURN_LEG, labelRect, textRect } from './scene.ts';
 import { routeWire } from './schroute.ts';
 
@@ -52,6 +54,7 @@ export function cleanWires(d: Design, sd: SheetDrawing, symbols: SymbolView[], a
   const nets = [...new Set(sd.wires.map((w) => w.netId))];
   let wires: Wire[] = sd.wires.map((w) => ({ ...w, pts: [...w.pts] }));
   let changed = false;
+  let parts: string | undefined; // where they stand, for what is remembered below
   for (const net of nets) {
     const mine = wires.filter((w) => w.netId === net);
     const others = wires.filter((w) => w.netId !== net);
@@ -63,21 +66,19 @@ export function cleanWires(d: Design, sd: SheetDrawing, symbols: SymbolView[], a
     for (const piece of piecesOf(chains)) {
       const rest = cur.filter((w) => !piece.includes(w));
       const costs = (ws: Wire[]) => ws.reduce((n, w) => n + costOf(w.pts, net, rest, sheet), 0);
+      // a piece the layout draws its own way (a bus along an IC's pins) stays messy by these rules and
+      // is tried again after every change: the outcome is remembered for the same piece in the same place
+      const place = (ws: Wire[]) => `${net}|${JSON.stringify(ws.map((w) => w.pts))}|${JSON.stringify(rest.map((w) => w.pts))}|${(parts ??= JSON.stringify([sheet.pins, sheet.bodies]))}`;
+      // a run behind a part goes round it, whoever drew it
+      const runs = piece.some((w) => behindPart(w.pts, sheet.bodies)) ? (remembered(`round|${place(piece)}`, () => goRound(net, piece, rest, sheet)) ?? piece) : piece;
       // each run straightened where it can be (the agent's own corners stay)
-      const straight = piece.map((w) => (w.via ? w : { ...w, pts: straighten(w.pts, net, [...rest, ...piece.filter((o) => o !== w)], sheet) ?? w.pts }));
+      const straight = runs.map((w) => (w.via ? w : { ...w, pts: straighten(w.pts, net, [...rest, ...runs.filter((o) => o !== w)], sheet) ?? w.pts }));
       let best = straight;
-      if (!piece.some((w) => w.via) && (tree.pruned || straight.some((w) => messy(w.pts)))) {
-        // a piece the layout draws its own way (a bus along an IC's pins) stays messy by these rules and
-        // is tried again after every change: the outcome is remembered for the same piece in the same place
-        const memo = `${net}|${JSON.stringify(straight.map((w) => w.pts))}|${JSON.stringify(rest.map((w) => w.pts))}|${JSON.stringify(sheet.pins)}`;
-        let fresh = redrawn.get(memo);
-        if (fresh === undefined) {
+      if (!runs.some((w) => w.via) && (tree.pruned || straight.some((w) => messy(w.pts)))) {
+        best = remembered(`redraw|${place(straight)}`, () => {
           const r = redraw(net, straight, rest, sheet);
-          fresh = r && costs(r) < costs(straight) ? r : null;
-          if (redrawn.size > 200) redrawn.delete(redrawn.keys().next().value!);
-          redrawn.set(memo, fresh);
-        }
-        if (fresh) best = fresh.map((w) => ({ ...w, pts: [...w.pts] }));
+          return r && costs(r) < costs(straight) ? r : null;
+        }) ?? best;
       }
       if (JSON.stringify(best.map((w) => w.pts)) !== JSON.stringify(piece.map((w) => w.pts))) better = true;
       cur = [...rest, ...best];
@@ -211,6 +212,16 @@ function chainsOf(edges: Edge[], anchors: Set<string>): Chain[] {
 /** Pieces drawn afresh, by what they were and where: the cleaner drawing, or null to keep them. */
 const redrawn = new Map<string, Wire[] | null>();
 
+function remembered(memo: string, draw: () => Wire[] | null): Wire[] | null {
+  let fresh = redrawn.get(memo);
+  if (fresh === undefined) {
+    fresh = draw();
+    if (redrawn.size > 200) redrawn.delete(redrawn.keys().next().value!);
+    redrawn.set(memo, fresh);
+  }
+  return fresh && fresh.map((w) => ({ ...w, pts: [...w.pts] }));
+}
+
 /** The tree's runs grouped into the pieces they make (runs meet only at their ends). */
 function piecesOf(chains: Wire[]): Wire[][] {
   const parent = chains.map((_, i) => i);
@@ -243,16 +254,49 @@ function messy(pts: number[]): boolean {
   return false;
 }
 
+/**
+ * Whether a run goes through a part's box, which the router never does: the part was put down on it,
+ * and hides it or stands across it. (A slanted lead belongs to the part drawn at 45°, a bridge's diamond.)
+ */
+export function behindPart(pts: number[], boxes: Rect[]): boolean {
+  // (asked of every run at every sync, and most runs are nowhere near most boxes)
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let i = 0; i + 1 < pts.length; i += 2) {
+    x0 = Math.min(x0, pts[i]!);
+    x1 = Math.max(x1, pts[i]!);
+    y0 = Math.min(y0, pts[i + 1]!);
+    y1 = Math.max(y1, pts[i + 1]!);
+  }
+  const near = boxes.filter((r) => x1 > r.x && x0 < r.x + r.w && y1 > r.y && y0 < r.y + r.h);
+  return near.length > 0 && segsOf(pts).some((sg) => near.some((r) => intoBox(sg, r)));
+}
+
+const intoBox = (sg: Seg, r: Rect) => (sg[0] === sg[2] || sg[1] === sg[3]) && throughBox(sg, r);
+
+/** A run from its first end up to the first box it goes into, on its grid: its first end alone (two numbers) when it starts going in. */
+function upToBox(pts: number[], boxes: Rect[]): number[] {
+  const out = [pts[0]!, pts[1]!];
+  for (const sg of segsOf(pts)) {
+    const [x1, y1, x2, y2] = sg;
+    const [dx, dy] = [Math.sign(x2 - x1), Math.sign(y2 - y1)];
+    const entered = boxes.filter((r) => intoBox(sg, r)).map((r) => (dx > 0 ? r.x - x1 : dx < 0 ? x1 - r.x - r.w : dy > 0 ? r.y - y1 : y1 - r.y - r.h));
+    if (!entered.length) {
+      out.push(x2, y2);
+      continue;
+    }
+    const clear = Math.floor(Math.max(0, Math.min(...entered)) / GRID) * GRID;
+    if (clear) out.push(x1 + dx * clear, y1 + dy * clear);
+    break;
+  }
+  return out;
+}
+
 /** Which way a wire must not arrive at a label (through its text or symbol). */
 const NOT_INTO: Record<string, [number, number]> = { up: [0, 1], down: [0, -1], left: [1, 0], right: [-1, 0] };
 
-/**
- * A piece drawn afresh, as a person would: from its first pin, each next pin or label (the nearest
- * first) joined onto what is drawn so far with the router. Null when one cannot be reached, or the
- * piece spans pages.
- */
-function redraw(net: string, piece: Wire[], rest: Wire[], sheet: Sheet): Wire[] | null {
-  const segs = piece.flatMap((w) => segsOf(w.pts));
+/** The pins and labels of a net on some wires, and which way each label must not be reached. */
+function terminals(net: string, wires: Wire[], sheet: Sheet): { terms: Map<string, Point>; forbid: Map<string, [number, number]> } {
+  const segs = wires.flatMap((w) => segsOf(w.pts));
   const on = (x: number, y: number) => segs.some((sg) => onSeg(x, y, sg));
   const terms = new Map<string, Point>();
   const forbid = new Map<string, [number, number]>();
@@ -263,35 +307,83 @@ function redraw(net: string, piece: Wire[], rest: Wire[], sheet: Sheet): Wire[] 
     const way = l.stub ?? l.dir;
     if (NOT_INTO[way]) forbid.set(key(l.x, l.y), NOT_INTO[way]!);
   }
-  const todo = [...terms.values()].sort((a, b) => a.x - b.x || a.y - b.y);
-  if (todo.length < 2) return null;
-  const area = sheet.area(todo[0]!);
+  return { terms, forbid };
+}
+
+/** What a piece is joined from: pins and labels on their own, and runs drawn already. */
+interface Island {
+  pts: Point[];
+  wires: number[][];
+}
+
+/** From the first island, each next (the nearest first) joined onto what is joined so far with the router: the wires drawn. Null when one cannot be reached, or they span pages. */
+function joinIslands(net: string, islands: Island[], forbid: Map<string, [number, number]>, rest: Wire[], sheet: Sheet): number[][] | null {
+  const pointsOf = (p: Island) => [...p.pts, ...p.wires.flatMap(toPts)];
+  const todo = [...islands].sort((a, b) => pointsOf(a)[0]!.x - pointsOf(b)[0]!.x || pointsOf(a)[0]!.y - pointsOf(b)[0]!.y);
+  const area = sheet.area(pointsOf(todo[0]!)[0]!);
   const same = (r: Rect | null) => !!r && r.x === area?.x && r.y === area.y;
-  if (!area || !todo.every((t) => same(sheet.area(t)))) return null;
+  if (!area || !todo.every((p) => pointsOf(p).every((t) => same(sheet.area(t))))) return null;
   const soft = sheet.soft.filter((t) => t.net !== net).map((t) => t.r);
-  const joined = [todo.shift()!];
-  const built: number[][] = [];
+  const drawn = islands.flatMap((p) => p.wires);
+  const first = todo.shift()!;
+  const joined = [...first.pts];
+  const built = [...first.wires];
+  const fresh: number[][] = [];
   while (todo.length) {
-    const far = (t: Point) => Math.min(...joined.map((j) => Math.abs(j.x - t.x) + Math.abs(j.y - t.y)), ...built.flatMap(segsOf).map((sg) => toSeg(t, sg)));
+    const far = (p: Island) => Math.min(...pointsOf(p).flatMap((t) => [...joined.map((j) => Math.abs(j.x - t.x) + Math.abs(j.y - t.y)), ...built.flatMap(segsOf).map((sg) => toSeg(t, sg))]));
     todo.sort((a, b) => far(a) - far(b));
     const t = todo.shift()!;
     const pts = routeWire({
-      from: [t],
-      fromWires: [],
+      from: t.pts,
+      fromWires: t.wires,
       to: joined,
       toWires: built,
       via: [],
-      wires: [...rest, ...built.map((b) => ({ netId: net, pts: b }))],
+      wires: [...rest, ...[...drawn, ...fresh].map((b) => ({ netId: net, pts: b }))],
       symbols: sheet.symbols,
       soft,
       bounds: area,
       forbid,
     });
     if (!pts) return null;
-    built.push(pts);
-    joined.push(t);
+    fresh.push(pts);
+    built.push(pts, ...t.wires);
+    joined.push(...t.pts);
   }
-  return built.map((pts) => ({ netId: net, pts }));
+  return fresh;
+}
+
+/**
+ * A piece drawn afresh, as a person would: from its first pin, each next pin or label (the nearest
+ * first) joined onto what is drawn so far with the router. Null when one cannot be reached, or the
+ * piece spans pages.
+ */
+function redraw(net: string, piece: Wire[], rest: Wire[], sheet: Sheet): Wire[] | null {
+  const { terms, forbid } = terminals(net, piece, sheet);
+  if (terms.size < 2) return null;
+  const built = joinIslands(net, [...terms.values()].map((t) => ({ pts: [t], wires: [] })), forbid, rest, sheet);
+  return built && built.map((pts) => ({ netId: net, pts }));
+}
+
+/**
+ * A piece with runs through a part: each keeps what it has up to the part at either end, the way
+ * between goes, and what is left is joined again round the part, so only what stood behind it moves.
+ * The rest of the piece stays as it is drawn. Null when one cannot be reached, or the piece spans pages.
+ */
+function goRound(net: string, piece: Wire[], rest: Wire[], sheet: Sheet): Wire[] | null {
+  const gone = piece.filter((w) => behindPart(w.pts, sheet.bodies));
+  const left: Wire[] = [
+    ...piece.filter((w) => !gone.includes(w)),
+    ...gone.flatMap((w) => [upToBox(w.pts, sheet.bodies), upToBox(toPts(w.pts).reverse().flatMap((p) => [p.x, p.y]), sheet.bodies)]).filter((pts) => pts.length > 2).map((pts) => ({ netId: net, pts })),
+  ];
+  const { terms, forbid } = terminals(net, gone, sheet);
+  const alone = [...terms.values()].filter((t) => !left.some((w) => segsOf(w.pts).some((sg) => onSeg(t.x, t.y, sg))));
+  const islands: Island[] = [...piecesOf(left).map((p) => ({ pts: [], wires: p.map((w) => w.pts) })), ...alone.map((t) => ({ pts: [t], wires: [] }))];
+  const fresh = islands.length > 1 ? joinIslands(net, islands, forbid, rest, sheet) : [];
+  if (!fresh) return null;
+  // (what is left beyond where the new wire joins it leads nowhere now)
+  const tree = treeOf(net, [...left, ...fresh.map((pts) => ({ netId: net, pts }))], sheet);
+  return (tree?.chains ?? []).map((c) => ({ netId: net, pts: c.pts, ...(c.via ? { via: true } : {}) }));
 }
 
 const toSeg = (p: Point, [x1, y1, x2, y2]: Seg) =>
