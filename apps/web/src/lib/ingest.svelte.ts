@@ -5,7 +5,7 @@
  * two are compared fact by fact; the user decides where they disagree. The datasheet is kept
  * so every pin can be shown on its page. Nothing is saved before the user's review.
  */
-import { compareDrafts, draftToCard, listUserParts, mergeDrafts, planUnits, registerUserParts, unregisterUserPart, type Disagreement } from '@4k7/parts';
+import { compareDrafts, draftToCard, listUserParts, mergeDrafts, planUnits, registerUserParts, unregisterUserPart, withGivenPinText, type Disagreement } from '@4k7/parts';
 import { PartDraft, type ToolContent, type DraftPin, type PackageInfo, type Design, type IngestIssue, type PartCard, type TokenCount } from '@4k7/schema';
 import { server } from './server.svelte.ts';
 import { deleteDatasheet, deleteLibraryPart, fetchDatasheet, loadDatasheet, loadLibrary, saveDatasheet, saveLibraryPart } from './files.ts';
@@ -402,9 +402,10 @@ export class IngestState {
   }
 
   /**
-   * A footprint given to a library part in the design (set_footprint, from its datasheet drawing)
-   * and a pin arrangement given to its symbol (set_symbol layout, e.g. like a reference drawing) go
-   * back to the library part once committed, so the Parts view and later designs have them.
+   * A footprint given to a library part in the design (set_footprint, from its datasheet drawing),
+   * a pin arrangement given to its symbol (set_symbol layout, e.g. like a reference drawing) and
+   * what its pins do (set_pin_descriptions) go back to the library part once committed, so the
+   * Parts view and later designs have them.
    */
   async adoptParts(design: Design): Promise<void> {
     for (const lib of this.library) {
@@ -417,6 +418,7 @@ export class IngestState {
         next = { ...next, symbolLayout: own.symbolLayout, customSymbol: true };
         delete next.units;
       }
+      next = withGivenPinText(next, own);
       if (next !== lib) await this.update(next);
     }
   }

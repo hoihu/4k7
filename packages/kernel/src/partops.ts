@@ -1,10 +1,11 @@
 /**
  * The ops on the part cards a design carries: how a part is drawn, its footprint, what it mates
- * with, its polarity, the name of a part, and the defaults generic parts are chosen by.
+ * with, its polarity, what its pins do, the name of a part, and the defaults generic parts are
+ * chosen by.
  */
-import { footprintFor, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOf, planUnits, standardPackage } from '@4k7/parts';
+import { footprintFor, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOf, planUnits, standardPackage, symbolFor } from '@4k7/parts';
 import { type Component, type Design, type EditOp, type ESeries, type OpResult, type PackageInfo, type PartCard, type PartPin, type SymbolLayout, type ValueSeries } from '@4k7/schema';
-import { cardOf, findComponent, natCmp, reject, resolveComponent } from './doc.ts';
+import { cardOf, findComponent, natCmp, reject, resolveComponent, resolveUnitRef } from './doc.ts';
 import { remakeSymbols } from './drawing.ts';
 import { polarityOf } from './marks.ts';
 
@@ -186,6 +187,54 @@ export function setPolarity(d: Design, op: Extract<EditOp, { op: 'set_polarity' 
   const now = polarityOf(copy);
   const said = now === null ? 'no mark (it fits either way round)' : now === 'unknown' ? 'no mark: its pins do not say which is the cathode' : now.kind === 'pin1' ? `a dot by pin ${now.pin}` : now.kind === 'cathode' ? `a band at the cathode, pin ${now.pin}` : `a "+" by the plus terminal, pin ${now.pin}`;
   return { op: 'set_polarity', effect: `${users.join(', ')}: ${said}`, ids: [card.id] };
+}
+
+/** The alternate functions an import noted behind a pin's text ("GPIO · alt: SPI0_RX, UART0_TX"). */
+const altOf = (text: string | undefined) => /(?:^| · )(alt: .*)$/.exec(text ?? '')?.[1];
+
+/**
+ * What a part's pins do (the pin table in Parts, unconnected-pin errors), on the design's copy of
+ * its card; marked, so it goes back to the library part once committed. A generic card is shared by
+ * components that differ, so its pins take no text.
+ */
+export function setPinDescriptions(d: Design, op: Extract<EditOp, { op: 'set_pin_descriptions' }>): OpResult {
+  const comp = resolveUnitRef(d, op.ref).comp;
+  const card = cardOf(d, comp.part)!;
+  const users = Object.values(d.components).filter((c) => c.part === card.id).map((c) => c.refdes).sort(natCmp);
+  if (card.id.startsWith('generic:')) {
+    reject({ code: 'PARAM_INVALID', message: `${card.id} is a generic part, one card for ${users.join(', ')} alike, so its pins take no text: their nets say what each does here. Give ${comp.refdes} a part of its own (import_part, sourcing) to describe its pins.` });
+  }
+  const copy: PartCard = structuredClone(card);
+  const changed = new Set<string>();
+  const unknown: string[] = [];
+  for (const { pin, description } of op.pins) {
+    const key = pin.trim().toUpperCase();
+    const numbered = copy.pins.filter((p) => p.number.toUpperCase() === key);
+    const pins = numbered.length ? numbered : copy.pins.filter((p) => p.name.toUpperCase() === key);
+    if (!pins.length) unknown.push(`"${pin}"`);
+    for (const p of pins) {
+      const alt = altOf(description) ? undefined : altOf(p.description);
+      const text = alt ? `${description} · ${alt}` : description;
+      if (text === p.description) continue;
+      p.description = text;
+      changed.add(p.number);
+    }
+  }
+  if (unknown.length) reject({ code: 'PIN_UNKNOWN', message: `${comp.refdes} (${card.id}) has no pin ${unknown.join(', ')}.`, candidates: card.pins.map((p) => `${p.number} ${p.name}`) });
+  if (!changed.size) return { op: 'set_pin_descriptions', effect: `${users.join(', ')}: the pins already say this`, ids: [] };
+  copy.customPinText = true;
+  d.parts[card.id] = copy;
+  // a switch is drawn from what its pins say is joined inside
+  const redrawn = JSON.stringify(symbolFor(card)) !== JSON.stringify(symbolFor(copy));
+  const sheets = redrawn ? remakeSymbols(d, card.id) : [];
+  return {
+    op: 'set_pin_descriptions',
+    effect:
+      `${users.join(', ')}: ${changed.size} pin description${changed.size === 1 ? '' : 's'}` +
+      (redrawn ? '. Its symbol is drawn differently now: its pins\' texts say which of them are joined inside' : '') +
+      (sheets.length ? `. Redrawn where it stood on your drawing of ${sheets.join(', ')}: wires to pins that moved were cut back and show as labels until you wire them again` : ''),
+    ids: [card.id],
+  };
 }
 
 /** Packages for generic parts without their own: per kind, and automatic sizing. */

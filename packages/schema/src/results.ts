@@ -184,6 +184,8 @@ export interface PinView {
   side: 'left' | 'right' | 'top' | 'bottom';
   showName: boolean;
   showNumber: boolean;
+  /** Its name runs along the pin, into the body. */
+  nameAlong?: boolean;
 }
 
 export interface SymbolView {

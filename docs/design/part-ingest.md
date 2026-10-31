@@ -75,6 +75,16 @@ the user's local Claude Code through the server, like the app chat.
    project from another computer) has its PDF downloaded by the server on first read
    (`POST /api/datasheets/fetch`, once per link) and kept like an imported one; when that file is
    not the one the part was imported from, the agent is told its page numbers may be off.
+8. **Changing a saved part**: `import_part` refuses a part already in the library. `design_edit` ops
+   on a component using it change the design's copy of its card, and once committed `adoptParts`
+   takes a footprint (`set_footprint`), a pin arrangement (`set_symbol layout`) and pin descriptions
+   (`set_pin_descriptions`) back to the library part. Pin descriptions are marked `customPinText` on
+   the copy and only such a copy takes over (`withGivenPinText`, pin by pin), so opening an older
+   design does not undo them, and the library part stays unmarked, so a design that merely uses it
+   does not write it back later. An import's alternate functions (`alt: …`) stay behind the new
+   words. Generic cards take no pin text: one card serves components that differ. A tactile switch
+   is drawn from what its pins' texts say is joined inside, so the op compares the symbol before and
+   after, redraws it where it stands if it changed, and says so.
 
 Not yet: per-field bounding boxes (the row is found again by searching the page text), the
 footprint overlay on the datasheet's land-pattern drawing, and STEP/GLB export.

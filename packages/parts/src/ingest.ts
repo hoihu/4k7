@@ -231,3 +231,20 @@ export function mergeDrafts(a: PartDraft, b: PartDraft, takeB: Set<string>): Par
   }
   return out;
 }
+
+/**
+ * The part with the pin texts its copy in a design was given (set_pin_descriptions), or the part
+ * itself when that adds nothing. A copy not given any stays out of it: it may be older than the part.
+ */
+export function withGivenPinText(part: PartCard, own: PartCard | undefined): PartCard {
+  if (!own?.customPinText) return part;
+  const given = new Map(own.pins.map((p) => [p.number, p.description]));
+  let changed = false;
+  const pins = part.pins.map((p) => {
+    const text = given.get(p.number);
+    if (!text || text === p.description) return p;
+    changed = true;
+    return { ...p, description: text };
+  });
+  return changed ? { ...part, pins } : part;
+}

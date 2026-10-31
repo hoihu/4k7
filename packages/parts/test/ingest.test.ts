@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { PackageInfo, PartDraft } from '@4k7/schema';
-import { bgaRowName, draftToCard, footprintFor, planUnits, symbolFor, unitOfPin } from '../src/index.ts';
+import type { PackageInfo, PartCard, PartDraft } from '@4k7/schema';
+import { bgaRowName, draftToCard, footprintFor, planUnits, symbolFor, unitOfPin, withGivenPinText } from '../src/index.ts';
 
 const lqfp100: PackageInfo = { name: 'LQFP100', family: 'QFP', pins: 100, pitch_mm: 0.5, body_mm: [14, 14], span_mm: [16, 16], lead_length_mm: 0.6, lead_width_mm: 0.22 };
 
@@ -176,6 +176,54 @@ describe('two-pass reconciliation', () => {
     const merged = mergeDrafts(proxy(a), proxy(b), new Set(['pin:12']));
     expect(merged.pins[11]!.type).toBe('in');
     expect(() => structuredClone(merged)).not.toThrow();
+  });
+});
+
+describe('pin descriptions given in a design', () => {
+  const part: PartCard = {
+    id: 'acme:X',
+    description: 'test part',
+    category: 'ic',
+    refPrefix: 'U',
+    pins: [
+      { number: '1', name: 'VIN', type: 'pwr_in', description: 'Library text', page: 3 },
+      { number: '2', name: 'EN', type: 'in', page: 4 },
+      { number: '3', name: 'FB', type: 'in' },
+    ],
+    params: {},
+    provenance: { source: 'datasheet' },
+  };
+  const copy = (texts: (string | undefined)[], extra: Partial<PartCard> = { customPinText: true }): PartCard => ({
+    ...part,
+    ...extra,
+    pins: part.pins.map((p, i) => {
+      const { description: _, ...rest } = p;
+      return { ...rest, ...(texts[i] ? { description: texts[i] } : {}) };
+    }),
+  });
+
+  it('go to the library part, which stays unmarked, pin by pin', () => {
+    const next = withGivenPinText(part, copy(['New text', 'Enable', undefined]));
+    expect(next.pins.map((p) => p.description)).toEqual(['New text', 'Enable', undefined]);
+    expect(next.pins[1]).toEqual({ number: '2', name: 'EN', type: 'in', page: 4, description: 'Enable' });
+    expect(next.customPinText).toBeUndefined();
+  });
+  it('a copy that has no text for a pin takes nothing away', () => {
+    const next = withGivenPinText(part, copy([undefined, 'Enable', undefined]));
+    expect(next.pins[0]!.description).toBe('Library text');
+    expect(next.pins[1]!.description).toBe('Enable');
+  });
+  it('a copy nobody gave text to changes nothing, even when its text differs: it may be the older one', () => {
+    expect(withGivenPinText(part, copy(['Old text', undefined, undefined], {}))).toBe(part);
+    expect(withGivenPinText(part, undefined)).toBe(part);
+  });
+  it('the same text is no change, so nothing is saved', () => {
+    expect(withGivenPinText(part, copy(['Library text', undefined, undefined]))).toBe(part);
+  });
+  it('a pin only the copy has is left out', () => {
+    const own = { ...copy([undefined, undefined, undefined]), pins: [...part.pins, { number: '4', name: 'NEW', type: 'in' as const, description: 'Extra' }] };
+    const next = withGivenPinText(part, own);
+    expect(next).toBe(part);
   });
 });
 

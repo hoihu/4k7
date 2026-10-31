@@ -8,7 +8,7 @@
  * its own (`auto`), so the picture never leaves a connection out.
  */
 import { DEFAULT_PAPER, PAGE, paperOf, type BlockView, type Component, type Design, type DrawnSymbol, type LabelView, type PageView, type PartCard, type PinView, type QuarterTurn, type Rect, type SchematicView, type SheetDrawing, type SheetView, type SymbolSpec, type SymbolView, type WireView } from '@4k7/schema';
-import { GRID, isTwoPin, specMirrors, symbolFor, symbolFromSpec, unitCount, uprightSymbol } from '@4k7/parts';
+import { GRID, isTwoPin, pinSide, specMirrors, symbolFor, symbolFromSpec, unitCount, uprightSymbol, type SymbolDef } from '@4k7/parts';
 import { drawingInputs, Memo } from './derive.ts';
 import { cardOf, componentsSorted, natCmp, nextId } from './doc.ts';
 import { grow, onSegment, overlap, reversePts } from './geom.ts';
@@ -457,7 +457,7 @@ function bringInStep(d: Design, sheetId: string): void {
     const w = want.get(s.comp);
     return !!w && d.components[s.comp]!.part === s.part && JSON.stringify([...units.get(s.comp)!].sort()) === JSON.stringify(w);
   };
-  sd.symbols = sd.symbols.filter(fits).map((s) => current(d, s));
+  sd.symbols = sd.symbols.filter(fits).map((s) => current(d, sd, s));
   fixConnections(d, sd);
   const drawn = new Set(sd.symbols.map((s) => s.comp));
   const fresh = comps.filter((c) => !drawn.has(c.id)).map((c) => c.id);
@@ -473,16 +473,53 @@ function bringInStep(d: Design, sheetId: string): void {
  * A stored symbol as its card draws it now. One drawn differently since it was stored (a crystal
  * or a switch drawn as its symbol where it was a box; a card whose pins changed) is made again
  * centred where it stood, and the sync cuts back the wires to pins that moved, so those
- * connections show as labels. Lying parts and split units are left as they are.
+ * connections show as labels. A box that only changed size keeps its corner (the one on the pins'
+ * side), so the pins along that side stay where they are. Lying parts and split units are left as
+ * they are.
  */
-function current(d: Design, s: DrawnSymbol): DrawnSymbol {
+function current(d: Design, sd: SheetDrawing, s: DrawnSymbol): DrawnSymbol {
   if (s.rot || s.unit || s.spec.unit !== undefined) return s;
-  const def = symbolFromSpec(cardOf(d, s.part)!, s.spec);
+  const card = cardOf(d, s.part)!;
+  const def = symbolFromSpec(card, s.spec);
   const b = def.bbox;
   if (s.bbox.x - s.x === b.x && s.bbox.y - s.y === b.y && s.bbox.w === b.w && s.bbox.h === b.h) return s;
-  const c = centre(s.bbox);
   const base = { comp: s.comp, part: s.part, ...(s.with ? { with: s.with } : {}), ...(s.by ? { by: s.by } : {}) };
+  if (s.bbox.x - s.x === b.x && s.bbox.y - s.y === b.y) {
+    const kept = drawnAt(d, d.components[s.comp]!, base, def, specMirrors(card, s.spec) ? s.x + s.bbox.w - b.w : s.x, s.y);
+    if (card.category === 'connector') {
+      // stored before its pins' names were drawn (November 2026): it grew for them, and the pins on top and at the bottom moved aside
+      const before = symbolFromSpec({ ...card, pins: card.pins.map((p) => ({ ...p, side: pinSide(p), name: p.number })) }, s.spec);
+      if (before.bbox.w === s.bbox.w && before.bbox.h === s.bbox.h) followPins(d, sd, s, before, kept, def);
+    }
+    return s.textBy ? { ...kept, textBy: s.textBy, ref: s.ref, value: s.value } : kept;
+  }
+  const c = centre(s.bbox);
   return made(d, d.components[s.comp]!, base, def, Math.round(c.x / GRID) * GRID, Math.round(c.y / GRID) * GRID);
+}
+
+/**
+ * What hangs only on pins of a connector that moved along their side goes along with them, so a bar
+ * joining its grounds stays one bar. A wire that also reaches another part is left: the sync cuts it
+ * back, and that connection shows as a label.
+ */
+function followPins(d: Design, sd: SheetDrawing, s: DrawnSymbol, was: SymbolDef, now: DrawnSymbol, def: SymbolDef): void {
+  const step = new Map(def.pins.map((p) => {
+    const o = was.pins.find((q) => q.number === p.number);
+    return [p.number, o?.side === p.side ? `${now.x + p.x - s.x - o!.x},${now.y + p.y - s.y - o!.y}` : undefined];
+  }));
+  const symbols = [makeSymbol(d, d.components[s.comp]!, was, s.x, s.y), ...sd.symbols.filter((x) => x !== s).flatMap((x) => symbolOf(d, x) ?? [])];
+  const pins = pinsOf(d, symbols);
+  for (const g of groups(pins, sd.wires, sd.labels)) {
+    const steps = new Set(g.pins.map((i) => (pins[i]!.sym === 0 ? step.get(pins[i]!.pin.number) : undefined)));
+    const [only] = steps;
+    if (steps.size !== 1 || !only || only === '0,0') continue;
+    const [dx, dy] = only.split(',').map(Number) as [number, number];
+    for (const i of g.wires) sd.wires[i]!.pts = sd.wires[i]!.pts.map((v, k) => v + (k % 2 ? dy : dx));
+    for (const i of g.labels) {
+      sd.labels[i]!.x += dx;
+      sd.labels[i]!.y += dy;
+    }
+  }
 }
 
 /**
@@ -884,6 +921,7 @@ export function moveSymbol(d: Design, sheetId: string, comp: Component, unit: st
       g.wires.forEach((w) => carried.wires.delete(w));
       g.labels.forEach((l) => carried.labels.delete(l));
     }
+    if (card.category === 'connector') followPins(d, sd, target, symbolFromSpec(card, target.spec), relook, symbolFromSpec(card, relook.spec));
     sd.symbols[i] = relook;
   }
   const now = sd.symbols[i]!;

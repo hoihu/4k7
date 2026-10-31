@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BUILTIN_PARTS, footprintFor, isModule, packageOf, partTitle, planUnits, searchParts, symbolFor, unitCount } from '@4k7/parts';
+  import { BUILTIN_PARTS, footprintFor, isModule, packageOf, partTitle, planUnits, searchParts, symbolFor, unitCount, withGivenPinText } from '@4k7/parts';
   import type { PartCard, PartPin, SheetView, SymbolView } from '@4k7/schema';
   import { app, tokenCost } from '../app.svelte.ts';
   import { USAGE_TITLE, usageLine } from '../usage.ts';
@@ -242,9 +242,11 @@
   /** The selected part as the library has it now (the agent may have given it a footprint since). */
   const part = $derived.by(() => {
     const lib = ingest.library.find((p) => p.id === current.id) ?? current;
-    // a footprint given in the design (set_footprint), even before it is committed
-    const pkg = app.designParts[lib.id]?.packageInfo;
-    return pkg?.pads?.length && JSON.stringify(pkg) !== JSON.stringify(lib.packageInfo) ? { ...lib, packageInfo: pkg, package: pkg.name } : lib;
+    // a footprint or pin descriptions given in the design (set_footprint, set_pin_descriptions), even before it is committed
+    const own = app.designParts[lib.id];
+    const card = withGivenPinText(lib, own);
+    const pkg = own?.packageInfo;
+    return pkg?.pads?.length && JSON.stringify(pkg) !== JSON.stringify(lib.packageInfo) ? { ...card, packageInfo: pkg, package: pkg.name } : card;
   });
   const shown = $derived(mode === 'import' ? ingest.card : part);
   $effect(() => {

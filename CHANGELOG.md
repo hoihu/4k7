@@ -7,6 +7,7 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ### Schematic
 
+- **A connector shows its pins' names**: an imported connector such as a USB-C receptacle now draws each pin's name in its symbol, next to the number, as an IC does. A plain numbered header or a single test point stays as it was. Names on the top or bottom run along the pins, and those pins move aside to make room; in a drawing you already have, the wires that hang only on those pins go with them, so a bar joining the grounds stays one bar.
 - **A part's name and value keep off the wires**: where a sheet is drawn by the layout they now step aside by themselves when they would run into a wire, a part or a label, going side by side where a stack does not fit between two wires. **Text stays readable** now reports names and values too, so a drawing that has this shows it in the list; on a sheet you or the agent arranged nothing moves until you ask.
 - **Drag a name or value to move it**: only that text moves, in steps of 25 mils, and with **Shift** its partner goes along. A click on it still selects the part.
 - **The agent can fine-tune them**: `place_text` puts a part's name and value on any side, stacked or side by side, at exact spots, or with `auto` moves only what runs into something. It does this as the last step on a sheet it arranged, and it leaves the text you dragged alone.
@@ -32,6 +33,7 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ### Coding agents
 
+- **The agent can describe a part's pins**: ask it to fill in or correct what the pins of a part in your design do, and it writes them on the part with `set_pin_descriptions`, no new import needed. You review them with the rest of the change; once accepted they are in the Parts view and in your library for later designs. An imported MCU's alternate functions stay. Generic parts such as a pin header take none, because one card serves all of them.
 - **Chat through the Codex CLI**: OpenAI's Codex can answer the app's chat on your ChatGPT plan or API key, next to Claude Code, GitHub Copilot CLI and OpenCode. Pick it with the model button under the chat box. It gets only the 4k7 tools, like the others: no shell, no files, and your own MCP servers stay out of it. It needs Codex 0.158 or newer, and shows its answers a whole message at a time. It can also drive the app from its own chat (see the README).
 
 ## 0.4.0 — 2026-10-30

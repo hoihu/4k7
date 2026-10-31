@@ -745,6 +745,7 @@ const COPPER_AFTER: Record<EditOp['op'], 'follow' | 'check' | null> = {
   set_footprint: 'follow',
   set_mating: null,
   set_polarity: null,
+  set_pin_descriptions: null,
   set_enclosure_brief: null,
   set_enclosure_script: null,
   set_enclosure_graphic: null,

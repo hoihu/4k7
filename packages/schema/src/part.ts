@@ -140,6 +140,8 @@ export interface PartCard {
   symbolLayout?: SymbolLayout;
   /** `symbolLayout` was arranged on purpose (set_symbol layout, e.g. like a reference drawing), not generated; it goes back to the library part. */
   customSymbol?: boolean;
+  /** Pin descriptions were given on purpose (set_pin_descriptions), not read at import; they go back to the library part. */
+  customPinText?: boolean;
   /**
    * Split symbol for big ICs: each unit is drawn as its own symbol (U1A, U1B …) with the
    * pins of its layout. Every pin belongs to exactly one unit. Overrides `symbolLayout`.

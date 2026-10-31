@@ -708,7 +708,7 @@ class AppState {
     const ing = this.ingest;
     const same = ing.request?.mpn.toLowerCase() === args.mpn.trim().toLowerCase();
     const known = ing.library.find((p) => p.mpn?.toLowerCase() === args.mpn.trim().toLowerCase());
-    if (known && !(same && ing.phase !== 'idle')) return text(`${args.mpn} is already in the library as ${known.id}; add it with add_part.`);
+    if (known && !(same && ing.phase !== 'idle')) return text(`${args.mpn} is already in the library as ${known.id}; add it with add_part. To change it, use design_edit on a component using it (set_pin_descriptions, set_footprint, set_symbol, set_mating, set_polarity, rename_part), not a new import.`);
     if (ing.phase === 'running' && !same) return text(`Another import (${ing.request?.mpn}) is running; try again when it has finished.`, true);
     if (ing.phase === 'review' && !same) return text(`The import of ${ing.request?.mpn} is waiting for the user's review in Parts; ask them to save or discard it first.`, true);
     if (ing.phase !== 'running' && !(same && ing.phase === 'review')) {
