@@ -7,7 +7,7 @@
  */
 import {
   KEEPOUT_FORBID,
-  type BoardDiagnostic,
+  type Diagnostic,
   type BoardKeepout,
   type BoardSettings,
   type BoardView,
@@ -37,14 +37,14 @@ const boardLayers = (n: number): CopperLayer[] => (n === 4 ? ['F.Cu', 'In1.Cu', 
  * not lay: kept or drawn). The pours are cut round keep-outs, so they never are. `focus`: only
  * these drawn tracks and vias (by id).
  */
-export function keepoutDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] {
-  const out: BoardDiagnostic[] = [];
+export function keepoutDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
+  const out: Diagnostic[] = [];
   if (!b.keepouts?.length) return out;
   const idOf = (x: object) => (x as { id?: string }).id;
   const inFocus = (x: object) => !focus || focus.has(idOf(x) ?? '');
   const label = (k: BoardKeepout) => `keep-out ${k.id}${k.name ? ` (${k.name})` : ''}`;
   const seen = new Set<string>();
-  const add = (key: string, d: BoardDiagnostic) => {
+  const add = (key: string, d: Diagnostic) => {
     if (seen.has(key)) return;
     seen.add(key);
     out.push(d);

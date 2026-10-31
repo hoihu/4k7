@@ -30,6 +30,7 @@ import {
   resolveChecks,
   type CheckSettings,
   DEFAULT_BOARD,
+  countDiagnostics,
   fabPresets,
   fabSummary,
   trackWidthFor,
@@ -41,7 +42,7 @@ import {
 } from '@4k7/schema';
 import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
 import { applyOp, describeConstraint, descriptionView } from './apply.ts';
-import { countDiagnostics, diagKey, runChecks, sortDiagnostics } from './checks.ts';
+import { diagKey, runChecks, sortDiagnostics } from './checks.ts';
 import { crossChecks } from './xcheck.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, valueOf, workCopy } from './doc.ts';

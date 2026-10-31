@@ -9,7 +9,7 @@
 import {
   COPPER_ORDER,
   IMPEDANCE_TOLERANCE,
-  type BoardDiagnostic,
+  type Diagnostic,
   type BoardRules,
   type BoardView,
   type CopperLayer,
@@ -263,10 +263,10 @@ export const keepOf = (v: Pick<ImpedanceView, 'keep'>, lay: Pick<ImpedanceLayer,
  * the ground beside it, lengths) need the board routed, with its pours. `quiet`: nets that are no
  * aggressor beside a line (supplies; nets with a plane always count as quiet).
  */
-export function impedanceDrc(b: BoardView, focus?: Set<string>, quiet: Set<string> = new Set()): BoardDiagnostic[] {
+export function impedanceDrc(b: BoardView, focus?: Set<string>, quiet: Set<string> = new Set()): Diagnostic[] {
   const views = b.impedance ?? [];
   if (!views.length) return [];
-  const out: BoardDiagnostic[] = [];
+  const out: Diagnostic[] = [];
   const name = (id: string) => b.netNames[id] ?? id;
   const at = (x: number, y: number) => ({ x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 });
   const xy = (x: number, y: number) => `${f2(x)}, ${f2(y)}`;

@@ -20,7 +20,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ASSEMBLY_HOUSE, assemblyHouse, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type BoardDiagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
 import { enclosureApiSummary, enclosureFacts, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
@@ -160,6 +160,10 @@ class AppState {
   board = $state.raw<BoardView | null>(null);
   boardBusy = $state(false);
   boardStage = $state<BoardStage>('placed');
+  /** What the board's checks found, once it is laid for the design as it is now (the header counts them with the schematic's). */
+  boardCounts = $state<DiagnosticCounts | null>(null);
+  /** The Layout view's list of checks is open. */
+  checksOpen = $state(false);
   /** Routing under way (the copper laid so far is drawn over the placed board), else null. */
   routeProgress = $state.raw<RouteProgress | null>(null);
   private boards = new BoardClient();
@@ -429,6 +433,7 @@ class AppState {
 
   async refresh() {
     this.rev++;
+    this.boardCounts = null;
     this.k = await this.kernel.state();
     this.designParts = await this.kernel.designParts();
     const ids = new Set(this.k.proposal?.hunks.map((h) => h.id) ?? []);
@@ -466,6 +471,7 @@ class AppState {
         if (stage === 'routed') {
           this.boardBusy = false;
           this.boardRev = rev;
+          if (rev === this.rev) this.boardCounts = countDiagnostics(board.diagnostics);
           // routed here, not taken from the design: keep it, so it is not routed again
           if (newCopper) void this.keepCopper(newCopper);
         }
@@ -647,7 +653,7 @@ class AppState {
   }
 
   /** Mark a board check as intended ("not a problem"): a waiver, so it drops out of the checks and stays out. */
-  waiveCheck(d: BoardDiagnostic): Promise<boolean> {
+  waiveCheck(d: Diagnostic): Promise<boolean> {
     return this.userEdit(`Not a problem: ${d.code} on ${d.entities.join(', ')}`, [{ op: 'add_waiver', code: d.code, entities: d.entities, reason: 'Marked as intended in the layout checks' }]);
   }
 

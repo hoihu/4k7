@@ -1,6 +1,6 @@
 <script lang="ts">
   import { boardStep, fabFiles, panelFabFiles, zip } from '@4k7/fab';
-  import { planeNames, userPlaced, whose, type BoardDiagnostic, type CopperLayer, type HousePlacement } from '@4k7/schema';
+  import { planeNames, userPlaced, whose, type Diagnostic, type CopperLayer, type HousePlacement } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
   import BoardCanvas from './BoardCanvas.svelte';
@@ -129,7 +129,6 @@
   // (routing runs after the placement shows: until its result is in, it is "routing…")
   const routing = $derived(b?.routing === 'done' && app.boardBusy && app.boardStage !== 'routed');
   const nParts = $derived(b?.parts.filter((p) => !p.componentId.startsWith('hole:')).length ?? 0);
-  let checksOpen = $state(false);
   let allChecks = $state(false);
   let waivedOpen = $state(false);
   // The check whose full message is shown; others stay clamped to two lines.
@@ -206,7 +205,7 @@
     app.flash(`Exported the board and ${step.parts} part${step.parts === 1 ? '' : 's'} as STEP${without}`);
   }
 
-  function focus(d: BoardDiagnostic) {
+  function focus(d: Diagnostic) {
     marker = d.at ?? null;
     app.selection = d.entities.filter((e) => b?.parts.some((p) => p.refdes === e));
   }
@@ -311,8 +310,8 @@
             </div>
           {/if}
         {/if}
-        <h4><button class="fold" aria-expanded={checksOpen} onclick={() => (checksOpen = !checksOpen)}><span class="chev">{checksOpen ? '▾' : '▸'}</span>Checks <span class="tag err">{errors}</span> <span class="tag warn">{warnings}</span></button></h4>
-        {#if checksOpen}
+        <h4><button class="fold" aria-expanded={app.checksOpen} onclick={() => (app.checksOpen = !app.checksOpen)}><span class="chev">{app.checksOpen ? '▾' : '▸'}</span>Checks <span class="tag err">{errors}</span> <span class="tag warn">{warnings}</span></button></h4>
+        {#if app.checksOpen}
         {#if !openChecks.length}<p class="muted small">No problems found.</p>{/if}
         <ul class="diags">
           {#each allChecks ? openChecks : openChecks.slice(0, CHECKS_SHOWN) as d, i (i)}

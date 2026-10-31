@@ -2,6 +2,7 @@ import type { PackageInfo } from './ingest.ts';
 import type { PartCategory } from './part.ts';
 import { fabSummary, type FabProfile } from './fab.ts';
 import type { PanelSettings, PanelView } from './panel.ts';
+import type { Diagnostic } from './results.ts';
 import { boardFacing, matingOf, type BoardFacing } from './enclosure.ts';
 import { stackupPresets, stackupText, type ImpedanceRule, type ImpedanceView, type Stackup } from './stackup.ts';
 
@@ -960,17 +961,6 @@ export interface UnroutedConnection extends RouteBlockage {
   near: string[];
 }
 
-export interface BoardDiagnostic {
-  code: string;
-  severity: 'error' | 'warning' | 'info';
-  message: string;
-  /** Where to look. */
-  at?: { x: number; y: number };
-  entities: string[];
-  /** Set when a waiver covers this check (the user or agent marked it intended). */
-  waivedBy?: string;
-}
-
 export interface BoardView {
   outline: { w: number; h: number };
   layers: CopperLayer[];
@@ -991,7 +981,7 @@ export interface BoardView {
   viaGroups: { id: string; netId: string; kind: ViaKind; wanted: number; note?: string; pad?: string; along?: string }[];
   /** Connections not (yet) made by copper. */
   ratsnest: RatsLine[];
-  diagnostics: BoardDiagnostic[];
+  diagnostics: Diagnostic[];
   stats: { nets: number; routed: number; unrouted: number; trackLength: number; vias: number };
   /** Connections the router left open, pad to pad (e.g. "U1.3" → "C2.1"), with what is in the way. */
   unrouted: UnroutedConnection[];

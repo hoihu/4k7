@@ -3,7 +3,7 @@
  * between tracks, vias and pads of different nets on the same layer.
  */
 import { cutoutDistance, insideBoard, padCapsule, roundPadDist } from '@4k7/schema';
-import type { BoardDiagnostic, BoardPad, BoardPart, BoardView, CopperLayer, Track } from '@4k7/schema';
+import type { Diagnostic, BoardPad, BoardPart, BoardView, CopperLayer, Track } from '@4k7/schema';
 import { segDist } from './segments.ts';
 import { padPointDist, padSegDist } from './keep.ts';
 
@@ -41,7 +41,7 @@ export const copperName = (b: Pick<BoardView, 'netNames'>, kind: 'track' | 'via'
  * Clearance between the copper of different nets on each layer. `focus`: only findings that
  * involve these drawn tracks and vias (by id), e.g. what an op just drew.
  */
-export function copperDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] {
+export function copperDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
   const items: Item[] = [];
   for (const p of b.parts) {
     for (const pad of p.pads) {
@@ -71,7 +71,7 @@ export function copperDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] 
     }
   }
   const c = b.rules.clearance;
-  const viaIssues: BoardDiagnostic[] = [];
+  const viaIssues: Diagnostic[] = [];
   if (!b.rules.viaInPad) {
     for (const v of b.vias) {
       if (v.inPad) continue; // thermal vias, placed in their pad on purpose (add_vias)
@@ -98,7 +98,7 @@ export function copperDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] 
     }
   }
   // what is close enough to look at: leftmost first, as the findings are listed
-  const out: BoardDiagnostic[] = [];
+  const out: Diagnostic[] = [];
   const seen = new Set<string>();
   for (const [A, B, gap] of closePairs(items, c, focus)) {
     const nets = [A.net, B.net].sort().join('|');
@@ -233,9 +233,9 @@ export function segRect(ax: number, ay: number, bx: number, by: number, r: { x0:
  * `straight`: the straight edges too (drawn copper; the router keeps off them). `focus`: only these
  * drawn tracks and vias (by id).
  */
-export function edgeDrc(b: BoardView, straight = false, focus?: Set<string>): BoardDiagnostic[] {
+export function edgeDrc(b: BoardView, straight = false, focus?: Set<string>): Diagnostic[] {
   const e = b.rules.edgeClearance;
-  const out: BoardDiagnostic[] = [];
+  const out: Diagnostic[] = [];
   const seen = new Set<string>();
   // how close a disc of radius r at (x, y) comes to the outline or a cutout (negative: over it)
   const room = (x: number, y: number, r: number) => {
@@ -276,10 +276,10 @@ export function edgeDrc(b: BoardView, straight = false, focus?: Set<string>): Bo
  * and emissions on fast signals. One finding per net and area, at the first crossing. `signal`
  * says which nets count (supplies and ground do not).
  */
-export function splitDrc(b: BoardView, signal: (netId: string) => boolean): BoardDiagnostic[] {
+export function splitDrc(b: BoardView, signal: (netId: string) => boolean): Diagnostic[] {
   if (b.layers.length !== 4) return [];
   const over: Partial<Record<CopperLayer, CopperLayer>> = { 'F.Cu': 'In1.Cu', 'B.Cu': 'In2.Cu' };
-  const out: BoardDiagnostic[] = [];
+  const out: Diagnostic[] = [];
   for (const pl of b.planes) {
     if (!pl.area) continue;
     const [x0, y0, x1, y1] = pl.area;
@@ -321,8 +321,8 @@ export function underBody(part: Pick<BoardPart, 'pads'>, x: number, y: number, r
  * at most), counted on the copper as it lies. A pad in its net's
  * pour on its own layer is left alone (the pour spreads the current).
  */
-export function planeViaDrc(b: BoardView): BoardDiagnostic[] {
-  const out: BoardDiagnostic[] = [];
+export function planeViaDrc(b: BoardView): Diagnostic[] {
+  const out: Diagnostic[] = [];
   const near = (x: number, y: number, pad: BoardView['parts'][number]['pads'][number], grow: number) => Math.max(Math.abs(x - pad.x) - pad.w / 2, Math.abs(y - pad.y) - pad.h / 2) <= grow;
   for (const g of b.viaGroups) {
     if (g.kind !== 'drop' || !g.pad || g.wanted < 2) continue;
@@ -418,8 +418,8 @@ export function edgeCrossings(pts: number[], x0: number, y0: number, x1: number,
  * its layer) is dangling; a piece that is not a multiple of 45° is off the usual directions.
  * `focus`: only these tracks (by id).
  */
-export function drawnDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] {
-  const out: BoardDiagnostic[] = [];
+export function drawnDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
+  const out: Diagnostic[] = [];
   const name = (id: string) => b.netNames[id] ?? id;
   const pads = b.parts.flatMap((p) => p.pads.map((pad) => ({ p, pad })));
   for (const t of b.drawn?.tracks ?? []) {
@@ -465,7 +465,7 @@ const angleBetween = (a: [number, number], b: [number, number]) => (Math.acos(Ma
  * pad, a via, a pour or another track of the net fills is not one, and neither is a junction inside
  * a pad or a via. `focus`: only junctions of these drawn tracks (by id).
  */
-export function acidDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] {
+export function acidDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
   type Arm = { dx: number; dy: number; w: number; id?: string };
   const nodes = new Map<string, { x: number; y: number; netId: string; layer: CopperLayer; arms: Arm[] }>();
   const at = (t: { netId: string; layer: CopperLayer }, x: number, y: number) => {
@@ -494,7 +494,7 @@ export function acidDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] {
       }
     }
   }
-  const out: BoardDiagnostic[] = [];
+  const out: Diagnostic[] = [];
   const pads = b.parts.flatMap((p) => p.pads);
   for (const n of nodes.values()) {
     if (n.arms.length < 2) continue;
@@ -541,8 +541,8 @@ export function acidDrc(b: BoardView, focus?: Set<string>): BoardDiagnostic[] {
  * from a fine-pitch pad) is the pad's doing and is let be. One finding per net and width where the
  * copper is routed; `focus`: only these drawn tracks (by id).
  */
-export function neckDrc(b: BoardView, widthOf: (netId: string, layer: CopperLayer) => number, focus?: Set<string>): BoardDiagnostic[] {
-  const out: BoardDiagnostic[] = [];
+export function neckDrc(b: BoardView, widthOf: (netId: string, layer: CopperLayer) => number, focus?: Set<string>): Diagnostic[] {
+  const out: Diagnostic[] = [];
   const seen = new Set<string>();
   const pads = b.parts.flatMap((p) => p.pads);
   for (const t of b.tracks) {
@@ -574,8 +574,8 @@ export function neckDrc(b: BoardView, widthOf: (netId: string, layer: CopperLaye
  * either). A pad of a plane styled `thermal: false`, or with thermal vias, is joined solid and not
  * counted; a pad a track of the net joins on the layer is let be.
  */
-export function thermalDrc(b: BoardView): BoardDiagnostic[] {
-  const out: BoardDiagnostic[] = [];
+export function thermalDrc(b: BoardView): Diagnostic[] {
+  const out: Diagnostic[] = [];
   for (const z of b.zones) {
     if (!z.shape) continue;
     if (b.planes.find((pl) => pl.netId === z.netId && pl.layer === z.layer)?.style?.thermal === false) continue;
@@ -603,8 +603,8 @@ export function thermalDrc(b: BoardView): BoardDiagnostic[] {
 }
 
 /** A note on each pour that lost islands: pieces the fill left out because they touched no copper of the net (dead copper). */
-export function deadCopperDrc(b: BoardView): BoardDiagnostic[] {
-  const out: BoardDiagnostic[] = [];
+export function deadCopperDrc(b: BoardView): Diagnostic[] {
+  const out: Diagnostic[] = [];
   for (const z of b.zones) {
     if (!z.removed) continue;
     const net = b.netNames[z.netId] ?? z.netId;

@@ -4,7 +4,7 @@
  * size. Placement checks need no routing; copper checks (tracks, vias) run with the route.
  */
 import { fabRuleIssues, MASK_MARGIN } from '@4k7/schema';
-import type { BoardDiagnostic, BoardPad, BoardView, CopperLayer } from '@4k7/schema';
+import type { Diagnostic, BoardPad, BoardView, CopperLayer } from '@4k7/schema';
 import { padGap } from './drc.ts';
 import { segSegDist } from './segments.ts';
 
@@ -37,9 +37,9 @@ function holes(b: BoardView, vias: boolean): Hole[] {
 }
 
 /** Hole walls thinner than the fab's limit; `viaPairs` = only pairs where a via is involved (the rest was checked at placement). */
-function spacing(b: BoardView, viaPairs: boolean): BoardDiagnostic[] {
+function spacing(b: BoardView, viaPairs: boolean): Diagnostic[] {
   const l = b.fab!.limits;
-  const out: BoardDiagnostic[] = [];
+  const out: Diagnostic[] = [];
   const hs = holes(b, viaPairs).sort((p, q) => p.x - q.x);
   const seen = new Set<string>();
   const widest = Math.max(l.holeToHole ?? 0, l.padHoleToHole ?? 0);
@@ -79,7 +79,7 @@ function spacing(b: BoardView, viaPairs: boolean): BoardDiagnostic[] {
  * (they join anyway). Between pads of one part the footprint decides (a warning); between parts
  * the layout does (an error). One finding per pair of parts, at its narrowest web.
  */
-function maskWebs(b: BoardView): BoardDiagnostic[] {
+function maskWebs(b: BoardView): Diagnostic[] {
   const min = b.fab!.limits.maskBridge;
   if (min === undefined) return [];
   const pads = b.parts.flatMap((p) => p.pads.filter((q) => !q.npth).map((q) => ({ p: p.refdes, q })));
@@ -102,7 +102,7 @@ function maskWebs(b: BoardView): BoardDiagnostic[] {
       if (!w || web < w.web) worst.set(key, { web, a: A, c: C });
     }
   }
-  const out: BoardDiagnostic[] = [];
+  const out: Diagnostic[] = [];
   for (const { web, a, c } of worst.values()) {
     const same = a.p === c.p;
     out.push({
@@ -117,12 +117,12 @@ function maskWebs(b: BoardView): BoardDiagnostic[] {
 }
 
 /** Layers, board size, rules, component holes and rings, mask webs, silkscreen lines and text: everything known at placement. */
-export function fabPlacementDrc(b: BoardView): BoardDiagnostic[] {
+export function fabPlacementDrc(b: BoardView): Diagnostic[] {
   const fab = b.fab;
   if (!fab) return [];
   const l = fab.limits;
   const who = `${fab.house} ${fab.tier}`;
-  const out: BoardDiagnostic[] = [];
+  const out: Diagnostic[] = [];
 
   const layerCount = b.layers.length as 2 | 4;
   if (!fab.layers.includes(layerCount)) {
@@ -196,11 +196,11 @@ export function fabPlacementDrc(b: BoardView): BoardDiagnostic[] {
 }
 
 /** Track widths, via sizes and hole spacing around vias, once the board is routed. */
-export function fabCopperDrc(b: BoardView): BoardDiagnostic[] {
+export function fabCopperDrc(b: BoardView): Diagnostic[] {
   const fab = b.fab;
   if (!fab) return [];
   const l = fab.limits;
-  const out: BoardDiagnostic[] = [];
+  const out: Diagnostic[] = [];
   const seen = new Set<string>();
   for (const t of b.tracks) {
     if (t.width >= l.track - EPS) continue;

@@ -19,7 +19,7 @@
  */
 import {
   DEFAULT_BOARD,
-  type BoardDiagnostic,
+  type Diagnostic,
   type BoardPad,
   type BoardPart,
   type BodyCorner,
@@ -1496,7 +1496,7 @@ export function drawnCopper(dc: DrawnCopper, parts: BoardPart[]): { tracks: Draw
  * connections); the rest is the agent's judgement and only warns. A via in a small part's land
  * pattern (no other net's pad under it: that is a short) is soft.
  */
-export function softened(x: BoardDiagnostic): BoardDiagnostic {
+export function softened(x: Diagnostic): Diagnostic {
   return x.code === 'DRC.VIA_IN_PAD' && x.severity === 'error' ? { ...x, severity: 'warning', message: `${x.message} (soft rule: fine where you mean it, e.g. a drop right beside a pad)` } : x;
 }
 
@@ -1868,9 +1868,9 @@ export function ratsnest(parts: BoardPart[], connected?: (netId: string, a: Boar
   return out;
 }
 
-function placementChecks(parts: BoardPart[], w: number, h: number, edge: number, outline: { outline: { w: number; h: number }; cornerRadius: number; shape: number[] | null }, cutouts: BoardCutout[] = []): BoardDiagnostic[] {
+function placementChecks(parts: BoardPart[], w: number, h: number, edge: number, outline: { outline: { w: number; h: number }; cornerRadius: number; shape: number[] | null }, cutouts: BoardCutout[] = []): Diagnostic[] {
   const shaped = outline.cornerRadius > 0 || !!outline.shape;
-  const out: BoardDiagnostic[] = [];
+  const out: Diagnostic[] = [];
   // a pad's corners (and centre): how far inside the outline / outside every cutout
   const padPoints = (p: BoardPad) => [[p.x - p.w / 2, p.y - p.h / 2], [p.x + p.w / 2, p.y - p.h / 2], [p.x - p.w / 2, p.y + p.h / 2], [p.x + p.w / 2, p.y + p.h / 2], [p.x, p.y]] as const;
   // through-hole parts (and holes) take their place on both sides
