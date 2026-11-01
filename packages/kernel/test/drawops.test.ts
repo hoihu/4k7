@@ -194,6 +194,14 @@ describe('wire at a pin', () => {
     expect(hasRun(k, left, right)).toBe(false);
     expect(sheetOf(k).wires.filter((w) => onWire(cap.x, cap.y, w.pts))).toEqual([]);
     expect(sch(k)).toEqual([]);
+    // (that is how it gets past: no detour)
+    expect(detours(k)).toEqual([]);
+  });
+
+  it('leaves that hop to the wire op: a part placed on its own draws no U', () => {
+    const { k } = row([{ pins: ['R2.2', 'R1.1'], net: 'XT' }, { pins: ['C1.1'], net: 'CAP' }]);
+    const r = k.transact({ summary: 'place', ops: [{ op: 'place_symbol', ref: 'R1', page: 1, x: 5700, y: 2800, orient: 'lying' }] } as never);
+    expect(r.results[0]!.effect).toMatch(/R1\.1 \(XT: the wire would jog\)/);
   });
 
   it('does not run over a pin off its grid', () => {

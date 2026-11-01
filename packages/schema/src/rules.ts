@@ -36,7 +36,7 @@ export const SCHEMATIC_CHECKS: readonly SchematicCheck[] = [
   { id: 'SCH.DANGLING', title: 'No loose wire ends', text: 'Every wire ends at a pin, a junction or another wire.', level: 'error', layout: true },
   { id: 'SCH.TEXT_OVERLAP', title: 'Text stays readable', text: 'Names, values and labels do not run into each other, a part or a wire.', level: 'warning', layout: false },
   { id: 'SCH.JOG', title: 'Parts in line', text: 'Two parts joined by a wire (a divider, parts in series) sit on one line, so the wire runs straight.', level: 'warning', layout: false },
-  { id: 'SCH.DETOUR', title: 'No wire doubles back', text: 'A wire does not turn back the way it came.', level: 'warning', layout: false },
+  { id: 'SCH.DETOUR', title: 'No wire doubles back', text: 'A wire does not turn back the way it came where it could run straight. Going round a part or another wire in its way is fine.', level: 'warning', layout: false },
   { id: 'SCH.CROSSING', title: 'Few wire crossings', text: 'Counted per net; more than the limit is reported.', level: 'info', max: 0, layout: false },
 ];
 
