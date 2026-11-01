@@ -30,8 +30,9 @@ window: the app is the browser tab, as with npx.
 
 `4k7pcb app` (`tools/server/src/launch.ts`) is what makes a double-click work:
 
-- A server already running on one of the ports: open its link, done. So the app can be opened
-  any number of times; the Mac launcher exits at once and is never "running" for the Finder.
+- A server that takes this access key already running on one of the ports: open its link, done. So
+  the app can be opened any number of times; the Mac launcher exits at once and is never "running"
+  for the Finder. A server with another key (one run from source) does not count.
 - Otherwise start the server detached (`--idle-exit`, logging to `~/.4k7/server.log`),
   which opens the app itself.
 - `--idle-exit`: there is no terminal to Ctrl-C and no window to close, so the server stops by
@@ -130,19 +131,31 @@ is cached afterwards. `prepare` also runs on `npm install` in a checkout (about 
 
 Projects are files the server writes (`~/Documents/4k7`), but the browser keeps settings and API
 keys per origin (host *and* port), so the app always opens at
-`http://localhost:7777`. When 7777 is taken by another 4k7 server (say the CLI's MCP
-server), a second one takes the next port of 7777–7781 but still points its link at
+`http://localhost:7777`. When 7777 is taken by another 4k7 server with the same key (say the CLI's
+MCP server), a second one takes the next port of 7777–7781 but still points its link at
 7777, adding its own port (`?port=7778`) so the tab connects to it. When 7777 belongs to another
-program, the app opens on the server's own port and the server says that settings saved at
-7777 do not show there.
+program, or to a server with another key, the app opens on the server's own port and the server
+says that settings saved at 7777 do not show there.
 
-A checkout's dev server (`http://localhost:5173`) takes precedence: `npm run dev` points the
-server's links there, and a server run on its own from the checkout does so while the
-dev server answers. In a checkout, 7777 is the backend and 5173 is the dev UI: 7777 still
-serves the last `npm run build`, so open the link `npm run dev` prints.
+A server run from source keeps to itself, so the two can run side by side, started in any order,
+and half-done code never touches real designs:
 
-So, in a checkout: `npm run dev` while working on the code (hot reload, the server from source),
-`npm start` to check the package as users get it.
+| | Run from source (`npm run dev`, `npm run server`, Claude Code in a checkout) | The app (download, `npx`, `npm start`) |
+| --- | --- | --- |
+| Access key, libraries, log | `~/.4k7-dev` (the agents' settings and a copy of the libraries from `~/.4k7` the first time, not the key) | `~/.4k7` |
+| Projects | `~/Documents/4k7-dev` | `~/Documents/4k7` |
+| Port | 7778–7781 | 7777 first |
+| Opens at | the dev server (`http://localhost:5173`) while it answers, else its own port | `http://localhost:7777` |
+
+Its own key is what keeps them apart: a tab looks on every port, but only connects to a server that
+takes its key. With one key on two servers, a new tab connects to the lowest port and pushes the tab
+there off it, and a tab whose server stopped saves into the other server's folder. The app's server
+also refuses pages of the dev server.
+
+So, in a checkout: `npm run dev` while working on the code (hot reload, the server from source), and open
+the link it prints. `npm start` for your own work, and to check the package as users get it.
+`FOURK7_HOME` and `FOURK7_PROJECTS` override these folders: `FOURK7_PROJECTS=~/Documents/4k7 npm run dev`
+works on the real designs.
 
 ## Security
 
@@ -152,7 +165,7 @@ access key in an `authorization` header and refuses pages of other origins.
 
 The app's address carries an access key: `http://localhost:7777/<access-key>`, a random UUID created
 once and kept in `~/.4k7/server.json` (`"accessKey"`), so the address stays the same across
-restarts and every server on this computer accepts it. (A `~/.4k7` folder from the app's old
+restarts and every server of the app on this computer accepts it. (A `~/.4k7` folder from the app's old
 name is moved to `~/.4k7` on the first start, and the browser copies its old database over the
 first time the renamed app opens, so the key, the profile and saved work carry over.) The page is served only at that path (`/`
 gets a page that says to use the link); the build files under `/assets` hold no secrets. The tab

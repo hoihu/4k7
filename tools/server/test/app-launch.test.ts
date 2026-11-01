@@ -4,8 +4,8 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SERVER_PORTS } from '@4k7/schema';
-import { candidateDirs, checkForUpdate, compareVersions, extendPathFor, LocalServer } from '../src/index.ts';
-import { serves4k7 } from '../src/app.ts';
+import { candidateDirs, checkForUpdate, compareVersions, extendPathFor, LocalServer, storageHandler } from '../src/index.ts';
+import { appHandler, serves4k7 } from '../src/app.ts';
 import { launchApp, mcpCommand } from '../src/launch.ts';
 
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -149,10 +149,20 @@ describe('4k7pcb app', () => {
 
     const before = new Set<number>();
     for (const p of SERVER_PORTS) if (await serves4k7(p)) before.add(p);
-    if (before.size === SERVER_PORTS.length) return; // every port busy on this machine: nothing to test
+    if (SERVER_PORTS.slice(1).every((p) => before.has(p))) return; // every port this one can take is busy on this machine: nothing to test
+
+    // a server that answers with another key (one run from source, say): its page would refuse this key's link, so it does not count
+    const accessKey = '11111111-2222-4333-8444-555555555555';
+    const foreign = new LocalServer({ accessKey, ports: [20000 + Math.floor(Math.random() * 20000)] });
+    const foreignPort = await foreign.start();
+    cleanups.push(() => foreign.stop());
+    const foreignStorage = storageHandler({ accessKey, projectsDir: join(stub, 'foreign'), dataDir: join(stub, 'foreign'), allowedOrigin: () => true });
+    const foreignApp = appHandler(null, '9.9.9', accessKey);
+    foreign.setHttpHandler((req, res) => ((req.url ?? '').startsWith('/api/') ? foreignStorage(req, res) : foreignApp(req, res)));
+    expect(await serves4k7(foreignPort)).toBe(true);
 
     // ports that already serve (another server on this computer) are left out, so a new one is started
-    const launch = { script: fileURLToPath(new URL('../src/cli.ts', import.meta.url)), ports: SERVER_PORTS.filter((p) => !before.has(p)) };
+    const launch = { script: fileURLToPath(new URL('../src/cli.ts', import.meta.url)), ports: [foreignPort, ...SERVER_PORTS.filter((p) => !before.has(p))] };
     const logs: string[] = [];
     await launchApp({ ...launch, log: (m) => logs.push(m) });
     const pid = Number(/pid (\d+)/.exec(logs[0] ?? '')?.[1]);
@@ -171,6 +181,8 @@ describe('4k7pcb app', () => {
       for (const p of SERVER_PORTS) if (!before.has(p) && (await serves4k7(p))) port = p;
     }
     expect(port).not.toBeNull();
+    // run from source (this test's script): the first port stays free for the installed app
+    expect(port).not.toBe(SERVER_PORTS[0]);
     if (!windows) {
       for (let i = 0; i < 50 && !existsSync(join(stub, 'opened')); i++) await new Promise((r) => setTimeout(r, 100));
       expect(readFileSync(join(stub, 'opened'), 'utf8')).toContain('/0cd22f19-30de-4d39-9287-ab0123456789');

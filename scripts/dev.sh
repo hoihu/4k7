@@ -2,10 +2,12 @@
 # Development: the app from source with hot reload (Vite) on localhost:5173, plus the local server
 # from source (restarts when its code changes), in one terminal. Ctrl-C stops both.
 #
-# Projects live in the browser's IndexedDB, per origin (host + port). Every checkout or worktree
-# that serves on its own port starts with an empty project; serving them all on 5173, one at a time,
-# keeps the projects. If another checkout's dev server holds 5173, it is stopped (by PID, only the
-# process listening on that port), then this one starts there.
+# A server run from source keeps to itself: its own access key, projects (~/Documents/4k7-dev) and
+# libraries (~/.4k7-dev), and it leaves port 7777 to the installed app, so half-done code never touches
+# real designs and the app (or npm start) runs beside this. Every checkout shares those, and the browser
+# keeps settings per origin (host + port), so all are served on 5173, one at a time. If another checkout's
+# dev server holds 5173, it is stopped (by PID, only the process listening on that port), then this one
+# starts there.
 set -euo pipefail
 PORT="${FOURK7_DEV_PORT:-5173}"
 cd "$(dirname "$0")/.."

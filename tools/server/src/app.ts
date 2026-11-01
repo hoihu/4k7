@@ -10,7 +10,8 @@
 import { createReadStream, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
-import { SERVER_ACCESS_KEY } from '@4k7/schema';
+import { SERVER_ACCESS_KEY, SERVER_PORTS } from '@4k7/schema';
+import { DEV_APP } from './config.ts';
 import type { HttpHandler } from './server.ts';
 import { secretsMatch } from './mcp.ts';
 import { LOCAL_HOST } from './storage.ts';
@@ -105,11 +106,16 @@ const NO_KEY_PAGE = `<!doctype html><meta charset="utf-8"><title>4k7</title>
 <p style="color:#999">The key is also in <code>~/.4k7/server.json</code> (<code>"accessKey"</code>).</p>
 </body>`;
 
-/** Whether a 4k7 server serves the app on this port (another one started first). */
-export async function serves4k7(port: number): Promise<boolean> {
+/**
+ * Whether a 4k7 server serves the app on this port (another one started first). With an access key: one
+ * that takes it, so a link with this key works there (a server run from source has a key of its own).
+ */
+export async function serves4k7(port: number, accessKey?: string): Promise<boolean> {
   try {
-    const r = await fetch(`http://127.0.0.1:${port}${PROBE_PATH}`, { signal: AbortSignal.timeout(800) });
-    return r.ok && ((await r.json()) as { name?: string }).name === '4k7-server';
+    const signal = AbortSignal.timeout(800);
+    const r = await fetch(`http://127.0.0.1:${port}${PROBE_PATH}`, { signal });
+    if (!r.ok || ((await r.json()) as { name?: string }).name !== '4k7-server') return false;
+    return !accessKey || (await fetch(`http://127.0.0.1:${port}/api/storage`, { headers: { authorization: `Bearer ${accessKey}` }, signal })).ok;
   } catch {
     return false;
   }
@@ -123,4 +129,19 @@ export async function reachable(url: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Where app links point unless this server's own address will do (undefined). Settings (and the API keys) live in the
+ * browser's storage per origin (host and port), so the installed app should always open at the same address:
+ * http://localhost:7777, served by this server or by another one that started first and takes the same key.
+ * Run from source, the links open the dev server (npm run dev) while it answers.
+ */
+export async function appUrl(opts: { port: number; accessKey: string; checkout: boolean; log: (msg: string) => void; home?: number; devApp?: string }): Promise<string | undefined> {
+  const { port, home = SERVER_PORTS[0], devApp = DEV_APP } = opts;
+  if (opts.checkout) return (await reachable(devApp)) ? devApp : undefined;
+  if (port === home) return undefined;
+  if (await serves4k7(home, opts.accessKey)) return `http://localhost:${home}`;
+  opts.log(`note: port ${home} is used by another program, so the app opens at http://localhost:${port}; settings saved at another address do not show there`);
+  return undefined;
 }

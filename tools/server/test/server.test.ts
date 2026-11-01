@@ -1,17 +1,17 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { get as httpGet } from 'node:http';
 import { Server as NetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { configDir, loadConfig } from '../src/config.ts';
+import { configDir, installedDir, loadConfig } from '../src/config.ts';
 import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Kernel } from '@4k7/kernel';
-import { SERVER_PROTOCOL, type ServerToTab } from '@4k7/schema';
-import { LocalServer, createMcpServer } from '../src/index.ts';
-import { appHandler, PROBE_PATH, serves4k7 } from '../src/app.ts';
+import { SERVER_ACCESS_KEY, SERVER_PROTOCOL, type ServerToTab } from '@4k7/schema';
+import { LocalServer, createMcpServer, storageHandler } from '../src/index.ts';
+import { appHandler, appUrl, PROBE_PATH, serves4k7 } from '../src/app.ts';
 
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
@@ -231,28 +231,131 @@ describe('serving the app', () => {
   });
 });
 
+describe('which server a link points at', () => {
+  /** Put together as main.ts does: answers the probe, and takes its key at the storage. */
+  async function serveAll(accessKey: string) {
+    const dir = mkdtempSync(join(tmpdir(), 'tw-all-'));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const { server, port } = await startServer(accessKey);
+    const app = appHandler(null, '9.9.9', accessKey);
+    const storage = storageHandler({ accessKey, projectsDir: join(dir, 'projects'), dataDir: dir, allowedOrigin: () => true });
+    server.setHttpHandler((req, res) => ((req.url ?? '').startsWith('/api/') ? storage(req, res) : app(req, res)));
+    return port;
+  }
+  const NOTHING = 'http://127.0.0.1:9';
+
+  it('tells a server that takes this key from one that does not', async () => {
+    const port = await serveAll(KEY);
+    expect(await serves4k7(port)).toBe(true);
+    expect(await serves4k7(port, KEY)).toBe(true);
+    expect(await serves4k7(port, OTHER)).toBe(false);
+  });
+
+  it('the app opens at the home port when a server there takes its key, else at its own', async () => {
+    const home = await serveAll(KEY);
+    const notes: string[] = [];
+    const link = (accessKey: string, port: number) => appUrl({ port, accessKey, checkout: false, home, devApp: NOTHING, log: (m) => notes.push(m) });
+    // on the home port itself: its own address
+    expect(await link(KEY, home)).toBeUndefined();
+    expect(notes).toEqual([]);
+    // a second server of the app
+    expect(await link(KEY, home + 1)).toBe(`http://localhost:${home}`);
+    expect(notes).toEqual([]);
+    // the home port is held by a server with another key (run from source, say): that link would be refused
+    expect(await link(OTHER, home + 1)).toBeUndefined();
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain(`http://localhost:${home + 1}`);
+  });
+
+  it('run from source, links open the dev server while it answers, else this server, never the home port', async () => {
+    const home = await serveAll(KEY);
+    const dev = `http://127.0.0.1:${await serveAll(OTHER)}`;
+    const link = (devApp: string) => appUrl({ port: home + 1, accessKey: KEY, checkout: true, home, devApp, log: () => {} });
+    expect(await link(dev)).toBe(dev);
+    expect(await link(NOTHING)).toBeUndefined();
+  });
+});
+
 describe('config folder', () => {
-  it('moves ~/.tracewise (the old name) to ~/.4k7 and keeps its access key', () => {
+  /** Runs `fn` with a home folder of its own and none of the settings from the environment. */
+  function withHome(fn: (home: string) => void) {
     const home = mkdtempSync(join(tmpdir(), '4k7-home-'));
     // the home folder comes from USERPROFILE on Windows
-    const env = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, FOURK7_HOME: process.env.FOURK7_HOME };
+    const names = ['HOME', 'USERPROFILE', 'FOURK7_HOME', 'FOURK7_PROJECTS', 'FOURK7_ACCESS_KEY', 'FOURK7_APP_URL'];
+    const env = names.map((n) => [n, process.env[n]] as const);
     try {
+      for (const n of names) delete process.env[n];
+      process.env.HOME = home;
+      process.env.USERPROFILE = home;
+      fn(home);
+    } finally {
+      for (const [n, v] of env) {
+        if (v !== undefined) process.env[n] = v;
+        else delete process.env[n];
+      }
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  it('moves ~/.tracewise (the old name) to ~/.4k7 and keeps its access key', () => {
+    withHome((home) => {
       mkdirSync(join(home, '.tracewise'));
       const accessKey = '8b1f4d2e-5c3a-4e6f-9a7b-0c1d2e3f4a5b';
       writeFileSync(join(home, '.tracewise', 'server.json'), JSON.stringify({ accessKey, claude: { unsetEnv: ['X'], env: {} } }));
-      process.env.HOME = home;
-      process.env.USERPROFILE = home;
-      delete process.env.FOURK7_HOME;
-      expect(configDir()).toBe(join(home, '.4k7'));
+      expect(installedDir()).toBe(join(home, '.4k7'));
       expect(existsSync(join(home, '.tracewise'))).toBe(false);
+      process.env.FOURK7_HOME = installedDir();
       expect(loadConfig()).toMatchObject({ accessKey, claude: { unsetEnv: ['X'] } });
       expect(JSON.parse(readFileSync(join(home, '.4k7', 'server.json'), 'utf8')).accessKey).toBe(accessKey);
-    } finally {
-      process.env.HOME = env.HOME;
-      if (env.USERPROFILE !== undefined) process.env.USERPROFILE = env.USERPROFILE;
-      else delete process.env.USERPROFILE;
-      if (env.FOURK7_HOME !== undefined) process.env.FOURK7_HOME = env.FOURK7_HOME;
-      rmSync(home, { recursive: true, force: true });
-    }
+    });
+  });
+
+  it('run from source it keeps to itself: its own key and folders, with the agents and a copy of the libraries', () => {
+    withHome((home) => {
+      const real = join(home, '.4k7');
+      mkdirSync(join(real, 'library'), { recursive: true });
+      mkdirSync(join(home, 'Documents'));
+      writeFileSync(join(real, 'library', 'part.json'), '{"id":"part"}');
+      const realConfig = JSON.stringify({ accessKey: OTHER, claude: { configDir: '~/.other', unsetEnv: ['X'], env: {} }, bins: { codex: '/bin/codex' }, projectsDir: '/real/projects', appUrl: 'http://localhost:1' });
+      writeFileSync(join(real, 'server.json'), realConfig);
+
+      expect(configDir()).toBe(join(home, '.4k7-dev'));
+      const cfg = loadConfig();
+      expect(cfg.accessKey).toMatch(SERVER_ACCESS_KEY);
+      expect(cfg.accessKey).not.toBe(OTHER);
+      expect(cfg).toMatchObject({ claude: { configDir: join(home, '.other'), unsetEnv: ['X'] }, bins: { codex: '/bin/codex' }, projectsDir: join(home, 'Documents', '4k7-dev') });
+      expect(cfg.appUrl).toBeUndefined();
+      expect(readFileSync(join(home, '.4k7-dev', 'library', 'part.json'), 'utf8')).toBe('{"id":"part"}');
+
+      // the next start finds it as it was left: the same key, and the copy is not made again
+      rmSync(join(home, '.4k7-dev', 'library', 'part.json'));
+      expect(loadConfig().accessKey).toBe(cfg.accessKey);
+      expect(existsSync(join(home, '.4k7-dev', 'library', 'part.json'))).toBe(false);
+
+      // the real folder is as it was; nothing left beside the new one
+      expect(readFileSync(join(real, 'server.json'), 'utf8')).toBe(realConfig);
+      expect(existsSync(join(real, 'library', 'part.json'))).toBe(true);
+      expect(readdirSync(home).sort()).toEqual(['.4k7', '.4k7-dev', 'Documents']);
+    });
+  });
+
+  it('run from source with no app set up, it starts with a key of its own and leaves ~/.4k7 alone', () => {
+    withHome((home) => {
+      const { accessKey, projectsDir } = loadConfig();
+      expect(accessKey).toMatch(SERVER_ACCESS_KEY);
+      expect(projectsDir).toBe(join(home, '4k7-dev'));
+      expect(loadConfig().accessKey).toBe(accessKey);
+      expect(existsSync(join(home, '.4k7'))).toBe(false);
+    });
+  });
+
+  it('honours the folders it is told, also run from source', () => {
+    withHome((home) => {
+      process.env.FOURK7_HOME = join(home, 'elsewhere');
+      process.env.FOURK7_PROJECTS = '~/designs';
+      expect(configDir()).toBe(join(home, 'elsewhere'));
+      expect(loadConfig().projectsDir).toBe(join(home, 'designs'));
+      expect(existsSync(join(home, '.4k7-dev'))).toBe(false);
+    });
   });
 });

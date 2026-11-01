@@ -42,6 +42,11 @@ and every pull request of a release are on its [GitHub release](https://github.c
 - **The agent can describe a part's pins**: ask it to fill in or correct what the pins of a part in your design do, and it writes them on the part with `set_pin_descriptions`, no new import needed. You review them with the rest of the change; once accepted they are in the Parts view and in your library for later designs. An imported MCU's alternate functions stay. Generic parts such as a pin header take none, because one card serves all of them.
 - **Chat through the Codex CLI**: OpenAI's Codex can answer the app's chat on your ChatGPT plan or API key, next to Claude Code, GitHub Copilot CLI and OpenCode. Pick it with the model button under the chat box. It gets only the 4k7 tools, like the others: no shell, no files, and your own MCP servers stay out of it. It needs Codex 0.158 or newer, and shows its answers a whole message at a time. It can also drive the app from its own chat (see the README).
 
+### Running 4k7
+
+- **`npm run dev` no longer touches your designs**: what runs from a checkout now keeps to itself, with an access key of its own, projects in `~/Documents/4k7-dev`, libraries in `~/.4k7-dev` (a copy of yours the first time) and a port other than 7777. Half-done code cannot change a real design, and `npm run dev` and the app, or `npm start`, run side by side in any order. To try a design in development, open it there: **Settings → General → Open file…** copies it in.
+- **The app opens beside another 4k7 server**: a server with a different access key on the same computer no longer counts as the app's own. Opening the app used to show a page refusing its link; it now starts its own server.
+
 ## 0.4.0 — 2026-10-30
 
 4k7 runs on Windows now: a download with Node inside, and your coding agent found and started from it. A cut through the enclosure now shows everything it goes through as solid.

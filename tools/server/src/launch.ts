@@ -24,7 +24,7 @@ export async function launchApp(opts: LaunchOptions = {}): Promise<void> {
   const log = opts.log ?? ((m: string) => process.stderr.write(`[4k7] ${m}\n`));
   const cfg = loadConfig();
   for (const port of opts.ports ?? SERVER_PORTS) {
-    if (await serves4k7(port)) {
+    if (await serves4k7(port, cfg.accessKey)) {
       const url = `http://localhost:${port}/${cfg.accessKey}`;
       log(`server already running; opening ${url}`);
       openBrowser(url, log);
