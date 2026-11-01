@@ -3,7 +3,7 @@ import { Agent, ScriptedProvider, formatDesignContext, optimizePrompt, type Agen
 import type { Diagnostic, ScopeInfo } from '@4k7/schema';
 
 const base = {
-  summary: { name: 'x', sheets: ['Main'], pages: 1, components: [], nets: [], counts: { errors: 0, warnings: 0, infos: 0, waived: 0 }, ledger: 0, waivers: 0 },
+  summary: { name: 'x', sheets: ['Main'], pages: 1, components: [], nets: [], counts: { errors: 0, warnings: 0, infos: 0, waived: 0, drawing: 0 }, ledger: 0, waivers: 0 },
   diagnostics: [],
   ledger: [],
   selection: ['R1'],
@@ -18,6 +18,17 @@ describe('schematic notes in the design context', () => {
     expect(block![1]).toBe(notes.trim());
     expect(t.indexOf('</design_state>')).toBeLessThan(t.indexOf('<schematic_notes>'));
     expect(t.indexOf('</schematic_notes>')).toBeLessThan(t.indexOf('<selection>'));
+  });
+
+  it('lists the issues before the findings on the drawing, and says how many there are of each', () => {
+    const drawn = Array.from({ length: 20 }, (_, i): Diagnostic => ({ code: 'SCH.JOG', severity: 'warning', entities: [`R${i}`], message: 'the wire jogs' }));
+    const issue: Diagnostic = { code: 'ERC.IO_UNUSED', severity: 'info', entities: ['U3'], message: '23 I/O pins unused' };
+    const t = formatDesignContext({ ...base, summary: { ...base.summary, counts: { errors: 0, warnings: 0, infos: 1, waived: 0, drawing: 20 } }, diagnostics: [...drawn, issue] });
+    expect(t).toContain('diagnostics: 0 errors, 0 warnings, 0 waived, and 20 drawing findings');
+    expect(t).toContain("not in the user's Issues");
+    expect(t).toContain('INFO ERC.IO_UNUSED U3');
+    expect(t.indexOf('ERC.IO_UNUSED')).toBeLessThan(t.indexOf('SCH.JOG'));
+    expect(t).toContain('… 6 more');
   });
 
   it('omits the block when there are no notes', () => {
@@ -59,7 +70,7 @@ describe('drawing rules in the loop', () => {
   const stub = (diagnostics: Diagnostic[]): KernelPort => ({
     transact: async () => ({ status: 'ok', applied: 0, introduced: [], resolved: [] }) as never,
     query: async () => ({}),
-    snapshot: async () => ({ ...base, diagnostics, counts: { errors: diagnostics.filter((d) => d.severity === 'error').length, warnings: 0, infos: 0, waived: 0 } }),
+    snapshot: async () => ({ ...base, diagnostics, counts: { errors: diagnostics.filter((d) => d.severity === 'error').length, warnings: 0, infos: 0, waived: 0, drawing: 0 } }),
   });
   const done = { name: 'done', match: /./, steps: Array.from({ length: 6 }, () => [{ type: 'text' as const, text: 'Done.' }]) };
   const run = async (kernel: KernelPort) => {
@@ -84,7 +95,7 @@ describe('drawing rules in the loop', () => {
     let calls = 0;
     const hanging: Diagnostic = { code: 'SCH.RAIL_SIDE', severity: 'warning', entities: ['R10', 'net:QSPI_SS'], message: "R10 has +3V3 at its bottom: a pull-up stands above QSPI_SS's wire", fixHints: [{ op: 'constrain', kind: 'arrangement', a: 'R10', value: 'up', strength: 'soft' }] };
     // none at the start of the turn, the warning after the agent's work
-    const kernel: KernelPort = { ...stub([]), snapshot: async () => ({ ...base, diagnostics: calls++ ? [hanging] : [], counts: { errors: 0, warnings: calls > 1 ? 1 : 0, infos: 0, waived: 0 } }) };
+    const kernel: KernelPort = { ...stub([]), snapshot: async () => ({ ...base, diagnostics: calls++ ? [hanging] : [], counts: { errors: 0, warnings: calls > 1 ? 1 : 0, infos: 0, waived: 0, drawing: 0 } }) };
     const ev = await run(kernel);
     const reviews = ev.filter((e) => e.type === 'verify');
     expect(reviews).toHaveLength(1);

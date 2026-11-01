@@ -35,7 +35,8 @@
 
   <Field label="Checks">
     {#snippet hint()}
-      <b>Must fix</b>: the agent fixes it before it finishes. <b>Warn</b> and <b>Note</b> show in the list of findings.
+      These say how a schematic reads, not whether the circuit is right, so they guide the agent and stay out of Issues.
+      <b>Must fix</b>: it fixes a finding before it finishes, and one it cannot shows under Issues. <b>Warn</b>: it looks over the ones its own changes bring. <b>Note</b>: it can read them, no more.
       {#if changed}<button class="link" onclick={() => app.updateSettings({ schematicChecks: {} })}>Back to the defaults</button>{/if}
     {/snippet}
     <div class="checks">

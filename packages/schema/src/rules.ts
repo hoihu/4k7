@@ -151,3 +151,11 @@ export const LAYOUT_SCH_RULES: ReadonlySet<string> = new Set(SCHEMATIC_CHECKS.fi
 
 /** An open error the agent has to fix or waive before it finishes: not a layout bug, which it has no lever on. */
 export const mustFix = (d: Diagnostic) => d.severity === 'error' && !d.waivedBy && !LAYOUT_SCH_RULES.has(d.code);
+
+/**
+ * How the schematic is drawn, not what is wrong with the circuit: a wire can run any number of ways
+ * and the design stays the same. The agent reads these to improve the drawing; for the user they are
+ * no issue (the list, the counts), unless the user made one so: a drawing check they set to Must fix,
+ * a placement they fixed hard.
+ */
+export const drawingFinding = (d: Diagnostic) => (d.code.startsWith('SCH.') || d.code === 'LEDGER.PLACEMENT') && (d.severity !== 'error' || LAYOUT_SCH_RULES.has(d.code));

@@ -187,6 +187,20 @@ describe('wire at a pin', () => {
     expect(detours(k)).toEqual([]);
   });
 
+  it('tells the agent of a hump, and leaves it out of the issues, on a changeset too', () => {
+    const { k, cap, on } = row();
+    const was = k.state().counts;
+    const via = [{ x: on(cap).x + 200, y: on(cap).y - 100 }, { x: on(cap).x, y: on(cap).y - 100 }];
+    const r = k.transact({ summary: 'wire', ops: [{ op: 'wire', from: 'R1.1', to: 'C1.1', via }] });
+    expect(r.introduced.map((x) => x.code)).toContain('SCH.DETOUR');
+    expect(r.counts).toMatchObject({ errors: was.errors, warnings: was.warnings });
+    expect(r.counts.drawing).toBeGreaterThan(was.drawing);
+    const s = k.state();
+    expect(s.counts).toEqual(r.counts);
+    expect(s.proposal!.after).toEqual(r.counts);
+    expect(s.summary.counts).toEqual(r.counts);
+  });
+
   it('goes round a pin of another net in the way', () => {
     const { k, left, cap, right } = row([{ pins: ['R2.2', 'R1.1'], net: 'XT' }, { pins: ['C1.1'], net: 'CAP' }]);
     const r = k.transact({ summary: 'wire', ops: [{ op: 'wire', from: 'R1.1', to: 'R2.2' }] });

@@ -24,7 +24,7 @@ describe('optimize', () => {
 
   it('puts the scope next to the selection in the design context', () => {
     const base = {
-      summary: { name: 'x', sheets: ['Main'], pages: 1, components: [], nets: [], counts: { errors: 0, warnings: 0, infos: 0, waived: 0 }, ledger: 0, waivers: 0 },
+      summary: { name: 'x', sheets: ['Main'], pages: 1, components: [], nets: [], counts: { errors: 0, warnings: 0, infos: 0, waived: 0, drawing: 0 }, ledger: 0, waivers: 0 },
       diagnostics: [],
       ledger: [],
       selection: [],
@@ -58,7 +58,7 @@ describe('optimize', () => {
       dryRun: true,
       results: [],
       diff: { added: [], removed: [], changed: [] },
-      counts: { errors: 0, warnings: 0, infos: 0, waived: 0 },
+      counts: { errors: 0, warnings: 0, infos: 0, waived: 0, drawing: 0 },
       introduced: [],
       resolved: [],
       scope: { ripple: ['J1'], measures: { crossings: 0, bends: 3, jogs: 1, detours: 0, overlaps: 0, wireIn: 12, labels: 1 }, baseline: info.measures },

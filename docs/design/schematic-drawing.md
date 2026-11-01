@@ -341,13 +341,15 @@ leaving no way through.
 
 ## 3. Notes and checks
 
-*2026-11-01:* `SCH.DETOUR` used to report every U with legs under `RETURN_LEG` from its shape alone,
-so a wire from a connector to an IC over the resistors between them (CC1, CC2 on a USB-C input) was
-"turning back on itself". It now reports a U only when its sideways run could slide back to the end
-of the shorter leg and run straight: no part, no pin the net's wires do not reach, no wire or label
-of another net on that line. A name or value does not count, since it can step aside. On the user's
-design 5 findings → 1, the hump onto a load cap's top pin. The auto wire (§2c) keeps refusing every
-U, `wireShape.uTurns`: clean or not at all.
+*2026-11-01:* findings on the drawing stay out of the Issues list and the counts: they say how a
+sheet reads, not that the circuit is wrong. The agent still gets them
+([schematic-rules.md](schematic-rules.md)). `SCH.DETOUR` used to report every U with legs under
+`RETURN_LEG` from its shape alone, so a wire from a connector to an IC over the resistors between
+them (CC1, CC2 on a USB-C input) was "turning back on itself". It now reports a U only when its
+sideways run could slide back to the end of the shorter leg and run straight: no part, no pin the
+net's wires do not reach, no wire or label of another net on that line. A name or value does not
+count, since it can step aside. On the user's design 5 findings → 1, the hump onto a load cap's top
+pin. The auto wire (§2c) keeps refusing every U, `wireShape.uTurns`: clean or not at all.
 
 *2026-10-13:* the ruleset text below was replaced. It read like a config format (ids, `level:`
 lines, `(layout)` marks) and its long default told the model things it knows. Now (see
