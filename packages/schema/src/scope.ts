@@ -15,6 +15,13 @@ export interface OptimizeScope {
   goal?: string;
 }
 
+/**
+ * The ops an Optimize run may use, all of them about how the area is drawn. The kernel's guard lets
+ * nothing else through (guardOp) and the run's prompt names every one: a test holds them together,
+ * so the agent is not told an op is refused that it may use.
+ */
+export const OPTIMIZE_OPS = ['place_symbol', 'place_block', 'wire', 'label', 'erase', 'move_supply', 'place_text', 'auto_draw', 'constrain', 'remove_constraint', 'set_symbol'] as const;
+
 /** Numbers the agent and the user can compare before and after a change. Lower is better. */
 export interface ScopeMeasures {
   /** Crossings between wires of different nets, among the nets that touch the area's parts. */

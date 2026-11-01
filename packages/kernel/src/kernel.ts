@@ -520,6 +520,7 @@ export class Kernel {
         return {
           coordinates: 'mils from the top-left corner of the page\'s paper, x to the right, y down; a symbol\'s x/y is its centre',
           labels_note: 'net labels; auto: true is a connection your drawing does not show, labelled by the kernel until you wire it (wire) or label it (label)',
+          supplies_note: 'supply symbols; auto: true is one the kernel draws at pins your drawing leaves loose, one for neighbouring pins on one supply (on a wire along their ends, shown but not stored). move_supply or label makes it yours',
           symbols_note: 'mirrored: true is how the symbol stands now (its left pins on the right; a two-pin part with pin 1 at the bottom or, lying, on the right); to swap it, give place_symbol mirror the opposite of this. rotated: degrees clockwise from how it is usually drawn (place_symbol rotate), lying: a two-pin part lying (place_symbol orient). text_user_placed: the user put its name or value where they stand. With texts: true, name and value say where its text stands (place_text moves them): y is the baseline, anchor which part of the text stands at x',
           drawing_area: { margin: PAGE.margin, title_block: `${PAGE.title} high, at the bottom` },
           pages: view.sheets.flatMap((s) =>

@@ -2,7 +2,7 @@
  * What a sheet's drawing measures, for the SCH checks and for Optimize: wires that cross, labels that
  * run into something, the bends, jogs and detours of a net.
  */
-import type { LabelView, Rect, SheetView, SymbolView } from '@4k7/schema';
+import type { LabelView, Rect, SheetView, SymbolView, WireView } from '@4k7/schema';
 import { segmentsOf, type Seg } from './geom.ts';
 import { RETURN_LEG, textRect, tw } from './scene.ts';
 
@@ -82,40 +82,50 @@ export interface Overlap {
 }
 
 /**
- * Labels and supply symbols of the given nets that run into something: the head (arrow and name,
- * ground bars, a flag) on a wire of another net, a stem along such a wire (it reads as connected),
- * and any part of them through another label (rail names keep 50 mils of air beside them), a
- * symbol, a part's body or its text. A supply's stem merely crossing a wire of another net is not
- * counted: the symbol stands upright whatever is in the way (SCH.RAIL_UP), the crossing is the
- * price. Each label is reported once, with the first thing it hits, however much it hits.
+ * What a label runs into on a drawing: the head (arrow and name, ground bars, a flag) on a wire of
+ * another net, a stem along such a wire (it reads as connected), and any part of it through another
+ * label (rail names keep 50 mils of air beside them), a symbol, a part's body or its text. A
+ * supply's stem merely crossing a wire of another net is not counted: the symbol stands upright
+ * whatever is in the way (SCH.RAIL_UP), the crossing is the price. `find` gives the first thing it
+ * hits, however much it hits, with `air` kept beside its head from a wire; `add` is for what joins
+ * the drawing after this was made.
  */
-export function labelOverlaps(sheet: SheetView, nets: Set<string>): Overlap[] {
-  const wires = sheet.wires.flatMap((w) => segmentsOf(w.pts).map(([x1, y1, x2, y2]) => ({ net: w.netId, r: line(x1, y1, x2, y2) })));
+export function labelClashes(sheet: Pick<SheetView, 'symbols' | 'wires' | 'labels'>) {
+  const segsOf = (w: WireView) => segmentsOf(w.pts).map(([x1, y1, x2, y2]) => ({ net: w.netId, r: line(x1, y1, x2, y2) }));
+  const wires = sheet.wires.flatMap(segsOf);
   const texts = sheet.symbols.flatMap((s) => [{ sym: s, which: 'name' as const, r: textRect(s.refPos, [s.refdes]) }, { sym: s, which: 'value' as const, r: textRect(s.valuePos, s.valueLines ?? [s.value]) }]);
   const parts = sheet.labels.map((l) => ({ l, parts: labelParts(l) }));
-  const out: Overlap[] = [];
-  for (const a of parts) {
-    if (!nets.has(a.l.netId)) continue;
-    const hit = ({ r, head }: { r: Rect; head: boolean }): OverlapHit | undefined => {
-      const w = wires.find((w) => w.net !== a.l.netId && (head ? meets(r, w.r) : alongLine(r, w.r)));
-      if (w) return { on: 'wire', net: w.net };
-      const s = sheet.symbols.find((s) => meets(r, s.bbox));
-      if (s) return { on: 'symbol', sym: s };
-      const t = texts.find((t) => meets(r, t.r));
-      if (t) return { on: 'text', sym: t.sym, which: t.which };
-      const b = parts.find((b) => b !== a && !(b.l.netId === a.l.netId && b.l.x === a.l.x && b.l.y === a.l.y) && b.parts.some((q) => meets(wider(r, head && a.l.kind === 'rail' && q.head && b.l.kind === 'rail' ? 50 : 0), q.r)));
-      if (b) return { on: 'label', label: b.l };
-      return undefined;
-    };
-    for (const p of a.parts) {
-      const h = hit(p);
-      if (h) {
-        out.push({ label: a.l, head: p.head, hit: h });
-        break;
+  return {
+    find(l: LabelView, air = 0): Overlap | undefined {
+      const hit = ({ r, head }: { r: Rect; head: boolean }): OverlapHit | undefined => {
+        const aired = air ? wider(r, air) : r;
+        const w = wires.find((w) => w.net !== l.netId && (head ? meets(aired, w.r) : alongLine(r, w.r)));
+        if (w) return { on: 'wire', net: w.net };
+        const s = sheet.symbols.find((s) => meets(r, s.bbox));
+        if (s) return { on: 'symbol', sym: s };
+        const t = texts.find((t) => meets(r, t.r));
+        if (t) return { on: 'text', sym: t.sym, which: t.which };
+        const b = parts.find((b) => b.l !== l && !(b.l.netId === l.netId && b.l.x === l.x && b.l.y === l.y) && b.parts.some((q) => meets(wider(r, head && l.kind === 'rail' && q.head && b.l.kind === 'rail' ? 50 : 0), q.r)));
+        if (b) return { on: 'label', label: b.l };
+        return undefined;
+      };
+      for (const p of labelParts(l)) {
+        const h = hit(p);
+        if (h) return { label: l, head: p.head, hit: h };
       }
-    }
-  }
-  return out;
+      return undefined;
+    },
+    add(l: LabelView, leads: WireView[] = []): void {
+      parts.push({ l, parts: labelParts(l) });
+      wires.push(...leads.flatMap(segsOf));
+    },
+  };
+}
+
+/** Labels and supply symbols of the given nets that run into something (labelClashes), each reported once. */
+export function labelOverlaps(sheet: SheetView, nets: Set<string>): Overlap[] {
+  const clashes = labelClashes(sheet);
+  return sheet.labels.filter((l) => nets.has(l.netId)).flatMap((l) => clashes.find(l) ?? []);
 }
 
 type Way = 'l' | 'r' | 'u' | 'd';

@@ -507,6 +507,18 @@ bends, crossings, running through parts or text. That is the largest piece of ne
    - On the way to the canvas (`schematicView`), a net drawn in pieces that no label ties together
      gets a label at a pin of each loose piece (`LabelView.auto`), at the pin where it runs into the
      least. Not a diagnostic: the drawing is complete, just not as the agent would draw it.
+     *2026-10-31:* a `set_symbol` layout on a stored sheet left an RP2040's six supply pins loose, 100
+     mils apart: six symbols stood on one column, a +3V3 stem along a +1V1 stem, which read like a
+     short. So neighbouring pins on one supply are now one piece (`shareSupplies`), joined by a wire
+     along their ends that is shown and not stored (`WireView.auto`), as the layout's bus joins them;
+     the symbol stands at the end of the run it points to. And a supply's automatic symbol stands
+     clear (`clearSupply`, by the same test as `SCH.TEXT_OVERLAP`): the first pin of its piece where
+     it runs into nothing, or stepped further off a side pin and on a longer stem. It likes 30 mils
+     of air beside its name, a step of up to 300 mils for that, no further: a symbol 500 mils from its
+     pin with its lead across a wire read worse than a tight name. Net labels go first, having one way
+     to point. On copies of the user's designs with every supply erased: 48 supply symbols running into
+     something → 4, connectivity unchanged. The 4 are a rail below a ground and two stems of one net;
+     they stand where they always did, and the agent can move them.
    - `place_symbol` moves the symbol in the stored drawing: an IC or connector takes the small parts
      the layout drew with it (`DrawnSymbol.with`) and those wired only to it, with their wires and
      labels; wires to what stays are cut back. `orient` and `mirror` make the symbol again. A part

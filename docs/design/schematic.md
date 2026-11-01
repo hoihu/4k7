@@ -108,6 +108,11 @@ the symbol are cut back: `wire` them again.
 
 A supply symbol that stands on a wire or a name: `move_supply` puts it elsewhere on its page, on a wire
 from what it stood on (`get_schematic` lists them under `supplies`). It still points its own way.
+Pins nothing is drawn at show an automatic symbol, `auto` in `supplies`: neighbouring pins on one supply
+share it, on a wire along their ends, standing clear of what it can. Symbols you stored stay one per
+pin, so when those of neighbouring pins run into each other, `erase` at those pins and the automatic
+one takes over; `wire` them together, or `move_supply`, to make it yours. All of this works on any part,
+whether or not you may move it: what is drawn at a pin is not the part.
 
 `set_net draw_as` decides wire or label for a whole net and keeps it, whatever is redrawn later: `label`
 puts a label or supply symbol at every pin and no wire between them, `wire` joins the pins by wires
