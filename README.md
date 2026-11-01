@@ -52,6 +52,11 @@ npm start          # build, package and run it like npx does (dist/4k7pcb.js)
 node scripts/bundle.mjs  # the downloads (DMGs, Linux and Windows archives) in build/
 ```
 
+`npm run dev` and the app can run side by side, started in any order, with nothing to set up. What runs from source keeps to
+itself, so half-done code never touches your real designs: its own access key, projects in `~/Documents/4k7-dev`, libraries in
+`~/.4k7-dev` (a copy of `~/.4k7` the first time) and a port other than 7777. The app, or `npm start`, stays in `~/Documents/4k7`.
+To try a design in development, open it there with **Settings → General → Open file…**, which copies it in.
+
 ## Bring your own AI
 
 4k7 ships no model. Chat in the app through a coding agent or an API key (A, B), or drive the app from your agent's own chat (C).

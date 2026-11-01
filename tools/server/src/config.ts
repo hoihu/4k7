@@ -1,14 +1,17 @@
 /**
  * The access key is created once and kept in ~/.4k7/server.json, so the app's address
  * (http://localhost:7777/<access-key>) stays the same across restarts and every server accepts the same tab.
+ *
+ * A server run from source keeps to itself in ~/.4k7-dev and ~/Documents/4k7-dev: with an access key of its own
+ * no tab crosses between the two, and half-done code never touches the real projects and libraries.
  */
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SERVER_ACCESS_KEY, type HarnessId } from '@4k7/schema';
-import { defaultProjectsDir } from './storage.ts';
+import { defaultProjectsDir, renameRetrying } from './storage.ts';
 
 /**
  * How to run the headless Claude Code for the app chat. Mirrors a shell alias such as
@@ -50,7 +53,7 @@ export interface ServerConfig {
   claude: ClaudeProfile;
   /** The agents' CLIs chosen in the app (absolute paths); the FOURK7_…_BIN variables win over them. */
   bins: Partial<Record<HarnessId, string>>;
-  /** Where the projects are kept (FOURK7_PROJECTS or "projectsDir"); else ~/Documents/4k7. */
+  /** Where the projects are kept (FOURK7_PROJECTS or "projectsDir"); else ~/Documents/4k7, or ~/Documents/4k7-dev run from source. */
   projectsDir: string;
 }
 
@@ -59,6 +62,45 @@ const OLD_DIR = '.tracewise';
 
 export function configDir(): string {
   if (process.env.FOURK7_HOME) return process.env.FOURK7_HOME;
+  return inCheckout() ? devDir() : installedDir();
+}
+
+/** Where a server run from source keeps its things. The first time, what the installed app has set up comes along. */
+function devDir(): string {
+  const dev = join(homedir(), '.4k7-dev');
+  if (!existsSync(dev)) seedDevDir(join(homedir(), '.4k7'), dev);
+  return dev;
+}
+
+/**
+ * The agents' settings and a copy of the libraries; not the access key, not the projects. Done in a temporary folder, with
+ * the new key, so that servers starting at the same moment (Claude Code sessions do) all end up with the same one.
+ */
+function seedDevDir(from: string, dev: string) {
+  const tmp = `${dev}.${process.pid}.tmp`;
+  try {
+    mkdirSync(tmp, { recursive: true, mode: 0o700 });
+    for (const d of ['library', 'artwork', 'datasheets', 'footprints']) {
+      if (existsSync(join(from, d))) cpSync(join(from, d), join(tmp, d), { recursive: true });
+    }
+    let kept: Pick<Partial<ServerConfig>, 'claude' | 'bins'> = {};
+    try {
+      const { claude, bins } = JSON.parse(readFileSync(join(from, 'server.json'), 'utf8')) as Partial<ServerConfig>;
+      kept = { claude, bins };
+    } catch {
+      // nothing set up there
+    }
+    writeFileSync(join(tmp, 'server.json'), JSON.stringify({ ...kept, accessKey: randomUUID() }, null, 2) + '\n', { mode: 0o600 });
+    renameRetrying(tmp, dev);
+  } catch {
+    // another server was first, or the copy failed: then it starts empty, and this is not tried again
+    rmSync(tmp, { recursive: true, force: true });
+    mkdirSync(dev, { recursive: true, mode: 0o700 });
+  }
+}
+
+/** ~/.4k7, where the installed app keeps its things. */
+export function installedDir(): string {
   const dir = join(homedir(), '.4k7');
   const old = join(homedir(), OLD_DIR);
   if (!existsSync(dir) && existsSync(old)) {
@@ -106,7 +148,7 @@ export function loadConfig(): ServerConfig {
     ...(appUrl ? { appUrl } : {}),
     claude,
     bins: typeof cfg.bins === 'object' && cfg.bins ? cfg.bins : {},
-    projectsDir: typeof projects === 'string' && projects ? expandHome(projects) : defaultProjectsDir(),
+    projectsDir: typeof projects === 'string' && projects ? expandHome(projects) : defaultProjectsDir(inCheckout() ? '4k7-dev' : '4k7'),
   };
 }
 

@@ -49,9 +49,9 @@ export interface StorageOptions {
 }
 
 /** ~/Documents/4k7 where there is a Documents folder, else ~/4k7. FOURK7_PROJECTS or "projectsDir" in server.json override it. */
-export function defaultProjectsDir(): string {
+export function defaultProjectsDir(name = '4k7'): string {
   const docs = join(homedir(), 'Documents');
-  return join(existsSync(docs) ? docs : homedir(), '4k7');
+  return join(existsSync(docs) ? docs : homedir(), name);
 }
 
 export interface ProjectEntry {
