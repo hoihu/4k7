@@ -10,7 +10,7 @@ import { eraseOp, labelOp, moveSupplyOp, textOp, wireOp } from './drawops.ts';
 import { setEnclosureBrief, setEnclosureGraphic, setEnclosureScript } from './enclosureops.ts';
 import { addKeepout, editKeepout, removeKeepout } from './keepout.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
-import { addPart, addSheet, connect, constrain, disconnect, moveToSheet, noConnect, remove, rename, setNet, setParam } from './netops.ts';
+import { addPart, addSheet, clearSheet, connect, constrain, disconnect, moveToSheet, noConnect, remove, removeSheet, rename, setNet, setParam } from './netops.ts';
 import { renamePart, setFootprint, setMating, setPackageDefaults, setPinDescriptions, setPolarity, setSymbol, setValueSeries } from './partops.ts';
 import { autoDraw, describe, placeBlock, placeSymbol, setPaper } from './sheetops.ts';
 import { tuneLength } from './tune.ts';
@@ -42,6 +42,10 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return addSheet(d, op.name);
     case 'move_to_sheet':
       return moveToSheet(d, op.refs, op.sheet);
+    case 'remove_sheet':
+      return removeSheet(d, op.sheet);
+    case 'clear_sheet':
+      return clearSheet(d, op);
     case 'constrain':
       return constrain(d, op);
     case 'remove_constraint': {

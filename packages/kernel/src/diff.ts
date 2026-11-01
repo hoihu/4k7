@@ -198,13 +198,16 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
   for (const id of Object.keys(draft.sheets)) {
     if (!base.sheets[id]) hunks.push({ id: `sheet:${id}`, kind: 'sheet', change: 'add', entityId: id, title: `sheet ${draft.sheets[id]!.name}`, details: [] });
   }
+  for (const id of Object.keys(base.sheets)) {
+    if (!draft.sheets[id]) hunks.push({ id: `sheet:${id}`, kind: 'sheet', change: 'remove', entityId: id, title: `sheet ${base.sheets[id]!.name}`, details: [] });
+  }
 
-  /* stored schematic drawings (drawing.ts), one hunk per sheet */
+  /* stored schematic drawings (drawing.ts), one hunk per sheet; a sheet's goes with the sheet */
   for (const id of new Set([...Object.keys(base.drawing ?? {}), ...Object.keys(draft.drawing ?? {})])) {
     const a = base.drawing?.[id];
     const b = draft.drawing?.[id];
-    if (JSON.stringify(a ?? null) === JSON.stringify(b ?? null)) continue;
-    const sheet = (draft.sheets[id] ?? base.sheets[id])?.name ?? id;
+    if (JSON.stringify(a ?? null) === JSON.stringify(b ?? null) || !draft.sheets[id]) continue;
+    const sheet = draft.sheets[id]!.name;
     const where = (x: typeof a) => new Map((x?.symbols ?? []).map((s) => [`${s.comp}#${s.unit ?? ''}`, `${s.x},${s.y},${s.rot ?? 0},${JSON.stringify(s.spec)}`]));
     const [wa, wb] = [where(a), where(b)];
     const ref = (k: string) => {
@@ -313,6 +316,7 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
     switch (kind) {
       case 'sheet':
         if (draft.sheets[entity]) d.sheets[entity] = clone(draft.sheets[entity]!);
+        else delete d.sheets[entity];
         break;
       case 'net':
         if (draft.nets[entity]) d.nets[entity] = clone(draft.nets[entity]!);
@@ -394,11 +398,22 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
     }
     seen.set(c.refdes, c.id);
   }
+  // a sheet whose removal was accepted stays while a part is on it (taking the part off or away
+  // was not accepted), and the design keeps one
+  const keepSheet = (id: string, why: string) => {
+    d.sheets[id] = clone(base.sheets[id]!);
+    notes.push(`kept sheet ${d.sheets[id]!.name} (${why})`);
+  };
+  for (const c of Object.values(d.components)) if (!d.sheets[c.sheet]) keepSheet(c.sheet, 'parts stay on it');
+  if (!Object.keys(d.sheets).length) keepSheet(Object.values(base.sheets).sort((a, b) => a.order - b.order)[0]!.id, 'a design keeps one');
   // constraints must not point at components that were not accepted
   for (const k of Object.values(d.ledger)) {
     if ((k.a && !d.components[k.a]) || (k.b && !d.components[k.b])) {
       delete d.ledger[k.id];
       notes.push(`dropped constraint ${k.id} (its component was not accepted)`);
+    } else if (k.sheet && !d.sheets[k.sheet]) {
+      delete d.ledger[k.id];
+      notes.push(`dropped constraint ${k.id} (its sheet is gone)`);
     }
   }
   gcNets(d);

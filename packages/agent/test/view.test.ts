@@ -21,6 +21,19 @@ const base = {
   selection: [],
 };
 
+describe('the sheets in the design state', () => {
+  const lineOf = (sheets: string[], on: string[]) =>
+    formatDesignContext({ ...base, summary: { ...base.summary, sheets, components: on.map((sheet, i) => ({ refdes: `R${i + 1}`, part: 'generic:R', value: '1k', sheet })) } }).split('\n')[1];
+
+  it('marks the empty ones, which can be taken away', () => {
+    expect(lineOf(['Main', 'MCU', 'LEDs'], ['Main', 'LEDs'])).toBe('name: x; sheets: Main, MCU (empty), LEDs; pages: 2');
+  });
+
+  it('does not mark the only sheet, which stays', () => {
+    expect(lineOf(['Main'], [])).toBe('name: x; sheets: Main; pages: 2');
+  });
+});
+
 describe('the user\'s view', () => {
   it('lists the parts in a zoomed schematic area and gives it in page coordinates', () => {
     const v = schematicViewInfo(sheet, { x: 500, y: 500, w: 11000, h: 2000 });

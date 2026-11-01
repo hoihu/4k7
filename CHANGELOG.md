@@ -33,6 +33,7 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ### Coding agents
 
+- **The agent can start a design over**: ask it to, with or without some parts, and `clear_sheet` takes a sheet's parts off in one step, with their connections and constraints and what stood on them on the board; `keep` names what stays. `remove_sheet` takes an empty sheet away, and the agent now does so itself when it moves the last parts off a sheet. As with any change, you review it first, and **Undo** brings it all back.
 - **The agent can describe a part's pins**: ask it to fill in or correct what the pins of a part in your design do, and it writes them on the part with `set_pin_descriptions`, no new import needed. You review them with the rest of the change; once accepted they are in the Parts view and in your library for later designs. An imported MCU's alternate functions stay. Generic parts such as a pin header take none, because one card serves all of them.
 - **Chat through the Codex CLI**: OpenAI's Codex can answer the app's chat on your ChatGPT plan or API key, next to Claude Code, GitHub Copilot CLI and OpenCode. Pick it with the model button under the chat box. It gets only the 4k7 tools, like the others: no shell, no files, and your own MCP servers stay out of it. It needs Codex 0.158 or newer, and shows its answers a whole message at a time. It can also drive the app from its own chat (see the README).
 
