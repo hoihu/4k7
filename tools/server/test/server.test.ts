@@ -4,7 +4,7 @@ import { Server as NetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { configDir, installedDir, loadConfig } from '../src/config.ts';
+import { configDir, expandHome, installedDir, loadConfig } from '../src/config.ts';
 import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -356,6 +356,17 @@ describe('config folder', () => {
       expect(configDir()).toBe(join(home, 'elsewhere'));
       expect(loadConfig().projectsDir).toBe(join(home, 'designs'));
       expect(existsSync(join(home, '.4k7-dev'))).toBe(false);
+    });
+  });
+
+  it('expands only a home folder at the start of a path, with one kind of slash', () => {
+    withHome((home) => {
+      for (const start of ['~', '$HOME']) {
+        expect(expandHome(start)).toBe(home);
+        expect(expandHome(`${start}/a/b`)).toBe(join(home, 'a', 'b'));
+      }
+      // no path set is no path, and these are not the home folder
+      for (const other of ['', '~other/a', '$HOMEDIR/a', 'a/~', '/a/$HOME']) expect(expandHome(other)).toBe(other);
     });
   });
 });

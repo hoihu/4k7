@@ -166,5 +166,7 @@ export function saveConfig(patch: Record<string, unknown>): void {
 }
 
 export function expandHome(p: string): string {
-  return p.replace(/^~(?=$|[\\/])/, homedir()).replace(/^\$HOME(?=$|[\\/])/, homedir());
+  const home = /^(~|\$HOME)(?=$|[\\/])/.exec(p);
+  // join: on Windows "~/designs" is C:\Users\me\designs, with one kind of slash
+  return home ? join(homedir(), p.slice(home[0].length)) : p;
 }
