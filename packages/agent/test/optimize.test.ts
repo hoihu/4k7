@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ScopeInfo, TransactionResult } from '@4k7/schema';
+import { OPTIMIZE_OPS, type ScopeInfo, type TransactionResult } from '@4k7/schema';
 import { compactTx, describeTx, formatDesignContext, formatScope, optimizePrompt } from '../src/index.ts';
 
 const info: ScopeInfo = {
@@ -38,6 +38,18 @@ describe('optimize', () => {
     expect(p).toContain('What bothers me: the divider is far from U1');
     expect(p).toContain('changing nothing is a good answer');
     expect(optimizePrompt({ ...info, scope: { ...info.scope, goal: undefined } })).not.toContain('What bothers me');
+  });
+
+  it('names every op the kernel lets an Optimize run use', () => {
+    const p = optimizePrompt(info);
+    for (const op of OPTIMIZE_OPS) expect(p, op).toMatch(new RegExp(`\\b${op}\\b`));
+    // (the plain words also stand elsewhere in it: these say what they are for)
+    expect(p).toContain('wire, label and erase at pins to show a connection');
+    expect(p).toContain('move_supply to stand a supply symbol somewhere clear');
+  });
+
+  it('says that what is drawn at the pins of a part it may not move can still change', () => {
+    expect(optimizePrompt(info)).toContain('What is drawn at a pin is not the part');
   });
 
   it('hands the model the measures and ripple of a dry run', () => {

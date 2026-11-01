@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { LabelView, OptimizeScope, ScopeInfo, SheetView, SymbolView } from '@4k7/schema';
+import { EditOp, OPTIMIZE_OPS, type LabelView, type OptimizeScope, type ScopeInfo, type SheetView, type SymbolView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
-import { circuitSignature, measure } from '../src/scope.ts';
+import { circuitSignature, guardOp, measure, resolveScope } from '../src/scope.ts';
 import { buckTransaction } from './fixtures.ts';
 
 /** The buck's output side: inductor, diode, output cap, feedback divider, compensation and boot parts. */
@@ -101,6 +101,17 @@ describe('optimize scope', () => {
     ] as const) {
       const r = k.transact({ summary: 'x', ops: [op as never] });
       expect(r.rejection?.code, op.op).toBe('OUT_OF_SCOPE');
+    }
+  });
+
+  it('lets through no op but those the prompt names', () => {
+    const { k, info } = setup();
+    const d = k.draftDesign();
+    const sc = resolveScope(d, k.state().view, info.scope);
+    if ('error' in sc) throw new Error(sc.error);
+    for (const name of EditOp.options.map((o) => o.shape.op.value)) {
+      if ((OPTIMIZE_OPS as readonly string[]).includes(name)) continue;
+      expect(() => guardOp(d, { op: name } as never, sc), name).toThrow(/changes more than how this area is drawn/);
     }
   });
 

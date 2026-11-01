@@ -283,7 +283,10 @@ export function eraseOp(d: Design, op: Extract<EditOp, { op: 'erase' }>): OpResu
         if (a.what === 'wire') sd.wires = sd.wires.filter((v) => !onWire(x, y, v.pts));
         else sd.labels = sd.labels.filter((v) => !(v.x === x && v.y === y));
       });
-      if (wires + labels === w + l) reject({ code: 'INVALID_OP', message: `No ${a.what} is drawn at (${a.x}, ${a.y}) on page ${a.page}. design_query get_schematic shows what is where.` });
+      if (wires + labels === w + l) {
+        const shown = a.what === 'wire' ? sh!.wires.some((v) => v.auto && onWire(x, y, v.pts)) : sh!.labels.some((v) => v.auto && v.x === x && v.y === y);
+        reject({ code: 'INVALID_OP', message: shown ? `That ${a.what} is drawn automatically, to show a connection the drawing leaves out: there is nothing to erase. It goes when the connection is drawn (wire, label)${a.what === 'label' ? '; a supply symbol can also be moved (move_supply)' : ''}.` : `No ${a.what} is drawn at (${a.x}, ${a.y}) on page ${a.page}. design_query get_schematic shows what is where.` });
+      }
     }
   }
   if (op.net) {
