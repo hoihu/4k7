@@ -7,15 +7,17 @@
  * completes it on the way to the canvas: a connection the drawing does not show gets a net label of
  * its own (`auto`), so the picture never leaves a connection out.
  */
-import { DEFAULT_PAPER, PAGE, paperOf, type BlockView, type Component, type Design, type DrawnSymbol, type LabelView, type PageView, type PartCard, type PinView, type QuarterTurn, type Rect, type SchematicView, type SheetDrawing, type SheetView, type SymbolSpec, type SymbolView, type WireView } from '@4k7/schema';
+import { DEFAULT_PAPER, PAGE, paperOf, type BlockView, type Component, type Design, type DrawnSymbol, type LabelView, type Net, type PageView, type PartCard, type PinView, type QuarterTurn, type Rect, type SchematicView, type SheetDrawing, type SheetView, type SymbolSpec, type SymbolView, type WireView } from '@4k7/schema';
 import { GRID, isTwoPin, pinSide, specMirrors, symbolFor, symbolFromSpec, unitCount, uprightSymbol, type SymbolDef } from '@4k7/parts';
 import { drawingInputs, Memo } from './derive.ts';
-import { cardOf, componentsSorted, natCmp, nextId } from './doc.ts';
-import { grow, onSegment, overlap, reversePts } from './geom.ts';
+import { cardOf, componentsSorted, isGroundNet, natCmp, nextId } from './doc.ts';
+import { grow, onSegment, overlap, reversePts, segmentsOf } from './geom.ts';
 import { PAGE_GAP, blockAssignment, drawnWith, evaluateConstraints, layoutSheetOf, pageName, pagesBBox, symbolKey } from './layout.ts';
 import { FRAME_PAD, frameAround, pieces } from './blocks.ts';
+import { within } from './parttext.ts';
 import { behindPart, cleanWires } from './wireclean.ts';
-import { addJunctions, crowding, deco, type Dir, drawingArea, labelForPin, labelRect, makeSymbol, rotateSymbol, type Scene, symbolMaking, textRect } from './scene.ts';
+import { addJunctions, crowding, deco, type Dir, drawingArea, labelForPin, labelRect, makeSymbol, rotateSymbol, type Scene, supplyDir, symbolMaking, textRect, tw } from './scene.ts';
+import { labelClashes, line, meets } from './sheetmeasures.ts';
 
 /* ---------------------------------- view ----------------------------------- */
 
@@ -101,7 +103,7 @@ function renderSheet(d: Design, id: string, name: string, sd: SheetDrawing): She
     const net = d.nets[l.netId];
     if (net) scene.labels.push({ ...l, text: net.name });
   }
-  autoLabels(d, scene);
+  autoLabels(d, scene, sd.pages);
   addJunctions(scene);
   const frames = storedFrames(d, id, scene, sd.pages);
   if (frames.length) scene.blocks = frames;
@@ -277,12 +279,130 @@ export function groups(pins: PinAt[], wires: WireView[], labels: Pick<LabelView,
   return [...out.values()];
 }
 
+/** A net with a connection the drawing does not show, and its pieces. */
+interface NetToLabel {
+  net: Net;
+  list: Group[];
+}
+
+/**
+ * Pins of one supply this close along a side of a symbol would have their symbols run into each
+ * other: one above another a rail's arrow and name (375 high) or a ground's bars (150 deep) reach
+ * the next pin's lead, side by side a rail's names or a ground's bars meet.
+ */
+function symbolsMeet(net: Net, side: PinView['side'], apart: number): boolean {
+  const ground = isGroundNet(net);
+  if (side === 'left' || side === 'right') return apart < (ground ? 200 : 400);
+  return apart < (ground ? 150 : tw(net.name) + 50);
+}
+
+const spotOf = (p: { x: number; y: number }) => `${p.x},${p.y}`;
+const isUpright = (side: PinView['side']) => side === 'left' || side === 'right';
+
+/** The net drawn at a spot of a symbol (a pin left unconnected on the spot of a connected one is drawn by that one's connection). */
+function netAtSpot(spot: PinAt[]): string | null {
+  const on = new Set(spot.flatMap((p) => p.net ?? []));
+  return on.size === 1 ? [...on][0]! : null;
+}
+
+/**
+ * Neighbouring pins of a symbol on one supply share a symbol, as the layout's bus does (its own
+ * supplies are drawn by rule, this is for pins a drawing has left loose): a wire along the pin ends
+ * joins them, shown but not stored, so it goes when something else is drawn at them. Only with no
+ * pin of anything else between them, nothing of another net on the way, and a piece among them with
+ * no symbol yet: symbols stored at two pins stay (a net forced to labels has one at every pin).
+ * Merges the pieces in `nets` and adds the wires. Returns the spots of the pins it joined and those
+ * of them that are not at the end of their run the symbol points to.
+ */
+function shareSupplies(scene: Scene, pins: PinAt[], nets: NetToLabel[]): { joined: Set<string>; behind: Set<string> } {
+  const out = { joined: new Set<string>(), behind: new Set<string>() };
+  const supplies = new Map(nets.filter((n) => supplyDir(n.net)).map((n) => [n.net.id, n]));
+  if (!supplies.size) return out;
+  const groupOf = new Map<PinAt, Group>();
+  for (const { list } of supplies.values()) for (const g of list) for (const i of g.pins) groupOf.set(pins[i]!, g);
+  const clear = (a: PinAt, b: PinAt, net: string) => {
+    const way = line(a.pin.x, a.pin.y, b.pin.x, b.pin.y);
+    const on = (r: Rect) => r.x <= way.x + way.w && way.x <= r.x + r.w && r.y <= way.y + way.h && way.y <= r.y + r.h;
+    if (scene.wires.some((w) => w.netId !== net && segmentsOf(w.pts).some(([x1, y1, x2, y2]) => on(line(x1, y1, x2, y2))))) return false;
+    if (pins.some((p) => p.sym !== a.sym && p.net !== net && on(line(p.pin.x, p.pin.y, p.pin.x, p.pin.y)))) return false;
+    return !scene.symbols.some((s, i) => i !== a.sym && meets(s.bbox, way));
+  };
+  // each side of each symbol, spot by spot along it
+  const sides = new Map<string, Map<number, PinAt[]>>();
+  for (const p of pins) {
+    const upright = isUpright(p.pin.side);
+    const key = `${p.sym}|${p.pin.side}|${upright ? p.pin.x : p.pin.y}`;
+    const at = upright ? p.pin.y : p.pin.x;
+    const side = sides.get(key) ?? new Map<number, PinAt[]>();
+    side.set(at, [...(side.get(at) ?? []), p]);
+    sides.set(key, side);
+  }
+  for (const side of sides.values()) {
+    const row = [...side].sort(([a], [b]) => a - b);
+    for (let i = 0; i + 1 < row.length; i++) {
+      const [[from, here], [to, next]] = [row[i]!, row[i + 1]!];
+      const netId = netAtSpot(here);
+      const supply = netId && netAtSpot(next) === netId ? supplies.get(netId) : undefined;
+      if (!supply) continue;
+      const [a, b] = [here.find((p) => p.net === netId)!, next.find((p) => p.net === netId)!];
+      const [ga, gb] = [groupOf.get(a), groupOf.get(b)];
+      if (!ga || !gb || ga === gb || (ga.labels.length && gb.labels.length)) continue;
+      if (!symbolsMeet(supply.net, a.pin.side, to - from) || !clear(a, b, supply.net.id)) continue;
+      scene.wires.push({ netId: supply.net.id, pts: [a.pin.x, a.pin.y, b.pin.x, b.pin.y], auto: true });
+      ga.pins.push(...gb.pins);
+      ga.labels.push(...gb.labels);
+      for (const k of gb.pins) groupOf.set(pins[k]!, ga);
+      supply.list.splice(supply.list.indexOf(gb), 1);
+      out.joined.add(spotOf(a.pin)).add(spotOf(b.pin));
+      out.behind.add(spotOf(isUpright(a.pin.side) && supplyDir(supply.net) === 'down' ? a.pin : b.pin));
+    }
+  }
+  return out;
+}
+
+/** How a supply's symbol steps clear at its pin, the shortest way first: further off a side pin, on a longer stem. */
+const SUPPLY_STEPS = [100, 300, 500, 700]
+  .flatMap((stub) => [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000].map((rise) => ({ stub, rise })))
+  .filter((s) => s.stub > 100 || s.rise > 0)
+  .sort((a, b) => a.stub + a.rise - (b.stub + b.rise) || a.rise - b.rise);
+/** The air a supply's name likes from a wire beside it (a junction dot on that wire reaches 24 mils off it), and how far the symbol steps for that. */
+const SUPPLY_AIR = 30;
+const STEP_FOR_AIR = 300;
+
+interface LabelSpot {
+  p: PinAt;
+  label: LabelView;
+  wires: WireView[];
+}
+
+/**
+ * Where a supply's symbol goes: at the first of the pins, or a short step off the first one, where
+ * it runs into nothing and has air beside its name; else the first way it runs into nothing at all
+ * (on its page); else where it would always stand: the agent can still move it, and SCH.TEXT_OVERLAP
+ * says so. A symbol at the end of a lead that turns aside has its one place.
+ */
+function clearSupply<T extends LabelSpot>(cand: T[], clashes: ReturnType<typeof labelClashes>, pages?: Rect[]): T | undefined {
+  const first = cand[0];
+  if (!first) return undefined;
+  const area = pages && drawingArea(pages[pageAt(pages, first.p.pin)]!);
+  const steps = first.wires.length ? [] : SUPPLY_STEPS.filter((s) => first.label.stub || s.stub === 100);
+  const stepped = ({ stub, rise }: { stub: number; rise: number }): T | [] => {
+    const label: LabelView = { ...first.label, ...(first.label.stub ? { stubLen: stub } : {}), ...(rise ? { rise } : {}) };
+    return area && !within(area, labelRect(label)) ? [] : { ...first, label };
+  };
+  const near = steps.filter((s) => s.stub - 100 + s.rise <= STEP_FOR_AIR).flatMap(stepped);
+  const free = (c: T, air = 0) => !clashes.find(c.label, air);
+  return [...cand, ...near].find((c) => free(c, SUPPLY_AIR)) ?? cand.find((c) => free(c)) ?? steps.flatMap(stepped).find((c) => free(c)) ?? first;
+}
+
 /**
  * Labels for the connections the drawing does not show: a net drawn in pieces (groups of pins
  * joined by wires) that no label ties together gets a label at a pin of each untied piece. A net
  * that goes on to parts not in the scene (another sheet) counts that as a piece of its own.
+ * Neighbouring pins on one supply are one piece (shareSupplies), whose symbol stands clear of what
+ * is drawn where it can (clearSupply).
  */
-function autoLabels(d: Design, scene: Scene): void {
+function autoLabels(d: Design, scene: Scene, pages?: Rect[]): void {
   const pins = pinsOf(d, scene.symbols);
   const gs = groups(pins, scene.wires, scene.labels);
   const here = new Set(scene.symbols.map((s) => s.componentId));
@@ -295,25 +415,30 @@ function autoLabels(d: Design, scene: Scene): void {
   }
   const wired = new Set<string>();
   for (const w of scene.wires) for (const [x, y] of ends(w)) wired.add(`${x},${y}`);
-  for (const [netId, list] of [...byNet].sort(([a], [b]) => natCmp(a, b))) {
+  const nets = [...byNet].sort(([a], [b]) => natCmp(a, b)).flatMap(([netId, list]): NetToLabel[] => {
     const net = d.nets[netId];
-    if (!net) continue;
-    const tied = list.filter((g) => g.labels.length);
-    const loose = list.filter((g) => !g.labels.length);
-    const pieces = loose.length + (tied.length ? 1 : 0) + (offSheet.has(netId) ? 1 : 0);
-    if (pieces < 2) continue;
-    for (const g of loose) {
-      // at the pin where the label runs into the least (a free pin end first), else by name
+    if (!net) return [];
+    const pieces = list.filter((g) => !g.labels.length).length + (list.some((g) => g.labels.length) ? 1 : 0) + (offSheet.has(netId) ? 1 : 0);
+    return pieces < 2 ? [] : [{ net, list }];
+  });
+  const { joined, behind } = shareSupplies(scene, pins, nets);
+  const atEnd = (p: PinAt) => joined.has(spotOf(p.pin)) && !behind.has(spotOf(p.pin));
+  const clashes = labelClashes(scene);
+  // net labels first: they have one way to point, a supply's symbol can step aside for them
+  for (const { net, list } of [...nets.filter((n) => !supplyDir(n.net)), ...nets.filter((n) => supplyDir(n.net))]) {
+    for (const g of list.filter((x) => !x.labels.length)) {
+      // at the end of a run the symbol points to, else at the pin where the label runs into the least (a free pin end first), else by name
       const cand = g.pins
         .map((i) => pins[i]!)
-        .filter((p) => p.net === netId)
+        .filter((p) => p.net === net.id)
         .map((p) => ({ p, ...labelAt(d, net, p), wired: wired.has(`${p.pin.x},${p.pin.y}`) }))
         .map((c) => ({ ...c, hits: crowding(scene, c.label, c.p.sym) }))
-        .sort((a, b) => a.hits - b.hits || Number(a.wired) - Number(b.wired) || natCmp(`${a.p.comp.refdes}.${a.p.pin.number}`, `${b.p.comp.refdes}.${b.p.pin.number}`));
-      const best = cand[0];
+        .sort((a, b) => Number(atEnd(b.p)) - Number(atEnd(a.p)) || a.hits - b.hits || Number(a.wired) - Number(b.wired) || natCmp(`${a.p.comp.refdes}.${a.p.pin.number}`, `${b.p.comp.refdes}.${b.p.pin.number}`));
+      const best = supplyDir(net) ? clearSupply(cand, clashes, pages) : cand[0];
       if (!best) continue;
       scene.wires.push(...best.wires.map((w) => ({ ...w, auto: true })));
       scene.labels.push({ ...best.label, auto: true });
+      clashes.add(best.label, best.wires);
     }
   }
 }
