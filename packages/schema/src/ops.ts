@@ -87,6 +87,17 @@ export const MoveToSheetOp = z.object({
   sheet: z.string(),
 });
 
+export const RemoveSheetOp = z.object({
+  op: z.literal('remove_sheet'),
+  sheet: z.string().describe('The sheet to take away. It must be empty: first move its parts to another sheet (move_to_sheet) or take them off (clear_sheet), in the same transaction if you like. A design keeps at least one sheet'),
+});
+
+export const ClearSheetOp = z.object({
+  op: z.literal('clear_sheet'),
+  sheet: z.string(),
+  keep: z.array(componentRef).optional().describe('Parts on the sheet that stay; without it every part goes'),
+}).describe('Take the parts off a sheet in one op, when the user wants them gone (starting over): as remove does for one part, with their connections and constraints, and also the waivers naming them, the description\'s blocks left without a part, and what stood on them on the board (drawn copper, via groups, planes, impedance rules and keep-outs on nets left without pins and on parts that are gone). The sheet stays; if nothing stays on it, the auto-layout draws it afresh.');
+
 export const ConstrainOp = z.object({
   op: z.literal('constrain'),
   kind: z
@@ -790,6 +801,8 @@ export const EditOp = z.discriminatedUnion('op', [
   SetNetOp,
   AddSheetOp,
   MoveToSheetOp,
+  RemoveSheetOp,
+  ClearSheetOp,
   ConstrainOp,
   RemoveConstraintOp,
   AddWaiverOp,

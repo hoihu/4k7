@@ -2,9 +2,9 @@
  * The ops on the circuit: parts, connections, nets, sheets and the constraints of the ledger.
  */
 import { isBoxSymbol, isTwoPin, packageOptions, searchParts, standardPackage } from '@4k7/parts';
-import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, type Design, type EditOp, type OpResult, parseQuantity, type PartCard } from '@4k7/schema';
+import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea } from '@4k7/schema';
 import { keepPlacement } from './board.ts';
-import { allocRefdes, cardOf, createNet, findComponent, findNet, isAutoNet, mergeNet, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
+import { allocRefdes, cardOf, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
 import { isDrawn } from './drawing.ts';
 import { drawNet } from './netdraw.ts';
 
@@ -317,9 +317,9 @@ function firstSheet(d: Design): string {
   return Object.values(d.sheets).sort((a, b) => a.order - b.order)[0]!.id;
 }
 
-function sheetByName(d: Design, name: string): string {
+function sheetByName(d: Design, name: string, hint = ' Add it with add_sheet first.'): string {
   const s = Object.values(d.sheets).find((x) => x.name.toLowerCase() === name.toLowerCase() || x.id === name);
-  if (!s) reject({ code: 'SHEET_UNKNOWN', message: `No sheet "${name}". Add it with add_sheet first.`, candidates: Object.values(d.sheets).map((x) => x.name) });
+  if (!s) reject({ code: 'SHEET_UNKNOWN', message: `No sheet "${name}".${hint}`, candidates: Object.values(d.sheets).map((x) => x.name) });
   return s.id;
 }
 
@@ -328,15 +328,139 @@ export function addSheet(d: Design, name: string): OpResult {
     return { op: 'add_sheet', effect: `sheet ${name} already exists` };
   }
   const id = nextId(d, 's');
-  d.sheets[id] = { id, name, order: Object.keys(d.sheets).length };
+  // (after the last one: a sheet removed leaves a gap in the order)
+  d.sheets[id] = { id, name, order: Math.max(-1, ...Object.values(d.sheets).map((s) => s.order)) + 1 };
   return { op: 'add_sheet', effect: `added sheet ${name}`, ids: [id] };
 }
 
 export function moveToSheet(d: Design, refs: string[], sheet: string): OpResult {
   const sid = sheetByName(d, sheet);
   const cs = refs.map((r) => resolveComponent(d, r));
+  const from = new Set(cs.map((c) => c.sheet));
   for (const c of cs) c.sheet = sid;
-  return { op: 'move_to_sheet', effect: `moved ${cs.map((c) => c.refdes).join(', ')} to ${d.sheets[sid]!.name}` };
+  const left = [...from].filter((id) => id !== sid && !partsOn(d, id).length).map((id) => d.sheets[id]!.name);
+  return { op: 'move_to_sheet', effect: `moved ${cs.map((c) => c.refdes).join(', ')} to ${d.sheets[sid]!.name}${left.length ? `; nothing left on ${left.join(', ')}: an empty sheet still takes a page, remove_sheet takes it away` : ''}` };
+}
+
+const partsOn = (d: Design, sheetId: string) => Object.values(d.components).filter((c) => c.sheet === sheetId);
+
+/** A sheet's stored drawing goes (not releaseSheet: parts that just left it are drawn where they are now, not where they stood). */
+function dropDrawing(d: Design, sheetId: string): void {
+  if (!d.drawing?.[sheetId]) return;
+  delete d.drawing[sheetId];
+  if (!Object.keys(d.drawing).length) delete d.drawing;
+}
+
+/** Take an empty sheet away. One with parts stays until they are moved or cleared, and a design keeps one sheet. */
+export function removeSheet(d: Design, name: string): OpResult {
+  const id = sheetByName(d, name, '');
+  const sheet = d.sheets[id]!;
+  if (Object.keys(d.sheets).length === 1) {
+    reject({ code: 'INVALID_OP', message: `${sheet.name} is the design's only sheet, and a design keeps one. clear_sheet takes its parts off to start it over.` });
+  }
+  const on = partsOn(d, id).map((c) => c.refdes).sort(natCmp);
+  if (on.length) {
+    reject({
+      code: 'SHEET_NOT_EMPTY',
+      message: `Sheet ${sheet.name} has ${on.length} part${on.length === 1 ? '' : 's'} on it (${on.slice(0, 8).join(', ')}${on.length > 8 ? ', …' : ''}). Move them to another sheet (move_to_sheet), or if the user wants them gone take them off (clear_sheet), then remove the sheet.`,
+    });
+  }
+  delete d.sheets[id];
+  dropDrawing(d, id);
+  const placements = Object.values(d.ledger).filter((k) => k.sheet === id).map((k) => k.id);
+  for (const k of placements) delete d.ledger[k];
+  return { op: 'remove_sheet', effect: `removed sheet ${sheet.name}`, ids: [id, ...placements] };
+}
+
+/**
+ * Take the parts off a sheet (all but `keep`) the way remove takes one, with what only they gave a
+ * reason for: the waivers naming them or a net they leave without pins (a new part or net of that
+ * name must not inherit one), the description's blocks left without a part, and what stood on them
+ * on the board (clearBoard). A sheet left with nothing goes back to the auto-layout, so what comes
+ * next on it is drawn afresh.
+ */
+export function clearSheet(d: Design, op: Extract<EditOp, { op: 'clear_sheet' }>): OpResult {
+  const id = sheetByName(d, op.sheet, '');
+  const name = d.sheets[id]!.name;
+  const keep = new Set((op.keep ?? []).map((r) => resolveComponent(d, r).id));
+  const parts = partsOn(d, id).filter((c) => !keep.has(c.id));
+  if (!parts.length) return { op: 'clear_sheet', effect: `${name} has no parts to take off` };
+  const ids = parts.flatMap((c) => remove(d, c.refdes).ids ?? []);
+  let constraints = ids.length - parts.length;
+
+  const refs = new Set(parts.map((c) => c.refdes));
+  const wired = new Set(Object.values(d.components).flatMap((c) => Object.values(c.pins)));
+  const nets = new Set(Object.values(d.nets).filter((n) => !wired.has(n.id)).map((n) => n.name));
+  let waivers = 0;
+  for (const w of Object.values(d.waivers)) {
+    w.entities = w.entities.filter((e) => !refs.has(e.split('.')[0]!) && !nets.has(e.replace(/^net:/, '')));
+    if (w.entities.length) continue;
+    delete d.waivers[w.id];
+    waivers++;
+  }
+
+  let blocks = 0;
+  if (d.description) {
+    const left = d.description.blocks.map((b) => ({ ...b, components: b.components.filter((c) => d.components[c]) })).filter((b) => b.components.length);
+    blocks = d.description.blocks.length - left.length;
+    if (left.length || d.description.overview) d.description = { ...d.description, blocks: left };
+    else delete d.description;
+  }
+
+  const titles = new Set(d.description?.blocks.map((b) => b.title));
+  const emptied = !partsOn(d, id).length;
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind !== 'sch_block' || (titles.has(k.key ?? '') && !(emptied && k.sheet === id))) continue;
+    delete d.ledger[k.id];
+    constraints++;
+  }
+  if (emptied) dropDrawing(d, id);
+
+  const also = [...plural(constraints, 'constraint'), ...plural(waivers, 'waiver'), ...plural(blocks, 'description block'), ...clearBoard(d, wired)];
+  const stay = partsOn(d, id).map((c) => c.refdes).sort(natCmp);
+  return {
+    op: 'clear_sheet',
+    effect:
+      `took ${plural(parts.length, 'part')[0]} off ${name}${also.length ? `, and ${also.join(', ')} that went with them` : ''}` +
+      (stay.length ? `; ${stay.join(', ')} stay` : '') +
+      (d.description?.overview ? '; the overview may no longer hold: rewrite it with describe' : ''),
+    ids: [id, ...ids],
+  };
+}
+
+const plural = (n: number, what: string) => (n ? [`${n} ${what}${n === 1 ? '' : 's'}`] : []);
+
+/**
+ * Take off the board what stood on nets left without pins and on parts that are gone: drawn copper,
+ * via groups, planes, impedance rules, keep-outs. It has no use any more (a net of the same name is
+ * a new net), and the agent could not even name those nets to erase it. A mounting hole stays, on
+ * no net. With no plane left the board is back to its automatic planes. Says what went.
+ */
+function clearBoard(d: Design, wired: ReadonlySet<string>): string[] {
+  const b = d.board;
+  if (!b) return [];
+  const said: string[] = [];
+  const thin = <T>(list: T[], goes: (x: T) => boolean, what: string): T[] => {
+    const left = list.filter((x) => !goes(x));
+    said.push(...plural(list.length - left.length, what));
+    return left;
+  };
+  const off = (netId: string) => !wired.has(netId);
+  const gone = (id: string) => !d.components[id];
+  const underNothing = (a?: PlaneArea) => !!a?.under?.length && a.under.every(gone);
+  if (b.drawn) {
+    b.drawn.tracks = thin(b.drawn.tracks, (t) => off(t.netId), 'track');
+    b.drawn.vias = thin(b.drawn.vias, (v) => off(v.netId), 'via');
+  }
+  if (b.vias) b.vias = thin(b.vias, (v) => off(v.netId) || (!!v.along && off(v.along)) || (!!v.pad && gone(v.pad.componentId)) || underNothing(v.area), 'via group');
+  if (b.planes) {
+    b.planes = thin(b.planes, (p) => off(p.netId) || underNothing(p.area), 'plane');
+    if (!b.planes.length) delete b.planes;
+  }
+  if (b.impedance) b.impedance = thin(b.impedance, (r) => r.nets.some(off), 'impedance rule');
+  if (b.keepouts) b.keepouts = thin(b.keepouts, (k) => !!k.part && gone(k.part), 'keep-out');
+  for (const h of b.holes ?? []) if (h.netId && off(h.netId)) delete h.netId;
+  return said;
 }
 
 /* ------------------------------- constraints ------------------------------ */

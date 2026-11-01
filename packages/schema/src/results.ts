@@ -70,6 +70,7 @@ export type RejectionCode =
   | 'NET_MISMATCH'
   | 'NO_PATH'
   | 'SHEET_UNKNOWN'
+  | 'SHEET_NOT_EMPTY'
   | 'WAIVER_UNKNOWN'
   | 'ENCLOSURE_INVALID'
   | 'STACKUP_INVALID'

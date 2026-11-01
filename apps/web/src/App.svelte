@@ -209,7 +209,13 @@
           <div class="fl sheets">
             {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
             {#each app.k?.view.sheets ?? [] as s, i (s.id)}
-              <button aria-pressed={i === app.sheet} onclick={() => (app.sheet = i)}>{s.name}{#if s.pages.length > 1}<span class="muted pc">{s.pages.length}p</span>{/if}</button>
+              <span class="tab" class:on={i === app.sheet}>
+                <button aria-pressed={i === app.sheet} onclick={() => (app.sheet = i)}>{s.name}{#if s.pages.length > 1}<span class="muted pc">{s.pages.length}p</span>{/if}</button>
+                <!-- a design keeps one sheet -->
+                {#if !s.symbols.length && app.k!.view.sheets.length > 1}
+                  <button class="x" disabled={app.running || !!app.k?.proposal} title="Remove this empty sheet" aria-label="Remove sheet {s.name}" onclick={() => app.removeSheet(s.name)}>×</button>
+                {/if}
+              </span>
             {/each}
             <button class="ib" disabled={app.running || !sheet || sheet.symbols.length < 2} onclick={optimize} title="Optimize the area on screen: the agent looks only at what you see and tries to improve how it is drawn. Text in the chat box says what bothers you.">✦ Optimize</button>
             <select class="paper-sel" value={app.k?.view.paper ?? 'A4'} disabled={app.running || !!app.k?.proposal} onchange={(e) => void app.setPaper(e.currentTarget.value as PaperId)} title="Paper size of the schematic pages: a bigger sheet holds more of the drawing per page" aria-label="Paper size">
@@ -311,8 +317,13 @@
   .sheets .pc { margin-left: 4px; }
   .sheets .paper-sel { border: 0; background: transparent; border-radius: 5px; padding: 2px 4px; color: var(--txt-3); cursor: pointer; }
   .sheets .paper-sel:hover:not(:disabled) { background: var(--hover); color: var(--txt); }
-  .sheets button[aria-pressed] { border: 0; background: transparent; border-radius: 5px; color: var(--txt-2); }
-  .sheets button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-txt); }
+  .sheets .tab { display: flex; padding: 0; border-radius: 5px; }
+  .sheets .tab.on { background: var(--accent-soft); }
+  .sheets button[aria-pressed] { border: 0; background: transparent; border-radius: 5px; padding: 2px 8px; color: var(--txt-2); }
+  .sheets button[aria-pressed="true"] { color: var(--accent-txt); }
+  .sheets button[aria-pressed]:has(+ .x) { padding-right: 4px; }
+  .sheets .x { border: 0; background: transparent; border-radius: 5px; padding: 2px 6px 2px 2px; color: var(--txt-3); }
+  .sheets .x:hover:not(:disabled) { color: var(--txt); }
   .pend { margin: 0 auto; display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 10px; font-size: 12px; white-space: nowrap; max-width: calc(100% - 16px); }
   .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); flex: none; }
   .pend .ib[aria-pressed="true"] { color: var(--accent-txt); }

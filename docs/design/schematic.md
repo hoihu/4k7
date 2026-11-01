@@ -47,6 +47,7 @@ with page, frame centre and size, labels). Then move what reads badly:
   it has the most labels to.
 - Fewer, fuller pages read better than many empty ones; `set_paper A3` when the blocks of a sheet do
   not fit A4.
+- A sheet left without parts still takes a blank page, in the printout too: `remove_sheet` takes it away.
 
 ## 3. Inside a block
 

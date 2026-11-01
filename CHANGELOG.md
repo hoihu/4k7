@@ -7,6 +7,7 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ### Schematic
 
+- **Remove an empty sheet**: a sheet with nothing on it has an **×** on its tab, so it no longer has to stay as a blank page in the printout. **Undo** brings it back.
 - **Power symbols on neighbouring pins no longer pile up**: where a drawing leaves a part's power pins without their symbols, after a new pin layout for example, neighbouring pins on one rail now share one symbol on a short wire along the pins, as the layout draws them, and a symbol steps clear of what else stands there. On an RP2040, six symbols on one column, with a +1V1 stem along a +3V3 one that read like a short, become one of each. It shows as soon as the design opens, and nothing in the file changes until you draw something there yourself: drag the symbol, or have the agent wire the pins.
 - **Optimize can fix power symbols**: the agent used to report overlapping power symbols on a part you placed as something it was not allowed to touch. It was told it could only move parts, though the kernel let it do more. It now knows that it may wire, label and erase at any pin in the area, and move power symbols.
 - **A connector shows its pins' names**: an imported connector such as a USB-C receptacle now draws each pin's name in its symbol, next to the number, as an IC does. A plain numbered header or a single test point stays as it was. Names on the top or bottom run along the pins, and those pins move aside to make room; in a drawing you already have, the wires that hang only on those pins go with them, so a bar joining the grounds stays one bar.
@@ -35,6 +36,7 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ### Coding agents
 
+- **The agent can start a design over**: ask it to, with or without some parts, and `clear_sheet` takes a sheet's parts off in one step, with their connections and constraints and what stood on them on the board; `keep` names what stays. `remove_sheet` takes an empty sheet away, and the agent now does so itself when it moves the last parts off a sheet. As with any change, you review it first, and **Undo** brings it all back.
 - **The agent can describe a part's pins**: ask it to fill in or correct what the pins of a part in your design do, and it writes them on the part with `set_pin_descriptions`, no new import needed. You review them with the rest of the change; once accepted they are in the Parts view and in your library for later designs. An imported MCU's alternate functions stay. Generic parts such as a pin header take none, because one card serves all of them.
 - **Chat through the Codex CLI**: OpenAI's Codex can answer the app's chat on your ChatGPT plan or API key, next to Claude Code, GitHub Copilot CLI and OpenCode. Pick it with the model button under the chat box. It gets only the 4k7 tools, like the others: no shell, no files, and your own MCP servers stay out of it. It needs Codex 0.158 or newer, and shows its answers a whole message at a time. It can also drive the app from its own chat (see the README).
 

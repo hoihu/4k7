@@ -32,7 +32,8 @@ export function formatDesignContext(opts: {
 }): string {
   const { summary: s, diagnostics, ledger, selection, scope, view, rules, layoutRules, enclosureRules } = opts;
   const lines: string[] = ['<design_state>'];
-  lines.push(`name: ${s.name}; sheets: ${s.sheets.join(', ')}; pages: ${s.pages}`);
+  const sheetNames = s.sheets.map((n) => (s.sheets.length > 1 && !s.components.some((c) => c.sheet === n) ? `${n} (empty)` : n));
+  lines.push(`name: ${s.name}; sheets: ${sheetNames.join(', ')}; pages: ${s.pages}`);
   if (s.components.length) {
     lines.push(`components (${s.components.length}): ` + s.components.map((c) => `${c.refdes}=${c.value}[${c.part}]`).join(' '));
   } else {

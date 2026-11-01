@@ -435,11 +435,15 @@ class AppState {
     this.rev++;
     // (in the Layout view they stay until the board is laid again, a moment later)
     if (this.view !== 'lay') this.boardCounts = null;
-    this.k = await this.kernel.state();
+    const next = await this.kernel.state();
+    const shown = this.k?.view.sheets[this.sheet]?.id;
+    this.k = next;
     this.designParts = await this.kernel.designParts();
     const ids = new Set(this.k.proposal?.hunks.map((h) => h.id) ?? []);
     for (const id of Object.keys(this.hunkOff)) if (!ids.has(id)) delete this.hunkOff[id];
-    if (this.sheet >= (this.k.view.sheets.length || 1)) this.sheet = 0;
+    // the sheet on screen stays when a sheet before it comes or goes; one that went leaves its place to its neighbour
+    const at = this.k.view.sheets.findIndex((s) => s.id === shown);
+    this.sheet = at >= 0 ? at : Math.max(0, Math.min(this.sheet, this.k.view.sheets.length - 1));
     if (this.view === 'lay') void this.refreshBoard();
     if (this.view === 'enc') void this.refreshEnclosure();
   }
@@ -639,6 +643,11 @@ class AppState {
   /** The paper size of the schematic pages (A4, A3…). */
   setPaper(size: PaperId) {
     return this.userEdit(`Schematic paper ${size}`, [{ op: 'set_paper', size }]);
+  }
+
+  /** Take an empty sheet away (the × on its tab); Undo brings it back. */
+  removeSheet(name: string) {
+    return this.userEdit(`Remove sheet ${name}`, [{ op: 'remove_sheet', sheet: name }]);
   }
 
   /** A direct user edit (e.g. removing a ledger entry) commits immediately, attributed to the user. */
