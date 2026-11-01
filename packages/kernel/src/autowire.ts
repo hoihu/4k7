@@ -134,6 +134,6 @@ function unclean(d: Design, sd: SheetDrawing, views: SymbolView[], net: string, 
   const sheet = (wires: SheetDrawing['wires']) => ({ wires, symbols: views, labels: sd.labels.map((l) => ({ ...l, text: '' })) }) as unknown as SheetView;
   const was = wireShape(sheet(sd.wires), net);
   const now = wireShape(sheet([...sd.wires, { netId: net, pts }]), net);
-  if (now.jogs.length > was.jogs.length || now.detours.length > was.detours.length) return 'the wire would jog';
+  if (now.jogs.length > was.jogs.length || now.uTurns.length > was.uTurns.length) return 'the wire would jog';
   return undefined;
 }

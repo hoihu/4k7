@@ -113,8 +113,8 @@ placer puts the small parts round them.
   to (a straight wire); columns wider than the page wrap into rows. Pieces are spaced without the
   flags of the nets about to become wires. The connections between them are drawn by the `wire`
   op's path finder; one that would cross more than three wires, wander (longer than three times
-  the gap plus 2500 mils) or go round a part and turn back (a U with a leg of 500 mils or more, as
-  SCH.DETOUR sees it; a shallow step to enter a pin stays a wire) stays a pair of labels. A piece is
+  the gap plus 2500 mils) or go round a part and turn back (a U with a leg of 500 mils or more; a
+  shallow step to enter a pin stays a wire) stays a pair of labels. A piece is
   set level with its neighbour on the shift that puts the most of their nets in line. A net keeps one label per drawn piece only where it
   leaves the block. Supply symbols standing on a row of pins of one net become one bar with one symbol.
 - **Pages**: blocks flow in the description's order, each to the highest, then leftmost, free spot
@@ -153,8 +153,8 @@ part runs one more step (`kernel/autowire.ts`), once, as the part is placed:
   a wire of it. The nearest three pieces are tried in turn.
 - **Clean or not at all.** The path is drawn only if it crosses no wire of another net, runs through
   no label or name, has at most three corners and no U-turn (the block wiring's test), is no longer
-  than the direct way plus 800 mils, spans no more than 4000 mils, and adds no jog or detour the net
-  did not have (`wireShape`, what SCH.JOG and SCH.DETOUR measure). Otherwise nothing is drawn, the
+  than the direct way plus 800 mils, spans no more than 4000 mils, and adds no jog or U-turn the net
+  did not have (`wireShape`). Otherwise nothing is drawn, the
   result says why for each pin ("R3.2 (LED_B: a wire would cross another)"), and the connection
   shows as the automatic labels the drawing completes itself with (§2a), so none is left out.
 - **Labels make way**: the net labels (and their leads) at the two ends of a new wire go, as for
@@ -340,6 +340,16 @@ opens as it was. In 14 of the 255 the forced net falls back to an automatic labe
 leaving no way through.
 
 ## 3. Notes and checks
+
+*2026-11-01:* findings on the drawing stay out of the Issues list and the counts: they say how a
+sheet reads, not that the circuit is wrong. The agent still gets them
+([schematic-rules.md](schematic-rules.md)). `SCH.DETOUR` used to report every U with legs under
+`RETURN_LEG` from its shape alone, so a wire from a connector to an IC over the resistors between
+them (CC1, CC2 on a USB-C input) was "turning back on itself". It now reports a U only when its
+sideways run could slide back to the end of the shorter leg and run straight: no part, no pin the
+net's wires do not reach, no wire or label of another net on that line. A name or value does not
+count, since it can step aside. On the user's design 5 findings → 1, the hump onto a load cap's top
+pin. The auto wire (§2c) keeps refusing every U, `wireShape.uTurns`: clean or not at all.
 
 *2026-10-13:* the ruleset text below was replaced. It read like a config format (ids, `level:`
 lines, `(layout)` marks) and its long default told the model things it knows. Now (see

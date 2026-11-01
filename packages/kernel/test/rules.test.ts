@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { CHECKED_SCH_RULES, LAYOUT_SCH_RULES, changedChecks, emptyDesign, migrateRulesText, mustFix, resolveChecks, type Design, type LabelView, type RuleLevel, type SchematicView, type SheetView, type SymbolView, type Transaction } from '@4k7/schema';
+import { CHECKED_SCH_RULES, LAYOUT_SCH_RULES, changedChecks, countDiagnostics, drawingFinding, emptyDesign, migrateRulesText, mustFix, resolveChecks, type Design, type Diagnostic, type LabelView, type RuleLevel, type SchematicView, type SheetView, type SymbolView, type Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { diagKey, sortDiagnostics } from '../src/checks.ts';
 import { schematicChecks } from '../src/schcheck.ts';
@@ -39,6 +39,19 @@ describe('the checks', () => {
     expect(mustFix({ code: 'SCH.JOG', severity: 'error', entities: [], message: '' })).toBe(true);
     expect(mustFix({ code: 'ERC.PIN_UNCONNECTED', severity: 'error', entities: [], message: '' })).toBe(true);
     expect(mustFix({ code: 'ERC.PIN_UNCONNECTED', severity: 'error', entities: [], message: '', waivedBy: 'w1' })).toBe(false);
+  });
+
+  it('tells how a sheet is drawn from what is wrong with the circuit, and counts them apart', () => {
+    const f = (code: string, severity: Diagnostic['severity'] = 'warning', waivedBy?: string): Diagnostic => ({ code, severity, entities: [], message: '', ...(waivedBy ? { waivedBy } : {}) });
+    for (const d of [f('SCH.DETOUR'), f('SCH.JOG'), f('SCH.CROSSING', 'info'), f('SCH.TEXT_OVERLAP'), f('SCH.RAIL_SIDE'), f('LEDGER.PLACEMENT')]) expect(drawingFinding(d), d.code).toBe(true);
+    // shipped at Must fix, because the layout follows them by itself: still only the drawing
+    for (const id of LAYOUT_SCH_RULES) expect(drawingFinding(f(id, 'error')), id).toBe(true);
+    // the user's own: a check they set to Must fix, a placement they fixed hard
+    expect(drawingFinding(f('SCH.JOG', 'error'))).toBe(false);
+    expect(drawingFinding(f('LEDGER.PLACEMENT', 'error'))).toBe(false);
+    for (const code of ['ERC.PIN_UNCONNECTED', 'SEM.CAP_VOLTAGE', 'XCHK.PIN_NO_PAD', 'LEDGER.PARAM', 'LIB.PART_MISSING']) expect(drawingFinding(f(code)), code).toBe(false);
+    expect(countDiagnostics([f('ERC.PIN_UNCONNECTED', 'error'), f('SEM.CAP_DERATING'), f('ERC.IO_UNUSED', 'info'), f('SCH.DETOUR'), f('SCH.CROSSING', 'info'), f('SCH.GND_DOWN', 'error'), f('SCH.JOG', 'warning', 'w1'), f('SCH.JOG', 'error')]))
+      .toEqual({ errors: 2, warnings: 1, infos: 1, waived: 1, drawing: 3 });
   });
 });
 

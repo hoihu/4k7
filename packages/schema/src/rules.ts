@@ -36,7 +36,7 @@ export const SCHEMATIC_CHECKS: readonly SchematicCheck[] = [
   { id: 'SCH.DANGLING', title: 'No loose wire ends', text: 'Every wire ends at a pin, a junction or another wire.', level: 'error', layout: true },
   { id: 'SCH.TEXT_OVERLAP', title: 'Text stays readable', text: 'Names, values and labels do not run into each other, a part or a wire.', level: 'warning', layout: false },
   { id: 'SCH.JOG', title: 'Parts in line', text: 'Two parts joined by a wire (a divider, parts in series) sit on one line, so the wire runs straight.', level: 'warning', layout: false },
-  { id: 'SCH.DETOUR', title: 'No wire doubles back', text: 'A wire does not turn back the way it came.', level: 'warning', layout: false },
+  { id: 'SCH.DETOUR', title: 'No wire doubles back', text: 'A wire does not turn back the way it came where it could run straight. Going round a part or another wire in its way is fine.', level: 'warning', layout: false },
   { id: 'SCH.CROSSING', title: 'Few wire crossings', text: 'Counted per net; more than the limit is reported.', level: 'info', max: 0, layout: false },
 ];
 
@@ -151,3 +151,11 @@ export const LAYOUT_SCH_RULES: ReadonlySet<string> = new Set(SCHEMATIC_CHECKS.fi
 
 /** An open error the agent has to fix or waive before it finishes: not a layout bug, which it has no lever on. */
 export const mustFix = (d: Diagnostic) => d.severity === 'error' && !d.waivedBy && !LAYOUT_SCH_RULES.has(d.code);
+
+/**
+ * How the schematic is drawn, not what is wrong with the circuit: a wire can run any number of ways
+ * and the design stays the same. The agent reads these to improve the drawing; for the user they are
+ * no issue (the list, the counts), unless the user made one so: a drawing check they set to Must fix,
+ * a placement they fixed hard.
+ */
+export const drawingFinding = (d: Diagnostic) => (d.code.startsWith('SCH.') || d.code === 'LEDGER.PLACEMENT') && (d.severity !== 'error' || LAYOUT_SCH_RULES.has(d.code));

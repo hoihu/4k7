@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ASSEMBLY_HOUSES, currencySymbol, feeFreeTiers, whose, type ParamSpec, type SupplierPart } from '@4k7/schema';
+  import { ASSEMBLY_HOUSES, currencySymbol, drawingFinding, feeFreeTiers, whose, type ParamSpec, type SupplierPart } from '@4k7/schema';
   import { canPackage, describePart, lifecycleWarning, samePackage, sourcingMismatch, stockState } from '@4k7/parts';
   import { app, type InspectorTab } from '../app.svelte.ts';
   import { catalogueOf } from '../sourcing.ts';
@@ -255,7 +255,8 @@
   /** Forced to wires, and a label shows all the same: no wire can go there. */
   const labelStays = $derived(!!net && net.attrs.drawAs === 'wire' && net.kind === 'signal' && !!app.k?.view.sheets.some((s) => s.labels.some((l) => l.netId === net!.id)));
 
-  const diags = $derived(app.k?.diagnostics ?? []);
+  // (how the sheet is drawn is the agent's to look at, not an issue: the counts leave it out too)
+  const diags = $derived((app.k?.diagnostics ?? []).filter((d) => !drawingFinding(d)));
   const open = $derived(diags.filter((d) => !d.waivedBy));
   const waived = $derived(diags.filter((d) => d.waivedBy));
 

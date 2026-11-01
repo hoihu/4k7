@@ -42,6 +42,8 @@ export const meets = (a: Rect, b: Rect) => {
   return along(a.x, b.x, a.w, b.w, a.w === 0 && b.w === 0) && along(a.y, b.y, a.h, b.h, a.h === 0 && b.h === 0);
 };
 export const line = (x1: number, y1: number, x2: number, y2: number): Rect => ({ x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) });
+/** Two lines (or a line and a point) have a point in common, an end touching included, which `meets` leaves out. */
+const share = (a: Rect, b: Rect) => a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h;
 
 /**
  * What a label draws, as the canvas draws it: the head (a flag; a rail's arrow and name; ground
@@ -130,6 +132,7 @@ export function labelOverlaps(sheet: SheetView, nets: Set<string>): Overlap[] {
 
 type Way = 'l' | 'r' | 'u' | 'd';
 const OPPOSITE: Record<Way, Way> = { l: 'r', r: 'l', u: 'd', d: 'u' };
+const STEP: Record<Way, [number, number]> = { l: [-1, 0], r: [1, 0], u: [0, -1], d: [0, 1] };
 const key = (x: number, y: number) => `${x},${y}`;
 
 /** The way a wire leaves (x, y) along a segment that starts there. */
@@ -172,14 +175,16 @@ export interface Jog {
 /**
  * How one net's wires are drawn, apart from where they go:
  * - bends: corners, where exactly two wires meet at a right angle (no pin, no T);
- * - detours: a wire that turns, steps sideways and turns back the way it came (a U), with nothing
+ * - uTurns: a wire that turns, steps sideways and turns back the way it came (a U), with nothing
  *   attached to the sideways step, and no leg as long as a row (RETURN_LEG); each is that sideways segment;
+ * - detours: the U-turns with nothing in the way, whose sideways step could slide back to the end of
+ *   the shorter leg and run straight. A U round a part or another net is how the wire gets past it;
  * - jogs: a pin facing down (or right) at pins facing it on the same wire, none of them in line,
  *   so the wire has to step across (two resistors of a divider side by side instead of stacked).
  */
-export function wireShape(sheet: SheetView, net: string): { bends: number; jogs: Jog[]; detours: Seg[] } {
+export function wireShape(sheet: SheetView, net: string): { bends: number; jogs: Jog[]; uTurns: Seg[]; detours: Seg[] } {
   const segs = sheet.wires.filter((w) => w.netId === net).flatMap((w) => segmentsOf(w.pts)).filter(([x1, y1, x2, y2]) => x1 !== x2 || y1 !== y2);
-  if (!segs.length) return { bends: 0, jogs: [], detours: [] };
+  if (!segs.length) return { bends: 0, jogs: [], uTurns: [], detours: [] };
   // what a wire can be attached to: a pin, or a supply symbol / net flag standing at its end
   const pinAt = new Set(sheet.symbols.flatMap((s) => s.pins.map((p) => key(p.x, p.y))));
   for (const l of sheet.labels) if (l.netId === net && (l.kind !== 'net' || l.dir !== 'on')) pinAt.add(key(l.x, l.y));
@@ -220,13 +225,23 @@ export function wireShape(sheet: SheetView, net: string): { bends: number; jogs:
   // (a wire running back along a whole row, like the return from the end of a row of a wrapped
   // chain to the start of the next, is no hump: one of its legs is long)
   const legOf = (x: number, y: number, g: Seg) => Math.max(0, ...segs.filter((o) => o !== g && touches(o, x, y)).map(([a, b, c, e]) => Math.abs(c - a) + Math.abs(e - b)));
+  // what a straight run cannot go through: a part, a pin this net's wires do not reach, a wire or label of another net
+  const inTheWay = (run: Rect) =>
+    sheet.symbols.some((s) => meets(run, s.bbox) || s.pins.some((p) => share(run, line(p.x, p.y, p.x, p.y)) && !segs.some((g) => touches(g, p.x, p.y)))) ||
+    sheet.wires.some((w) => w.netId !== net && segmentsOf(w.pts).some(([a, b, c, e]) => share(run, line(a, b, c, e)))) ||
+    sheet.labels.some((l) => l.netId !== net && labelParts(l).some((p) => meets(run, p.r)));
+  const uTurns: Seg[] = [];
   const detours: Seg[] = [];
   for (const g of segs) {
     const [x1, y1, x2, y2] = g;
     if (!bend(x1, y1) || !bend(x2, y2) || !bare(g)) continue;
     const out1 = ends.get(key(x1, y1))!.find((w) => w !== wayFrom(x1, y1, x2, y2));
     const out2 = ends.get(key(x2, y2))!.find((w) => w !== wayFrom(x2, y2, x1, y1));
-    if (out1 && out1 === out2 && Math.max(legOf(x1, y1, g), legOf(x2, y2, g)) < RETURN_LEG) detours.push(g);
+    const [leg1, leg2] = [legOf(x1, y1, g), legOf(x2, y2, g)];
+    if (!out1 || out1 !== out2 || Math.max(leg1, leg2) >= RETURN_LEG) continue;
+    uTurns.push(g);
+    const [dx, dy] = [STEP[out1][0] * Math.min(leg1, leg2), STEP[out1][1] * Math.min(leg1, leg2)];
+    if (!inTheWay(line(x1 + dx, y1 + dy, x2 + dx, y2 + dy))) detours.push(g);
   }
 
   // pins on these wires, with the way each faces and the drawing it is on
@@ -237,5 +252,5 @@ export function wireShape(sheet: SheetView, net: string): { bends: number; jogs:
     const facing = pins.filter((b) => b.sym !== a.sym && b.on === a.on && b.way === OPPOSITE[a.way!] && (a.way === 'd' ? b.y >= a.y : b.x >= a.x));
     if (facing.length && !facing.some((b) => (a.way === 'd' ? b.x === a.x : b.y === a.y))) jogs.push({ pin: a, facing });
   }
-  return { bends, jogs, detours };
+  return { bends, jogs, uTurns, detours };
 }

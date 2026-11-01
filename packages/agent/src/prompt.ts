@@ -2,7 +2,7 @@
  * System prompt and per-turn design context. The system prompt is static (cacheable);
  * the design state travels with each user message.
  */
-import { DESIGN_GUIDE, type DesignSummary, type Diagnostic, type ScopeInfo, type ViewInfo } from '@4k7/schema';
+import { DESIGN_GUIDE, drawingFinding, type DesignSummary, type Diagnostic, type ScopeInfo, type ViewInfo } from '@4k7/schema';
 import { formatScope } from './optimize.ts';
 import { formatView } from './view.ts';
 
@@ -46,9 +46,10 @@ export function formatDesignContext(opts: {
     );
   }
   if (s.valueSeries) lines.push('value series: ' + Object.entries(s.valueSeries).map(([k, v]) => `${k}s ${v}`).join(', '));
-  const open = diagnostics.filter((d) => !d.waivedBy);
+  // (the issues first: a sheet with a lot drawn has findings enough to push them off the list)
+  const open = [...diagnostics.filter((d) => !d.waivedBy && !drawingFinding(d)), ...diagnostics.filter((d) => !d.waivedBy && drawingFinding(d))];
   const c = s.counts;
-  lines.push(`diagnostics: ${c.errors} errors, ${c.warnings} warnings, ${c.waived} waived`);
+  lines.push(`diagnostics: ${c.errors} errors, ${c.warnings} warnings, ${c.waived} waived, and ${c.drawing} drawing findings (how the sheet reads, not what is wrong with the circuit; not in the user's Issues)`);
   for (const d of open.slice(0, 15)) lines.push(`  ${d.severity.toUpperCase()} ${d.code} ${d.entities.join(',')}: ${d.message}`);
   if (open.length > 15) lines.push(`  … ${open.length - 15} more (design_query get_diagnostics)`);
   if (s.description) {

@@ -260,7 +260,6 @@
     "parts": 29,
     "nets": 19,
     "sch": {
-      "SCH.DETOUR": 1,
       "SCH.JOG": 2,
       "SCH.CROSSING": 5
     },
@@ -271,7 +270,7 @@
     "bends": 14,
     "crossings": 4,
     "jogs": 2,
-    "detours": 1,
+    "detours": 0,
     "labels": 8,
     "supplies": 23,
     "pages": 2,

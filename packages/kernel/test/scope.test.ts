@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EditOp, OPTIMIZE_OPS, type LabelView, type OptimizeScope, type ScopeInfo, type SheetView, type SymbolView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { circuitSignature, guardOp, measure, resolveScope } from '../src/scope.ts';
+import { wireShape } from '../src/sheetmeasures.ts';
 import { buckTransaction } from './fixtures.ts';
 
 /** The buck's output side: inductor, diode, output cap, feedback divider, compensation and boot parts. */
@@ -169,6 +170,35 @@ describe('optimize measures: how the wires are drawn', () => {
     expect(z).toMatchObject({ bends: 2, detours: 0 });
     // a U with a tap on its sideways run is a bus
     expect(m(sheet([[0, 0, 0, -300, 500, -300, 500, 0], [250, -300, 250, -600]])).detours).toBe(0);
+  });
+
+  it('takes a U with something on its straight way for how the wire gets past it, not for a detour', () => {
+    // from a connector to an IC on one level (CC1 on a USB-C input), over what stands between them
+    const over = [6000, 1900, 4700, 1900, 4700, 1100, 2600, 1100, 2600, 1900, 2500, 1900];
+    expect(m(sheet([over]))).toMatchObject({ bends: 4, detours: 1 });
+    const also = (s: Partial<SheetView>) => m({ ...sheet([over]), ...s });
+    // a part
+    expect(m(sheet([over], [vertical('R16', 3800, 1700)]))).toMatchObject({ bends: 4, detours: 0 });
+    // a wire of another net, across the way or ending on it
+    const other = (pts: number[]) => ({ wires: [{ netId: 'n', pts: over }, { netId: 'o', pts }] });
+    expect(also(other([3000, 1500, 3000, 2500])).detours).toBe(0);
+    expect(also(other([3000, 1900, 3000, 2500])).detours).toBe(0);
+    expect(also(other([3000, 2000, 3000, 2500])).detours).toBe(1);
+    // a pin this net's wires do not reach
+    expect(m(sheet([over], [vertical('R16', 3800, 1900)])).detours).toBe(0);
+    // a label of another net, not one of its own
+    const flag = (netId: string): LabelView => ({ x: 3000, y: 1800, text: 'X', netId, kind: 'net', dir: 'down' });
+    expect(also({ labels: [flag('o')] }).detours).toBe(0);
+    expect(also({ labels: [flag('n')] }).detours).toBe(1);
+    // a part beside the way, or under the top of the U and clear of the way
+    expect(m(sheet([over], [vertical('R16', 3800, 2000)])).detours).toBe(1);
+    expect(m(sheet([over], [vertical('R16', 3800, 1300)])).detours).toBe(1);
+  });
+
+  it('slides a U back only as far as its shorter leg, and the wire may end on its own pin there', () => {
+    // from the left, round a load cap and down onto its top pin: round the cap it has to go, the hop onto the pin it has not
+    const s = sheet([[10500, 5400, 9600, 5400, 9600, 4700, 9900, 4700, 9900, 4800]], [vertical('C27', 9900, 4800)]);
+    expect(wireShape(s, 'n')).toMatchObject({ uTurns: [[9600, 5400, 9600, 4700], [9600, 4700, 9900, 4700]], detours: [[9600, 4700, 9900, 4700]] });
   });
 
   it('overlaps: a supply head on a wire, a stem along one, names touching, text; not a stem merely crossing', () => {

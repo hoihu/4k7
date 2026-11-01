@@ -2,6 +2,7 @@ import type { Stackup } from './stackup.ts';
 import type { EditOp } from './ops.ts';
 import type { ScopeOutcome } from './scope.ts';
 import type { QuarterTurn, ValueSeries } from './model.ts';
+import { drawingFinding } from './rules.ts';
 
 /* ------------------------------ diagnostics ------------------------------- */
 
@@ -29,12 +30,15 @@ export interface DiagnosticCounts {
   warnings: number;
   infos: number;
   waived: number;
+  /** Open findings on how the schematic is drawn (drawingFinding), which the others leave out. */
+  drawing: number;
 }
 
 export function countDiagnostics(ds: Diagnostic[]): DiagnosticCounts {
-  const c: DiagnosticCounts = { errors: 0, warnings: 0, infos: 0, waived: 0 };
+  const c: DiagnosticCounts = { errors: 0, warnings: 0, infos: 0, waived: 0, drawing: 0 };
   for (const x of ds) {
     if (x.waivedBy) c.waived++;
+    else if (drawingFinding(x)) c.drawing++;
     else if (x.severity === 'error') c.errors++;
     else if (x.severity === 'warning') c.warnings++;
     else c.infos++;

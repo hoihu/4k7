@@ -30,7 +30,8 @@ Screen space belongs to the design. Chrome has to earn its pixels.
    minimap) float on the canvas instead of taking columns.
 5. **Collapsible chat.** The chat column collapses to a button, giving a full-width canvas.
 6. **Counts, not cards.** The top bar shows `● 0 ● 2` (errors, warnings) instead of a diagnostics panel.
-   Changesets show `−1 +1` deltas as numbers.
+   Changesets show `−1 +1` deltas as numbers. Both, and the Issues list, hold what is wrong with the
+   design; how the schematic is drawn is the agent's to look at ([schematic-rules.md](schematic-rules.md)).
 7. **Tool calls are collapsed** into one summary line ("9 tool calls · 1 refused, fixed").
 8. **Base font 13 px, UI chrome 11–12 px, monospace for design identifiers** (refdes, nets, constraints).
 9. **Phones:** the schematic's three panes become bottom tabs (Agent · Canvas · Issues). Layout

@@ -15,7 +15,7 @@ const sheet = {
 } as unknown as SheetView;
 
 const base = {
-  summary: { name: 'x', sheets: ['Power'], pages: 2, components: [], nets: [], counts: { errors: 0, warnings: 0, infos: 0, waived: 0 }, ledger: 0, waivers: 0 },
+  summary: { name: 'x', sheets: ['Power'], pages: 2, components: [], nets: [], counts: { errors: 0, warnings: 0, infos: 0, waived: 0, drawing: 0 }, ledger: 0, waivers: 0 },
   diagnostics: [],
   ledger: [],
   selection: [],
