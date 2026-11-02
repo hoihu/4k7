@@ -3,6 +3,12 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
+## 0.5.1 — 2026-11-02
+
+A small security update. Nothing else changes in the app, and the [known problems of 0.5.0](https://4k7.dev/changelog#v0.5.0) still stand.
+
+- **A list over its limit is refused at once**: the app checks what an agent sends with the Zod library, now at 4.6.7. Up to 4.6.5, Zod went through a list's entries before it looked at the length, so a very long list of wrong entries could use up the memory of the browser tab ([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)). Only what an agent sends goes through this check, not a design you open. A list with no limit of its own, such as the operations in one change, is still checked entry by entry.
+
 ## 0.5.0 — 2026-11-01
 
 A schematic is now yours to put right: **F** and **R** work on every symbol, and names, values, power symbols and whole nets go where you want them. Wires join a pin from any side and go round the parts in their way, and Issues hold only what is wrong with the circuit. Editing a big design is several times faster, and the Codex CLI can answer the chat.

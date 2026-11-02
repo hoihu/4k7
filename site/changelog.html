@@ -155,6 +155,19 @@
     </div>
 
     <!-- releases: written by scripts/changelog.mjs from CHANGELOG.md, do not edit -->
+    <article class="release" id="v0.5.1">
+      <header>
+        <h2><a href="#v0.5.1">0.5.1</a></h2>
+        <time datetime="2026-11-02">2 November 2026</time>
+        <a class="gh" href="https://github.com/hoihu/4k7/releases/tag/v0.5.1">Release on GitHub</a>
+      </header>
+      <div class="notes">
+        <p>A small security update. Nothing else changes in the app, and the <a href="https://4k7.dev/changelog#v0.5.0">known problems of 0.5.0</a> still stand.</p>
+        <ul>
+          <li><b>A list over its limit is refused at once</b>: the app checks what an agent sends with the Zod library, now at 4.6.7. Up to 4.6.5, Zod went through a list’s entries before it looked at the length, so a very long list of wrong entries could use up the memory of the browser tab (<a href="https://github.com/advisories/GHSA-mrhx-c7xc-m3w5">GHSA-mrhx-c7xc-m3w5</a>). Only what an agent sends goes through this check, not a design you open. A list with no limit of its own, such as the operations in one change, is still checked entry by entry.</li>
+        </ul>
+      </div>
+    </article>
     <article class="release" id="v0.5.0">
       <header>
         <h2><a href="#v0.5.0">0.5.0</a></h2>
