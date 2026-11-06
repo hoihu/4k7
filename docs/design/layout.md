@@ -428,7 +428,13 @@ Each step is useful alone.
     plane with `thermal: false`, with thermal vias, or with a track on the layer are not counted. Thermal reliefs
     themselves are real: the router cuts a ring round each pad and via of the pour's net, draws the spokes back
     where no other net is in the way, and the Gerber writer clears the cuts and draws the spokes
-    (`ZoneShape.cuts`, `adds`); style, gap and spoke width are `set_plane_style`'s.
+    (`ZoneShape.cuts`, `adds`); style, gap and spoke width are `set_plane_style`'s. Clear polarity
+    erases whatever the file drew before, so with several planes on a layer the writer draws the one
+    that goes round another first (`planeGoesRound`, as the router cuts them) and keeps a later
+    plane's fill and cuts to its own outline, a cut reaching out of it written as the part inside.
+    Until 2026-11-06 the later plane's clearances cut the earlier one's spokes and joints in the
+    files, though the board view showed them; `packages/fab/test/planes.test.ts` compares each such
+    layer, read back, with its planes written one by one.
     **Dead copper**: a pour island that touches no copper of its net is never filled (the `alive` set in
     `planeShape`), so no floating copper reaches the Gerbers. `Zone.removed` counts the islands of 1 mm² and
     more and `DRC.DEAD_COPPER` (info) tells the agent where the biggest was: a track or pad of another net

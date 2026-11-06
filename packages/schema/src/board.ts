@@ -1068,6 +1068,20 @@ export function planeStyleText(s: PlaneStyle): string {
     .join(', ');
 }
 
+/**
+ * Whether plane `a` goes round plane `b` on their layer, with `b`'s gap (`b` lies on top): a full
+ * plane goes round every area on its layer; of two areas the smaller lies on top (a +5V patch
+ * inside a local GND pour), the later one in `planes` when they are as big. The router cuts the
+ * planes so, and the Gerber writer draws `a` first.
+ */
+export function planeGoesRound<P extends { layer: CopperLayer; area?: [number, number, number, number] }>(planes: readonly P[], a: P, b: P): boolean {
+  if (a === b || a.layer !== b.layer || !b.area) return false;
+  if (!a.area) return true;
+  const size = (r: [number, number, number, number]) => (r[2] - r[0]) * (r[3] - r[1]);
+  const d = size(b.area) - size(a.area);
+  return Math.abs(d) > 1e-6 ? d < 0 : planes.indexOf(b) > planes.indexOf(a);
+}
+
 /** The planes on a layer as a legend names them: "+5V, +3V3 under U1". */
 export function planeNames(b: Pick<BoardView, 'planes' | 'netNames'>, layer: CopperLayer): string {
   return b.planes
