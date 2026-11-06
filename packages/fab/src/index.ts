@@ -8,3 +8,6 @@ export * from './scad.ts';
 export * from './enclosure.ts';
 export * from './enclosure-api.ts';
 export * from './print.ts';
+export * from './netcheck.ts';
+export * from './netdesign.ts';
+export * from './ipc356.ts';

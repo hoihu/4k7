@@ -3,11 +3,51 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
+import { ipc356 } from './ipc356.ts';
 import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, MASK_MARGIN, planeGoesRound, pointBounds, refdesHeight, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type HousePlacement, type PanelView, type Zone, type ZoneCut, type ZoneShape } from '@4k7/schema';
 
 export interface FabFile {
   name: string;
   content: string;
+}
+
+/** Who wrote a set of files, from what and when: in each file, so a set can be told from another (X2 attributes, the drill file's and netlist's header). */
+export interface FabStamp {
+  /** The app's version ("0.6.1"; a build not released says so: "0.6.1-dev"). */
+  version: string;
+  /** The board's fingerprint (boardFingerprint): the same for the same copper, so two sets can be told the same or not. */
+  board?: string;
+  /** When the files were written (ISO 8601 with the offset); left out, the files are the same on every export. */
+  date?: string;
+}
+
+/** For files made without a stamp (tests, a check of the board as it is): the version is not said. */
+const UNSTAMPED: FabStamp = { version: 'unknown' };
+/** Text kept to what a Gerber attribute or comment may hold (no * % , or line breaks). */
+const plain = (s: string) => s.replace(/[*%,\r\n]+/g, ' ').trim();
+
+/**
+ * A board's fingerprint: 8 hex digits of a hash (FNV-1a) of what its copper is made of (the outline,
+ * the layers, each part's pads with their nets, the tracks, vias and planes). The same board gives
+ * the same fingerprint on every export, whatever else changed in the design.
+ */
+export function boardFingerprint(b: BoardView): string {
+  const text = JSON.stringify([b.outline, b.layers, b.parts.map((p) => [p.refdes, p.pads.map((q) => [q.number, q.x, q.y, q.w, q.h, q.shape, q.drill, q.slot, q.npth, q.netId ? b.netNames[q.netId] : null])]), b.tracks.map((t) => [t.layer, t.width, t.pts, b.netNames[t.netId]]), b.vias.map((v) => [v.x, v.y, v.pad, v.drill, b.netNames[v.netId]]), b.zones.map((z) => [z.layer, b.netNames[z.netId], z.shape ?? z.rects])]);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/** The comment lines a file starts with: the program and its version, the design and its board's fingerprint, the date. */
+export function stampLines(project: string, stamp: FabStamp = UNSTAMPED): string[] {
+  return [
+    `4k7 ${plain(stamp.version)}`,
+    `${plain(project) || 'board'}${stamp.board ? `, board ${plain(stamp.board)}` : ''}`,
+    ...(stamp.date ? [plain(stamp.date)] : []),
+  ];
 }
 
 const SILK_WIDTH = 0.15;
@@ -124,7 +164,11 @@ class Gerber {
   private body: string[] = [];
   private next = 10;
   private current = -1;
-  constructor(private h: number, private attrs: string[]) {}
+  constructor(
+    private h: number,
+    private attrs: string[],
+    private head: { project: string; stamp: FabStamp },
+  ) {}
 
   private aperture(def: string): number {
     let d = this.apertures.get(def);
@@ -215,9 +259,12 @@ class Gerber {
       const [shape, params] = def.split(',');
       return `%ADD${d}${shape},${params}*%`;
     });
+    const { project, stamp } = this.head;
     return [
-      '%TF.GenerationSoftware,4k7,4k7,0.1*%',
+      `%TF.GenerationSoftware,4k7,4k7,${plain(stamp.version)}*%`,
+      ...(stamp.date ? [`%TF.CreationDate,${plain(stamp.date)}*%`] : []),
       ...this.attrs.map((a) => `%TF.${a}*%`),
+      ...stampLines(project, stamp).slice(1, 2).map((l) => `G04 ${l}*`),
       '%FSLAX46Y46*%',
       '%MOMM*%',
       '%LPD*%',
@@ -233,8 +280,9 @@ class Gerber {
 const onLayer = (p: BoardPad, layer: CopperLayer) => !p.npth && (!!p.drill || p.layers.includes(layer));
 
 /** The Gerber set and drill files; with `panel`, `b` is the whole panel (panelBoard) and the panel's contours and fiducials are drawn. */
-export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFile[] {
+export function gerbers(b: BoardView, project: string, panel?: PanelView, stamp?: FabStamp): FabFile[] {
   const { w, h } = b.outline;
+  const head = { project, stamp: stamp ?? UNSTAMPED };
   const base = project.replace(/[^\w.-]+/g, '_') || 'board';
   const files: FabFile[] = [];
   const pads = b.parts.flatMap((p) => p.pads);
@@ -243,7 +291,7 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFi
   /* copper */
   b.layers.forEach((layer, i) => {
     const pos = i === 0 ? 'Top' : i === n - 1 ? 'Bot' : 'Inr';
-    const g = new Gerber(h, [`FileFunction,Copper,L${i + 1},${pos}`, 'FilePolarity,Positive']);
+    const g = new Gerber(h, [`FileFunction,Copper,L${i + 1},${pos}`, 'FilePolarity,Positive'], head);
     // planes and pours: the one that goes round another first, each drawn over another kept to itself
     const drawn: Box[] = [];
     for (const z of layerZones(b, layer)) {
@@ -261,14 +309,14 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFi
 
   /* solder mask (openings; vias are tented) and paste (SMD pads only) */
   for (const [side, layer] of [['Top', 'F.Cu'], ['Bot', 'B.Cu']] as const) {
-    const mask = new Gerber(h, [`FileFunction,Soldermask,${side}`, 'FilePolarity,Negative']);
+    const mask = new Gerber(h, [`FileFunction,Soldermask,${side}`, 'FilePolarity,Negative'], head);
     for (const p of pads) {
       if (p.npth) mask.circle(p.x, p.y, p.drill! + 2 * MASK_MARGIN); // bare hole: no mask over it
       else if (onLayer(p, layer)) mask.pad(p, MASK_MARGIN);
     }
     for (const f of panel?.fiducials ?? []) mask.circle(f.x, f.y, f.mask);
     files.push({ name: `${base}-${side === 'Top' ? 'F' : 'B'}_Mask.gbr`, content: mask.toString() });
-    const paste = new Gerber(h, [`FileFunction,Paste,${side}`, 'FilePolarity,Positive']);
+    const paste = new Gerber(h, [`FileFunction,Paste,${side}`, 'FilePolarity,Positive'], head);
     for (const p of pads) if (!p.drill && p.layers.includes(layer)) paste.pad(p);
     files.push({ name: `${base}-${side === 'Top' ? 'F' : 'B'}_Paste.gbr`, content: paste.toString() });
   }
@@ -279,7 +327,7 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFi
     const parts = b.parts.filter((p) => p.side === side && !p.componentId.startsWith('hole:')); // mounting holes carry no silkscreen
     // the bottom file only when something is printed there
     if (side === 'bottom' && !graphics.length && !parts.length) continue;
-    const silk = new Gerber(h, [`FileFunction,Legend,${side === 'top' ? 'Top' : 'Bot'}`, 'FilePolarity,Positive']);
+    const silk = new Gerber(h, [`FileFunction,Legend,${side === 'top' ? 'Top' : 'Bot'}`, 'FilePolarity,Positive'], head);
     // the pads exposed on this side
     const here = pads.filter((p) => p.npth || onLayer(p, layer));
     // graphics first; then the pads (with their clearance) are cleared out of them
@@ -366,14 +414,14 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFi
 
   /* outline */
   // the board outline (rounded corners too; a panel: its milled contours) and every milled cutout, as closed contours
-  const edge = new Gerber(h, ['FileFunction,Profile,NP', 'FilePolarity,Positive']);
+  const edge = new Gerber(h, ['FileFunction,Profile,NP', 'FilePolarity,Positive'], head);
   const closed = (pts: number[]) => [...pts, pts[0]!, pts[1]!];
   for (const contour of panel ? panel.edges : [boardPolygon(b)]) edge.line(closed(contour), 0.1);
   for (const c of b.cutouts ?? []) edge.line(closed(cutoutPolygon(c)), 0.1);
   files.push({ name: `${base}-Edge_Cuts.gbr`, content: edge.toString() });
 
-  files.push({ name: `${base}-PTH.drl`, content: drill(b) });
-  if (b.parts.some((p) => p.pads.some((q) => q.npth))) files.push({ name: `${base}-NPTH.drl`, content: drill(b, false) });
+  files.push({ name: `${base}-PTH.drl`, content: drill(b, true, head) });
+  if (b.parts.some((p) => p.pads.some((q) => q.npth))) files.push({ name: `${base}-NPTH.drl`, content: drill(b, false, head) });
   return files;
 }
 
@@ -382,13 +430,13 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFi
  * mounting holes), or with `plated = false` the non-plated ones (mounting holes). A slotted
  * hole is routed with its width's tool from one end's centre to the other (G00 … M15 G01 … M16).
  */
-export function drill(b: BoardView, plated = true): string {
+export function drill(b: BoardView, plated = true, head: { project: string; stamp?: FabStamp } = { project: 'board' }): string {
   const holes: { d: number; x: number; y: number; to?: [number, number] }[] = [
     ...(plated ? b.vias.map((v) => ({ d: v.drill, x: v.x, y: v.y })) : []),
     ...b.parts.flatMap((p) => p.pads.filter((q) => q.drill && !!q.npth !== plated).map((q) => ({ d: q.drill!, ...slotEnds(q) }))),
   ];
   const sizes = [...new Set(holes.map((x) => x.d.toFixed(3)))].sort();
-  const lines = ['M48', '; 4k7 0.1', `; ${plated ? 'PLATED' : 'NON-PLATED'} holes`, '; FORMAT={-:-/ absolute / metric / decimal}', 'FMAT,2', 'METRIC,TZ'];
+  const lines = ['M48', ...stampLines(head.project, head.stamp).map((l) => `; ${l}`), `; ${plated ? 'PLATED' : 'NON-PLATED'} holes`, '; FORMAT={-:-/ absolute / metric / decimal}', 'FMAT,2', 'METRIC,TZ'];
   sizes.forEach((s, i) => lines.push(`T${i + 1}C${s}`));
   lines.push('%', 'G90', 'G05');
   const at = (x: number, y: number) => `X${x.toFixed(3)}Y${(b.outline.h - y).toFixed(3)}`;
@@ -503,8 +551,13 @@ export function pickAndPlace(b: BoardView, placements: Record<string, HousePlace
   ]);
 }
 
-/** Gerbers, drill, BOM (in the assembly house's form, see bom) and pick-and-place (in the house's frame where `placements` say it). */
-export function fabFiles(b: BoardView, project: string, house?: string, placements?: Record<string, HousePlacement>): FabFile[] {
+/** Gerbers, drill, the netlist (IPC-D-356A, for the house's electrical test), BOM (in the assembly house's form, see bom) and pick-and-place (in the house's frame where `placements` say it). */
+export function fabFiles(b: BoardView, project: string, house?: string, placements?: Record<string, HousePlacement>, stamp?: FabStamp): FabFile[] {
   const base = project.replace(/[^\w.-]+/g, '_') || 'board';
-  return [...gerbers(b, project), { name: `${base}-BOM.csv`, content: bom(b, house) }, { name: `${base}-PnP.csv`, content: pickAndPlace(b, placements) }];
+  return [
+    ...gerbers(b, project, undefined, stamp),
+    { name: `${base}-IPC356.ipc`, content: ipc356(b, project, { stamp }) },
+    { name: `${base}-BOM.csv`, content: bom(b, house) },
+    { name: `${base}-PnP.csv`, content: pickAndPlace(b, placements) },
+  ];
 }
