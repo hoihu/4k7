@@ -2,7 +2,7 @@
  * The user's view: what they had on screen when they sent a message, so "improve this area" or
  * "the parts here" can be resolved without asking. Unlike an Optimize scope it restricts nothing.
  */
-import type { AreaViewInfo, BoardView, EnclosureViewInfo, Rect, SheetView, ViewInfo } from '@4k7/schema';
+import type { AreaViewInfo, BoardView, EnclosureViewInfo, GerberViewInfo, Rect, SheetView, ViewInfo } from '@4k7/schema';
 
 const inside = (r: Rect, b: Rect) => b.x >= r.x && b.y >= r.y && b.x + b.w <= r.x + r.w && b.y + b.h <= r.y + r.h;
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
@@ -72,9 +72,24 @@ function formatCut(v: EnclosureViewInfo): string {
   ].join('\n');
 }
 
+/** The production files the user looks at in the Gerber viewer. */
+function formatGerbers(v: GerberViewInfo): string {
+  const r = v.rect;
+  const mm = (n: number) => Math.round(n * 10) / 10;
+  const from = v.source === 'files' ? `files the user opened (${v.title})` : v.source === 'panel' ? "the panel's production files" : "this board's production files";
+  return [
+    `<view kind="gerbers" zoomed="${v.whole ? 'no' : 'yes'}">`,
+    `the Gerber viewer (Tools): ${from}${v.below ? ', seen from below (mirrored)' : ''}`,
+    `layers shown: ${v.layers.join(' ') || 'none'}${v.hidden.length ? `; switched off: ${v.hidden.join(' ')}` : ''}`,
+    v.whole ? 'all of them in view' : `zoomed in: x ${r.x}–${mm(r.x + r.w)}, y ${r.y}–${mm(r.y + r.h)} mm (the files' coordinates, y up); view_gerbers with area: true shows it`,
+    '</view>',
+  ].join('\n');
+}
+
 /** The <view> block of the design context. */
 export function formatView(v: ViewInfo): string {
   if (v.view === 'enclosure') return formatCut(v);
+  if (v.view === 'gerbers') return formatGerbers(v);
   const lines: string[] = [];
   if (v.view === 'schematic') {
     const pages = v.pages ?? [];

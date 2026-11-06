@@ -3,6 +3,13 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
+## Unreleased
+
+### Production files
+
+- **A Gerber viewer**, in the new **Tools** tab: it opens on this board's Gerbers and drill files, made from the design as it is (as **Fab files** writes them), and on Gerbers, drill files and zips from any other program when you drop them on it or pick them with **Open files…**. Each layer is drawn in its own colour, read back from the files themselves: switch layers on and off, look from the top or from below, zoom, pan, and click twice to measure. Beside it, what the files say: which layer each file is (from its X2 attributes, else its name, as KiCad, Altium, Eagle or EasyEDA name them), the board's size, the copper layers, the holes per drill size, the smallest drill and track, and what looks wrong, such as no outline or a layer reaching past it. **Its panel** shows the panel's files.
+- **The agent looks at the production files too**: ask it whether the files are right before you order, or about files you opened, and it gets the same summary and a picture of the layers it asks for, the whole board or a spot. The viewer shows what it looks at.
+
 ## 0.5.1 — 2026-11-02
 
 A small security update. Nothing else changes in the app, and the [known problems of 0.5.0](https://4k7.dev/changelog#v0.5.0) still stand.

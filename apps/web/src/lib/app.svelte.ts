@@ -20,8 +20,8 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
-import { enclosureApiSummary, enclosureFacts, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
+import { ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { enclosureApiSummary, enclosureFacts, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import costGuide from '../../../../docs/design/cost.md?raw';
@@ -35,6 +35,8 @@ import { IngestState } from './ingest.svelte.ts';
 import { assemblyFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, placedLand, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
+import { gerberViewer } from './gerberViewer.svelte.ts';
+import { colourLegend, fabPicture } from './gerberDraw.ts';
 import { checkDesignCost, checkDesignStock, checkDesignValues, sourcingTool, type BoardFacts, type CostReport, type StockReport, type SupplierPart } from './sourcing.ts';
 import { fabRefreshPrompt } from './fabRefresh.ts';
 import {
@@ -97,7 +99,7 @@ const portFromAddress = Number(new URLSearchParams(location.search).get('port'))
 /** How often to look for the server that keeps the files while it is not reachable. */
 const DISK_RETRY_MS = 4000;
 
-export type View = 'sch' | 'lay' | 'enc' | 'parts' | 'set';
+export type View = 'sch' | 'lay' | 'enc' | 'parts' | 'tools' | 'set';
 export type InspectorTab = 'issues' | 'ledger' | 'history' | 'sel';
 
 export type { ChatFile, ChatItem, Segment } from '@4k7/schema';
@@ -446,6 +448,8 @@ class AppState {
     this.sheet = at >= 0 ? at : Math.max(0, Math.min(this.sheet, this.k.view.sheets.length - 1));
     if (this.view === 'lay') void this.refreshBoard();
     if (this.view === 'enc') void this.refreshEnclosure();
+    // the Gerber viewer shows this board's files: made again from the board as it is now
+    if (this.view === 'tools' && gerberViewer.source !== 'files') void this.refreshBoard();
   }
 
   /** The Enclosure view: the working copy's brief and script, and the board they go with. */
@@ -529,9 +533,20 @@ class AppState {
     }
   }
 
+  /** The name the production files are written under. */
+  get fabName(): string {
+    const n = this.k?.summary.name;
+    return n && n !== 'untitled' ? n : '4k7-board';
+  }
+
+  /** The board shown is the design as it is now, routed. */
+  get boardCurrent(): boolean {
+    return !this.boards.busy && !!this.board && this.boardStage === 'routed' && this.boardRev === this.rev;
+  }
+
   /** The routed board of the current design, for agents (computed if needed). */
   private async routedBoard(): Promise<BoardView | null> {
-    if (!this.boards.busy && this.board && this.boardStage === 'routed' && this.boardRev === this.rev) return this.board;
+    if (this.boardCurrent) return this.board;
     const next = this.boards.next();
     if (!this.boards.busy) void this.refreshBoard();
     return next;
@@ -1224,6 +1239,71 @@ class AppState {
           return fail('board image', (e as Error).message);
         }
       }
+      case 'view_gerbers': {
+        const parsed = GerberViewInput.safeParse(input ?? {});
+        if (!parsed.success) return fail('Gerber viewer', parsed.error.message);
+        const args = parsed.data;
+        const seen = this.turnView ?? this.currentView();
+        if (args.area && seen?.view !== 'gerbers') return fail('Gerber viewer', 'There is no area: the user was not looking at the Gerber viewer. Leave area out for the whole board, or pass region.');
+        const gv = gerberViewer;
+        if (args.files === 'open' && !gv.set) return fail('Gerber viewer', 'Nothing is open in the Gerber viewer: files "board" makes this board\'s production files.');
+        // files the user opened stay as they are; this board's (or its panel's) are made anew from the board as it is now
+        const files = args.files && args.files !== 'open' ? args.files : gv.source === 'files' ? 'open' : (gv.source ?? 'board');
+        if (files !== 'open') {
+          // made from the board as it is now, routed (a big board takes a while); the viewer (opened
+          // first) makes them from the same board
+          const routed = await this.routedBoard();
+          if (this.view !== 'tools') {
+            this.view = 'tools';
+            await tick();
+          }
+          const b = this.boardCurrent ? this.board! : routed;
+          if (!b) return fail('Gerber viewer', 'The board could not be computed.');
+          if (files === 'panel' && !b.panel) return fail('Gerber viewer', 'The board has no panel: design_edit set_panel makes one.');
+          gv.fromBoard(b, this.fabName, files === 'panel');
+        }
+        // this board's files count from its bottom-left corner, y up
+        const height = gv.boardHeight;
+        // (the text and the picture from this one set, whatever the viewer makes meanwhile)
+        const set = gv.set!;
+        const named = (f: { name: string; layer: { id: string } }, l: string) => f.layer.id.toLowerCase() === l.toLowerCase() || f.name.toLowerCase() === l.toLowerCase();
+        const unknown = (args.layers ?? []).filter((l) => !set.files.some((f) => named(f, l)));
+        if (args.layers) {
+          if (unknown.length === args.layers.length) return fail('Gerber viewer', `No layer ${args.layers.join(', ')}: the layers are ${set.files.map((f) => f.layer.id).join(', ')}.`);
+          gv.hidden = Object.fromEntries(set.files.filter((f) => !args.layers!.some((l) => named(f, l))).map((f) => [f.layer.id, true]));
+        }
+        if (args.side) gv.below = args.side === 'bottom';
+        const r = args.region;
+        const region = r ? { x: Math.min(r[0], r[2]), y: Math.min(r[1], r[3]), w: Math.abs(r[2] - r[0]), h: Math.abs(r[3] - r[1]) } : null;
+        if (region && (region.w < 0.2 || region.h < 0.2)) return fail('Gerber viewer', 'The region is too small: give x0, y0, x1, y1 in mm at least 0.2 mm apart.');
+        const frame = args.area && seen?.view === 'gerbers' ? seen.rect : (region ?? gv.whole());
+        if (!frame) return fail('Gerber viewer', 'The files draw nothing.');
+        // the user sees what the agent looks at
+        gv.show(frame);
+        if (this.view !== 'tools') {
+          this.view = 'tools';
+          await tick();
+        }
+        const shown = set.files.filter((f) => !gv.hidden[f.layer.id]);
+        const mm = (v: number) => Math.round(v * 100) / 100;
+        const off = set.files.filter((f) => !shown.includes(f)).map((f) => f.layer.id);
+        try {
+          const img = fabPicture(shown, frame, gv.below, args.width);
+          return {
+            content: [
+              fabSetText(set),
+              `Shown: ${shown.map((f) => f.layer.id).join(', ') || 'no layer'}${off.length ? ` (switched off: ${off.join(', ')})` : ''}${unknown.length ? `; not open: ${unknown.join(', ')}` : ''}; seen from ${gv.below ? 'below, mirrored left to right' : 'the top'}; x ${mm(frame.x)}–${mm(frame.x + frame.w)}, y ${mm(frame.y)}–${mm(frame.y + frame.h)} mm${height !== null ? ` (the files' coordinates, y up from the ${gv.source === 'panel' ? 'panel' : 'board'}'s bottom-left corner: ${gv.source === 'panel' ? 'panel' : 'board'} y = ${height} − file y)` : " (the files' coordinates, y up)"}.`,
+              `Colours: ${colourLegend(shown)}.`,
+            ].join('\n'),
+            images: [img],
+            isError: false,
+            label: 'Gerber viewer',
+            detail: `${files === 'open' ? gv.title : files}${region ? ' · region' : args.area ? ' · the area' : ''}`,
+          };
+        } catch (e) {
+          return fail('Gerber viewer', (e as Error).message);
+        }
+      }
     }
     return (await runKernelTool(this.editPort, tool, input)) ?? unknownTool(tool);
   }
@@ -1614,9 +1694,10 @@ class AppState {
     return this.settings.provider === 'api' && !!this.apiProblem;
   }
 
-  /** What the user has on screen: the schematic sheet or the 2D board, and the area of it shown; the box cut open. */
+  /** What the user has on screen: the schematic sheet or the 2D board, and the area of it shown; the box cut open; the production files in the Gerber viewer. */
   currentView(): ViewInfo | null {
     if (this.view === 'enc') return this.enclosureCut?.() ?? null;
+    if (this.view === 'tools') return gerberViewer.viewInfo();
     if (this.view === 'sch') {
       const sheet = this.k?.view.sheets[this.sheet];
       const rect = this.visibleArea.sch?.();

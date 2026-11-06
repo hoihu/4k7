@@ -71,7 +71,7 @@ export interface ScopeOutcome {
  * that is open and the area of it they zoomed into, so "this area", "here" and "what I see" can be
  * resolved. Read-only: unlike a scope it restricts nothing.
  */
-export type ViewInfo = AreaViewInfo | EnclosureViewInfo;
+export type ViewInfo = AreaViewInfo | EnclosureViewInfo | GerberViewInfo;
 
 /** The schematic sheet or the 2D board, and the area of it on screen. */
 export interface AreaViewInfo {
@@ -100,4 +100,21 @@ export interface EnclosureViewInfo {
   removed: '+' | '-';
   /** The pieces lifted apart (the open view). */
   opened: boolean;
+}
+
+/** The Gerber viewer (Tools): the production files open and the area of them on screen (the files' mm, x right, y up). */
+export interface GerberViewInfo {
+  view: 'gerbers';
+  /** This board's files, its panel's, or files the user opened. */
+  source: 'board' | 'panel' | 'files';
+  /** What is open, as the viewer names it. */
+  title: string;
+  /** The area on screen: x, y its bottom-left corner. */
+  rect: Rect;
+  whole: boolean;
+  /** Seen from below (mirrored). */
+  below: boolean;
+  /** Layers shown and switched off, by id (F.Cu, B.Mask, Edge.Cuts, PTH …). */
+  layers: string[];
+  hidden: string[];
 }

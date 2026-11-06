@@ -1,4 +1,4 @@
-/** Minimal zip writer (stored, no compression): enough for a fab package download. */
+/** Minimal zip writer (stored, no compression): enough for a fab package download; and a reader for the zips fab houses get. */
 
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
@@ -71,4 +71,44 @@ export function zip(files: { name: string; content: string | Uint8Array }[], dat
     p += part.length;
   }
   return out;
+}
+
+/** The files in a zip (stored or deflated), folders left out. */
+export async function unzip(data: Uint8Array): Promise<{ name: string; data: Uint8Array }[]> {
+  const v = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  // the end of the central directory: the last record of its kind (a comment may follow it)
+  let end = -1;
+  for (let i = data.length - 22; i >= Math.max(0, data.length - 22 - 0xffff); i--) {
+    if (v.getUint32(i, true) === 0x06054b50) {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) throw new Error('not a zip file');
+  const dec = new TextDecoder();
+  const out: { name: string; data: Uint8Array }[] = [];
+  let p = v.getUint32(end + 16, true);
+  for (let k = v.getUint16(end + 10, true); k > 0; k--) {
+    if (p + 46 > data.length || v.getUint32(p, true) !== 0x02014b50) throw new Error('the zip file is damaged');
+    const [flags, method, size] = [v.getUint16(p + 8, true), v.getUint16(p + 10, true), v.getUint32(p + 20, true)];
+    const [nameLen, extraLen, commentLen] = [v.getUint16(p + 28, true), v.getUint16(p + 30, true), v.getUint16(p + 32, true)];
+    const local = v.getUint32(p + 42, true);
+    const name = dec.decode(data.subarray(p + 46, p + 46 + nameLen));
+    p += 46 + nameLen + extraLen + commentLen;
+    if (name.endsWith('/')) continue;
+    if (flags & 1) throw new Error(`${name} in the zip is encrypted`);
+    if (size === 0xffffffff) throw new Error(`${name} in the zip is too large`);
+    const start = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
+    const raw = data.subarray(start, start + size);
+    if (method === 0) out.push({ name, data: raw });
+    else if (method === 8) out.push({ name, data: await inflate(raw) });
+    else throw new Error(`${name} in the zip is compressed in a way this reader does not know (method ${method})`);
+  }
+  return out;
+}
+
+/** Deflated data unpacked (the browser's and Node's DecompressionStream). */
+async function inflate(raw: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([raw as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 }

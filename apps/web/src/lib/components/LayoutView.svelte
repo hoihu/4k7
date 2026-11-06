@@ -142,7 +142,7 @@
   /** Drawn copper the route helper laid (or that came from the router): route fresh may lay it again. */
   const helperCopper = $derived(b?.drawn ? b.drawn.tracks.filter((t) => t.by).length + b.drawn.vias.filter((v) => v.by).length : 0);
 
-  const projectName = () => (app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : '4k7-board');
+  const projectName = () => app.fabName;
   function download(blob: Blob, file: string) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

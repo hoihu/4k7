@@ -10,6 +10,7 @@
   import Parts from './lib/components/Parts.svelte';
   import LayoutView from './lib/components/LayoutView.svelte';
   import EnclosureView from './lib/components/EnclosureView.svelte';
+  import ToolsView from './lib/components/ToolsView.svelte';
   import Splitter from './lib/components/Splitter.svelte';
   import { panes } from './lib/panes.svelte.ts';
   import { printSchematic } from './lib/print.ts';
@@ -49,7 +50,7 @@
     void app.init();
     const fromHash = () => {
       const h = location.hash.slice(1) as View;
-      if (['sch', 'lay', 'enc', 'parts', 'set'].includes(h)) app.view = h;
+      if (['sch', 'lay', 'enc', 'parts', 'tools', 'set'].includes(h)) app.view = h;
     };
     fromHash();
     window.addEventListener('hashchange', fromHash);
@@ -93,6 +94,7 @@
     { id: 'lay', label: 'Layout' },
     { id: 'enc', label: 'Enclosure' },
     { id: 'parts', label: 'Parts' },
+    { id: 'tools', label: 'Tools' },
     { id: 'set', label: 'Settings' },
   ];
 
@@ -264,6 +266,8 @@
           {#if !app.chatOpen}<button class="ib agentbtn" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
         </div>
       </section>
+    {:else if app.view === 'tools'}
+      <ToolsView />
     {:else}
       <Settings />
     {/if}
