@@ -82,6 +82,8 @@ function formatGerbers(v: GerberViewInfo): string {
     `the Gerber viewer (Tools): ${from}${v.below ? ', seen from below (mirrored)' : ''}`,
     `layers shown: ${v.layers.join(' ') || 'none'}${v.hidden.length ? `; switched off: ${v.hidden.join(' ')}` : ''}`,
     v.whole ? 'all of them in view' : `zoomed in: x ${r.x}–${mm(r.x + r.w)}, y ${r.y}–${mm(r.y + r.h)} mm (the files' coordinates, y up); view_gerbers with area: true shows it`,
+    ...(v.check ? [v.check] : []),
+    ...(v.focused ? [`the finding the user picked: ${v.focused}`] : []),
     '</view>',
   ].join('\n');
 }

@@ -117,4 +117,8 @@ export interface GerberViewInfo {
   /** Layers shown and switched off, by id (F.Cu, B.Mask, Edge.Cuts, PTH …). */
   layers: string[];
   hidden: string[];
+  /** The netlist check of the files in a line (what it found, or why there is none). */
+  check?: string;
+  /** The finding of the check the user picked, shown on the canvas. */
+  focused?: string;
 }

@@ -926,6 +926,8 @@ export interface Zone {
   shape?: ZoneShape;
   /** Islands of the pour left out of the fill because they touched no copper of the net: how many, their area (mm²) and where the biggest is. */
   removed?: { islands: number; area: number; at: { x: number; y: number } };
+  /** The fill touches no copper of its net at all (no pad, track or via of it reaches it): its area (mm²) and a point in it. Kept, so the plane shows where it was set, but joined to nothing. */
+  floating?: { area: number; at: { x: number; y: number } };
 }
 
 export type ZoneCut =

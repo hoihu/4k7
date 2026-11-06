@@ -3,10 +3,13 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { fileURLToPath } from 'node:url';
 import { thirdPartyNotices } from './third-party-notices.ts';
 import { devAccessKey } from './dev-access-key.ts';
+import { readFileSync } from 'node:fs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url)).replace(/[\\/]$/, '');
 /** How people run the packaged app (installed from the private repository, not the npm registry). */
 const pkg = process.env.FOURK7_PKG ?? 'github:hoihu/4k7';
+/** The app's version, from the package; a development build says so. */
+const version: string = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
 /** For the downloaded app (scripts/bundle.mjs): what to open instead of running the npx command. */
 const run = process.env.FOURK7_RUN;
 
@@ -33,6 +36,8 @@ export default defineConfig(({ command }) => {
       __SERVER_MCP__: JSON.stringify(packaged ? `npx -y ${pkg} mcp` : `node ${repoRoot}/tools/server/src/main.ts`),
       // identifies which app build a tab runs (shown in diagnostics and the server log)
       __BUILD_ID__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')),
+      // written into the production files, so a set tells which version made it
+      __APP_VERSION__: JSON.stringify(packaged ? version : `${version}-dev`),
     },
     build: { target: 'es2022', sourcemap: !packaged },
   };

@@ -9,7 +9,7 @@ import { type Board as CongestionBoard, congestion } from './congestion.ts';
 import { boardInputs, Memo } from './derive.ts';
 import { applyWaivers, boardCopy, cardOf, clone, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
 import { viewOf } from './drawing.ts';
-import { acidDrc, copperDrc, deadCopperDrc, drawnDrc, edgeDrc, neckDrc, planeViaDrc, splitDrc, thermalDrc } from './drc.ts';
+import { acidDrc, copperDrc, deadCopperDrc, drawnDrc, edgeDrc, neckDrc, padShorts, planeViaDrc, splitDrc, thermalDrc } from './drc.ts';
 import { fabCopperDrc, fabPlacementDrc } from './fabdrc.ts';
 import { polyLength, r3 } from './geom.ts';
 import { keepoutDrc } from './keepout.ts';
@@ -18,6 +18,7 @@ import { padOfPin, pin1Chamfer, placeMarks, polarityOf } from './marks.ts';
 import { panelTabDrc, panelView } from './panel.ts';
 import { CORNER, cornerAt, type Item, padNet, placeParts, rotate, settingsPlanes, swapped } from './placer.ts';
 import { route, type RouteInput, type RouteProgress } from './router.ts';
+import { capsuleCuts } from './routepours.ts';
 
 /**
  * A drop via's spot on the board, from its offset to the pad's centre in the footprint's own frame
@@ -184,7 +185,8 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     view.diagnostics.push(...panel.diagnostics.map((x) => ({ ...x })));
     view.diagnostics.push(...panelTabDrc(view));
   }
-  view.diagnostics.push(...fabPlacementDrc(view), ...keepoutDrc(view));
+  // (pads that touch: a short, from the placement on, routed or not)
+  view.diagnostics.push(...fabPlacementDrc(view), ...keepoutDrc(view), ...padShorts(view));
   applyWaivers(d, view.diagnostics);
   return view;
 }
@@ -335,7 +337,8 @@ export function layoutBoard(d: Design, b: BoardView, opts: { budgetMs?: number; 
     routing: 'done',
     tracks: copper.tracks,
     vias: copper.vias,
-    zones: copper.zones,
+    // (planes kept from before 0.6.1: an oval pad of another net cut as the capsule it is)
+    zones: kept ? capsuleCuts(copper.zones, pads) : copper.zones,
     planes,
     ratsnest: ratsnest(b.parts, connected),
     stats: {

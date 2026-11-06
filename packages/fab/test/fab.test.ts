@@ -21,7 +21,7 @@ describe('fab outputs', () => {
     expect(files.map((f) => f.name)).toEqual([
       'buck_converter-F_Cu.gbr', 'buck_converter-B_Cu.gbr',
       'buck_converter-F_Mask.gbr', 'buck_converter-F_Paste.gbr', 'buck_converter-B_Mask.gbr', 'buck_converter-B_Paste.gbr',
-      'buck_converter-F_Silkscreen.gbr', 'buck_converter-Edge_Cuts.gbr', 'buck_converter-PTH.drl',
+      'buck_converter-F_Silkscreen.gbr', 'buck_converter-Edge_Cuts.gbr', 'buck_converter-PTH.drl', 'buck_converter-IPC356.ipc',
       'buck_converter-BOM.csv', 'buck_converter-PnP.csv',
     ]);
     for (const f of files.filter((x) => x.name.endsWith('.gbr'))) {

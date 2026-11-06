@@ -2,7 +2,7 @@
  * One pass of the router, its planes and pours (router.ts): the areas they may fill on the grid, in
  * islands, and their exact geometry.
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, keepoutDistance, padCapsule, planeGoesRound, type Zone, type ZoneShape } from '@4k7/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, keepoutDistance, padCapsule, planeGoesRound, type BoardPad, type Zone, type ZoneCut, type ZoneShape } from '@4k7/schema';
 import { r3, segDist } from './geom.ts';
 import { G, islandsOf, type PassGrid, type Plane } from './routegrid.ts';
 
@@ -183,8 +183,13 @@ export function passPours(grid: PassGrid) {
     pads.forEach((p, idx) => {
       if (padNet[idx] === rg.pnet || !(p.drill || p.layers.includes(pl.layer))) return;
       const g = gapOf(p.netId);
-      if (p.shape === 'round') cuts.push({ k: 'circle', x: p.x, y: p.y, d: r3(Math.min(p.w, p.h) + 2 * g) });
-      else cuts.push({ k: 'rect', x: r3(p.x - p.w / 2 - g), y: r3(p.y - p.h / 2 - g), w: r3(p.w + 2 * g), h: r3(p.h + 2 * g) });
+      if (p.shape === 'round' && p.w === p.h) cuts.push({ k: 'circle', x: p.x, y: p.y, d: r3(p.w + 2 * g) });
+      else if (p.shape === 'round') {
+        // an oval pad (round a slotted hole, a USB-C shield pin) as the capsule it is: a circle of its
+        // narrow side left both ends of the slot in the plane, shorting the pin's net to it
+        const c = padCapsule(p);
+        cuts.push({ k: 'stroke', pts: [r3(c.ax), r3(c.ay), r3(c.bx), r3(c.by)], w: r3(2 * c.r + 2 * g) });
+      } else cuts.push({ k: 'rect', x: r3(p.x - p.w / 2 - g), y: r3(p.y - p.h / 2 - g), w: r3(p.w + 2 * g), h: r3(p.h + 2 * g) });
     });
     for (const t of tracks) if (t.netId !== pl.netId && t.layer === pl.layer) cuts.push({ k: 'stroke', pts: t.pts, w: r3(t.width + 2 * gapOf(t.netId)) });
     for (const v of vias) if (v.netId !== pl.netId) cuts.push({ k: 'circle', x: v.x, y: v.y, d: r3(v.pad + 2 * gapOf(v.netId)) });
@@ -268,3 +273,34 @@ export function passPours(grid: PassGrid) {
 }
 
 export type PassPours = ReturnType<typeof passPours>;
+
+/**
+ * Planes routed before 0.6.1 cut a pad of another net that is round but longer one way (an oval
+ * pad round a slotted hole: a USB-C shield pin) as a circle of its narrow side, so both ends of the
+ * slot stayed in the plane and its net was shorted to the plane's. A design keeps its planes'
+ * shapes with its copper, so this gives such a cut the pad's capsule, as planeShape now cuts it,
+ * without routing again. The grid the plane was filled on already kept clear of the capsule, so the
+ * plane loses no more than that cut.
+ */
+export function capsuleCuts(zones: Zone[], pads: BoardPad[]): Zone[] {
+  const ovals = pads.filter((p) => p.shape === 'round' && p.w !== p.h);
+  if (!ovals.length) return zones;
+  let changed = false;
+  const out = zones.map((z) => {
+    if (!z.shape) return z;
+    let cuts: ZoneCut[] | null = null;
+    z.shape.cuts.forEach((c, i) => {
+      if (c.k !== 'circle') return;
+      const p = ovals.find((q) => Math.abs(q.x - c.x) < 1e-6 && Math.abs(q.y - c.y) < 1e-6 && q.netId !== z.netId && (q.drill || q.layers.includes(z.layer)));
+      const gap = p ? (c.d - Math.min(p.w, p.h)) / 2 : -1;
+      if (!p || gap < -1e-6) return;
+      const k = padCapsule(p);
+      cuts ??= z.shape!.cuts.slice();
+      cuts[i] = { k: 'stroke', pts: [r3(k.ax), r3(k.ay), r3(k.bx), r3(k.by)], w: r3(2 * k.r + 2 * Math.max(0, gap)) };
+    });
+    if (!cuts) return z;
+    changed = true;
+    return { ...z, shape: { ...z.shape, cuts } };
+  });
+  return changed ? out : zones;
+}

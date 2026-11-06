@@ -18,7 +18,7 @@ describe('reading production files', () => {
   it('reads back the files fabFiles writes: each layer by its attribute, the board, its pads, holes and tracks', () => {
     const b = board();
     const set = readFabFiles(fabFiles(b, 'buck'));
-    expect(set.skipped).toEqual(['buck-BOM.csv', 'buck-PnP.csv']);
+    expect(set.skipped).toEqual(['buck-IPC356.ipc', 'buck-BOM.csv', 'buck-PnP.csv']);
     expect(set.files.map((f) => f.layer.id)).toEqual(['F.Silkscreen', 'F.Paste', 'F.Mask', 'F.Cu', 'B.Cu', 'B.Mask', 'B.Paste', 'Edge.Cuts', 'PTH']);
     expect(set.files.every((f) => f.layer.by === 'attribute' || f.format === 'excellon')).toBe(true);
     expect(set.files.every((f) => !f.notes.length)).toBe(true);

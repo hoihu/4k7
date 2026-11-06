@@ -403,8 +403,10 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
         'The Gerber viewer (Tools tab): production files read back from the files themselves, as the fab house gets them: this ' +
         "board's (made from the working copy as Fab files exports them), its panel's, or the files the user opened in the viewer (from other programs too). " +
         "Returns what the files say (each file's layer and how it was told, the board's size, the copper layers, the holes per drill size, the smallest " +
-        'drill and track, what could not be read or looks wrong) and a picture: all layers or some, from the top or from below, the whole board or a region. ' +
-        'For checking the output before an order (mask openings, paste, silkscreen off the pads, drills in their pads, the outline) and for questions ' +
+        'drill and track, what could not be read or looks wrong), the netlist check of the files (their copper read back and held against the design, or ' +
+        'against the IPC-D-356 netlist among files the user opened: shorts, opens, pads without copper, copper joined to nothing, each with where) and a ' +
+        'picture: all layers or some, from the top or from below, the whole board or a region. ' +
+        'For checking the output before an order (the netlist check first; then mask openings, paste, silkscreen off the pads, drills in their pads, the outline) and for questions ' +
         'about files the user opened. The app shows the viewer with the same view.',
       input_schema: schemaOf(GerberViewInput),
     },
