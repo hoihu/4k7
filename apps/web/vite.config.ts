@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { fileURLToPath } from 'node:url';
 import { thirdPartyNotices } from './third-party-notices.ts';
+import { devAccessKey } from './dev-access-key.ts';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url)).replace(/[\\/]$/, '');
 /** How people run the packaged app (installed from the private repository, not the npm registry). */
@@ -17,7 +18,8 @@ export default defineConfig(({ command }) => {
   const packaged = command === 'build';
   const notices = thirdPartyNotices();
   return {
-    plugins: [svelte(), notices.app],
+    // (in development: the page gets the key of the server `npm run dev` started)
+    plugins: [svelte(), notices.app, devAccessKey()],
     worker: { format: 'es', plugins: notices.worker },
     // what the enclosure's worker loads: known up front, or the first render in development reloads the page
     optimizeDeps: { include: ['manifold-3d', 'opentype.js/dist/opentype.mjs'] },

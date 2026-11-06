@@ -18,6 +18,8 @@ import {
 
 /** 'elsewhere': another tab of the app took over the server; this tab stops retrying. */
 export type ServerStatus = 'off' | 'connecting' | 'connected' | 'waiting' | 'elsewhere';
+/** Why the last try to connect failed: a server refused the access key, or none answered. */
+export type ServerProblem = 'denied' | 'no-server';
 
 /** Close code the server uses when a newer tab replaces this one. */
 const REPLACED = 4000;
@@ -33,6 +35,7 @@ class ServerClient {
   port = $state<number | null>(null);
   agent = $state<string | null>(null);
   error = $state<string | null>(null);
+  problem = $state<ServerProblem | null>(null);
   calls = $state(0);
   /** Whether the server can run the local Claude Code (the app chat and datasheet imports). */
   chat = $state<ChatCapability | null>(null);
@@ -75,8 +78,9 @@ class ServerClient {
       if (r === true) return true;
       if (typeof r === 'string') denied = r;
     }
-    if (denied && !opts.silent) this.error = denied === 'wrong access key' ? 'The server did not accept this address. Open the link the 4k7pcb command printed.' : denied;
+    if (denied && !opts.silent) this.error = denied === 'wrong access key' ? "The server did not accept this tab's access key. Open the link it printed." : denied;
     else if (!opts.silent) this.error = `No server found. Is it running (${__APP_RUN__ ? `open ${__SERVER_RUN__}` : __SERVER_RUN__}, or Claude Code with the 4k7 MCP server)?`;
+    this.problem = denied ? 'denied' : 'no-server';
     this.status = 'waiting';
     this.#scheduleRetry();
     return false;
@@ -138,6 +142,7 @@ class ServerClient {
           this.mcpCommand = msg.mcpCommand ?? null;
           this.status = 'connected';
           this.error = null;
+          this.problem = null;
           this.#onConnected?.(this.#accessKey, port);
           done(true);
           return;

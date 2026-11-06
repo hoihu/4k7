@@ -153,7 +153,9 @@ there off it, and a tab whose server stopped saves into the other server's folde
 also refuses pages of the dev server.
 
 So, in a checkout: `npm run dev` while working on the code (hot reload, the server from source), and open
-the link it prints. `npm start` for your own work, and to check the package as users get it.
+`http://localhost:5173`: the page asks Vite for the key of the server `npm run dev` started, so it connects without
+the link the server prints (a key saved from an earlier link can be another server's). `npm start` for your own work,
+and to check the package as users get it.
 `FOURK7_HOME` and `FOURK7_PROJECTS` override these folders: `FOURK7_PROJECTS=~/Documents/4k7 npm run dev`
 works on the real designs.
 
@@ -172,7 +174,10 @@ gets a page that says to use the link); the build files under `/assets` hold no 
 reads the key from its address, remembers it, and sends it when it connects to the WebSocket,
 which also accepts only the app's own pages (localhost on the server ports, the configured app
 address and, in a checkout, the dev server). Other pages and programs on this computer get neither
-the app nor the server. `/mcp` needs the token issued to a running chat process and refuses
+the app nor the server. In a checkout Vite also hands the dev server's key to its own page
+(`/__4k7/access-key`, `apps/web/dev-access-key.ts`): only to a request of that page's own origin
+(`Sec-Fetch-Site: same-origin`) under a localhost host name, so another site, another port on
+localhost or a DNS-rebinding page gets 403. `/mcp` needs the token issued to a running chat process and refuses
 browsers.
 
 ## Updating

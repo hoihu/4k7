@@ -3,7 +3,7 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
-import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, MASK_MARGIN, refdesHeight, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type HousePlacement, type PanelView } from '@4k7/schema';
+import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, MASK_MARGIN, planeGoesRound, pointBounds, refdesHeight, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type HousePlacement, type PanelView, type Zone, type ZoneCut, type ZoneShape } from '@4k7/schema';
 
 export interface FabFile {
   name: string;
@@ -13,6 +13,111 @@ export interface FabFile {
 const SILK_WIDTH = 0.15;
 const SILK_TO_PAD = 0.15;
 const f6 = (v: number) => Math.round(v * 1e6).toString();
+
+/* planes sharing a layer */
+
+/** x0, y0, x1, y1 (mm, board coordinates). */
+type Box = [number, number, number, number];
+const EPS = 1e-6;
+const overlap = (a: Box, b: Box) => a[0] < b[2] - EPS && b[0] < a[2] - EPS && a[1] < b[3] - EPS && b[1] < a[3] - EPS;
+const within = (a: Box, b: Box) => a[0] >= b[0] - EPS && a[1] >= b[1] - EPS && a[2] <= b[2] + EPS && a[3] <= b[3] + EPS;
+const grown = (b: Box, d: number): Box => [b[0] - d, b[1] - d, b[2] + d, b[3] + d];
+const joined = (a: Box, b: Box): Box => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+
+/** A layer's planes and pours in drawing order: a plane before those it goes round, which lie on top of it. */
+function layerZones(b: BoardView, layer: CopperLayer): Zone[] {
+  const plane = (z: Zone) => b.planes.find((p) => p.netId === z.netId && p.layer === z.layer);
+  const before = (u: Zone, v: Zone) => {
+    const [p, q] = [plane(u), plane(v)];
+    return !!p && !!q && planeGoesRound(b.planes, p, q);
+  };
+  return b.zones.filter((z) => z.layer === layer).sort((u, v) => (before(u, v) ? -1 : before(v, u) ? 1 : 0));
+}
+
+function cutBox(c: ZoneCut): Box {
+  if (c.k === 'circle') return grown([c.x, c.y, c.x, c.y], c.d / 2);
+  if (c.k === 'rect') return [c.x, c.y, c.x + c.w, c.y + c.h];
+  return grown(pointBounds([c.pts]), c.k === 'stroke' ? c.w / 2 : 0);
+}
+
+/** How far what a plane draws reaches: its fill, its cuts, its spokes. */
+function zoneReach(z: Zone): Box {
+  const sh = z.shape;
+  if (!sh) {
+    let b: Box = [Infinity, Infinity, -Infinity, -Infinity];
+    for (let i = 0; i + 3 < z.rects.length; i += 4) b = joined(b, [z.rects[i]!, z.rects[i + 1]!, z.rects[i]! + z.rects[i + 2]!, z.rects[i + 1]! + z.rects[i + 3]!]);
+    return b;
+  }
+  let b: Box = sh.clip ? pointBounds([sh.clip]) : sh.outline;
+  for (const c of sh.cuts) b = joined(b, cutBox(c));
+  for (const a of sh.adds) b = joined(b, cutBox({ k: 'stroke', ...a }));
+  return b;
+}
+
+/** A circle's edge, written as a polygon round it, lies at most this far outside it (mm). */
+const ROUND_TOL = 0.001;
+/** Corners of a polygon round a whole circle of radius r. */
+const corners = (r: number) => Math.max(12, Math.ceil(Math.PI / Math.acos(r / (r + ROUND_TOL))));
+
+/** The segment a, b stroked with a round pen of radius r (a disc when a = b), as a polygon round it: each edge touches the stroke's edge or lies just outside it. */
+function strokePolygon(ax: number, ay: number, bx: number, by: number, r: number): number[] {
+  const m = Math.ceil(corners(r) / 2); // corners per half turn
+  const far = r / Math.cos(Math.PI / (2 * m));
+  const t = Math.atan2(by - ay, bx - ax);
+  const pts: number[] = [];
+  for (const [x, y, from] of [[bx, by, t - Math.PI / 2], [ax, ay, t + Math.PI / 2]] as const) {
+    for (let k = 0; k <= m; k++) pts.push(x + far * Math.cos(from + (Math.PI * k) / m), y + far * Math.sin(from + (Math.PI * k) / m));
+  }
+  return pts;
+}
+
+/** The part of a polygon (flat x, y) inside a box, Sutherland–Hodgman; [] when nothing is left. */
+function clipToBox(pts: number[], [x0, y0, x1, y1]: Box): number[] {
+  let out = pts;
+  for (const [c, v, s] of [[0, x0, 1], [0, x1, -1], [1, y0, 1], [1, y1, -1]] as const) {
+    const src = out;
+    out = [];
+    const n = src.length / 2;
+    for (let i = 0; i < n; i++) {
+      const j = (i + n - 1) % n;
+      const p = [src[2 * j]!, src[2 * j + 1]!];
+      const q = [src[2 * i]!, src[2 * i + 1]!];
+      const [pin, qin] = [s * (p[c]! - v) >= 0, s * (q[c]! - v) >= 0];
+      if (pin !== qin) {
+        const f = (v - p[c]!) / (q[c]! - p[c]!);
+        out.push(c === 0 ? v : p[0]! + f * (q[0]! - p[0]!), c === 1 ? v : p[1]! + f * (q[1]! - p[1]!));
+      }
+      if (qin) out.push(q[0]!, q[1]!);
+    }
+    if (out.length < 6) return [];
+  }
+  // (no corner twice in a row, and something left)
+  const kept: number[] = [];
+  for (let i = 0; i < out.length; i += 2) {
+    const [px, py] = kept.length ? [kept[kept.length - 2]!, kept[kept.length - 1]!] : [out[out.length - 2]!, out[out.length - 1]!];
+    if (Math.abs(out[i]! - px) > EPS || Math.abs(out[i + 1]! - py) > EPS) kept.push(out[i]!, out[i + 1]!);
+  }
+  let area = 0;
+  for (let i = 0; i < kept.length; i += 2) area += kept[i]! * kept[(i + 3) % kept.length]! - kept[(i + 2) % kept.length]! * kept[i + 1]!;
+  return kept.length >= 6 && Math.abs(area) > 1e-9 ? kept : [];
+}
+
+/** A plane's cut kept to a box: itself when inside it, nothing when outside, else the part inside (a rectangle, polygons). */
+function cutWithin(c: ZoneCut, box: Box): ZoneCut[] {
+  const b = cutBox(c);
+  if (within(b, box)) return [c];
+  if (!overlap(b, box)) return [];
+  const poly = (pts: number[]): ZoneCut[] => {
+    const inside = clipToBox(pts, box);
+    return inside.length ? [{ k: 'poly', pts: inside }] : [];
+  };
+  if (c.k === 'rect') return [{ k: 'rect', x: Math.max(b[0], box[0]), y: Math.max(b[1], box[1]), w: Math.min(b[2], box[2]) - Math.max(b[0], box[0]), h: Math.min(b[3], box[3]) - Math.max(b[1], box[1]) }];
+  if (c.k === 'circle') return poly(strokePolygon(c.x, c.y, c.x, c.y, c.d / 2));
+  if (c.k === 'poly') return poly(c.pts);
+  if (c.pts.length <= 4) return poly(strokePolygon(c.pts[0]!, c.pts[1]!, c.pts[2] ?? c.pts[0]!, c.pts[3] ?? c.pts[1]!, c.w / 2));
+  // a polyline, segment by segment (the pen's round ends make its corners)
+  return Array.from({ length: c.pts.length / 2 - 1 }, (_, i) => cutWithin({ k: 'stroke', pts: c.pts.slice(2 * i, 2 * i + 4), w: c.w }, box)).flat();
+}
 
 class Gerber {
   private apertures = new Map<string, number>();
@@ -44,16 +149,19 @@ class Gerber {
     this.aperture(p.shape === 'rect' ? `R,${w.toFixed(6)}X${h.toFixed(6)}` : Math.abs(w - h) < 1e-6 ? `C,${w.toFixed(6)}` : `O,${w.toFixed(6)}X${h.toFixed(6)}`);
     this.body.push(`${this.xy(p.x, p.y)}D03*`);
   }
-  /** An exact plane: the outline filled, cutouts cleared (clear polarity), spokes drawn back. */
-  plane(sh: import('@4k7/schema').ZoneShape) {
+  /**
+   * An exact plane: the outline filled, cutouts cleared (clear polarity), spokes drawn back.
+   * `over`: drawn over another plane of the layer, one that goes round it. Clear polarity erases
+   * whatever the file drew before, that plane's copper too (the spokes and joints round its own
+   * vias and pads, all of it under a shaped board's fill), so this plane's fill and cuts are kept
+   * to its own outline: a cut reaching out of it is written as the part inside, one outside left out.
+   */
+  plane(sh: ZoneShape, over = false) {
     const [x0, y0, x1, y1] = sh.outline;
     // the filled area: the clip polygon (a shaped board), else the rectangle
-    const area = sh.clip ?? [x0, y0, x1, y0, x1, y1, x0, y1];
-    this.body.push('G36*', `${this.xy(area[0]!, area[1]!)}D02*`);
-    for (let i = 2; i < area.length; i += 2) this.body.push(`${this.xy(area[i]!, area[i + 1]!)}D01*`);
-    this.body.push(`${this.xy(area[0]!, area[1]!)}D01*`, 'G37*');
+    this.region(sh.clip ? (over ? clipToBox(sh.clip, sh.outline) : sh.clip) : [x0, y0, x1, y0, x1, y1, x0, y1]);
     this.body.push('%LPC*%');
-    for (const c of sh.cuts) {
+    for (const c of over ? sh.cuts.flatMap((c) => cutWithin(c, sh.outline)) : sh.cuts) {
       if (c.k === 'circle') this.circle(c.x, c.y, c.d);
       else if (c.k === 'rect') this.pad({ x: c.x + c.w / 2, y: c.y + c.h / 2, w: c.w, h: c.h, shape: 'rect' });
       else if (c.k === 'poly') this.region(c.pts); // (already in clear polarity)
@@ -136,7 +244,14 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView): FabFi
   b.layers.forEach((layer, i) => {
     const pos = i === 0 ? 'Top' : i === n - 1 ? 'Bot' : 'Inr';
     const g = new Gerber(h, [`FileFunction,Copper,L${i + 1},${pos}`, 'FilePolarity,Positive']);
-    for (const z of b.zones) if (z.layer === layer) (z.shape ? g.plane(z.shape) : g.regions(z.rects));
+    // planes and pours: the one that goes round another first, each drawn over another kept to itself
+    const drawn: Box[] = [];
+    for (const z of layerZones(b, layer)) {
+      const reach = zoneReach(z);
+      if (z.shape) g.plane(z.shape, drawn.some((o) => overlap(o, reach)));
+      else g.regions(z.rects);
+      drawn.push(reach);
+    }
     for (const p of pads) if (onLayer(p, layer)) g.pad(p);
     for (const v of b.vias) g.circle(v.x, v.y, v.pad);
     for (const t of b.tracks) if (t.layer === layer) g.line(t.pts, t.width);

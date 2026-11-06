@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BoardView, SheetView } from '@4k7/schema';
+import type { BoardView, GerberViewInfo, SheetView } from '@4k7/schema';
 import { boardViewInfo, formatDesignContext, formatView, schematicViewInfo } from '../src/index.ts';
 
 const sym = (refdes: string, x: number, y: number, unit?: string) => ({ refdes, componentId: refdes, ...(unit ? { unit } : {}), bbox: { x, y, w: 400, h: 300 } });
@@ -75,6 +75,16 @@ describe('the user\'s view', () => {
     expect(t).toContain('x 8–17.5, y 8–14.3 mm');
     expect(t).toContain('get_board_image with area: true');
     expect(boardViewInfo(board, { x: -3, y: -3, w: 56, h: 46 }).whole).toBe(true);
+  });
+
+  it('gives the production files the user looks at in the Gerber viewer, and the call that shows them', () => {
+    const v: GerberViewInfo = { view: 'gerbers', source: 'files', title: 'spiral2-fab.zip', rect: { x: 10, y: 5, w: 20.5, h: 12 }, whole: false, below: true, layers: ['F.Cu', 'F.Mask', 'PTH'], hidden: ['B.Cu'] };
+    const t = formatView(v);
+    expect(t).toContain('<view kind="gerbers" zoomed="yes">');
+    expect(t).toContain('files the user opened (spiral2-fab.zip), seen from below (mirrored)');
+    expect(t).toContain('layers shown: F.Cu F.Mask PTH; switched off: B.Cu');
+    expect(t).toContain("x 10–30.5, y 5–17 mm (the files' coordinates, y up); view_gerbers with area: true shows it");
+    expect(formatView({ ...v, whole: true, source: 'board', below: false })).toContain("the Gerber viewer (Tools): this board's production files\nlayers shown: F.Cu F.Mask PTH; switched off: B.Cu\nall of them in view");
   });
 
   it('gives the cut through the box the user looks at, and the render that shows it', () => {

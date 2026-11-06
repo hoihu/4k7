@@ -2,7 +2,7 @@
  * One pass of the router, its planes and pours (router.ts): the areas they may fill on the grid, in
  * islands, and their exact geometry.
  */
-import { boardPolygon, cutoutBounds, cutoutDistance, keepoutDistance, padCapsule, type Zone, type ZoneShape } from '@4k7/schema';
+import { boardPolygon, cutoutBounds, cutoutDistance, keepoutDistance, padCapsule, planeGoesRound, type Zone, type ZoneShape } from '@4k7/schema';
 import { r3, segDist } from './geom.ts';
 import { G, islandsOf, type PassGrid, type Plane } from './routegrid.ts';
 
@@ -32,18 +32,8 @@ export function passPours(grid: PassGrid) {
   };
   /** The gap round an area plane, to the plane it lies in. */
   const areaGap = (q: Plane) => Math.max(rules.clearance, q.style?.gap ?? 0);
-  /**
-   * Whether `pl` goes round the area plane `q` on its layer: a full plane goes round every area;
-   * of two areas the smaller lies on top (a +5V patch inside a local GND pour), the later one
-   * when they are as big.
-   */
-  const areaSize = (a: [number, number, number, number]) => (a[2] - a[0]) * (a[3] - a[1]);
-  const goesRound = (pl: Plane, q: Plane) => {
-    if (q === pl || q.layer !== pl.layer || !q.area) return false;
-    if (!pl.area) return true;
-    const d = areaSize(q.area) - areaSize(pl.area);
-    return Math.abs(d) > 1e-6 ? d < 0 : planes.indexOf(q) > planes.indexOf(pl);
-  };
+  /** Whether `pl` goes round the area plane `q` on its layer (q lies on top, in pl's gap round it). */
+  const goesRound = (pl: Plane, q: Plane) => planeGoesRound(planes, pl, q);
   const region = (pl: Plane) => {
     const l = layerIdx.get(pl.layer)!;
     const pnet = numOf(pl.netId);

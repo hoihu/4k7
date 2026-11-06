@@ -160,6 +160,24 @@ export const BoardImageInput = z.object({
   width: z.number().int().min(400).max(2400).default(1400),
 });
 
+export const GerberViewInput = z.object({
+  files: z
+    .enum(['board', 'panel', 'open'])
+    .optional()
+    .describe("Whose files: board (this board's, made from the working copy as Fab files exports them), panel (its panel's), open (what is open in the viewer, e.g. files the user dropped in). Default: what is open, else the board's"),
+  layers: z
+    .array(z.string())
+    .optional()
+    .describe('The layers to show, by id (F.Cu, In1.Cu, B.Cu, F.Mask, B.Mask, F.Paste, B.Paste, F.Silkscreen, B.Silkscreen, Edge.Cuts, PTH, NPTH) or file name; the others are switched off in the viewer. Default: those shown there now'),
+  side: z.enum(['top', 'bottom']).optional().describe('Seen from the top (default) or from below: mirrored left to right, the bottom layers in front'),
+  area: z.boolean().optional().describe('The area the user zoomed into in the viewer (the <view> block)'),
+  region: z
+    .tuple([z.number(), z.number(), z.number(), z.number()])
+    .optional()
+    .describe("Zoom into x0, y0, x1, y1 in mm, in the files' coordinates (x right, y up; this board's files have 0, 0 at its bottom-left corner)"),
+  width: z.number().int().min(400).max(2400).default(1400),
+});
+
 export const ENCLOSURE_VIEWS = ['front_left', 'back_right', 'open', 'sections', 'base_top', 'bottom'] as const;
 export const RenderEnclosureInput = z.object({
   views: z
@@ -265,6 +283,7 @@ export const TOOL_NAMES = {
   datasheet: 'read_datasheet',
   image: 'get_schematic_image',
   boardImage: 'get_board_image',
+  gerbers: 'view_gerbers',
   renderEnclosure: 'render_enclosure',
   attachment: 'view_attachment',
   ask: 'ask_user',
@@ -377,6 +396,17 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
         'connections not routed yet). The whole board, the area the user zoomed into, or a region in mm. Routing a big board takes a while; ' +
         'the picture waits for it.',
       input_schema: schemaOf(BoardImageInput),
+    },
+    {
+      name: TOOL_NAMES.gerbers,
+      description:
+        'The Gerber viewer (Tools tab): production files read back from the files themselves, as the fab house gets them: this ' +
+        "board's (made from the working copy as Fab files exports them), its panel's, or the files the user opened in the viewer (from other programs too). " +
+        "Returns what the files say (each file's layer and how it was told, the board's size, the copper layers, the holes per drill size, the smallest " +
+        'drill and track, what could not be read or looks wrong) and a picture: all layers or some, from the top or from below, the whole board or a region. ' +
+        'For checking the output before an order (mask openings, paste, silkscreen off the pads, drills in their pads, the outline) and for questions ' +
+        'about files the user opened. The app shows the viewer with the same view.',
+      input_schema: schemaOf(GerberViewInput),
     },
     {
       name: TOOL_NAMES.renderEnclosure,
