@@ -155,6 +155,30 @@
     </div>
 
     <!-- releases: written by scripts/changelog.mjs from CHANGELOG.md, do not edit -->
+    <article class="release" id="v0.6.1">
+      <header>
+        <h2><a href="#v0.6.1">0.6.1</a></h2>
+        <time datetime="2026-11-06">6 November 2026</time>
+        <a class="gh" href="https://github.com/hoihu/4k7/releases/tag/v0.6.1">Release on GitHub</a>
+      </header>
+      <div class="notes">
+        <p>If you ordered boards with a USB-C connector, or any part whose pins sit in slotted holes, inside a plane of another net: a plane could short such a pin to itself, and 0.6.0 still did. The production files are now read back and checked against the design on every export, so a fault that only the files have is caught before you order.</p>
+        <h3>Production files</h3>
+        <ul>
+          <li><b>Every export checks its own files</b>: the copper is read back from the Gerbers and drill files, joined through the plated holes, and held against the design’s netlist. The export says what it found: two nets joined (a short, with the pads and where), a net left in pieces where the board has it joined, a pad with no copper, copper joined to nothing. The files still download, so you can look at them. It takes about half a second for a board of 110 × 150 mm on four layers.</li>
+          <li><b>The Gerber viewer shows the same check</b> beside the files. Pick a finding to see its layer with the holes, and a ring round the spot. Files you open there are checked too: against the netlist that came with them, if there is one, else against this board, which is how to check the zip you sent to the fab. Parts moved since are named and left out.</li>
+          <li><b>The zip has a netlist for the fab’s electrical test</b> (IPC-D-356A, <code>-IPC356.ipc</code>): every pad and via with its net, where it is, its size and hole. The fab house compares it with the netlist it reads out of the Gerbers before it builds anything, so a fault only the files have stops the order, not the boards.</li>
+          <li><b>The agent gets the check too</b>: <code>view_gerbers</code> lists the findings with where they are, and the agent sees which one you picked in the viewer.</li>
+          <li><b>Each file says which version wrote it, when, and from which board</b>: until now every Gerber said version 0.1. The board is a fingerprint of its copper, the same on every export of the same board, so two sets can be told apart.</li>
+        </ul>
+        <h3>Fixes</h3>
+        <ul>
+          <li><b>A plane could short a slotted pin of another net to itself</b>: a pad round a slotted hole (a USB-C receptacle’s shield pins) was cut out of a plane as a circle of the pad’s narrow side, so both ends of the slot stayed in the plane. On one board, the connector’s ground pins were shorted to the +3V3 area of an inner layer. The plane is now cut round the whole pad. This goes back to 0.4.0, when slotted holes came in. A design you routed before is mended when it opens, with no routing again: export its files again before you order.</li>
+          <li><b>Pads of two nets that touch are a short</b>: a capacitor placed so its ground pad overlapped a regulator’s +3V3 tab by 25 µm was reported only as courtyards overlapping and a thin solder mask web. The board’s checks now call it a short, an error, as soon as the parts are placed.</li>
+          <li><b>A plane its net never reaches is reported</b>: an area plane under parts that have none of its pins, or a local pour away from its pads, went to the fab as copper joined to nothing, without a word. It is now a warning (<code>DRC.FLOATING_PLANE</code>).</li>
+        </ul>
+      </div>
+    </article>
     <article class="release" id="v0.6.0">
       <header>
         <h2><a href="#v0.6.0">0.6.0</a></h2>
