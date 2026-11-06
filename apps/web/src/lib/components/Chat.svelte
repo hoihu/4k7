@@ -107,13 +107,17 @@
           {#if app.noModel}
             <p class="demo">
               {#if app.apiProblem === 'no model'}The chat has no model yet: pick one with the model button below, or
-              {:else}The API is not set up ({app.apiProblem}). <button class="linkbtn" onclick={() => (app.view = 'set')}>Finish it</button>, or{/if} {#if __APP_RUN__}open {__SERVER_RUN__}{:else}run <code>{__SERVER_RUN__}</code> and open the link it prints{/if} to chat with a coding agent on this computer
+              {:else}The API is not set up ({app.apiProblem}). <button class="linkbtn" onclick={() => (app.view = 'set')}>Finish it</button>, or{/if} {#if __APP_RUN__}open {__SERVER_RUN__}{:else}run <code>{__SERVER_RUN__}</code>{#if __PACKAGED__} and open the link it prints{/if}{/if} to chat with a coding agent on this computer
               (<b>Claude Code</b>, <b>GitHub Copilot</b>, <b>Codex</b>, <b>OpenCode</b>).
             </p>
-          {:else if app.settings.provider === 'agent' && server.status !== 'connected'}
+          {:else if app.settings.provider === 'agent' && server.status !== 'connected' && server.status !== 'connecting'}
+            <!-- what is wrong, and what to do; in development the page has the server's key from Vite, so only a server that is not running is left -->
             <p class="demo">
-              The chat uses your {app.harness.name}, but the server is {server.status === 'elsewhere' ? 'connected in another tab' : 'not connected'}.
-              {#if server.status === 'elsewhere'}<button class="linkbtn" onclick={() => server.useThisTab()}>Use this tab</button>{:else if __APP_RUN__}Open {__SERVER_RUN__} again.{:else}Run <code>{__SERVER_RUN__}</code> and open the link it prints.{/if}
+              The chat uses your {app.harness.name}, but
+              {#if server.status === 'elsewhere'}the server is connected in another tab. <button class="linkbtn" onclick={() => server.useThisTab()}>Use this tab</button>
+              {:else if server.problem === 'denied'}the server did not accept this tab's access key. Open the link it printed.
+              {:else if server.status === 'off' && __PACKAGED__}this tab has no access key. Open the link the server printed.
+              {:else}the server is not running. {#if __APP_RUN__}Open {__SERVER_RUN__} again.{:else}Start it with <code>{__SERVER_RUN__}</code>{#if __PACKAGED__} and open the link it prints{/if}.{/if}{/if}
             </p>
           {/if}
         </div>

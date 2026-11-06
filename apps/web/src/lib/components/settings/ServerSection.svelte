@@ -44,7 +44,7 @@
 
   <Field label="Connection">
     {#snippet hint()}
-      The app's address (<code>http://localhost:7777/…</code>) carries the server's access key. Opening the link the server prints connects this tab.
+      The app's address (<code>http://localhost:7777/…</code>) carries the server's access key. Opening the link the server prints connects this tab.{#if !__PACKAGED__} In this checkout's dev server the page gets the key from Vite, so <code>http://localhost:5173</code> connects too.{/if}
     {/snippet}
     <div class="row">
       {#if linked}<button class="btn" onclick={disconnect}>Disconnect</button>
@@ -66,7 +66,7 @@
         {#if __APP_RUN__}
           <p>Open {serverRun}: it starts the server and opens this page connected to it. Then choose a coding agent with the model button under the chat box.</p>
         {:else}
-          <p>Start the server in a terminal and open the link it prints. Then choose a coding agent with the model button under the chat box.</p>
+          <p>Start the server in a terminal{#if __PACKAGED__} and open the link it prints{:else} (<code>npm run dev</code> starts it with this page, which connects by itself){/if}. Then choose a coding agent with the model button under the chat box.</p>
           <div class="cmd"><code>{serverRun}</code></div>
           {#if where}<p class="muted">Run it in this repository.</p>{/if}
         {/if}

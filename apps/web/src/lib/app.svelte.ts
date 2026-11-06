@@ -92,6 +92,21 @@ async function cropImage(url: string, box: [number, number, number, number], px:
   return out.toDataURL('image/jpeg', 0.9);
 }
 
+/**
+ * In development: the access key of the server `npm run dev` started, which Vite gives this page
+ * (apps/web/dev-access-key.ts). Null in the packaged app, or when no server has run from a checkout.
+ */
+async function devAccessKey(): Promise<string | null> {
+  if (__PACKAGED__) return null;
+  try {
+    const r = await fetch('/__4k7/access-key', { cache: 'no-store' });
+    const key = r.ok ? ((await r.json()) as { accessKey?: unknown }).accessKey : null;
+    return typeof key === 'string' && SERVER_ACCESS_KEY.test(key) ? key : null;
+  } catch {
+    return null;
+  }
+}
+
 const addressPath = /^\/([^/]+)\/?$/.exec(location.pathname)?.[1] ?? '';
 const keyFromAddress = SERVER_ACCESS_KEY.test(addressPath) ? addressPath : null;
 const portFromAddress = Number(new URLSearchParams(location.search).get('port')) || null;
@@ -210,6 +225,8 @@ class AppState {
   private renameFile = false;
   /** Writes to the project files, one after the other (a new project's file is created once). */
   private writes: Promise<unknown> = Promise.resolve();
+  /** The access key this tab started with: its address's, the dev server's (in development), or the one saved. */
+  private startKey: string | null = null;
   /** A coding agent answering the app chat through the server: its session and the current run. */
   private agentSession: { harness: string; id: string } | null = null;
   private agentRun: { id: string; item: ChatItem } | null = null;
@@ -245,10 +262,13 @@ class AppState {
       () => this.diagnostics(),
     );
     this.persistent = await storagePersistent();
-    // the address's key wins over the saved one (the dev server's address carries none)
-    const accessKey = keyFromAddress ?? this.settings.serverAccessKey;
+    // the address's key wins; in development the one of the server `npm run dev` started (a key saved
+    // from an earlier link can be another server's); else the saved one
+    const accessKey = keyFromAddress ?? (await devAccessKey()) ?? this.settings.serverAccessKey;
+    this.startKey = accessKey || null;
     if (accessKey) {
-      const silent = accessKey === this.settings.serverAccessKey;
+      // quiet unless a new address brought the key: the chat says what is wrong
+      const silent = keyFromAddress !== accessKey || accessKey === this.settings.serverAccessKey;
       void server.connect(accessKey, { silent, preferPort: portFromAddress ?? this.settings.serverPort }).then((ok) => {
         if (!ok && !silent && server.error) this.flash(server.error);
       });
@@ -271,7 +291,7 @@ class AppState {
     this.diskConnecting ??= (async () => {
       if (this.diskTimer) clearTimeout(this.diskTimer);
       this.diskTimer = null;
-      const ok = await disk.find(accessKey ?? keyFromAddress ?? this.settings.serverAccessKey, { sameOrigin: !!keyFromAddress, preferPort: port ?? portFromAddress ?? this.settings.serverPort });
+      const ok = await disk.find(accessKey ?? this.startKey ?? this.settings.serverAccessKey, { sameOrigin: !!keyFromAddress, preferPort: port ?? portFromAddress ?? this.settings.serverPort });
       if (!ok) this.diskTimer = setTimeout(() => void this.connectDisk(), DISK_RETRY_MS);
       else if (!this.diskLoaded) await this.loadDisk();
       else if (this.unsaved) await this.persist();
@@ -1793,7 +1813,13 @@ class AppState {
     const fail = (t: string) => item.segments.push({ type: 'error', text: t });
     const h = this.harness;
     if (server.status !== 'connected') {
-      fail(__APP_RUN__ ? `${h.name} is not connected. Open ${__SERVER_RUN__} again.` : `${h.name} is not connected. Start the server (${__SERVER_RUN__}) and open the app with the link it prints.`);
+      fail(
+        server.problem === 'denied'
+          ? `${h.name} is not connected: the server did not accept this tab's access key. Open the link it printed.`
+          : __APP_RUN__
+            ? `${h.name} is not connected. Open ${__SERVER_RUN__} again.`
+            : `${h.name} is not connected. Start the server (${__SERVER_RUN__})${__PACKAGED__ ? ' and open the app with the link it prints' : ''}.`,
+      );
       return;
     }
     if (!h.available) {

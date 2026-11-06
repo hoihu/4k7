@@ -44,7 +44,7 @@ From a checkout:
 
 ```sh
 npm install
-npm run dev        # http://localhost:5173 with hot reload, plus the server (prints the app's link)
+npm run dev        # http://localhost:5173 with hot reload, plus the server (the page connects to it by itself)
 npm test           # kernel + agent tests (vitest)
 npm run typecheck  # tsc + svelte-check
 npm run build      # static build in apps/web/dist
