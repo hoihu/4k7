@@ -3,7 +3,7 @@
 What changed in each release of 4k7, newest first. Also at [4k7.dev/changelog](https://4k7.dev/changelog); the downloads
 and every pull request of a release are on its [GitHub release](https://github.com/hoihu/4k7/releases).
 
-## Unreleased
+## 0.6.1 — 2026-11-06
 
 If you ordered boards with a USB-C connector, or any part whose pins sit in slotted holes, inside a plane of another net: a plane could short such a pin to itself, and 0.6.0 still did. The production files are now read back and checked against the design on every export, so a fault that only the files have is caught before you order.
 
