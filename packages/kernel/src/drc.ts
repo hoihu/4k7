@@ -115,6 +115,52 @@ export function copperDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
   return [...viaIssues, ...out];
 }
 
+/**
+ * Pads of different nets whose copper touches: a short, whatever drew them there (a part placed
+ * over another's pad, two footprints overlapping). The clearance between the pads of two parts is
+ * the placement's business (their courtyards), but copper that touches is a short in the files, so
+ * it is called one: in 0.6.0 a capacitor's ground pad 25 µm over a regulator's tab showed only as
+ * courtyards overlapping. Pads of one part count only where both are connected (a footprint's
+ * unconnected pads, a shield's, may overlap by design).
+ */
+export function padShorts(b: BoardView): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  for (const layer of b.layers) {
+    const pads = b.parts.flatMap((part) =>
+      part.pads.filter((p) => !p.npth && (p.drill || p.layers.includes(layer))).map((p) => ({ part, p, x0: p.x - p.w / 2, x1: p.x + p.w / 2, y0: p.y - p.h / 2, y1: p.y + p.h / 2 })),
+    );
+    pads.sort((a, c) => a.x0 - c.x0);
+    for (let i = 0; i < pads.length; i++) {
+      const A = pads[i]!;
+      for (let j = i + 1; j < pads.length && pads[j]!.x0 <= A.x1 + EPS; j++) {
+        const B = pads[j]!;
+        if (B.y0 > A.y1 + EPS || A.y0 > B.y1 + EPS) continue;
+        if (A.p.netId && A.p.netId === B.p.netId) continue;
+        if (A.part === B.part && !(A.p.netId && B.p.netId)) continue;
+        if (A.part !== B.part && !A.p.netId && !B.p.netId) continue; // two unconnected pads: nothing joined
+        if (shapeGap(padShape(A.p), padShape(B.p)) > 0) continue;
+        const net = (p: BoardPad) => (p.netId ? (b.netNames[p.netId] ?? p.netId) : 'not connected');
+        const [a, c] = [`${A.part.refdes}.${A.p.number}`, `${B.part.refdes}.${B.p.number}`];
+        out.push({
+          code: 'DRC.SHORT',
+          severity: 'error',
+          message: `${a} (${net(A.p)}) touches ${c} (${net(B.p)}) on ${layer}: a short. Move ${A.part === B.part ? 'the pads apart' : `${A.part.refdes} or ${B.part.refdes}`} until their copper is clear.`,
+          at: { x: (Math.max(A.x0, B.x0) + Math.min(A.x1, B.x1)) / 2, y: (Math.max(A.y0, B.y0) + Math.min(A.y1, B.y1)) / 2 },
+          entities: [...new Set([A.part.refdes, B.part.refdes])],
+        });
+      }
+    }
+  }
+  // a pad of a through-hole part touches on every layer: once is enough
+  const seen = new Set<string>();
+  return out.filter((d) => {
+    const key = `${d.entities.join('|')}|${d.message.split(' on ')[0]}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Rows of the broad phase, mm. */
 const ROW_MM = 1;
 
@@ -580,6 +626,17 @@ export function thermalDrc(b: BoardView): Diagnostic[] {
 export function deadCopperDrc(b: BoardView): Diagnostic[] {
   const out: Diagnostic[] = [];
   for (const z of b.zones) {
+    if (z.floating) {
+      const net = b.netNames[z.netId] ?? z.netId;
+      const plane = b.planes.find((p) => p.netId === z.netId && p.layer === z.layer);
+      out.push({
+        code: 'DRC.FLOATING_PLANE',
+        severity: 'warning',
+        message: `The ${net} ${plane?.area ? 'area' : z.layer.startsWith('In') ? 'plane' : 'pour'} on ${z.layer} touches no ${net} copper: no pad, track or via of ${net} reaches it, so its ${z.floating.area} mm² are copper joined to nothing in the files. Put it where ${net}'s pads are, give it a via of ${net}, or remove it (set_plane).`,
+        at: z.floating.at,
+        entities: [`net:${net}`],
+      });
+    }
     if (!z.removed) continue;
     const net = b.netNames[z.netId] ?? z.netId;
     const n = z.removed.islands;

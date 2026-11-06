@@ -664,7 +664,13 @@ function routeOnce(
     }
     const dead = [...lost.values()].filter((e) => e.n * G * G >= 1).sort((x, y) => y.n - x.n);
     const removed = dead.length ? { islands: dead.length, area: Math.round(dead.reduce((s, e) => s + e.n, 0) * G * G * 10) / 10, at: { x: r3(dead[0]!.sx / dead[0]!.n), y: r3(dead[0]!.sy / dead[0]!.n) } } : undefined;
-    zones.push({ netId: pl.netId, layer: pl.layer, rects, shape: planeShape(pl, rg, alive), ...(removed ? { removed } : {}) });
+    // nothing of the net reaches the plane at all: it is kept (it shows where it was set), and said
+    let floating: Zone['floating'];
+    if (!rg.touched.size) {
+      const c = rg.island.indexOf(rg.main);
+      floating = { area: Math.round(rg.sizes[rg.main]! * G * G * 10) / 10, at: { x: r3((c % W) * G), y: r3(Math.floor(c / W) * G) } };
+    }
+    zones.push({ netId: pl.netId, layer: pl.layer, rects, shape: planeShape(pl, rg, alive), ...(removed ? { removed } : {}), ...(floating ? { floating } : {}) });
   }
   // connections made through a plane count as routed; those left to a pour it did not join, open
   for (let q = failed.length - 1; q >= 0; q--) if (find(failed[q]!.a) === find(failed[q]!.b)) failed.splice(q, 1);
