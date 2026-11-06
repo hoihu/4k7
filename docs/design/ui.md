@@ -10,7 +10,7 @@
 | **Schematic** | Proposal **A** (conversation-first) **+ C** (review cockpit) merged | Schematic work is conversation-heavy, and every AI change must be reviewable. The review happens inline, not in a separate screen |
 | **Layout** | Proposal **B** (canvas-first + command bar) | Board work needs the whole screen. Hints are given where the user is looking |
 | **Parts** | Ingest review | Library list, datasheet with source highlights, and extracted fields side by side |
-| **Tools** | — | The Gerber viewer (2026-11-06): production files read back layer by layer, this board's or any program's, with the chat beside it; the agent looks through the same viewer (`view_gerbers`) |
+| **Tools** | — | The Gerber viewer (2026-11-06): production files read back layer by layer, this board's or any program's, with the chat beside it, and the netlist check of their copper beside them (a finding picks its layer and rings the spot); the agent looks through the same viewer (`view_gerbers`) |
 | **Settings** | — | Providers, model roles, MCP servers, relay, budget |
 
 All workspaces share the same top bar, the same issues/ledger/history data, and the same changeset

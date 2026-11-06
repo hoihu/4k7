@@ -436,9 +436,14 @@ Each step is useful alone.
     files, though the board view showed them; `packages/fab/test/planes.test.ts` compares each such
     layer, read back, with its planes written one by one.
     **Dead copper**: a pour island that touches no copper of its net is never filled (the `alive` set in
-    `planeShape`), so no floating copper reaches the Gerbers. `Zone.removed` counts the islands of 1 mm² and
-    more and `DRC.DEAD_COPPER` (info) tells the agent where the biggest was: a track or pad of another net
-    split the pour there.
+    `planeShape`). `Zone.removed` counts the islands of 1 mm² and more and `DRC.DEAD_COPPER` (info) tells
+    the agent where the biggest was: a track or pad of another net split the pour there. When nothing of
+    the net touches any island (an area under parts with none of its pins, a local pour away from its
+    pads), the biggest is kept, so the plane shows where it was set: that is copper joined to nothing in
+    the files, `Zone.floating`, and `DRC.FLOATING_PLANE` (warning) says so (since 2026-11-06; before, it
+    went to the fab without a word). A pad of another net in a plane is cut as its shape: a rectangle, a
+    circle, an oval pad (round a slotted hole) as its capsule; until 2026-11-06 an oval pad was cut as a
+    circle of its narrow side and both ends of its slot stayed in the plane, see [fab-check](fab-check.md).
 12. **Which part belongs with which** (built 2026-10-15). The placer guessed each part's parent
     (a decoupling cap: the IC whose supply pin it takes; else the biggest part sharing a signal
     net) and the agent could not say otherwise: a connector followed the regulator it feeds, a
