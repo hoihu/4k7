@@ -85,6 +85,9 @@ describe('the user\'s view', () => {
     expect(t).toContain('layers shown: F.Cu F.Mask PTH; switched off: B.Cu');
     expect(t).toContain("x 10–30.5, y 5–17 mm (the files' coordinates, y up); view_gerbers with area: true shows it");
     expect(formatView({ ...v, whole: true, source: 'board', below: false })).toContain("the Gerber viewer (Tools): this board's production files\nlayers shown: F.Cu F.Mask PTH; switched off: B.Cu\nall of them in view");
+    // the netlist check of the files, and the finding the user picked
+    const checked = formatView({ ...v, check: 'netlist check against this board: 1 short', focused: 'GND and +3V3 are joined in the files: C13.2 (GND) touches U2.2 (+3V3) on F.Cu' });
+    expect(checked).toContain('view_gerbers with area: true shows it\nnetlist check against this board: 1 short\nthe finding the user picked: GND and +3V3 are joined in the files: C13.2 (GND) touches U2.2 (+3V3) on F.Cu\n</view>');
   });
 
   it('gives the cut through the box the user looks at, and the render that shows it', () => {

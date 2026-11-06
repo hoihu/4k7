@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { boardStep, fabFiles, panelFabFiles, zip } from '@4k7/fab';
+  import { boardFingerprint, boardNetDesign, boardStep, fabFiles, panelFabFiles, zip, type CopperCheck, type FabStamp } from '@4k7/fab';
+  import { checkFiles } from '../netcheckClient.ts';
   import { planeNames, userPlaced, whose, type Diagnostic, type CopperLayer, type HousePlacement } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
   import Board3DView from './Board3DView.svelte';
@@ -178,8 +179,20 @@
     // where the house's own footprints lie on the pads (the check held each land against them): the
     // pick-and-place in the house's frame for those parts, so it places them without turning them first
     const placements = Object.assign({}, ...(checked?.lines.map((l) => l.placements ?? {}) ?? [])) as Record<string, HousePlacement>;
-    // the BOM in the form the house the parts are sourced for reads
-    const files = panel ? panelFabFiles(board, name, app.house.id, placements) : fabFiles(board, name, app.house.id, placements);
+    // the BOM in the form the house the parts are sourced for reads; each file says which version
+    // wrote it, from which board and when
+    const stamp: FabStamp = { version: __APP_VERSION__, board: boardFingerprint(board), date: localTime(new Date()) };
+    const files = panel ? panelFabFiles(board, name, app.house.id, placements, stamp) : fabFiles(board, name, app.house.id, placements, stamp);
+    // the files read back and held against the design before they go out: their copper, not the
+    // board's, which is what the house builds
+    app.flash('Checking the production files against the design…');
+    let copper: CopperCheck | null = null;
+    let unchecked = '';
+    try {
+      copper = await checkFiles(files.filter((f) => /\.(gbr|drl)$/.test(f.name)), boardNetDesign(board, panel ? board.panel : undefined), true);
+    } catch (e) {
+      unchecked = (e as Error).message;
+    }
     download(new Blob([zip(files) as BlobPart], { type: 'application/zip' }), `${name.replace(/[^\w.-]+/g, '_')}-${panel ? 'panel' : 'fab'}.zip`);
     const stop = checked?.lines.filter(lineBlocks).flatMap((l) => l.refs) ?? [];
     const framed = Object.keys(placements).length;
@@ -193,7 +206,22 @@
             ? ` · ${stop.length > 6 ? `${stop.length} parts` : stop.join(', ')} stop${stop.length === 1 ? 's' : ''} the order (Sourcing says why)`
             : ` · every part checked at ${app.house.name}`;
     const frame = framed ? ` · ${framed} part${framed === 1 ? '' : 's'} placed in ${whose(app.house)} own frame` : '';
-    app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}${stock}${frame}`);
+    const faults = copper?.findings ?? [];
+    const net = unchecked
+      ? ` · the files could not be checked (${unchecked})`
+      : !copper
+        ? ''
+        : faults.length
+          ? ` · the files' copper does not match the design: ${faults[0]!.text}${faults.length > 1 ? `, and ${faults.length - 1} more` : ''}. Tools shows where`
+          : ' · the files join every net and no two';
+    app.flash(`Exported ${files.length} files${errors ? ` (the board still has ${errors} DRC error${errors > 1 ? 's' : ''})` : ''}${net}${stock}${frame}`, faults.length || unchecked ? 20_000 : undefined);
+  }
+
+  /** A moment as ISO 8601 in local time with its offset, as Gerber X2's creation date has it. */
+  function localTime(d: Date): string {
+    const two = (n: number) => String(Math.trunc(Math.abs(n))).padStart(2, '0');
+    const off = -d.getTimezoneOffset();
+    return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}T${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}${off < 0 ? '-' : '+'}${two(off / 60)}:${two(off % 60)}`;
   }
 
   /** The board and its parts in 3D as a STEP file, for a mechanical CAD program. */
@@ -375,9 +403,9 @@
         <h4>Files</h4>
         {#if b.parts.length}
           <div class="row2">
-            <button class="btn" title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, BOM (in {whose(app.house)} form) and pick-and-place as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
+            <button class="btn" title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, the netlist for the house's electrical test (IPC-D-356A), BOM (in {whose(app.house)} form) and pick-and-place as a .zip; the files are read back and their copper held against the design first{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
             <!-- (the panel view has its own Panel files button) -->
-            {#if b.panel && mode !== 'panel'}<button class="btn" title="The {b.panel.settings.cols} × {b.panel.settings.rows} panel ({b.panel.w} × {b.panel.h} mm): Gerber, drill with the mouse bites and tooling holes, BOM and pick-and-place of every copy, as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}` : ''}" onclick={() => exportFab(true)}>Panel files ⤓</button>{/if}
+            {#if b.panel && mode !== 'panel'}<button class="btn" title="The {b.panel.settings.cols} × {b.panel.settings.rows} panel ({b.panel.w} × {b.panel.h} mm): Gerber, drill with the mouse bites and tooling holes, the netlist (IPC-D-356A), BOM and pick-and-place of every copy, as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}` : ''}" onclick={() => exportFab(true)}>Panel files ⤓</button>{/if}
             <button class="btn" title="The board and its parts in 3D as a STEP file (.step), for a mechanical CAD program: the outline with its holes and cutouts, and every part body, named by designator" onclick={exportStep}>STEP ⤓</button>
           </div>
         {/if}

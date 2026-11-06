@@ -7,6 +7,8 @@ declare const __APP_RUN__: boolean;
 /** What Claude Code starts as the 4k7 MCP server. */
 declare const __SERVER_MCP__: string;
 declare const __BUILD_ID__: string;
+/** The app's version ("0.6.1"; "0.6.1-dev" from a checkout's dev server). */
+declare const __APP_VERSION__: string;
 /** Text files imported as they are (the agent's guides). */
 declare module '*.md?raw' {
   const text: string;

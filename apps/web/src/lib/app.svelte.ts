@@ -21,7 +21,7 @@ import {
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
 import { ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
-import { enclosureApiSummary, enclosureFacts, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
+import { copperCheckText, enclosureApiSummary, enclosureFacts, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import costGuide from '../../../../docs/design/cost.md?raw';
@@ -1307,11 +1307,22 @@ class AppState {
         const shown = set.files.filter((f) => !gv.hidden[f.layer.id]);
         const mm = (v: number) => Math.round(v * 100) / 100;
         const off = set.files.filter((f) => !shown.includes(f)).map((f) => f.layer.id);
+        // the netlist check of the files (in its worker; about half a second on a big board)
+        let checkText: string;
+        try {
+          const check = await gv.checked();
+          checkText = check
+            ? `${copperCheckText(check, { max: 20 })}\n(${gv.against === 'netlist' ? 'Held against the netlist (IPC-D-356) that came with the files' : 'Held against this board'}: the copper read back from the files, joined through the plated holes. A finding is in the files themselves, whatever the board view shows: fix its cause in the design, then look again.)`
+            : `Netlist check: ${gv.checkNote || 'not run'}`;
+        } catch (e) {
+          checkText = `Netlist check failed: ${(e as Error).message}`;
+        }
         try {
           const img = fabPicture(shown, frame, gv.below, args.width);
           return {
             content: [
               fabSetText(set),
+              checkText,
               `Shown: ${shown.map((f) => f.layer.id).join(', ') || 'no layer'}${off.length ? ` (switched off: ${off.join(', ')})` : ''}${unknown.length ? `; not open: ${unknown.join(', ')}` : ''}; seen from ${gv.below ? 'below, mirrored left to right' : 'the top'}; x ${mm(frame.x)}–${mm(frame.x + frame.w)}, y ${mm(frame.y)}–${mm(frame.y + frame.h)} mm${height !== null ? ` (the files' coordinates, y up from the ${gv.source === 'panel' ? 'panel' : 'board'}'s bottom-left corner: ${gv.source === 'panel' ? 'panel' : 'board'} y = ${height} − file y)` : " (the files' coordinates, y up)"}.`,
               `Colours: ${colourLegend(shown)}.`,
             ].join('\n'),
@@ -2059,11 +2070,12 @@ class AppState {
     return ok;
   }
 
-  flash(msg: string) {
+  /** A message under the top bar for a few seconds (`ms`: longer, for one that must be read). */
+  flash(msg: string, ms = 3500) {
     this.toast = msg;
     setTimeout(() => {
       if (this.toast === msg) this.toast = null;
-    }, 3500);
+    }, ms);
   }
 }
 

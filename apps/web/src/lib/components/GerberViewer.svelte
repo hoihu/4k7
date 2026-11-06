@@ -95,9 +95,9 @@
   }
   const toScreen = (p: At): [number, number] => [size.w / 2 + (p.x - view!.cx) * view!.scale * sign(), size.h / 2 - (p.y - view!.cy) * view!.scale];
 
-  // the measure on a canvas of its own, so a moving cursor does not draw the files again
+  // the measure and the finding picked on a canvas of their own, so a moving cursor does not draw the files again
   $effect(() => {
-    const [m, c, s] = [measure, cursor, size];
+    const [m, c, s, f] = [measure, cursor, size, gv.focused];
     void [view, gv.below];
     if (!overlay || !view || !s.w) return;
     const [w, h] = [Math.round(s.w * s.dpr), Math.round(s.h * s.dpr)];
@@ -105,9 +105,25 @@
     const ctx = overlay.getContext('2d')!;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    ctx.setTransform(s.dpr, 0, 0, s.dpr, 0, 0);
+    if (f) {
+      // a ring round the spot, at least a pad's size on screen
+      const [x, y] = toScreen(f.at);
+      const r = Math.max(14, 0.6 * view.scale);
+      ctx.strokeStyle = f.kind === 'short' || f.kind === 'open' ? '#ff5d5d' : '#ffb84d';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.beginPath();
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        ctx.moveTo(x + dx * (r + 4), y + dy * (r + 4));
+        ctx.lineTo(x + dx * (r + 12), y + dy * (r + 12));
+      }
+      ctx.stroke();
+    }
     const b = m?.b ?? c;
     if (!m || !b) return;
-    ctx.setTransform(s.dpr, 0, 0, s.dpr, 0, 0);
     const [ax, ay] = toScreen(m.a);
     const [bx, by] = toScreen(b);
     ctx.strokeStyle = ctx.fillStyle = '#7fe0ff';
@@ -173,10 +189,11 @@
   function ondrop(e: DragEvent) {
     e.preventDefault();
     dropping = false;
-    void gv.fromFiles([...(e.dataTransfer?.files ?? [])]);
+    void gv.fromFiles([...(e.dataTransfer?.files ?? [])], routed);
   }
 
   const set = $derived(gv.set);
+  const check = $derived(gv.check);
   const s = $derived(set?.summary);
   const board = $derived(app.board);
   const routed = $derived(board?.parts.length && app.boardStage === 'routed' ? board : null);
@@ -260,7 +277,7 @@
         multiple
         hidden
         onchange={(e) => {
-          void gv.fromFiles([...(e.currentTarget.files ?? [])]);
+          void gv.fromFiles([...(e.currentTarget.files ?? [])], routed);
           e.currentTarget.value = '';
         }}
       />
@@ -269,6 +286,31 @@
     {#if set && s}
       <h4 class="trunc" title={gv.title}>{gv.title}</h4>
       {#if s.board}<p class="small mono">{mm(s.board.w)} × {mm(s.board.h)} mm{s.board.fromOutline ? '' : ' (no outline)'} · {s.copperLayers} copper layer{s.copperLayers === 1 ? '' : 's'}</p>{/if}
+      <h4 title="The copper read back from the files, joined through the plated holes, and held against {gv.source === 'files' ? 'the netlist that came with the files (IPC-D-356), else this board' : 'the design'}: which nets it joins, which it leaves in pieces">
+        Netlist check
+        {#if gv.checking}<span class="busy">checking…</span>{/if}
+      </h4>
+      {#if check}
+        {#if !check.findings.length}
+          <p class="small okay">Every net joined, no two nets touching: {check.found} pads, {check.nets} nets{gv.against === 'netlist' ? ', against the netlist in the files' : ''}.</p>
+        {:else}
+          <ul class="diags">
+            {#each check.findings as f, i (i)}
+              <li>
+                <button class="r" aria-pressed={gv.focused === f} title="Show it{f.layer ? ` on ${f.layer}, with the holes` : ''}" onclick={() => gv.focus(gv.focused === f ? null : f)}>
+                  <span class="tag {f.kind === 'short' || f.kind === 'open' ? 'err' : 'warn'}">{f.kind === 'pad' ? 'no copper' : f.kind}</span>
+                  <span class="grow">{f.text} <span class="mono muted at">x {f.at.x.toFixed(2)} y {f.at.y.toFixed(2)}</span></span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+          {#if gv.against === 'netlist'}<p class="small muted">Held against the netlist that came with the files.</p>{/if}
+        {/if}
+        {#if check.notFound.length}<p class="small muted">Not in the files where the board has them (moved since?), so not checked: {check.notFound.length > 12 ? `${check.notFound.slice(0, 12).join(', ')} and ${check.notFound.length - 12} more` : check.notFound.join(', ')}.</p>{/if}
+        {#if check.openInDesign}<p class="small muted">{check.openInDesign} connection{check.openInDesign === 1 ? '' : 's'} the board leaves unrouted {check.openInDesign === 1 ? 'is' : 'are'} open in the files too.</p>{/if}
+      {:else if gv.checkNote}
+        <p class="small muted">{gv.checkNote}</p>
+      {/if}
       <h4>
         Layers
         <span class="grow"></span>
@@ -351,6 +393,14 @@
   .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; flex: none; }
   .notes li { padding: 2px 0; color: var(--txt-2); }
   .holes { border-collapse: collapse; font-size: 11.5px; }
+  h4 .busy { border: 0; padding: 0 4px; font-weight: 400; }
+  .okay { color: var(--ok, #4cc38a); }
+  .diags { list-style: none; margin: 0; padding: 0; }
+  .diags li { display: flex; align-items: flex-start; }
+  .diags .r { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: flex-start; text-align: left; border: 0; background: none; padding: 3px 2px; font-size: 12px; color: var(--txt-2); cursor: pointer; border-radius: 4px; }
+  .diags .r:hover, .diags .r[aria-pressed='true'] { background: var(--hover); }
+  .diags .tag { flex: none; }
+  .diags .at { font-size: 10.5px; white-space: nowrap; }
   .holes td { padding: 1px 12px 1px 0; }
   @media (max-width: 900px) {
     .status > span:first-child { display: none; }
