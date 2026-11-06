@@ -155,6 +155,29 @@
     </div>
 
     <!-- releases: written by scripts/changelog.mjs from CHANGELOG.md, do not edit -->
+    <article class="release" id="v0.6.0">
+      <header>
+        <h2><a href="#v0.6.0">0.6.0</a></h2>
+        <time datetime="2026-11-06">6 November 2026</time>
+        <a class="gh" href="https://github.com/hoihu/4k7/releases/tag/v0.6.0">Release on GitHub</a>
+      </header>
+      <div class="notes">
+        <p>If you order boards, update: with two planes or pours on one copper layer, the Gerber files could leave a plane cut off from its vias and pads, while the app showed it joined. A Gerber viewer, in the new <b>Tools</b> tab, now reads production files back as the fab house gets them, for you and the agent; it is how this was found.</p>
+        <h3>Fixes</h3>
+        <ul>
+          <li><b>A plane could be cut off from its vias and pads in the Gerber files</b> when it shared a layer with another plane or pour: an area plane inside a full plane (+5V across In2.Cu, +3V3 under the MCU), or local pours on an outer layer. The clearances of the one written last cut through the other’s thermal spokes and solid joints, so in the files it touched none of its vias and pads, although the board view and the checks showed them joined. A full plane set again after an area plane on its layer also wiped the area out of the files. Each plane now keeps its cuts to itself. This goes back to 0.2.0: if a board of yours has two planes or pours on one layer, export its files again and look at them in the Gerber viewer before you order.</li>
+        </ul>
+        <h3>Gerber viewer</h3>
+        <ul>
+          <li><b>A Gerber viewer</b>, in the new <b>Tools</b> tab: it opens on this board’s Gerbers and drill files, made from the design as it is (as <b>Fab files</b> writes them), and on Gerbers, drill files and zips from any other program when you drop them on it or pick them with <b>Open files…</b>. Each layer is drawn in its own colour, read back from the files themselves: switch layers on and off, look from the top or from below, zoom, pan, and click twice to measure. Beside it, what the files say: which layer each file is (from its X2 attributes, else its name, as KiCad, Altium, Eagle or EasyEDA name them), the board’s size, the copper layers, the holes per drill size, the smallest drill and track, and what looks wrong, such as no outline or a layer reaching past it. <b>Its panel</b> shows the panel’s files.</li>
+          <li><b>The agent looks at the production files too</b>: ask it whether the files are right before you order, or about files you opened, and it gets the same summary and a picture of the layers it asks for, the whole board or a spot. The viewer shows what it looks at.</li>
+        </ul>
+        <h3>Known problems</h3>
+        <ul>
+          <li>The <a href="https://4k7.dev/changelog#v0.5.0">known problems of 0.5.0</a> still stand.</li>
+        </ul>
+      </div>
+    </article>
     <article class="release" id="v0.5.1">
       <header>
         <h2><a href="#v0.5.1">0.5.1</a></h2>
