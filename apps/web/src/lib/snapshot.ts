@@ -58,7 +58,9 @@ async function renderSvgPng(live: SVGSVGElement, width: number, frame: Rect): Pr
   clone.setAttribute('height', String(height));
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.style.position = 'static';
-  const bg = getComputedStyle(live.parentElement ?? live).backgroundColor;
+  // the canvas behind the pages: the SVG's own under a schematic theme, else the column's
+  const own = getComputedStyle(live).backgroundColor;
+  const bg = own && own !== 'rgba(0, 0, 0, 0)' ? own : getComputedStyle(live.parentElement ?? live).backgroundColor;
 
   const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
   const url = URL.createObjectURL(blob);

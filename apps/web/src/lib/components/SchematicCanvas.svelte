@@ -2,6 +2,7 @@
   import { GRID, RAIL_STEM, textRect } from '@4k7/parts';
   import { PAGE, type LabelView, type PageView, type PaperId, type PinView, type Prim, type Rect, type SheetView, type SymbolView } from '@4k7/schema';
   import { Dropped, SvgView, pastDrag, plainKey, type Pan } from '../canvas.svelte.ts';
+  import { schematicThemeStyle } from '../schematicThemes.ts';
 
   interface Props {
     sheet: SheetView | undefined;
@@ -25,6 +26,8 @@
     /** Optimize: the area the agent is working in, drawn as a frame. */
     scopeRect?: Rect | null;
     compact?: boolean;
+    /** The colour theme (Settings → Appearance); unset or "app": the app's colours. */
+    theme?: string;
     /**
      * Hand editing: drag a symbol, a part's name or value or a supply symbol, swing a net label, R / F to turn or mirror the
      * selected symbol, Delete to take a picked wire or label (or the selected parts) away. Each gesture is one of the
@@ -52,11 +55,12 @@
   type Dir = 'left' | 'right' | 'up' | 'down';
   type Spot = { page: number; x: number; y: number };
 
-  let { sheet, designName, pageCount, paper = 'A4', overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false, editable = false, onmovesymbol, onmovetext, onturnsymbol, onlabeldir, onmovesupply, onerase, onremove, onnote }: Props = $props();
+  let { sheet, designName, pageCount, paper = 'A4', overlays = {}, hot = null, showDiff = true, selection = [], selectedNet = null, onselect, onselectnet, onclear, scopeRect = null, compact = false, theme, editable = false, onmovesymbol, onmovetext, onturnsymbol, onlabeldir, onmovesupply, onerase, onremove, onnote }: Props = $props();
 
   /** A dragged name or value moves in whole steps of this, finer than the wires' grid so it fits between them. */
   const TEXT_STEP = 25;
   const canEdit = $derived(editable && !compact);
+  const themeStyle = $derived(schematicThemeStyle(theme));
 
   const view = new SvgView({ x: 0, y: 0, w: 1000, h: 1000 }, 300, 200000, updateZoom);
   let fittedFor = '';
@@ -457,6 +461,8 @@
   bind:this={view.svg}
   class="sch"
   class:compact
+  class:themed={!!themeStyle}
+  style={themeStyle || undefined}
   viewBox="{view.vb.x} {view.vb.y} {view.vb.w} {view.vb.h}"
   data-bbox={sheet ? `${sheet.bbox.x},${sheet.bbox.y},${sheet.bbox.w},${sheet.bbox.h}` : undefined}
   preserveAspectRatio="xMidYMid meet"
@@ -646,8 +652,10 @@
   .sch.compact { position: static; height: 100%; }
   /* the keys go to the canvas once it is clicked; the selection frames already show where they act */
   .sch:focus { outline: none; }
-  .page .paper { fill: var(--paper); stroke: var(--grid); stroke-width: 12; }
-  .page .frame { fill: none; stroke: var(--grid); stroke-width: 10; }
+  /* a theme paints its own canvas (the column behind is in the app's colours) */
+  .sch.themed { background-color: var(--canvas); background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 16px 16px; }
+  .page .paper { fill: var(--paper); stroke: var(--frame, var(--grid)); stroke-width: 12; }
+  .page .frame { fill: none; stroke: var(--frame, var(--grid)); stroke-width: 10; }
   .page .title { fill: var(--sch-txt); font-size: 170px; }
   .page .tb-label { fill: var(--pin-txt); font-size: 80px; letter-spacing: 8px; }
   .page .tb-val { fill: var(--pin-txt); font-size: 140px; }
@@ -683,19 +691,19 @@
   .sym:hover polygon.filled { fill: var(--sym-hover); }
   .sym:hover .ref, .sym:hover .val, .sym:hover .sym-t { fill: var(--sym-hover); }
   text { font-family: var(--mono); }
-  .ref { fill: var(--sym); font-size: 88px; font-weight: 700; }
+  .ref { fill: var(--ref, var(--sym)); font-size: 88px; font-weight: 700; }
   .sym-t { fill: var(--sym); font-size: 64px; }
   .val { fill: var(--sch-txt); font-size: 80px; }
   .pin-n { fill: var(--sch-txt); font-size: 70px; }
   .pin-no { fill: var(--pin-txt); font-size: 52px; }
-  .pwr line { stroke: var(--wire); stroke-width: 14; stroke-linecap: round; }
+  .pwr line { stroke: var(--supply, var(--wire)); stroke-width: 14; stroke-linecap: round; }
   .pwr-hit { fill: transparent; stroke: none; }
   .net.dragging { opacity: 0.85; }
-  .pwr .arrow { fill: var(--wire); stroke: var(--wire); stroke-width: 8; stroke-linejoin: round; }
-  .rail-t { fill: var(--wire); font-size: 78px; font-weight: 700; }
-  .net-t { fill: var(--wire); font-size: 72px; font-weight: 600; }
-  .flag { fill: var(--canvas); stroke: var(--wire); stroke-width: 10; }
-  .nc line { stroke: var(--err); stroke-width: 12; }
+  .pwr .arrow { fill: var(--supply, var(--wire)); stroke: var(--supply, var(--wire)); stroke-width: 8; stroke-linejoin: round; }
+  .rail-t { fill: var(--supply, var(--wire)); font-size: 78px; font-weight: 700; }
+  .net-t { fill: var(--label, var(--wire)); font-size: 72px; font-weight: 600; }
+  .flag { fill: var(--flag, var(--canvas)); stroke: var(--label, var(--wire)); stroke-width: 10; }
+  .nc line { stroke: var(--nc, var(--err)); stroke-width: 12; }
   .ov { stroke-width: 14; stroke-dasharray: 60 36; transition: fill-opacity .15s, stroke-width .15s; pointer-events: none; }
   .ov.add { fill: var(--ok); fill-opacity: .08; stroke: var(--ok); }
   .ov.change { fill: var(--warn); fill-opacity: .1; stroke: var(--warn); }
