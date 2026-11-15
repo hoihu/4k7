@@ -184,6 +184,7 @@
           <SchematicCanvas
             bind:this={canvas}
             {sheet}
+            theme={app.settings.schematicTheme}
             scopeRect={app.scope && sheet && app.scope.scope.sheet === sheet.id ? app.scope.scope.rect : null}
             designName={app.k?.summary.name}
             pageCount={app.k?.summary.pages}

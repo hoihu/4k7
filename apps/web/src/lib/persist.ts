@@ -7,6 +7,7 @@
  * to the server (the browser's copy is left as it was).
  */
 import type { ApiServiceId } from '@4k7/agent';
+import type { SchematicThemeId } from './schematicThemes.ts';
 import { migrateRulesText, type AgentEffort, type Artwork, type CheckSettings, type HarnessId, type PartCard } from '@4k7/schema';
 
 const DB = '4k7';
@@ -271,6 +272,8 @@ export interface Settings {
   mode: Mode;
   fixBudget: number;
   theme: 'system' | 'light' | 'dark';
+  /** The schematic canvas's colours (schematicThemes.ts); 'app' = the app's light or dark. */
+  schematicTheme: SchematicThemeId;
   /** The local server's access key and port, remembered so the tab reconnects by itself. */
   serverAccessKey: string;
   serverPort: number | null;
@@ -304,6 +307,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mode: 'review',
   fixBudget: 5,
   theme: 'dark',
+  schematicTheme: 'app',
   serverAccessKey: '',
   serverPort: null,
   project: '',
