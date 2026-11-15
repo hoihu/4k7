@@ -1,8 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect x="0" y="29" width="64" height="6" rx="3" fill="#b8b0a4"/>
-  <rect x="8" y="16" width="48" height="32" rx="12" fill="#e8d9bd"/>
-  <rect x="16" y="16" width="6" height="32" fill="#f2c230"/>
-  <rect x="25" y="16" width="6" height="32" fill="#7a3fb0"/>
-  <rect x="34" y="16" width="6" height="32" fill="#d6382f"/>
-  <rect x="45" y="16" width="6" height="32" fill="#d7a63a"/>
+  <defs>
+    <clipPath id="b"><rect x="10" y="23" width="44" height="18" rx="9"/></clipPath>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".55"/>
+      <stop offset=".45" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity=".18"/>
+    </linearGradient>
+    <linearGradient id="w" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e4e1dc"/>
+      <stop offset=".35" stop-color="#fbfaf8"/>
+      <stop offset="1" stop-color="#7f7a72"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="29" width="64" height="6" rx="3" fill="url(#w)"/>
+  <g clip-path="url(#b)">
+    <rect x="10" y="23" width="44" height="18" fill="#e9dcc3"/>
+    <rect x="17" y="23" width="7" height="18" fill="#f2c230"/>
+    <rect x="26.5" y="23" width="7" height="18" fill="#8a4fd0"/>
+    <rect x="36" y="23" width="7" height="18" fill="#e0443a"/>
+    <rect x="46" y="23" width="3" height="18" fill="#d7a63a"/>
+    <rect x="10" y="23" width="44" height="18" fill="url(#g)"/>
+  </g>
 </svg>
