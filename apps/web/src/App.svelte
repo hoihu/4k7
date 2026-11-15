@@ -287,7 +287,7 @@
   /* the chat and detail columns of every view, at the widths the user dragged them to; the canvas keeps 280px */
   .app { --chat-col: min(var(--chat-w), calc(100vw - var(--side-w) - 280px)); --side-col: min(var(--side-w), calc(100vw - 520px)); }
   .bar { display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); min-width: 0; }
-  .logo { width: 22px; height: 22px; display: grid; place-items: center; flex: none; }
+  .logo { height: 22px; display: grid; place-items: center; flex: none; }
   .proj { font-weight: 600; max-width: 180px; }
   .nav { display: flex; gap: 2px; margin-left: 6px; }
   .nav button { border: 0; background: transparent; padding: 5px 10px; border-radius: 6px; color: var(--txt-2); }
