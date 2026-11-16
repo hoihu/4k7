@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ASSEMBLY_HOUSES, currencySymbol, money, STOCK_MARGIN, whose } from '@4k7/schema';
-  import { estimateLine, lineBlocks, lineIssues, lineNeedsAttention, MIN_SAVING, type CostEstimate, type Saving, type StockLine } from '@4k7/parts';
+  import { estimateLine, lineBlocks, lineIssues, lineNeedsAttention, MIN_SAVING, servicesOnlyText, type CostEstimate, type Saving, type StockLine } from '@4k7/parts';
   import type { SupplierPart } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
 
@@ -39,7 +39,7 @@
   const fine = $derived(r ? r.lines.filter((l) => !lineNeedsAttention(l)) : []);
   const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   /** As the Checks list has them: E stops the order, W wants a look, I is a fee (a part bought for the order is no problem). */
-  const severity = (l: StockLine) => (lineBlocks(l) ? 'err' : (l.state !== 'ok' && l.state !== 'ordered') || l.warnings?.length ? 'warn' : 'info');
+  const severity = (l: StockLine) => (lineBlocks(l) ? 'err' : (l.state !== 'ok' && l.state !== 'ordered') || l.warnings?.length || l.serviceNote ? 'warn' : 'info');
   /** Without its own catalogue (PCBWay) the stock check is a check of the BOM: what goes on it, and what the house needs to buy the rest. */
   const bomOnly = $derived(!!house.noCatalogue);
   const none = $derived(house.byMpn && house.param ? `No ${house.numberName} or manufacturer part number` : `No ${house.numberName}`);
@@ -52,7 +52,7 @@
   const cash = (v: number) => money(v, house);
   const feesText = (e: CostEstimate) => [`parts ${cash(e.parts)}`, ...e.fees.map((f) => `${f.name} ${cash(f.amount)}`)].join(' · ');
   /** A house that orders by the maker's number keeps a part on the order without its own number: leaving it off is the user's, in the BOM they upload. */
-  const savingAction = (s: Saving) => (s.to ? 'Use' : s.kind === 'side' ? 'Move to top' : house.byMpn || !house.param ? null : 'Leave off');
+  const savingAction = (s: Saving) => (s.to ? 'Use' : s.kind === 'side' ? 'Move to top' : s.kind === 'service' || house.byMpn || !house.param ? null : 'Leave off');
   const savingTitle = (s: Saving) =>
     s.to ? `Use ${s.to.sku} for ${s.refs.join(', ')}` : s.kind === 'side' ? `Put ${s.refs.join(', ')} on the top side` : `Take the ${house.numberName} off ${s.refs.join(', ')}: they are left off the order, to solder by hand`;
   const savedInAll = $derived(c ? c.savings.reduce((n, s) => n + s.saves, 0) : 0);
@@ -71,7 +71,7 @@
   <li>
     <div class="grow" title={p.description}>
       <div class="trunc"><span class="mono">{p.sku}</span>{#if adds !== undefined}<b class="mono adds">+{cash(adds)}{p.price.length ? '' : ' + its price'}</b>{/if} {#if p.mpn !== p.sku}<span class="muted">{p.mpn}</span>{/if}</div>
-      <div class="trunc muted">{#if p.tier}<span class="tag" class:ok={!p.fee}>{p.tier}</span> {/if}{p.stock !== null ? `${short(p.stock)} in stock` : p.supply === 'stock' ? 'kept in stock' : p.supply === 'order' ? 'bought for the order' : 'stock unknown'}{p.live ? '' : ' (mirror)'}{adds === undefined ? price(p) : ''}</div>
+      <div class="trunc muted">{#if p.tier}<span class="tag" class:ok={!p.fee}>{p.tier}</span> {/if}{#if servicesOnlyText(p, house)}<span class="tag">{servicesOnlyText(p, house)}</span> {/if}{p.stock !== null ? `${short(p.stock)} in stock` : p.supply === 'stock' ? 'kept in stock' : p.supply === 'order' ? 'bought for the order' : 'stock unknown'}{p.live ? '' : ' (mirror)'}{adds === undefined ? price(p) : ''}</div>
     </div>
     <button class="btn" disabled={app.running || !!app.k?.proposal} {title} onclick={() => void onuse()}>Use</button>
   </li>

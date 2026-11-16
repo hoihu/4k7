@@ -49,7 +49,15 @@ interface JlcpcbItem {
   /** Pieces added for losses in assembly ("loss"), and the fewest it places ("least patch": SMT placement) */
   lossNumber?: number;
   leastPatchNumber?: number;
+  /**
+   * 2: the part page's "PCBA Type" says "Standard Only" (Economic assembly does not take it); 0: "Economic
+   * and Standard". Checked against the part pages on 2026-11-16 (C2843785 and C72505 are 2, C3342 is 0).
+   */
+  componentProductType?: number;
 }
+
+/** componentProductType of a part that only Standard assembly takes. */
+const STANDARD_ONLY = 2;
 
 /** JLCPCB's names for what the checks read under other names (see SupplierPart.attributes). */
 const ATTRIBUTE_NAMES: Record<string, string> = { 'Voltage Rating': 'Voltage Rated' };
@@ -224,6 +232,7 @@ export function fromJlcpcb(c: JlcpcbItem): SupplierPart {
     live: true,
     ...(typeof c.lossNumber === 'number' && c.lossNumber > 0 ? { attrition: c.lossNumber } : {}),
     ...(typeof c.leastPatchNumber === 'number' && c.leastPatchNumber > 0 ? { minQty: c.leastPatchNumber } : {}),
+    ...(c.componentProductType === STANDARD_ONLY ? { services: ['Standard'] } : {}),
   };
 }
 

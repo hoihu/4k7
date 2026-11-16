@@ -24,7 +24,7 @@ import {
   type SupplierPart,
   whose,
 } from '@4k7/schema';
-import { canReplace, checkStock, describePart, lineBuy, lineOnOrder, plentyFor, pool, rankParts, replacementQuery, stockText, type PartSource, type SourcedComponent, type StockLine, type StockReport } from './sourcing.ts';
+import { canReplace, checkStock, describePart, lineBuy, lineOnOrder, plentyFor, pool, rankParts, replacementQuery, servicesWithout, stockText, type PartSource, type SourcedComponent, type StockLine, type StockReport } from './sourcing.ts';
 
 /** A saving smaller than this (in the house's currency, on the whole order) is not worth a change. */
 export const MIN_SAVING = 0.5;
@@ -261,6 +261,44 @@ export function serviceProblem(svc: AssemblyService, facts: AssemblyFacts, board
   return null;
 }
 
+/** The lines whose part a service does not take (the house's catalogue names the services that do). */
+export function linesWithout(lines: StockLine[], svc: Pick<AssemblyService, 'name'>, house: Pick<AssemblyHouse, 'services'>): StockLine[] {
+  return lines.filter((l) => lineOnOrder(l) && servicesWithout(l.part, house).includes(svc.name));
+}
+
+/** Why a service cannot take the order's parts: the ones it does not take, by designator and part number; null when it takes them all. */
+function partsProblem(lines: StockLine[], svc: AssemblyService, house: AssemblyHouse): string | null {
+  const out = linesWithout(lines, svc, house);
+  if (!out.length) return null;
+  const only = [...new Set(out.flatMap((l) => l.part!.services!))].join(' or ');
+  const what = out.map((l) => `${refsText(l.refs)} (${l.sku}${l.part!.mpn && l.part!.mpn !== l.sku ? ` ${l.part!.mpn}` : ''})`).join(', ');
+  return `${house.name} assembles ${what} in ${only} assembly only`;
+}
+
+/** Designators, runs shortened: "D3–D50, C1". */
+export function refsText(refs: readonly string[]): string {
+  const out: string[] = [];
+  let run: { prefix: string; from: number; to: number; first: string; last: string } | null = null;
+  const flush = () => {
+    if (run) out.push(run.to - run.from >= 2 ? `${run.first}–${run.last}` : run.from === run.to ? run.first : `${run.first}, ${run.last}`);
+    run = null;
+  };
+  for (const r of refs) {
+    const m = /^(.*?)(\d+)$/.exec(r);
+    const n = m ? Number(m[2]) : NaN;
+    if (m && run && run.prefix === m[1] && n === run.to + 1) {
+      run.to = n;
+      run.last = r;
+      continue;
+    }
+    flush();
+    if (m) run = { prefix: m[1]!, from: n, to: n, first: r, last: r };
+    else out.push(r);
+  }
+  flush();
+  return out.join(', ');
+}
+
 /** What a service needs for the order that the design does not have yet: a panel, for a board below its smallest single board. */
 export function serviceNeeds(svc: AssemblyService, facts: AssemblyFacts): string | null {
   const b = svc.limits.boardSize;
@@ -291,7 +329,13 @@ export function estimateOrder(
 }
 
 /** estimateOrder without the rounding: savings are the difference of two of these. */
-function estimateExact(lines: StockLine[], facts: AssemblyFacts, boards: number, house: AssemblyHouse, opts: { oneSide?: boolean; quotes?: Record<string, AssemblyQuote | Error> } = {}): CostEstimate[] {
+function estimateExact(
+  lines: StockLine[],
+  facts: AssemblyFacts,
+  boards: number,
+  house: AssemblyHouse,
+  opts: { oneSide?: boolean; anyService?: boolean; quotes?: Record<string, AssemblyQuote | Error> } = {},
+): CostEstimate[] {
   // (a line without a record that the house buys for the order counts with a fee: On Demand)
   const placed = lines.filter(lineOnOrder);
   let parts = 0;
@@ -300,7 +344,7 @@ function estimateExact(lines: StockLine[], facts: AssemblyFacts, boards: number,
   const both = f.bottomRefs.length > 0;
   const m = (v: number) => money(v, house);
   return house.services.map((svc): CostEstimate => {
-    const problem = serviceProblem(svc, f, boards);
+    const problem = (opts.anyService ? null : partsProblem(placed, svc, house)) ?? serviceProblem(svc, f, boards);
     if (problem) return { service: svc.name, unavailable: problem, parts, fees: [], total: NaN };
     const needs = serviceNeeds(svc, f);
     const extra = { ...(svc.notCounted ? { notCounted: svc.notCounted } : {}), ...(needs ? { needs } : {}) };
@@ -367,8 +411,11 @@ export async function quoteServices(house: AssemblyHouse, source: PartSource, or
 
 /** A way to make the order cheaper: a part to take on some components, or a change to the design. */
 export interface Saving {
-  /** cheaper: an equivalent part costs less (with its fees); merge: a part number already on the order; side: every part on one side; hand: solder through-hole parts yourself. */
-  kind: 'cheaper' | 'merge' | 'side' | 'hand';
+  /**
+   * cheaper: an equivalent part costs less (with its fees); merge: a part number already on the order; side: every part on one side;
+   * hand: solder through-hole parts yourself; service: parts every service takes instead of the ones only a dearer service takes.
+   */
+  kind: 'cheaper' | 'merge' | 'side' | 'hand' | 'service';
   refs: string[];
   /** The part number the components have now, and the part to take instead (none for a change to the design). */
   from?: string;
@@ -498,6 +545,42 @@ export async function checkCost(
     for (let i = savings.length - 1; i >= 0; i--) if (savings[i]!.kind === 'merge' && pairs.get([savings[i]!.from, savings[i]!.to!.sku].sort().join(' ')) !== savings[i]) savings.splice(i, 1);
   }
   if (svc && range) {
+    // parts only a dearer service takes: what the cheaper one would cost with parts it takes instead
+    const limitedLines = stock.lines.filter((l) => lineOnOrder(l) && servicesWithout(l.part, house).length);
+    if (limitedLines.length) {
+      const open = estimateRange(estimateExact(stock.lines, facts, boards, house, { anyService: true, ...(quotes ? { quotes } : {}) }));
+      if (open && open.low.service !== range.low.service && open.low.total < range.low.total - MIN_SAVING) {
+        const target = house.services.find((s) => s.name === open.low.service)!;
+        const lines = linesWithout(stock.lines, target, house);
+        const refs = lines.flatMap((l) => l.refs);
+        const only = [...new Set(lines.flatMap((l) => l.part!.services!))].join(' or ');
+        // a like-for-like part the cheaper service takes, for each (a part number and package, or a value and package)
+        const instead = new Map<StockLine, SupplierPart>();
+        await pool(lines, opts.concurrency ?? 4, async (l) => {
+          const comps = l.refs.map((r) => byRef.get(r)!);
+          const q = replacementQuery(comps[0]!);
+          if (!q) return;
+          const found = await source.search(q).catch(() => [] as SupplierPart[]);
+          const ok = found.filter((p) => p.sku !== l.sku && !servicesWithout(p, house).includes(target.name) && plentyFor(p, l.need) && comps.every((c) => canReplace(p, c, l.part, l.need)));
+          const best = rankParts(ok, tiers)[0];
+          if (best) instead.set(l, best);
+        });
+        const each = lines.map((l) => `${refsText(l.refs)} ${l.sku}${l.part!.mpn !== l.sku ? ` ${l.part!.mpn}` : ''}${instead.has(l) ? ` (${instead.get(l)!.sku} would do)` : ''}`).join(', ');
+        const one = lines.length === 1 ? instead.get(lines[0]!) : undefined;
+        savings.push({
+          kind: 'service',
+          refs,
+          ...(one ? { from: lines[0]!.sku, to: one } : {}),
+          saves: cents(range.low.total - open.low.total),
+          what:
+            `${each}: ${house.name} assembles ${lines.length === 1 ? 'it' : 'them'} in ${only} assembly only, so the order goes to ${range.low.service}; with parts ${target.name} assembly takes instead it can go to ${target.name}` +
+            ` (${money(open.low.total, house)} before any change in the parts' prices)` +
+            (lines.length > instead.size
+              ? `; no like-for-like part for ${lines.filter((l) => !instead.has(l)).map((l) => refsText(l.refs)).join(', ')}: an equivalent part means reading its datasheet, and the user's OK where it changes what the circuit does`
+              : ''),
+        });
+      }
+    }
     // every part on one side: another service takes the order, or the second side's fees go
     if (facts.bottomRefs.length) {
       const oneQuotes = quoted ? await quoteServices(house, source, { ...quoteOrder(stock.lines, facts, boards), sides: 1 }) : undefined;

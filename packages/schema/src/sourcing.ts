@@ -57,6 +57,12 @@ export interface SupplierPart {
   lifecycle?: string;
   /** How the house places it, when its catalogue says (its price depends on it). */
   placement?: PlacementKind;
+  /**
+   * The house's assembly services that take the part, by name, when its catalogue limits them
+   * (JLCPCB's "Standard only" parts: ['Standard']); absent: every service. An order with the part
+   * goes to one of these, whatever the others would cost.
+   */
+  services?: readonly string[];
 }
 
 /**
