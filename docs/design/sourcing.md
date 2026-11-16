@@ -181,7 +181,12 @@ profile's).
   assembles one side only, 2 to 50 boards, 2, 4 or 6 layers, chips down to 0402; Standard both sides, up to 80,000
   boards, chips down to 01005, single boards from 70 × 70 mm (a smaller one is priced, with the note that it needs a
   panel). Not included: the bare boards (5 two-layer boards up to 100 × 100 mm are $2), shipping, taxes and duties; for
-  Standard also packing, fixtures and its per-board minimum on bulk orders.
+  Standard also packing, fixtures and its per-board minimum on bulk orders. Some parts are "Standard only" (the part
+  page's "PCBA Type"; the search's `componentProductType` 2, 0 for "Economic and Standard", read 2026-11-16 against
+  C2843785 and C72505): `SupplierPart.services` is `['Standard']`, the stock check names the line, and Economic cannot
+  take an order with one. JLCPCB moves such an order to Standard: spiral2's 2 boards were estimated at $80.05
+  (Economic) and billed $132.83 (Standard; the estimate had $133.05) because of a WS2812-type LED and an electrolytic.
+  The bill's fees differ by about 1 % from the price page: JLCPCB converts them at the day's exchange rate.
 - **Eurocircuits** publishes no price list. Its fees are the price table its [online calculator](https://be.eurocircuits.com/shop/assembly/configurator.aspx)
   runs on (version 261001_1, read 2026-10-25), each value × its assembly factor 1.1: €55 per SMD side, €1.925 per BOM
   line, €3.85 per unique part (€5.50 On Demand), per placement and board €0.11 (SMD), €0.55 (fine pitch, BGA), €0.88
@@ -217,6 +222,7 @@ that takes the order; savings that touch the same parts overlap):
 | merge | The part another line already has: one part number less to load | Use |
 | side | Every part on the top side: a one-sided service (JLCPCB Economic) takes the order, or the second side's fees go (Eurocircuits €55, PCBWay its quote) | Move to top |
 | hand | Through-hole parts soldered by hand: leave them off the order and solder them yourself | Leave off (at JLCPCB; at a house that orders by MPN, leave them out of the BOM you upload) |
+| service | Parts only a dearer service takes (JLCPCB's Standard only) keep the order from the cheaper one: what it would cost with parts it takes, and the like-for-like ones found | Use, for one part with a like-for-like replacement; else the agent |
 
 Components with no part number are matched to parts too (what JLCPCB's [BOM tool](https://jlcpcb.com/parts/bom-tool)
 does for an uploaded BOM): a resistor or capacitor by its value and package, anything else by its part number, ranked

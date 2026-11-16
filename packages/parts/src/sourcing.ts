@@ -160,6 +160,8 @@ export interface StockLine {
   mismatch: string[];
   /** What else wants a look: the maker has made the part obsolete, or no longer recommends it. */
   warnings?: string[];
+  /** The part only some of the house's services take: what that means for the order (servicesWithout). */
+  serviceNote?: string;
   /** In-stock parts that could take its place, best first. */
   replacements: SupplierPart[];
   /** What the replacements have in common with the part ("same resistance and package"). */
@@ -197,7 +199,18 @@ export interface StockReport {
 }
 
 /** Lines that need a look: anything but plenty in stock (or bought for the order), fitting, fee-free, current. */
-export const lineNeedsAttention = (l: StockLine) => (l.state !== 'ok' && l.state !== 'ordered') || l.mismatch.length > 0 || !!l.part?.fee || !!l.warnings?.length;
+export const lineNeedsAttention = (l: StockLine) => (l.state !== 'ok' && l.state !== 'ordered') || l.mismatch.length > 0 || !!l.part?.fee || !!l.warnings?.length || !!l.serviceNote;
+
+/** The house's services that do not take a part (its catalogue names the ones that do); empty when every one does. */
+export function servicesWithout(p: Pick<SupplierPart, 'services'> | null | undefined, house: Pick<AssemblyHouse, 'services'>): string[] {
+  const only = p?.services;
+  return only ? house.services.map((s) => s.name).filter((n) => !only.includes(n)) : [];
+}
+
+/** "Standard only": the services that take a part, when not every one does. */
+export function servicesOnlyText(p: Pick<SupplierPart, 'services'>, house: Pick<AssemblyHouse, 'services'>): string | null {
+  return p.services && servicesWithout(p, house).length ? `${p.services.join(' or ')} only` : null;
+}
 /** Lines that go on the house's order: a part it lists, or one it buys for the order without a record (an MPN outside Eurocircuits' database, any part at PCBWay). */
 export const lineOnOrder = (l: StockLine) => !!l.part || l.state === 'ordered';
 /** Lines that stop an order as they are: the part cannot be had, or it is not the part the design asks for (the house assembles what the number says). */
@@ -310,7 +323,12 @@ function settle(l: StockLine, comps: SourcedComponent[], house: AssemblyHouse, f
   else l.state = stockState(l.part.stock, l.need, l.part.supply);
   if (!l.part) return;
   const life = lifecycleWarning(l.part.lifecycle);
-  if (life) l.warnings = [life];
+  if (life) l.warnings = [...(l.warnings ?? []), life];
+  const without = servicesWithout(l.part, house);
+  if (without.length) {
+    const only = l.part.services!.join(' or ');
+    l.serviceNote = `${only} assembly only at ${house.name}: an order with it cannot go to ${without.join(' or ')} assembly${without.length === 1 ? '' : 's'}, whatever ${without.length === 1 ? 'that' : 'those'} would cost`;
+  }
   const found = new Map<string, string[]>();
   for (const c of comps) {
     // the land the part needs against the one on the board, where the house has a footprint for the
@@ -345,7 +363,7 @@ function landMismatch(fit: LandFit, land: PlacedLand, footprint: HouseFootprint,
 
 const isPassive = (c: SourcedComponent) => c.category === 'resistor' || c.category === 'capacitor';
 
-const wantsReplacement = (l: StockLine) => lineBlocks(l) || l.state === 'low' || !!l.part?.fee || !!l.warnings?.length;
+const wantsReplacement = (l: StockLine) => lineBlocks(l) || l.state === 'low' || !!l.part?.fee || !!l.warnings?.length || !!l.serviceNote;
 
 /**
  * What a like-for-like replacement is searched by: a resistor or capacitor by its value and package,
@@ -370,12 +388,15 @@ async function findReplacements(l: StockLine, c: SourcedComponent, source: PartS
   const passive = isPassive(c);
   const fits = (p: SupplierPart) => p.sku !== l.sku && canReplace(p, c, l.part, l.need);
   // better than the part it replaces in what is wrong with it: no fee where only the fee is, more stock where it is low
-  const onlyFee = (l.state === 'ok' || l.state === 'ordered') && !l.mismatch.length && !l.warnings?.length;
-  const better = (p: SupplierPart) => (onlyFee ? !p.fee : l.state === 'low' ? (p.stock === null ? p.supply === 'stock' : p.stock > (l.part?.stock ?? 0)) : true);
+  // (a part only some services take: better is one every service takes, whatever its fee)
+  const settled = (l.state === 'ok' || l.state === 'ordered') && !l.mismatch.length && !l.warnings?.length;
+  const limited = (p: SupplierPart) => Number(servicesWithout(p, house).length > 0);
+  const better = (p: SupplierPart) =>
+    settled && l.serviceNote ? !limited(p) : settled ? !p.fee : l.state === 'low' ? (p.stock === null ? p.supply === 'stock' : p.stock > (l.part?.stock ?? 0)) : true;
   // plenty of stock (STOCK_MARGIN × the need) before the house's class: a part that will still be there when the order goes in
   const short = (p: SupplierPart) => Number(!plentyFor(p, l.need));
   l.replacements = rankParts(found.filter((p) => fits(p) && better(p)), house.tiers.map((t) => t.name))
-    .sort((a, b) => Number(a.fee) - Number(b.fee) || short(a) - short(b))
+    .sort((a, b) => limited(a) - limited(b) || Number(a.fee) - Number(b.fee) || short(a) - short(b))
     .slice(0, n);
   if (!l.replacements.length) return;
   l.replacementBasis =
@@ -461,10 +482,11 @@ export async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>
 /* -------------------------------------- text -------------------------------------- */
 
 /** One line per part, for the agent and for logs (prices in the house's currency). */
-export function describePart(p: SupplierPart, house: Pick<AssemblyHouse, 'currency'> = { currency: 'USD' }): string {
+export function describePart(p: SupplierPart, house: Pick<AssemblyHouse, 'currency'> & { services?: AssemblyHouse['services'] } = { currency: 'USD' }): string {
   const price = p.price[0] ? (p.price.every((b) => b.each === 0) ? 'free' : `${currencySymbol(house)}${trimNum(p.price[0].each)}@${p.price[0].qty}`) : '';
   const facts = p.description || Object.entries(p.attributes).map(([k, v]) => (k === 'Value' ? v : `${k} ${v}`)).join(', ');
-  return [p.sku, p.mpn !== p.sku ? p.mpn : '', p.package, p.tier, stockText(p), lifecycleWarning(p.lifecycle) ?? '', price, facts.slice(0, 140)].filter(Boolean).join(' · ');
+  const only = house.services ? servicesOnlyText(p, { services: house.services }) : null;
+  return [p.sku, p.mpn !== p.sku ? p.mpn : '', p.package, p.tier, only ?? '', stockText(p), lifecycleWarning(p.lifecycle) ?? '', price, facts.slice(0, 140)].filter(Boolean).join(' · ');
 }
 
 /** "stock 1,234", "kept in stock", "bought for the order", "stock unknown", with "(mirror)" when it was not read from the house just now. */
@@ -507,6 +529,7 @@ export function lineIssues(l: StockLine): string[] {
     // (bought for the order is no problem: the part says so, and its fee follows)
     ...(l.state === 'ordered' ? (l.mismatch.length || l.warnings?.length || l.part?.fee ? [] : [lineProblem(l)]) : l.state !== 'ok' || !l.mismatch.length ? [lineProblem(l)] : []),
     ...(l.warnings ?? []),
+    ...(l.serviceNote ? [l.serviceNote] : []),
     ...(l.part?.fee ? [`${l.part.tier}: a fee`] : []),
   ];
 }
@@ -530,16 +553,17 @@ export function stockReportText(r: StockReport, house: AssemblyHouse): string {
       `${r.lines.length} part number${r.lines.length === 1 ? '' : 's'} for ${parts} component${parts === 1 ? '' : 's'}.`,
   );
   const line = (l: StockLine) => {
-    const what = l.part ? `${l.sku}${l.part.mpn !== l.sku ? ` ${l.part.mpn}` : ''} (${l.part.tier || 'no class'}, ${stockText(l.part)})` : l.sku;
+    const only = l.part ? servicesOnlyText(l.part, house) : null;
+    const what = l.part ? `${l.sku}${l.part.mpn !== l.sku ? ` ${l.part.mpn}` : ''} (${l.part.tier || 'no class'}${only ? `, ${only}` : ''}, ${stockText(l.part)})` : l.sku;
     const bits = [`- ${l.refs.join(', ')} · ${what}: ${lineIssues(l).join('; ')}`];
     if (l.replacements.length) bits.push(`. Replacements (${l.replacementBasis}): ${l.replacements.map((p) => describePart(p, house)).join(' | ')}`);
-    else if (lineBlocks(l) || l.warnings?.length) bits.push('. No like-for-like replacement found: search for another part (sourcing search) or import one (import_part)');
+    else if (lineBlocks(l) || l.warnings?.length || l.serviceNote) bits.push('. No like-for-like replacement found: search for another part (sourcing search) or import one (import_part)');
     return bits.join('');
   };
   const settled = (l: StockLine) => l.state === 'ok' || l.state === 'ordered';
   const blocking = r.lines.filter(lineBlocks);
-  const warn = r.lines.filter((l) => !lineBlocks(l) && (!settled(l) || !!l.warnings?.length));
-  const fees = r.lines.filter((l) => !lineBlocks(l) && settled(l) && !l.warnings?.length && l.part?.fee);
+  const warn = r.lines.filter((l) => !lineBlocks(l) && (!settled(l) || !!l.warnings?.length || !!l.serviceNote));
+  const fees = r.lines.filter((l) => !lineBlocks(l) && settled(l) && !l.warnings?.length && !l.serviceNote && l.part?.fee);
   const fine = r.lines.filter((l) => !lineNeedsAttention(l));
   if (blocking.length) out.push(`Stop the order (${blocking.length}):`, ...blocking.map(line));
   if (warn.length) out.push(`Look at (${warn.length}):`, ...warn.map(line));

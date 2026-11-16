@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EUROCIRCUITS_ASSEMBLY, JLCPCB_ASSEMBLY, PCBWAY_ASSEMBLY, type BoardPad, type PartQuery, type SupplierPart } from '@4k7/schema';
-import { assemblyFacts, boardHints, checkCost, costReportText, estimateLine, estimateOrder, lineBuy, type AssemblyFacts, type AssemblyQuote, type PartSource, type QuoteOrder, type SourcedComponent, type StockLine } from '../src/index.ts';
+import { assemblyFacts, boardHints, checkCost, checkStock, costReportText, estimateLine, estimateOrder, lineBuy, lineIssues, refsText, stockReportText, type AssemblyFacts, type AssemblyQuote, type PartSource, type QuoteOrder, type SourcedComponent, type StockLine } from '../src/index.ts';
 
 const H = JLCPCB_ASSEMBLY;
 const part = (sku: string, o: Partial<SupplierPart> = {}): SupplierPart => ({ sku, mpn: 'X', package: '0603', description: '', stock: 1_000_000, tier: 'Basic', fee: false, price: [{ qty: 1, each: 0.01 }], attributes: {}, url: '', live: true, ...o });
@@ -127,6 +127,15 @@ describe('the estimate', () => {
     expect(estimateLine(estimateOrder(lines, facts({ bottomRefs: ['C9'] }), 10, H), 10)).toMatch(/^≈ \$\d+\.\d\d for 10 boards \(\$\d+\.\d\d a board, Standard\)$/);
   });
 
+  it("says which parts keep a service from the order: a part only another service takes (JLCPCB's Standard only)", () => {
+    const leds = Array.from({ length: 48 }, (_, i) => `D${i + 3}`);
+    const only = [...lines, line('C2843785', leds, 96, part('C2843785', { ...ext, mpn: 'XL-5050RGBC-2812B', package: 'SMD5050', services: ['Standard'] }))];
+    const [eco, std] = estimateOrder(only, facts(), 2, H);
+    expect(eco).toMatchObject({ unavailable: 'JLCPCB assembles D3–D50 (C2843785 XL-5050RGBC-2812B) in Standard assembly only' });
+    expect(std!.unavailable).toBeUndefined();
+    expect(estimateLine([eco!, std!], 2)).toMatch(/, Standard\)$/);
+  });
+
   it('prices many joints at their tier', () => {
     const std = estimateOrder(lines, facts({ smtJoints: 600, handJoints: 0 }), 100, H)[1]!;
     expect(std.fees.find((f) => f.name.endsWith('placed'))).toEqual({ name: '60,000 joints placed', amount: 78 });
@@ -210,6 +219,41 @@ describe('cost check', () => {
   it('offers one way round of two lines that could share a part number', async () => {
     const r = await checkCost([res('R1', 'C1'), res('R2', 'C2')], catalogue([r10k('C1'), r10k('C2', { ...ext })], () => []), { house: H, boards: 10, facts: () => facts({ handJoints: 0, handRefs: [] }) });
     expect(r.savings.map((s) => [s.refs.join(' '), s.from, s.to?.sku])).toEqual([['R2', 'C2', 'C1']]);
+  });
+
+  it('counts what parts the cheaper service takes would save, and names a like-for-like one', async () => {
+    const elec = (sku: string, o: Partial<SupplierPart> = {}) => part(sku, { ...ext, mpn: 'RVT1H220M0605', package: 'SMD,D6.3xL5.4mm', ...o });
+    const comps: SourcedComponent[] = [res('R1', 'C1'), { refdes: 'C1', category: 'capacitor', params: { lcsc: 'C72505' }, mpn: 'RVT1H220M0605', pkg: 'SMD,D6.3xL5.4mm' }];
+    const found = (q: PartQuery) => (q.text === 'RVT1H220M0605' ? [elec('C72505', { services: ['Standard'] }), elec('C99')] : []);
+    const r = await checkCost(comps, catalogue([r10k('C1'), elec('C72505', { services: ['Standard'] })], found), { house: H, boards: 2, facts: () => facts({ handJoints: 0, handRefs: [] }) });
+    expect(r.service).toBe('Standard');
+    expect(r.estimates[0]!.unavailable).toBe('JLCPCB assembles C1 (C72505 RVT1H220M0605) in Standard assembly only');
+    const s = r.savings.find((x) => x.kind === 'service')!;
+    // Standard: $25.56 + $8.21 + 2 × $1.53; Economic: $8.18 + $1.53 + 1 × $3.07 (the joints the same)
+    expect(s).toMatchObject({ refs: ['C1'], from: 'C72505', saves: 24.05 });
+    expect(s.to?.sku).toBe('C99');
+    expect(s.what).toMatch(/^C1 C72505 RVT1H220M0605 \(C99 would do\): JLCPCB assembles it in Standard assembly only, so the order goes to Standard; with parts Economic assembly takes instead it can go to Economic \(\$\d+\.\d\d before any change in the parts' prices\)$/);
+    // none found: it says so
+    const none = await checkCost(comps, catalogue([r10k('C1'), elec('C72505', { services: ['Standard'] })], () => []), { house: H, boards: 2, facts: () => facts({ handJoints: 0, handRefs: [] }) });
+    const t = none.savings.find((x) => x.kind === 'service')!;
+    expect(t.to).toBeUndefined();
+    expect(t.what).toContain('no like-for-like part for C1: an equivalent part means reading its datasheet');
+  });
+
+  it('names a part only one service takes in the stock check, and prefers replacements every service takes', async () => {
+    const elec = (sku: string, o: Partial<SupplierPart> = {}) => part(sku, { mpn: 'RVT1H220M0605', package: 'SMD,D6.3xL5.4mm', ...o });
+    const comps: SourcedComponent[] = [{ refdes: 'C1', category: 'capacitor', params: { lcsc: 'C72505' }, mpn: 'RVT1H220M0605', pkg: 'SMD,D6.3xL5.4mm' }];
+    const src = catalogue([elec('C72505', { services: ['Standard'] })], () => [elec('C98', { services: ['Standard'] }), elec('C99', { ...ext })]);
+    const r = await checkStock(comps, src, { house: H, boards: 2 });
+    const l = r.lines[0]!;
+    expect(lineIssues(l)).toEqual(['in stock', 'Standard assembly only at JLCPCB: an order with it cannot go to Economic assembly, whatever that would cost']);
+    expect(l.replacements.map((p) => p.sku)).toEqual(['C99']);
+    const text = stockReportText(r, H);
+    expect(text).toContain('Look at (1):\n- C1 · C72505 RVT1H220M0605 (Basic, Standard only, stock 1,000,000): in stock; Standard assembly only at JLCPCB');
+  });
+
+  it('writes runs of designators short', () => {
+    expect(refsText(['D3', 'D4', 'D5', 'D7', 'C1', 'C2', 'J1'])).toBe('D3–D5, D7, C1, C2, J1');
   });
 
   it('writes the report for the agent', async () => {

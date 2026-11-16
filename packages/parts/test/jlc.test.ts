@@ -165,6 +165,9 @@ describe('jlcpcb.com', () => {
     });
     expect(fromJlcpcb(item({ componentLibraryType: 'expand', preferredComponentFlag: true }))).toMatchObject({ tier: 'Preferred', fee: false });
     expect(fromJlcpcb(item({ componentLibraryType: 'expand', stockCount: undefined }))).toMatchObject({ tier: 'Extended', fee: true, stock: null });
+    // "PCBA Type: Standard Only" on the part page; 0 is "Economic and Standard"
+    expect(fromJlcpcb(item({ componentProductType: 2 }))).toMatchObject({ services: ['Standard'] });
+    expect(fromJlcpcb(item({ componentProductType: 0 }))).not.toHaveProperty('services');
     // an IC with no losses and no minimum says neither
     expect(fromJlcpcb(item({ lossNumber: 0, leastPatchNumber: 0 }))).not.toHaveProperty('attrition');
     // a capacitor's rating goes by the name the checks read

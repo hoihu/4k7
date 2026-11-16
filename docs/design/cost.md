@@ -1,6 +1,7 @@
 # Cost: a guide for the agent making a design cheaper to make
 
-> Part of [sourcing.md](sourcing.md). Status: 2026-10-25; Eurocircuits and PCBWay 2026-10-25. Written to
+> Part of [sourcing.md](sourcing.md). Status: 2026-10-25; Eurocircuits and PCBWay 2026-10-25; parts
+> only one service takes 2026-11-16. Written to
 > the agent: this text is what it reads (`get_guide cost`) before it changes a design to make it cheaper. What
 > the user asks wins over it.
 
@@ -17,6 +18,10 @@ tool's house names another); this guide says how to use them.
   savings it found (each with a one-click way the user can take it), and the bare board's surcharges.
 - `sourcing values`: cheaper ways to make each resistor's and capacitor's value.
 - Note the total. You report before and after at the end.
+- Say which service the order goes to and why, with every service's total, not only the cheapest:
+  the user orders on the house's page, and an order that cannot take the cheap service costs the
+  dear one. Say too what the estimate leaves out (the bare boards above all, for a 4-layer or large
+  board easily as much again).
 
 ## 2. What costs money, the most first (small runs)
 
@@ -25,6 +30,13 @@ tool's house names another); this guide says how to use them.
    order); a house that has one service charges the second side (Eurocircuits €55). Moving the few
    parts on the bottom to the top is often the biggest saving of all (tens of dollars at JLCPCB).
    Only when the top has room, and the user did not put them there on purpose: ask.
+   Some parts only the dearer service takes (JLCPCB's "Standard only" parts: the stock check names
+   them, and the cost check says the cheaper service cannot take the order because of them). One
+   such part moves the whole order to Standard: about $50 more for a small order at JLCPCB (its
+   setup, stencil, and a loading fee for every part number). The cost check counts what parts the
+   cheaper service takes instead would save; find them (a like-for-like part, or an equivalent:
+   read its datasheet, and ask where it changes what the circuit does) or tell the user the order
+   is Standard and why.
 2. **Fees per unique part number.** At JLCPCB, Economic assembly charges a loading fee for every
    unique Extended part and Standard for every unique part. At Eurocircuits every part number costs
    a BOM line and a part fee (€5.78), an On Demand part €1.65 more than a Generic or eC-stock one.
