@@ -34,7 +34,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `get_schematic`: the schematic drawing: pages, blocks, where each symbol and net label stands.
 - `get_copper`: drawn tracks and vias with their ids, optionally by net or area.
 - `get_board`: board outline, part positions, routing stats and DRC results.
-- `get_current_map`: the routed copper against each net's current: per net ok, unverified or unknown, and the tracks and vias that do not carry it, worst first, with their fixes (see [layout](layout.md) §14).
+- `get_current_map`: the routed copper against each net's current: per net ok, unverified or unknown (and, with loads stated, the drop to the furthest load against 3 % of the rail), and the tracks and vias that do not carry it, worst first, with their fixes (see [layout](layout.md) §14).
 - `try_placements`: compare arrangements of the main parts without changing the design.
 - `suggest_moves`: small-part moves (turn, swap, shift) that close open connections, without applying them.
 - `get_enclosure`: the enclosure brief, script, board API and last render report.

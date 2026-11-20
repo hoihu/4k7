@@ -5,8 +5,8 @@
  * the net's copper graph). A power net without max_current is unknown, never fine. See
  * docs/design/layout.md §14.
  */
-import { COPPER_ORDER, padPins, trackCurrentFor, trackRiseFor, trackWidthFor, viaCurrentFor } from '@4k7/schema';
-import type { BoardPad, BoardPart, BoardRules, BoardView, CopperLayer, CurrentBasis, CurrentStatus, CurrentTrack, CurrentView, CurrentVias, Design, Diagnostic, EditOp, NetLoad, QueryOp, Track } from '@4k7/schema';
+import { COPPER_ORDER, IR_BUDGET, padPins, trackCurrentFor, trackRiseFor, trackWidthFor, viaCurrentFor } from '@4k7/schema';
+import type { BoardPad, BoardPart, BoardRules, BoardView, CopperLayer, CurrentBasis, CurrentStatus, CurrentTrack, CurrentView, CurrentVias, Design, Diagnostic, DropPiece, IrDrop, EditOp, NetLoad, QueryOp, Track } from '@4k7/schema';
 import { cardOf, isGroundNet, isPowerNet } from './doc.ts';
 import { powerSources } from './power.ts';
 import { idOf, pointSegDist, segmentsOf, segSegDist } from './geom.ts';
@@ -184,7 +184,7 @@ export function currentCheck(d: Design, b: BoardView): CurrentCheck {
       basis: split ? 'split' : 'bound',
       status,
       ...(worst > 0 ? { worst: r2(worst) } : {}),
-      ...(split ? { loads: r3(split.placed), ...(rest > 1e-9 ? { unplaced: r3(rest) } : {}), dropMv: r2(split.dropMv) } : {}),
+      ...(split ? { loads: r3(split.placed), ...(rest > 1e-9 ? { unplaced: r3(rest) } : {}), dropMv: r2(split.dropMv), ...(split.worst ? { irDrop: irDropOf(cu, split, n.attrs.voltage) } : {}) } : {}),
       ...(why ? { why } : {}),
     });
   }
@@ -192,6 +192,31 @@ export function currentCheck(d: Design, b: BoardView): CurrentCheck {
 }
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/** A split net's drop to its worst load against IR_BUDGET of the rail's voltage (the net's voltage attribute), with the pieces that drop the most on the way. */
+function irDropOf(cu: NetCopper, split: ReturnType<typeof solveSplit>, voltage: number | undefined): IrDrop {
+  const w = split.worst!;
+  const { part, pad } = cu.pads[w.pad]!;
+  const pieces: DropPiece[] = [
+    ...[...split.pathTracks].map(([ti, mv]): DropPiece => {
+      const t = cu.tracks[ti]!;
+      const id = idOf(t);
+      return { kind: 'track', index: cu.trackIndex[ti]!, ...(id ? { id } : {}), layer: t.layer, width: t.width, amps: r3(split.trackAmps[ti]!), dropMv: r2(mv), at: { x: r2(t.pts[0]!), y: r2(t.pts[1]!) } };
+    }),
+    ...[...split.pathVias].map(([vi, mv]): DropPiece => {
+      const v = cu.vias[vi]!;
+      const id = idOf(v);
+      return { kind: 'via', ...(id ? { id } : {}), drill: v.drill, amps: r3(split.viaAmps[vi]!), dropMv: r2(mv), at: { x: r2(v.x), y: r2(v.y) } };
+    }),
+  ].sort((a, b) => b.dropMv - a.dropMv);
+  const railV = voltage && voltage > 0 ? voltage : undefined;
+  return {
+    load: `${part.refdes}.${pad.number}`,
+    mv: r2(w.mv),
+    ...(railV ? { railV, budgetMv: r2(railV * IR_BUDGET * 1000), pct: r2(w.mv / (railV * 10)) } : {}),
+    worst: pieces.slice(0, 3),
+  };
+}
 
 /**
  * The loads stated on a net: set_net loads, and each pad with add_vias drop amps (its current
@@ -628,12 +653,12 @@ function solveSplit(b: BoardView, cu: NetCopper, copperUm: Partial<Record<Copper
   // the network on its roots, from the source
   const root = (i: number) => findRoot(i);
   const src = source.length && padItems[source[0]!]!.length ? root(padItems[source[0]!]![0]!) : -1;
-  const adj = new Map<number, { o: number; g: number }[]>();
+  const adj = new Map<number, { o: number; g: number; track?: number; via?: number }[]>();
   for (const e of edges) {
     const [x, y] = [root(e.a), root(e.b)];
     if (x === y) continue;
-    (adj.get(x) ?? adj.set(x, []).get(x)!).push({ o: y, g: e.g });
-    (adj.get(y) ?? adj.set(y, []).get(y)!).push({ o: x, g: e.g });
+    (adj.get(x) ?? adj.set(x, []).get(x)!).push({ o: y, g: e.g, track: e.track, via: e.via });
+    (adj.get(y) ?? adj.set(y, []).get(y)!).push({ o: x, g: e.g, track: e.track, via: e.via });
   }
   const reach = new Set<number>(src >= 0 ? [src] : []);
   const stack = [...reach];
@@ -703,8 +728,30 @@ function solveSplit(b: BoardView, cu: NetCopper, copperUm: Partial<Record<Copper
     const vs = pts.map((x) => volt(x.n));
     return (Math.max(...vs) - Math.min(...vs)) * 1000;
   });
-  const loadDrop = Math.max(0, ...loads.flatMap((l, li) => (reached[li] ? l.pads.filter((q) => padItems[q]!.length).map((q) => -volt(padItems[q]![0]!) * 1000) : [])));
-  return { placed, trackAmps, trackDrop, viaAmps, dropMv: loadDrop };
+  // the load pad furthest down, and the way its current comes: back from it towards the source,
+  // each step along the piece that brings it the most current (a tree: its only way)
+  let worst: { load: number; pad: number; mv: number } | undefined;
+  loads.forEach((l, li) => {
+    if (reached[li]) for (const q of l.pads) if (padItems[q]!.length && (!worst || -volt(padItems[q]![0]!) * 1000 > worst.mv)) worst = { load: li, pad: q, mv: -volt(padItems[q]![0]!) * 1000 };
+  });
+  const pathTracks = new Map<number, number>();
+  const pathVias = new Map<number, number>();
+  if (worst) {
+    const seen = new Set<number>();
+    for (let n = root(padItems[worst.pad]![0]!); n !== src && !seen.has(n); ) {
+      seen.add(n);
+      let best: { o: number; i: number; dv: number; track?: number; via?: number } | undefined;
+      for (const e of adj.get(n) ?? []) {
+        const dv = volt(e.o) - volt(n);
+        if (dv > 0 && (!best || e.g * dv > best.i)) best = { ...e, i: e.g * dv, dv };
+      }
+      if (!best) break;
+      if (best.track !== undefined) pathTracks.set(best.track, (pathTracks.get(best.track) ?? 0) + best.dv * 1000);
+      if (best.via !== undefined) pathVias.set(best.via, (pathVias.get(best.via) ?? 0) + best.dv * 1000);
+      n = best.o;
+    }
+  }
+  return { placed, trackAmps, trackDrop, viaAmps, dropMv: worst?.mv ?? 0, worst, pathTracks, pathVias };
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -807,7 +854,45 @@ export function currentDrc(b: BoardView, c: CurrentCheck): Diagnostic[] {
         fixHints: viaFix(b, v),
       });
     }
+    const ir = n.irDrop;
+    if (ir?.budgetMv !== undefined && ir.mv > ir.budgetMv) {
+      const at = ir.worst[0]?.at;
+      const pieces = ir.worst.map((p) => (p.kind === 'track' ? `${p.id ? `${p.id} ` : ''}${p.width} mm on ${p.layer} at (${p.at.x}, ${p.at.y}) drops ${fmt(p.dropMv)} mV at ${fmt(p.amps)} A` : `the via${p.id ? ` ${p.id}` : ''} (${p.drill} mm drill) at (${p.at.x}, ${p.at.y}) drops ${fmt(p.dropMv)} mV at ${fmt(p.amps)} A`));
+      const unplaced = n.unplaced ? ` Only the stated loads are counted (${fmt(n.loads ?? 0)} of ${fmt(amps)} A): the real drop can be higher.` : '';
+      out.push({
+        code: 'DRC.IR_DROP',
+        severity: ir.mv > 2 * ir.budgetMv ? 'error' : 'warning',
+        message: `${n.name} drops ${fmt(ir.mv)} mV (${fmt(ir.pct!)} % of ${ir.railV} V) from its source to ${ir.load}, over the budget of 3 % (${fmt(ir.budgetMv)} mV).${pieces.length ? ` The most on the way: ${pieces.join('; ')}.` : ''} Widen the path (edit_copper width_mm, or set_net track_mm and route again for router copper; add_vias kind tie where a via drops much), or shorten it.${unplaced} get_current_map lists the drop per piece.`,
+        ...(at ? { at } : {}),
+        entities: [`net:${n.name}`, ir.load, ...ir.worst.flatMap((p) => (p.id ? [p.id] : []))],
+        fixHints: irFix(b, n.netId, ir),
+      });
+    }
   }
+  return out;
+}
+
+/**
+ * DRC.IR_DROP's fix: the pieces that drop the most, widened (or tied with more vias) until the drop
+ * they shed brings the net under 90 % of its budget; each at most four times what it is.
+ */
+function irFix(b: BoardView, netId: string, ir: IrDrop): EditOp[] {
+  const net = b.netNames[netId] ?? netId;
+  let excess = ir.mv - 0.9 * ir.budgetMv!;
+  const out: EditOp[] = [];
+  let routerWidth = 0;
+  for (const p of ir.worst) {
+    if (excess <= 0 || p.dropMv <= 0) break;
+    const k = p.dropMv * 0.75 >= excess ? p.dropMv / (p.dropMv - excess) : 4;
+    excess -= p.dropMv * (1 - 1 / k);
+    if (p.kind === 'via') out.push({ op: 'add_vias', kind: 'tie', net, at: [{ x_mm: p.at.x, y_mm: p.at.y }], amps: r2(p.amps * k) });
+    else {
+      const width = Math.ceil(p.width * k * 20 - 1e-6) / 20;
+      if (p.id) out.push({ op: 'edit_copper', ids: [p.id], width_mm: width });
+      else routerWidth = Math.max(routerWidth, width);
+    }
+  }
+  if (routerWidth) out.push({ op: 'set_net', net, track_mm: routerWidth });
   return out;
 }
 
@@ -889,13 +974,25 @@ export function currentMapAnswer(d: Design, b: BoardView, q: Extract<QueryOp, { 
               ...(n.worst !== undefined ? { worst_ratio: n.worst } : {}),
               ...(n.loads !== undefined ? { loads_a: n.loads } : {}),
               ...(n.unplaced !== undefined ? { unplaced_a: n.unplaced, placed: `${fmt(n.loads ?? 0)} of ${fmt(n.amps!)} A placed: the rest may flow anywhere` } : {}),
-              ...(n.dropMv !== undefined ? { drop_mv: n.dropMv } : {}),
+              ...(n.irDrop
+                ? {
+                    ir_drop_mv: n.irDrop.mv,
+                    ir_load: n.irDrop.load,
+                    ...(n.irDrop.budgetMv !== undefined
+                      ? { ir_drop_pct: n.irDrop.pct, ir_budget_mv: n.irDrop.budgetMv, ir_status: n.irDrop.mv > n.irDrop.budgetMv ? 'over' : 'ok' }
+                      : { ir_budget: 'unknown', ir_why: `${n.name} has no voltage: set it (set_net voltage) to check the drop against 3 % of it` }),
+                    ...(n.irDrop.worst.length ? { ir_worst: n.irDrop.worst.map((p) => ({ kind: p.kind, ...(p.id ? { id: p.id } : {}), ...(p.kind === 'track' ? { layer: p.layer, width_mm: p.width } : { drill_mm: p.drill }), at: { x_mm: p.at.x, y_mm: p.at.y }, amps: p.amps, drop_mv: p.dropMv })) } : {}),
+                    ...(n.unplaced !== undefined ? { ir_note: 'only the stated loads are counted: the real drop can be higher' } : {}),
+                  }
+                : n.dropMv !== undefined
+                  ? { ir_drop_mv: n.dropMv }
+                  : {}),
               ...(n.fromRails ? { why: "no max_current of its own: the sum of the rails' max_current bounds it (each rail's current returns on it)" } : {}),
               ...(n.why ? { why: `loads stated but not split: ${n.why}` } : {}),
             },
       ),
     hotspots: spots.slice(0, q.worst ?? 20).map((s) => s.spot),
     ...(spots.length > (q.worst ?? 20) ? { more: spots.length - (q.worst ?? 20) } : {}),
-    note: "split: the current the net's stated loads (set_net loads, add_vias drop amps) draw through each piece, solved over the copper from where the current comes in (with what of max_current no load places added: it may flow anywhere); over = too small for that. bound: each track and each via group that is the only way between two layers is checked for all of the net's max_current (a branch that carries less shows as unverified, not over). drop_mv: the drop the stated loads cause (report only). A pour or plane counts as one piece of copper: its necks are not checked. Tracks inside their own pour and pieces up to 1 mm long are not counted.",
+    note: "split: the current the net's stated loads (set_net loads, add_vias drop amps) draw through each piece, solved over the copper from where the current comes in (with what of max_current no load places added: it may flow anywhere); over = too small for that. bound: each track and each via group that is the only way between two layers is checked for all of the net's max_current (a branch that carries less shows as unverified, not over). ir_drop_mv: the drop from the source to the load pin furthest down (ir_load) the stated loads cause, checked against 3 % of the net's voltage (ir_budget_mv, DRC.IR_DROP; unknown without set_net voltage); ir_worst: the pieces on that way that drop the most; drop_mv per piece. A pour or plane counts as one piece of copper: its necks are not checked, and it drops nothing. Tracks inside their own pour and pieces up to 1 mm long are not counted.",
   };
 }

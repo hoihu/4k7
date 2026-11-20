@@ -13,7 +13,7 @@
 import type { BoardView, Diagnostic } from '@4k7/schema';
 
 /** The findings that turn the heat map on by themselves while one is open. */
-export const CURRENT_CODES = ['DRC.CURRENT_UNVERIFIED', 'DRC.VIA_CURRENT', 'DRC.CURRENT_UNKNOWN', 'DRC.TRACK_CURRENT'];
+export const CURRENT_CODES = ['DRC.CURRENT_UNVERIFIED', 'DRC.VIA_CURRENT', 'DRC.CURRENT_UNKNOWN', 'DRC.TRACK_CURRENT', 'DRC.IR_DROP'];
 
 /** The scale: estimated heating as a share of the allowed rise, cool to hot. */
 export const HEAT = [
