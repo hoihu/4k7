@@ -1045,6 +1045,79 @@ export interface UnroutedConnection extends RouteBlockage {
   near: string[];
 }
 
+/**
+ * The routed copper against its nets' current (kernel current.ts, docs/design/layout.md §14): what
+ * the DRC checks, get_current_map lists and the layout view's heat map draws, worked out once per
+ * routed board. `bound`: the net's whole max_current is assumed in each piece (a branch may carry
+ * less); `unknown`: a power net without max_current, never fine.
+ */
+export type CurrentBasis = 'bound' | 'unknown';
+export type CurrentStatus = 'ok' | 'unverified' | 'unknown';
+
+export interface CurrentTrack {
+  netId: string;
+  /** Index into BoardView.tracks. */
+  index: number;
+  /** Drawn copper: the track's id. */
+  id?: string;
+  layer: CopperLayer;
+  width: number;
+  length: number;
+  copperUm: number;
+  amps: number;
+  basis: CurrentBasis;
+  capacity: number;
+  ratio: number;
+  /** Its estimated heating (°C) at `amps`. */
+  rise: number;
+  /** The width that carries `amps` on its layer. */
+  needs: number;
+  at: { x: number; y: number };
+  /** The pads its ends lie on. */
+  from?: string;
+  to?: string;
+}
+
+export interface CurrentVias {
+  netId: string;
+  at: { x: number; y: number };
+  vias: number;
+  drill: number;
+  /** Drawn copper: the vias' ids. */
+  ids: string[];
+  /** The layers whose copper they join. */
+  layers: CopperLayer[];
+  amps: number;
+  basis: CurrentBasis;
+  capacity: number;
+  ratio: number;
+  /** Vias of that drill that carry `amps`. */
+  needs: number;
+}
+
+export interface CurrentNet {
+  netId: string;
+  name: string;
+  amps?: number;
+  basis: CurrentBasis;
+  status: CurrentStatus;
+  /** The worst ratio of current to capacity among the copper checked. */
+  worst?: number;
+}
+
+export interface CurrentView {
+  /** The allowed heating (set_board current_rise_c, °C): the capacities and the heat map's colours are relative to it. */
+  riseC: number;
+  /** Each copper layer's thickness (µm) from the stack-up. */
+  copperUm: Partial<Record<CopperLayer, number>>;
+  /** Every net with a max_current and copper, and every power net with copper but none (unknown). */
+  nets: CurrentNet[];
+  /** Every track counted of a net with a current (not those inside the net's own pour, nor pieces up to 1 mm). */
+  tracks: CurrentTrack[];
+  /** The via groups that are the only way across between two layers' copper (cuts), of a net with a current. */
+  vias: CurrentVias[];
+}
+
 export interface BoardView {
   outline: { w: number; h: number };
   layers: CopperLayer[];
@@ -1112,6 +1185,8 @@ export interface BoardView {
   graphics: BoardGraphic[];
   /** The fabrication panel, resolved for this outline (absent: none set). */
   panel?: PanelView;
+  /** The copper against its nets' current, once routed (the current check: DRC, get_current_map, the heat map). */
+  current?: CurrentView;
 }
 
 /** How get_board says where a part is plugged from (top view). */

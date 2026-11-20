@@ -172,3 +172,68 @@ describe('routed copper', () => {
     expect(find(b, 'DRC.CURRENT_UNVERIFIED').some((x) => x.entities.includes('net:+3V3'))).toBe(true);
   });
 });
+
+describe('BoardView.current (what the heat map draws)', () => {
+  type Spot = { kind: string; net: string; ratio: number; rise_c?: number; width_mm?: number; basis: string; vias?: number };
+  const spots = (k: Kernel) => (k.query({ op: 'get_current_map', include_ok: true, worst: 200 }) as { hotspots: Spot[] }).hotspots;
+
+  it('carries the same numbers per track and via group as get_current_map', () => {
+    const k = drawnBuck([
+      { op: 'set_plane', layer: 'B.Cu', net: '+3V3' },
+      { op: 'set_plane', layer: 'F.Cu', net: '+3V3', rect: { x_mm: 15.2, y_mm: 0.6, width_mm: 8.2, height_mm: 4.6 } },
+      { op: 'draw_via', at: [21.8, 3], net: '+3V3' },
+      { op: 'draw_via', at: [21.8, 12.9], net: '+3V3' },
+      { op: 'draw_track', from: 'C2.1', to: [21.8, 12.9], width_mm: 0.25 },
+      { op: 'draw_via', at: [15, 17.6], net: '+3V3' },
+      { op: 'draw_track', from: 'R1.1', to: [15, 17.6], width_mm: 0.5 },
+    ]);
+    const b = k.board();
+    const c = b.current!;
+    expect(c.riseC).toBe(10);
+    expect(c.tracks.length).toBeGreaterThan(0);
+    expect(c.vias.length).toBe(1);
+    const map = spots(k);
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    const r1 = (v: number) => Math.round(v * 10) / 10;
+    for (const t of c.tracks) {
+      // the index points at the track it describes
+      expect(b.tracks[t.index]!.netId).toBe(t.netId);
+      expect(b.tracks[t.index]!.width).toBe(t.width);
+      expect(t.basis).toBe('bound');
+      expect(map.some((s) => s.kind === 'track' && s.width_mm === t.width && s.ratio === r2(t.ratio) && s.rise_c === r1(t.rise) && s.basis === t.basis)).toBe(true);
+    }
+    const [v] = c.vias;
+    expect(map.find((s) => s.kind === 'via_group')).toMatchObject({ ratio: r2(v!.ratio), vias: v!.vias, basis: 'bound' });
+  });
+
+  it('a power net without max_current carries basis unknown', () => {
+    const k = drawnBuck([{ op: 'draw_track', from: 'J1.1', to: 'C1.1', width_mm: 2 }]);
+    const n = k.board().current!.nets.find((x) => x.name === '+12V');
+    expect(n).toMatchObject({ basis: 'unknown', status: 'unknown' });
+    expect(n!.amps).toBeUndefined();
+  });
+
+  it('follows max_current and current_rise_c on the copper as it is (no routing again)', () => {
+    const k = drawnBuck([{ op: 'draw_track', from: 'L1.2', to: 'C2.1', width_mm: 0.5 }]);
+    const copper = k.draftDesign().board!.routed;
+    const at = (b: BoardView) => b.current!.tracks.find((t) => b.netNames[t.netId] === '+3V3')!;
+    const before = at(k.board());
+    expect(before.amps).toBe(2);
+    ok(k, [{ op: 'set_net', net: '+3V3', max_current: 1 }]);
+    const lower = at(k.board());
+    expect(lower.amps).toBe(1);
+    expect(lower.rise).toBeLessThan(before.rise);
+    ok(k, [{ op: 'set_board', current_rise_c: 20 }]);
+    const relaxed = k.board();
+    expect(relaxed.current!.riseC).toBe(20);
+    expect(at(relaxed).ratio).toBeLessThan(lower.ratio);
+    expect(at(relaxed).rise).toBeCloseTo(lower.rise, 9);
+    expect(k.draftDesign().board!.routed).toBe(copper);
+  });
+
+  it('is absent until the board is routed', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    expect(k.board().current).toBeUndefined();
+  });
+});

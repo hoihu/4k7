@@ -157,6 +157,10 @@ export const BoardImageInput = z.object({
     .tuple([z.number(), z.number(), z.number(), z.number()])
     .optional()
     .describe('Zoom into x0, y0, x1, y1 in mm (board coordinates, top left 0, 0), e.g. around an unrouted connection'),
+  overlay: z
+    .enum(['current', 'none'])
+    .optional()
+    .describe("current: the current heat map on for this picture (power copper coloured by its heating at the net's max_current, dashed where not known; it is on by itself while a current finding is open); none: off for this picture. Default: as the layout view shows it"),
   width: z.number().int().min(400).max(2400).default(1400),
 });
 
@@ -394,7 +398,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
       description:
         'PNG rendering of the board (2D top view of the working copy: copper of every layer, pads, silkscreen, and the ratsnest of ' +
         'connections not routed yet). The whole board, the area the user zoomed into, or a region in mm. Routing a big board takes a while; ' +
-        'the picture waits for it.',
+        'the picture waits for it. With overlay current (on by itself while a current finding is open), the current heat map.',
       input_schema: schemaOf(BoardImageInput),
     },
     {

@@ -12,13 +12,13 @@ function buck() {
   return k;
 }
 
-/** The route step (the last one), then the board. */
 /**
  * The current check's findings: the router joins a pad to its plane with one via and runs supplies
  * at the power width, sizing nothing for a net's current (that is the agent's: current.test.ts).
  */
 const CURRENT = ['DRC.CURRENT_UNVERIFIED', 'DRC.VIA_CURRENT', 'DRC.CURRENT_UNKNOWN'];
 
+/** The route step (the last one), then the board. */
 function routed(k: Kernel) {
   k.transact({ summary: 'route', ops: [{ op: 'route' }] });
   return k.board();

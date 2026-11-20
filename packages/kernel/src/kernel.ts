@@ -493,7 +493,7 @@ export class Kernel {
         };
         // how its copper on the board carries that current (get_current_map has the pieces)
         const routedNow = this.routedNow(d);
-        const checked = routedNow ? currentCheck(d, routedNow).nets.find((x) => x.netId === n.id) : undefined;
+        const checked = routedNow ? (routedNow.current ?? currentCheck(d, routedNow)).nets.find((x) => x.netId === n.id) : undefined;
         const current = {
           status: !amps ? 'unknown' : !routedNow ? 'not checked: not routed yet' : (checked?.status ?? 'no copper yet'),
           ...(checked?.worst !== undefined ? { worst_ratio: checked.worst } : {}),
