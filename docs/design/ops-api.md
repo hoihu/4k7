@@ -120,12 +120,12 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 
 - `route`: router copper for the board as placed, or for given nets.
 - `set_copper_mode`: who lays the copper: the router, or you (drawn mode).
-- `draw_track`: draw one track of one net on one layer.
+- `draw_track`: draw one track of one net on one layer; with router copper, lay one connection pad to pad through given points, laid first on every route.
 - `draw_pair`: draw a differential pair along a centre line.
 - `draw_via`: a through via of one net at a spot.
 - `edit_copper`: change drawn tracks and vias in place, keeping their ids.
 - `tune_length`: add a meander to a drawn track to reach a length or match other nets.
-- `erase_copper`: take tracks and vias away.
+- `erase_copper`: take tracks and vias away, or the connections you laid for the router.
 - `set_plane`: a net's copper plane on a layer, whole or in an area.
 - `set_plane_style`: a plane's gaps, clearance, edge pull-back and thermal reliefs.
 - `add_vias`: thermal, stitching, fence or placed vias of one net.

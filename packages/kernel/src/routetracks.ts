@@ -159,16 +159,25 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
    * Turn a path into tracks and vias, reserve its copper; returns the cells the copper covers.
    * The path is laid in runs, one per layer and width: a neck (routesearch.ts) is a run of its own,
    * meeting the wider run beside it on that run's last grid point (the narrow track fits wherever
-   * the wide one does).
+   * the wide one does). `pins`: grid points the track must turn at as they are (the points of a
+   * connection the agent laid): a run ends there and the next begins, so the straightening cannot
+   * cut them, and the runs are one track again afterwards. `own`: the width the track should have
+   * where it fits (else the net's set width; see widened).
    */
-  const commit = (netId: string, net: number, k: number, path: number[], startPad: number, endPad: number, endVia = false): number[] => {
-    const runs: { l: number; k: number; cells: number[] }[] = [];
+  const commit = (netId: string, net: number, k: number, path: number[], startPad: number, endPad: number, endVia = false, pins?: Set<number>, own = input.netWidths?.[netId]): number[] => {
+    // joinsNext: the run goes on, on its layer and at its width, in the next one (split at a pin)
+    const runs: { l: number; k: number; cells: number[]; joinsNext?: boolean }[] = [];
     for (const s of path) {
       const l = Math.floor(s / N);
       const ks = classAt(net, k, s);
       const run = runs.at(-1);
       if (!run || run.l !== l || run.k !== ks) runs.push({ l, k: ks, cells: [s % N] });
-      else run.cells.push(s % N);
+      else if (pins?.has(s % N) && run.cells.length > 1) {
+        // (the pin ends this run and begins the next)
+        run.cells.push(s % N);
+        run.joinsNext = true;
+        runs.push({ l, k: ks, cells: [s % N] });
+      } else run.cells.push(s % N);
     }
     // a short stretch at the full width between two necks on one layer: narrow too (no stubs of
     // wide track a few grid steps long)
@@ -176,6 +185,7 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
       const [a, b, c] = [runs[ri - 1]!, runs[ri]!, runs[ri + 1]!];
       if (b.k === k && a.k !== k && a.k === c.k && a.l === b.l && c.l === b.l && b.cells.length < NECK_MIN) {
         a.cells.push(...b.cells, ...c.cells);
+        a.joinsNext = c.joinsNext;
         runs.splice(ri, 2);
         ri--;
       }
@@ -183,7 +193,7 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
     // runs of one layer meet: the narrower one goes on to the wider one's grid point beside it
     for (let ri = 1; ri < runs.length; ri++) {
       const [a, b] = [runs[ri - 1]!, runs[ri]!];
-      if (a.l !== b.l) continue;
+      if (a.l !== b.l || a.joinsNext) continue; // (runs split at a pin already share it)
       if (widths[b.k]! < widths[a.k]!) b.cells.unshift(a.cells.at(-1)!);
       else a.cells.push(b.cells[0]!);
     }
@@ -232,8 +242,17 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
       const pts = verts.flatMap((c) => [(c % W) * G, Math.floor(c / W) * G]);
       if (ri > 0 && runs[ri - 1]!.l !== run.l) addVia(netId, net, pts[0]!, pts[1]!);
       // (ends meeting the run before or after on this layer: those stay where they are)
-      return { l: run.l, width: widths[run.k]!, pts, joinsBefore: ri > 0 && runs[ri - 1]!.l === run.l, joinsAfter: ri + 1 < runs.length && runs[ri + 1]!.l === run.l };
+      return { l: run.l, width: widths[run.k]!, pts, joinsNext: !!run.joinsNext, joinsBefore: ri > 0 && runs[ri - 1]!.l === run.l, joinsAfter: ri + 1 < runs.length && runs[ri + 1]!.l === run.l };
     });
+    // runs split at a pin are one track again (the pin a corner of it)
+    for (let li = lines.length - 2; li >= 0; li--) {
+      const [a, b] = [lines[li]!, lines[li + 1]!];
+      if (!a.joinsNext) continue;
+      a.pts = [...a.pts, ...b.pts.slice(2)];
+      a.joinsNext = b.joinsNext;
+      a.joinsAfter = b.joinsAfter;
+      lines.splice(li + 1, 1);
+    }
     /** pts adjusted at one end, unless that moved an end where the line meets the next run on its layer. */
     const keepJoins = (line: (typeof lines)[number], pts: number[]) => {
       const same = (q: number, r: number) => Math.abs(pts[q]! - line.pts[r]!) < 1e-9 && Math.abs(pts[q + 1]! - line.pts[r + 1]!) < 1e-9;
@@ -268,10 +287,9 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
     if (startPad < 0 && first && !(lines.length === 1 && endVia)) first.pts = keepJoins(first, reversePts(joinTrack(reversePts(simplify(first.pts)), first.l, net, first.width)));
     if (endPad < 0 && !endVia) last.pts = keepJoins(last, joinTrack(simplify(last.pts), last.l, net, last.width));
     for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, line.width);
-    // a net whose width is set, routed narrower all along for a pad too small for it (its width
-    // with necks found no way, see routeConn): narrow only where it goes into that pad, the full
-    // width elsewhere where that keeps its clearance
-    const own = input.netWidths?.[netId];
+    // a net whose width is set (or a laid connection's asked width, `own`), routed narrower all
+    // along for a pad too small for it (its width with necks found no way, see routeConn): narrow
+    // only where it goes into that pad, the full width elsewhere where that keeps its clearance
     const width = widths[k]!;
     const laid: { l: number; pts: number[]; width: number }[] = [];
     lines.forEach((line, li) => {
