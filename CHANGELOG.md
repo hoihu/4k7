@@ -13,6 +13,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 - **Parts that only JLCPCB's Standard assembly takes are named.** JLCPCB marks some parts "Standard only" (WS2812-type LEDs, some electrolytic capacitors), and one such part sends the whole order to Standard: a higher setup and stencil fee, and a loading fee for every part number, not only the Extended ones. The cost check used to price these orders at the cheaper Economic service anyway: a 2-board order estimated at $80 was billed $133. Now Economic says it cannot take the order and names the parts. The stock check tags them "Standard only" and prefers replacements that Economic takes. The cost check says what replacing them would save and names a like-for-like part where it finds one.
 
+### Fixes
+
+- **Renaming a project to the same name in other case keeps the name.** On macOS and Windows, renaming project "lamp" to "Lamp" made it "Lamp 2", as if another project already had the name. It now becomes "Lamp". A project whose name really is taken still gets a number.
+
 ## 0.6.1 — 2026-11-06
 
 If you ordered boards with a USB-C connector, or any part whose pins sit in slotted holes, inside a plane of another net: a plane could short such a pin to itself, and 0.6.0 still did. The production files are now read back and checked against the design on every export, so a fault that only the files have is caught before you order.
