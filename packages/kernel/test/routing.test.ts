@@ -318,6 +318,27 @@ describe('copper the agent locked (lock_copper)', () => {
     expect(r.tracks.some((t) => t.locked)).toBe(false);
   });
 
+  it('a locked net routed first and kept to another layer keeps its locked copper as it lies; the hints steer only what is routed', () => {
+    const b = first();
+    expect(b.tracks.every((t) => t.layer === 'F.Cu')).toBe(true);
+    // B locked on F.Cu, asked to keep to B.Cu and be routed first; A is routed round it on B.Cu
+    const parts = [part('P1', [[0.5, 5, 'A']]), part('P2', [[19.5, 5, 'A']]), ...bOnly];
+    for (const p of parts) Object.assign(p.pads[0]!, { layers: ['F.Cu', 'B.Cu'], drill: 0.6 });
+    const steer = { routeFirst: new Set(['B']), netLayers: { B: 'B.Cu' as CopperLayer } };
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts, powerNets: new Set(), locked: { tracks: b.tracks, vias: [] }, ...steer });
+    expect(r.tracks.filter((t) => t.netId === 'B')).toEqual(b.tracks.map((t) => ({ ...t, locked: true })));
+    expect(r.vias.filter((v) => v.netId === 'B')).toEqual([]);
+    expect(r.locked).toEqual([{ netId: 'B', tracks: b.tracks.length, vias: 0, heldTracks: b.tracks.length, heldVias: 0 }]);
+    expect(r.failed).toEqual([]);
+    // what is not locked still follows the hint: with a part moved off it, B is routed again on B.Cu
+    const moved = [parts[0]!, parts[1]!, parts[2]!, part('Q2', [[14, 9, 'B']])];
+    Object.assign(moved[3]!.pads[0]!, { layers: ['F.Cu', 'B.Cu'], drill: 0.6 });
+    const s = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts: moved, powerNets: new Set(), locked: { tracks: b.tracks, vias: [] }, ...steer });
+    expect(s.locked![0]!.heldTracks).toBe(0);
+    expect(s.failed).toEqual([]);
+    expect(s.tracks.filter((t) => t.netId === 'B').every((t) => !t.locked && t.layer === 'B.Cu')).toBe(true);
+  });
+
   it('a connection the agent laid is not closed off either: its net is named in the way', () => {
     const parts = [part('P1', [[0.5, 5, 'A']]), part('P2', [[19.5, 5, 'A']]), ...bOnly];
     const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts, powerNets: new Set(), laid: [{ id: 't1', netId: 'B', from: 2, to: 3, points: [] }] });

@@ -390,6 +390,10 @@ keeping copper out of an area, is the keep-outs of §13: the router keeps a net 
 kept to a layer out of them like any other (a net kept to a layer a keep-out closes routes on
 another).
 
+Locked copper (§5.9) wins: a locked net routed first or kept to a layer keeps its locked copper
+as it lies, on the layers it lies on; the two steer only what the router lays for it (the
+connections a broken piece no longer makes, the net once unlocked).
+
 ## 6. What the agent cannot do yet
 
 - Route one net first (§7 step 6).
