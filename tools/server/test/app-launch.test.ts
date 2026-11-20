@@ -104,8 +104,7 @@ describe('the command for Claude Code', () => {
 describe('idle exit', () => {
   it('tells when the first tab connects and when the last one leaves', async () => {
     const events: boolean[] = [];
-    const base = 20000 + Math.floor(Math.random() * 20000);
-    const server = new LocalServer({ accessKey: '0cd22f19-30de-4d39-9287-ab0123456789', ports: [base], devPorts: [5173], onTab: (c) => events.push(c) });
+    const server = new LocalServer({ accessKey: '0cd22f19-30de-4d39-9287-ab0123456789', ports: [0], devPorts: [5173], onTab: (c) => events.push(c) });
     const port = await server.start();
     cleanups.push(() => server.stop());
     const { default: WebSocket } = await import('ws');
@@ -153,7 +152,7 @@ describe('4k7pcb app', () => {
 
     // a server that answers with another key (one run from source, say): its page would refuse this key's link, so it does not count
     const accessKey = '11111111-2222-4333-8444-555555555555';
-    const foreign = new LocalServer({ accessKey, ports: [20000 + Math.floor(Math.random() * 20000)] });
+    const foreign = new LocalServer({ accessKey, ports: [0] });
     const foreignPort = await foreign.start();
     cleanups.push(() => foreign.stop());
     const foreignStorage = storageHandler({ accessKey, projectsDir: join(stub, 'foreign'), dataDir: join(stub, 'foreign'), allowedOrigin: () => true });

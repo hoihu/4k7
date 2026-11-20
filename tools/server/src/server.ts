@@ -10,6 +10,7 @@
  * from the app's address before anything is forwarded.
  */
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { secretsMatch } from './mcp.ts';
 import {
@@ -91,11 +92,11 @@ export class LocalServer {
     for (const port of ports) {
       try {
         this.#http = await listen(port, this.#opts.host ?? '127.0.0.1', (req, res) => this.#onHttp(req, res));
-        this.port = port;
+        this.port = (this.#http.address() as AddressInfo).port; // differs from `port` only for 0: any free one
         this.#wss = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
         this.#wss.on('connection', (ws, req) => this.#onConnection(ws, req));
         this.#http.on('upgrade', (req, socket, head) => this.#wss!.handleUpgrade(req, socket, head, (ws) => this.#wss!.emit('connection', ws, req)));
-        return port;
+        return this.port;
       } catch (e) {
         // taken, or on Windows in a range the system keeps for itself (Hyper-V and WSL reserve whole ranges)
         if (!['EADDRINUSE', 'EACCES'].includes((e as NodeJS.ErrnoException).code ?? '')) throw e;
