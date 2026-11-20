@@ -42,7 +42,7 @@ erDiagram
 |---|---|
 | `Component` | id, refdes, part_card (hash), params (value, tolerance, voltage, dnp…), sheet, variant flags |
 | `Pin` | component, part pin id, electrical type (in/out/bidir/pwr_in/pwr_out/passive/oc/nc), net |
-| `Net` | id, name, net_class, attributes (voltage, max_current, frequency, is_diff_pair_of) |
+| `Net` | id, name, net_class, attributes (voltage, max_current, loads, frequency, is_diff_pair_of). `NetAttrs.loads` (`set_net loads`): what its pins draw, `{ componentId, pins (numbers on the net), amps }`; a load whose part or pin left the net is ignored, not removed |
 | `NetClass` | width, clearance, via, impedance target, diff-pair gap, max length |
 | `Sheet` | functional block (e.g. "Power 3V3"), ports, child sheet instances |
 
@@ -73,7 +73,12 @@ erDiagram
 - `Rule`: design rules and fab-profile limits, scoped by net class, layer or area. The first slice keeps them apart: `board.rules` (what the board is routed with, plus `currentRise`: how much copper may heat with its current, which only the current check reads, [layout](layout.md) §14) and `board.fab` (the manufacturer's limits, [fab-rules](fab-rules.md)).
 - `BoardView.current` (`CurrentView`): the routed copper against its nets' current, worked out with
   the DRC and never stored; the findings, `get_current_map` and the layout view's heat map read it
-  ([layout](layout.md) §14).
+  ([layout](layout.md) §14). Per net: `basis` (`split`, `bound`, `unknown`), `status` (`ok`, `over`,
+  `unverified`, `unknown`), `amps` (max_current, or GND's from its rails with `fromRails`), and for a
+  split `loads` (A reached), `unplaced` (A of max_current no load places), `dropMv` (worst source to
+  load), else `why` the loads were not split. Per track and via group: `amps`, `basis`, `status`,
+  `split` (its share alone when there is an unplaced rest); tracks `dropMv`, via groups `shared`
+  (not the only way across).
 - `Diagnostic`: produced, never stored as truth. It has a code, severity, entities and a
   suggested fix. It is shown in the UI and sent to the agent.
 - `Waiver`: diagnostic code + entity set + reason + who approved it. Stored and reviewed.

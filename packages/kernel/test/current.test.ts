@@ -237,3 +237,173 @@ describe('BoardView.current (what the heat map draws)', () => {
     expect(k.board().current).toBeUndefined();
   });
 });
+
+describe('loads and the split (set_net loads)', () => {
+  type Track = { kind: string; net: string; id?: string; width_mm: number; length_mm: number; copper_um: number; amps: number; basis: string; status: string; ratio: number; drop_mv?: number; code?: string; fix?: unknown[] };
+  type NetRow = { net: string; basis: string; status: string; max_current_a?: number; loads_a?: number; unplaced_a?: number; drop_mv?: number; why?: string };
+  const map = (k: Kernel) => k.query({ op: 'get_current_map', include_ok: true, worst: 200 }) as { nets: NetRow[]; hotspots: Track[] };
+  const track = (k: Kernel, id: string) => map(k).hotspots.find((h) => h.kind === 'track' && h.id === id)!;
+  const net = (k: Kernel, name = '+3V3') => map(k).nets.find((n) => n.net === name)!;
+  // L1.2 (where +3V3 comes in: the inductor from SW) at (17.8, 3.6), C2.1 at (20.1, 12.9), R1.1 at (15, 16.2)
+  const mainAndStub = (more: unknown[] = []) =>
+    drawnBuck([
+      { op: 'draw_track', from: 'L1.2', to: 'C2.1', width_mm: 1 },
+      { op: 'draw_track', from: 'C2.1', to: 'R1.1', width_mm: 0.25 },
+      ...more,
+    ]);
+
+  it('a stub to a part that draws little passes once the loads are stated (split); without loads it stays unverified', () => {
+    const bare = mainAndStub();
+    expect(find(bare.board(), 'DRC.CURRENT_UNVERIFIED')).toHaveLength(1);
+    expect(track(bare, 't2')).toMatchObject({ basis: 'bound', status: 'unverified' });
+    const k = mainAndStub([{ op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 1.8 }, { pin: 'R1.1', amps: 0.001 }] }]);
+    const b = k.board();
+    expect(find(b, 'DRC.CURRENT_UNVERIFIED')).toEqual([]);
+    expect(find(b, 'DRC.TRACK_CURRENT')).toEqual([]);
+    expect(track(k, 't2')).toMatchObject({ basis: 'split', status: 'ok' });
+    expect(track(k, 't1')).toMatchObject({ basis: 'split', status: 'ok' });
+    expect(net(k)).toMatchObject({ basis: 'split', status: 'ok', loads_a: 1.801 });
+  });
+
+  it('a track too narrow for its split current: DRC.TRACK_CURRENT, a warning to twice its capacity, an error over; the hinted width clears it', () => {
+    const at = (w: number) => drawnBuck([{ op: 'draw_track', from: 'L1.2', to: 'C2.1', width_mm: w }, { op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 2 }] }]);
+    const warn = at(0.5);
+    const [w] = find(warn.board(), 'DRC.TRACK_CURRENT');
+    expect(w?.severity).toBe('warning');
+    expect(find(warn.board(), 'DRC.CURRENT_UNVERIFIED')).toEqual([]);
+    const k = at(0.25);
+    const [f] = find(k.board(), 'DRC.TRACK_CURRENT');
+    expect(f).toBeDefined();
+    expect(f!.severity).toBe('error');
+    expect(f!.message).toMatch(/\+3V3/);
+    expect(f!.message).toMatch(/0\.25 mm/);
+    expect(f!.message).toMatch(/F\.Cu/);
+    expect(f!.message).toMatch(/35 µm/);
+    expect(f!.message).toMatch(/2 A/);
+    expect(f!.message).toMatch(/0\.8 mm/);
+    expect(f!.message).toMatch(/°C/);
+    expect(f!.entities).toContain('t1');
+    expect(f!.fixHints?.[0]).toMatchObject({ op: 'edit_copper', ids: ['t1'], width_mm: 0.8 });
+    expect(track(k, 't1')).toMatchObject({ basis: 'split', status: 'over', code: 'DRC.TRACK_CURRENT' });
+    expect(net(k)).toMatchObject({ basis: 'split', status: 'over' });
+    ok(k, [f!.fixHints![0]!]);
+    expect(find(k.board(), 'DRC.TRACK_CURRENT')).toEqual([]);
+  });
+
+  it('a tree: each branch carries its own load, the trunk the sum', () => {
+    const k = drawnBuck([
+      { op: 'draw_track', from: 'L1.2', to: [17.8, 14], width_mm: 1 },
+      { op: 'draw_track', net: '+3V3', from: [17.8, 14], to: 'C2.1', width_mm: 0.6 },
+      { op: 'draw_track', net: '+3V3', from: [17.8, 14], to: 'R1.1', via: [[17.8, 17.2]], width_mm: 0.4 },
+      { op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 1.2 }, { pin: 'R1.1', amps: 0.8 }] },
+    ]);
+    expect(track(k, 't1').amps).toBeCloseTo(2, 6);
+    expect(track(k, 't2').amps).toBeCloseTo(1.2, 6);
+    expect(track(k, 't3').amps).toBeCloseTo(0.8, 6);
+    expect(track(k, 't3')).toMatchObject({ basis: 'split', status: 'ok' });
+  });
+
+  it('a loop: two tracks side by side split the current by conductance, the wider carrying more', () => {
+    const k = drawnBuck([
+      { op: 'draw_track', from: 'L1.2', to: 'C2.1', width_mm: 1 },
+      { op: 'draw_track', from: 'L1.2', to: 'C2.1', via: [[22.5, 3.6], [22.5, 12.9]], width_mm: 0.5 },
+      { op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 2 }] },
+    ]);
+    const [a, b] = [track(k, 't1'), track(k, 't2')];
+    expect(a.amps + b.amps).toBeCloseTo(2, 6);
+    // conductance w / L each (the same copper)
+    const ga = 1 / a.length_mm;
+    const gb = 0.5 / b.length_mm;
+    expect(a.amps).toBeCloseTo((2 * ga) / (ga + gb), 2);
+    expect(a.amps).toBeGreaterThan(b.amps);
+  });
+
+  it('add_vias drop amps on a pad states its load; naming it in loads as well does not count it twice', () => {
+    const drop = { op: 'add_vias', kind: 'drop', ref: 'C2', pad: '1', at: [{ x_mm: 22.1, y_mm: 12.9 }], amps: 1.8 };
+    const k = mainAndStub([drop, { op: 'set_net', net: '+3V3', loads: [{ pin: 'R1.1', amps: 0.001 }] }]);
+    expect(net(k).loads_a).toBeCloseTo(1.801, 6);
+    expect(track(k, 't1').amps).toBeCloseTo(1.801 + 0.199, 6);
+    const both = mainAndStub([drop, { op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 1.5 }, { pin: 'R1.1', amps: 0.001 }] }]);
+    // the explicit load wins
+    expect(net(both).loads_a).toBeCloseTo(1.501, 6);
+  });
+
+  it('two sources and no ratio: the net falls back to bound', () => {
+    const k = mainAndStub([
+      { op: 'add_part', part: 'generic:L', refdes: 'L2', params: { inductance: '10uH', current: '3.2A', package: 'IND-4x4' } },
+      { op: 'connect', pins: ['L2.1'], net: 'SW' },
+      { op: 'connect', pins: ['L2.2'], net: '+3V3' },
+      { op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 1.8 }, { pin: 'R1.1', amps: 0.001 }] },
+    ]);
+    expect(net(k)).toMatchObject({ basis: 'bound' });
+    expect(net(k).why).toMatch(/source/);
+    expect(track(k, 't2')).toMatchObject({ basis: 'bound', status: 'unverified' });
+    expect(find(k.board(), 'DRC.CURRENT_UNVERIFIED')).toHaveLength(1);
+  });
+
+  it('loads that place less than max_current: the rest is reported, and copper the rest could flow through is not ok', () => {
+    const k = mainAndStub([{ op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 0.5 }] }]);
+    expect(net(k)).toMatchObject({ basis: 'split', loads_a: 0.5, unplaced_a: 1.5, max_current_a: 2 });
+    expect(net(k).status).not.toBe('ok');
+    // the stub draws nothing of the stated loads, but 1.5 A may still flow there
+    expect(track(k, 't2')).toMatchObject({ basis: 'split', status: 'unverified' });
+    expect(find(k.board(), 'DRC.CURRENT_UNVERIFIED')).toHaveLength(1);
+    expect(find(k.board(), 'DRC.TRACK_CURRENT')).toEqual([]);
+  });
+
+  it('set_net loads is checked: an unknown pin, a pin on another net and amps ≤ 0 are refused; null clears', () => {
+    const k = mainAndStub();
+    const no = (loads: unknown) => k.transact({ summary: 'x', ops: [{ op: 'set_net', net: '+3V3', loads }] }).status;
+    expect(no([{ pin: 'U9.1', amps: 1 }])).not.toBe('ok');
+    expect(no([{ pin: 'C2.2', amps: 1 }])).not.toBe('ok');
+    expect(no([{ pin: 'C2.1', amps: 0 }])).not.toBe('ok');
+    expect(no([{ pin: 'C2.1', amps: -1 }])).not.toBe('ok');
+    ok(k, [{ op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 2 }] }]);
+    expect(k.draftDesign().nets[Object.values(k.draftDesign().nets).find((n) => n.name === '+3V3')!.id]!.attrs.loads).toHaveLength(1);
+    expect(net(k).basis).toBe('split');
+    ok(k, [{ op: 'set_net', net: '+3V3', loads: null }]);
+    expect(Object.values(k.draftDesign().nets).find((n) => n.name === '+3V3')!.attrs.loads).toBeUndefined();
+    expect(net(k).basis).toBe('bound');
+  });
+
+  it('changing the loads checks again without routing; the drop along the copper is worked out (V = I · ρL / (w · t))', () => {
+    const k = drawnBuck([{ op: 'draw_track', from: 'L1.2', to: 'C2.1', width_mm: 1 }]);
+    const copper = k.draftDesign().board!.routed;
+    ok(k, [{ op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 2 }] }]);
+    expect(k.draftDesign().board!.routed).toBe(copper);
+    const t = track(k, 't1');
+    const ohms = (1.72e-8 * t.length_mm * 1e-3) / (1e-3 * t.copper_um * 1e-6);
+    expect(t.drop_mv).toBeCloseTo(2 * ohms * 1000, 1);
+    expect(net(k).drop_mv).toBeCloseTo(2 * ohms * 1000, 1);
+    expect(k.board().current!.nets.find((n) => n.name === '+3V3')!.dropMv).toBeCloseTo(2 * ohms * 1000, 1);
+    ok(k, [{ op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 1 }] }]);
+    expect(track(k, 't1').amps).toBeCloseTo(1 + 1, 6); // 1 A placed, 1 A of max_current not
+    expect(k.draftDesign().board!.routed).toBe(copper);
+  });
+
+  it('loads set after routing check the router copper again without routing (the copper key holds)', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    ok(k, [{ op: 'route' }]);
+    k.accept();
+    k.keepCopper(k.board().newCopper!);
+    const key = k.draftDesign().board!.copper!.key;
+    ok(k, [{ op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 1.9 }, { pin: 'R1.1', amps: 0.0003 }] }]);
+    const b = k.board();
+    expect(b.newCopper).toBeUndefined();
+    expect(k.draftDesign().board!.copper!.key).toBe(key);
+    expect(b.current!.nets.find((n) => n.name === '+3V3')!.basis).toBe('split');
+  });
+
+  it('GND without max_current is bound by the sum of the rails when every rail with copper has one', () => {
+    const k = drawnBuck([
+      { op: 'draw_track', from: 'J1.1', to: 'C1.1', width_mm: 2 },
+      { op: 'draw_track', from: 'J1.2', to: 'C1.2', width_mm: 0.25 },
+    ]);
+    expect(net(k, 'GND')).toMatchObject({ basis: 'unknown' });
+    ok(k, [{ op: 'set_net', net: '+12V', max_current: 1 }]);
+    // +12V 1 A and +3V3 2 A
+    expect(net(k, 'GND')).toMatchObject({ basis: 'bound', max_current_a: 3 });
+    expect(net(k, 'GND').why).toMatch(/rails/);
+  });
+});

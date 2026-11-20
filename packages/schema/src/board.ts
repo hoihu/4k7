@@ -1048,11 +1048,14 @@ export interface UnroutedConnection extends RouteBlockage {
 /**
  * The routed copper against its nets' current (kernel current.ts, docs/design/layout.md §14): what
  * the DRC checks, get_current_map lists and the layout view's heat map draws, worked out once per
- * routed board. `bound`: the net's whole max_current is assumed in each piece (a branch may carry
- * less); `unknown`: a power net without max_current, never fine.
+ * routed board. `split`: the current the net's stated loads draw through each piece (set_net
+ * loads), solved over its copper; `bound`: the net's whole max_current is assumed in each piece (a
+ * branch may carry less); `unknown`: a power net without max_current, never fine. Status `over`: too
+ * small for its split current; `unverified`: too small for the bound (or for what an unplaced rest
+ * could add), nobody said whether that much flows there.
  */
-export type CurrentBasis = 'bound' | 'unknown';
-export type CurrentStatus = 'ok' | 'unverified' | 'unknown';
+export type CurrentBasis = 'split' | 'bound' | 'unknown';
+export type CurrentStatus = 'ok' | 'over' | 'unverified' | 'unknown';
 
 export interface CurrentTrack {
   netId: string;
@@ -1064,10 +1067,16 @@ export interface CurrentTrack {
   width: number;
   length: number;
   copperUm: number;
+  /** What it is checked for: the bound, or its split share (plus the net's unplaced rest, if any). */
   amps: number;
   basis: CurrentBasis;
+  /** split with an unplaced rest: its share of the stated loads alone (`amps` adds the rest). */
+  split?: number;
+  status: CurrentStatus;
   capacity: number;
   ratio: number;
+  /** split: the voltage drop along it (mV) from the stated loads. Report only (no budget yet). */
+  dropMv?: number;
   /** Its estimated heating (°C) at `amps`. */
   rise: number;
   /** The width that carries `amps` on its layer. */
@@ -1089,6 +1098,11 @@ export interface CurrentVias {
   layers: CopperLayer[];
   amps: number;
   basis: CurrentBasis;
+  /** split with an unplaced rest: its share of the stated loads alone. */
+  split?: number;
+  status: CurrentStatus;
+  /** split: a group with another way round (not a cut), checked for the share it carries. */
+  shared?: boolean;
   capacity: number;
   ratio: number;
   /** Vias of that drill that carry `amps`. */
@@ -1098,11 +1112,22 @@ export interface CurrentVias {
 export interface CurrentNet {
   netId: string;
   name: string;
+  /** max_current (or what bounds it: GND's from its rails, the loads' sum without one). */
   amps?: number;
+  /** amps is GND's bound from the rails' max_current (it has none of its own). */
+  fromRails?: boolean;
   basis: CurrentBasis;
   status: CurrentStatus;
   /** The worst ratio of current to capacity among the copper checked. */
   worst?: number;
+  /** split: the stated loads that the copper reaches from the source (A). */
+  loads?: number;
+  /** split: what of max_current no stated load places (A); it may flow anywhere. */
+  unplaced?: number;
+  /** split: the worst drop from the source to a load (mV). Report only (no budget yet). */
+  dropMv?: number;
+  /** bound with loads stated: why they are not split (two sources, no source on the board …). */
+  why?: string;
 }
 
 export interface CurrentView {

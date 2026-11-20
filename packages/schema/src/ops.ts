@@ -78,6 +78,12 @@ export const SetNetOp = z.object({
   external: z.boolean().optional().describe('True for nets driven from outside the design (e.g. supply input on a connector)'),
   power: z.boolean().optional().describe('Draw as a power rail'),
   max_current: z.number().nullable().optional().describe('Expected maximum current in amps: get_net suggests a track width for it and how many vias it needs (about 0.9 A per 0.3 mm via) where it flows through a pad: place them with add_vias drop'),
+  loads: z
+    .array(z.object({ pin: z.string().min(1).describe('A pin of the net, e.g. "U3.VDD" (a name on several pins: the current is shared between them)'), amps: z.number().positive().describe('What it draws (A, DC or RMS), from its datasheet') }))
+    .min(1)
+    .nullable()
+    .optional()
+    .describe('What the net\'s pins draw: the current check then splits the net\'s current over its copper from where it comes in to these pins (a stub to a pull-up carries its milliamps, not max_current) and checks each track for its share (DRC.TRACK_CURRENT). Replaces the list; null clears it. A pad with add_vias drop amps counts as stated already (a load here for the same pad wins). Loads under max_current leave the rest unplaced (it may flow anywhere)'),
   track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise)'),
   draw_as: z.enum(['label', 'wire']).nullable().optional().describe('Force how the schematic draws this net, now and after every later change, on each sheet it is on (the sheet\'s drawing becomes yours, as with place_symbol, and auto_draw redraws it but does not hand it back while a net on it is forced). label: a label or supply symbol at every pin, no wire between them. wire: wires and no label; a label stays only where no wire can go (another page or sheet, no clear path), and a supply keeps one symbol per drawn piece. null: no longer forced, drawn afresh: wires where they draw cleanly, labels where not. While it is forced, wire (draw_as label), label (draw_as wire) and erase on the net are refused. The app\'s net panel sets it: the user\'s choice, so change it only when asked'),
 });

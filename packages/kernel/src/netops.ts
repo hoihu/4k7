@@ -303,6 +303,23 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
     else a.maxCurrent = op.max_current;
     changes.push(`max_current=${op.max_current ?? '∅'}`);
   }
+  if (op.loads !== undefined) {
+    if (op.loads === null) delete a.loads;
+    else {
+      // each pin of the net (a name on several pins: those on this net), drawing more than nothing
+      a.loads = op.loads.map((l) => {
+        if (!(l.amps > 0)) reject({ code: 'PARAM_INVALID', message: `${l.pin} draws ${l.amps} A: give what it draws, more than 0 A (leave it out if it draws nothing).` });
+        const hs = resolvePins(d, l.pin);
+        const on = hs.filter((h) => h.comp.pins[h.pin.number] === net.id);
+        if (!on.length) {
+          const other = hs[0]!.comp.pins[hs[0]!.pin.number];
+          reject({ code: 'NET_MISMATCH', message: `${l.pin} is ${other ? `on ${d.nets[other]?.name ?? other}` : 'not connected'}, not on ${net.name}: a load is a pin of the net it draws from.` });
+        }
+        return { componentId: on[0]!.comp.id, pins: on.map((h) => h.pin.number), amps: l.amps };
+      });
+    }
+    changes.push(op.loads === null ? 'no loads' : `loads ${op.loads.map((l) => `${l.pin} ${l.amps} A`).join(', ')}`);
+  }
   if (op.track_mm !== undefined) {
     if (op.track_mm === null) delete a.trackWidth;
     else {

@@ -63,7 +63,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `connect`: put pins on a net.
 - `disconnect`: take pins off their net.
 - `no_connect`: mark pins as deliberately unconnected.
-- `set_net`: rename a net and set its voltage, external/power flags, max current, track width and how it is drawn.
+- `set_net`: rename a net and set its voltage, external/power flags, max current, the loads its pins draw (`loads: [{ pin: "U3.VDD", amps: 0.35 }]`, null clears; each pin must be on the net and draw more than 0 A; the current check splits the net's current over its copper from them, `layout.md` §14), track width and how it is drawn.
 - `describe`: the functional blocks (which group and order the schematic) and the design document text.
 
 ### Sheets and drawing

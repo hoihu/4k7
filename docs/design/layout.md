@@ -1093,12 +1093,62 @@ power 1/0.44, the curve's exponent) with their count. Dashes, not pattern fills:
 the agent sees keeps them. Pours and planes stay in their layer colour, "not solved" in the legend.
 Tooltips read like "+5V · 0.25 mm · 35 µm · 2 A (bound?) · needs 0.8 mm · ≈ +66 °C". The map is on
 by itself while a current finding is open (`DRC.CURRENT_UNVERIFIED`, `DRC.VIA_CURRENT`,
-`DRC.CURRENT_UNKNOWN`, later `DRC.TRACK_CURRENT`), off when none is; the user's switch holds for
+`DRC.CURRENT_UNKNOWN`, `DRC.TRACK_CURRENT`), off when none is; the user's switch holds for
 the session either way. `get_board_image` shows it as the view does; `overlay: "current"` or
 `"none"` forces it on or off for one picture, and its text then names the colours.
 
-**Not yet** (follow-ups of the proposal): loads per pin (`set_net loads`) and the current split over
-the copper (then `DRC.TRACK_CURRENT` on the real current, and IR drop at 3 % of the rail), GND's
-bound from the rails it returns, the current through thermal-relief spokes, pin currents (GPIO overload) and a
-DC solve of pours and planes. Until the solve, a pour or plane counts as one node: a pour necked
-between two vias looks fine here.
+**Loads, sources and the split** (2026-11-20, the second step). `set_net loads: [{ pin: "U3.VDD",
+amps: 0.35 }]` (`NetAttrs.loads`; each pin on the net, more than 0 A, `null` clears; a name on several
+pins shares the current between them) says what the net's pins draw, from their datasheets. A pad
+with `add_vias kind: "drop"` and `amps` counts as a load already, so the agent never states one
+current twice; where a stated load names the same pad, the stated load wins (a drop on the source's
+own pad changes nothing). The sources are inferred, never asked (`power.ts`, the power walk that
+`powerChecks` uses too, moved out of `checks.ts`): a net's `pwr_out` pins, a connector's pins on an
+external net, and the far pin of an inductor, ferrite bead, fuse or diode whose other end is nearer
+the supply (not a resistor: that is a divider or a pull-up more often than a rail). With exactly one
+source (one part: its pads joined), the net's copper graph above becomes a resistor network: each
+track piece between the points where something meets it at w·t/(ρ·L) (ρ = 1.72e-8 Ω·m, t the
+layer's copper), each via's barrel (π · drill · 25 µm, the board's thickness long), pads and each
+pour island one node. The source is held at 0 V, each load draws its current from its pads, and
+conjugate gradients solve the Laplacian (a tree, most nets, comes out as the sum of the loads
+downstream; a loop splits by conductance). Each track then carries its largest piece's current,
+basis `split`. Loads that add up to less than `max_current` leave the rest unplaced ("0.6 of 2 A
+placed"): it may flow anywhere, so each piece is checked for its share plus that rest, and is
+`over` only where its share alone is too much. Loads the copper does not reach (not routed yet)
+count as unplaced. More than `max_current` is the power budget's check (F1), not this one: the
+loads are used as given. A net with loads and no `max_current` is checked for its loads. Two
+sources or more (no ratio between them), none found, or none on the board: the net stays `bound`,
+and `get_current_map` says why.
+
+Status per piece: `over` when too small for its split share, `unverified` when too small for what
+it is checked for (the bound, or its share plus the unplaced rest), `ok` otherwise. Copper that
+carries its split share is `ok` even where it would fail the bound: that is the point of the loads
+(a stub to a pull-up stops being flagged). Via groups on a split net: a cut is checked for what
+crosses it (plus the unplaced rest), and every other group that carries a share is checked for that
+share alone (`shared`, `only_path: false`). **GND** with no `max_current` of its own is bound by the
+sum of the rails' `max_current` when every rail with copper has one (`fromRails`), else unknown.
+Its split from the loads' returns is not done: which ground pins of the source the returns go back
+to is not simple to say, so GND stays on its bound.
+
+| Code | When | Severity | Fix hints |
+|---|---|---|---|
+| `DRC.TRACK_CURRENT` | Track pieces too narrow for their split share (one finding per net, listing net, id, layer, width, copper, amps, the width needed and the estimated rise) | error when the share is over twice the capacity, else warning | as `DRC.CURRENT_UNVERIFIED`: `edit_copper` (drawn), `set_net track_mm` with "make room and route again; do not lower the net's width" (router copper) |
+
+`DRC.CURRENT_UNVERIFIED` now names `set_net loads` as the other way out, and on a split net says how
+much of `max_current` the loads place. `DRC.VIA_CURRENT` uses the split current where known.
+
+**The drop.** The solve gives the voltages too: each track's `dropMv` (the drop along it) and each
+split net's `dropMv` (the worst source to load), in `get_current_map` as `drop_mv` and in the heat
+map's tooltip. Report only: no finding and no budget yet. `get_current_map` adds per net `basis`,
+`loads_a`, `unplaced_a`, `drop_mv` and `why`; per hotspot `status`, `split_a`, `drop_mv`; `over`
+sorts first. On the heat map a split piece is solid in its colour (its current is known, over or
+not); "(split)" in its tooltip.
+
+Neither the loads nor the split are in the copper or placement key: changing them checks the copper
+as it lies again, without routing (the loads are net attributes, in `boardInputs` with the rest).
+
+**Not yet** (follow-ups of the proposal): `DRC.IR_DROP` against 3 % of the rail (the drop is worked
+out, not judged), GND's split from the loads' returns, a ratio between two sources, the current
+through thermal-relief spokes, pin currents (GPIO overload) and a DC solve of pours and planes.
+Until that solve, a pour or plane counts as one node: a pour necked between two vias looks fine
+here, and carries no drop.
