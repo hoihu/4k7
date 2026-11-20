@@ -640,12 +640,16 @@ export const DrawTrackOp = z.object({
   op: z.literal('draw_track'),
   from: trackEnd,
   to: trackEnd,
-  via: z.array(mmPoint).max(64).optional().describe('Corners between from and to, in order. Each piece runs straight from one point to the next (with bend, the kernel adds the 45° corners)'),
+  via: z
+    .array(z.union([mmPoint, z.tuple([z.number(), z.number(), z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'])])]))
+    .max(64)
+    .optional()
+    .describe('Corners between from and to, in order. Drawn copper: each piece runs straight from one point to the next (with bend, the kernel adds the 45° corners). Router copper: points the connection must pass through, the router finding the way between them; [x, y, layer] goes on on that layer from the point (a via there)'),
   bend,
-  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Default F.Cu, or the layer of an SMD pad it starts or ends on'),
+  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Default F.Cu, or the layer of an SMD pad it starts or ends on (router copper: the router\'s choice, with vias where it likes)'),
   net: netName.optional().describe('Default: the net of the pad or via at either end (required when both ends are points)'),
   width_mm: z.number().positive().optional().describe('Default: the net\'s width, else power width for supplies, else the signal width'),
-}).describe('Drawn copper: draw one track (a polyline) of one net on one layer, as given: nothing else is moved or rerouted. A layer change needs a via (draw_via) where two tracks meet. The effect gives the track\'s id (t…) and checks it at once, when the whole transaction is applied: other copper too close (errors) and loose ends or pieces off 45° (warnings); get_board says which connections are still open.');
+}).describe('Drawn copper: draw one track (a polyline) of one net on one layer, as given: nothing else is moved or rerouted. A layer change needs a via (draw_via) where two tracks meet. The effect gives the track\'s id (t…) and checks it at once, when the whole transaction is applied: other copper too close (errors) and loose ends or pieces off 45° (warnings); get_board says which connections are still open. Router copper (the default mode): lay one connection yourself, pad to pad, where you know how it should go and the router does not (a switching loop tight, a high-current path short and wide, a sensitive trace round the side away from the noise): give only the points where the way matters. The route step lays it first, before anything else, through those points, and never rips it up; the rest is routed round it, and the points move with the end pad they are nearer. If it finds no way (a point too close to other copper, no room for a via) it is not laid: get_board laid_tracks and DRC.TRACK_NOT_LAID say why and where, and the router routes that connection its own way. The same two pads again replace it; erase_copper takes it away.');
 
 export const DrawPairOp = z.object({
   op: z.literal('draw_pair'),
@@ -701,7 +705,7 @@ export const EraseCopperOp = z.object({
     .optional()
     .describe('Tracks with a point and vias inside this rectangle (top-left corner and size, mm)'),
   all: z.boolean().optional().describe('All drawn copper'),
-}).describe('Drawn copper: take tracks and vias away (any given selector; they add up).');
+}).describe('Drawn copper: take tracks and vias away (any given selector; they add up). Router copper: takes away the connections you laid with draw_track (by id, net, part, rect: a point or end pad inside, or all); the router routes them its own way again.');
 
 export const SetPlaneOp = z.object({
   op: z.literal('set_plane'),

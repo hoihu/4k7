@@ -9,7 +9,7 @@
  * drawn already. The app runs that search in a worker and hands the transaction its result
  * (RouteHelperResult), so the kernel stays responsive and the user can watch and stop it.
  */
-import { DEFAULT_BOARD, padHasPin, type Diagnostic, type CopperLayer, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
+import { DEFAULT_BOARD, padHasPin, type Diagnostic, type CopperLayer, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type LaidTrack, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
 import { boardRouteInput, copperKey, placedOf, softened, storedPlacement } from './board.ts';
 import { rotate } from './placer.ts';
 import { boardCopy, findNet, isPowerNet, reject, resolveComponent, resolvePins } from './doc.ts';
@@ -290,14 +290,18 @@ export function setCopperMode(d: Design, op: Extract<EditOp, { op: 'set_copper_m
     // (the stubs and vias of add_vias groups stay theirs: the groups lay them)
     const stubs = new Set(before.tracks.map((t) => JSON.stringify(t)));
     // (the router's copper counts as the helper's: route fresh may lay it again)
-    for (const t of current.tracks) if (!stubs.has(JSON.stringify(t))) dc.tracks.push(anchored(before, { ...t, pts: [...t.pts], id: nextId(dc, 't'), by: 'helper' })); // (its own points: drawn copper is moved in place, and the kept copper is shared with other copies of the design)
-    for (const v of current.vias) if (!v.group) dc.vias.push({ ...v, id: nextId(dc, 'v'), by: 'helper' });
+    // (the copper of a connection the agent laid is its own; the rest the helper's)
+    for (const { laid, ...t } of current.tracks) if (!stubs.has(JSON.stringify(t))) dc.tracks.push(anchored(before, { ...t, pts: [...t.pts], id: nextId(dc, 't'), ...(laid ? {} : { by: 'helper' as const }) })); // (its own points: drawn copper is moved in place, and the kept copper is shared with other copies of the design)
+    for (const { laid, ...v } of current.vias) if (!v.group) dc.vias.push({ ...v, id: nextId(dc, 'v'), ...(laid ? {} : { by: 'helper' as const }) });
   }
   b.drawn = dc;
+  // (the connections laid for the router: their copper, if routed, is the drawn copper now)
+  const laidBefore = b.laid?.length ?? 0;
+  delete b.laid;
   return {
     op: op.op,
     effect: current
-      ? `the copper is yours now: the router's ${dc.tracks.length} tracks and ${dc.vias.length} vias taken over as drawn copper (get_copper lists them by id)`
+      ? `the copper is yours now: the router's ${dc.tracks.length} tracks and ${dc.vias.length} vias taken over as drawn copper (get_copper lists them by id)${laidBefore ? `, the ${laidBefore} connection(s) you laid for the router with them` : ''}`
       : `the copper is yours now, nothing drawn yet${op.keep !== false && copper ? ' (the router\'s copper was not for this placement)' : ''}: draw_track, draw_via, or route nets for a first path`,
     ids: ['board'],
   };
@@ -319,6 +323,8 @@ function anchored(board: BoardView, t: DrawnTrack): DrawnTrack {
 
 
 export function drawTrack(d: Design, op: Extract<EditOp, { op: 'draw_track' }>): OpResult {
+  if (!d.board?.drawn) return layTrack(d, op);
+  if (op.via?.some((p) => p.length > 2)) reject({ code: 'INVALID_OP', message: 'Drawn copper: a track stays on one layer; a layer change is a draw_via where two tracks meet (a point with a layer is for router copper).' });
   const { b, dc } = drawnOf(d);
   const board = placedOf(d);
   const ends = [op.from, op.to].map((e) => endOf(d, board, dc, e));
@@ -342,6 +348,105 @@ export function drawTrack(d: Design, op: Extract<EditOp, { op: 'draw_track' }>):
   dc.tracks.push(track);
   d.board = b;
   return { op: op.op, effect: `track ${track.id}: ${netName(d, netId!)} on ${layer}, ${width} mm, ${pts.length / 2 - 1} piece(s), ${r3(polyLength(pts))} mm`, ids: ['board', track.id] };
+}
+
+/**
+ * draw_track while the copper is the router's: one connection the agent lays (BoardSettings.laid),
+ * pad to pad through the points given, each kept relative to the end pad it is nearer so it moves
+ * with that part. The route step lays it first, every pass the same way (docs/design/layout.md
+ * §5.8). Checked against the board as it stands now; the same two pads again replace it.
+ */
+function layTrack(d: Design, op: Extract<EditOp, { op: 'draw_track' }>): OpResult {
+  const board = placedOf(d);
+  if (op.bend) reject({ code: 'INVALID_OP', message: 'Router copper: the router finds the way between your points (bend is for drawn copper); give only the points where the way matters.' });
+  const end = (e: string | [number, number], which: string) => {
+    if (typeof e !== 'string' || /^v\d+$/i.test(e)) reject({ code: 'INVALID_OP', message: `Router copper: a track you lay joins two pads ("U1.3"); its ${which} is not a pad. To draw copper anywhere, set_copper_mode mode "drawn" first.` });
+    const { pad, anchor } = padOf(d, board, e as string);
+    return { pad, anchor, label: `${d.components[anchor.componentId]?.refdes ?? '?'}.${pad.number}` };
+  };
+  const a = end(op.from, 'start');
+  const z = end(op.to, 'end');
+  if (a.pad === z.pad) reject({ code: 'INVALID_OP', message: `from and to are the same pad (${a.label}).` });
+  const netId = a.pad.netId;
+  if (!netId) reject({ code: 'PIN_UNCONNECTED', message: `${a.label} is not connected in the netlist; a track there would join nothing.` });
+  if (z.pad.netId !== netId) reject({ code: 'NET_MISMATCH', message: `${a.label} is on ${netName(d, netId!)}, ${z.label} on ${z.pad.netId ? netName(d, z.pad.netId) : 'no net'}: a track joins two pads of one net.` });
+  if (op.net && findNet(d, op.net)?.id !== netId) reject({ code: 'NET_MISMATCH', message: `${a.label} and ${z.label} are on ${netName(d, netId!)}, not ${op.net}.` });
+  if (op.layer) trackLayer(board, op.layer);
+  for (const p of op.via ?? []) if (p[2]) trackLayer(board, p[2]);
+  // an SMD pad only on its own layer: the layer the track leaves it on, and the one it reaches the other on
+  const onPad = (e: typeof a, l: string | undefined, first: boolean) => {
+    if (l && !e.pad.drill && !e.pad.layers.includes(l as CopperLayer)) reject({ code: 'BOARD_INVALID', message: `${e.label} is on ${e.pad.layers.join(', ')}, the track ${first ? 'starts' : 'ends'} on ${l}: ${first ? 'start on its layer' : 'give the last point its layer'} (a point with a layer changes layer there, with a via).` });
+  };
+  onPad(a, op.layer, true);
+  onPad(z, [...(op.via ?? [])].reverse().find((p) => p[2])?.[2] ?? op.layer, false);
+  const b = boardCopy(d);
+  if (op.width_mm !== undefined) {
+    if (op.width_mm < 0.1 || op.width_mm > 10) reject({ code: 'PARAM_INVALID', message: `A track of ${op.width_mm} mm cannot be made; give 0.1–10 mm.` });
+    if (b.fab && op.width_mm < b.fab.limits.track - 1e-9) reject({ code: 'FAB_LIMIT', message: `A ${op.width_mm} mm track is below ${b.fab.house}'s limit (${b.fab.limits.track} mm, ${b.fab.tier}).` });
+  }
+  const { w, h } = board.outline;
+  const through: NonNullable<LaidTrack['through']> = (op.via ?? []).map(([px, py, layer]) => {
+    const [x, y] = [r3(px), r3(py)];
+    if (x < 0 || y < 0 || x > w || y > h) reject({ code: 'BOARD_INVALID', message: `The point (${x}, ${y}) is off the board (${w} × ${h} mm).` });
+    // relative to the end pad it is nearer: it moves with that part
+    const near = Math.hypot(x - a.pad.x, y - a.pad.y) <= Math.hypot(x - z.pad.x, y - z.pad.y) ? 'from' : 'to';
+    const pad = near === 'from' ? a.pad : z.pad;
+    return { end: near, dx: r3(x - pad.x), dy: r3(y - pad.y), ...(layer ? { layer } : {}) };
+  });
+  const list = [...(b.laid ?? [])];
+  const key = (p: PadAnchor) => `${p.componentId} ${p.pad}`;
+  const [ka, kz] = [key(a.anchor), key(z.anchor)];
+  // the same two pads again: replaces it
+  const was = list.findIndex((t) => (key(t.from) === ka && key(t.to) === kz) || (key(t.from) === kz && key(t.to) === ka));
+  let id = was >= 0 ? list[was]!.id : '';
+  for (let i = 1; !id; i++) if (!list.some((t) => t.id === `t${i}`)) id = `t${i}`;
+  const track: LaidTrack = {
+    id,
+    netId: netId!,
+    from: a.anchor,
+    to: z.anchor,
+    ...(op.layer ? { layer: op.layer } : {}),
+    ...(op.width_mm !== undefined ? { width: r3(op.width_mm) } : {}),
+    ...(through.length ? { through } : {}),
+  };
+  if (was >= 0) list[was] = track;
+  else list.push(track);
+  b.laid = list;
+  d.board = b;
+  const pts = (op.via ?? []).map(([x, y, l]) => `(${r3(x)}, ${r3(y)}${l ? ` → ${l}` : ''})`);
+  const what = `${a.label} → ${z.label} (${netName(d, netId!)}), ${op.layer ?? 'on the layers the router picks'}, ${op.width_mm !== undefined ? `${r3(op.width_mm)} mm` : "the net's width"}${pts.length ? `, through ${pts.join(', ')}` : ''}`;
+  return { op: op.op, effect: `laid connection ${id}${was >= 0 ? ' (replaced)' : ''}: ${what}; route lays it first, as asked, and never rips it up (get_board laid_tracks)`, ids: ['board'] };
+}
+
+/** erase_copper while the copper is the router's: the connections the agent laid (BoardSettings.laid). */
+function eraseLaid(d: Design, op: Extract<EditOp, { op: 'erase_copper' }>): OpResult {
+  const list = d.board?.laid ?? [];
+  if (!op.all && !op.ids?.length && !op.nets?.length && !op.parts?.length && !op.rect) reject({ code: 'INVALID_OP', message: 'erase_copper needs ids, nets, parts, rect or all.' });
+  const unknown = (op.ids ?? []).filter((id) => !list.some((t) => t.id === id.toLowerCase()));
+  if (unknown.length) reject({ code: 'REF_UNKNOWN', message: `No connection ${unknown.join(', ')} is laid (the copper is the router's: erase_copper takes away the connections you laid with draw_track).`, candidates: list.map((t) => t.id) });
+  const nets = new Set((op.nets ?? []).map((n) => {
+    const net = findNet(d, n);
+    if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${n}".`, candidates: Object.values(d.nets).map((x) => x.name) });
+    return net!.id;
+  }));
+  const parts = new Set((op.parts ?? []).map((r) => resolveComponent(d, r).id));
+  const ids = new Set((op.ids ?? []).map((id) => id.toLowerCase()));
+  const view = op.rect ? placedOf(d).laid ?? [] : [];
+  const inRect = (x: number, y: number) => !!op.rect && x >= op.rect.x_mm && y >= op.rect.y_mm && x <= op.rect.x_mm + op.rect.width_mm && y <= op.rect.y_mm + op.rect.height_mm;
+  const padAt = (label: string) => placedOf(d).parts.find((p) => p.refdes === label.slice(0, label.lastIndexOf('.')))?.pads.find((q) => q.number === label.slice(label.lastIndexOf('.') + 1));
+  const inside = (t: LaidTrack) => {
+    const v = view.find((x) => x.id === t.id);
+    return !!v && (v.through.some((p) => inRect(p.x, p.y)) || [v.from, v.to].some((e) => { const p = padAt(e); return !!p && inRect(p.x, p.y); }));
+  };
+  const goes = (t: LaidTrack) => op.all || ids.has(t.id) || nets.has(t.netId) || parts.has(t.from.componentId) || parts.has(t.to.componentId) || inside(t);
+  const gone = list.filter(goes).map((t) => t.id);
+  if (!gone.length) return { op: op.op, effect: 'nothing matched', ids: [] };
+  const b = boardCopy(d);
+  const keep = list.filter((t) => !goes(t));
+  if (keep.length) b.laid = keep;
+  else delete b.laid;
+  d.board = b;
+  return { op: op.op, effect: `erased ${gone.length} laid connection(s): ${gone.join(', ')}; the router routes them its own way`, ids: ['board'] };
 }
 
 /**
@@ -572,6 +677,7 @@ export function editCopper(d: Design, op: Extract<EditOp, { op: 'edit_copper' }>
 }
 
 export function eraseCopper(d: Design, op: Extract<EditOp, { op: 'erase_copper' }>): OpResult {
+  if (!d.board?.drawn) return eraseLaid(d, op);
   const { dc } = drawnOf(d);
   if (!op.all && !op.ids?.length && !op.nets?.length && !op.parts?.length && !op.rect) reject({ code: 'INVALID_OP', message: 'erase_copper needs ids, nets, parts, rect or all.' });
   const known = new Set([...dc.tracks.map((t) => t.id), ...dc.vias.map((v) => v.id)]);

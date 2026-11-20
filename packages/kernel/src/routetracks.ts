@@ -155,16 +155,28 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
     return changed;
   };
 
-  /** Turn a path into tracks and vias, reserve its copper; returns the cells the copper covers. */
-  const commit = (netId: string, net: number, k: number, path: number[], startPad: number, endPad: number, endVia = false): number[] => {
+  /**
+   * Turn a path into tracks and vias, reserve its copper; returns the cells the copper covers.
+   * `pins`: grid points the track must turn at as they are (the points of a connection the agent
+   * laid): a run ends there and the next begins, so the straightening cannot cut them, and the
+   * runs are one track again afterwards. `own`: the width the track should have where it fits
+   * (else the net's set width; see widened).
+   */
+  const commit = (netId: string, net: number, k: number, path: number[], startPad: number, endPad: number, endVia = false, pins?: Set<number>, own = input.netWidths?.[netId]): number[] => {
     const width = widths[k]!;
     const free = freeFor(net, k);
-    const runs: { l: number; cells: number[] }[] = [];
+    // joinsNext: the run goes on, on its layer, in the next one (split at a pin)
+    const runs: { l: number; cells: number[]; joinsNext?: boolean }[] = [];
     for (const s of path) {
       const l = Math.floor(s / N);
       const run = runs.at(-1);
       if (!run || run.l !== l) runs.push({ l, cells: [s % N] });
-      else run.cells.push(s % N);
+      else if (pins?.has(s % N) && run.cells.length > 1) {
+        // (the pin ends this run and begins the next)
+        run.cells.push(s % N);
+        run.joinsNext = true;
+        runs.push({ l, cells: [s % N] });
+      } else run.cells.push(s % N);
     }
     // a path starting or ending inside a pad runs on to (from) the pad's centre cell, so the
     // straightening can aim its last piece at the pad centre (not at some cell off to the side)
@@ -208,9 +220,17 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
       }
       for (const c of cov) covered.push(run.l * N + c);
       const pts = verts.flatMap((c) => [(c % W) * G, Math.floor(c / W) * G]);
-      if (ri > 0) addVia(netId, net, pts[0]!, pts[1]!);
-      return { l: run.l, pts };
+      if (ri > 0 && !runs[ri - 1]!.joinsNext) addVia(netId, net, pts[0]!, pts[1]!);
+      return { l: run.l, pts, joinsNext: !!run.joinsNext };
     });
+    // runs split at a pin are one track again (the pin a corner of it)
+    for (let li = lines.length - 2; li >= 0; li--) {
+      const [a, b] = [lines[li]!, lines[li + 1]!];
+      if (!a.joinsNext) continue;
+      a.pts = [...a.pts, ...b.pts.slice(2)];
+      a.joinsNext = b.joinsNext;
+      lines.splice(li + 1, 1);
+    }
     if (startPad >= 0 && lines[0]) {
       const sp = pads[startPad]!;
       const se = escapes[startPad];
@@ -241,7 +261,6 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
     for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, width);
     // a net whose width is set, routed narrower for a pad too small for it: narrow only where it
     // goes into that pad, the full width elsewhere where that keeps its clearance
-    const own = input.netWidths?.[netId];
     const laid: { l: number; pts: number[]; width: number }[] = [];
     lines.forEach((line, li) => {
       const pts = simplify(line.pts);

@@ -12,13 +12,13 @@
  * grid passes follow (horizontal on F.Cu, vertical on B.Cu, vias cheap; see Style): a board
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
-import { type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, roundPadDist, type RouteBlockage, type RoutedLine, type Track, type Via, type Zone } from '@4k7/schema';
+import { type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type LaidStatus, roundPadDist, type RouteBlockage, type RoutedLine, type Track, type Via, type Zone } from '@4k7/schema';
 import { r3, segDist, segmentsOf } from './geom.ts';
 import { Heap } from './heap.ts';
 import { keptCopper, type KeptCopper } from './keep.ts';
 import { routeLines } from './pairroute.ts';
 import { passDrops } from './routedrops.ts';
-import { type Conn, CORRIDOR, EDGE, G, HISTORY_STEP, inArea, now, OUTER, passGrid, type Plane, PROBE_PENALTY, PROGRESS_MS, type Style } from './routegrid.ts';
+import { type Conn, CORRIDOR, EDGE, G, HISTORY_STEP, inArea, MULTI, now, OUTER, passGrid, type Plane, PROBE_PENALTY, PROGRESS_MS, type Style } from './routegrid.ts';
 import { passPours } from './routepours.ts';
 import { passSearch } from './routesearch.ts';
 import { passTracks } from './routetracks.ts';
@@ -110,6 +110,15 @@ export interface RouteInput {
    * connections the drawn copper made.
    */
   drawn?: { tracks: Track[]; vias: Via[]; only?: { nets?: string[]; pairs?: [BoardPad, BoardPad][] } };
+  /**
+   * Connections the agent laid with draw_track (BoardSettings.laid), laid before anything else in
+   * every pass: pad `from` to pad `to` (indices into all parts' pads in order) through `points`, at
+   * `width` (else the net's), on `layer` from the start and on a point's layer from that point (a
+   * via there); no layer: the router's choice. Copper no rip-up clears. One that finds no way is
+   * not laid (RouteResult.laid says why) and its connection is routed as any other. With drawn
+   * copper, only those of the nets asked for (`only`).
+   */
+  laid?: { id: string; netId: string; from: number; to: number; width?: number; layer?: CopperLayer; points: { x: number; y: number; layer?: CopperLayer }[] }[];
   /** Stop routing after this many milliseconds; what is left is reported unrouted. Default 90 s. */
   budgetMs?: number;
   /** Called while routing: the copper laid so far in the current pass, a few times a second. */
@@ -150,6 +159,8 @@ export interface RouteResult {
   reused?: { tracks: number; vias: number };
   /** What was done with the lines at a set impedance routed first (RouteInput.controlled). */
   lines?: RoutedLine[];
+  /** Per RouteInput.laid (those routed): laid as asked, or why not. */
+  laid?: LaidStatus[];
 }
 
 /** Why a connection stayed open: what its way would have to cross (see probe in routeOnce). */
@@ -188,6 +199,8 @@ function routeNets(input: RouteInput, passes = 40): RouteResult {
   // drawn copper: only the connections asked for are routed (see RouteInput.drawn)
   const scope = input.drawn ? new Set(input.drawn.only?.nets ?? []) : null;
   const inScope = (c: Conn) => !scope || scope.has(c.netId);
+  // the connections the agent laid, of the nets routed here
+  const laid = (input.laid ?? []).filter((t) => !scope || scope.has(t.netId));
   const planeOnly = conns.filter((c) => (dedicated.has(c.netId) || viaArea(c)) && inScope(c));
   const throughPlane = new Set(planeOnly);
   const pairs: Conn[] = (input.drawn?.only?.pairs ?? []).map(([a, b]) => ({ netId: a.netId!, a: pads.indexOf(a), b: pads.indexOf(b), len: Math.hypot(a.x - b.x, a.y - b.y) }));
@@ -222,18 +235,30 @@ function routeNets(input: RouteInput, passes = 40): RouteResult {
   const drawn = input.drawn ? keptCopper(input, input.drawn, true) : null;
   const keptNow = (): KeptCopper | null => joinKept(keep && keeping ? { ...keep, pieces: keep.pieces.filter((pc) => !letGo.has(pc.netId)) } : null, drawn);
   // before the first pass the best there is: nothing routed
-  input.onBest?.(result({ tracks: [], vias: [], zones: [], failed: [...order, ...planeOnly], roots: Int32Array.from(pads, (_, i) => i), timedOut: false, blockage: new Map(), reused: undefined }, 0));
+  input.onBest?.(result({ tracks: [], vias: [], zones: [], failed: [...order, ...planeOnly], roots: Int32Array.from(pads, (_, i) => i), timedOut: false, blockage: new Map(), reused: undefined, laid: [] }, 0));
   for (let pass = 0; pass < passes; pass++) {
     const bestOpen = best ? best.failed.length : null;
     const progress = input.onProgress ? (tracks: Track[], vias: Via[], done: number) => input.onProgress!({ pass: pass + 1, tracks, vias, connections: conns.length, done, bestOpen, elapsedMs: now() - t0, grid: style === GRID }) : undefined;
-    const r = routeOnce(input, pads, owner, order, deadline, planeOnly, early, history, style, keptNow(), progress);
+    const r = routeOnce(input, pads, owner, order, deadline, planeOnly, early, history, style, keptNow(), progress, laid);
     ran++;
     // each pass's copper, so even a quick pass shows (the next one starts from nothing)
     progress?.(r.tracks, r.vias, conns.length - r.failed.length);
-    const improved = !best || r.failed.length < best.failed.length || (r.failed.length === best.failed.length && pourOpen(r) < pourOpen(best));
+    // (a pass that lays more of the agent's connections as asked is better, whatever else it leaves open)
+    const missing = (x: { laid: LaidStatus[] }) => x.laid.filter((t) => !t.laid).length;
+    const improved = !best || missing(r) < missing(best) || (missing(r) === missing(best) && (r.failed.length < best.failed.length || (r.failed.length === best.failed.length && pourOpen(r) < pourOpen(best))));
     if (improved) {
       best = r;
       if (r.failed.length) input.onBest?.(result(r, ran));
+    }
+    if (keeping && missing(r) && !r.timedOut) {
+      // a connection the agent laid that found no way round the kept copper: route from scratch
+      keeping = false;
+      stale = 0;
+      phaseBest = null;
+      history.fill(0);
+      order = firstOrder;
+      early = new Set();
+      continue;
     }
     if (!r.failed.length || r.timedOut) break;
     // every open connection closed off by pads, keep-outs or the edge alone: no pass can help
@@ -280,7 +305,7 @@ function routeNets(input: RouteInput, passes = 40): RouteResult {
     early = failed;
     order = [...order.filter((c) => failed.has(c)), ...order.filter((c) => !failed.has(c))];
   }
-  return result(best ?? routeOnce(input, pads, owner, order, deadline, planeOnly, new Set(), history, style, keptNow()), ran);
+  return result(best ?? routeOnce(input, pads, owner, order, deadline, planeOnly, new Set(), history, style, keptNow(), undefined, laid), ran);
 
   /** A pass's result as the caller sees it. */
   function result(r: ReturnType<typeof routeOnce>, ran: number): RouteResult {
@@ -303,6 +328,7 @@ function routeNets(input: RouteInput, passes = 40): RouteResult {
       passes: ran,
       groups: Array.from(r.roots),
       ...(r.reused ? { reused: r.reused } : {}),
+      ...(r.laid.length ? { laid: r.laid } : {}),
     };
   }
 
@@ -387,19 +413,147 @@ function routeOnce(
   /** Copper kept from the routing before (see RouteInput.keep), there from the start. */
   kept: KeptCopper | null,
   progress?: (tracks: Track[], vias: Via[], done: number) => void,
+  /** The connections the agent laid (RouteInput.laid), laid first. */
+  laidAsked: NonNullable<RouteInput['laid']> = [],
 ) {
   const grid = passGrid({ input, pads, owner, order, deadline, planeOnly, early, history, style, kept, progress });
   const finder = passSearch(grid);
   const lay = passTracks(grid, finder);
   const pouring = passPours(grid);
   const dropper = passDrops(grid, finder, lay, pouring);
-  const { rules, layers, W, H, N, L, netNum, numOf, padNet, widths, trackClass, maps, viaAt, viaNear, VIA_SPACING, stampVia, fixedMap, keptTracks, keptVias, escapes, ownCopper, escapeOf, offCentre, find, groupCells, union, tracks, vias, failed } = grid;
+  const { rules, layers, layerIdx, W, H, N, L, netNum, numOf, padNet, padCells, widths, trackClass, maps, viaAt, viaNear, VIA_SPACING, stampVia, fixedMap, keptTracks, keptVias, escapes, ownCopper, escapeOf, offCentre, find, groupCells, union, tracks, vias, failed } = grid;
   const { clock, cost, from, goal, seenAt, DX, DY, STEP, freeFor, viaBlocked, viaFreeFor, deepestCells, search, corridor, widen } = finder;
   const { commit, reserved, clearOf, padAt } = lay;
   const { zones, planes, region, planeShape } = pouring;
   const { reachMain, reserveDrops, dropOnto } = dropper;
   let epoch = 0;
   let timedOut = false;
+  /*
+   * The connections the agent laid (RouteInput.laid), before anything else: each stretch from
+   * point to point a search of its own (the same way every pass: no history costs, the free
+   * style), held to its layer where one is given, the whole laid by commit turning at the points.
+   * One that finds no way is not laid, and its connection is routed as any other. What is laid no
+   * rip-up clears (fixedMap).
+   */
+  const laidStatus: LaidStatus[] = [];
+  if (laidAsked.length && fixedMap.length) {
+    const before = maps[0]!.map((m) => m.slice());
+    for (const t of laidAsked) laidStatus.push(layLaid(t));
+    for (let l = 0; l < L; l++) {
+      const [m, was, fx] = [maps[0]![l]!, before[l]!, fixedMap[l]!];
+      for (let i = 0; i < N; i++) if (m[i] !== was[i]) fx[i] = m[i]!;
+    }
+  }
+  function layLaid(t: NonNullable<RouteInput['laid']>[number]): LaidStatus {
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    const fail = (why: string, x: number, y: number, blockedBy?: number): LaidStatus => {
+      const id = blockedBy !== undefined ? [...netNum].find(([, n]) => n === blockedBy)?.[0] : undefined;
+      return { id: t.id, laid: false, why, at: { x: r2(x), y: r2(y) }, ...(id ? { blockedBy: id } : {}) };
+    };
+    const [a, b] = [t.from, t.to];
+    const [pa, pb] = [pads[a], pads[b]];
+    if (!pa || !pb || pa.netId !== t.netId || pb.netId !== t.netId) return { id: t.id, laid: false, why: 'its pads are not on its net' };
+    if (find(a) === find(b)) return { id: t.id, laid: false, why: 'its pads are joined already (by copper laid before it)', at: { x: r2(pa.x), y: r2(pa.y) } };
+    const net = numOf(t.netId);
+    // the width: as for a routed connection (routeConn), the one asked for in place of the net's
+    const takes = (w: number) => Math.min(pa.w, pa.h) >= w * 0.9 && Math.min(pb.w, pb.h) >= w * 0.9;
+    const fitting = (w: number) => widths.reduce((best, x, i) => (i !== 2 && x <= w && takes(x) && x > widths[best]! ? i : best), 0);
+    const own = t.width ?? input.netWidths?.[t.netId];
+    const k = own ? (own <= rules.track || takes(own) ? trackClass(own) : fitting(own)) : input.powerNets.has(t.netId) && takes(rules.powerTrack) ? 1 : 0;
+    const w = widths[k]!;
+    const free = freeFor(net, k);
+    const escapeOk = (st: number) => {
+      const idx = escapeOf.get(st);
+      if (idx === undefined || w <= rules.track) return true;
+      const e = escapes[idx]!;
+      const p = pads[idx]!;
+      return clearOf(net, e.l, w, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
+    };
+    const label = (idx: number) => `${owner[idx]!.refdes}.${pads[idx]!.number}`;
+    const on = (l: number | null) => (l === null ? '' : ` on ${layers[l]}`);
+    let cur: number | null = null;
+    if (t.layer) {
+      const l = layerIdx.get(t.layer);
+      if (l === undefined) return fail(`the board has no ${t.layer}`, pa.x, pa.y);
+      cur = l;
+    }
+    const onCur = (st: number) => cur === null || Math.floor(st / N) === cur;
+    let starts = padCells[a]!.filter((st) => onCur(st) && escapeOk(st));
+    if (!starts.length) return fail(`${label(a)} is not${on(cur)}`, pa.x, pa.y);
+    const full: number[] = [];
+    const pins = new Set<number>();
+    let from = label(a);
+    for (const stop of [...t.points.map((p) => ({ ...p, pad: false })), { x: pb.x, y: pb.y, layer: undefined, pad: true }]) {
+      const here = stop.pad ? label(b) : `(${r2(stop.x)}, ${r2(stop.y)})`;
+      epoch++;
+      const stamp = epoch;
+      let goals: number[];
+      let accept: ((st: number) => boolean) | undefined;
+      if (stop.pad) {
+        goals = padCells[b]!.filter((st) => onCur(st) && escapeOk(st));
+        if (!goals.length) return fail(`${here} is not${on(cur)}`, stop.x, stop.y);
+        // (as for a routed connection: on the pad's centre line where the track fits there)
+        const fits = (st: number) => free(Math.floor(st / N), st % N);
+        const centred = (st: number) => fits(st) && !offCentre(net, k, st);
+        const deepest = new Set(deepestCells(goals));
+        accept = goals.some(centred) ? centred : goals.some(fits) ? fits : (st: number) => deepest.has(st);
+      } else {
+        const i = Math.round(stop.x / G);
+        const j = Math.round(stop.y / G);
+        if (i < 0 || j < 0 || i >= W || j >= H) return fail(`${here} is off the board`, stop.x, stop.y);
+        const c = j * W + i;
+        const ls = cur === null ? layers.map((_, l) => l) : [cur];
+        goals = ls.filter((l) => free(l, c)).map((l) => l * N + c);
+        if (!goals.length) {
+          const v = maps[k]![ls[0]!]![c]!;
+          const what = v === EDGE ? 'the board edge (or a plane layer) is' : v === MULTI ? 'copper of other nets is' : 'other copper is';
+          return fail(`${here} has no room for a ${w} mm track${on(cur)}: ${what} too close`, stop.x, stop.y, v > 0 ? v : undefined);
+        }
+      }
+      for (const st of goals) goal[st] = stamp;
+      const isGoal = (st: number) => goal[st] === stamp;
+      let [gx0, gy0, gx1, gy1] = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const st of goals) {
+        const x = (st % N) % W;
+        const y = Math.floor((st % N) / W);
+        [gx0, gy0, gx1, gy1] = [Math.min(gx0, x), Math.min(gy0, y), Math.max(gx1, x), Math.max(gy1, y)];
+      }
+      const target = { x0: gx0, y0: gy0, x1: gx1, y1: gy1 };
+      const steady = { style: FREE, oneLayer: cur !== null };
+      const way = corridor(net, k, starts, goals, stamp);
+      let path: number[] | null = null;
+      if (way) {
+        for (const r of [CORRIDOR, 3 * CORRIDOR]) if (!path) path = search(net, k, starts, isGoal, target, accept, widen(way, r), false, Infinity, steady);
+        path ??= search(net, k, starts, isGoal, target, accept, 0, true, Infinity, steady);
+      }
+      if (!path) return fail(`no way for a ${w} mm track from ${from} to ${here}${on(cur)}`, stop.x, stop.y);
+      full.push(...(full.length && full.at(-1) === path[0] ? path.slice(1) : path));
+      if (stop.pad) break;
+      // a point: the track turns there as it is; a layer given goes on from there (a via)
+      const end = path.at(-1)!;
+      const c = end % N;
+      pins.add(c);
+      starts = [end];
+      if (stop.layer) {
+        const next = layerIdx.get(stop.layer);
+        if (next === undefined) return fail(`the board has no ${stop.layer}`, stop.x, stop.y);
+        if (next !== Math.floor(end / N)) {
+          if (!viaFreeFor(net)(c) || !free(next, c)) return fail(`no room for a via at ${here}`, stop.x, stop.y);
+          starts = [next * N + c];
+          full.push(starts[0]!);
+        }
+        cur = next;
+      }
+      from = here;
+    }
+    const [t0, v0] = [tracks.length, vias.length];
+    const copper = commit(t.netId, net, k, full, padCells[a]!.includes(full[0]!) ? a : -1, padCells[b]!.includes(full.at(-1)!) ? b : -1, false, pins, own);
+    for (let q = t0; q < tracks.length; q++) tracks[q]!.laid = t.id;
+    for (let q = v0; q < vias.length; q++) vias[q]!.laid = t.id;
+    union(a, b);
+    groupCells.get(find(a))!.push(...copper);
+    return { id: t.id, laid: true };
+  }
   /*
    * Fan-out first: pads on a net with a dedicated inner plane drop onto it before the signals are
    * routed (the signals then go round the drop vias; routed first, a signal can shut a pad off
@@ -683,7 +837,7 @@ function routeOnce(
   const roots = Int32Array.from(pads, (_, i) => find(i));
   const blockage = probeFailed();
   const reused = kept ? { tracks: keptTracks.length, vias: keptVias.length } : undefined;
-  return { tracks, vias, failed, roots, zones, timedOut, blockage, reused };
+  return { tracks, vias, failed, roots, zones, timedOut, blockage, reused, laid: laidStatus };
 
   /**
    * Each open connection, again with the other nets' tracks and vias passable at a price (pads,

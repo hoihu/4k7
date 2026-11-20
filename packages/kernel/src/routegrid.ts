@@ -262,7 +262,7 @@ export function passGrid({ input, pads, owner, order, deadline, planeOnly, early
   // tracks may not
   const widths = [rules.track, rules.powerTrack, rules.viaPad];
   const trackClass = (w: number) => widths.findIndex((x, i) => i !== 2 && x === w);
-  for (const w of Object.values(input.netWidths ?? {})) if (w > 0 && trackClass(w) < 0) widths.push(w);
+  for (const w of [...Object.values(input.netWidths ?? {}), ...(input.laid ?? []).map((t) => t.width ?? 0)]) if (w > 0 && trackClass(w) < 0) widths.push(w);
   /*
    * Drawn copper with nothing asked of the router: no search runs, what is wanted is the pours and
    * what the copper joins. The clearance maps and the costs are all for the search, but for the

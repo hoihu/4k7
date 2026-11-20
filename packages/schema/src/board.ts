@@ -50,6 +50,12 @@ export interface BoardSettings {
   holes?: MountingHole[];
   /** Vias placed on purpose (add_vias): thermal vias in a pad, stitching over an area, a fence round one, given spots. */
   vias?: ViaGroup[];
+  /**
+   * Connections the agent laid with draw_track while the router lays the copper: the router lays
+   * them first on every route, as asked, and never rips them up (docs/design/layout.md §5.8).
+   * Dropped when the copper becomes drawn (set_copper_mode drawn takes their copper over).
+   */
+  laid?: LaidTrack[];
   /** Rounded board corners: the radius (mm); absent or 0 = square corners. */
   cornerRadius?: number;
   /**
@@ -109,6 +115,40 @@ export interface DrawnTrack extends Track {
   to?: PadAnchor;
   /** Laid by the route helper, or taken over from the router: route fresh may lay it again. Absent: the agent's own (drawn or edited by it). */
   by?: 'helper';
+}
+
+/**
+ * A connection the agent laid with draw_track while the copper is the router's: pad to pad
+ * through the given points, at the width given (else the net's), on the layer given (else the
+ * router's choice). The router finds the exact way between the points, keeping the clearances,
+ * before anything else is routed.
+ */
+export interface LaidTrack {
+  /** "t1", "t2" … */
+  id: string;
+  netId: string;
+  from: PadAnchor;
+  to: PadAnchor;
+  /** The layer it runs on from its start (absent: the router's choice, with vias where it likes). */
+  layer?: CopperLayer;
+  /** mm; absent: the net's width (its own, else the power or signal width). */
+  width?: number;
+  /**
+   * The points it goes through, in order: each relative to the end pad it was nearer when laid
+   * (mm from that pad's centre, not turned with the part), so it moves with that part; `layer`:
+   * the layer it goes on from there (a via at the point where it changes).
+   */
+  through?: { end: 'from' | 'to'; dx: number; dy: number; layer?: CopperLayer }[];
+}
+
+/** Whether a laid connection could be laid as asked, and if not why and where (RouteResult.laid). */
+export interface LaidStatus {
+  id: string;
+  laid: boolean;
+  why?: string;
+  at?: { x: number; y: number };
+  /** The net (id) whose copper is in the way, where one is. */
+  blockedBy?: string;
 }
 
 export interface DrawnVia extends Via {
@@ -220,6 +260,8 @@ export interface StoredCopper {
   reused?: { tracks: number; vias: number };
   /** The lines at a set impedance routed first, and whether a pair kept together. */
   lines?: RoutedLine[];
+  /** The connections the agent laid (BoardSettings.laid): laid as asked, or why not. */
+  laid?: LaidStatus[];
 }
 
 export interface StoredPlacement {
@@ -899,6 +941,8 @@ export interface Track {
   width: number;
   /** Polyline x0,y0,x1,y1,… */
   pts: number[];
+  /** Laid as the agent asked (BoardSettings.laid): that connection's id. */
+  laid?: string;
 }
 
 export interface Via {
@@ -911,6 +955,8 @@ export interface Via {
   group?: string;
   /** A thermal via in a pad (add_vias pad): allowed there whatever via_in_pad says. */
   inPad?: boolean;
+  /** Laid as the agent asked (BoardSettings.laid): that connection's id. */
+  laid?: string;
 }
 
 /**
@@ -1007,6 +1053,11 @@ export interface BoardView {
   routing: 'none' | 'stale' | 'done';
   /** The copper is the agent's (BoardSettings.drawn): routing is always 'done', open connections are what is not drawn yet. */
   drawn?: { tracks: DrawnTrack[]; vias: DrawnVia[] };
+  /**
+   * The connections the agent laid with draw_track (BoardSettings.laid), as they stand on this
+   * placement: ends as "U1.3", points in board mm; after routing, whether each was laid as asked.
+   */
+  laid?: { id: string; netId: string; from: string; to: string; layer?: CopperLayer; width?: number; through: { x: number; y: number; layer?: CopperLayer }[]; laid?: boolean; why?: string; at?: { x: number; y: number } }[];
   /** Identifies this placement (parts, nets, outline, rules); the route step records it. */
   placementKey: string;
   /** The outline: proposed by the placer, or set by the user. */
@@ -1239,6 +1290,20 @@ export function boardSummary(b: BoardView, routed = true) {
             const at = g.kind === 'drop' ? { at_mm: b.vias.filter((v) => v.group === g.id).map((v) => [v.x, v.y]) } : {};
             return { id: g.id, net: b.netNames[g.netId] ?? g.netId, kind: g.kind, vias, ...at, ...(g.note ? { note: g.note } : {}) };
           }),
+        }
+      : {}),
+    ...(b.laid?.length
+      ? {
+          laid_tracks: b.laid.map((t) => ({
+            id: t.id,
+            net: b.netNames[t.netId] ?? t.netId,
+            from: t.from,
+            to: t.to,
+            ...(t.layer ? { layer: t.layer } : {}),
+            ...(t.width ? { width_mm: t.width } : {}),
+            ...(t.through.length ? { through_mm: t.through.map((p) => (p.layer ? [p.x, p.y, p.layer] : [p.x, p.y])) } : {}),
+            state: t.laid === undefined ? 'laid by the route step' : t.laid ? 'laid as asked' : `not laid: ${t.why}; the router routed this connection its own way`,
+          })),
         }
       : {}),
     mounting_holes: b.parts.filter((p) => p.componentId.startsWith('hole:')).map((p) => ({ id: p.refdes, x: p.x, y: p.y, diameter: p.pads[0]?.drill, plated: !p.pads[0]?.npth })),
