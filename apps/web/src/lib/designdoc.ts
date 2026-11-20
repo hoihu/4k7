@@ -5,7 +5,7 @@
  * Printed like the schematic, through the browser's print dialog (which also saves a PDF);
  * schematic and board are drawn by the same canvas components as on screen.
  */
-import { bomLines } from '@4k7/fab';
+import { bomLines, copperText, FINISH_TEXT, impedanceLines, notesStackup, stackupLines, stackupSource, thicknessText } from '@4k7/fab';
 import type { Body3D } from '@4k7/parts';
 import { PAPERS, planeNames, type BoardView, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@4k7/schema';
 import BoardCanvas from './components/BoardCanvas.svelte';
@@ -478,6 +478,8 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
           shot('front', 'From the front, the heights of the parts'),
       );
     }
+    const stack = notesStackup(b);
+    const impedance = impedanceLines(b);
     html.push(
       `<table class="kv"><tbody>` +
         [
@@ -486,6 +488,10 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
           ...(b.keepouts?.length ? [['Keep-outs', b.keepouts.map((k) => `${k.id}${k.name ? ` ${k.name}` : ''}: no ${k.forbid.join(', ')}${k.layers.length < b.layers.length ? ` on ${k.layers.join(', ')}` : ''}${k.part ? `, follows ${k.part}` : ''}`).join('; ')]] : []),
           ['Rules', `clearance ${b.rules.clearance} mm · track ${b.rules.track} mm, power ${b.rules.powerTrack} mm · via ${b.rules.viaPad}/${b.rules.viaDrill} mm · edge ${b.rules.edgeClearance} mm`],
           ...(b.fab ? [['Manufacturer', `${b.fab.house}, ${b.fab.tier}: track ${b.fab.limits.track} mm, gap ${b.fab.limits.clearance} mm at the narrowest (${b.fab.source.url}${b.fab.source.checked ? `, checked ${b.fab.source.checked}` : ''})`]] : []),
+          // the same stack-up, impedance table and finish as the fab zip's fab-notes.txt (fabnotes.ts)
+          ['Stack-up', `${stackupSource(stack)}: ${thicknessText(stack)}, copper ${copperText(stack)}. ${stackupLines(stack).join('; ')}`],
+          ['Impedance', impedance.length ? impedance.map((l) => l.join('; ')).join(' · ') : 'none: no line is routed at a set impedance'],
+          ['Finish', FINISH_TEXT],
           ['Routing', b.routing === 'done' ? `${b.stats.routed} of ${b.stats.nets} nets, ${Math.round(b.stats.trackLength)} mm of track, ${plural(b.stats.vias, 'via')}${b.ratsnest.length ? `, ${b.ratsnest.length} connections open` : ''}` : 'not routed'],
           ['Checks (DRC)', `${plural(drc!.e, 'error')}, ${plural(drc!.w, 'warning')}`],
           ...(b.missing.length ? [['No footprint', b.missing.join(', ')]] : []),
