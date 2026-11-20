@@ -4,13 +4,15 @@
  * export checks what it writes, and the agent's view_gerbers waits for the result. One check runs
  * at a time; a check asked with a `latest` key replaces one of that key still waiting (the viewer's
  * files made again after another edit), so edits in a row do not queue up checks of old files.
+ * The layout's checks give the board instead: the worker makes its files (checkBoard).
  */
 import type { CopperCheck, NetDesign } from '@4k7/fab';
+import type { BoardView } from '@4k7/schema';
+
+type Ask = { files: { name: string; content: string }[]; design: NetDesign; fresh: boolean } | { board: BoardView };
 
 interface Job {
-  files: { name: string; content: string }[];
-  design: NetDesign;
-  fresh: boolean;
+  ask: Ask;
   latest?: string;
   resolve: (c: CopperCheck | null) => void;
   reject: (e: Error) => void;
@@ -43,17 +45,26 @@ function start() {
       start();
     };
   }
-  worker.postMessage({ files: job.files, design: job.design, fresh: job.fresh });
+  worker.postMessage(job.ask);
 }
 
 /** The files' copper against the design (`fresh`: the files were just made from it); null without copper layers. */
 export function checkFiles(files: { name: string; content: string }[], design: NetDesign, fresh: boolean, latest?: string): Promise<CopperCheck | null> {
+  return enqueue({ files, design, fresh }, latest);
+}
+
+/** The board's own files, made in the worker as the export makes them, against the board; a later ask replaces one still waiting. */
+export function checkBoard(board: BoardView): Promise<CopperCheck | null> {
+  return enqueue({ board }, 'board');
+}
+
+function enqueue(ask: Ask, latest?: string): Promise<CopperCheck | null> {
   return new Promise((resolve, reject) => {
     if (latest) {
       const i = waiting.findIndex((j) => j.latest === latest);
       if (i >= 0) waiting.splice(i, 1)[0]!.reject(new Error('replaced by a newer check'));
     }
-    waiting.push({ files, design, fresh, ...(latest ? { latest } : {}), resolve, reject });
+    waiting.push({ ask, ...(latest ? { latest } : {}), resolve, reject });
     start();
   });
 }

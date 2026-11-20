@@ -199,7 +199,7 @@ stored geometry, from which a view and the checks are derived.
 | Solver | auto-layout, wire path finder (`layout.ts`, `schroute.ts`) | placer, router (`board.ts`, `router.ts`) |
 | Stored | `Design.drawing` | `board.placement`, `board.drawn`, `board.copper` (a cache) |
 | View | `viewOf`, a `SheetView` per sheet | `placedOf`, then `layoutBoard`: a `BoardView` |
-| Checks | ERC, `SCH.*` | `DRC.*`, `IMP.*`, `PANEL.*` |
+| Checks | ERC, `SCH.*` | `DRC.*`, `IMP.*`, `PANEL.*`; `FAB.*` from the production files (in the app, `fab-check.md`) |
 
 The solvers stay separate: an orthogonal mil lattice and a 0.1 mm clearance grid at 45° are different
 problems. What is common is how they are driven:

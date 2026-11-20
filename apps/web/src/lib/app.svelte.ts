@@ -36,6 +36,8 @@ import { assemblyFacts, describeDatasheetPages, findDesignSections, getBuiltinPa
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
 import { gerberViewer } from './gerberViewer.svelte.ts';
+import { checkBoard } from './netcheckClient.ts';
+import { FabWatch } from './fabFindings.ts';
 import { colourLegend, fabPicture } from './gerberDraw.ts';
 import { checkDesignCost, checkDesignStock, checkDesignValues, sourcingTool, type BoardFacts, type CostReport, type StockReport, type SupplierPart } from './sourcing.ts';
 import { fabRefreshPrompt } from './fabRefresh.ts';
@@ -184,6 +186,12 @@ class AppState {
   /** Routing under way (the copper laid so far is drawn over the placed board), else null. */
   routeProgress = $state.raw<RouteProgress | null>(null);
   private boards = new BoardClient();
+  /** The production files' netlist check of the routed board, FAB.* (fabFindings.ts): beside the board's own checks, not in them. */
+  fabDiagnostics = $state.raw<Diagnostic[]>([]);
+  private fab = new FabWatch(checkBoard, () => {
+    this.fabDiagnostics = this.fab.current();
+    if (this.boardCounts && this.boardCurrent) this.boardCounts = countDiagnostics([...this.board!.diagnostics, ...this.fabDiagnostics]);
+  });
   /** The route helper searching in its worker (drawn copper): what for, and the copper laid so far. */
   helperRun = $state.raw<{ what: string; progress: RouteProgress | null } | null>(null);
   private helperStop: (() => void) | null = null;
@@ -501,10 +509,11 @@ class AppState {
         const { newCopper, ...shown } = board;
         this.board = shown;
         this.boardStage = stage;
+        this.fab.update(shown, stage === 'routed');
         if (stage === 'routed') {
           this.boardBusy = false;
           this.boardRev = rev;
-          if (rev === this.rev) this.boardCounts = countDiagnostics(board.diagnostics);
+          if (rev === this.rev) this.boardCounts = countDiagnostics([...board.diagnostics, ...this.fabDiagnostics]);
           // routed here, not taken from the design: keep it, so it is not routed again
           if (newCopper) void this.keepCopper(newCopper);
         }
@@ -1340,7 +1349,15 @@ class AppState {
   }
 
   /** The kernel as the agent's tools reach it: an edit asking the route helper runs in its worker first (transactEdit). */
-  private editPort: KernelPort = { ...this.kernel.port, transact: (tx) => this.transactEdit(tx) };
+  private editPort: KernelPort = {
+    ...this.kernel.port,
+    transact: (tx) => this.transactEdit(tx),
+    // the production files' findings of the board as it is now, beside the kernel's
+    query: async (q) => {
+      const out = await this.kernel.port.query(q);
+      return (q as { op?: string })?.op === 'get_diagnostics' && Array.isArray(out) && this.boardCurrent ? [...out, ...(await this.fab.settled())] : out;
+    },
+  };
 
   /**
    * A transaction for the kernel. One that asks the route helper on drawn copper (route nets /
