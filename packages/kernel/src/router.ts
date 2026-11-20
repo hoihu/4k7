@@ -13,7 +13,7 @@
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
 import { type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, roundPadDist, type RouteBlockage, type RoutedLine, type Track, type Via, type Zone } from '@4k7/schema';
-import { r3, segDist, segmentsOf } from './geom.ts';
+import { neckReach, r3, segDist, segmentsOf } from './geom.ts';
 import { Heap } from './heap.ts';
 import { keptCopper, type KeptCopper } from './keep.ts';
 import { routeLines } from './pairroute.ts';
@@ -393,8 +393,8 @@ function routeOnce(
   const lay = passTracks(grid, finder);
   const pouring = passPours(grid);
   const dropper = passDrops(grid, finder, lay, pouring);
-  const { rules, layers, W, H, N, L, netNum, numOf, padNet, widths, trackClass, maps, viaAt, viaNear, VIA_SPACING, stampVia, fixedMap, keptTracks, keptVias, escapes, ownCopper, escapeOf, offCentre, find, groupCells, union, tracks, vias, failed } = grid;
-  const { clock, cost, from, goal, seenAt, DX, DY, STEP, freeFor, viaBlocked, viaFreeFor, deepestCells, search, corridor, widen } = finder;
+  const { rules, layers, W, H, N, L, netNum, numOf, padNet, widths, trackClass, padDist, maps, viaAt, viaNear, VIA_SPACING, stampVia, fixedMap, keptTracks, keptVias, escapes, ownCopper, escapeOf, offCentre, find, groupCells, union, tracks, vias, failed } = grid;
+  const { clock, cost, from, goal, seenAt, DX, DY, STEP, neck, freeNeck, classAt, viaBlocked, viaFreeFor, deepestCells, search, corridor, widen } = finder;
   const { commit, reserved, clearOf, padAt } = lay;
   const { zones, planes, region, planeShape } = pouring;
   const { reachMain, reserveDrops, dropOnto } = dropper;
@@ -435,31 +435,72 @@ function routeOnce(
     }
     const pa = pads[c.a]!;
     const pb = pads[c.b]!;
-    // the net's own width, else power width, each only where both pads can take it
-    const takes = (w: number) => Math.min(pa.w, pa.h) >= w * 0.9 && Math.min(pb.w, pb.h) >= w * 0.9;
+    // the net's own width, else on a power net the power width; near a pad too small for it the
+    // track narrows to the widest width that pad takes (a neck, see necks), and runs at its width
+    // again clear of it
     const own = input.netWidths?.[c.netId];
-    const wide = input.powerNets.has(c.netId) && takes(rules.powerTrack);
-    // too wide for a pad: the widest class that still fits (never below the signal width)
+    const chosen = own ? trackClass(own) : input.powerNets.has(c.netId) ? 1 : 0;
+    // a power track that finds no way is necked down to the signal width all along. A width the
+    // user set for the net is a requirement: failing that, the widest both end pads take, widened
+    // again where it fits once laid (commit), the necks no longer than they must be
+    const takes = (w: number) => Math.min(pa.w, pa.h) >= w * 0.9 && Math.min(pb.w, pb.h) >= w * 0.9;
     const fitting = (w: number) => widths.reduce((best, x, i) => (i !== 2 && x <= w && takes(x) && x > widths[best]! ? i : best), 0);
-    const chosen = own ? (own <= rules.track || takes(own) ? trackClass(own) : fitting(own)) : wide ? 1 : 0;
-    // a power track that finds no way is necked down to the signal width (a width the user set
-    // for the net is not: that one is a requirement)
     let k = chosen;
     let path = attempt(chosen);
     if (!path && chosen === 1 && !own && now() <= deadline) path = attempt((k = 0));
+    if (!path && own && own > rules.track && !takes(own) && fitting(own) !== chosen && now() <= deadline) path = attempt((k = fitting(own)));
     if (!path) {
+      neck.run = 0;
       failed.push(c);
       return;
     }
+    /** The neck zone for width class k: round the pads of both ends' copper that cannot take it. */
+    function necks(k: number) {
+      neck.run = 0;
+      const w = widths[k]!;
+      if (w <= rules.track) return;
+      const reach = neckReach(w);
+      const r = ++neck.no;
+      const ra = find(c.a);
+      const rb = find(c.b);
+      pads.forEach((p, idx) => {
+        const root = find(idx);
+        if (root !== ra && root !== rb) return;
+        const size = Math.min(p.w, p.h);
+        if (size >= w * 0.9) return;
+        // the widest width below this one that the pad takes (never below the signal width)
+        const nk = widths.reduce((best, x, i) => (i !== 2 && x < w && size >= x * 0.9 && x > widths[best]! ? i : best), 0);
+        const d = padDist(p);
+        for (let j = Math.max(0, Math.floor((p.y - p.h / 2 - reach) / G)); j <= Math.min(H - 1, Math.ceil((p.y + p.h / 2 + reach) / G)); j++) {
+          for (let i = Math.max(0, Math.floor((p.x - p.w / 2 - reach) / G)); i <= Math.min(W - 1, Math.ceil((p.x + p.w / 2 + reach) / G)); i++) {
+            const dist = d(i * G, j * G);
+            if (dist > reach) continue;
+            const at = j * W + i;
+            const on = dist < w / 2 ? 1 : 0;
+            if (neck.at[at] !== r) {
+              neck.at[at] = r;
+              neck.k[at] = nk;
+              neck.on[at] = on;
+            } else {
+              if (widths[nk]! < widths[neck.k[at]!]!) neck.k[at] = nk;
+              if (on) neck.on[at] = 1;
+            }
+          }
+        }
+        neck.run = r;
+      });
+    }
     function attempt(k: number): number[] | null {
+      necks(k);
       // an escape stub is reserved at the signal width: a wider track may run along it only where
       // it keeps its clearance at that width
       const escapeOk = (st: number) => {
         const idx = escapeOf.get(st);
-        if (idx === undefined || widths[k]! <= rules.track) return true;
+        const w = widths[classAt(net, k, st)]!;
+        if (idx === undefined || w <= rules.track) return true;
         const e = escapes[idx]!;
         const p = pads[idx]!;
-        return clearOf(net, e.l, widths[k]!, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
+        return clearOf(net, e.l, w, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
       };
       epoch++;
       const goalStamp = epoch;
@@ -467,8 +508,8 @@ function routeOnce(
       for (const st of goalCells) goal[st] = goalStamp;
       // end where the track fits, on its pad's centre line; failing that where it fits; failing
       // that deepest inside the pad
-      const fits = (st: number) => freeFor(net, k)(Math.floor(st / N), st % N);
-      const centred = (st: number) => fits(st) && !offCentre(net, k, st);
+      const fits = (st: number) => freeNeck(net, k)(Math.floor(st / N), st % N);
+      const centred = (st: number) => fits(st) && !offCentre(net, classAt(net, k, st), st);
       const deepest = new Set(deepestCells(goalCells));
       const accept = goalCells.some(centred) ? centred : goalCells.some(fits) ? fits : (st: number) => deepest.has(st);
       // (the estimate: the box round the whole goal group, not just pad a)
@@ -501,6 +542,7 @@ function routeOnce(
     }
     // (a route may also start on copper laid earlier for this net: then it starts right there)
     const copper = commit(c.netId, net, k, path, padAt(find(c.b), path[0]!), padAt(find(c.a), path.at(-1)!));
+    neck.run = 0;
     union(c.a, c.b);
     groupCells.get(find(c.a))!.push(...copper);
     routedNow++;
