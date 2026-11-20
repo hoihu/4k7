@@ -334,6 +334,30 @@ loop, the high-current path, a sensitive trace), with only the points where the 
 
 Nothing changes for a board without such connections: the bench boards route to the same copper.
 
+### 5.9 Route first and a net's layer
+
+Steering softer than laying copper (built 2026-11-20):
+
+- **`set_net route_first`** (`NetAttrs.routeFirst`, `RouteInput.routeFirst`): the net's
+  connections come first in the router's order (before the shortest-first order of the rest), in
+  every pass: after a pass the open connections move to the front as before, but behind those of
+  the nets routed first. So the switching node, a clock or the high-current path gets the short,
+  clean ways, and the others go round it.
+- **`set_net layer`** (`NetAttrs.layer`, `RouteInput.netLayers`): each step of the net's tracks
+  off that layer costs one more grid step (`LAYER_COST`, routegrid.ts): a cost, not a ban. It
+  keeps to the layer where that is about as short, and still changes layer where it must (two
+  vias to reach B.Cu between SMD pads 2 mm apart cost more than the steps on F.Cu, so such a
+  connection stays on top). Not for connections the agent laid with `draw_track` (§5.8): they take
+  the layers they are given. A layer the board does not have is refused (`BOARD_INVALID`); one
+  left over after `set_board layers: 2` is ignored by the router.
+
+Both are in the copper key, not in the placement key (the board routes again without going out of
+date), and in the net's basis (its copper is routed again, the other nets' kept). Boards whose nets
+set neither route to the same copper as before (the bench boards do). The third steering tool,
+keeping copper out of an area, is the keep-outs of §13: the router keeps a net routed first or
+kept to a layer out of them like any other (a net kept to a layer a keep-out closes routes on
+another).
+
 ## 6. What the agent cannot do yet
 
 - Route one net, or keep the router's copper for a net (§7 step 6).
@@ -360,7 +384,10 @@ Each step is useful alone.
    - one connection laid by the agent, the kernel finding the path through the given points:
      *built 2026-11-20* as `draw_track` with router copper (§5.8), laid first and never ripped up;
      where it finds no way the router routes the connection its own way and the DRC says why;
-   - `lock_copper { nets }`: copper the router never rips up (a switching loop drawn by hand).
+   - `lock_copper { nets }`: copper the router never rips up (a switching loop drawn by hand);
+   - softer than geometry: *built 2026-11-20* (§5.9) as `set_net route_first` (the clean ways go to
+     the critical nets) and `set_net layer` (a preferred layer per net, a cost, not a ban);
+     keep-outs (no signals under the inductor) are `add_keepout` (§13).
    The DRC and the netlist check judge the result, as on the schematic.
 7. **Layout Optimize**: the ✦ Optimize button on the board ([zoom-optimize.md](zoom-optimize.md) §6
    steps 3–4): the zoomed area as a scope, `place` (move, turn) only inside it, measures before and

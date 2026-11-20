@@ -246,4 +246,21 @@ describe('the router and the keep-outs', () => {
     // another layer, or another thing held off: it stays
     expect(keptCopper(input(parts, { keepouts: [keepout(8, 3, 12, 5, ['tracks'], ['B.Cu']), keepout(8, 3, 12, 5, ['vias', 'pours'])] }), before).tracks).toHaveLength(1);
   });
+  it('holds a net routed first, and a net kept to a layer, out too', () => {
+    // route_first: the net goes first and still goes round
+    const ko = keepout(8, 0, 12, 7, ['tracks'], ['F.Cu']);
+    const parts = [smd('P', 2, 4, 'A'), smd('Q', 18, 4, 'A')];
+    const first = route(input(parts, { layers: ['F.Cu'], keepouts: [ko], routeFirst: new Set(['A']) }));
+    expect(first.failed).toEqual([]);
+    expect(first.tracks.some((t) => inside(ko, t))).toBe(false);
+    // kept to B.Cu, where a wall across the board holds tracks off: it routes on F.Cu, not into it
+    const wall = keepout(8, 0, 12, 10, ['tracks'], ['B.Cu']);
+    const tht = [smd('P', 2, 4, 'A'), smd('Q', 18, 4, 'A')];
+    for (const p of tht) Object.assign(p.pads[0]!, { layers: ['F.Cu', 'B.Cu'], drill: 0.6 });
+    expect(route(input(tht, { netLayers: { A: 'B.Cu' } })).tracks.map((t) => t.layer)).toEqual(['B.Cu']);
+    const r = route(input(tht, { keepouts: [wall], netLayers: { A: 'B.Cu' } }));
+    expect(r.failed).toEqual([]);
+    expect(r.tracks.some((t) => t.layer === 'B.Cu' && inside(wall, t))).toBe(false);
+    expect(r.tracks.some((t) => t.layer === 'F.Cu' && inside(wall, t))).toBe(true);
+  });
 });

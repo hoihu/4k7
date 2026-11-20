@@ -434,7 +434,7 @@ export function layoutBoard(d: Design, b: BoardView, opts: { budgetMs?: number; 
  * vias placed on purpose and, with drawn copper, that copper; `extra` adds to it.
  */
 export function boardRouteInput(d: Design, b: BoardView, extra: Partial<RouteInput> = {}): RouteInput {
-  const { powerNets, planes, netWidths, gaps } = routeSetup(d, b);
+  const { powerNets, planes, netWidths, gaps, routeFirst, netLayers } = routeSetup(d, b);
   // the lines at a set impedance and the planes under them (the router keeps those planes whole)
   const lines: NonNullable<RouteInput['lines']> = [];
   for (const v of b.impedance ?? []) {
@@ -450,6 +450,8 @@ export function boardRouteInput(d: Design, b: BoardView, extra: Partial<RouteInp
     parts: b.parts,
     powerNets,
     netWidths,
+    ...(routeFirst.size ? { routeFirst } : {}),
+    ...(Object.keys(netLayers).length ? { netLayers } : {}),
     ...(Object.keys(gaps).length ? { pourGaps: gaps } : {}),
     ...(lines.length ? { lines } : {}),
     ...(b.impedance?.some((v) => v.layers.length) ? { controlled: b.impedance.filter((v) => v.layers.length).map((v) => ({ id: v.id, nets: v.nets, layers: v.layers.map((l) => ({ layer: l.layer, width: l.width, ...(l.gap !== undefined ? { gap: l.gap } : {}) })) })), netNames: b.netNames } : {}),
@@ -536,7 +538,11 @@ function routeSetup(d: Design, b: BoardView) {
   for (const v of b.impedance ?? []) if (v.layers[0]) for (const id of v.nets) netWidths[id] = v.layers[0].width;
   // how far the pours keep from a line at a set impedance
   const gaps = pourGaps(b.impedance);
-  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort(), ...(b.drawn ? ['drawn', b.drawn] : []), ...(Object.keys(gaps).length ? ['gaps', Object.entries(gaps).sort()] : [])]));
+  // nets routed first, and the layer a net's tracks keep to (set_net route_first, layer; layout.md §5.9)
+  const routeFirst = new Set(Object.values(d.nets).filter((n) => n.attrs.routeFirst).map((n) => n.id));
+  const netLayers: Record<string, CopperLayer> = Object.fromEntries(Object.values(d.nets).flatMap((n) => (n.attrs.layer && b.layers.includes(n.attrs.layer) ? [[n.id, n.attrs.layer]] : [])));
+  const steer = routeFirst.size || Object.keys(netLayers).length ? ['steer', [...routeFirst].sort(), Object.entries(netLayers).sort()] : [];
+  const key = hash(stableJson([COPPER_FORMAT, b.placementKey, [...powerNets].sort(), Object.entries(netWidths).sort(), ...(b.drawn ? ['drawn', b.drawn] : []), ...(Object.keys(gaps).length ? ['gaps', Object.entries(gaps).sort()] : []), ...steer]));
   // the pads dropping through vias the agent placed (add_vias drop), per net
   const drops = (d.board?.vias ?? []).filter((g) => g.kind === 'drop');
   // the connections the agent laid (a change routes that net again)
@@ -549,10 +555,10 @@ function routeSetup(d: Design, b: BoardView) {
     nets: Object.fromEntries(
       Object.keys(d.nets)
         .sort()
-        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.offsets ?? g.count ?? null, g.drill ?? null, g.size ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null]), ...(gaps[id] !== undefined ? [gaps[id]] : []), ...(laid.some((t) => t.netId === id) ? ['laid', laid.filter((t) => t.netId === id)] : [])]))]),
+        .map((id) => [id, hash(stableJson([powerNets.has(id), netWidths[id] ?? null, drops.filter((g) => g.netId === id).map((g) => [g.pad, g.offsets ?? g.count ?? null, g.drill ?? null, g.size ?? null]), planes.filter((pl) => pl.netId === id).map((pl) => [pl.layer, !!pl.area, pl.style ?? null]), ...(gaps[id] !== undefined ? [gaps[id]] : []), ...(laid.some((t) => t.netId === id) ? ['laid', laid.filter((t) => t.netId === id)] : []), ...(routeFirst.has(id) ? ['first'] : []), ...(netLayers[id] ? ['layer', netLayers[id]] : [])]))]),
     ),
   };
-  return { powerNets, planes, netWidths, gaps, key, basis };
+  return { powerNets, planes, netWidths, gaps, routeFirst, netLayers, key, basis };
 }
 
 /** The key copper routed for this design's board now would be kept under (see BoardSettings.copper). */

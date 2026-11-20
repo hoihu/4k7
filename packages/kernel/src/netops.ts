@@ -2,7 +2,7 @@
  * The ops on the circuit: parts, connections, nets, sheets and the constraints of the ledger.
  */
 import { isBoxSymbol, isTwoPin, packageOptions, searchParts, standardPackage } from '@4k7/parts';
-import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea } from '@4k7/schema';
+import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, DEFAULT_BOARD, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea } from '@4k7/schema';
 import { keepPlacement } from './board.ts';
 import { allocRefdes, cardOf, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
 import { isDrawn } from './drawing.ts';
@@ -312,6 +312,21 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
       a.trackWidth = Math.round(op.track_mm * 1000) / 1000;
     }
     changes.push(`track ${op.track_mm === null ? 'default' : `${a.trackWidth} mm`}`);
+  }
+  if (op.route_first !== undefined) {
+    if (op.route_first) a.routeFirst = true;
+    else delete a.routeFirst;
+    changes.push(op.route_first ? 'routed first' : 'routed as any other');
+  }
+  if (op.layer !== undefined) {
+    if (op.layer === null) delete a.layer;
+    else {
+      const n = d.board?.layers ?? DEFAULT_BOARD.layers;
+      const has = n === 4 ? ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'] : ['F.Cu', 'B.Cu'];
+      if (!has.includes(op.layer)) reject({ code: 'BOARD_INVALID', message: `${op.layer} does not exist on a ${n}-layer board.`, candidates: has });
+      a.layer = op.layer;
+    }
+    changes.push(op.layer ? `tracks on ${op.layer} where they can` : 'tracks on any layer');
   }
   if (op.draw_as !== undefined && (op.draw_as ?? undefined) !== a.drawAs) {
     if (op.draw_as === null) delete a.drawAs;

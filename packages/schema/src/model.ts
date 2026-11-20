@@ -179,6 +179,10 @@ export interface NetAttrs {
    * between them, or wires and no label where a wire can go. Absent: whatever draws best.
    */
   drawAs?: 'label' | 'wire';
+  /** The router routes this net's connections before the others (the clean ways go to it). */
+  routeFirst?: boolean;
+  /** The copper layer its tracks should keep to on the board: a cost on the others, not a ban. */
+  layer?: 'F.Cu' | 'In1.Cu' | 'In2.Cu' | 'B.Cu';
 }
 
 /**
