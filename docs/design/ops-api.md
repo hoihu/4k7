@@ -1,6 +1,6 @@
 # Operation API (ops catalogue)
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft.
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft; §2 matches the shipped ops as of 2026-11-20.
 
 The ops catalogue is the **only** way to read or change a design. The in-app agent, external
 agents (through MCP), scripts, tests and the UI all use it.
@@ -17,18 +17,141 @@ agents (through MCP), scripts, tests and the UI all use it.
 
 ## 2. Op groups
 
-| Group | Ops (selection) |
-|---|---|
-| Query | `get_summary`, `find` (parts/nets/pins by filter), `get_component`, `get_net`, `get_diagnostics`, `get_ledger`, `explain(entity)`, `render_snapshot(view, region)` (image for vision models) |
-| Library | `search_parts`, `ingest_datasheet`, `get_part_card`, `generate_footprint(params)`, `generate_symbol(params)` |
-| Schematic | `add_part`, `remove`, `set_param`, `connect`, `disconnect`, `rename_net`, `set_net_class`, `create_sheet`, `move_to_sheet`, `add_port`, `annotate` |
-| Constraints | `constrain`, `update_constraint`, `disable_constraint`, `remove_constraint` |
-| Board | `set_outline`, `set_stackup` (implemented, see [impedance](impedance.md)), `set_fab_profile` (implemented, see [fab-rules](fab-rules.md)), `add_mounting_hole`, `add_keepout` |
-| Solvers | `layout_schematic(scope)`, `place(scope, strategy)`, `route(scope, strategy)`, `pour(zone)`, `tune_length(group)` |
-| Rules | `set_rule`, `add_net_class`, `set_impedance` (nets and differential pairs at a set impedance; implemented, see [impedance](impedance.md)), `define_length_group` |
-| Verify | `run_checks(scope, kinds)`, `add_waiver`, `remove_waiver` |
-| Output | `export_fab(profile)`, `export_bom`, `export_pdf`, `export_native` |
-| History | `begin_changeset`, `commit_changeset`, `revert`, `branch`, `compare(branch_a, branch_b)` |
+Every op the kernel accepts, as defined in `packages/schema/src/ops.ts` (edit ops in the EditOp union, applied in a
+transaction; query ops in the QueryOp union, read-only). The field-level docs live in the schema; a test
+(`packages/schema/test/ops-doc.test.ts`) fails when this list and the schema drift apart.
+
+### Query
+
+- `get_summary`: overview of the design.
+- `find`: parts and nets by a substring of refdes, part id, value or net name, or by category.
+- `get_component`: one component: part, parameters, package, pins with their nets, constraints.
+- `get_net`: one net: its pins, track width, vias for its current, impedance rule.
+- `get_diagnostics`: the design's current diagnostics (check results).
+- `get_ledger`: the constraint ledger: every constraint with its strength and the user's words.
+- `get_description`: the design description: overview, functional blocks with their parts, parts no block covers yet.
+- `get_fab_profiles`: the built-in manufacturer profiles and the one this board uses.
+- `get_schematic`: the schematic drawing: pages, blocks, where each symbol and net label stands.
+- `get_copper`: drawn tracks and vias with their ids, optionally by net or area.
+- `get_board`: board outline, part positions, routing stats and DRC results.
+- `try_placements`: compare arrangements of the main parts without changing the design.
+- `suggest_moves`: small-part moves (turn, swap, shift) that close open connections, without applying them.
+- `get_enclosure`: the enclosure brief, script, board API and last render report.
+- `get_guide`: an agent guide (schematic, cost, mechanics, high_speed).
+
+### Library
+
+- `search_parts`: search the library by function, MPN or category.
+- `get_part`: one part card.
+- `set_symbol`: how a part's symbol is drawn (one symbol or units, and which pin goes where).
+- `set_footprint`: a part's footprint from its datasheet (pads, body, height); applies to every component of that part.
+- `set_pin_descriptions`: what a part's pins do, from the datasheet's pin table; goes back to the library part.
+- `set_polarity`: which way round a part goes, marked on the silkscreen.
+- `set_mating`: the face a connector, card slot or switch is used from and the plug's size.
+- `rename_part`: a part's MPN shown on the symbol and in the BOM, and its human name.
+- `set_package_defaults`: default packages for generic resistors, capacitors, inductors, diodes and LEDs.
+- `set_value_series`: the E-series ranges of generic resistors, capacitors and inductors.
+
+### Schematic (netlist)
+
+- `add_part`: add a component from a part card, with parameters and sheet.
+- `remove`: remove a component.
+- `set_param`: set or remove a component's parameters.
+- `rename`: change a component's reference designator.
+- `connect`: put pins on a net.
+- `disconnect`: take pins off their net.
+- `no_connect`: mark pins as deliberately unconnected.
+- `set_net`: rename a net and set its voltage, external/power flags, max current, track width and how it is drawn.
+- `describe`: the functional blocks (which group and order the schematic) and the design document text.
+
+### Sheets and drawing
+
+- `add_sheet`: add a schematic sheet.
+- `move_to_sheet`: move components to another sheet.
+- `remove_sheet`: remove a sheet.
+- `clear_sheet`: take all parts off a sheet, with their connections and constraints.
+- `set_paper`: paper size of the schematic pages (A4, A3, A2).
+- `place_symbol`: move a symbol on the schematic (the sheet's drawing becomes hand-arranged).
+- `place_block`: put a functional block roughly where it belongs on its page.
+- `auto_draw`: let the auto-layout redraw a sheet, or just some parts.
+- `wire`: draw a wire between two pins already on one net.
+- `label`: show a pin's net by a net label or supply symbol.
+- `erase`: take wires and labels out of the drawing (the netlist does not change).
+- `move_supply`: move one supply symbol to another spot on its page.
+- `place_text`: put a part's name and value where they read best.
+
+### Constraints
+
+- `constrain`: add a placement, parameter, layer, arrangement or note constraint (soft or hard).
+- `remove_constraint`: remove a constraint (also takes back an `attach`).
+
+### Board
+
+- `set_board`: board size, layers and design rules.
+- `set_outline`: a free-form board outline.
+- `add_cutout`: a rectangular, round or slot cutout.
+- `remove_cutout`: remove a cutout.
+- `add_hole`: a mounting hole, at a corner or a position, plated or not.
+- `remove_hole`: remove a hole.
+- `add_keepout`: an area where tracks, vias, pours or parts are not allowed on some layers.
+- `edit_keepout`: change a keep-out.
+- `remove_keepout`: remove a keep-out.
+- `add_graphic`: silkscreen graphic or text.
+- `edit_graphic`: move, scale or restyle a graphic.
+- `remove_graphic`: remove a graphic.
+- `set_panel`: make the board in a fabrication panel (see [panel](panel.md)).
+
+### Rules
+
+- `set_fab_profile`: the manufacturer and its limits (see [fab-rules](fab-rules.md)).
+- `set_stackup`: the layer build-up (see [impedance](impedance.md)).
+- `set_impedance`: route a net or differential pair at a set impedance (see [impedance](impedance.md)).
+- `remove_impedance`: remove an impedance rule.
+
+### Placement
+
+- `place`: put a component at a position, rotation and side on the board, optionally locked.
+- `attach`: say which part a small part belongs with on the board.
+- `propose_placement`: place the board afresh, with the main parts where given.
+- `refine_placement`: move and turn the placer's small parts to untangle the ratsnest.
+
+### Copper
+
+- `route`: router copper for the board as placed, or for given nets.
+- `set_copper_mode`: who lays the copper: the router, or you (drawn mode).
+- `draw_track`: draw one track of one net on one layer.
+- `draw_pair`: draw a differential pair along a centre line.
+- `draw_via`: a through via of one net at a spot.
+- `edit_copper`: change drawn tracks and vias in place, keeping their ids.
+- `tune_length`: add a meander to a drawn track to reach a length or match other nets.
+- `erase_copper`: take tracks and vias away.
+- `set_plane`: a net's copper plane on a layer, whole or in an area.
+- `set_plane_style`: a plane's gaps, clearance, edge pull-back and thermal reliefs.
+- `add_vias`: thermal, stitching, fence or placed vias of one net.
+- `remove_vias`: remove a via group.
+
+### Verify
+
+- `add_waiver`: waive a check result for given entities, with a reason.
+- `remove_waiver`: remove a waiver.
+
+### Enclosure
+
+- `set_enclosure_brief`: what the box must do, decisions and questions for the user (see [enclosure](enclosure.md)).
+- `set_enclosure_script`: the enclosure as a script.
+- `set_enclosure_graphic`: a logo or icon the enclosure script can emboss, engrave or inlay.
+
+### Names from earlier drafts that did not ship
+
+- *rename_net*: `set_net` with rename. *create_sheet*: `add_sheet`. *add_mounting_hole*: `add_hole`.
+- *get_part_card*: `get_part`. *generate_symbol*, *generate_footprint*: `set_symbol`, `set_footprint` from the datasheet.
+- *layout_schematic*: `auto_draw`. *pour*: `set_plane`.
+- *set_rule*: `set_board`. *set_net_class*, *add_net_class*: per net with `set_net`. *define_length_group*: `tune_length` with match.
+- *update_constraint*, *disable_constraint*: `remove_constraint`, then `constrain`.
+- *run_checks*: checks run with every transaction; read them with `get_diagnostics`.
+- *explain*, *render_snapshot*, *ingest_datasheet*, *add_port*, *annotate*, the *export_…* ops and the history ops
+  (*begin_changeset*, *commit_changeset*, *revert*, *branch*, *compare*) are not ops. Images, part import and
+  production files are agent tools or app features (see [ai-loop](ai-loop.md)); undo and redo are the app's.
 
 ## 3. Envelope
 
