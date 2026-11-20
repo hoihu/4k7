@@ -90,9 +90,9 @@ pours last). What changed:
 - **More passes.** Up to 40, stopping when one routes everything, when 8 in a row bring no
   improvement, or at the budget (90 s, was 15 s). The pass order no longer alternates with "longest
   first": a new order every pass undid what the history costs taught.
-- **Neck-down.** A power net is drawn wide where its pads allow it; a wide track that finds no way is
-  tried again at the signal width. A width the user set for a net (`set_net track_mm`) is a
-  requirement and never necked down.
+- **Neck-down.** A power net is drawn wide, narrowed only in a short neck into a pad too small for
+  it (§5.7); a wide track that finds no way is tried again at the signal width. A width the user set
+  for a net (`set_net track_mm`) is a requirement and never necked down to the signal width.
 - **Why it is open.** Each open connection says what blocks it (`RouteBlockage`): the nets whose
   copper lies across its way and where it first meets them, `enclosed` if no way exists even with all
   copper gone (pads or the edge close the pad off), or `plane` if a pad found no room for its via
@@ -244,6 +244,47 @@ a part turned or moved, `try_placements`) before anything is done to the copper.
 
     node --experimental-transform-types packages/kernel/bench/board.ts 4 3 place
 
+### 5.7 Necks
+
+A track runs at its net's width (`set_net track_mm`, else the power width on a power net) and
+narrows only near a pad too small for it: a neck. Before, the router chose one width per
+connection. A power net went at the signal width all along whenever one of its two pads was
+smaller than the power width (every QFN pin, a SOT-23 pin, a regulator's SW pin). A net with a set
+width was searched at the widest width both pads take, then widened where the laid track left
+room; one tight spot anywhere along a layer's run kept that run narrow from end to end.
+
+Now the search itself knows the necks (`routesearch.ts`, zone set per connection by `routeConn`
+in `router.ts`). While a connection is routed, the grid points round each pad of either end's
+copper that cannot take the width (within `neckReach`: 1 mm, or twice the width if more) are its
+neck zone, each with the width it may narrow to there (the widest the pad takes, never below the
+signal width). The search may use a zone point at that width where the full width does not fit,
+at a small cost per step (`NECK_COST`: the full width is preferred wherever it fits); a point
+where the full width would reach onto the pad takes the neck width too (the copper would stick out
+of the pad). `commit` (`routetracks.ts`) lays the path in runs per layer and width, each
+straightened and checked at its own width; a narrow run meets the wide one on its last grid point
+(the narrow track fits wherever the wide one does), and a stretch of fewer than `NECK_MIN` grid
+steps at the full width between two necks is laid narrow.
+
+When the width with necks finds no way, a power track is still necked to the signal width all
+along. A net with a set width goes as before: at the widest width both end pads take, widened
+again where it fits once laid. `DRC.NECK` (§7, the etching checks) names what is left narrow for
+longer than a neck: a narrow track is let be only with an end on or within `neckReach` of a pad
+too small for the width, and no longer than twice that. For copper the router laid, the message
+tells the agent to make room there and route again rather than lower the width. `COPPER_FORMAT` 2:
+copper routed before this is routed again.
+
+Benches: the six `bench/board.ts` boards route to the same copper as before (their pads all take
+their nets' widths). `bench/route.ts` (two QFP-48 with 0.25 mm pins, VCC and GND supplies at a
+0.4 mm power width): on 2 layers VCC was 0.15 mm for 136 mm of its track and is now 0.15 mm for 26
+mm, the rest at 0.4 mm. On 4 layers both supplies are planes and their copper is the same as
+before. This bench's open count depends on timing (the probes have a time budget): on 4 layers it
+came out 0 or 2 open on main from run to run, and 2 or 3 with necks.
+
+| `bench/route.ts 2`, run alone | nets | open | tracks | vias | length | VCC at 0.4 / 0.15 mm |
+|---|---|---|---|---|---|---|
+| before | 63/63 | 0 | 334 | 238 | 3229 mm | 164 / 136 mm |
+| necks | 63/63 | 0 | 355 | 244 | 3248 mm | 253 / 26 mm |
+
 ## 6. What the agent cannot do yet
 
 - Draw or remove a track itself, or route one net (§7 step 6).
@@ -257,6 +298,7 @@ Each step is useful alone.
 
 1. **The view and the board picture** (§3). *Built 2026-10-13.*
 2. **Routing to completion** (§5.1): history costs, more passes, neck-down, blockers. *Built 2026-10-13.*
+   Necks only near pads too small for the width (§5.7). *Built 2026-11-20.*
 3. **Open connections for the agent, the loop and the propose rule** (§4, §5.2): `BoardView.unrouted`,
    placement measures, guide text, `propose open_connections`. *Built 2026-10-13.*
 4. **Progress and kept copper** (§5.3, §5.4). *Built 2026-10-13.*
@@ -422,7 +464,8 @@ Each step is useful alone.
     junction, or a track ending on the side of another) with nothing of the net in the wedge between them: a pad,
     via, pour or other track of the net filling it, or a junction inside a pad or via, clears it. `DRC.NECK`
     (`neckDrc`, warning): a track narrower than its net's width (`set_net`, its impedance rule, else the power or
-    signal width), unless it starts or ends on a pad too small for that width (a fine-pitch escape).
+    signal width), unless it is a neck (§5.7): an end on or within `neckReach` of a pad too small for that width,
+    and no longer than twice that.
     `DRC.THERMAL_SPOKES` (`thermalDrc`): a pad joined to its pour through a thermal relief has fewer than two spokes
     (warning), or none and no track of its net on the layer (an error for a surface pad: it is cut off). Pads of a
     plane with `thermal: false`, with thermal vias, or with a track on the layer are not counted. Thermal reliefs

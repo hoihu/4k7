@@ -259,7 +259,7 @@ function hash(s: string): string {
 }
 
 /** Bump when what StoredCopper holds changes meaning: copper kept by an older version is routed again. */
-const COPPER_FORMAT = 1;
+const COPPER_FORMAT = 2;
 
 /**
  * The board as placed (`b`): routed and its copper checked when the route step was taken for this placement (or `route`).

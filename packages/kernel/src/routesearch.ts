@@ -4,7 +4,7 @@
  */
 import { keepoutDistance } from '@4k7/schema';
 import { Heap } from './heap.ts';
-import { CLIP_COST, COARSE, G, now, type PassGrid, TURN_COST } from './routegrid.ts';
+import { CLIP_COST, COARSE, G, NECK_COST, now, type PassGrid, TURN_COST } from './routegrid.ts';
 
 export function passSearch(grid: PassGrid) {
   const { input, pads, deadline, history, style, rules, layers, W, H, N, L, widths, searching, stitching, maps, CW, CH, CN, crow, ccol, coarseOf, padDist, viaAt, viaNear, ownCopper, ownInset, toCentre, touch, offMiddle, splitCost, pays, clips, offCentre } = grid;
@@ -39,6 +39,29 @@ export function passSearch(grid: PassGrid) {
     // inside the net's own pad: only where the track stays on the pad (no copper sticking out)
     const st = l * N + i;
     return ownCopper[st] === net && ownInset[st]! >= widths[k]! / 2 - 0.01;
+  };
+  /*
+   * Necks: a track wider than a pad it starts or ends on runs at its width and narrows only near
+   * that pad. While one connection is routed (router.ts sets the zone, see necksFor), the grid
+   * points within reach of such a pad are its neck zone (neck.at[i] === neck.run), each with the
+   * width class it may narrow to there (neck.k: the widest the pad takes). Where the track's own
+   * width does not fit, a zone point takes the narrow one; so does one where the wide copper would
+   * reach onto the pad (neck.on: it would stick out of the pad). neck.run 0: no zone (every other
+   * search). See docs/design/layout.md §5.7.
+   */
+  const neck = { at: new Int32Array(N), k: new Int8Array(N), on: new Uint8Array(N), run: 0, no: 0 };
+  /** A zone point where the neck's width fits on layer l. */
+  const neckOk = (net: number, l: number, i: number) => neck.run !== 0 && neck.at[i] === neck.run && freeFor(net, neck.k[i]!)(l, i);
+  /** freeFor(net, k), or a neck point where its narrow width fits. */
+  const freeNeck = (net: number, k: number) => {
+    const wide = freeFor(net, k);
+    if (!neck.run) return wide;
+    return (l: number, i: number) => wide(l, i) || neckOk(net, l, i);
+  };
+  /** The width class a track of class k takes at state st: its own, or the neck's where it does not fit. */
+  const classAt = (net: number, k: number, st: number) => {
+    const i = st % N;
+    return neck.run && neck.at[i] === neck.run && (neck.on[i] || !freeFor(net, k)(Math.floor(st / N), i)) ? neck.k[i]! : k;
   };
   /*
    * Via keep-out: no via overlapping any pad (its own net's included) or within the land pattern
@@ -103,10 +126,13 @@ export function passSearch(grid: PassGrid) {
   const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean, corr = 0, floodFirst = false, within = Infinity): number[] | null => {
     // no new search once the time is up (its reachability flood alone can take a while)
     if (now() > clock.until) return null;
-    const free = freeFor(net, k);
+    const free = freeNeck(net, k);
     const viaFree = viaFreeFor(net);
     const run = ++clock.searches;
     const inPad = widths[k]! / 2 - 0.01;
+    // a neck point where the track's own width does not fit: the narrow width there
+    const nr = neck.run;
+    const narrowOk = (l: number, c: number) => nr !== 0 && neck.at[c] === nr && freeFor(net, neck.k[c]!)(l, c);
     // a track wider than a via pad may not fit where a via does (its clearance reaches farther):
     // only then must a via's landing be checked for the track as well
     const wide = widths[k]! > rules.viaPad;
@@ -125,7 +151,7 @@ export function passSearch(grid: PassGrid) {
     // starts and goals only where this width fits; if none does (a track wider than its pad),
     // the cells deepest inside the pad: on its centre line, not at a corner
     const usable = (st: number) => free(Math.floor(st / N), st % N);
-    const centred = (st: number) => usable(st) && !offCentre(net, k, st);
+    const centred = (st: number) => usable(st) && !offCentre(net, classAt(net, k, st), st);
     const seeds = starts.filter(centred);
     if (!seeds.length) seeds.push(...starts.filter(usable));
     const from0 = seeds.length ? seeds : deepestCells(starts);
@@ -158,7 +184,7 @@ export function passSearch(grid: PassGrid) {
         const lo = l * N;
         const ok = (c: number) => {
           const v = m[c]!;
-          return v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad);
+          return v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad) || narrowOk(l, c);
         };
         for (let d = 0; d < 8; d++) {
           const dx = DX[d]!;
@@ -218,7 +244,7 @@ export function passSearch(grid: PassGrid) {
       const i = s % N;
       // copper of the net where this width does not fit (a goal: thinner copper, e.g. a drop to a
       // pour): a way may end there, not run on along it (its copper would reach beyond the thin one)
-      if (from[s]! >= 0 && ownCopper[s] !== net && maps[k]![l]![i] !== 0 && maps[k]![l]![i] !== net) continue;
+      if (from[s]! >= 0 && ownCopper[s] !== net && maps[k]![l]![i] !== 0 && maps[k]![l]![i] !== net && !narrowOk(l, i)) continue;
       const x = i % W;
       const y = (i - x) / W;
       const base = cost[s]!;
@@ -226,10 +252,11 @@ export function passSearch(grid: PassGrid) {
       // free(l, ·) for this layer, inlined (the hottest test of the search)
       const m = maps[k]![l]!;
       const lo = l * N;
-      const ok = (c: number) => {
+      const wideOk = (c: number) => {
         const v = m[c]!;
         return v === 0 || v === net || (ownCopper[lo + c] === net && ownInset[lo + c]! >= inPad);
       };
+      const ok = nr === 0 ? wideOk : (c: number) => wideOk(c) || narrowOk(l, c);
       const kind = layerKind[l]!;
       const tch = k < 2 ? touch[k]! : null;
       for (let d = 0; d < 8; d++) {
@@ -245,7 +272,7 @@ export function passSearch(grid: PassGrid) {
         // diagonal steps: both orthogonal neighbours must be clear too (no corner cutting)
         if (dx !== 0 && dy !== 0 && (!ok(y * W + nx) || !ok(ny * W + x))) continue;
         const off = kind === 1 ? dy !== 0 : kind === 2 ? dx !== 0 : false;
-        const nc = base + STEP[d]! + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? style.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + (split !== null ? split[ns]! : 0) + history[ns]!;
+        const nc = base + STEP[d]! + (nr !== 0 && !wideOk(ni) ? NECK_COST : 0) + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? style.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + (split !== null ? split[ns]! : 0) + history[ns]!;
         if (nc < costOf(ns)) {
           seenAt[ns] = run;
           cost[ns] = nc;
@@ -311,7 +338,7 @@ export function passSearch(grid: PassGrid) {
       const v = mk[l]![i]!;
       if (v === 0 || v === net) return true;
       const st = l * N + i;
-      return (ownCopper[st] === net && ownInset[st]! >= inPad) || goal[st] === goalStamp || goal[st] === -goalStamp;
+      return (ownCopper[st] === net && ownInset[st]! >= inPad) || goal[st] === goalStamp || goal[st] === -goalStamp || neckOk(net, l, i);
     };
     const viaFree = viaFreeFor(net);
     let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
@@ -448,7 +475,7 @@ export function passSearch(grid: PassGrid) {
     return no;
   };
 
-  return { clock, cost, from, goal, seenAt, DX, DY, STEP, freeFor, viaBlocked, viaFreeFor, deepestCells, search, corridor, widen };
+  return { clock, cost, from, goal, seenAt, DX, DY, STEP, freeFor, neck, freeNeck, classAt, viaBlocked, viaFreeFor, deepestCells, search, corridor, widen };
 }
 
 export type PassSearch = ReturnType<typeof passSearch>;
