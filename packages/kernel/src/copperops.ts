@@ -836,6 +836,7 @@ const COPPER_AFTER: Record<EditOp['op'], 'follow' | 'check' | null> = {
   add_part: 'follow',
   remove: 'follow',
   set_param: 'follow',
+  set_dnp: null,
   rename: null,
   connect: 'follow',
   disconnect: 'follow',

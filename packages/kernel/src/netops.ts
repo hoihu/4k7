@@ -138,6 +138,16 @@ export function setParam(d: Design, ref: string, params: Record<string, string |
   return { op: 'set_param', effect: `${c.refdes}: ${Object.entries(params).map(([k, v]) => `${k}=${v ?? '∅'}`).join(', ')}`, ids: [c.id] };
 }
 
+/** Do not populate, or fit again (docs/design/assembly.md §8): the part stays in the netlist and on the board. */
+export function setDnp(d: Design, refs: string[], dnp: boolean): OpResult {
+  const comps = refs.map((r) => resolveComponent(d, r));
+  for (const c of comps) {
+    if (dnp) c.dnp = true;
+    else delete c.dnp;
+  }
+  return { op: 'set_dnp', effect: `${comps.map((c) => c.refdes).join(', ')}: ${dnp ? 'do not populate' : 'fitted'}`, ids: comps.map((c) => c.id) };
+}
+
 function hardParamConstraints(d: Design, compId: string, key: string): Constraint[] {
   return Object.values(d.ledger).filter((k) => k.kind === 'param' && k.strength === 'hard' && k.a === compId && k.key === key);
 }

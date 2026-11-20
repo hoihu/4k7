@@ -118,11 +118,23 @@ describe('necks', () => {
     expect(neck({ tracks: [track('A', [3, 5, 10, 5], 0.5)] })).toEqual([]);
   });
 
-  it('lets be an escape from a pad too small for the width', () => {
+  it('lets be a short escape from a pad too small for the width', () => {
     const small = part('U1', [pad('1', 3, 5, 0.3, 0.8, 'A')]);
-    expect(neck({ parts: [small], tracks: [track('A', [3, 5, 10, 5], 0.25)] })).toEqual([]);
+    expect(neck({ parts: [small], tracks: [track('A', [3, 5, 4.2, 5], 0.25)] })).toEqual([]);
+    // a neck that ends near the pad (at a via beside it) rather than on it
+    expect(neck({ parts: [small], tracks: [track('A', [3.6, 5, 4.6, 5], 0.25)] })).toEqual([]);
     const wide = part('U1', [pad('1', 3, 5, 1, 1, 'A')]);
-    expect(neck({ parts: [wide], tracks: [track('A', [3, 5, 10, 5], 0.25)] })).toHaveLength(1);
+    expect(neck({ parts: [wide], tracks: [track('A', [3, 5, 4.2, 5], 0.25)] })).toHaveLength(1);
+  });
+
+  it('flags a track that runs narrow from a small pad for longer than a neck', () => {
+    // 7 mm at 0.25 mm from a 0.3 mm pad, where the net runs at 0.5 mm: the neck zone is 1 mm
+    const small = part('U1', [pad('1', 3, 5, 0.3, 0.8, 'A')]);
+    const [d, ...more] = neck({ parts: [small], tracks: [track('A', [3, 5, 10, 5], 0.25)] });
+    expect(more).toEqual([]);
+    expect(d).toMatchObject({ code: 'DRC.NECK', severity: 'warning', entities: ['net:A', 'U1'] });
+    expect(d!.message).toContain('0.25 mm wide for 7 mm from U1.1, longer than a neck into that pad where A runs at 0.5 mm');
+    expect(d!.message).toContain('make room there');
   });
 });
 

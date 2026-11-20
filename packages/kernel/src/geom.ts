@@ -72,4 +72,10 @@ export function segSegDist(ax: number, ay: number, bx: number, by: number, cx: n
 }
 
 /** A drawn track's or via's id (the router's copper has none). */
+/**
+ * A neck zone round a pad too small for a track of width w (mm): the router narrows the track only
+ * this close to the pad, 1 mm or twice the width (see docs/design/layout.md §5.7).
+ */
+export const neckReach = (w: number) => Math.max(1, 2 * w);
+
 export const idOf = (x: object): string | undefined => (x as { id?: string }).id;

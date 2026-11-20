@@ -1,6 +1,6 @@
 # Assembly: what the assembly house sees
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: polarity marks, the land check, SMD electrolytics and the pick-and-place in the house's frame 2026-10-26.
+> Part of the [architecture](../ARCHITECTURE.md). Status: polarity marks, the land check, SMD electrolytics and the pick-and-place in the house's frame 2026-10-26; do-not-populate parts 2026-11-20.
 
 An assembly house places every part from the BOM and the pick-and-place file, and checks the result
 against the board before it solders: its engineers draw their own model of each part over our pads
@@ -187,10 +187,28 @@ the counts, a transaction's introduced findings, the Inspector and the agent's m
 
 What is not checked:
 
-- **Do-not-populate.** `Component.dnp` exists in the model, but no op sets it and neither the board, the
-  BOM nor the pick-and-place reads it (only the capacitor-requirement check skips such a capacitor). A
-  consistency check between them would have nothing to compare, so there is none until DNP is a feature.
+- **Do-not-populate parts (§8) against the files.** The BOM and the pick-and-place leave them out by
+  construction (both are written from the same board), so there is no `XCHK.*` that holds the schematic,
+  the BOM and the pick-and-place against each other for them.
 - **Through-hole parts are not in the pick-and-place** (it holds parts with a pad on the surface, §6) and are
   in the BOM with type Thru-hole; that is by design for every board with a header, so it is not a finding.
 - **A BOM line against its component.** The stock check does that (§3, [sourcing](sourcing.md)); `XCHK.*`
   does not need the network.
+
+## 8. Do-not-populate parts
+
+`set_dnp` marks components as not to be fitted (`Component.dnp`), and clears the mark: an optional part
+such as a 0 Ω strap, a spare pull-up, an alternative crystal load or a matching network left open. One
+flag per component; there are no named assembly variants.
+
+- **The board keeps the part**: its footprint, its pads on their nets and the copper to them, so it can be
+  fitted by hand later. The flag is not part of the placement key, so setting it does not make the routing
+  stale. The board marks it (`BoardPart.dnp`); the silkscreen does not (yet).
+- **The BOM and the pick-and-place leave it out** (`bomLines`, `pickAndPlace`), for every house's BOM form.
+- **The stock and cost checks leave it out**: `stockLines` puts it on no line and not among the components
+  without a number, so it is not bought, its placement is not counted and its fees are not paid.
+- **The schematic shows "DNP"** under the value (`valueLinesOf`).
+- **It does not meet a datasheet requirement**: a DNP capacitor is no bootstrap or decoupling capacitor
+  (`SEM.REQUIREMENT`, `SEM.DECOUPLING`) and a DNP resistor no pull-up or pull-down (`SEM.PULL`). The
+  requirements of a DNP part itself are still checked.
+- **The proposal shows it** as a change of the component ("do not populate", "fitted again").

@@ -4,12 +4,12 @@
  */
 import { type BoardPad, type Via } from '@4k7/schema';
 import { r3, reversePts, segDist, segmentsOf, segSegDist } from './geom.ts';
-import { cutPts, entryBend, G, type PassGrid, sgn, simplify } from './routegrid.ts';
+import { cutPts, entryBend, G, NECK_MIN, type PassGrid, sgn, simplify } from './routegrid.ts';
 import { type PassSearch } from './routesearch.ts';
 
 export function passTracks(grid: PassGrid, finder: PassSearch) {
   const { input, pads, rules, layers, W, H, N, L, numOf, padNet, widths, trackClass, padDist, stampSeg, stampVia, copperCells, addVia, padCells, escapes, offMiddle, gaps, clips, find, tracks, vias } = grid;
-  const { freeFor } = finder;
+  const { freeFor, classAt } = finder;
   /** Turn a path into tracks and vias, reserve its copper; pad ends start/stop at pad centres. */
   /**
    * Straighten a run of grid cells on one layer into long 0/45/90° pieces (the maze path zigzags
@@ -157,26 +157,45 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
 
   /**
    * Turn a path into tracks and vias, reserve its copper; returns the cells the copper covers.
-   * `pins`: grid points the track must turn at as they are (the points of a connection the agent
-   * laid): a run ends there and the next begins, so the straightening cannot cut them, and the
-   * runs are one track again afterwards. `own`: the width the track should have where it fits
-   * (else the net's set width; see widened).
+   * The path is laid in runs, one per layer and width: a neck (routesearch.ts) is a run of its own,
+   * meeting the wider run beside it on that run's last grid point (the narrow track fits wherever
+   * the wide one does). `pins`: grid points the track must turn at as they are (the points of a
+   * connection the agent laid): a run ends there and the next begins, so the straightening cannot
+   * cut them, and the runs are one track again afterwards. `own`: the width the track should have
+   * where it fits (else the net's set width; see widened).
    */
   const commit = (netId: string, net: number, k: number, path: number[], startPad: number, endPad: number, endVia = false, pins?: Set<number>, own = input.netWidths?.[netId]): number[] => {
-    const width = widths[k]!;
-    const free = freeFor(net, k);
-    // joinsNext: the run goes on, on its layer, in the next one (split at a pin)
-    const runs: { l: number; cells: number[]; joinsNext?: boolean }[] = [];
+    // joinsNext: the run goes on, on its layer and at its width, in the next one (split at a pin)
+    const runs: { l: number; k: number; cells: number[]; joinsNext?: boolean }[] = [];
     for (const s of path) {
       const l = Math.floor(s / N);
+      const ks = classAt(net, k, s);
       const run = runs.at(-1);
-      if (!run || run.l !== l) runs.push({ l, cells: [s % N] });
+      if (!run || run.l !== l || run.k !== ks) runs.push({ l, k: ks, cells: [s % N] });
       else if (pins?.has(s % N) && run.cells.length > 1) {
         // (the pin ends this run and begins the next)
         run.cells.push(s % N);
         run.joinsNext = true;
-        runs.push({ l, cells: [s % N] });
+        runs.push({ l, k: ks, cells: [s % N] });
       } else run.cells.push(s % N);
+    }
+    // a short stretch at the full width between two necks on one layer: narrow too (no stubs of
+    // wide track a few grid steps long)
+    for (let ri = 1; ri + 1 < runs.length; ri++) {
+      const [a, b, c] = [runs[ri - 1]!, runs[ri]!, runs[ri + 1]!];
+      if (b.k === k && a.k !== k && a.k === c.k && a.l === b.l && c.l === b.l && b.cells.length < NECK_MIN) {
+        a.cells.push(...b.cells, ...c.cells);
+        a.joinsNext = c.joinsNext;
+        runs.splice(ri, 2);
+        ri--;
+      }
+    }
+    // runs of one layer meet: the narrower one goes on to the wider one's grid point beside it
+    for (let ri = 1; ri < runs.length; ri++) {
+      const [a, b] = [runs[ri - 1]!, runs[ri]!];
+      if (a.l !== b.l || a.joinsNext) continue; // (runs split at a pin already share it)
+      if (widths[b.k]! < widths[a.k]!) b.cells.unshift(a.cells.at(-1)!);
+      else a.cells.push(b.cells[0]!);
     }
     // a path starting or ending inside a pad runs on to (from) the pad's centre cell, so the
     // straightening can aim its last piece at the pad centre (not at some cell off to the side)
@@ -209,7 +228,8 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
     }
     const covered: number[] = [];
     const lines = runs.map((run, ri) => {
-      const clip = (l: number, i: number, dx: number, dy: number) => clips(net, k, l, i, dx, dy);
+      const free = freeFor(net, run.k);
+      const clip = (l: number, i: number, dx: number, dy: number) => clips(net, run.k, l, i, dx, dy);
       let { verts, covered: cov } = straighten(run.l, run.cells, free, clip);
       // again on the result, until it stops improving: a spike in the maze path (up and back
       // down) is cut off once the pieces before and after it can see each other
@@ -220,8 +240,9 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
       }
       for (const c of cov) covered.push(run.l * N + c);
       const pts = verts.flatMap((c) => [(c % W) * G, Math.floor(c / W) * G]);
-      if (ri > 0 && !runs[ri - 1]!.joinsNext) addVia(netId, net, pts[0]!, pts[1]!);
-      return { l: run.l, pts, joinsNext: !!run.joinsNext };
+      if (ri > 0 && runs[ri - 1]!.l !== run.l) addVia(netId, net, pts[0]!, pts[1]!);
+      // (ends meeting the run before or after on this layer: those stay where they are)
+      return { l: run.l, width: widths[run.k]!, pts, joinsNext: !!run.joinsNext, joinsBefore: ri > 0 && runs[ri - 1]!.l === run.l, joinsAfter: ri + 1 < runs.length && runs[ri + 1]!.l === run.l };
     });
     // runs split at a pin are one track again (the pin a corner of it)
     for (let li = lines.length - 2; li >= 0; li--) {
@@ -229,20 +250,26 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
       if (!a.joinsNext) continue;
       a.pts = [...a.pts, ...b.pts.slice(2)];
       a.joinsNext = b.joinsNext;
+      a.joinsAfter = b.joinsAfter;
       lines.splice(li + 1, 1);
     }
+    /** pts adjusted at one end, unless that moved an end where the line meets the next run on its layer. */
+    const keepJoins = (line: (typeof lines)[number], pts: number[]) => {
+      const same = (q: number, r: number) => Math.abs(pts[q]! - line.pts[r]!) < 1e-9 && Math.abs(pts[q + 1]! - line.pts[r + 1]!) < 1e-9;
+      return (!line.joinsBefore || same(0, 0)) && (!line.joinsAfter || same(pts.length - 2, line.pts.length - 2)) ? pts : line.pts;
+    };
     if (startPad >= 0 && lines[0]) {
       const sp = pads[startPad]!;
       const se = escapes[startPad];
       const pts = lines[0].pts;
-      pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y, ...entryBend(pts[0]!, pts[1]!, sp, width)]));
+      pts.unshift(...(se && se.state === path[0] ? [sp.x, sp.y, se.p1.x, se.p1.y] : [sp.x, sp.y, ...entryBend(pts[0]!, pts[1]!, sp, lines[0].width)]));
     }
     const last = lines.at(-1)!;
     if (endPad >= 0) {
       const ep = pads[endPad]!;
       const ee = escapes[endPad];
       const pts = last.pts;
-      pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : entryBend(pts.at(-2)!, pts.at(-1)!, ep, width)), ep.x, ep.y);
+      pts.push(...(ee && ee.state === path.at(-1) ? [ee.p1.x, ee.p1.y] : entryBend(pts.at(-2)!, pts.at(-1)!, ep, last.width)), ep.x, ep.y);
     }
     let dropVia: Via | undefined;
     if (endVia) {
@@ -253,22 +280,25 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
       if (vias.length > before) dropVia = vias.at(-1);
     }
     // exactly onto the pads' centre lines (the grid only gets within half a step)
-    if (startPad >= 0 && lines[0]) lines[0].pts = reversePts(alignEnd(reversePts(simplify(lines[0].pts)), pads[startPad]!, lines[0].l, net, width, lines.length === 1 ? dropVia : undefined));
-    if (endPad >= 0) last.pts = alignEnd(simplify(last.pts), pads[endPad]!, last.l, net, width);
+    const first = lines[0];
+    if (startPad >= 0 && first) first.pts = keepJoins(first, reversePts(alignEnd(reversePts(simplify(first.pts)), pads[startPad]!, first.l, net, first.width, lines.length === 1 ? dropVia : undefined)));
+    if (endPad >= 0) last.pts = keepJoins(last, alignEnd(simplify(last.pts), pads[endPad]!, last.l, net, last.width));
     // an end on a track of the net (a join): exactly onto that track's centre line
-    if (startPad < 0 && lines[0] && !(lines.length === 1 && endVia)) lines[0].pts = reversePts(joinTrack(reversePts(simplify(lines[0].pts)), lines[0].l, net, width));
-    if (endPad < 0 && !endVia) last.pts = joinTrack(simplify(last.pts), last.l, net, width);
-    for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, width);
-    // a net whose width is set, routed narrower for a pad too small for it: narrow only where it
-    // goes into that pad, the full width elsewhere where that keeps its clearance
+    if (startPad < 0 && first && !(lines.length === 1 && endVia)) first.pts = keepJoins(first, reversePts(joinTrack(reversePts(simplify(first.pts)), first.l, net, first.width)));
+    if (endPad < 0 && !endVia) last.pts = keepJoins(last, joinTrack(simplify(last.pts), last.l, net, last.width));
+    for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, line.width);
+    // a net whose width is set (or a laid connection's asked width, `own`), routed narrower all
+    // along for a pad too small for it (its width with necks found no way, see routeConn): narrow
+    // only where it goes into that pad, the full width elsewhere where that keeps its clearance
+    const width = widths[k]!;
     const laid: { l: number; pts: number[]; width: number }[] = [];
     lines.forEach((line, li) => {
       const pts = simplify(line.pts);
       // (the pads at its ends too small for the full width: a neck into each)
       const small = (q: number) => (q >= 0 && own !== undefined && Math.min(pads[q]!.w, pads[q]!.h) < own * 0.9 ? pads[q]! : null);
       const into = (end: boolean) => (end ? (li === lines.length - 1 ? small(endPad) : null) : li === 0 ? small(startPad) : null);
-      const wide = own !== undefined && own > width + 1e-9 && pts.length >= 4 ? widened(net, line.l, pts, width, own, into(false), into(true)) : null;
-      laid.push(...(wide ?? [{ l: line.l, pts, width }]));
+      const wide = own !== undefined && own > width + 1e-9 && line.width === width && pts.length >= 4 ? widened(net, line.l, pts, width, own, into(false), into(true)) : null;
+      laid.push(...(wide ?? [{ l: line.l, pts, width: line.width }]));
     });
     // the copper as it finally lies (aligned ends moved it): the cells later routes may join
     const onCopper = new Set<number>();

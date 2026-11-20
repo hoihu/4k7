@@ -27,7 +27,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
         change: 'add',
         entityId: id,
         title: `${b.refdes} ${valueOf(draft, b)}`,
-        details: [b.part, ...paramsList(b), ...(conns.length ? [conns.join(', ')] : [])],
+        details: [b.part, ...paramsList(b), ...(b.dnp ? ['do not populate'] : []), ...(conns.length ? [conns.join(', ')] : [])],
       });
     } else if (a && !b) {
       hunks.push({ id: `component:${id}`, kind: 'component', change: 'remove', entityId: id, title: `${a.refdes} ${valueOf(base, a)}`, details: [a.part] });
@@ -295,6 +295,7 @@ function componentChanges(base: Design, draft: Design, a: Component, b: Componen
   const ncA = [...a.noConnect].sort().join(',');
   const ncB = [...b.noConnect].sort().join(',');
   if (ncA !== ncB) out.push(`no-connect ${ncA || '∅'} → ${ncB || '∅'}`);
+  if (!!a.dnp !== !!b.dnp) out.push(b.dnp ? 'do not populate' : 'fitted again (was DNP)');
   return out;
 }
 
