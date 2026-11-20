@@ -15,6 +15,7 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ### Fixes
 
+- **A wrong `timeout_s` no longer ends `wait_for_review` or `import_part` at once**: when an agent connected over MCP passed a timeout that was not a number (such as `"abc"`) or a very large one (over about 25 days), the server gave up straight away with "The app did not answer wait_for_review within NaN s", and the agent never saw what was wrong with its call. Now the server waits as long as the app allows for that tool (5 to 600 s for a review, 30 to 900 s for an import), so the agent gets the app's answer: the review, the imported part, or a message saying what is wrong with `timeout_s`. This goes back to 0.1.0.
 - **Renaming a project to the same name in other case keeps the name.** On macOS and Windows, renaming project "lamp" to "Lamp" made it "Lamp 2", as if another project already had the name. It now becomes "Lamp". A project whose name really is taken still gets a number.
 
 ## 0.6.1 — 2026-11-06

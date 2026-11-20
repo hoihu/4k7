@@ -160,6 +160,47 @@ describe('MCP server', () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(tab.messages.some((m) => m.type === 'agent' && m.name === 'Claude Code')).toBe(true);
   });
+
+  it('waits for the tab to reject a bad timeout_s instead of timing out at once', async () => {
+    const { server, port } = await startServer();
+    // A tab that takes a moment to answer, as the app does when it validates the input.
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: 'http://localhost:5173' } });
+    cleanups.push(() => ws.close());
+    await new Promise((r) => ws.on('open', r));
+    ws.send(JSON.stringify({ type: 'hello', protocol: SERVER_PROTOCOL, accessKey: KEY, client: 'slow-tab' }));
+    await new Promise((r) => ws.once('message', r));
+    ws.on('message', (raw) => {
+      const msg = JSON.parse(String(raw)) as ServerToTab;
+      if (msg.type !== 'call') return;
+      setTimeout(() => ws.send(JSON.stringify({ type: 'result', id: msg.id, isError: true, content: [{ type: 'text', text: 'invalid timeout_s' }] })), 100);
+    });
+
+    const mcp = createMcpServer(server);
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await mcp.connect(serverT);
+    const client = new Client({ name: 'claude-code', version: '1.0.0' });
+    await client.connect(clientT);
+    cleanups.push(() => client.close());
+
+    const spy = vi.spyOn(globalThis, 'setTimeout');
+    cleanups.push(() => spy.mockRestore());
+    const cases: [string, unknown, number][] = [
+      ['wait_for_review', 'abc', (120 + 15) * 1000],
+      ['wait_for_review', 2_147_469, (600 + 15) * 1000], // (s + 15) * 1000 would overflow a 32-bit timer
+      ['wait_for_review', 1, 60_000],
+      ['wait_for_review', undefined, (120 + 15) * 1000],
+      ['import_part', 'abc', (420 + 15) * 1000],
+      ['import_part', 1e9, (900 + 15) * 1000],
+      ['import_part', Number.NaN, (420 + 15) * 1000],
+    ];
+    for (const [name, timeout_s, delay] of cases) {
+      spy.mockClear();
+      const res = await client.callTool({ name, arguments: timeout_s === undefined ? {} : { mpn: 'X', timeout_s } });
+      expect((res.content as { text: string }[])[0]?.text).toBe('invalid timeout_s');
+      const longest = Math.max(...spy.mock.calls.map((c) => c[1] ?? 0));
+      expect(longest, `${name} ${String(timeout_s)}`).toBe(delay);
+    }
+  });
 });
 
 describe('serving the app', () => {
