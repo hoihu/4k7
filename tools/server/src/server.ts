@@ -56,6 +56,24 @@ interface Pending {
 
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::(\d+))?$/;
 
+/** Bounds and default of timeout_s for the tools that wait (as in packages/schema/src/tools.ts). */
+const WAIT_TOOLS: Record<string, { min: number; max: number; default: number }> = {
+  wait_for_review: { min: 5, max: 600, default: 120 },
+  import_part: { min: 30, max: 900, default: 420 },
+};
+
+/**
+ * How long a call may wait in the tab. The input is the agent's, not yet checked by the tab, so a timeout_s that is
+ * not a number takes the default and one out of range is clamped: the timer must outlast the tab's own answer.
+ */
+function waitSeconds(tool: string, input: unknown): number {
+  const w = WAIT_TOOLS[tool];
+  if (!w) return 0;
+  const raw = (input as { timeout_s?: unknown } | null)?.timeout_s;
+  const s = typeof raw === 'number' && Number.isFinite(raw) ? raw : w.default;
+  return Math.min(w.max, Math.max(w.min, s));
+}
+
 export class LocalServer {
   readonly accessKey: string;
   #opts: LocalServerOptions;
@@ -209,7 +227,7 @@ export class LocalServer {
       );
     }
     const id = ++this.#seq;
-    const waitS = tool === 'wait_for_review' ? Number((input as { timeout_s?: number })?.timeout_s ?? 120) : tool === 'import_part' ? Number((input as { timeout_s?: number })?.timeout_s ?? 420) : 0;
+    const waitS = waitSeconds(tool, input);
     const timeoutMs = Math.max(this.#opts.callTimeoutMs ?? 60_000, (waitS + 15) * 1000);
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
