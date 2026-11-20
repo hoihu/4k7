@@ -4,7 +4,7 @@
  */
 import { cutoutDistance, insideBoard, padCapsule, roundPadDist } from '@4k7/schema';
 import type { Diagnostic, BoardPad, BoardPart, BoardView, CopperLayer, Track } from '@4k7/schema';
-import { idOf, segDist, segmentsOf, segSegDist } from './geom.ts';
+import { idOf, neckReach, segDist, segmentsOf, segSegDist } from './geom.ts';
 import { padPointDist, padSegDist } from './keep.ts';
 
 type Shape =
@@ -557,31 +557,43 @@ export function acidDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
 /**
  * Necks: a track narrower than the width its net runs at (`widthOf`: set_net, its impedance rule,
  * else the power or signal width). Copper that thin carries less than the net was sized for and
- * heats first. A track that starts or ends on a pad too small to take the net's width (an escape
- * from a fine-pitch pad) is the pad's doing and is let be. One finding per net and width where the
- * copper is routed; `focus`: only these drawn tracks (by id).
+ * heats first. A short neck into a pad too small to take the net's width (an escape from a
+ * fine-pitch pad, as the router lays it) is the pad's doing and is let be: a track with an end on
+ * or near such a pad, no longer than the neck zone round it (neckReach, twice: the router narrows
+ * only that close to the pad). Longer, the net runs narrow where the wide track found no way.
+ * One finding per net and width where the copper is routed; `focus`: only these drawn tracks (by
+ * id). See docs/design/layout.md §5.7.
  */
 export function neckDrc(b: BoardView, widthOf: (netId: string, layer: CopperLayer) => number, focus?: Set<string>): Diagnostic[] {
   const out: Diagnostic[] = [];
   const seen = new Set<string>();
-  const pads = b.parts.flatMap((p) => p.pads);
+  const pads = b.parts.flatMap((p) => p.pads.map((pad) => ({ ref: `${p.refdes}.${pad.number}`, pad })));
   for (const t of b.tracks) {
     const want = widthOf(t.netId, t.layer);
     if (t.width >= want - 0.005 || t.pts.length < 4) continue;
     const id = idOf(t);
     if (focus && !(id && focus.has(id))) continue;
+    const len = segmentsOf(t.pts).reduce((s, [ax, ay, bx, by]) => s + Math.hypot(bx - ax, by - ay), 0);
+    // the pads too small for the width with an end of the track on them or in their neck zone
+    const reach = neckReach(want);
     const ends = [[t.pts[0]!, t.pts[1]!], [t.pts.at(-2)!, t.pts.at(-1)!]] as const;
-    if (ends.some(([x, y]) => pads.some((p) => p.netId === t.netId && (p.drill || p.layers.includes(t.layer)) && padPointDist(p, x, y) < EPS && Math.min(p.w, p.h) < want - 0.005))) continue;
+    const small = ends.flatMap(([x, y]) => pads.filter(({ pad: p }) => p.netId === t.netId && (p.drill || p.layers.includes(t.layer)) && Math.min(p.w, p.h) < want - 0.005 && padPointDist(p, x, y) <= reach + EPS).slice(0, 1));
+    if (small.length && len <= 2 * reach + EPS) continue;
     const net = b.netNames[t.netId] ?? t.netId;
     const key = id ?? `${net}|${t.width}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    const into = small.length ? ` from ${[...new Set(small.map((x) => x.ref))].join(' to ')}, longer than a neck into ${small.length > 1 ? 'those pads' : 'that pad'}` : '';
+    const fix = id
+      ? `Widen it (edit_copper width), or set the net's width (set_net) to what it can take.`
+      : `The router narrows a track only near a pad too small for the width, or where the wide track finds no way: make room there (move or turn the parts in the way) and route again; do not lower the net's width to make it fit.`;
     out.push({
       code: 'DRC.NECK',
       severity: 'warning',
-      message: `${id ? `Track ${id}` : 'A track'} (${net}, ${t.layer}) is ${t.width} mm wide where ${net} runs at ${want} mm: a neck in the net's copper. Widen it${id ? ' (edit_copper width)' : ''}, or set the net's width (set_net) to what it can take.`,
+      message: `${id ? `Track ${id}` : 'A track'} (${net}, ${t.layer}) is ${t.width} mm wide for ${r2(len)} mm${into} where ${net} runs at ${want} mm: a neck in the net's copper. ${fix}`,
       at: { x: t.pts[0]!, y: t.pts[1]! },
-      entities: id ? [id] : [`net:${net}`],
+      entities: id ? [id] : [`net:${net}`, ...new Set(small.map((x) => x.ref.split('.')[0]!))],
     });
   }
   return out;

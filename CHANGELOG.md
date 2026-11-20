@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Assembly
+
+- **Parts can be marked do-not-populate (DNP).** Ask the agent to leave a part off the assembly, such as a 0 Ω strap, a spare pull-up or a matching network left open, and to fit it again later. Before, every part in the design was bought and assembled. Now a DNP part stays on the board with its pads and tracks, so you can still solder it by hand, but it is left out of the BOM and the pick-and-place file you upload, and out of the stock and cost checks. The schematic shows "DNP" under its value. A DNP capacitor or resistor no longer counts for a datasheet requirement, so leaving off a decoupling capacitor or a pull-up is reported.
+
 ### Schematic
 
 - **Colour themes for the schematic** (Settings → Appearance → Schematic colours): Pale yellow, Navy on cream, Green on black, Blueprint and Black on white, besides following the app's light or dark. A theme colours only the schematic canvas: wires, symbols and their fill, text, net labels, supply symbols, the sheet and its frame. Printing and the design document stay black on white; the agent's pictures of the schematic show the theme you see.
@@ -12,6 +16,11 @@ and every pull request of a release are on its [GitHub release](https://github.c
 ### Sourcing
 
 - **Parts that only JLCPCB's Standard assembly takes are named.** JLCPCB marks some parts "Standard only" (WS2812-type LEDs, some electrolytic capacitors), and one such part sends the whole order to Standard: a higher setup and stencil fee, and a loading fee for every part number, not only the Extended ones. The cost check used to price these orders at the cheaper Economic service anyway: a 2-board order estimated at $80 was billed $133. Now Economic says it cannot take the order and names the parts. The stock check tags them "Standard only" and prefers replacements that Economic takes. The cost check says what replacing them would save and names a like-for-like part where it finds one.
+
+### Board
+
+- **Power tracks keep their width up to the pin**: the router now runs a power net, or a net whose width you set (`set_net track_mm`), at that width all along, and narrows it only in a short neck of about a millimetre right at a pad too small for it, such as a QFN or SOT-23 pin. Until now one such pad made the whole connection narrow: a 0.5 mm supply track to a QFN pin was laid at the 0.25 mm signal width for its full length, 11 mm on a test board, where it is now 0.5 mm for all but the last 1.2 mm. Boards routed with an earlier version are routed again the first time you open their layout.
+- **`DRC.NECK` also names a track that stays narrow for longer than a neck**: a narrow track that ran into a small pad was let be however long it was. Now only a short neck right at such a pad is. For a track the router laid, the warning tells the agent to make room there (move or turn the parts in the way) and route again, not to lower the net's width.
 
 ### Production files
 

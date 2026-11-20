@@ -478,11 +478,11 @@ export interface BomLine {
   refs: string[];
 }
 
-/** Bill of materials grouped by part, value and package, in the order of each line's first designator. */
+/** Bill of materials grouped by part, value and package, in the order of each line's first designator. Do-not-populate parts are left out. */
 export function bomLines(b: BoardView): BomLine[] {
   const groups = new Map<string, BomLine>();
   for (const p of b.parts) {
-    if (p.componentId.startsWith('hole:')) continue; // board features, not parts to buy
+    if (p.componentId.startsWith('hole:') || p.dnp) continue; // board features, and parts not fitted: not parts to buy
     const key = `${p.part}|${p.value}|${p.pkg}|${p.mpn ?? ''}|${p.lcsc ?? ''}|${p.eurocircuits ?? ''}`;
     const plated = p.pads.filter((d) => !d.npth);
     const g = groups.get(key) ?? {
@@ -534,13 +534,13 @@ export function bom(b: BoardView, house = 'jlcpcb'): string {
  * board is turned over about its horizontal axis, 180° − the rotation of the mirrored footprint on the
  * board (KiCad's orientation of a bottom footprint; KiBot's notes on the position file). A bottom part
  * not turned is therefore 180°. This is the convention, not something the house documents: the
- * order's preview shows the parts as it will place them.
+ * order's preview shows the parts as it will place them. Do-not-populate parts are left out.
  */
 export function pickAndPlace(b: BoardView, placements: Record<string, HousePlacement> = {}): string {
   return csv([
     ['Designator', 'Val', 'Package', 'Mid X', 'Mid Y', 'Rotation', 'Layer'],
     ...b.parts
-      .filter((p) => p.pads.some((q) => !q.drill))
+      .filter((p) => !p.dnp && p.pads.some((q) => !q.drill))
       .map((p) => {
         const at = placements[p.refdes];
         const bottom = p.side === 'bottom';
