@@ -157,6 +157,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
             ...(b.planes ? [`planes: ${b.planes.map((p) => `${draft.nets[p.netId]?.name ?? p.netId} on ${p.layer}${p.area ? (p.area.under ? ` under ${p.area.under.map((id) => draft.components[id]?.refdes ?? id).join(', ')}` : ' (an area)') : ''}${p.style ? ` (${planeStyleText(p.style)})` : ''}`).join(', ') || 'none'}`] : []),
             ...(b.drawn ? [drawnDetail(base.board?.drawn, b.drawn)] : base.board?.drawn ? ['copper back to the router (the drawn copper dropped)'] : []),
             ...(b.laid?.length ? [`connections laid by the agent: ${b.laid.map((t) => `${t.id} ${draft.components[t.from.componentId]?.refdes ?? '?'}.${t.from.pad} → ${draft.components[t.to.componentId]?.refdes ?? '?'}.${t.to.pad}`).join(', ')}`] : []),
+            ...(b.locked?.length ? [`copper locked: ${b.locked.map((l) => `${draft.nets[l.netId]?.name ?? l.netId} (${l.tracks.length} tracks, ${l.vias.length} vias)`).join(', ')}`] : []),
           ]
         : [],
     });

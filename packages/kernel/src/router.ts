@@ -12,7 +12,7 @@
  * grid passes follow (horizontal on F.Cu, vertical on B.Cu, vias cheap; see Style): a board
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
-import { type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type LaidStatus, roundPadDist, type RouteBlockage, type RoutedLine, type Track, type Via, type Zone } from '@4k7/schema';
+import { type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type LaidStatus, type LockedStatus, roundPadDist, type RouteBlockage, type RoutedLine, type Track, type Via, type Zone } from '@4k7/schema';
 import { neckReach, r3, segDist, segmentsOf } from './geom.ts';
 import { Heap } from './heap.ts';
 import { keptCopper, type KeptCopper } from './keep.ts';
@@ -102,6 +102,12 @@ export interface RouteInput {
    */
   keep?: { tracks: Track[]; vias: Via[] };
   /**
+   * Copper the agent locked (lock_copper, BoardSettings.locked): what still holds for this board
+   * (checked as `keep` is, see keep.ts) is laid as it lies before anything else in every pass, and
+   * never let go; `keep` keeps clear of it. It comes out marked `locked`. Not with drawn copper.
+   */
+  locked?: { tracks: Track[]; vias: Via[] };
+  /**
    * Drawn copper (the agent's own, BoardSettings.drawn): there from the start exactly as it lies,
    * never ripped up nor checked here (the DRC judges it). With it the router lays copper only for
    * `only`: the open connections of those nets (their pads' drops to a plane too), or those pairs
@@ -161,6 +167,8 @@ export interface RouteResult {
   lines?: RoutedLine[];
   /** Per RouteInput.laid (those routed): laid as asked, or why not. */
   laid?: LaidStatus[];
+  /** Per net with RouteInput.locked copper: how much of it there is, and how much still holds (and is laid). */
+  locked?: LockedStatus[];
 }
 
 /** Why a connection stayed open: what its way would have to cross (see probe in routeOnce). */
@@ -225,7 +233,12 @@ function routeNets(input: RouteInput, passes = 40): RouteResult {
    * (the probe names them), once; after that, or when none is named, the board is routed
    * from scratch (letting go net by net can go on for many passes, each naming the next).
    */
-  const keep = input.keep ? keptCopper(input, input.keep) : null;
+  // the copper the agent locked, as far as it still holds (never let go), and the kept copper clear of it
+  const lockedIn = input.locked && !input.drawn ? input.locked : null;
+  const held = lockedIn ? keptCopper(input, lockedIn) : null;
+  const locked: KeptCopper | null = held?.pieces.length ? { ...held, tracks: held.tracks.map((t) => ({ ...t, locked: true })), vias: held.vias.map((v) => ({ ...v, locked: true })) } : null;
+  const heldCopper = locked ? { tracks: locked.pieces.flatMap((pc) => pc.tracks.map((i) => locked.tracks[i]!)), vias: locked.pieces.flatMap((pc) => pc.vias.map((i) => locked.vias[i]!)) } : undefined;
+  const keep = input.keep ? keptCopper(input, input.keep, false, heldCopper) : null;
   const keptNets = new Set(keep?.pieces.map((pc) => pc.netId));
   const letGo = new Set<string>();
   let keeping = keptNets.size > 0;
@@ -233,7 +246,7 @@ function routeNets(input: RouteInput, passes = 40): RouteResult {
   // fewest open since routing from scratch began (the kept passes' best does not count against it)
   let phaseBest: number | null = null;
   const drawn = input.drawn ? keptCopper(input, input.drawn, true) : null;
-  const keptNow = (): KeptCopper | null => joinKept(keep && keeping ? { ...keep, pieces: keep.pieces.filter((pc) => !letGo.has(pc.netId)) } : null, drawn);
+  const keptNow = (): KeptCopper | null => joinKept(joinKept(locked, keep && keeping ? { ...keep, pieces: keep.pieces.filter((pc) => !letGo.has(pc.netId)) } : null), drawn);
   // before the first pass the best there is: nothing routed
   input.onBest?.(result({ tracks: [], vias: [], zones: [], failed: [...order, ...planeOnly], roots: Int32Array.from(pads, (_, i) => i), timedOut: false, blockage: new Map(), reused: undefined, laid: [] }, 0));
   for (let pass = 0; pass < passes; pass++) {
@@ -329,7 +342,22 @@ function routeNets(input: RouteInput, passes = 40): RouteResult {
       groups: Array.from(r.roots),
       ...(r.reused ? { reused: r.reused } : {}),
       ...(r.laid.length ? { laid: r.laid } : {}),
+      ...(lockedIn ? { locked: lockedStatus() } : {}),
     };
+  }
+
+  /** Per net with locked copper: how much there is, and how much of it holds. */
+  function lockedStatus(): LockedStatus[] {
+    const all = lockedIn!;
+    const nets = [...new Set([...all.tracks, ...all.vias].map((x) => x.netId))].sort();
+    const pieces = locked?.pieces ?? [];
+    return nets.map((netId) => ({
+      netId,
+      tracks: all.tracks.filter((t) => t.netId === netId).length,
+      vias: all.vias.filter((v) => v.netId === netId).length,
+      heldTracks: pieces.filter((pc) => pc.netId === netId).reduce((n, pc) => n + pc.tracks.length, 0),
+      heldVias: pieces.filter((pc) => pc.netId === netId).reduce((n, pc) => n + pc.vias.length, 0),
+    }));
   }
 
   /**
@@ -432,18 +460,12 @@ function routeOnce(
    * The connections the agent laid (RouteInput.laid), before anything else: each stretch from
    * point to point a search of its own (the same way every pass: no history costs, the free
    * style), held to its layer where one is given, the whole laid by commit turning at the points.
-   * One that finds no way is not laid, and its connection is routed as any other. What is laid no
-   * rip-up clears (fixedMap).
+   * One that finds no way is not laid, and its connection is routed as any other. What is laid is
+   * there in every pass and no rip-up clears it, but it is not in fixedMap (as the locked copper):
+   * the probe names its net where it is in the way, not a pad or the edge.
    */
   const laidStatus: LaidStatus[] = [];
-  if (laidAsked.length && fixedMap.length) {
-    const before = maps[0]!.map((m) => m.slice());
-    for (const t of laidAsked) laidStatus.push(layLaid(t));
-    for (let l = 0; l < L; l++) {
-      const [m, was, fx] = [maps[0]![l]!, before[l]!, fixedMap[l]!];
-      for (let i = 0; i < N; i++) if (m[i] !== was[i]) fx[i] = m[i]!;
-    }
-  }
+  if (laidAsked.length && fixedMap.length) for (const t of laidAsked) laidStatus.push(layLaid(t));
   /** The neck zone for width class k: round the pads of both ends' copper (of pads ea and eb) that cannot take it. */
   function necksFor(k: number, ea: number, eb: number) {
     neck.run = 0;
@@ -899,7 +921,10 @@ function routeOnce(
   // a big board) alive while the next pass allocates its own
   const roots = Int32Array.from(pads, (_, i) => find(i));
   const blockage = probeFailed();
-  const reused = kept ? { tracks: keptTracks.length, vias: keptVias.length } : undefined;
+  // (the locked copper is laid as locked, not reused)
+  const reusedTracks = keptTracks.filter((t) => !t.locked).length;
+  const reusedVias = keptVias.filter((v) => !v.locked).length;
+  const reused = kept && (reusedTracks || reusedVias || !input.locked) ? { tracks: reusedTracks, vias: reusedVias } : undefined;
   return { tracks, vias, failed, roots, zones, timedOut, blockage, reused, laid: laidStatus };
 
   /**

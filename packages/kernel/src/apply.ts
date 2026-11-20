@@ -4,7 +4,7 @@
  */
 import { type Design, type EditOp, type OpResult } from '@4k7/schema';
 import { addCutout, addGraphic, addHole, addVias, attach, editGraphic, place, proposePlacement, refineStep, routeStep, setBoard, setFabProfile, setOutline, setPanel, setPlane, setPlaneStyle } from './boardops.ts';
-import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, type OpContext, routeDrawn, setCopperMode } from './copperops.ts';
+import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, lockCopper, unlockCopper, type OpContext, routeDrawn, setCopperMode } from './copperops.ts';
 import { boardCopy, nextId, reject } from './doc.ts';
 import { eraseOp, labelOp, moveSupplyOp, textOp, wireOp } from './drawops.ts';
 import { setEnclosureBrief, setEnclosureGraphic, setEnclosureScript } from './enclosureops.ts';
@@ -136,6 +136,10 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return tuneLength(d, op);
     case 'erase_copper':
       return eraseCopper(d, op);
+    case 'lock_copper':
+      return lockCopper(d, op);
+    case 'unlock_copper':
+      return unlockCopper(d, op);
     case 'set_plane':
       return setPlane(d, op);
     case 'set_plane_style':

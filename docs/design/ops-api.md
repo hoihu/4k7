@@ -127,6 +127,8 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `edit_copper`: change drawn tracks and vias in place, keeping their ids.
 - `tune_length`: add a meander to a drawn track to reach a length or match other nets.
 - `erase_copper`: take tracks and vias away, or the connections you laid for the router.
+- `lock_copper`: keep a net's routed copper exactly as it lies; route lays it first and never rips it up.
+- `unlock_copper`: let go of locked copper; the router routes those nets its own way again.
 - `set_plane`: a net's copper plane on a layer, whole or in an area.
 - `set_plane_style`: a plane's gaps, clearance, edge pull-back and thermal reliefs.
 - `add_vias`: thermal, stitching, fence or placed vias of one net.

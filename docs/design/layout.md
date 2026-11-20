@@ -316,8 +316,9 @@ as asked; `erase_copper` takes it away.
   and use the free style, so the connection lies the same way in every pass. `commit` lays the
   whole path with the points as pins: a run ends at each and the next begins, so the
   straightening, which cuts corners wherever it can, keeps them, and the runs are one track again
-  afterwards. Its cells go into `fixedMap`, so no rip-up clears it and the probe names it like a
-  pad. Its tracks and vias carry the connection's id (`Track.laid`, `Via.laid`): incremental
+  afterwards. It is there in every pass and no rip-up clears it, but its cells are not in
+  `fixedMap` (since §5.9): where it is in the way, the probe names its net (`DRC.UNROUTED` adds
+  "a track you laid", `get_board` `blocked_by` "your track"), not a pad or the edge. Its tracks and vias carry the connection's id (`Track.laid`, `Via.laid`): incremental
   routing does not keep them (they are laid afresh), and the net's basis includes the
   connection, so changing it routes that net again; the placement key includes the list, so a
   change shows the routing out of date.
@@ -334,9 +335,40 @@ loop, the high-current path, a sensitive trace), with only the points where the 
 
 Nothing changes for a board without such connections: the bench boards route to the same copper.
 
+### 5.9 Locked copper
+
+Often the router gets a net right on one route and the next route, after some other change,
+lays it differently. `lock_copper { nets }` keeps the router's copper of those nets exactly as it
+lies (`BoardSettings.locked`, `LockedCopper`: tracks and vias in board mm; not the connections laid
+with `draw_track` nor the vias and stubs of `add_vias` groups, which are laid as asked anyway). Only
+from routing done for the board as it stands (the copper kept with the design under the current
+key, not a stopped one): the op refuses otherwise, and refuses a net with no routed tracks.
+Locking a net again takes its copper as it lies then; `unlock_copper { nets | ["all"] }` lets it go.
+
+The router (`RouteInput.locked`) checks it as kept copper is checked (`keep.ts`: clearance to other
+nets' pads, vias placed on purpose and the edge, then what that leaves hanging), and lays what
+holds before anything else in every pass, through the same path as the kept copper (it joins its
+pads, the escapes and every search keep clear of it), marked `Track.locked` / `Via.locked`. Unlike
+the kept copper it is never let go (`letGo` and a route from scratch keep it), and the kept copper
+keeps its clearance from it (`keptCopper`'s `held`): copper routed while a piece was broken is not
+kept where it would short that piece once it holds again. Like a connection the agent laid it is not in
+`fixedMap`, so the probe names its net where it is in the way ("its copper is locked", `blocked_by`
+"(locked)"). What does not hold (a part moved off it, or another net's pad now too close) is not
+laid, and the connections it made are routed as any other; `DRC.LOCKED_BROKEN` (warning) and
+`get_board` `locked_copper` say how much still holds. The lock is not changed: put the part back and
+it all holds again. With a lock, the lines at a set impedance are routed with the rest, round it (as
+with kept copper, §5.5), not coupled first.
+
+The lock is in the copper key, not in the placement key: locking or unlocking re-routes the board
+(incrementally: the other nets are kept) without making the routing out of date. The net's basis
+includes it, so its copper from before is not kept beside the locked copper. `set_copper_mode
+drawn` drops the lock: the locked copper, as laid, becomes the agent's own drawn copper (as a laid
+connection's does). The copper of a board without locks is produced as before (`COPPER_FORMAT`
+unchanged): the bench boards route to the same copper.
+
 ## 6. What the agent cannot do yet
 
-- Route one net, or keep the router's copper for a net (§7 step 6).
+- Route one net first (§7 step 6).
 - Optimize a zoomed area of the board with the scope guard the schematic has (`zoom-optimize.md`
   steps 3–4).
 - Be told the user's taste for layouts (the schematic has notes in Settings).
@@ -360,7 +392,9 @@ Each step is useful alone.
    - one connection laid by the agent, the kernel finding the path through the given points:
      *built 2026-11-20* as `draw_track` with router copper (§5.8), laid first and never ripped up;
      where it finds no way the router routes the connection its own way and the DRC says why;
-   - `lock_copper { nets }`: copper the router never rips up (a switching loop drawn by hand).
+   - **`lock_copper` and `unlock_copper`** (*built 2026-11-20*, §5.9): a net's routed copper kept
+     exactly as it lies, laid first and never ripped up (whole nets; locking a single connection is
+     left for later).
    The DRC and the netlist check judge the result, as on the schematic.
 7. **Layout Optimize**: the ✦ Optimize button on the board ([zoom-optimize.md](zoom-optimize.md) §6
    steps 3–4): the zoomed area as a scope, `place` (move, turn) only inside it, measures before and
