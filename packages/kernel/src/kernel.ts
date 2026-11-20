@@ -38,6 +38,7 @@ import {
   viasForCurrent,
   enclosureGraphicsInfo,
   boardStackup,
+  COPPER_ORDER,
   type SymbolView,
 } from '@4k7/schema';
 import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
@@ -53,6 +54,7 @@ import { syncDrawing, viewOf } from './drawing.ts';
 import { keepForcedNets } from './netdraw.ts';
 import { blockAssignment } from './layout.ts';
 import { copperKey, layoutBoard, placedOf, planePlan } from './board.ts';
+import { currentCheck, currentMapAnswer, currentRise, layerCopper } from './current.ts';
 import type { RouteProgress } from './router.ts';
 import { HELPER_TX_MS, annotateChecks, drawsCopper, followParts, movesParts, type HelperHooks } from './copperops.ts';
 import { canonicalJson, migrate } from './canonical.ts';
@@ -161,6 +163,16 @@ export class Kernel {
   /** What the board worker lays the board from (layoutBoard): to send on, not to change. */
   boardRequest(): { design: Design; placed: BoardView } {
     return { design: this.draft, placed: placedOf(this.draft) };
+  }
+
+  /**
+   * The working copy's board where it is routed and computing it routes nothing (copper kept for
+   * this placement, or drawn): for queries that read the copper.
+   */
+  private routedNow(d: Design): BoardView | undefined {
+    const had = this.boards.get(d);
+    const b = had ?? (d === this.draft && (d.board?.drawn || (d.board?.copper && d.board.copper.key === copperKey(d))) ? this.board() : undefined);
+    return b?.routing === 'done' ? b : undefined;
   }
 
   /** The board of the working copy: placement, routing and DRC (computed on demand, cached). `follow` follows the routing, if it routes (see layoutBoard). */
@@ -467,11 +479,28 @@ export class Kernel {
         const rules = (d.board ?? DEFAULT_BOARD).rules;
         const kind = isGroundNet(n) ? 'ground' : isPowerNet(n) ? 'supply' : 'signal';
         const width = n.attrs.trackWidth ?? (kind === 'signal' ? rules.track : rules.powerTrack);
+        // the width its current needs, per layer: each layer's copper from the stack-up, at the board's allowed heating
+        const settings = d.board ?? DEFAULT_BOARD;
+        const stack = boardStackup(settings);
+        const copper = layerCopper({ layers: COPPER_ORDER[settings.layers], stackup: stack });
+        const rise = currentRise(rules);
+        const amps = n.attrs.maxCurrent;
         const track = {
           width_mm: width,
           why: n.attrs.trackWidth ? 'set for this net' : kind === 'signal' ? 'signal width (rules)' : 'power width (rules)',
-          ...(n.attrs.maxCurrent ? { suggested_mm: trackWidthFor(n.attrs.maxCurrent), for_current_a: n.attrs.maxCurrent } : {}),
+          ...(amps ? { suggested_mm: Object.fromEntries(Object.entries(copper).map(([l, um]) => [l, trackWidthFor(amps, rise, um)])), for_current_a: amps, copper_um: copper, rise_c: rise } : {}),
           rules: { signal_mm: rules.track, power_mm: rules.powerTrack },
+        };
+        // how its copper on the board carries that current (get_current_map has the pieces)
+        const routedNow = this.routedNow(d);
+        const checked = routedNow ? currentCheck(d, routedNow).nets.find((x) => x.netId === n.id) : undefined;
+        const current = {
+          status: !amps ? 'unknown' : !routedNow ? 'not checked: not routed yet' : (checked?.status ?? 'no copper yet'),
+          ...(checked?.worst !== undefined ? { worst_ratio: checked.worst } : {}),
+          rise_c: rise,
+          note: !amps
+            ? 'No max_current: the current check cannot tell whether its copper carries its current. Set it on a net that carries real current.'
+            : 'Every track and every via that is the only way between two layers is checked for all of max_current (unverified: some copper carries less; whether that much flows there is not known). get_current_map lists the pieces.',
         };
         // the vias its pads drop onto its plane with: one each, those the agent placed (add_vias drop)
         const perVia = viaCurrentFor(rules.viaDrill);
@@ -493,10 +522,15 @@ export class Kernel {
         // a line at a set impedance: its rule worked out for the board
         const rule = d.board?.impedance?.find((r) => r.nets.includes(n.id));
         const impedance = rule ? { impedance: impedanceText(resolveRule(rule, lineBoard(d)), (id) => d.nets[id]?.name ?? id) } : {};
-        return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, track, ...impedance, ...vias };
+        return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, track, current, ...impedance, ...vias };
       }
       case 'get_diagnostics':
         return this.analyse(d).diagnostics;
+      case 'get_current_map': {
+        const b = this.routedNow(d);
+        if (!b) return { routed: false, note: 'The board is not routed (or its routing is out of date): route it first, then ask again.' };
+        return currentMapAnswer(d, b, q);
+      }
       case 'get_fab_profiles': {
         const layers = d.board?.layers ?? 2;
         const cur = d.board?.fab;

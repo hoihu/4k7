@@ -74,7 +74,7 @@ describe('tune_length', () => {
     expect(len(dn) - was).toBeGreaterThan(0.7);
     const b = k.board();
     expect(codes(b)).not.toContain('IMP.SKEW');
-    expect(codes(b).filter((c) => c.startsWith('DRC.') && c !== 'DRC.UNROUTED')).toEqual([]);
+    expect(codes(b).filter((c) => c.startsWith('DRC.') && c !== 'DRC.UNROUTED' && c !== 'DRC.CURRENT_UNKNOWN')).toEqual([]);
     // the bumps go away from the partner (down, the partner is above) and are small: at most twice the pair's gap
     const gap = b.impedance![0]!.layers[0]!.gap!;
     const ys = dn.pts.filter((_, i) => i % 2 === 1 && dn.pts[i - 1]! > 8 && dn.pts[i - 1]! < 32);
@@ -139,7 +139,7 @@ describe('tune_length', () => {
     // (the bumps go up, away from it)
     ok(k, [{ op: 'tune_length', track: 't1', target_mm: was + 3 }]);
     // (DRC.NECK: the GND track beside it is drawn thinner than GND runs, on purpose)
-    expect(codes(k.board()).filter((c) => c.startsWith('DRC.') && c !== 'DRC.UNROUTED' && c !== 'DRC.NECK')).toEqual([]);
+    expect(codes(k.board()).filter((c) => c.startsWith('DRC.') && c !== 'DRC.UNROUTED' && c !== 'DRC.NECK' && c !== 'DRC.CURRENT_UNKNOWN')).toEqual([]);
     const up = track(k, 't1').pts.filter((_, i) => i % 2 === 1);
     expect(Math.min(...up)).toBeLessThan(5 - 0.5);
     // forced down, between the two, there is none

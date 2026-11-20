@@ -25,6 +25,11 @@ export interface BoardRules {
   edgeClearance: number;
   /** Allow vias in pads (off by default: vias keep clear of every pad and of small parts' land patterns). */
   viaInPad?: boolean;
+  /**
+   * How much copper may heat with the net's current (°C): 10, 20 or 30; absent = 10. It sets the
+   * capacity of tracks and vias in the current check (docs/design/layout.md §14), not the copper.
+   */
+  currentRise?: 10 | 20 | 30;
 }
 
 export interface BoardSettings {

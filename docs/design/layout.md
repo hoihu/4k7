@@ -434,7 +434,8 @@ Each step is useful alone.
     net's current; the guide has the agent trace the high-current paths (supply in, regulator,
     switch node and inductor, bulk and output caps, out to the loads, each ground return) and ask
     on those pads only. A bar never reaches under its part's body. Net currents no longer go into
-    the router or the copper key; the drop requests do.
+    the router or the copper key; the drop requests do. Whether the copper as laid carries a net's current is checked
+    afterwards, without changing it (§14).
 
     **Placed by the agent, each on its own stub** (2026-10-23). The bar was the wrong reading of
     *the vias could go on a wider track*: the user (a bulk capacitor's pad with six vias on a bar
@@ -959,3 +960,79 @@ a pattern fill is lost in the PNG the agent looks at. The design document's boar
 
 **Limits**: inner-layer-only keep-outs hold no parts; a polygon's bounding box is what the placer
 keeps parts out of (the check is exact); the router keeps its grid's distance, not the exact one.
+
+## 14. Copper against the net's current (2026-11-20)
+
+The user: show how much current flows in the power copper, and catch a track too narrow for its
+current or a single via joining two planes. Before, nothing compared the copper as laid with
+`max_current`: `get_net` suggested a width (outer layer, 1 oz, whatever the stack-up), and the
+agent could take it or not. This section is the first step (tier 3a of the design proposal):
+every check uses the net's whole `max_current` as an upper bound on what flows anywhere in its
+copper. `current.ts` (`currentCheck`, `currentDrc`), called from `layoutBoard` with the other
+copper checks, so it reads only the board and the nets: setting `max_current` or the allowed
+heating after routing checks the copper again without routing (neither is in the copper key).
+
+**The current here.** Each piece of a net's copper has an amps value with a basis: `bound` (at most
+the net's `max_current` flows here: no piece can carry more than the whole net) or `unknown` (no
+`max_current`). A net's status follows: `ok` (every piece checked carries the bound: honestly fine,
+because the bound is conservative), `unverified` (some piece carries less than the bound, and
+nobody has said whether that much flows there) or `unknown`. Only `ok` is ever reported as fine;
+a power net (supply or ground, `isPowerNet`) with copper and no `max_current` is `unknown`, never
+`ok`.
+
+**The formula.** IPC-2221's external curve, I = 0.048 · ΔT^0.44 · A^0.725 (A the cross-section in
+mil²), for every layer, with that layer's copper from the stack-up in effect (`boardStackup`:
+JLCPCB's 4 layers are 35 / 15.2 / 15.2 / 35 µm, a 2 oz tier 70 µm outside). `trackCurrentFor`,
+`trackRiseFor` and `trackWidthFor` in `packages/schema/src/model.ts` are that one curve. Inner
+layers use the external curve, not 2221's halved internal one: IPC-2152 measured inner conductors
+no worse than outer ones. Which way it errs: conservative near a plane (most boards have one, and a
+plane cools the track a lot), about right for a long isolated outer track; so a board that passes
+would pass a 2152 calculator with plane modifiers too, and some warnings are stricter than needed.
+Vias: `viaCurrentFor` as before (the plated barrel, π · drill · 25 µm, on 2221's internal curve,
+about 0.9 A for a 0.3 mm drill at 10 °C); vias of a net within 1 mm of each other, edge to edge,
+count as one group whose capacity is the sum.
+
+**Allowed heating** is a board rule: `set_board current_rise_c` 10, 20 or 30 °C (default 10,
+`BoardRules.currentRise`, absent at 10). A dense board can trade copper for heat. It is in every
+number of the check (findings, `get_net`'s widths, `get_current_map`'s basis) and left out of the
+placement key: it changes findings, not copper.
+
+**The copper graph** (per net with a current, only where it has vias). On each layer its tracks,
+pads, vias and each connected piece of its pours (`Zone.rects`, islands joined where they touch)
+are joined where they touch (a pour reaches a pad or via up to 0.5 mm off, the relief ring); a
+through-hole pad joins its layers. The via groups are the edges between the layers. A via group is
+checked where it is a cut: without it, the copper falls apart into pieces on both sides that carry
+current, each with a pad and either a pour, two pads, or a pad where current comes in (a `pwr_out`
+pin, a connector's or an inductor's pin). That is where the whole current must cross; a group with
+a second way round is not checked (the bound would say nothing about how the current splits), nor
+is one that only drops a single pull-up or decoupling pad to its plane (*every pad drops with one
+via*, §7 item 9: the user did not want those flagged).
+
+**Findings**
+
+| Code | When | Severity | Fix hints |
+|---|---|---|---|
+| `DRC.CURRENT_UNVERIFIED` | Track pieces of a net narrower than its `max_current` needs on their layer: one finding per net, listing how many, how long, the narrowest, the width needed per layer and the worst rise. Not counted: a piece inside its own pour on its layer, a piece up to 1 mm long (a neck into a pad, held by its ends) | error when the worst piece is over twice its capacity, else warning | drawn: `edit_copper` with the width needed (one per width); router copper: `set_net track_mm` (and "make room and route again; do not lower the net's width", as `DRC.NECK`) |
+| `DRC.VIA_CURRENT` | A via group that is a cut (above) and carries less than `max_current` | error over twice, else warning | `add_vias kind: "tie"` at the group's centre with the net's amps |
+| `DRC.CURRENT_UNKNOWN` | A power net with copper and no `max_current`, once per net | info | none: the kernel cannot guess the number; the agent sets it |
+
+The router sizes nothing for a current (§7 item 9): it runs supplies at their width and drops a pad
+with one via. So a routed board with a 2 A rail usually shows these findings, and they are the
+agent's to work through: widen (`set_net track_mm`, `edit_copper`), add a tie or drops where the
+current crosses layers, or raise the allowed heating where the board can take it.
+
+**What the agent reads.** `design_query get_current_map` (`nets`, `rect`, `worst` default 20,
+`include_ok`): the basis (rise, curve, each layer's copper, via plating), every net with a current
+and every unknown power net (never cut by `worst`), and the hotspots worst first: tracks (`id` for
+drawn copper, the pads at its ends, width, length, copper, amps, capacity, ratio, estimated rise,
+the width it needs, the finding's code and its fix) and via groups (layers, count, drill, capacity,
+ratio, `only_path`, the vias needed, the fix). `get_net` gives the width the current needs per layer
+(`track.suggested_mm`, with the copper and rise it used) and a short `current` block (status, worst
+ratio). Both answer only on a routed board whose copper is kept (or drawn): they never route.
+
+**Not yet** (follow-ups of the proposal): loads per pin (`set_net loads`) and the current split over
+the copper (then `DRC.TRACK_CURRENT` on the real current, and IR drop at 3 % of the rail), GND's
+bound from the rails it returns, a heat-map overlay in the layout view and in `get_board_image`,
+`calc track_current`, the current through thermal-relief spokes, pin currents (GPIO overload) and a
+DC solve of pours and planes. Until the solve, a pour or plane counts as one node: a pour necked
+between two vias looks fine here.
