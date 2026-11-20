@@ -202,8 +202,23 @@ net's length and vias and a pair's skew; `get_net` gives the rule of a net.
 | `design_query get_net` | The net's rule |
 | `design_query get_guide topic high_speed` | The guide |
 | Changeset | The stack-up and the rules in the board's details |
+| Fab zip | `<project>-fab-notes.txt` (`packages/fab/src/fabnotes.ts`), see below |
+| Design document | Stack-up, Impedance and Finish rows in the Layout section: the same lines as the notes file |
 
 No buttons: the user asks in words; the Layout view shows the copper as before.
+
+**Fabrication notes.** Every fab zip (and a panel's) holds `<project>-fab-notes.txt`, plain text: the
+board's size, thickness (copper and dielectric added up, and the nearest tenth to order) and finished
+copper weights; the stack-up in effect top to bottom with its materials, εr, mask and source; each
+impedance rule with its target, tolerance, style, and per layer the width, a pair's gap, a coplanar
+line's gap to its ground and the plane it runs over (and the layers it cannot run on, with why); "None"
+when the board has no rules, never an invented table. The design has no surface finish or mask and
+silk colours, so the file says to choose them when ordering. Then a block each for JLCPCB, PCBWay and
+Eurocircuits: what to set in its order form, quote form or configurator; at JLCPCB Impedance Control
+Yes with the stack-up selected by name (it builds from the form, not from files; on 2 layers no
+impedance control, about ±15 %); at PCBWay impedance control asked for, with a remark pointing at the
+file; at Eurocircuits the defined-impedance pool with its own build-up. Where the stack-up is not that
+house's, its block says to set the house's (set_stackup) and check the widths first.
 
 ## 8. Sources
 
@@ -235,4 +250,6 @@ No buttons: the user asks in words; the Layout view shows the copper as before.
   tracks); serpentines that alternate sides.
 - Striplines on inner signal layers (6 layers and up; the solver has them), dispersion and losses,
   trapezoidal etching (about 1 Ω).
-- The stack-up and an impedance table in the design document and the fab outputs.
+- A fabrication drawing (a Gerber drawing layer or a PDF) besides the notes file; special
+  requirements (castellations, edge plating, an impedance test coupon), which the design does not
+  say yet; the finish and colours as part of the design.

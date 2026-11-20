@@ -6,6 +6,7 @@
  */
 import type { BoardPart, BoardView, HousePlacement, PanelView, Zone, ZoneCut } from '@4k7/schema';
 import { bom, gerbers, pickAndPlace, type FabFile, type FabStamp } from './gerber.ts';
+import { fabNotes } from './fabnotes.ts';
 import { ipc356 } from './ipc356.ts';
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
@@ -112,5 +113,6 @@ export function panelFabFiles(b: BoardView, project: string, house?: string, pla
     { name: `${base}-IPC356.ipc`, content: ipc356(b, name, { panel: b.panel, stamp }) },
     { name: `${base}-BOM.csv`, content: bom(p, house) },
     { name: `${base}-PnP.csv`, content: pickAndPlace(p, copies) },
+    { name: `${base}-fab-notes.txt`, content: fabNotes(p, name, `${base}-fab-notes.txt`, stamp) },
   ];
 }
