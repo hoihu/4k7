@@ -57,6 +57,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `add_part`: add a component from a part card, with parameters and sheet.
 - `remove`: remove a component.
 - `set_param`: set or remove a component's parameters.
+- `set_dnp`: mark components do-not-populate, or fit them again (out of the BOM, the pick-and-place and the cost; still on the board).
 - `rename`: change a component's reference designator.
 - `connect`: put pins on a net.
 - `disconnect`: take pins off their net.

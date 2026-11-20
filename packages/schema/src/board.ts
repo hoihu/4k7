@@ -856,6 +856,8 @@ export interface BoardPart {
   lcsc?: string;
   /** The part Eurocircuits assembles: its generic number or an MPN (the component's eurocircuits parameter). */
   eurocircuits?: string;
+  /** Do not populate (set_dnp): on the board with its pads and copper, but out of the BOM and the pick-and-place. */
+  dnp?: true;
   /** Package name ("0603", "SOIC-8", "LQFP100"). */
   pkg: string;
   /** Package data the footprint was built from (3D bodies come from the same). */

@@ -274,14 +274,15 @@ function levenshtein(a: string, b: string): number {
 
 /**
  * Value as displayed on the schematic, one item per line: the main value, then a rating
- * that matters for the part (a capacitor's voltage): "10nF" / "25V".
+ * that matters for the part (a capacitor's voltage): "10nF" / "25V"; and "DNP" under it for a
+ * part not to be fitted (set_dnp).
  */
 export function valueLinesOf(d: Design, c: Component): string[] {
   const card = cardOf(d, c.part);
   const p = c.params;
   const main = p.resistance ?? p.capacitance ?? p.inductance ?? p.mpn ?? p.color;
-  if (main && card?.category === 'capacitor' && p.voltage) return [main, p.voltage];
-  return [valueOf(d, c)];
+  const lines = main && card?.category === 'capacitor' && p.voltage ? [main, p.voltage] : [valueOf(d, c)];
+  return c.dnp ? [...lines, 'DNP'] : lines;
 }
 
 /** Display value of a component: its main parameter, or MPN / part name. */

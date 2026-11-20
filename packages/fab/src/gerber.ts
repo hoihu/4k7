@@ -3,6 +3,7 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
+import { fabNotes } from './fabnotes.ts';
 import { ipc356 } from './ipc356.ts';
 import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, MASK_MARGIN, planeGoesRound, pointBounds, refdesHeight, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type HousePlacement, type PanelView, type Zone, type ZoneCut, type ZoneShape } from '@4k7/schema';
 
@@ -477,11 +478,11 @@ export interface BomLine {
   refs: string[];
 }
 
-/** Bill of materials grouped by part, value and package, in the order of each line's first designator. */
+/** Bill of materials grouped by part, value and package, in the order of each line's first designator. Do-not-populate parts are left out. */
 export function bomLines(b: BoardView): BomLine[] {
   const groups = new Map<string, BomLine>();
   for (const p of b.parts) {
-    if (p.componentId.startsWith('hole:')) continue; // board features, not parts to buy
+    if (p.componentId.startsWith('hole:') || p.dnp) continue; // board features, and parts not fitted: not parts to buy
     const key = `${p.part}|${p.value}|${p.pkg}|${p.mpn ?? ''}|${p.lcsc ?? ''}|${p.eurocircuits ?? ''}`;
     const plated = p.pads.filter((d) => !d.npth);
     const g = groups.get(key) ?? {
@@ -533,13 +534,13 @@ export function bom(b: BoardView, house = 'jlcpcb'): string {
  * board is turned over about its horizontal axis, 180° − the rotation of the mirrored footprint on the
  * board (KiCad's orientation of a bottom footprint; KiBot's notes on the position file). A bottom part
  * not turned is therefore 180°. This is the convention, not something the house documents: the
- * order's preview shows the parts as it will place them.
+ * order's preview shows the parts as it will place them. Do-not-populate parts are left out.
  */
 export function pickAndPlace(b: BoardView, placements: Record<string, HousePlacement> = {}): string {
   return csv([
     ['Designator', 'Val', 'Package', 'Mid X', 'Mid Y', 'Rotation', 'Layer'],
     ...b.parts
-      .filter((p) => p.pads.some((q) => !q.drill))
+      .filter((p) => !p.dnp && p.pads.some((q) => !q.drill))
       .map((p) => {
         const at = placements[p.refdes];
         const bottom = p.side === 'bottom';
@@ -551,7 +552,7 @@ export function pickAndPlace(b: BoardView, placements: Record<string, HousePlace
   ]);
 }
 
-/** Gerbers, drill, the netlist (IPC-D-356A, for the house's electrical test), BOM (in the assembly house's form, see bom) and pick-and-place (in the house's frame where `placements` say it). */
+/** Gerbers, drill, the netlist (IPC-D-356A, for the house's electrical test), BOM (in the assembly house's form, see bom), pick-and-place (in the house's frame where `placements` say it) and the fabrication notes (stack-up, impedance, finish; see fabnotes.ts). */
 export function fabFiles(b: BoardView, project: string, house?: string, placements?: Record<string, HousePlacement>, stamp?: FabStamp): FabFile[] {
   const base = project.replace(/[^\w.-]+/g, '_') || 'board';
   return [
@@ -559,5 +560,6 @@ export function fabFiles(b: BoardView, project: string, house?: string, placemen
     { name: `${base}-IPC356.ipc`, content: ipc356(b, project, { stamp }) },
     { name: `${base}-BOM.csv`, content: bom(b, house) },
     { name: `${base}-PnP.csv`, content: pickAndPlace(b, placements) },
+    { name: `${base}-fab-notes.txt`, content: fabNotes(b, project, `${base}-fab-notes.txt`, stamp) },
   ];
 }
