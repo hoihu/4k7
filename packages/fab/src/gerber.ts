@@ -3,6 +3,7 @@
  * paste, silkscreen, outline), Excellon drill, BOM and pick-and-place. Board coordinates are
  * y down from the top-left corner; fab files use y up from the bottom-left corner.
  */
+import { fabNotes } from './fabnotes.ts';
 import { ipc356 } from './ipc356.ts';
 import { boardPolygon, bodyOutline, cutoutPolygon, figureDepths, MASK_MARGIN, planeGoesRound, pointBounds, refdesHeight, textStrokes, textWidth, type BoardGraphic, type BoardPad, type BoardView, type CopperLayer, type HousePlacement, type PanelView, type Zone, type ZoneCut, type ZoneShape } from '@4k7/schema';
 
@@ -551,7 +552,7 @@ export function pickAndPlace(b: BoardView, placements: Record<string, HousePlace
   ]);
 }
 
-/** Gerbers, drill, the netlist (IPC-D-356A, for the house's electrical test), BOM (in the assembly house's form, see bom) and pick-and-place (in the house's frame where `placements` say it). */
+/** Gerbers, drill, the netlist (IPC-D-356A, for the house's electrical test), BOM (in the assembly house's form, see bom), pick-and-place (in the house's frame where `placements` say it) and the fabrication notes (stack-up, impedance, finish; see fabnotes.ts). */
 export function fabFiles(b: BoardView, project: string, house?: string, placements?: Record<string, HousePlacement>, stamp?: FabStamp): FabFile[] {
   const base = project.replace(/[^\w.-]+/g, '_') || 'board';
   return [
@@ -559,5 +560,6 @@ export function fabFiles(b: BoardView, project: string, house?: string, placemen
     { name: `${base}-IPC356.ipc`, content: ipc356(b, project, { stamp }) },
     { name: `${base}-BOM.csv`, content: bom(b, house) },
     { name: `${base}-PnP.csv`, content: pickAndPlace(b, placements) },
+    { name: `${base}-fab-notes.txt`, content: fabNotes(b, project, `${base}-fab-notes.txt`, stamp) },
   ];
 }
