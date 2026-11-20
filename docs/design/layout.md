@@ -1064,6 +1064,15 @@ ratio, `only_path`, the vias needed, the fix). `get_net` gives the width the cur
 (`track.suggested_mm`, with the copper and rise it used) and a short `current` block (status, worst
 ratio). Both answer only on a routed board whose copper is kept (or drawn): they never route.
 
+**Sizing before drawing.** `calc track_current` (`packages/agent/src/calc.ts`, next to `calc
+impedance`) is the agent's calculator for the same curve: two of `width_mm`, `amps` and `rise_c`
+give the third (`trackCurrentFor`, `trackWidthFor`, `trackRiseFor`; no second formula), on a
+layer's copper from the stack-up in effect (`layer`, default F.Cu) or `copper_um` as given, at the
+board's `current_rise_c` unless `rise_c` is given (`DesignSummary.currentRise`). `via_drill_mm` adds
+one via's capacity (`viaCurrentFor`, `per_via_a`) and `vias_needed` for the current. Its note says
+which way it errs (conservative near a plane). The guide has the agent size with it before drawing,
+then work through `get_current_map`: errors first, then the unverified pieces, then the unknown rails.
+
 **One check, three readers.** `layoutBoard` works the check out once per routed board and keeps it
 as `BoardView.current` (`CurrentView` in `packages/schema/src/board.ts`: the allowed rise, each
 layer's copper, the nets with basis and status, every track counted with its index into
@@ -1090,6 +1099,6 @@ the session either way. `get_board_image` shows it as the view does; `overlay: "
 
 **Not yet** (follow-ups of the proposal): loads per pin (`set_net loads`) and the current split over
 the copper (then `DRC.TRACK_CURRENT` on the real current, and IR drop at 3 % of the rail), GND's
-bound from the rails it returns, `calc track_current`, the current through thermal-relief spokes, pin currents (GPIO overload) and a
+bound from the rails it returns, the current through thermal-relief spokes, pin currents (GPIO overload) and a
 DC solve of pours and planes. Until the solve, a pour or plane counts as one node: a pour necked
 between two vias looks fine here.

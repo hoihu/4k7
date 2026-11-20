@@ -706,6 +706,7 @@ export class Kernel {
       ...(d.description ? { description: { blocks: d.description.blocks.length, undescribed: descriptionView(d)!.undescribed } } : {}),
       ...(d.valueSeries ? { valueSeries: { ...d.valueSeries } } : {}),
       stackup: (({ name, copper, dielectric, mask }) => ({ name, copper, dielectric, ...(mask ? { mask } : {}) }))(boardStackup(d.board ?? DEFAULT_BOARD)),
+      ...(d.board?.rules.currentRise ? { currentRise: d.board.rules.currentRise } : {}),
     };
   }
 
