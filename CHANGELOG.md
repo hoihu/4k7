@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Assembly
+
+- **Parts can be marked do-not-populate (DNP).** Ask the agent to leave a part off the assembly, such as a 0 Ω strap, a spare pull-up or a matching network left open, and to fit it again later. Before, every part in the design was bought and assembled. Now a DNP part stays on the board with its pads and tracks, so you can still solder it by hand, but it is left out of the BOM and the pick-and-place file you upload, and out of the stock and cost checks. The schematic shows "DNP" under its value. A DNP capacitor or resistor no longer counts for a datasheet requirement, so leaving off a decoupling capacitor or a pull-up is reported.
+
 ### Schematic
 
 - **Colour themes for the schematic** (Settings → Appearance → Schematic colours): Pale yellow, Navy on cream, Green on black, Blueprint and Black on white, besides following the app's light or dark. A theme colours only the schematic canvas: wires, symbols and their fill, text, net labels, supply symbols, the sheet and its frame. Printing and the design document stay black on white; the agent's pictures of the schematic show the theme you see.

@@ -42,6 +42,12 @@ export const SetParamOp = z.object({
   params: z.record(z.string(), z.string().nullable()).describe('Parameters to set; null removes a parameter'),
 });
 
+export const SetDnpOp = z.object({
+  op: z.literal('set_dnp'),
+  refs: z.array(componentRef).min(1),
+  dnp: z.boolean().describe('true: do not populate (the part stays in the schematic and on the board, with its pads and copper, but is left out of the BOM, the pick-and-place file, the stock and cost checks, and does not count for a datasheet requirement); false: fit it again'),
+}).describe('Mark components as do-not-populate (DNP), or fit them again: an optional part such as a 0 Ω strap, a spare pull-up or a matching network left open. The schematic shows DNP by the value.');
+
 export const RenameOp = z.object({
   op: z.literal('rename'),
   ref: componentRef,
@@ -794,6 +800,7 @@ export const EditOp = z.discriminatedUnion('op', [
   AddPartOp,
   RemoveOp,
   SetParamOp,
+  SetDnpOp,
   RenameOp,
   ConnectOp,
   DisconnectOp,
