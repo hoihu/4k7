@@ -94,12 +94,19 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
   const recordPath = (store: RecordStore, id: string) => join(recordDir(store), `${recordFileName(id)}.json`);
   const sheetDir = join(dataDir, 'datasheets');
 
-  /** An id not taken yet: "name", "name 2", "name 3"… */
+  /** Whether two ids name the same file: "Lamp" and "lamp" do on macOS and Windows. */
+  const sameFile = (a: string, b: string) => {
+    if (a.toLowerCase() !== b.toLowerCase()) return false;
+    const [x, y] = [statSync(projectPath(a), { bigint: true }), statSync(projectPath(b), { bigint: true })];
+    return x.dev === y.dev && x.ino === y.ino;
+  };
+
+  /** An id not taken yet: "name", "name 2", "name 3"… A project's own file (`except`) is free for it, in any case. */
   const freeId = (name: string, except?: string) => {
     const base = projectFileName(name);
     for (let n = 1; ; n++) {
       const id = n === 1 ? base : `${base} ${n}`;
-      if (id === except || !existsSync(projectPath(id))) return id;
+      if (id === except || !existsSync(projectPath(id)) || (except !== undefined && sameFile(id, except))) return id;
     }
   };
 
