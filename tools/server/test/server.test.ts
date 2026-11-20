@@ -22,8 +22,7 @@ const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 const OTHER = '11111111-2222-4333-8444-555555555555';
 
 async function startServer(accessKey = KEY) {
-  const base = 20000 + Math.floor(Math.random() * 20000);
-  const server = new LocalServer({ accessKey, ports: [base, base + 1], devPorts: [5173] });
+  const server = new LocalServer({ accessKey, ports: [0], devPorts: [5173] });
   const port = await server.start();
   cleanups.push(() => server.stop());
   return { server, port };
@@ -98,16 +97,15 @@ describe('server access', () => {
   });
 
   it('falls through to the next port when one is taken', async () => {
-    const base = 20000 + Math.floor(Math.random() * 20000);
-    const a = new LocalServer({ accessKey: KEY, ports: [base, base + 1] });
-    const b = new LocalServer({ accessKey: OTHER, ports: [base, base + 1] });
-    expect(await a.start()).toBe(base);
-    expect(await b.start()).toBe(base + 1);
+    const a = new LocalServer({ accessKey: KEY, ports: [0] });
+    const base = await a.start();
+    const b = new LocalServer({ accessKey: OTHER, ports: [base, 0] });
+    expect(await b.start()).not.toBe(base);
     cleanups.push(() => a.stop(), () => b.stop());
   });
 
   it('falls through a port the system keeps for itself, as Windows does with whole ranges', async () => {
-    const base = 20000 + Math.floor(Math.random() * 20000);
+    const base = 7777; // never bound: listen is mocked for it
     const listen = NetServer.prototype.listen;
     const reserved = vi.spyOn(NetServer.prototype, 'listen').mockImplementation(function (this: NetServer, ...args: unknown[]) {
       if (args[0] !== base) return listen.apply(this, args as never);
@@ -115,8 +113,8 @@ describe('server access', () => {
       return this;
     });
     cleanups.push(() => reserved.mockRestore());
-    const server = new LocalServer({ accessKey: KEY, ports: [base, base + 1] });
-    expect(await server.start()).toBe(base + 1);
+    const server = new LocalServer({ accessKey: KEY, ports: [base, 0] });
+    expect(await server.start()).not.toBe(base);
     cleanups.push(() => server.stop());
   });
 

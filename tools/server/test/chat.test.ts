@@ -16,8 +16,7 @@ afterEach(async () => {
 });
 
 async function setup(bin = FAKE, profile?: ClaudeProfile) {
-  const base = 20000 + Math.floor(Math.random() * 20000);
-  const server = new LocalServer({ accessKey: KEY, ports: [base, base + 1], devPorts: [5173] });
+  const server = new LocalServer({ accessKey: KEY, ports: [0], devPorts: [5173] });
   const port = await server.start();
   cleanups.push(() => server.stop());
   const capability = detectClaude(bin, profile);
