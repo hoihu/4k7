@@ -285,9 +285,58 @@ came out 0 or 2 open on main from run to run, and 2 or 3 with necks.
 | before | 63/63 | 0 | 334 | 238 | 3229 mm | 164 / 136 mm |
 | necks | 63/63 | 0 | 355 | 244 | 3248 mm | 253 / 26 mm |
 
+### 5.8 Connections the agent lays (draw_track with router copper)
+
+The user: *sometimes the agent knows how to wire a certain segment better, but can't convince the
+autorouter to do it.* With router copper the agent could only steer the router from afar
+(placement, widths, planes, vias), never say "this connection goes here"; drawn copper (§9) lets it
+say so, but then it lays every track. Now `draw_track` with router copper (no `set_copper_mode
+drawn`) lays one connection as the agent wants it, and the router does the rest. It is the same
+op, not a second one: `from` and `to` are two pads of one net, `via` the points it must pass
+through (`[x, y]`, or `[x, y, layer]` to go on on that layer from there), `layer` and `width_mm`
+as asked; `erase_copper` takes it away.
+
+- **What is kept** (`BoardSettings.laid`, `LaidTrack`, part of the design, unlike the copper
+  cache): the two pads (`PadAnchor`, as drawn copper's ends), the layer and width if given, and the
+  points, each relative to the end pad it was nearer when laid (not turned with the part: a point
+  10 mm out would swing round the pad). A part moved moves the points near it. Ids `t1`, `t2`, …
+  (the smallest free). Giving the same two pads again replaces it; `erase_copper` by id, net,
+  part, rect (a point or end pad inside) or `all` removes it. The op checks what it can against
+  the board as it stands (both ends pads of one net, the layers on the board and not a dedicated
+  plane, an SMD pad on the layer the track leaves or reaches it on, the points on the board, the
+  width); `bend`, via ids and points as ends are for drawn copper and refused here.
+  `set_copper_mode drawn` drops the list: the routed copper it laid is taken over as the agent's
+  own drawn copper (the rest as the helper's).
+- **How it is laid** (`RouteInput.laid`, `layLaid` in router.ts): before anything else in every
+  pass, each stretch from point to point is a search of its own at the connection's width (chosen
+  as for a routed connection, the asked width in place of the net's, with a neck near an end pad
+  too small for it, §5.7; failing that, the widest both end pads take, `widened` where it fits),
+  held to its layer where one is given (no vias), the router's choice where not.
+  A point's layer starts at that point, with a via there. The stretches ignore the history costs
+  and use the free style, so the connection lies the same way in every pass. `commit` lays the
+  whole path with the points as pins: a run ends at each and the next begins, so the
+  straightening, which cuts corners wherever it can, keeps them, and the runs are one track again
+  afterwards. Its cells go into `fixedMap`, so no rip-up clears it and the probe names it like a
+  pad. Its tracks and vias carry the connection's id (`Track.laid`, `Via.laid`): incremental
+  routing does not keep them (they are laid afresh), and the net's basis includes the
+  connection, so changing it routes that net again; the placement key includes the list, so a
+  change shows the routing out of date.
+- **When it finds no way** (a point too close to other copper, no room for a via, a pad on
+  another layer): it is not laid, the router routes the connection its own way (the board still
+  works), and `DRC.TRACK_NOT_LAID` (warning) and `get_board` `laid_tracks` say why and where,
+  with the net in the way. A pass that lays more of them wins over one that leaves fewer
+  connections open. With copper kept from the routing before, one that finds no way sends the
+  router to a route from scratch (the kept copper may be what is in the way).
+- **It looks like any other copper** (the user's choice: nothing marks what the agent laid).
+
+The guide: route first and look, then lay only the few connections that matter (the switching
+loop, the high-current path, a sensitive trace), with only the points where the way matters.
+
+Nothing changes for a board without such connections: the bench boards route to the same copper.
+
 ## 6. What the agent cannot do yet
 
-- Draw or remove a track itself, or route one net (§7 step 6).
+- Route one net, or keep the router's copper for a net (§7 step 6).
 - Optimize a zoomed area of the board with the scope guard the schematic has (`zoom-optimize.md`
   steps 3–4).
 - Be told the user's taste for layouts (the schematic has notes in Settings).
@@ -308,8 +357,9 @@ Each step is useful alone.
 6. **Copper ops for the agent**, as `wire`/`label`/`erase` on the schematic:
    - `route { nets?, region? }`: route only those (the rest stays as it is);
    - `unroute { nets? | parts? | region? }`: rip up;
-   - `track { net, from: "U1.3", to: "C4.1", layer?, via? }`: one connection, the kernel finding the
-     path through the given corners;
+   - one connection laid by the agent, the kernel finding the path through the given points:
+     *built 2026-11-20* as `draw_track` with router copper (§5.8), laid first and never ripped up;
+     where it finds no way the router routes the connection its own way and the DRC says why;
    - `lock_copper { nets }`: copper the router never rips up (a switching loop drawn by hand).
    The DRC and the netlist check judge the result, as on the schematic.
 7. **Layout Optimize**: the ✦ Optimize button on the board ([zoom-optimize.md](zoom-optimize.md) §6
@@ -552,7 +602,7 @@ none of them (nor the anchors and the helper mark) when the board goes back to t
   `straight_first`) puts a 45° corner between two points that are not on one horizontal, vertical
   or 45° line, so the agent gives waypoints, not corners. Refused only for what cannot be meant: an
   unknown pad, via or net, a pad or via of another net (a short by construction), an inner layer
-  that is a plane.
+  that is a plane. (With router copper the same op lays one connection for the router, §5.8.)
 - `draw_via { at, net, drill_mm?, size_mm? }`: a through via.
 - `edit_copper { ids, move?, via?, bend?, width_mm?, layer?, drill_mm?, size_mm? }`: changes in
   place, keeping the ids. A move shifts the tracks and vias named; the ends of other tracks on a

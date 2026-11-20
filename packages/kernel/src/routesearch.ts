@@ -4,7 +4,7 @@
  */
 import { keepoutDistance } from '@4k7/schema';
 import { Heap } from './heap.ts';
-import { CLIP_COST, COARSE, G, NECK_COST, now, type PassGrid, TURN_COST } from './routegrid.ts';
+import { CLIP_COST, COARSE, G, NECK_COST, now, type PassGrid, type Style, TURN_COST } from './routegrid.ts';
 
 export function passSearch(grid: PassGrid) {
   const { input, pads, deadline, history, style, rules, layers, W, H, N, L, widths, searching, stitching, maps, CW, CH, CN, crow, ccol, coarseOf, padDist, viaAt, viaNear, ownCopper, ownInset, toCentre, touch, offMiddle, splitCost, pays, clips, offCentre } = grid;
@@ -21,6 +21,8 @@ export function passSearch(grid: PassGrid) {
   // the reachability flood (see search); its buffers only once a search needs one
   let floodAt: Int32Array | null = null;
   let floodQueue: Int32Array | null = null;
+  // the history costs a connection the agent laid is searched with: none (see search)
+  let noHistory: Float32Array | null = null;
   // the corridors (coarse cells) searches keep to, by number (see widen)
   const corridorAt = new Int32Array(CN);
   let corridorNo = 0;
@@ -116,17 +118,21 @@ export function passSearch(grid: PassGrid) {
    * A* from any start state to a goal state; returns the path (start → goal) or null. `corr`: only
    * within that corridor (a number from widen; 0: anywhere). `floodFirst`: check that a goal can
    * be reached at all before searching (for a connection that is probably impossible).
-   * `within`: no way dearer than that.
+   * `within`: no way dearer than that. `steady`: a connection the agent laid (router.ts, layLaid):
+   * the same way every pass (no history costs, the given style), on one layer where asked.
    */
   /*
    * The estimate of the way left (A*): the distance to the target: a point, or the box round all
    * goal cells. With a group of copper as the goal, a point (one pad of it) would overestimate
    * the way to the group's nearer parts, and the search would run past them to that pad.
    */
-  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean, corr = 0, floodFirst = false, within = Infinity): number[] | null => {
+  const search = (net: number, k: number, starts: number[], isGoal: (s: number) => boolean, target: { x: number; y: number } | { x0: number; y0: number; x1: number; y1: number }, accept?: (s: number) => boolean, corr = 0, floodFirst = false, within = Infinity, steady?: { style: Style; oneLayer: boolean }): number[] | null => {
     // no new search once the time is up (its reachability flood alone can take a while)
     if (now() > clock.until) return null;
     const free = freeNeck(net, k);
+    const hist = steady ? (noHistory ??= new Float32Array(S)) : history;
+    const sty = steady ? steady.style : style;
+    const changes = L > 1 && !steady?.oneLayer; // may change layer (a via)
     const viaFree = viaFreeFor(net);
     const run = ++clock.searches;
     const inPad = widths[k]! / 2 - 0.01;
@@ -199,7 +205,7 @@ export function passSearch(grid: PassGrid) {
           seen[ns] = run;
           queue[tail++] = ns;
         }
-        if (L > 1 && viaFree(i)) {
+        if (changes && viaFree(i)) {
           for (let l2 = 0; l2 < L; l2++) {
             const ns = l2 * N + i;
             if (seen[ns] === run || (wide && !free(l2, i) && !isGoal(ns))) continue;
@@ -272,7 +278,7 @@ export function passSearch(grid: PassGrid) {
         // diagonal steps: both orthogonal neighbours must be clear too (no corner cutting)
         if (dx !== 0 && dy !== 0 && (!ok(y * W + nx) || !ok(ny * W + x))) continue;
         const off = kind === 1 ? dy !== 0 : kind === 2 ? dx !== 0 : false;
-        const nc = base + STEP[d]! + (nr !== 0 && !wideOk(ni) ? NECK_COST : 0) + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? style.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + (split !== null ? split[ns]! : 0) + history[ns]!;
+        const nc = base + STEP[d]! + (nr !== 0 && !wideOk(ni) ? NECK_COST : 0) + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? sty.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + (split !== null ? split[ns]! : 0) + hist[ns]!;
         if (nc < costOf(ns)) {
           seenAt[ns] = run;
           cost[ns] = nc;
@@ -281,13 +287,13 @@ export function passSearch(grid: PassGrid) {
           heap.push(ns, nc + h(ns));
         }
       }
-      if (L > 1 && viaFree(i)) {
+      if (changes && viaFree(i)) {
         for (let l2 = 0; l2 < L; l2++) {
           if (l2 === l) continue;
           const ns = l2 * N + i;
           // the track goes on from the via: it must fit there too (see wide)
           if (wide && !free(l2, i) && !isGoal(ns)) continue;
-          const nc = base + style.via + history[ns]!;
+          const nc = base + sty.via + hist[ns]!;
           if (nc < costOf(ns)) {
             seenAt[ns] = run;
             cost[ns] = nc;

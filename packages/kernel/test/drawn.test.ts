@@ -111,8 +111,9 @@ describe('drawn copper', () => {
 
   it('get_copper lists the drawn copper by id; draw ops refuse while the copper is the router\'s', () => {
     const k = buck();
-    const r = k.transact({ summary: 'x', ops: [{ op: 'draw_track', from: 'U1.SS', to: 'C3.1' }] });
+    const r = k.transact({ summary: 'x', ops: [{ op: 'draw_via', net: 'GND', at: [5, 5] }] });
     expect(r.status).toBe('rejected');
+    // (draw_track with router copper lays a connection for the router instead: laidtrack.test.ts)
     ok(k, [{ op: 'set_copper_mode', mode: 'drawn', keep: false }, { op: 'draw_track', from: 'U1.SS', to: 'C3.1', via: [[10, 10]] }, { op: 'draw_via', net: 'GND', at: [5, 5] }]);
     const q = k.query({ op: 'get_copper' }) as { tracks: { id: string; net: string; pts: number[][]; from?: string }[]; vias: { id: string }[] };
     expect(q.tracks.map((t) => [t.id, t.net, t.pts.length])).toEqual([['t1', 'SS', 3]]);

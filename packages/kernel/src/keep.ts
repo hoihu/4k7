@@ -53,9 +53,10 @@ export function padSegDist(p: BoardPad, ax: number, ay: number, bx: number, by: 
 
 /**
  * The copper of `before` that still holds on the board `input` describes (its parts, planes,
- * rules and vias placed on purpose), grouped by the pads it joins. Vias of a group (add_vias) are
- * not taken over: the router lays them afresh. `asDrawn`: all of it, as it lies (the agent's drawn
- * copper: nothing is checked or dropped, a piece joining no pad included).
+ * rules and vias placed on purpose), grouped by the pads it joins. Vias of a group (add_vias) and
+ * the copper of connections the agent laid (draw_track) are not taken over: the router lays them
+ * afresh. `asDrawn`: all of it, as it lies (the agent's drawn copper: nothing is checked or
+ * dropped, a piece joining no pad included).
  */
 export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: Via[] }, asDrawn = false): KeptCopper {
   const { rules } = input;
@@ -145,12 +146,12 @@ export function keptCopper(input: RouteInput, before: { tracks: Track[]; vias: V
     return !fixed.some((f) => Math.hypot(f.x - v.x, f.y - v.y) < (f.pad + v.pad) / 2 + rules.clearance - EPS);
   };
 
-  // (a drop via's stub is laid afresh with its via)
+  // (a drop via's stub is laid afresh with its via, the copper of a connection the agent laid as asked)
   const stubs = new Set((input.vias?.stubs ?? []).map((t) => `${t.netId} ${t.layer} ${t.pts.join(' ')}`));
-  let tracks = asDrawn ? before.tracks.filter((t) => nets.has(t.netId) && input.layers.includes(t.layer) && t.pts.length >= 4) : before.tracks.filter((t) => nets.has(t.netId) && input.layers.includes(t.layer) && !closed.has(t.layer) && t.pts.length >= 4 && !stubs.has(`${t.netId} ${t.layer} ${t.pts.join(' ')}`) && trackClear(t));
+  let tracks = asDrawn ? before.tracks.filter((t) => nets.has(t.netId) && input.layers.includes(t.layer) && t.pts.length >= 4) : before.tracks.filter((t) => !t.laid && nets.has(t.netId) && input.layers.includes(t.layer) && !closed.has(t.layer) && t.pts.length >= 4 && !stubs.has(`${t.netId} ${t.layer} ${t.pts.join(' ')}`) && trackClear(t));
   // (vias of a group the router lays afresh are not taken over: placed on purpose or stitching)
   const afresh = new Set([...fixed, ...(input.vias?.fill ?? [])].map((v) => v.group));
-  let vias = asDrawn ? before.vias.filter((v) => nets.has(v.netId)) : before.vias.filter((v) => (!v.group || !afresh.has(v.group)) && nets.has(v.netId) && viaClear(v));
+  let vias = asDrawn ? before.vias.filter((v) => nets.has(v.netId)) : before.vias.filter((v) => !v.laid && (!v.group || !afresh.has(v.group)) && nets.has(v.netId) && viaClear(v));
 
   // a net with a plane: a via joined to one pad may be its drop (inside the plane's area, if it has one)
   const dropOk = (v: Via) => {
