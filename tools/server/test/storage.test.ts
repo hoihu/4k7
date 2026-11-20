@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,6 +70,26 @@ describe('storage on this computer', () => {
     expect(readdirSync(projectsDir).sort()).toEqual(['b 2.twd.json', 'b.twd.json']);
     // its own name: nothing moves
     expect(await (await api('projects/b/rename', { method: 'POST', body: '{"name":"b"}' })).json()).toEqual({ id: 'b' });
+  });
+
+  it('renames a project to its own name in other case', async () => {
+    const { api, projectsDir } = await start();
+    await api('projects', { method: 'POST', body: '{"name":"lamp"}' });
+    // macOS and Windows find "Lamp" as the same file as "lamp"; a link gives a case-sensitive disk the same view
+    const caseSensitive = !existsSync(join(projectsDir, 'Lamp.twd.json'));
+    if (caseSensitive) symlinkSync('lamp.twd.json', join(projectsDir, 'Lamp.twd.json'));
+    expect(await (await api('projects/lamp/rename', { method: 'POST', body: '{"name":"Lamp"}' })).json()).toEqual({ id: 'Lamp' });
+    expect(readdirSync(projectsDir)).toEqual(['Lamp.twd.json']);
+    expect(await (await api('projects/Lamp')).text()).toBe('{"name":"lamp"}');
+  });
+
+  it('does not rename over another project that differs only in case', async () => {
+    const { api, projectsDir } = await start();
+    await api('projects', { method: 'POST', body: '{"name":"lamp"}' });
+    if (existsSync(join(projectsDir, 'Lamp.twd.json'))) return; // one file on a case-insensitive disk
+    writeFileSync(join(projectsDir, 'Lamp.twd.json'), '{"name":"Lamp"}');
+    expect(await (await api('projects/lamp/rename', { method: 'POST', body: '{"name":"Lamp"}' })).json()).toEqual({ id: 'Lamp 2' });
+    expect(readdirSync(projectsDir).sort()).toEqual(['Lamp 2.twd.json', 'Lamp.twd.json']);
   });
 
   it('refuses names that leave the folder', async () => {
