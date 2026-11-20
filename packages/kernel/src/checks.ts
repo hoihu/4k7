@@ -255,7 +255,7 @@ function requirementChecks(ctx: Ctx) {
         if (!net) continue;
         const ok = componentsSorted(d).some((x) => {
           const xc = cardOf(d, x.part);
-          if (xc?.category !== 'resistor') return false;
+          if (xc?.category !== 'resistor' || x.dnp) return false;
           const [a, b] = twoPinNets(d, x, xc);
           const other = a === net ? b : b === net ? a : undefined;
           if (!other) return false;

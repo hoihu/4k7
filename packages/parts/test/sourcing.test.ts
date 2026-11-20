@@ -117,6 +117,12 @@ describe('stock check', () => {
     expect(unsourced).toEqual(['J1', 'R3']);
   });
 
+  it('leaves do-not-populate components out: not on a line and not missing a number', () => {
+    const { lines, unsourced } = stockLines([res('R1', 'C25804'), res('R2', 'C25804', { dnp: true }), res('R3', 'C1', { dnp: true }), res('R4', undefined, { dnp: true })], H, 5);
+    expect(lines.map((l) => [l.sku, l.refs, l.need])).toEqual([['C25804', ['R1'], 5]]);
+    expect(unsourced).toEqual([]);
+  });
+
   it('looks every part up once and says what stops the order, what to look at and what is fine', async () => {
     const plenty = part('C25804', { mpn: '0603WAF1002T5E', attributes: { Resistance: '10kΩ' }, price: [{ qty: 1, each: 0.002 }] });
     const { src, asked } = catalogue({

@@ -182,6 +182,21 @@ describe('cost check', () => {
     expect(r.savings.find((s) => s.kind === 'hand')!.what).toBe('J1 is soldered by hand: leave it off the order (no LCSC number) and solder it yourself');
   });
 
+  it('leaves a do-not-populate part out of the cost: not bought, not placed', async () => {
+    const parts = [r10k('C1', { price: [{ qty: 1, each: 0.01 }] }), part('C9', { mpn: 'BIG', package: 'SOT-223', price: [{ qty: 1, each: 5 }] })];
+    const comps: SourcedComponent[] = [res('R1', 'C1'), { refdes: 'U1', category: 'ic', params: { lcsc: 'C9' }, mpn: 'BIG', pkg: 'SOT-223' }];
+    let assembled: string[] = [];
+    const facts2 = (a: Set<string>) => ((assembled = [...a].sort()), facts({ handJoints: 0, handRefs: [] }));
+    const fitted = await checkCost(comps, catalogue(parts, () => []), { house: H, boards: 10, facts: facts2 });
+    expect(assembled).toEqual(['R1', 'U1']);
+    const off = await checkCost([comps[0]!, { ...comps[1]!, dnp: true }], catalogue(parts, () => []), { house: H, boards: 10, facts: facts2 });
+    expect(assembled).toEqual(['R1']);
+    expect(off.stock.lines.flatMap((l) => l.refs)).toEqual(['R1']);
+    expect(off.stock.unsourced).toEqual([]);
+    const low = (r: typeof fitted) => Math.min(...r.estimates.map((e) => e.parts));
+    expect(low(fitted) - low(off)).toBeCloseTo(50, 1);
+  });
+
   it('prices moving the bottom parts up when a one-sided service would take the order', async () => {
     const { savings, service } = await checkCost([res('R1', 'C1'), res('C9', 'C1')], catalogue([r10k('C1')], () => []), { house: H, boards: 10, facts: () => facts({ bottomRefs: ['C9'], handJoints: 0, handRefs: [] }) });
     expect(service).toBe('Standard');

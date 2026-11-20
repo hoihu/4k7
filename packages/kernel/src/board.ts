@@ -563,6 +563,7 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     ...(it.card.manufacturer ? { manufacturer: it.card.manufacturer } : {}),
     ...(it.comp.params.lcsc ? { lcsc: it.comp.params.lcsc } : {}),
     ...(it.comp.params.eurocircuits ? { eurocircuits: it.comp.params.eurocircuits } : {}),
+    ...(it.comp.dnp ? { dnp: true as const } : {}),
     pkg: it.pkg,
     pkgInfo: it.info,
     x: r3(it.x),

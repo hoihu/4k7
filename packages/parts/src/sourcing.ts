@@ -129,6 +129,8 @@ export interface SourcedComponent {
   mpn?: string;
   /** Its land as it lies on the board: the check compares it with the house's footprint for the part (fitLand). */
   land?: PlacedLand;
+  /** Do not populate (set_dnp): not bought, not placed, so in no line and not unsourced. */
+  dnp?: boolean;
 }
 
 /**
@@ -232,11 +234,12 @@ export function houseNumber(c: SourcedComponent, house: AssemblyHouse): string |
   return house.normalize([value, c.params.tolerance, c.params.voltage, c.params.dielectric, c.params.power, c.pkg].filter(Boolean).join(' '));
 }
 
-/** Group the components by the house's part number; those without one are `unsourced`. */
+/** Group the components by the house's part number; those without one are `unsourced`. Do-not-populate components are left out (and so out of the cost). */
 export function stockLines(components: SourcedComponent[], house: AssemblyHouse, boards: number): { lines: StockLine[]; unsourced: string[] } {
   const by = new Map<string, StockLine>();
   const unsourced: string[] = [];
   for (const c of components) {
+    if (c.dnp) continue;
     const sku = houseNumber(c, house);
     if (!sku) {
       unsourced.push(c.refdes);
