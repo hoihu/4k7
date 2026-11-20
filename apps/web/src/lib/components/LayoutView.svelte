@@ -68,7 +68,8 @@
   let marker = $state<{ x: number; y: number } | null>(null);
   const netName = (id: string | null) => (id ? (b?.netNames[id] ?? id) : '');
   const desc = $derived(app.k?.description ?? null);
-  const openChecks = $derived(b?.diagnostics.filter((d) => !d.waivedBy) ?? []);
+  // (with the production files' findings, FAB.*, once the routed board's files are checked)
+  const openChecks = $derived(b ? [...b.diagnostics.filter((d) => !d.waivedBy), ...app.fabDiagnostics] : []);
   const waivedChecks = $derived(b?.diagnostics.filter((d) => d.waivedBy) ?? []);
   const errors = $derived(openChecks.filter((d) => d.severity === 'error').length);
   const warnings = $derived(openChecks.filter((d) => d.severity === 'warning').length);
@@ -345,7 +346,7 @@
           {#each allChecks ? openChecks : openChecks.slice(0, CHECKS_SHOWN) as d, i (i)}
             <li>
               <button class="r" aria-expanded={shownCheck === d.message} onclick={() => { focus(d); showCheck(d.message); }}><span class="tag {d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info'}">{d.severity[0]!.toUpperCase()}</span><span class="grow" class:clamp={shownCheck !== d.message}>{d.message}</span></button>
-              {#if d.entities.length}<button class="x" title="Not a problem: intended, so this check goes away" aria-label="Mark as not a problem" disabled={app.running} onclick={() => void app.waiveCheck(d)}>✕</button>{/if}
+              {#if d.entities.length && !d.code.startsWith('FAB.')}<button class="x" title="Not a problem: intended, so this check goes away" aria-label="Mark as not a problem" disabled={app.running} onclick={() => void app.waiveCheck(d)}>✕</button>{/if}
             </li>
           {/each}
         </ul>

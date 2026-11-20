@@ -34,9 +34,10 @@ else the source whose net has fewer sources on that island (the shield pad in a 
 says which pad touches which net's copper on which layer; at most three spots per pair of nets.
 
 spiral2 (110 × 150 mm, four layers, 455 pads, 348 plated holes) takes about 0.4 s. The app runs it in a
-worker (`apps/web/src/lib/netcheck.worker.ts`): on every export (the flash says what it found), in the
-Gerber viewer beside the files (each finding picks its layer, the holes and the outline, and rings the
-spot), and for the agent in `view_gerbers` and in `<view>` (with the finding the user picked).
+worker (`apps/web/src/lib/netcheck.worker.ts`): on the routed board for its checks (below), on every
+export (the flash says what it found), in the Gerber viewer beside the files (each finding picks its
+layer, the holes and the outline, and rings the spot), and for the agent in `view_gerbers` and in
+`<view>` (with the finding the user picked).
 
 Files opened in the viewer are held against the IPC-D-356 netlist among them, if there is one (as the
 house does), else against the board; when fewer than half the board's pads are where the files have
@@ -45,6 +46,32 @@ pads, they are another board's files (or in other coordinates) and are not held 
 Its blind spot is the reader, shared with the viewer. `packages/fab/test/oracle.test.ts` reads the same
 files with tracespace's gerber-parser and gerber-plotter (MIT, development only) and asks for the same
 copper per layer (area to 0.1 %, the same number of pieces) and the same findings.
+
+## In the board's checks (`FAB.*`)
+
+The check also runs by itself on the board as it is (`apps/web/src/lib/fabFindings.ts`): when the
+board worker has routed the board (its routing done, not stale), a moment later (0.8 s; edits in a row
+check only the last board) the netlist check's worker makes the board's files as the export does,
+reads them back and holds them against the board (`checkBoardFiles`). Nothing runs on the kernel's
+worker. `fabDiagnostics` (`packages/fab/src/fabdiag.ts`) turns each finding into a diagnostic, one
+code per kind:
+
+| Code | Severity | Finding |
+|---|---|---|
+| `FAB.SHORT` | error | pads of two nets on one piece of copper |
+| `FAB.OPEN` | error | a net in pieces the board has joined |
+| `FAB.PAD_MISSING` | error | a pad with no copper on a layer it is on |
+| `FAB.FLOATING` | warning | copper joined to no pad (not where the board marks its plane floating itself: `DRC.FLOATING_PLANE` says that) |
+
+The message is the finding's text after "Production files:", the entities its pads (up to six) and
+`net:` its nets, `at` the spot in the board's coordinates. The findings are held under the board's
+fingerprint (`boardFingerprint`, the copper it was found on) and shown only while the board has that
+copper: a placed board not routed yet has none, a change of copper drops them until its own check is
+done, an undo to copper checked before brings its findings back at once. They are listed with the DRC
+in the layout's checks (not waivable: a fault of the files is fixed, not marked intended), counted in
+the header's issues, and `get_diagnostics` adds them to the kernel's when the board is current
+(waiting for a check under way). They are not in `BoardView.diagnostics`, so `propose` does not yet
+refuse on them; refusing to propose while a `FAB.*` error is open is the next step.
 
 ## The netlist file (`packages/fab/src/ipc356.ts`)
 
@@ -94,6 +121,10 @@ boards (2 and 4 layers, planes, areas set twice, pours, keep-outs, cutouts, roun
 turned every quarter, panels), each held against its netlist, and three read by tracespace. With the
 0.6.0 circle cut put back, all six fail on the shield pads.
 
-Not done: a check that runs on every change of the board (the viewer and the export run it; the
-Issues list does not have it), and making the Issues list carry the files' findings. The check knows
-nothing of the mask, paste and silkscreen files.
+`fabFindings.test.ts` (app): the findings shown for the routed board's copper only, one check for
+edits in a row, none for a board not routed. `netcheck.test.ts` also holds the 0.6.0 cut through
+`fabDiagnostics`: a `FAB.SHORT` at the shield pad, and none for the board as built now.
+
+Not done: `propose` refusing while a `FAB.*` error is open (planned next), and the check on a panel's
+files in the checks (the export and the viewer check those). The check knows nothing of the mask,
+paste and silkscreen files.

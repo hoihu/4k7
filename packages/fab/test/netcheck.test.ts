@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Kernel } from '@4k7/kernel';
 import type { BoardView, EditOp, ZoneCut } from '@4k7/schema';
-import { boardNetDesign, checkCopper, checkFabSet, copperCheckText, gerbers, panelBoard, readExcellon, readFabFiles, readGerber, type NetDesign, type NetPad } from '../src/index.ts';
+import { boardNetDesign, checkBoardFiles, checkCopper, checkFabSet, fabDiagnostics, copperCheckText, gerbers, panelBoard, readExcellon, readFabFiles, readGerber, type NetDesign, type NetPad } from '../src/index.ts';
 import { capsuleCuts } from '../../kernel/src/routepours.ts';
 import { buckTransaction } from '../../kernel/test/fixtures.ts';
 
@@ -172,6 +172,18 @@ function usb(rot: 0 | 90 = 0): Kernel {
   return k;
 }
 
+/** The board with its +5V plane cut round J1's slotted shield pads as 0.6.0 cut it: a circle of the slot's narrow side. */
+function circleCut(b: BoardView): BoardView {
+  const plane = b.zones.find((z) => z.layer === 'In2.Cu' && b.netNames[z.netId] === '+5V')!;
+  const shield = b.parts.find((p) => p.refdes === 'J1')!.pads.filter((p) => p.slot);
+  const old = (cuts: ZoneCut[]): ZoneCut[] =>
+    cuts.map((cut) => {
+      const p = shield.find((q) => cut.k === 'stroke' && cut.pts.length === 4 && Math.abs((cut.pts[0]! + cut.pts[2]!) / 2 - q.x) < 1e-3 && Math.abs((cut.pts[1]! + cut.pts[3]!) / 2 - q.y) < 1e-3);
+      return p && cut.k === 'stroke' ? { k: 'circle', x: p.x, y: p.y, d: Math.round((Math.min(p.w, p.h) + cut.w - Math.min(p.w, p.h)) * 1000) / 1000 } : cut;
+    });
+  return { ...b, zones: b.zones.map((z) => (z === plane ? { ...z, shape: { ...z.shape!, cuts: old(z.shape!.cuts) } } : z)) };
+}
+
 const ownCheck = (b: BoardView) => checkFabSet(readFabFiles(gerbers(b, 'x')), boardNetDesign(b), { fresh: true })!;
 
 describe('the netlist check of the files 4k7 writes', () => {
@@ -202,12 +214,7 @@ describe('the netlist check of the files 4k7 writes', () => {
 
       // the plane as 0.6.0 cut it (kept so in a design routed then): the check finds the short,
       // and the board as the kernel builds it from the kept copper has the oval cut again
-      const old = (cuts: ZoneCut[]): ZoneCut[] =>
-        cuts.map((cut) => {
-          const p = shield.find((q) => cut.k === 'stroke' && cut.pts.length === 4 && Math.abs((cut.pts[0]! + cut.pts[2]!) / 2 - q.x) < 1e-3 && Math.abs((cut.pts[1]! + cut.pts[3]!) / 2 - q.y) < 1e-3);
-          return p && cut.k === 'stroke' ? { k: 'circle', x: p.x, y: p.y, d: Math.round((Math.min(p.w, p.h) + cut.w - Math.min(p.w, p.h)) * 1000) / 1000 } : cut;
-        });
-      const zones = b.zones.map((z) => (z === plane ? { ...z, shape: { ...z.shape!, cuts: old(z.shape!.cuts) } } : z));
+      const { zones } = circleCut(b);
       const broken = ownCheck({ ...b, zones });
       const shorts = broken.findings.filter((f) => f.kind === 'short');
       expect(shorts.length, copperCheckText(broken)).toBeGreaterThan(0);
@@ -217,6 +224,21 @@ describe('the netlist check of the files 4k7 writes', () => {
       expect(ownCheck({ ...b, zones: mended }).findings).toEqual([]);
     }
   }, 240_000);
+
+  it('turns the findings into FAB.* diagnostics at the spot on the board: the 0.6.0 cut is a FAB.SHORT, the board as built now has none', () => {
+    const b = usb().board();
+    expect(fabDiagnostics(checkBoardFiles(b), b)).toEqual([]);
+    const broken = circleCut(b);
+    const ds = fabDiagnostics(checkBoardFiles(broken), broken);
+    const shorts = ds.filter((d) => d.code === 'FAB.SHORT');
+    expect(shorts.length, JSON.stringify(ds)).toBeGreaterThan(0);
+    expect(ds.every((d) => d.code === 'FAB.SHORT' && d.severity === 'error')).toBe(true);
+    expect(shorts[0]!.entities).toEqual(expect.arrayContaining(['net:+5V', 'net:GND']));
+    expect(shorts[0]!.message).toMatch(/^Production files: .*J1\.S[12]/);
+    // where the board has the shield pad (board coordinates, y down), not where the files have it
+    const shield = b.parts.find((p) => p.refdes === 'J1')!.pads.filter((p) => p.slot);
+    expect(shorts.every((d) => shield.some((p) => Math.hypot(d.at!.x - p.x, d.at!.y - p.y) < 1))).toBe(true);
+  }, 120_000);
 
   it('mends the cut in a design routed before the fix when it opens, without routing again', () => {
     const k = usb();

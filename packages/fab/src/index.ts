@@ -11,4 +11,5 @@ export * from './print.ts';
 export * from './netcheck.ts';
 export * from './netdesign.ts';
 export * from './ipc356.ts';
+export * from './fabdiag.ts';
 export * from './fabnotes.ts';
