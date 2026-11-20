@@ -715,6 +715,16 @@ export const EraseCopperOp = z.object({
   all: z.boolean().optional().describe('All drawn copper'),
 }).describe('Drawn copper: take tracks and vias away (any given selector; they add up). Router copper: takes away the connections you laid with draw_track (by id, net, part, rect: a point or end pad inside, or all); the router routes them its own way again.');
 
+export const LockCopperOp = z.object({
+  op: z.literal('lock_copper'),
+  nets: z.array(netName).min(1).describe('The nets whose routed copper to keep as it is, e.g. ["SW", "+5V"]'),
+}).describe('Router copper: keep the router\'s copper for these nets exactly as it lies now, when a route got a net right (the switching loop tight, the power path short) and later routes should not change it. The board must be routed as it stands. Route then lays it before anything else and never rips it up; the rest is routed round it. Locking does not make the routing out of date. A part moved off locked copper breaks the pieces it touched: those are not laid (get_board locked_copper and DRC.LOCKED_BROKEN say so) but stay locked, and come back if the part does. Locking a net again takes its copper as it lies then; unlock_copper lets it go. Connections you laid with draw_track are laid as asked anyway (not part of the lock).');
+
+export const UnlockCopperOp = z.object({
+  op: z.literal('unlock_copper'),
+  nets: z.array(netName).min(1).describe('The nets to let go, or ["all"]'),
+}).describe('Let go of copper locked with lock_copper: the router may route those nets its own way again.');
+
 export const SetPlaneOp = z.object({
   op: z.literal('set_plane'),
   layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Copper layer; inner layers (4-layer boards) become dedicated planes, outer layers get a pour around the tracks'),
@@ -851,6 +861,8 @@ export const EditOp = z.discriminatedUnion('op', [
   EditCopperOp,
   TuneLengthOp,
   EraseCopperOp,
+  LockCopperOp,
+  UnlockCopperOp,
   SetPlaneOp,
   SetPlaneStyleOp,
   AddHoleOp,

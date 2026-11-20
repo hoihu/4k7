@@ -292,6 +292,57 @@ describe('steering the router (set_net route_first, layer)', () => {
   });
 });
 
+describe('copper the agent locked (lock_copper)', () => {
+  // B from the top edge to the bottom edge (its pads reach the edge clearance), routed alone first
+  const bOnly = [part('Q1', [[10, 1, 'B']]), part('Q2', [[10, 9, 'B']])];
+  const first = () => route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts: bOnly, powerNets: new Set() });
+
+  it('is laid exactly as it lies and never let go: the net in the way is named', () => {
+    const b = first();
+    // A must cross the locked B on one layer
+    const parts = [part('P1', [[0.5, 5, 'A']]), part('P2', [[19.5, 5, 'A']]), ...bOnly];
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts, powerNets: new Set(), locked: { tracks: b.tracks, vias: [] } });
+    expect(r.tracks.filter((t) => t.netId === 'B')).toEqual(b.tracks.map((t) => ({ ...t, locked: true })));
+    expect(r.locked).toEqual([{ netId: 'B', tracks: b.tracks.length, vias: 0, heldTracks: b.tracks.length, heldVias: 0 }]);
+    // (not closed off by pads or the edge: B's copper is in the way)
+    expect(r.failed.map((f) => [f.netId, f.blockedBy, f.enclosed])).toEqual([['A', ['B'], undefined]]);
+    expect(r.reused).toBeUndefined();
+  });
+
+  it('what a moved part broke away from is not laid; the net is routed again round the rest', () => {
+    const b = first();
+    const moved = [part('Q1', [[10, 1, 'B']]), part('Q2', [[14, 9, 'B']])];
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts: moved, powerNets: new Set(), locked: { tracks: b.tracks, vias: [] } });
+    expect(r.locked![0]!.heldTracks).toBe(0);
+    expect(r.failed).toEqual([]);
+    expect(r.tracks.some((t) => t.locked)).toBe(false);
+  });
+
+  it('a connection the agent laid is not closed off either: its net is named in the way', () => {
+    const parts = [part('P1', [[0.5, 5, 'A']]), part('P2', [[19.5, 5, 'A']]), ...bOnly];
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts, powerNets: new Set(), laid: [{ id: 't1', netId: 'B', from: 2, to: 3, points: [] }] });
+    expect(r.laid).toEqual([{ id: 't1', laid: true }]);
+    expect(r.failed.map((f) => [f.netId, f.blockedBy, f.enclosed])).toEqual([['A', ['B'], undefined]]);
+  });
+
+  it('locked copper and a connection laid on the same net: both laid first, neither let go', () => {
+    // B: three pads; Q1–Q2 locked as routed alone, Q2–Q3 laid by the agent through a point
+    const three = [part('Q1', [[4, 2, 'B']]), part('Q2', [[10, 2, 'B']]), part('Q3', [[16, 8, 'B']])];
+    const b = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts: three.slice(0, 2), powerNets: new Set() });
+    const parts = [...three, part('P1', [[2, 6, 'A']]), part('P2', [[18, 3, 'A']])];
+    const pads = parts.flatMap((p) => p.pads);
+    const input = { outline: { w: 20, h: 10 }, layers: ['F.Cu', 'B.Cu'] as CopperLayer[], rules: RULES, parts, powerNets: new Set<string>(), locked: { tracks: b.tracks, vias: [] }, laid: [{ id: 't1', netId: 'B', from: 1, to: 2, points: [{ x: 10, y: 8 }] }] };
+    const r = route(input);
+    expect(r.laid).toEqual([{ id: 't1', laid: true }]);
+    expect(r.tracks.filter((t) => t.locked)).toEqual(b.tracks.map((t) => ({ ...t, locked: true })));
+    expect(r.tracks.some((t) => t.laid === 't1')).toBe(true);
+    // (nothing else of B: the locked copper and the laid connection join all three pads)
+    expect(r.tracks.filter((t) => t.netId === 'B' && !t.locked && !t.laid)).toEqual([]);
+    expect(r.connected('B', pads[0]!, pads[2]!)).toBe(true);
+    expect(r.failed).toEqual([]);
+  });
+});
+
 describe('the routed copper, kept with the design', () => {
   it('a routed design read back from its file is still routed (key order does not matter)', () => {
     const k = buck();
