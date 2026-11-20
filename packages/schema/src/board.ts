@@ -1109,6 +1109,34 @@ export interface CurrentVias {
   needs: number;
 }
 
+/**
+ * A pad or via joined to its net's pour only through thermal-relief spokes, on the current's way
+ * (DRC.SPOKE_CURRENT): the spokes that connect against what flows through them.
+ */
+export interface CurrentJoint {
+  netId: string;
+  kind: 'pad' | 'via';
+  /** The pad ("U3.4"), or a drawn via's id. */
+  ref?: string;
+  at: { x: number; y: number };
+  /** The pours' layers it joins through spokes. */
+  layers: CopperLayer[];
+  /** Spokes that connect, on all those layers. */
+  spokes: number;
+  /** The narrowest spoke (mm). */
+  spokeWidth: number;
+  amps: number;
+  basis: CurrentBasis;
+  /** split with an unplaced rest: its share of the stated loads alone. */
+  split?: number;
+  status: CurrentStatus;
+  /** spokes × one spoke's capacity (its width, the layer's copper, the allowed rise). */
+  capacity: number;
+  ratio: number;
+  /** The spoke width that would carry `amps` (mm). */
+  needs: number;
+}
+
 export interface CurrentNet {
   netId: string;
   name: string;
@@ -1164,6 +1192,8 @@ export interface CurrentView {
   tracks: CurrentTrack[];
   /** The via groups that are the only way across between two layers' copper (cuts), of a net with a current. */
   vias: CurrentVias[];
+  /** The pads and vias joined to a pour only through thermal reliefs, on the current's way. */
+  joints: CurrentJoint[];
 }
 
 export interface BoardView {
