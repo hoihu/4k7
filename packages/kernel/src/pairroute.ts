@@ -405,8 +405,9 @@ function attempt(cx: Ctx, rule: Rule, chain: Chain, ends: [[BoardPad, BoardPad],
  */
 export function routeLines(input: RouteInput, passes: number, run: Run): RouteResult {
   const only = input.drawn?.only;
-  // (a single connection asked for, or drawn copper with nothing to route: no lines of its own)
-  if (only?.pairs || (input.drawn && !only?.nets) || input.keep) return run(input, passes);
+  // (a single connection asked for, or drawn copper with nothing to route: no lines of its own; with
+  // copper kept or locked, the lines are routed with the rest, round it, as any other net)
+  if (only?.pairs || (input.drawn && !only?.nets) || input.keep || input.locked?.tracks.length) return run(input, passes);
   const allPads = input.parts.flatMap((p) => p.pads);
   const withPads = new Set(allPads.flatMap((p) => (p.netId ? [p.netId] : [])));
   const scope = new Set(only?.nets ?? withPads);

@@ -290,18 +290,21 @@ export function setCopperMode(d: Design, op: Extract<EditOp, { op: 'set_copper_m
     // (the stubs and vias of add_vias groups stay theirs: the groups lay them)
     const stubs = new Set(before.tracks.map((t) => JSON.stringify(t)));
     // (the router's copper counts as the helper's: route fresh may lay it again)
-    // (the copper of a connection the agent laid is its own; the rest the helper's)
-    for (const { laid, ...t } of current.tracks) if (!stubs.has(JSON.stringify(t))) dc.tracks.push(anchored(before, { ...t, pts: [...t.pts], id: nextId(dc, 't'), ...(laid ? {} : { by: 'helper' as const }) })); // (its own points: drawn copper is moved in place, and the kept copper is shared with other copies of the design)
-    for (const { laid, ...v } of current.vias) if (!v.group) dc.vias.push({ ...v, id: nextId(dc, 'v'), ...(laid ? {} : { by: 'helper' as const }) });
+    // (the copper of a connection the agent laid, and copper it locked, is its own; the rest the helper's)
+    for (const { laid, locked, ...t } of current.tracks) if (!stubs.has(JSON.stringify(t))) dc.tracks.push(anchored(before, { ...t, pts: [...t.pts], id: nextId(dc, 't'), ...(laid || locked ? {} : { by: 'helper' as const }) })); // (its own points: drawn copper is moved in place, and the kept copper is shared with other copies of the design)
+    for (const { laid, locked, ...v } of current.vias) if (!v.group) dc.vias.push({ ...v, id: nextId(dc, 'v'), ...(laid || locked ? {} : { by: 'helper' as const }) });
   }
   b.drawn = dc;
   // (the connections laid for the router: their copper, if routed, is the drawn copper now)
+  // (and the locked copper: what of it was laid is drawn copper now, the agent's own)
   const laidBefore = b.laid?.length ?? 0;
+  const lockedBefore = b.locked?.length ?? 0;
   delete b.laid;
+  delete b.locked;
   return {
     op: op.op,
     effect: current
-      ? `the copper is yours now: the router's ${dc.tracks.length} tracks and ${dc.vias.length} vias taken over as drawn copper (get_copper lists them by id)${laidBefore ? `, the ${laidBefore} connection(s) you laid for the router with them` : ''}`
+      ? `the copper is yours now: the router's ${dc.tracks.length} tracks and ${dc.vias.length} vias taken over as drawn copper (get_copper lists them by id)${laidBefore ? `, the ${laidBefore} connection(s) you laid for the router with them` : ''}${lockedBefore ? `, the locked copper of ${lockedBefore} net(s) with them` : ''}`
       : `the copper is yours now, nothing drawn yet${op.keep !== false && copper ? ' (the router\'s copper was not for this placement)' : ''}: draw_track, draw_via, or route nets for a first path`,
     ids: ['board'],
   };
@@ -676,6 +679,57 @@ export function editCopper(d: Design, op: Extract<EditOp, { op: 'edit_copper' }>
   return { op: op.op, effect: `edited ${ids.join(', ')}: ${did.join(', ')}${extra.length ? `; ${extra.join(', ')} went along at the moved via${vias.length > 1 ? 's' : ''}` : ''}`, ids: ['board', ...ids, ...extra] };
 }
 
+/**
+ * lock_copper: the router's copper of these nets, from routing done for the board as it stands,
+ * kept as it lies (BoardSettings.locked; docs/design/layout.md §5.9). Not the connections the agent
+ * laid nor the vias and stubs of add_vias groups: those are laid as asked anyway.
+ */
+export function lockCopper(d: Design, op: Extract<EditOp, { op: 'lock_copper' }>): OpResult {
+  if (d.board?.drawn) reject({ code: 'INVALID_OP', message: 'The copper is drawn: it is all yours already and stays as you drew it (lock_copper keeps the router\'s copper).' });
+  const now = placedOf(d);
+  const copper = d.board?.copper;
+  if (!copper || copper.stopped || now.routing !== 'done' || copper.key !== copperKey(d)) reject({ code: 'BOARD_INVALID', message: 'The board is not routed as it stands: route first (and let it finish), look at it, then lock what came out right.' });
+  const stubs = new Set(now.tracks.map((t) => JSON.stringify(t)));
+  const bare = <T extends { laid?: string; locked?: boolean }>({ laid: _l, locked: _k, ...x }: T) => x;
+  const b = boardCopy(d);
+  const locked = [...(b.locked ?? [])];
+  const said: string[] = [];
+  for (const name of op.nets) {
+    const net = findNet(d, name);
+    if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${name}".`, candidates: Object.values(d.nets).map((n) => n.name) });
+    const tracks = copper!.tracks.filter((t) => t.netId === net!.id && !t.laid && !stubs.has(JSON.stringify(t))).map(bare);
+    const vias = copper!.vias.filter((v) => v.netId === net!.id && !v.laid && !v.group).map(bare);
+    if (!tracks.length) reject({ code: 'BOARD_INVALID', message: `${net!.name} has no routed tracks to lock.` });
+    const was = locked.findIndex((l) => l.netId === net!.id);
+    if (was >= 0) locked.splice(was, 1);
+    locked.push({ netId: net!.id, tracks, vias });
+    said.push(`${net!.name} (${tracks.length} tracks, ${vias.length} vias${was >= 0 ? ', locked again as it lies now' : ''})`);
+  }
+  b.locked = locked;
+  d.board = b;
+  return { op: op.op, effect: `locked the copper of ${said.join(', ')}: route lays it as it is, before anything else, and never rips it up (get_board locked_copper)`, ids: ['board'] };
+}
+
+/** unlock_copper: let go of locked copper (BoardSettings.locked); the router routes those nets its own way again. */
+export function unlockCopper(d: Design, op: Extract<EditOp, { op: 'unlock_copper' }>): OpResult {
+  const before = d.board?.locked ?? [];
+  if (!before.length) reject({ code: 'REF_UNKNOWN', message: 'No copper is locked.' });
+  const all = op.nets.some((n) => n.toLowerCase() === 'all');
+  const ids = all
+    ? before.map((l) => l.netId)
+    : op.nets.map((n) => {
+        const net = findNet(d, n);
+        if (!net || !before.some((l) => l.netId === net.id)) reject({ code: 'REF_UNKNOWN', message: `${n} has no locked copper.`, candidates: before.map((l) => netName(d, l.netId)) });
+        return net!.id;
+      });
+  const b = boardCopy(d);
+  const keep = before.filter((l) => !ids.includes(l.netId));
+  if (keep.length) b.locked = keep;
+  else delete b.locked;
+  d.board = b;
+  return { op: op.op, effect: `let go of the locked copper of ${before.filter((l) => ids.includes(l.netId)).map((l) => netName(d, l.netId)).join(', ')}; the router may route it its own way again`, ids: ['board'] };
+}
+
 export function eraseCopper(d: Design, op: Extract<EditOp, { op: 'erase_copper' }>): OpResult {
   if (!d.board?.drawn) return eraseLaid(d, op);
   const { dc } = drawnOf(d);
@@ -888,6 +942,8 @@ const COPPER_AFTER: Record<EditOp['op'], 'follow' | 'check' | null> = {
   edit_copper: 'check',
   tune_length: 'check',
   erase_copper: null,
+  lock_copper: null,
+  unlock_copper: null,
   set_plane: null,
   set_plane_style: null,
   add_hole: 'follow',
