@@ -82,6 +82,11 @@ export const DraftPin = z.object({
   functions: z.array(z.string()).optional().describe('Alternate/additional functions, e.g. ["USART2_TX","TIM2_CH1"]'),
   description: z.string().optional(),
   page: z.number().int().positive().optional().describe('PDF page (the NNN of pages/page-NNN.txt) with this pin\'s table row'),
+  max_v: z
+    .number()
+    .positive()
+    .optional()
+    .describe('Absolute maximum voltage of this pin, from the absolute maximum ratings table, where it is lower than the supply\'s: an enable, logic or sense input of a regulator or driver (EN of a 32 V LDO: 6.5). Leave out where the table gives none or only one relative to a supply (VCC + 0.3 V)'),
 });
 export type DraftPin = z.infer<typeof DraftPin>;
 
@@ -97,7 +102,7 @@ export const PartDraft = z.object({
   datasheet: z.string().optional().describe('Datasheet URL if known'),
   package: PackageInfo,
   pins: z.array(DraftPin).min(1).describe('EVERY pin of this package, including every supply, ground and NC pin'),
-  supply_max_v: z.number().positive().optional().describe('Absolute maximum supply voltage'),
+  supply_max_v: z.number().positive().optional().describe('Absolute maximum supply voltage (given to the supply pins; a pin rated lower carries its own max_v)'),
   decoupling: z
     .array(z.object({ pin: z.string(), min: z.string().describe('e.g. "100nF", "4.7uF"'), note: z.string().optional() }))
     .optional()
