@@ -147,7 +147,7 @@ describe('MCP server', () => {
 
     expect(client.getInstructions()).toMatch(/4k7/);
     const tools = (await client.listTools()).tools.map((t) => t.name);
-    expect(tools).toEqual(['get_context', 'design_query', 'design_edit', 'calc', 'import_part', 'sourcing', 'pending_import', 'artwork', 'read_datasheet', 'get_schematic_image', 'get_board_image', 'view_gerbers', 'render_enclosure', 'propose', 'wait_for_review']);
+    expect(tools).toEqual(['get_context', 'design_query', 'design_edit', 'calc', 'import_part', 'sourcing', 'pending_import', 'artwork', 'read_datasheet', 'get_schematic_image', 'get_board_image', 'view_gerbers', 'render_enclosure', 'propose', 'propose_plan', 'wait_for_review']);
 
     const res = await client.callTool({
       name: 'design_edit',
@@ -159,6 +159,48 @@ describe('MCP server', () => {
     // the agent name reaches the tab
     await new Promise((r) => setTimeout(r, 20));
     expect(tab.messages.some((m) => m.type === 'agent' && m.name === 'Claude Code')).toBe(true);
+  });
+
+  it('offers propose_plan to a terminal agent only, and tells it when to use it', async () => {
+    const { server } = await startServer();
+    const list = async (mode: 'cli' | 'chat') => {
+      const mcp = createMcpServer(server, { mode });
+      const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+      await mcp.connect(serverT);
+      const client = new Client({ name: 'claude-code', version: '1.0.0' });
+      await client.connect(clientT);
+      cleanups.push(() => client.close());
+      return { client, tools: (await client.listTools()).tools };
+    };
+    const cli = await list('cli');
+    const plan = cli.tools.find((t) => t.name === 'propose_plan')!;
+    expect(plan.inputSchema).toMatchObject({ required: ['steps'], properties: { steps: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } } });
+    expect(cli.client.getInstructions()).toMatch(/plan_step: on[\s\S]*more than about 10 parts[\s\S]*propose_plan[\s\S]*wait_for_review/);
+    expect((await list('chat')).tools.map((t) => t.name)).not.toContain('propose_plan');
+  });
+
+  it('relays propose_plan and the decision wait_for_review waits for', async () => {
+    const { server, port } = await startServer();
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: 'http://localhost:5173' } });
+    cleanups.push(() => ws.close());
+    const calls: { tool: string; input: unknown }[] = [];
+    await new Promise<void>((resolve) => {
+      ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', protocol: SERVER_PROTOCOL, accessKey: KEY, client: 'test-tab' })));
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(String(raw)) as ServerToTab;
+        if (msg.type === 'welcome') resolve();
+        if (msg.type !== 'call') return;
+        calls.push({ tool: msg.tool, input: msg.input });
+        // the user decides a moment later
+        const answer = msg.tool === 'propose_plan' ? 'Showed the user a plan of 2 steps.' : "plan rejected. The user's comment: USB on the right";
+        setTimeout(() => ws.send(JSON.stringify({ type: 'result', id: msg.id, isError: false, content: [{ type: 'text', text: answer }] })), msg.tool === 'wait_for_review' ? 50 : 0);
+      });
+    });
+    const steps = ['U1 buck 12 V → 3.3 V', 'USB-C on the left edge'];
+    expect(await server.call('propose_plan', { steps })).toMatchObject({ isError: false });
+    const r = await server.call('wait_for_review', { timeout_s: 5 });
+    expect(r.content).toEqual([{ type: 'text', text: "plan rejected. The user's comment: USB on the right" }]);
+    expect(calls).toEqual([{ tool: 'propose_plan', input: { steps } }, { tool: 'wait_for_review', input: { timeout_s: 5 } }]);
   });
 
   it('waits for the tab to reject a bad timeout_s instead of timing out at once', async () => {

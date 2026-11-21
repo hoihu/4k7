@@ -10,22 +10,23 @@ import { CONVERSATION_FORMAT, type ChatItem, type Conversation, type Conversatio
  */
 export const CONVERSATION_BUDGET = 40 * 1024 * 1024;
 
-/** A project file read: the design for the kernel, and the conversation it keeps (null: none). */
-export function readProject(file: ProjectFile): { design: Design; conversation: Conversation | null } {
-  const { conversation, ...design } = file;
-  if (!conversation || !Array.isArray(conversation.sessions)) return { design, conversation: null };
+/** A project file read: the design for the kernel, the conversation it keeps (null: none) and whether the plan step is on. */
+export function readProject(file: ProjectFile): { design: Design; conversation: Conversation | null; planStep: boolean } {
+  const { conversation, planStep, ...design } = file;
+  const plan = planStep === true;
+  if (!conversation || !Array.isArray(conversation.sessions)) return { design, conversation: null, planStep: plan };
   if (conversation.format > CONVERSATION_FORMAT) throw new Error('its conversation was written by a newer version of the app');
-  return { design, conversation };
+  return { design, conversation, planStep: plan };
 }
 
 /**
- * The project file: the design's JSON (canonical, from the kernel) with the conversation after it.
- * The design's text is kept as it is, so a file diffs the same with or without one.
+ * The project file: the design's JSON (canonical, from the kernel) with the plan step (when on) and the
+ * conversation after it. The design's text is kept as it is, so a file diffs the same with or without them.
  */
-export function projectJson(designJson: string, conversation: Conversation | null): string {
-  if (!conversation) return designJson;
-  const body = JSON.stringify(conversation, null, 2).replace(/\n/g, '\n  ');
-  return designJson.replace(/\n}\n?$/, `,\n  "conversation": ${body}\n}\n`);
+export function projectJson(designJson: string, conversation: Conversation | null, planStep = false): string {
+  if (!conversation && !planStep) return designJson;
+  const body = conversation ? `,\n  "conversation": ${JSON.stringify(conversation, null, 2).replace(/\n/g, '\n  ')}` : '';
+  return designJson.replace(/\n}\n?$/, `${planStep ? ',\n  "planStep": true' : ''}${body}\n}\n`);
 }
 
 /**
@@ -65,6 +66,7 @@ export function restoredSessions(c: Conversation | null): ConversationSession[] 
         ...it,
         status: 'done',
         ...(it.changeset?.state === 'pending' ? { changeset: { state: 'unreviewed', note: 'Not reviewed: the project was closed with these changes pending.' } } : {}),
+        ...(it.plan?.state === 'pending' ? { plan: { ...it.plan, state: 'unreviewed' } } : {}),
       })),
     }));
 }

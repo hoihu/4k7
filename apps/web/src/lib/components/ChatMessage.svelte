@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app, type ChatItem } from '../app.svelte.ts';
   import ChangesetCard from './ChangesetCard.svelte';
+  import PlanCard from './PlanCard.svelte';
   import { markdown } from '../markdown.ts';
   import { USAGE_TITLE, usageLine } from '../usage.ts';
 
@@ -54,6 +55,7 @@
     {/each}
     {#if m.status === 'streaming'}<div class="working"><span class="dot"></span>{m.source ? `${m.source} is editing the working copy…` : 'working…'}</div>{/if}
     {#if m.usage}<div class="usage" title={USAGE_TITLE}>{usageLine(m.usage, m.usage.costUsd, m.usage.exact)}</div>{/if}
+    <PlanCard item={m} {readonly} />
     <ChangesetCard item={m} {readonly} />
   </div>
 {/if}

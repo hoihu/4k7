@@ -20,7 +20,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
 import { copperCheckText, enclosureApiSummary, enclosureFacts, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
@@ -57,6 +57,7 @@ import {
 } from './persist.ts';
 import { disk, type ProjectEntry } from './disk.svelte.ts';
 import { fitConversation, projectJson, readProject, restoredSessions } from './conversation.ts';
+import { PLAN_STEP_OFF, PlanReview } from './plan.ts';
 
 /** A tool's answer before the chat's label is put on it. */
 type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
@@ -143,6 +144,8 @@ class AppState {
   chat = $state<ChatItem[]>([]);
   /** The project file keeps the conversation (the user opted in, per project). */
   keepConversation = $state(false);
+  /** External agents show a plan before a larger task (propose_plan), kept in the project file (Settings → General → Plan step). */
+  planStep = $state(false);
   /** Earlier conversations the project file keeps (before the chat was cleared or the project reopened); the agent does not see them. */
   chatArchive = $state.raw<ConversationSession[]>([]);
   running = $state(false);
@@ -231,6 +234,8 @@ class AppState {
   private abort: AbortController | null = null;
   private seq = 1;
   private reviewWaiters: ((result: string) => void)[] = [];
+  /** The plan an external agent proposed, waiting for the user (the plan step). */
+  private plans = new PlanReview();
   /** The in-app agent is running (external agents must wait). */
   private inAppBusy = false;
   /** The files were read once the server was found (the project, libraries). */
@@ -375,12 +380,13 @@ class AppState {
           await this.refreshProjects();
           return null;
         }
-        const { design: d, conversation } = readProject(JSON.parse(text) as ProjectFile);
+        const { design: d, conversation, planStep } = readProject(JSON.parse(text) as ProjectFile);
         await this.kernel.load(d);
         this.projectId = id;
         this.unsaved = false;
         this.renameFile = false;
         this.restoreConversation(conversation);
+        this.planStep = planStep;
         return d;
       } catch (e) {
         // a newer version's file, or a broken one: it is left as it is
@@ -416,11 +422,24 @@ class AppState {
 
   /** The design's file text: the design, and the conversation when the project keeps it. */
   private projectText(designJson: string): string {
-    if (!this.keepConversation) return designJson;
+    if (!this.keepConversation) return projectJson(designJson, null, this.planStep);
     const { conversation, omitted } = fitConversation(this.conversation());
     if (omitted > this.conversationOmitted) this.flash(`The conversation is large: the project file keeps its ${omitted} oldest attachment${omitted === 1 ? '' : 's'} by name only.`);
     this.conversationOmitted = omitted;
-    return projectJson(designJson, conversation);
+    return projectJson(designJson, conversation, this.planStep);
+  }
+
+  /** Turn the plan step on or off for this project (written to the project file). */
+  async setPlanStep(on: boolean) {
+    this.planStep = on;
+    await this.persist();
+    if (!this.unsaved) this.flash(on ? 'Agents now show a plan before a larger task in this project.' : 'The plan step is off for this project.');
+  }
+
+  /** The user accepts or rejects the plan an external agent proposed, with an optional comment. */
+  decidePlan(accepted: boolean, comment = '') {
+    this.plans.decide(accepted, comment);
+    this.conversationChanged();
   }
 
   /** Keep the conversation in the project file, or (off) remove it from there. */
@@ -445,6 +464,7 @@ class AppState {
 
   /** Write a conversation change still waiting, before another project replaces this one. */
   private flushConversation() {
+    this.plans.drop();
     if (!this.conversationTimer) return;
     clearTimeout(this.conversationTimer);
     this.conversationTimer = null;
@@ -1500,7 +1520,7 @@ class AppState {
         const p = this.k?.proposal;
         const pending = p ? `\n<pending_changeset hunks="${p.hunks.length}">${p.hunks.map((h) => `${h.change} ${h.title}`).join('; ')}</pending_changeset>` : '';
         log('context', true, `${snap.summary.components.length} parts · ${snap.counts.errors}E ${snap.counts.warnings}W`);
-        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope, view: this.turnView ?? this.currentView(), rules: this.settings.schematicNotes, layoutRules: this.settings.layoutNotes, enclosureRules: this.settings.enclosureNotes }) + pending + `\nautonomy: ${this.settings.mode}`);
+        return text(formatDesignContext({ ...snap, selection: this.selection, scope: this.scope, view: this.turnView ?? this.currentView(), rules: this.settings.schematicNotes, layoutRules: this.settings.layoutNotes, enclosureRules: this.settings.enclosureNotes }) + pending + `\nautonomy: ${this.settings.mode}\nplan_step: ${this.planStep ? 'on' : 'off'}`);
       }
       case 'propose': {
         const args = ProposeInput.safeParse(input);
@@ -1577,8 +1597,24 @@ class AppState {
         this.flash(`${server.agent ?? 'External agent'} proposed ${p.hunks.length} changes`);
         return text(`Proposed ${p.hunks.length} changes for review. Call wait_for_review to get the user's decision.`);
       }
+      case 'propose_plan': {
+        if (!this.planStep) {
+          log('plan', false, 'refused: the plan step is off');
+          return text(PLAN_STEP_OFF, true);
+        }
+        const args = ProposePlanInput.safeParse(input);
+        if (!args.success) return text(args.error.message, true);
+        const it = item();
+        const reply = this.plans.show(it, args.data);
+        if (this.agentRun?.item !== it) it.status = 'done';
+        this.conversationChanged();
+        this.flash(`${server.agent ?? 'External agent'} proposed a plan of ${args.data.steps.length} steps`);
+        return text(reply);
+      }
       case 'wait_for_review': {
         const args = WaitForReviewInput.parse(input ?? {});
+        const plan = this.plans.wait(args.timeout_s);
+        if (plan) return text(await plan);
         if (!this.k?.proposal) return text('Nothing is pending review.');
         const result = await new Promise<string>((resolve) => {
           const timer = setTimeout(() => {
@@ -1686,12 +1722,13 @@ class AppState {
       return;
     }
     this.flushConversation();
-    const { design: d, conversation } = readProject(file);
+    const { design: d, conversation, planStep } = readProject(file);
     await this.queueWrite(async () => {
       await this.kernel.load(d);
       this.projectId = null;
       this.renameFile = false;
       this.restoreConversation(conversation);
+      this.planStep = planStep;
     });
     this.agent.reset();
     this.chat = [];
@@ -2037,6 +2074,7 @@ class AppState {
 
   /** A new conversation; with the project keeping it, this one stays in the project file. */
   clearChat() {
+    this.plans.drop();
     this.agentSession = null;
     this.agent.reset();
     if (this.keepConversation && this.chat.length) this.chatArchive = [...this.chatArchive, { items: $state.snapshot(this.chat) as ChatItem[] }];
