@@ -269,7 +269,7 @@ Each step is useful alone.
 5. **The pictures and the Enclosure view** (§5.3, §6), the script stored and editable, the
    exports. *Built 2026-10-15.*
 6. **Follow-ups** (2026-10-16): the board hidden in the Enclosure view (PCB), enclosure notes,
-   print orientation in the script and a 3MF plate, plug paths in the Layout's 3D view, overhang,
+   print orientation in the script and a 3MF plate, plug paths in the Layout's 3D view (the `plugs` button, off by default since 2026-11-21: they cluttered the board), overhang,
    bridge and thin-wall warnings. *Built.*
 7. **Labels and logos** (§3.1): `label`, `graphic`, `on_face`, `engrave`, `emboss` in
    `board.scad`, `set_enclosure_graphic`, inlays in the print files, face pictures. *Built

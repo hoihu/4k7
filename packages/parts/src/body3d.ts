@@ -114,10 +114,14 @@ export function body3dFor(pkg: PackageInfo, pinNumbers: string[] = []): Body3DRe
   }
 }
 
-/** The body of every part on the board that has one (by component id): the 3D view and the STEP export. */
-export function boardBodies(b: BoardView): Map<string, Body3D> {
+/**
+ * The body of every part on the board that has one (by component id): the 3D view and the STEP export.
+ * `fitted`: only the parts that are assembled (not DNP), for the Layout's 3D view of the assembled board.
+ */
+export function boardBodies(b: BoardView, opts: { fitted?: boolean } = {}): Map<string, Body3D> {
   const bodies = new Map<string, Body3D>();
   for (const p of b.parts) {
+    if (opts.fitted && p.dnp) continue;
     const r = body3dFor(p.pkgInfo, p.pads.map((x) => x.number));
     if (r.ok) bodies.set(p.componentId, r.body);
   }
