@@ -76,7 +76,8 @@ erDiagram
   ([layout](layout.md) §14). Per net: `basis` (`split`, `bound`, `unknown`), `status` (`ok`, `over`,
   `unverified`, `unknown`), `amps` (max_current, or GND's from its rails with `fromRails`), and for a
   split `loads` (A reached), `unplaced` (A of max_current no load places), `dropMv` (worst source to
-  load), else `why` the loads were not split. Per track and via group: `amps`, `basis`, `status`,
+  load), `irDrop` (that load pad, the drop against 3 % of the net's voltage, the pieces that drop
+  most on the way: [layout](layout.md) §14), else `why` the loads were not split. Per track and via group: `amps`, `basis`, `status`,
   `split` (its share alone when there is an unplaced rest); tracks `dropMv`, via groups `shared`
   (not the only way across).
 - `Diagnostic`: produced, never stored as truth. It has a code, severity, entities and a

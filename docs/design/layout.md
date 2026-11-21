@@ -1164,22 +1164,36 @@ to is not simple to say, so GND stays on its bound.
 | Code | When | Severity | Fix hints |
 |---|---|---|---|
 | `DRC.TRACK_CURRENT` | Track pieces too narrow for their split share (one finding per net, listing net, id, layer, width, copper, amps, the width needed and the estimated rise) | error when the share is over twice the capacity, else warning | as `DRC.CURRENT_UNVERIFIED`: `edit_copper` (drawn), `set_net track_mm` with "make room and route again; do not lower the net's width" (router copper) |
+| `DRC.IR_DROP` | Split net whose drop from the source to a load pad is over 3 % of its `voltage` (one per net, naming the load, mV, %, budget and the pieces that drop most) | error over 6 %, else warning | widen those pieces (`edit_copper` / `set_net track_mm`), `add_vias tie` at a via |
 
 `DRC.CURRENT_UNVERIFIED` now names `set_net loads` as the other way out, and on a split net says how
 much of `max_current` the loads place. `DRC.VIA_CURRENT` uses the split current where known.
 
 **The drop.** The solve gives the voltages too: each track's `dropMv` (the drop along it) and each
-split net's `dropMv` (the worst source to load), in `get_current_map` as `drop_mv` and in the heat
-map's tooltip. Report only: no finding and no budget yet. `get_current_map` adds per net `basis`,
-`loads_a`, `unplaced_a`, `drop_mv` and `why`; per hotspot `status`, `split_a`, `drop_mv`; `over`
-sorts first. On the heat map a split piece is solid in its colour (its current is known, over or
-not); "(split)" in its tooltip.
+split net's drop to the load pad furthest down (`irDrop`: the pad, the drop, and the pieces on its way
+that drop the most, found by walking back from the pad to the source along the piece that brings the
+most current). In the heat map's tooltip per track. `get_current_map` adds per net `basis`,
+`loads_a`, `unplaced_a`, `ir_drop_mv`, `ir_load`, `ir_worst` and `why`; per hotspot `status`,
+`split_a`, `drop_mv`; `over` sorts first. On the heat map a split piece is solid in its colour (its
+current is known, over or not); "(split)" in its tooltip.
 
-Neither the loads nor the split are in the copper or placement key: changing them checks the copper
-as it lies again, without routing (the loads are net attributes, in `boardInputs` with the rest).
+**IR drop** (2026-11-20, Martin: a fixed budget). `DRC.IR_DROP`, once per split net: the drop from
+the source to the load pad furthest down is over **3 % of the rail's voltage** (`IR_BUDGET`; no
+per-net setting, no board rule). The voltage is the net's `voltage` attribute, the one the rating
+checks read; no other is guessed (not from the net's name, nor from a regulator's feedback divider).
+A net without one gets no finding, and `get_current_map` says `ir_budget: "unknown"` and why (never
+fine); with one, `ir_drop_pct`, `ir_budget_mv` and `ir_status`. Warning over the budget, error over
+twice it (6 %), as the other current checks. The message names the load pad, the drop in mV and %,
+the budget and the (up to three) pieces that drop the most on the way; `at` is the worst of them.
+Its fix hints widen those pieces in turn (`edit_copper` drawn, `set_net track_mm` router copper; a
+via: `add_vias tie` with that much more current), each at most four times, until the drop is under
+90 % of the budget. Only on a `split` net (bound and unknown nets, and so GND, have no drop to
+judge), and only from the stated loads: where loads under `max_current` leave a rest unplaced, the
+message and `ir_note` say the real drop can be higher. It errs low in two ways: a pour or plane is
+one node and carries no drop (a necked pour looks lossless), and copper is taken at 20 °C (a hot
+track drops about 4 % more per 10 °C).
 
-**Not yet** (follow-ups of the proposal): `DRC.IR_DROP` against 3 % of the rail (the drop is worked
-out, not judged), GND's split from the loads' returns, a ratio between two sources, the current
+**Not yet** (follow-ups of the proposal): GND's split from the loads' returns, a ratio between two sources, the current
 through thermal-relief spokes, pin currents (GPIO overload) and a DC solve of pours and planes.
 Until that solve, a pour or plane counts as one node: a pour necked between two vias looks fine
 here, and carries no drop.

@@ -101,6 +101,7 @@ describe('heat map on or off', () => {
   it('is on by itself while a current finding is open, off when none is', () => {
     expect(currentOverlayOn([diag('DRC.CURRENT_UNVERIFIED')], null)).toBe(true);
     expect(currentOverlayOn([diag('DRC.TRACK_CURRENT')], null)).toBe(true);
+    expect(currentOverlayOn([diag('DRC.IR_DROP')], null)).toBe(true);
     expect(currentOverlayOn([diag('DRC.VIA_CURRENT')], null)).toBe(true);
     expect(currentOverlayOn([diag('DRC.CURRENT_UNKNOWN')], null)).toBe(true);
     expect(currentOverlayOn([diag('DRC.CLEARANCE')], null)).toBe(false);

@@ -1075,7 +1075,7 @@ export interface CurrentTrack {
   status: CurrentStatus;
   capacity: number;
   ratio: number;
-  /** split: the voltage drop along it (mV) from the stated loads. Report only (no budget yet). */
+  /** split: the voltage drop along it (mV) from the stated loads. */
   dropMv?: number;
   /** Its estimated heating (°C) at `amps`. */
   rise: number;
@@ -1124,11 +1124,34 @@ export interface CurrentNet {
   loads?: number;
   /** split: what of max_current no stated load places (A); it may flow anywhere. */
   unplaced?: number;
-  /** split: the worst drop from the source to a load (mV). Report only (no budget yet). */
+  /** split: the worst drop from the source to a load (mV). */
   dropMv?: number;
+  /** split: that drop against the rail's budget (DRC.IR_DROP). */
+  irDrop?: IrDrop;
   /** bound with loads stated: why they are not split (two sources, no source on the board …). */
   why?: string;
 }
+
+/** A piece of copper on the way from a net's source to its worst load, with the drop across it. */
+export type DropPiece =
+  | { kind: 'track'; /** Into BoardView.tracks. */ index: number; id?: string; layer: CopperLayer; width: number; amps: number; dropMv: number; at: { x: number; y: number } }
+  | { kind: 'via'; id?: string; drill: number; amps: number; dropMv: number; at: { x: number; y: number } };
+
+/** A split net's IR drop: from its source to the load pin furthest down, against IR_BUDGET of the rail. */
+export interface IrDrop {
+  /** The load pad furthest down ("U3.2"). */
+  load: string;
+  mv: number;
+  /** The rail's voltage (the net's voltage attribute); without it the budget is unknown. */
+  railV?: number;
+  budgetMv?: number;
+  pct?: number;
+  /** The pieces on the way, the largest drop first (up to 3). */
+  worst: DropPiece[];
+}
+
+/** The IR-drop budget: a share of the rail's voltage (3 %). See docs/design/layout.md §14. */
+export const IR_BUDGET = 0.03;
 
 export interface CurrentView {
   /** The allowed heating (set_board current_rise_c, °C): the capacities and the heat map's colours are relative to it. */

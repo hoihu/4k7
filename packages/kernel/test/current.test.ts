@@ -240,7 +240,7 @@ describe('BoardView.current (what the heat map draws)', () => {
 
 describe('loads and the split (set_net loads)', () => {
   type Track = { kind: string; net: string; id?: string; width_mm: number; length_mm: number; copper_um: number; amps: number; basis: string; status: string; ratio: number; drop_mv?: number; code?: string; fix?: unknown[] };
-  type NetRow = { net: string; basis: string; status: string; max_current_a?: number; loads_a?: number; unplaced_a?: number; drop_mv?: number; why?: string };
+  type NetRow = { net: string; basis: string; status: string; max_current_a?: number; loads_a?: number; unplaced_a?: number; ir_drop_mv?: number; ir_drop_pct?: number; ir_budget_mv?: number; ir_budget?: string; ir_load?: string; ir_status?: string; why?: string };
   const map = (k: Kernel) => k.query({ op: 'get_current_map', include_ok: true, worst: 200 }) as { nets: NetRow[]; hotspots: Track[] };
   const track = (k: Kernel, id: string) => map(k).hotspots.find((h) => h.kind === 'track' && h.id === id)!;
   const net = (k: Kernel, name = '+3V3') => map(k).nets.find((n) => n.net === name)!;
@@ -374,7 +374,7 @@ describe('loads and the split (set_net loads)', () => {
     const t = track(k, 't1');
     const ohms = (1.72e-8 * t.length_mm * 1e-3) / (1e-3 * t.copper_um * 1e-6);
     expect(t.drop_mv).toBeCloseTo(2 * ohms * 1000, 1);
-    expect(net(k).drop_mv).toBeCloseTo(2 * ohms * 1000, 1);
+    expect(net(k).ir_drop_mv).toBeCloseTo(2 * ohms * 1000, 1);
     expect(k.board().current!.nets.find((n) => n.name === '+3V3')!.dropMv).toBeCloseTo(2 * ohms * 1000, 1);
     ok(k, [{ op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 1 }] }]);
     expect(track(k, 't1').amps).toBeCloseTo(1 + 1, 6); // 1 A placed, 1 A of max_current not
@@ -405,5 +405,80 @@ describe('loads and the split (set_net loads)', () => {
     // +12V 1 A and +3V3 2 A
     expect(net(k, 'GND')).toMatchObject({ basis: 'bound', max_current_a: 3 });
     expect(net(k, 'GND').why).toMatch(/rails/);
+  });
+});
+
+describe('IR drop against 3 % of the rail (DRC.IR_DROP)', () => {
+  type NetRow = { net: string; basis: string; ir_drop_mv?: number; ir_drop_pct?: number; ir_budget_mv?: number; ir_budget?: string; ir_why?: string; ir_load?: string; ir_status?: string; ir_worst?: { kind: string; id?: string; drop_mv: number }[] };
+  type Spot = { kind: string; id?: string; length_mm: number; copper_um: number; width_mm: number };
+  const map = (k: Kernel) => k.query({ op: 'get_current_map', include_ok: true, worst: 200 }) as { nets: NetRow[]; hotspots: Spot[] };
+  const row = (k: Kernel, name = '+3V3') => map(k).nets.find((n) => n.net === name)!;
+  // +3V3 (3.3 V: a budget of 99 mV) from L1.2 the long way round to C2.1
+  const longWay = (width: number, loads: unknown, more: unknown[] = []) =>
+    drawnBuck([
+      { op: 'draw_track', from: 'L1.2', to: 'C2.1', via: [[17.8, -8], [40, -8], [40, 12.9]], width_mm: width },
+      ...(loads ? [{ op: 'set_net', net: '+3V3', loads }] : []),
+      ...more,
+    ]);
+
+  it('a 1.5 A load at the end of a long thin track drops more than 99 mV: a warning naming the load and the track; widening clears it', () => {
+    const k = longWay(0.3, [{ pin: 'C2.1', amps: 1.5 }]);
+    const t = map(k).hotspots.find((h) => h.kind === 'track' && h.id === 't1')!;
+    // R = ρL / (w · t)
+    const mv = 1.5 * ((1.72e-8 * t.length_mm * 1e-3) / (0.3e-3 * t.copper_um * 1e-6)) * 1000;
+    expect(mv).toBeGreaterThan(99);
+    expect(mv).toBeLessThan(198);
+    const r = row(k);
+    expect(r.ir_drop_mv).toBeCloseTo(mv, 0);
+    expect(r).toMatchObject({ ir_budget_mv: 99, ir_load: 'C2.1', ir_status: 'over' });
+    expect(r.ir_drop_pct).toBeCloseTo(mv / 33, 1);
+    expect(r.ir_worst?.[0]).toMatchObject({ kind: 'track', id: 't1' });
+    const [f] = find(k.board(), 'DRC.IR_DROP');
+    expect(f).toBeDefined();
+    expect(f!.severity).toBe('warning');
+    expect(f!.message).toMatch(/\+3V3/);
+    expect(f!.message).toMatch(/C2\.1/);
+    expect(f!.message).toMatch(/99 mV/);
+    expect(f!.message).toMatch(/t1/);
+    expect(f!.entities).toEqual(expect.arrayContaining(['net:+3V3', 'C2.1', 't1']));
+    expect(f!.fixHints?.[0]).toMatchObject({ op: 'edit_copper', ids: ['t1'] });
+    ok(k, f!.fixHints!);
+    expect(find(k.board(), 'DRC.IR_DROP')).toEqual([]);
+    expect(row(k).ir_status).toBe('ok');
+  });
+
+  it('over 6 % of the rail it is an error', () => {
+    const [f] = find(longWay(0.15, [{ pin: 'C2.1', amps: 1.5 }]).board(), 'DRC.IR_DROP');
+    expect(f?.severity).toBe('error');
+  });
+
+  it('two loads: the finding names the one furthest down', () => {
+    // R1.1 on a short stub near the source, C2.1 at the end of the long way
+    const k = longWay(0.3, [{ pin: 'C2.1', amps: 1.5 }, { pin: 'R1.1', amps: 0.1 }], [{ op: 'draw_track', from: 'L1.2', to: 'R1.1', width_mm: 0.3 }]);
+    expect(row(k).ir_load).toBe('C2.1');
+    expect(find(k.board(), 'DRC.IR_DROP')[0]!.message).toMatch(/to C2\.1/);
+  });
+
+  it('no loads: no IR drop is judged (bound); changing the loads checks again without routing', () => {
+    const k = longWay(0.3, null);
+    expect(find(k.board(), 'DRC.IR_DROP')).toEqual([]);
+    expect(row(k).basis).toBe('bound');
+    expect(row(k).ir_drop_mv).toBeUndefined();
+    const copper = k.draftDesign().board!.routed;
+    ok(k, [{ op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 1.5 }] }]);
+    expect(find(k.board(), 'DRC.IR_DROP')).toHaveLength(1);
+    ok(k, [{ op: 'set_net', net: '+3V3', loads: [{ pin: 'C2.1', amps: 0.5 }] }]);
+    expect(find(k.board(), 'DRC.IR_DROP')).toEqual([]);
+    expect(k.draftDesign().board!.routed).toBe(copper);
+  });
+
+  it('a rail without a voltage: no finding, and the budget is unknown (never fine)', () => {
+    const k = longWay(0.3, [{ pin: 'C2.1', amps: 1.5 }], [{ op: 'set_net', net: '+3V3', voltage: null }]);
+    expect(find(k.board(), 'DRC.IR_DROP')).toEqual([]);
+    const r = row(k);
+    expect(r.ir_budget).toBe('unknown');
+    expect(r.ir_why).toMatch(/voltage/);
+    expect(r.ir_status).toBeUndefined();
+    expect(r.ir_drop_mv).toBeGreaterThan(99);
   });
 });
