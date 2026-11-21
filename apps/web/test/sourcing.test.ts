@@ -122,6 +122,18 @@ describe('sourcing tool', () => {
     expect(failed).toMatchObject({ isError: true, content: 'JLCPCB stock check failed: not this one' });
   });
 
+  it('does not call an order fine when parts have no part number', async () => {
+    const none: StockReport = { ...report, lines: [], unsourced: ['C1', 'R1', 'U1'], estimates: undefined };
+    const empty = await sourcingTool({ action: 'check', boards: 25 }, { stock: async () => none, cost: fails, values: fails });
+    expect(empty.detail).toBe("3 part(s) without an LCSC number, so the order can't be checked yet");
+    expect(empty.detail).not.toContain('fine');
+    expect(empty.content).toContain("3 parts have no LCSC number, so the order can't be checked yet");
+    expect(empty.content).not.toContain('Fine');
+    const ok = { ...report.lines[0]!, part: r10k, state: 'ok' as const };
+    const mixed = await sourcingTool({ action: 'check', boards: 25 }, { stock: async () => ({ ...none, lines: [ok], unsourced: ['C1', 'U1'] }), cost: fails, values: fails });
+    expect(mixed.detail).toBe('1 part number(s) fine to order, 2 part(s) without an LCSC number');
+  });
+
   it('runs the values check and lists the cheaper ways to make each value', async () => {
     const odd = { ...r10k, sku: 'C25967', attributes: { Resistance: '31.6kΩ' } };
     const values: ValuesReport = {
