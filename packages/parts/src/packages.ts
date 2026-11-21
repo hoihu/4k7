@@ -82,6 +82,11 @@ export function standardPackage(name: string, pins = 2): PackageInfo | null {
     case 'SOIC-8':
     case 'SO-8':
       return { name: 'SOIC-8', family: 'SOIC', pins: 8, pitch_mm: 1.27, body_mm: [3.9, 4.9], span_mm: [6.0, 4.9], lead_length_mm: 0.7, lead_width_mm: 0.42, height_mm: 1.5 };
+    // the 0.208" (5.3 mm) EIAJ body, Microchip's 8S2 (ATtiny85-20SU), as JLCPCB names it
+    case 'SOIC-8-208MIL':
+    case 'SOIJ-8':
+    case '8S2':
+      return { name: 'SOIC-8-208mil', family: 'SOIC', pins: 8, pitch_mm: 1.27, body_mm: [5.3, 5.3], span_mm: [7.9, 5.3], lead_length_mm: 0.65, lead_width_mm: 0.42, height_mm: 1.9 };
     case 'MBS':
     case 'MBS-4':
       return { name: 'MBS-4', family: 'SOIC', pins: 4, pitch_mm: 2.6, body_mm: [3.9, 4.7], span_mm: [6.6, 4.7], lead_length_mm: 0.8, lead_width_mm: 0.6, height_mm: 2.4 };

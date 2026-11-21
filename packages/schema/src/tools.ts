@@ -9,7 +9,7 @@ import { ASSEMBLY_HOUSES, feeFreeTiers } from './sourcing.ts';
 
 export const CalcCall = z.object({
   fn: z
-    .enum(['divider', 'buck', 'led_resistor', 'rc', 'nearest_e', 'impedance'])
+    .enum(['divider', 'buck', 'led_resistor', 'rc', 'nearest_e', 'impedance', 'track_current'])
     .describe(
       'divider: {vout, vref, r_bottom?, series?} → E-series R top/bottom and resulting vout. ' +
         'buck: {vin, vout, iout, fsw, ripple_ratio?, series?} → inductance, ripple current, peak current. ' +
@@ -17,6 +17,7 @@ export const CalcCall = z.object({
         'rc: {r?, c?, f?, series?} → give two, get the third (f = 1/(2πRC)). ' +
         'nearest_e: {value, kind?, series?, round?} → standard value (kind resistor/capacitor/inductor takes the design\'s series; round up/down). ' +
         'impedance: {ohms?, width?, gap?, diff?, coplanar_gap?, layer?, h?, er?, t?, mask?, f?} → a track\'s impedance from a field solver: ohms gives the width for it, width the impedance it gives; gap makes it a differential pair (ohms: its differential impedance; diff: 1 with width and ohms finds the gap), coplanar_gap puts ground beside it on its layer; f (Hz) adds the wavelength on the line. Default: the board\'s stack-up, layer F.Cu (or B.Cu) over the plane next to it, with its solder mask; h (mm to the plane) with er, t (copper mm) and mask: 0 override it. ' +
+        'track_current: {width_mm?, amps?, rise_c?, layer?, copper_um?, via_drill_mm?} → the same IPC-2221 numbers the current check (get_current_map) uses: two of width_mm, amps and rise_c give the third (width_mm: the current it carries; amps: the width it needs; both: its heating); rise_c defaults to the board\'s current_rise_c, the copper to layer\'s in the stack-up (default F.Cu) or copper_um; via_drill_mm adds per_via_a and the vias_needed for amps. ' +
         'series: E3, E6, E12, E24, E48, E96 or E192; default: the design\'s series for that kind (set_value_series), else E96 for resistors, E12 caps, E6 inductors.',
     ),
   args: z.record(z.string(), z.union([z.number(), z.string()])),
@@ -157,6 +158,10 @@ export const BoardImageInput = z.object({
     .tuple([z.number(), z.number(), z.number(), z.number()])
     .optional()
     .describe('Zoom into x0, y0, x1, y1 in mm (board coordinates, top left 0, 0), e.g. around an unrouted connection'),
+  overlay: z
+    .enum(['current', 'none'])
+    .optional()
+    .describe("current: the current heat map on for this picture (power copper coloured by its heating at the net's max_current, dashed where not known; it is on by itself while a current finding is open); none: off for this picture. Default: as the layout view shows it"),
   width: z.number().int().min(400).max(2400).default(1400),
 });
 
@@ -394,7 +399,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
       description:
         'PNG rendering of the board (2D top view of the working copy: copper of every layer, pads, silkscreen, and the ratsnest of ' +
         'connections not routed yet). The whole board, the area the user zoomed into, or a region in mm. Routing a big board takes a while; ' +
-        'the picture waits for it.',
+        'the picture waits for it. With overlay current (on by itself while a current finding is open), the current heat map.',
       input_schema: schemaOf(BoardImageInput),
     },
     {
@@ -436,7 +441,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
           name: TOOL_NAMES.propose,
           description:
             'Hand the working copy to the user for review (or commit it in Auto mode). Refused while the design has open ' +
-            'errors: fix them or waive with a reason first. Call once per coherent change' + (engine === 'cli' ? ', then wait_for_review.' : '.'),
+            'errors (fix them or waive with a reason first) or the production files of the routed board have FAB.* errors (fix the copper). Call once per coherent change' + (engine === 'cli' ? ', then wait_for_review.' : '.'),
           input_schema: schemaOf(ProposeInput),
         }]
       : [{

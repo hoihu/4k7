@@ -81,6 +81,13 @@ Screen space belongs to the design. Chrome has to earn its pixels.
 - **Drag = hint.** Dragging a part doesn't move it for good. It produces a `place(C2) ≈ Δ(x, y) · soft`
   constraint that shows up in the preview and goes into the ledger when sent.
 - The full chat history for layout is still available (activity ≡ log), but hidden by default.
+- **Overlays** sit in the layers list with the copper layers: ratsnest, placement (yours / the
+  agent's / locked), dimensions, and **Current · heat map**: power copper coloured by its estimated
+  heating at the net's `max_current` against the allowed rise, dashed where the current is not known
+  to be carried, grey dashed where it is unknown, the rest faint, with a small legend on the canvas.
+  It comes on by itself while a current finding is open; the user's switch holds for the session.
+  The agent's board picture shows what the view shows (`get_board_image overlay` overrides it for
+  one picture). See [layout](layout.md) §14.
 
 ## 5. Open UI questions
 

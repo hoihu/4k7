@@ -13,6 +13,7 @@
   import { lineBlocks } from '@4k7/parts';
   import PanelCanvas from './PanelCanvas.svelte';
   import PanelSetup from './PanelSetup.svelte';
+  import { HEAT, UNKNOWN_COLOUR, currentOverlayOn } from '../currentMap.ts';
 
   /** Layout workspace: agent chat, the board, and a panel with checks, layers and outputs. */
   $effect(() => {
@@ -23,7 +24,8 @@
   // while it routes (or the route helper searches, drawn copper): the board with the copper laid so far
   const helper = $derived(app.helperRun);
   const prog = $derived(app.routeProgress ?? helper?.progress ?? null);
-  const shown = $derived(b && prog ? { ...b, tracks: prog.tracks, vias: prog.vias } : b);
+  // (the heat map goes with the routed copper: not with the copper laid so far)
+  const shown = $derived(b && prog ? { ...b, tracks: prog.tracks, vias: prog.vias, current: undefined } : b);
   const secs = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`);
   let show = $state<Record<string, boolean>>({ board: true, 'F.Cu': true, 'In1.Cu': true, 'In2.Cu': true, 'B.Cu': true, silk: true, courtyard: false, ratsnest: true, placement: false, dims: true });
   let hotNet = $state<string | null>(null);
@@ -73,6 +75,9 @@
   const waivedChecks = $derived(b?.diagnostics.filter((d) => d.waivedBy) ?? []);
   const errors = $derived(openChecks.filter((d) => d.severity === 'error').length);
   const warnings = $derived(openChecks.filter((d) => d.severity === 'warning').length);
+  // the current heat map: on while a current finding is open, unless the user switched it this session (or a picture forces it)
+  const currentOn = $derived(currentOverlayOn(openChecks, app.currentOverlay, app.overlayForce));
+  const canvasShow = $derived({ ...show, current: currentOn && !!shown?.current });
   const layerNames: [string, string][] = $derived([
     ['board', 'Board · substrate / solder mask'],
     ...(b?.layers ?? ['F.Cu', 'B.Cu']).map((l: CopperLayer): [string, string] => {
@@ -250,7 +255,7 @@
     <BoardCanvas
       bind:this={canvas2d}
       board={shown}
-      {show}
+      show={canvasShow}
       {hotNet}
       {marker}
       selection={app.selection}
@@ -263,6 +268,16 @@
       ongraphic={(id, dx, dy) => app.userEdit(`Move ${id}`, [{ op: 'edit_graphic', id, dx_mm: dx, dy_mm: dy }])}
     />
     </div>
+    {#if canvasShow.current && mode === '2d' && shown?.current}
+      <!-- the heat map's legend: heating at the net's max_current against the allowed rise -->
+      <div class="heatkey" aria-label="Current heat map legend">
+        <b>Heating vs +{shown.current.riseC} °C</b>
+        {#each HEAT as h (h.label)}<span><i style:background={h.colour}></i>{h.label}</span>{/each}
+        <span><i class="dash" style:color={HEAT[3].colour}></i>unverified</span>
+        <span><i class="dash" style:color={UNKNOWN_COLOUR}></i>unknown</span>
+        <span class="note">pours: not solved</span>
+      </div>
+    {/if}
     <!-- one row: the pending bar goes on a line of its own when the tools leave no room, never under them -->
     <div class="top">
     <!-- only the view on the canvas; the actions are in the side panel -->
@@ -397,6 +412,8 @@
           {#each layerNames as [key, label] (key)}
             <li><label><input type="checkbox" bind:checked={show[key]} /><span class="sw {key.replace('.', '')}"></span>{label}</label></li>
           {/each}
+          <!-- on by itself while a current finding is open; the user's switch holds for the session -->
+          <li><label title="Power copper coloured by its heating at the net's max_current, against the allowed rise (on while a current finding is open)"><input type="checkbox" checked={currentOn} onchange={(e) => (app.currentOverlay = e.currentTarget.checked)} /><span class="sw current"></span>Current · heat map</label></li>
         </ul>
         {/if}
         <FabRules rules={b.rules} fab={b.fab} layers={b.layers.length as 2 | 4} />
@@ -481,6 +498,13 @@
   .sw.courtyard { background: #d65db1; }
   .sw.ratsnest { background: #9aa3ad; }
   .sw.dims { background: #7fdcb4; }
+  .sw.current { background: linear-gradient(90deg, #3987e5, #3fb39a, #e8d04a, #f5902a, #e0303c); }
+  .heatkey { position: absolute; left: 10px; bottom: 30px; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; max-width: 60%; padding: 5px 8px; border-radius: 6px; background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--line-2); font-size: 11px; color: var(--txt-2); pointer-events: none; }
+  .heatkey b { color: var(--txt); font-weight: 600; }
+  .heatkey span { display: inline-flex; gap: 4px; align-items: center; }
+  .heatkey i { width: 14px; height: 4px; border-radius: 2px; display: inline-block; }
+  .heatkey i.dash { background: repeating-linear-gradient(90deg, currentColor 0 4px, transparent 4px 7px); }
+  .heatkey .note { color: var(--txt-3); }
   .sw.placement { background: linear-gradient(90deg, #6fb5ff 50%, #f0a03c 50%); }
   @media (max-width: 900px) {
     .lay, .lay.nochat { grid-template-columns: minmax(0, 1fr); grid-template-rows: 60% 40%; }

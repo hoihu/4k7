@@ -26,7 +26,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `get_summary`: overview of the design.
 - `find`: parts and nets by a substring of refdes, part id, value or net name, or by category.
 - `get_component`: one component: part, parameters, package, pins with their nets, constraints.
-- `get_net`: one net: its pins, track width, vias for its current, impedance rule.
+- `get_net`: one net: its pins, track width (the width its current needs, per layer), how its copper carries its current, vias for its current, impedance rule.
 - `get_diagnostics`: the design's current diagnostics (check results).
 - `get_ledger`: the constraint ledger: every constraint with its strength and the user's words.
 - `get_description`: the design description: overview, functional blocks with their parts, parts no block covers yet.
@@ -34,6 +34,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `get_schematic`: the schematic drawing: pages, blocks, where each symbol and net label stands.
 - `get_copper`: drawn tracks and vias with their ids, optionally by net or area.
 - `get_board`: board outline, part positions, routing stats and DRC results.
+- `get_current_map`: the routed copper against each net's current: per net ok, unverified or unknown (and, with loads stated, the drop to the furthest load against 3 % of the rail), and the tracks and vias that do not carry it, worst first, with their fixes (see [layout](layout.md) §14).
 - `try_placements`: compare arrangements of the main parts without changing the design.
 - `suggest_moves`: small-part moves (turn, swap, shift) that close open connections, without applying them.
 - `get_enclosure`: the enclosure brief, script, board API and last render report.
@@ -62,7 +63,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `connect`: put pins on a net.
 - `disconnect`: take pins off their net.
 - `no_connect`: mark pins as deliberately unconnected.
-- `set_net`: rename a net and set its voltage, external/power flags, max current, track width and how it is drawn.
+- `set_net`: rename a net and set its voltage, external/power flags, max current, the loads its pins draw (`loads: [{ pin: "U3.VDD", amps: 0.35 }]`, null clears; each pin must be on the net and draw more than 0 A; the current check splits the net's current over its copper from them, `layout.md` §14), track width, how it is drawn, and on the board whether the router routes it first and the layer its tracks keep to (a cost, not a ban).
 - `describe`: the functional blocks (which group and order the schematic) and the design document text.
 
 ### Sheets and drawing
@@ -88,7 +89,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 
 ### Board
 
-- `set_board`: board size, layers and design rules.
+- `set_board`: board size, layers and design rules (clearance, track and power-track width, via drill and pad, edge clearance, vias in pads, corner radius, and current_rise_c: how much copper may heat with its net's current, 10, 20 or 30 °C, default 10, which sets what the current check asks of tracks and vias, not the copper).
 - `set_outline`: a free-form board outline.
 - `add_cutout`: a rectangular, round or slot cutout.
 - `remove_cutout`: remove a cutout.

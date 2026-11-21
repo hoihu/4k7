@@ -32,6 +32,25 @@ describe('standard packages', () => {
     expect(p1!.h).toBeCloseTo(0.95, 2);
   });
 
+  it('gives the ATtiny85-20SU the 208 mil SOIC-8 (Microchip 8S2) land, not the 150 mil one', () => {
+    const card = BUILTIN_PARTS.find((c) => c.id === 'microchip:ATTINY85-20SU')!;
+    const pkg = packageOf(card)!;
+    expect(pkg.body_mm![0]).toBeCloseTo(5.3, 1); // 8S2: E1 5.18–5.40 mm
+    expect(pkg.pitch_mm).toBe(1.27);
+    const fp = footprintFor(pkg, card.pins.map((p) => p.number));
+    if (!fp.ok) throw new Error(fp.reason);
+    const pad = (n: string) => fp.footprint.pads.find((p) => p.number === n)!;
+    // pad rows ~7.2 mm apart centre to centre (KiCad's 8S2 land: ±3.6), the 150 mil SOIC-8's ~5.3 mm
+    expect(pad('8').x - pad('1').x).toBeGreaterThan(6.9);
+    expect(pad('8').x - pad('1').x).toBeLessThan(7.5);
+    // the pads reach past the 7.9 mm lead span (toe) and start inside the foot's heel, clear of the 5.3 mm body
+    expect(pad('8').x + pad('8').w / 2).toBeGreaterThan(7.9 / 2);
+    expect(pad('8').x - pad('8').w / 2).toBeLessThan(7.9 / 2 - 0.65);
+    expect(pad('8').x - pad('8').w / 2).toBeGreaterThanOrEqual(5.3 / 2);
+    // the 150 mil SOIC-8 stays as it was for the TI "D" parts
+    expect(packageOf(BUILTIN_PARTS.find((c) => c.id === 'ti:LM358DR')!)!.body_mm).toEqual([3.9, 4.9]);
+  });
+
   it('puts the SOT-223 tab on the output pin', () => {
     const fp = footprintFor(standardPackage('SOT-223')!, ['1', '2', '3']);
     if (!fp.ok) throw new Error(fp.reason);

@@ -85,6 +85,11 @@ export function setBoard(d: Design, op: Extract<EditOp, { op: 'set_board' }>): O
     else delete b.rules.viaInPad;
     out.push(op.via_in_pad ? 'vias in pads allowed' : 'no vias in pads');
   }
+  if (op.current_rise_c !== undefined) {
+    if (op.current_rise_c === 10) delete b.rules.currentRise;
+    else b.rules.currentRise = op.current_rise_c;
+    out.push(`copper may heat ${op.current_rise_c} °C with its current`);
+  }
   if (!out.length) reject({ code: 'BOARD_INVALID', message: 'set_board needs at least one setting.' });
   d.board = b;
   return { op: 'set_board', effect: `board: ${out.join(', ')}`, ids: ['board'] };

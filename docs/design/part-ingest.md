@@ -22,7 +22,9 @@ the user's local Claude Code through the server, like the app chat.
    column for that package and the package drawing, and submits a `PartDraft`
    (`packages/schema/src/ingest.ts`): pins with number, name, type, alternate functions and the
    **page of each pin's table row**, plus package family, nominal dimensions and drawing page,
-   decoupling notes and absolute-maximum supply. It also notes where the datasheet's design
+   decoupling notes and absolute-maximum supply (given to the supply pins), and a pin's own
+   absolute maximum (`max_v`) where the ratings table rates it lower than the supply (an EN or logic
+   input of a regulator); the card's `maxVoltage` is what `SEM.ABS_MAX` checks. It also notes where the datasheet's design
    sections are (`pages`: pinout, package, typical application, design procedure, layout
    guidelines), pages only; the card keeps them as `datasheetPages`. Both passes' pages are kept.
 3. **The tab checks every submission** with `draftToCard` (`packages/parts/src/ingest.ts`):

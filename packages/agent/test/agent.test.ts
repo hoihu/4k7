@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Kernel } from '@4k7/kernel';
-import { MCP_INSTRUCTIONS, DESIGN_GUIDE, agentTools, findStackupPreset } from '@4k7/schema';
+import { MCP_INSTRUCTIONS, DESIGN_GUIDE, agentTools, findStackupPreset, trackCurrentFor, trackRiseFor, trackWidthFor, viaCurrentFor } from '@4k7/schema';
 import { Agent, SYSTEM_PROMPT, ScriptedProvider, runCalc, runKernelTool, nearestE, type AgentEvent, type KernelPort, type Script } from '../src/index.ts';
 import { DEMO_FALLBACK, DEMO_SCRIPTS } from './scripts.ts';
 
@@ -202,6 +202,48 @@ describe('calc', () => {
     expect(Number(wide.wavelength_mm)).toBeLessThan(75);
     expect(() => runCalc({ fn: 'impedance', args: { ohms: 50 } })).toThrow(/no stack-up known/);
     expect(() => runCalc({ fn: 'impedance', args: { ohms: 90, diff: 1 } }, {}, jlc)).toThrow(/needs gap/);
+  });
+
+  it('track_current sizes a track or vias with the current check\'s own numbers', () => {
+    const { name, copper, dielectric, mask } = findStackupPreset('JLC04161H-7628')!;
+    const jlc = { name, copper, dielectric, ...(mask ? { mask } : {}) };
+    // width → amps, amps → width, both → rise: the check's functions, F.Cu (35 µm) at 10 °C by default
+    const cap = runCalc({ fn: 'track_current', args: { width_mm: 0.5 } }, {}, jlc);
+    expect(cap).toMatchObject({ width_mm: 0.5, rise_c: 10, copper_um: 35, layer: 'F.Cu', curve: 'IPC-2221 external' });
+    expect(cap.amps).toBeCloseTo(trackCurrentFor(0.5, 35, 10), 3);
+    const w = runCalc({ fn: 'track_current', args: { amps: 2 } }, {}, jlc);
+    expect(w.width_mm).toBe(trackWidthFor(2, 10, 35));
+    const rise = runCalc({ fn: 'track_current', args: { amps: 2, width_mm: 0.5 } }, {}, jlc);
+    expect(rise.rise_c).toBeCloseTo(trackRiseFor(2, 0.5, 35), 1);
+    expect(String(rise.note)).toMatch(/conservative near a plane/);
+    // an inner layer of JLC's 4 layers (15.2 µm) needs a wider track than F.Cu
+    const inner = runCalc({ fn: 'track_current', args: { amps: 2, layer: 'In1.Cu' } }, {}, jlc);
+    expect(inner.copper_um).toBe(15.2);
+    expect(Number(inner.width_mm)).toBeGreaterThan(Number(w.width_mm));
+    // the board's allowed heating is the default rise
+    const warm = runCalc({ fn: 'track_current', args: { amps: 2 } }, {}, jlc, 30);
+    expect(warm.rise_c).toBe(30);
+    expect(warm.width_mm).toBe(trackWidthFor(2, 30, 35));
+    // vias: one via's capacity and how many the current needs
+    const vias = runCalc({ fn: 'track_current', args: { amps: 3, via_drill_mm: 0.3 } }, {}, jlc);
+    expect(vias.per_via_a).toBeCloseTo(viaCurrentFor(0.3, 10), 3);
+    expect(vias.vias_needed).toBe(Math.ceil(3 / viaCurrentFor(0.3, 10)));
+    expect(runCalc({ fn: 'track_current', args: { via_drill_mm: 0.3, copper_um: 70 } }).vias_needed).toBeUndefined();
+    // impossible input
+    expect(() => runCalc({ fn: 'track_current', args: { amps: 2, width_mm: 1, rise_c: 10 } }, {}, jlc)).toThrow(/give two of/);
+    expect(() => runCalc({ fn: 'track_current', args: {} }, {}, jlc)).toThrow(/give width_mm/);
+    expect(() => runCalc({ fn: 'track_current', args: { amps: -1 } }, {}, jlc)).toThrow(/amps must be a positive/);
+    expect(() => runCalc({ fn: 'track_current', args: { amps: 1, layer: 'In3.Cu' } }, {}, jlc)).toThrow(/F\.Cu, In1\.Cu, In2\.Cu, B\.Cu/);
+    expect(() => runCalc({ fn: 'track_current', args: { amps: 1, layer: 'F.Cu', copper_um: 35 } }, {}, jlc)).toThrow(/not both/);
+    expect(() => runCalc({ fn: 'track_current', args: { amps: 1 } })).toThrow(/no stack-up known/);
+  });
+
+  it('track_current works at the board\'s current_rise_c through the tool', async () => {
+    const k = new Kernel();
+    k.transact({ summary: 'board', ops: [{ op: 'set_board', current_rise_c: 20 }] });
+    const out = await runKernelTool(port(k), 'calc', { fn: 'track_current', args: { amps: 2 } });
+    expect(out?.isError).toBe(false);
+    expect(JSON.parse(out!.content)).toMatchObject({ rise_c: 20, width_mm: trackWidthFor(2, 20, 35) });
   });
 
   it('impedance works on the design\'s own stack-up through the tool', async () => {

@@ -91,10 +91,11 @@ export function jlcpcbSource(fetchFn: Post = (u, i) => fetch(u, i), base = 'http
       if ((q.kind === 'resistor' || q.kind === 'capacitor') && !q.value?.trim()) return feeFreeList(q.kind, pkg, q);
       const words = q.kind === 'resistor' || q.kind === 'capacitor' ? passiveWords(q) : q.text?.trim();
       if (!words) throw new Error('Give text to search for, or kind + value for a resistor/capacitor.');
-      let ask: Record<string, unknown> = { keyword: words, stockFlag: true, ...(pkg ? { componentSpecificationList: [pkg] } : {}) };
+      const stockFlag = !q.outOfStock;
+      let ask: Record<string, unknown> = { keyword: words, stockFlag, ...(pkg ? { componentSpecificationList: [pkg] } : {}) };
       let items = await call(ask);
       // JLCPCB names a package several ways ("SOT-223", "SOT-223-3"): with none under the exact name, it joins the words
-      if (!items.length && pkg && !q.kind) items = await call((ask = { keyword: `${words} ${pkg}`, stockFlag: true }));
+      if (!items.length && pkg && !q.kind) items = await call((ask = { keyword: `${words} ${pkg}`, stockFlag }));
       // Basic parts can sit beyond the first page of a popular search: a fee-free or a passive's search asks for them too
       if (q.noFee || q.kind) items = [...(await call({ ...ask, componentLibraryType: 'base' })), ...items];
       const seen = new Set<string>();
