@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_BOARD, type Design, type Diagnostic, type PartCard } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
+import { corrected, wrong } from '../../parts/test/fixtures/esp32c3.ts';
 
 const diags = (k: Kernel, code?: string) => (k.query({ op: 'get_diagnostics' }) as Diagnostic[]).filter((x) => x.code.startsWith('XCHK.') && (!code || x.code === code));
 
@@ -141,5 +142,23 @@ describe('XCHK: schematic, board and BOM agree', () => {
     const r = k.transact({ summary: 'intended', ops: [{ op: 'add_waiver', code: 'XCHK.PIN_NO_PAD', entities: ['X1'], reason: 'a test part with no real footprint' }] });
     expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
     expect(diags(k, 'XCHK.PIN_NO_PAD')[0]!.waivedBy).toBeTruthy();
+  });
+});
+
+describe('XCHK.LAND_OFF_CENTRE', () => {
+  it('the bike lamp ESP32-C3-MINI-1 land with its rows moved, before and after the fix', () => {
+    const pins = Array.from({ length: 53 }, (_, i) => String(i + 1));
+    const k = withPart(card('espressif:ESP32-C3-MINI-1', pins, { refPrefix: 'U', package: 'LGA-53' }));
+    const fp = (pads: typeof wrong) => k.transact({ summary: 'land', ops: [{ op: 'set_footprint', ref: 'X1', name: 'ESP32-C3-MINI-1', pads, body_mm: [13.2, 16.6] }] });
+    expect(fp(wrong).status).toBe('ok');
+    const [m, ...rest] = diags(k, 'XCHK.LAND_OFF_CENTRE');
+    expect(rest).toEqual([]);
+    expect(m).toMatchObject({ severity: 'warning', entities: ['X1'] });
+    expect(m!.message).toContain('espressif:ESP32-C3-MINI-1');
+    expect(m!.message).toContain('the left column (pads 1–11) is centred 0.7 mm above the midpoint between the top and bottom rows');
+    expect(m!.message).toContain('11.2 mm apart');
+    expect(m!.message).toContain('set_footprint');
+    expect(fp(corrected).status).toBe('ok');
+    expect(diags(k, 'XCHK.LAND_OFF_CENTRE')).toEqual([]);
   });
 });

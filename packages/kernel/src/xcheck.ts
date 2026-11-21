@@ -1,11 +1,11 @@
 /**
  * Cross-checks between the schematic, the board and the fab files (XCHK.*): the symbol's pins
  * against the footprint's pads, the nets against the pads that carry them, the `package`
- * parameter against the footprint built, the board's own objects against the nets, and the parts
- * the BOM and pick-and-place leave out. A pure function of the design: the board and both files
+ * parameter against the footprint built, a ring of pads against itself, the board's own objects
+ * against the nets, and the parts the BOM and pick-and-place leave out. A pure function of the design: the board and both files
  * are made from the same parts, so what they will hold is worked out here without placing the board.
  */
-import { footprintFor, packageOf, standardPackage } from '@4k7/parts';
+import { footprintFor, landRingOffset, packageOf, standardPackage } from '@4k7/parts';
 import type { Component, Design, Diagnostic, EditOp, PartCard, Severity } from '@4k7/schema';
 import { padPins } from '@4k7/schema';
 import { applyWaivers, cardOf, componentsSorted, natCmp } from './doc.ts';
@@ -15,6 +15,8 @@ interface Land {
   pads: { number: string; also?: string[]; drill?: number }[];
   /** Why the part is not on the board (absent: it is). */
   reason?: string;
+  /** Its ring of pads does not line up with itself (landRingOffset), in words. */
+  ring?: string;
 }
 
 const list = (xs: string[], max = 8) => (xs.length > max ? `${xs.slice(0, max).join(', ')} and ${xs.length - max} more` : xs.join(', '));
@@ -37,6 +39,8 @@ export function crossChecks(d: Design): Diagnostic[] {
       const fp = footprintFor(pkg, card.pins.map((p) => p.number));
       // a footprint the generator refused still has its pads, when they were given by hand
       land = fp.ok ? { pads: fp.footprint.pads } : { pads: pkg.pads ?? [], reason: fp.reason };
+      const ring = fp.ok ? landRingOffset(fp.footprint.pads) : null;
+      if (ring) land.ring = ring.text;
       lands.set(key, land);
     }
     return { land, pkgName: pkg.name };
@@ -98,6 +102,13 @@ export function crossChecks(d: Design): Diagnostic[] {
         push('warning', 'XCHK.PAD_NO_PIN', [c.refdes],
           `${c.refdes}: the ${pkgLabel} footprint has ${strays.length === 1 ? 'a pad' : 'pads'} ${list(strays)} that no pin of the symbol is on, so ${strays.length === 1 ? 'it is' : 'they are'} soldered to nothing${strays.some((s) => /^(EP|PAD)$/i.test(s)) ? ' (an exposed pad is usually a ground or thermal pin the part card should list)' : ''}. ` +
             `Add the missing pin to the part (an exposed pad as pin EP, type nc if it is internally open), use a package with the right pin count (set_param package), or correct the footprint with set_footprint.`);
+      }
+
+      // a ring of pads round four sides is centred on itself: a row or column off it was misread
+      if (land.ring) {
+        push('warning', 'XCHK.LAND_OFF_CENTRE', [c.refdes],
+          `${c.refdes} (${card.id}): the ${pkgLabel} land does not line up with itself: ${land.ring}. A land with pads on all four sides is centred on its own rows and columns, so one of them is off the datasheet's recommended land pattern (a row moved and the side pads left where they were), and the part will not sit on its pads. ` +
+            `Read the land pattern again (read_datasheet, the package page) and correct the pads with set_footprint.`);
       }
     }
 
