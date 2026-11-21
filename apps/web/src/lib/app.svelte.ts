@@ -239,6 +239,8 @@ class AppState {
   private diskConnecting: Promise<void> | null = null;
   /** The design was renamed and its file not yet (the server was not reachable). */
   private renameFile = false;
+  /** The name a new project's file takes when it is created: the file it was opened from (else the design's name). */
+  private newFileName: string | undefined;
   /** Writes to the project files, one after the other (a new project's file is created once). */
   private writes: Promise<unknown> = Promise.resolve();
   /** The access key this tab started with: its address's, the dev server's (in development), or the one saved. */
@@ -1619,8 +1621,9 @@ class AppState {
       try {
         if (this.projectId) await disk.saveProject(this.projectId, json);
         else {
-          this.projectId = await disk.createProject(json);
-          this.renameFile = false; // named after the design already
+          this.projectId = await disk.createProject(json, this.newFileName);
+          this.newFileName = undefined;
+          this.renameFile = false; // named after the design, or the file it came from, already
           void this.updateSettings({ project: this.projectId });
           await this.refreshProjects();
         }
@@ -1679,8 +1682,11 @@ class AppState {
     return this.projectText(await this.kernel.exportDesign());
   }
 
-  /** Open a design (a project file: with the conversation it keeps) as a new project (its own file, named after the design). */
-  async importDesign(file: ProjectFile) {
+  /**
+   * Open a design (a project file: with the conversation it keeps) as a new project: its own file, named
+   * `fileName` (the file it was opened from) or else after the design; a number only when that name is taken.
+   */
+  async importDesign(file: ProjectFile, fileName?: string) {
     if (this.running) {
       this.flash('Wait for the agent to finish first.');
       return;
@@ -1690,6 +1696,7 @@ class AppState {
     await this.queueWrite(async () => {
       await this.kernel.load(d);
       this.projectId = null;
+      this.newFileName = fileName;
       this.renameFile = false;
       this.restoreConversation(conversation);
     });
