@@ -175,6 +175,16 @@ export class Kernel {
     return b?.routing === 'done' ? b : undefined;
   }
 
+  /**
+   * The board DRC's copper-to-copper findings (pads, tracks, vias and pours of two nets touching or
+   * too close), for get_diagnostics: from the copper where it is routed or drawn, else from the
+   * placement (pads that touch). The board's other findings are the layout's. See docs/design/layout.md.
+   */
+  private copperShorts(d: Design): Diagnostic[] {
+    const b = this.routedNow(d) ?? placedOf(d);
+    return b.diagnostics.filter((x) => x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE');
+  }
+
   /** The board of the working copy: placement, routing and DRC (computed on demand, cached). `follow` follows the routing, if it routes (see layoutBoard). */
   board(follow: { onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
     const d = this.draft;
@@ -533,7 +543,7 @@ export class Kernel {
         return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, track, current, ...impedance, ...vias };
       }
       case 'get_diagnostics':
-        return this.analyse(d).diagnostics;
+        return [...this.analyse(d).diagnostics, ...this.copperShorts(d)];
       case 'get_current_map': {
         const b = this.routedNow(d);
         if (!b) return { routed: false, note: 'The board is not routed (or its routing is out of date): route it first, then ask again.' };
