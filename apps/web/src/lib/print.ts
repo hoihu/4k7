@@ -84,6 +84,16 @@ export async function printSchematic(view: SchematicView, designName: string): P
   await printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(designName)} · schematic</title><style>${style(view.paper)}</style></head><body>${pages.join('')}</body></html>`);
 }
 
+/** Save `blob` as a file through the browser's download. */
+export function downloadFile(blob: Blob, file: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = file;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 /** Print a document of our own through the browser's dialog (which also saves a PDF). `prepare`: last touches to the loaded document (canvases to draw), before the dialog. */
 export async function printHtml(html: string, prepare?: (doc: Document) => void): Promise<void> {
   // a hidden frame of our own document: no popup, no blocker

@@ -1638,17 +1638,17 @@ class AppState {
   docBusy = $state(false);
 
   /**
-   * The design document through the print dialog: the description, each block with its
-   * schematic and its place on the board, layout, assembly drawing, BOM and schematic pages.
+   * The design document through the print dialog, or (`download`) as one HTML file: the description,
+   * each block with its schematic and its place on the board, layout, assembly drawing, BOM and schematic pages.
    */
-  async designDocument() {
+  async designDocument(download = false) {
     if (!this.k || this.docBusy) return;
     this.docBusy = true;
     try {
       const board = this.k.summary.components.length ? await this.routedBoard() : null;
-      const { printDesignDocument } = await import('./designdoc.ts');
+      const { downloadDesignDocument, printDesignDocument } = await import('./designdoc.ts');
       const k = this.k;
-      await printDesignDocument({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal });
+      await (download ? downloadDesignDocument : printDesignDocument)({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal });
     } catch (e) {
       this.flash(`The design document failed: ${(e as Error).message}`);
     } finally {
