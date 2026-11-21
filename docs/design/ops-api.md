@@ -35,6 +35,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `get_copper`: drawn tracks and vias with their ids, optionally by net or area.
 - `get_board`: board outline, part positions, routing stats and DRC results.
 - `get_current_map`: the routed copper against each net's current: per net ok, unverified or unknown (and, with loads stated, the drop to the furthest load against 3 % of the rail), and the tracks and vias that do not carry it, worst first, with their fixes (see [layout](layout.md) §14).
+- `get_power_tree`: what feeds what: per power rail its source, the series parts it is fed through, the rails it feeds, its loads, current budget and a linear regulator's dissipation (shape in §6).
 - `try_placements`: compare arrangements of the main parts without changing the design.
 - `suggest_moves`: small-part moves (turn, swap, shift) that close open connections, without applying them.
 - `get_enclosure`: the enclosure brief, script, board API and last render report.
@@ -227,3 +228,37 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - **UI**: accept/reject, drag-hint, ledger edits and settings all emit ops, so user and AI
   actions show up the same way in history.
 - **Scripts/tests**: generated TS and Rust clients. The evals drive the kernel natively without a browser.
+
+## 6. The power tree (`get_power_tree`)
+
+`design_query get_power_tree` answers "what feeds what, and will it run hot?" from the schematic alone
+(`packages/kernel/src/powertree.ts`). It reads the same power walk as the power and current checks
+(`packages/kernel/src/power.ts`) and the dissipation SEM.LDO_DISSIPATION computes (`linearRegulators` in
+`packages/kernel/src/checks.ts`), so its numbers are the check's. Unknown is said, never 0 or fine.
+
+```jsonc
+{ "rails": [                                      // every power net but ground, by name; [] with a note when there are none
+  { "net": "+3V3A", "voltage": 3.3,                // or "unknown"
+    "source": { "kind": "regulator",               // regulator | connector | battery | unknown: the nearest upstream
+                "ref": "U1", "regulator": "linear", // linear | switching, left out when neither is clear
+                "from": "+5V" },                   // the regulator's input rail
+    "through": [{ "ref": "R1", "category": "resistor", "from": "+3V3" }], // series parts from the source down to this rail
+    "feeds": ["+1V8"],                             // the rails fed from this one (through a regulator or series parts)
+    "supplies": ["U2"],                            // parts with a power input on it
+    "loads": [{ "pin": "U2.3", "a": 0.1 }],        // set_net loads
+    "current": { "max_a": 0.5,                     // max_current, else the loads' sum, else "unknown"
+                 "basis": "max_current",           // max_current | loads | unknown
+                 "loads_a": 0.1, "feeds_a": 0.05,  // feeds_a: the fed rails' current where it passes unchanged; "unknown" behind a switcher
+                 "budget": "ok" },                 // ok | over | unknown: max_current against loads_a + feeds_a
+    "dissipation": { "ref": "U1", "package": "SOT-23", "watts": 0.85, "limit_w": 0.29,
+                     "status": "error",            // ok | warning | error | unknown, as SEM.LDO_DISSIPATION
+                     "missing": "current" } } ] }  // with unknown: voltage | current | package
+```
+
+A source is a part's power output pin (a regulator; `from` is its power input's rail), a connector's pin
+on an external net, or a battery's pins (a part whose card says battery or cell, or refdes BT). Current
+then flows through series parts (inductors, ferrite beads, fuses, diodes, a choke's windings; a resistor
+only between two power nets, as elsewhere it is a pull-up or a divider), away from the sources; a rail with
+neither is `unknown`. `dissipation` is on the rail a linear regulator drives directly; a switcher's rail
+has none. The budget is `unknown` without max_current, and where a switcher is fed (its input current
+depends on its efficiency).
