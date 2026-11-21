@@ -155,6 +155,11 @@ export interface PartCard {
    * fits either way round. Without it the pins' names decide (K and A, + and −; pin 1 for the rest).
    */
   polarity?: { mark: 'pin1' | 'cathode' | 'plus' | 'none'; pin?: string };
+  /**
+   * A bare copper pad, no part (an SMD test point): nothing to buy, place or solder, so it is left
+   * out of the BOM, the pick-and-place, the stock and cost checks, and has no 3D body.
+   */
+  padOnly?: boolean;
 }
 
 /** PDF pages of a datasheet's sections, as the importer found them. */

@@ -558,7 +558,7 @@ function placerInputs(d: Design, sch: SchematicView) {
 
 /** What moves parts: into the outline, towards their nets, turned, apart. */
 function placerMoves(d: Design, inputs: ReturnType<typeof placerInputs>) {
-  const { settings, rules, layers, items, stored, byComp, padsOf, padPos, nets, weight, springs, near, parent, positions, bySize, anchorOf, rooms } = inputs;
+  const { settings, rules, layers, items, stored, byComp, padsOf, padPos, nets, weight, springs, near, parent, positions, depth, bySize, anchorOf, rooms } = inputs;
   // a proposed board fitted round the arrangement moves it as a whole: the choices' place on it
   const applyLocks = () => {
     for (const k of positions) {
@@ -775,8 +775,10 @@ function placerMoves(d: Design, inputs: ReturnType<typeof placerInputs>) {
       return [];
     }),
   ];
+  // a part at a part that is itself at an IC (a test point at an inductor) goes after it, to where it ends up
+  const hugOrder = [...satellites].sort((a, b) => depth(a.to) - depth(b.to));
   const hugCaps = (only?: Set<Item>) => {
-    for (const s of satellites) {
+    for (const s of hugOrder) {
       const it = s.it;
       if (it.fixed || it.intent || (only && !only.has(it))) continue;
       const ic = s.to;
@@ -792,7 +794,8 @@ function placerMoves(d: Design, inputs: ReturnType<typeof placerInputs>) {
       // a pin under the body (a BGA ball): a ring of caps would wall in the tracks escaping from
       // between the balls. Only a part alone on its ball's net (a VCAP cap) goes to the edge, with
       // a channel for those tracks; the rest keep the place the relaxation found
-      const under = Math.abs(s.tx) < ic.fp.body.w / 2 - 0.1 && Math.abs(s.ty) < ic.fp.body.h / 2 - 0.1;
+      // (a two-pin part's pads under its body, a power inductor's, are its ends: a part at one goes beside it)
+      const under = !isTwoPin(ic.card) && Math.abs(s.tx) < ic.fp.body.w / 2 - 0.1 && Math.abs(s.ty) < ic.fp.body.h / 2 - 0.1;
       const net = padsOf(it).find((p) => p.pad.x === s.px && p.pad.y === s.py)?.net;
       if (under && (nets.get(net ?? '')?.length ?? 0) > 2) continue;
       const gap = SPACING + (under ? 1.2 : 0);
