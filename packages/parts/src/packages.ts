@@ -53,6 +53,8 @@ export function standardPackage(name: string, pins = 2): PackageInfo | null {
   }
   const hdr = /^(?:HDR|HEADER|PINHEADER)[-_ ]?1X(\d+)$/.exec(n) ?? (/^HDR$/.test(n) ? [n, String(pins)] : null);
   if (hdr) return { name: `HDR-1x${hdr[1]}`, family: 'HEADER', pins: Number(hdr[1]), pitch_mm: 2.54, height_mm: 8.5 };
+  const xh = jstXh(n, pins);
+  if (xh) return xh;
   // "6x6mm", "IND6X6": the usual square power-inductor sizes, as IND-6X6
   const ind = /^(?:IND[-_ ]?)?(4|6|8|10|12)X\1(?:MM)?$/.exec(n);
   switch (ind ? `IND-${ind[1]}X${ind[1]}` : n) {
@@ -101,9 +103,91 @@ export function standardPackage(name: string, pins = 2): PackageInfo | null {
       return { name: 'IND-12x12', family: 'CHIP', pins: 2, body_mm: [12.3, 12.3], lead_length_mm: 2.8, height_mm: 6.0 };
     case 'CAP-6.3':
       return vchip('CAP-6.3X5.4');
+    case '3535':
+    case 'LED-3535':
+    case 'LED-3.5X3.5':
+    case 'LED-3.5X3.5MM':
+      return led3535();
   }
   if (VCHIP[n]) return vchip(n);
   return null;
+}
+
+/**
+ * JST XH (2.5 mm pitch, through-hole, vertical) by the names it goes by: JST-XH-2, "JST XH 2",
+ * "XH 2.5mm 2 pin", B2B-XH-A, KiCad's JST_XH_B2B-XH-A_1x02_P2.50mm_Vertical; without a count, the
+ * part's pins. A header with the housing as its body: 5.75 mm deep, (n − 1) × 2.5 + 4.9 mm long,
+ * 7 mm high (JST XH catalogue, from memory, not checked against the drawing). The pin row sits
+ * about 0.5 mm off the housing's centre on the real part; drawn centred.
+ */
+function jstXh(n: string, pins: number): PackageInfo | null {
+  if (!/(^|[^A-Z])XH([^A-Z]|$)/.test(n)) return null;
+  const rest = n.replace(/P?2\.50?\s*MM/g, ' ');
+  const count = /[BS](\d+)B-XH/.exec(rest)?.[1] ?? /1X0*(\d+)/.exec(rest)?.[1] ?? /(\d+)[-_ ]?(?:P|PIN|PINS|POS|WAY)\b/.exec(rest)?.[1] ?? /XH[-_ ]+(\d+)\b/.exec(rest)?.[1];
+  const k = count ? Number(count) : pins;
+  if (!(k >= 1 && k <= 20)) return null;
+  return { name: `JST-XH-${k}`, family: 'HEADER', pins: k, pitch_mm: 2.5, body_mm: [5.75, r2((k - 1) * 2.5 + 4.9)], height_mm: 7.0 };
+}
+
+/**
+ * A 3535 power LED (3.45 × 3.45 mm: Cree XP-E/XP-G class and the generic 1–3 W emitters): the two
+ * electrodes as 0.5 × 3.3 mm strips 1.4 mm either side of the centre (pin 1, the generic LED's
+ * cathode, left), between them the 1.3 × 3.3 mm thermal pad, electrically isolated. Lands from the
+ * Cree XP-G2 datasheet's recommended footprint as read for an imported part; check a specific
+ * LED's drawing, some makers put the cathode on the other side or tie the thermal pad to it.
+ */
+function led3535(): PackageInfo {
+  const strip = (number: string, x: number, w: number) => ({ number, x, y: 0, w, h: 3.3, shape: 'rect' as const });
+  return {
+    name: 'LED-3535',
+    family: 'other',
+    pins: 2,
+    body_mm: [3.45, 3.45],
+    height_mm: 2.3,
+    exposed_pad_mm: [1.3, 3.3],
+    pads: [strip('1', -1.4, 0.5), strip('2', 1.4, 0.5), strip('EP', 0, 1.3)],
+  };
+}
+
+/** Every package name standardPackage knows, in its own spelling (headers for `pins` pins). */
+function knownPackages(pins: number): string[] {
+  const vchips = Object.values(VCHIP).map((v) => `CAP-${v.can[0]}x${v.can[1]}`);
+  return [
+    ...Object.keys(CHIPS),
+    ...['SOD-123', 'SOD-323', 'SMA', 'SMB', 'SOT-23', 'SOT-23-5', 'SOT-23-6', 'SOT-223', 'SOIC-8', 'MBS-4'],
+    ...['IND-4x4', 'IND-6x6', 'IND-8x8', 'IND-10x10', 'IND-12x12'],
+    ...vchips,
+    ...Object.keys(AXIAL).map((k) => `AXIAL-${k}`),
+    ...Object.keys(DIODES_AXIAL),
+    ...['RADIAL-D5', 'RADIAL-D6.3', 'RADIAL-D8', 'RADIAL-D10', 'RADIAL-D12.5', 'LED-3mm', 'LED-5mm', 'LED-3535'],
+    `HDR-1x${pins}`,
+    `JST-XH-${pins}`,
+  ];
+}
+
+function editDistance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j]! + 1, next[j - 1]! + 1, row[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length]!;
+}
+
+/** The known package names nearest to one standardPackage does not know (for a refusal), nearest first. */
+export function closestPackages(name: string, pins = 2, count = 6): string[] {
+  const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9.]/g, '');
+  const q = norm(name);
+  const score = (c: string) => {
+    const k = norm(c);
+    return editDistance(q, k) - (q && (k.includes(q) || q.includes(k)) ? 3 : 0);
+  };
+  return knownPackages(pins)
+    .map((c) => ({ c, s: score(c) }))
+    .sort((a, b) => a.s - b.s)
+    .slice(0, count)
+    .map((x) => x.c);
 }
 
 /**
@@ -202,9 +286,9 @@ export function packageOptions(card: PartCard): string[] {
     case 'generic:D':
       return ['SOD-323', 'SOD-123', 'SMA', 'SMB', 'DO-35', 'DO-41', 'DO-15', 'DO-201AD'];
     case 'generic:LED':
-      return ['0402', '0603', '0805', '1206', 'LED-3mm', 'LED-5mm'];
+      return ['0402', '0603', '0805', '1206', 'LED-3535', 'LED-3mm', 'LED-5mm'];
     default:
-      return [];
+      return card.category === 'connector' ? [`HDR-1x${card.pins.length}`, `JST-XH-${card.pins.length}`] : [];
   }
 }
 

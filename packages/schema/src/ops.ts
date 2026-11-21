@@ -244,7 +244,7 @@ export const SetPackageDefaultsOp = z.object({
   electrolytic: pkgName.describe('Polarized capacitors, e.g. "CAP-8x10", "RADIAL-D8"'),
   inductor: pkgName.describe('e.g. "IND-6x6"'),
   diode: pkgName.describe('e.g. "SMA", "DO-41"'),
-  led: pkgName.describe('e.g. "0805", "LED-5mm"'),
+  led: pkgName.describe('e.g. "0805", "LED-5mm", "LED-3535"'),
   passives: z.string().optional().describe('Shorthand: resistors, ceramic capacitors and LEDs at once, e.g. "0805" for hand soldering'),
   auto_size: z.boolean().optional().describe('Size up where the value demands it (capacitors ≥ 4.7 µF or > 25 V, resistor power, inductor/diode current); default on'),
 });
