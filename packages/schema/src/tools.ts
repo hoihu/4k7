@@ -436,7 +436,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
           name: TOOL_NAMES.propose,
           description:
             'Hand the working copy to the user for review (or commit it in Auto mode). Refused while the design has open ' +
-            'errors: fix them or waive with a reason first. Call once per coherent change' + (engine === 'cli' ? ', then wait_for_review.' : '.'),
+            'errors (fix them or waive with a reason first) or the production files of the routed board have FAB.* errors (fix the copper). Call once per coherent change' + (engine === 'cli' ? ', then wait_for_review.' : '.'),
           input_schema: schemaOf(ProposeInput),
         }]
       : [{

@@ -37,7 +37,7 @@ import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
 import { gerberViewer } from './gerberViewer.svelte.ts';
 import { checkBoard } from './netcheckClient.ts';
-import { FabWatch } from './fabFindings.ts';
+import { FabWatch, fabRefusal } from './fabFindings.ts';
 import { colourLegend, fabPicture } from './gerberDraw.ts';
 import { checkDesignCost, checkDesignStock, checkDesignValues, sourcingTool, type BoardFacts, type CostReport, type StockReport, type SupplierPart } from './sourcing.ts';
 import { fabRefreshPrompt } from './fabRefresh.ts';
@@ -1506,6 +1506,15 @@ class AppState {
           if (hard.length) {
             log('propose', false, `refused: ${hard.length} hard copper rule(s)`);
             return text(`Refused: the drawn copper breaks ${hard.length} hard rule(s). Fix them (get_board_image region shows the spot; get_copper lists the copper by id):\n` + hard.slice(0, 20).map((x) => `- ${x.code}${x.at ? ` at ${x.at.x.toFixed(2)}, ${x.at.y.toFixed(2)}` : ''}: ${x.message}`).join('\n'), true);
+          }
+        }
+        // the routed board's production files read back clean (FAB.*, kept beside the board's own checks): errors are fixed, not waived
+        if (draftBoard?.routed || draftBoard?.drawn) {
+          await this.routedBoard();
+          const fab = fabRefusal(await this.fab.settled());
+          if (fab) {
+            log('propose', false, `refused: ${fab.count} production-file finding(s)`);
+            return text(fab.text, true);
           }
         }
         // a routed board is routed completely, or the agent says why not
