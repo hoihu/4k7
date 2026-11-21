@@ -941,7 +941,7 @@ class AppState {
    * package, and its land as it lies on the board (held against the house's footprint for the part).
    */
   private async sourcedComponents(): Promise<SourcedComponent[]> {
-    type Info = { refdes: string; part: string; category?: SourcedComponent['category']; params: Record<string, string>; package?: { name: string }; dnp?: boolean };
+    type Info = { refdes: string; part: string; category?: SourcedComponent['category']; params: Record<string, string>; package?: { name: string }; dnp?: boolean; padOnly?: boolean };
     const refs = this.k?.summary.components.map((c) => c.refdes) ?? [];
     const [infos, board] = await Promise.all([
       Promise.all(refs.map((ref) => this.kernel.query({ op: 'get_component', ref }))) as Promise<(Info | { error: string })[]>,
@@ -955,7 +955,7 @@ class AppState {
       const mpn = c.params.mpn ?? card?.mpn;
       const p = placed.get(c.refdes);
       const land = p && card ? placedLand(p, (pin) => card.pins.find((x) => x.number === pin)?.name) : undefined;
-      return [{ refdes: c.refdes, ...(c.category ? { category: c.category } : {}), params: c.params, ...(pkg ? { pkg } : {}), ...(mpn ? { mpn } : {}), ...(land ? { land } : {}), ...(c.dnp ? { dnp: true } : {}) }];
+      return [{ refdes: c.refdes, ...(c.category ? { category: c.category } : {}), params: c.params, ...(pkg ? { pkg } : {}), ...(mpn ? { mpn } : {}), ...(land ? { land } : {}), ...(c.dnp || c.padOnly ? { dnp: true } : {}) }];
     });
   }
 

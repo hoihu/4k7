@@ -129,7 +129,7 @@ export interface SourcedComponent {
   mpn?: string;
   /** Its land as it lies on the board: the check compares it with the house's footprint for the part (fitLand). */
   land?: PlacedLand;
-  /** Do not populate (set_dnp): not bought, not placed, so in no line and not unsourced. */
+  /** Do not populate (set_dnp), or a bare pad (a test point): not bought, not placed, so in no line and not unsourced. */
   dnp?: boolean;
 }
 

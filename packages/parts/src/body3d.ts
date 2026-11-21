@@ -118,6 +118,7 @@ export function body3dFor(pkg: PackageInfo, pinNumbers: string[] = []): Body3DRe
 export function boardBodies(b: BoardView): Map<string, Body3D> {
   const bodies = new Map<string, Body3D>();
   for (const p of b.parts) {
+    if (p.padOnly) continue; // a bare pad (a test point): no part on it
     const r = body3dFor(p.pkgInfo, p.pads.map((x) => x.number));
     if (r.ok) bodies.set(p.componentId, r.body);
   }

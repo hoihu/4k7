@@ -114,6 +114,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 
 - `place`: put a component at a position, rotation and side on the board, optionally locked.
 - `attach`: say which part a small part belongs with on the board.
+- `add_test_points`: a test point pad on each named net (or every supply rail), at the part that drives it, labelled TP_<net>.
 - `propose_placement`: place the board afresh, with the main parts where given.
 - `refine_placement`: move and turn the placer's small parts to untangle the ratsnest.
 

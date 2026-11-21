@@ -518,6 +518,11 @@ export const AttachOp = z.object({
   pin: z.string().optional().describe('The pin of `to` it serves (number or name), e.g. the VDD pin a decoupling cap is for: it goes right at that pin. It must share a net with it'),
 }).describe("Say which part a small part belongs with on the board, where the placer's guess (shown in get_board belongs_to, marked guessed) is wrong. Declared once, it holds for every later placement; remove_constraint goes back to the guess. A part you placed is placed afresh at its new parent; one the user placed stays where it is.");
 
+export const AddTestPointsOp = z.object({
+  op: z.literal('add_test_points'),
+  nets: z.array(z.string().min(1)).min(1).describe('Nets to probe, e.g. ["+3V3", "GND"]; "rails" stands for every supply rail (a net with a voltage, marked power or external, or named like +3V3, VCC, VBUS; not ground)'),
+}).describe('Add a test point to each net: a bare round 1.5 mm SMD pad (generic:TP; nothing to buy or assemble) on the net, named TP<n>, with TP_<net> on the silkscreen, placed at the part that drives the net (its regulator or inductor, the input connector) as attach would. A net that already has a test point gets no second one, so it is safe to run again. Use add_part generic:TP with package TP-1.0 for a smaller pad, or generic:TP_LOOP for a through-hole loop a probe hooks onto.');
+
 export const PlaceSymbolOp = z.object({
   op: z.literal('place_symbol'),
   ref: componentRef.describe('Component, or one unit of a split symbol ("U3B")'),
@@ -850,6 +855,7 @@ export const EditOp = z.discriminatedUnion('op', [
   RemoveImpedanceOp,
   PlaceOp,
   AttachOp,
+  AddTestPointsOp,
   PlaceSymbolOp,
   WireOp,
   LabelOp,
