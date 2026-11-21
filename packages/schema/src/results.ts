@@ -354,4 +354,6 @@ export interface DesignSummary {
   valueSeries?: ValueSeries;
   /** The board's stack-up in effect (what calc impedance works on by default). */
   stackup?: Pick<Stackup, 'name' | 'copper' | 'dielectric' | 'mask'>;
+  /** The board's allowed heating (set_board current_rise_c, °C) when not the default 10 (what calc track_current works at). */
+  currentRise?: 10 | 20 | 30;
 }

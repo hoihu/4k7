@@ -78,7 +78,15 @@ export const SetNetOp = z.object({
   external: z.boolean().optional().describe('True for nets driven from outside the design (e.g. supply input on a connector)'),
   power: z.boolean().optional().describe('Draw as a power rail'),
   max_current: z.number().nullable().optional().describe('Expected maximum current in amps: get_net suggests a track width for it and how many vias it needs (about 0.9 A per 0.3 mm via) where it flows through a pad: place them with add_vias drop'),
+  loads: z
+    .array(z.object({ pin: z.string().min(1).describe('A pin of the net, e.g. "U3.VDD" (a name on several pins: the current is shared between them)'), amps: z.number().positive().describe('What it draws (A, DC or RMS), from its datasheet') }))
+    .min(1)
+    .nullable()
+    .optional()
+    .describe('What the net\'s pins draw: the current check then splits the net\'s current over its copper from where it comes in to these pins (a stub to a pull-up carries its milliamps, not max_current) and checks each track for its share (DRC.TRACK_CURRENT). Replaces the list; null clears it. A pad with add_vias drop amps counts as stated already (a load here for the same pad wins). Loads under max_current leave the rest unplaced (it may flow anywhere)'),
   track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise)'),
+  route_first: z.boolean().nullable().optional().describe('Board: the router routes this net before the others, in every pass, so it gets the short, clean ways (a switching node, a clock, the high-current path); null = as any other'),
+  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).nullable().optional().describe('Board: the copper layer its tracks should keep to (a cost on the others, not a ban: it still changes layer where it must; not for connections laid with draw_track); null = any'),
   draw_as: z.enum(['label', 'wire']).nullable().optional().describe('Force how the schematic draws this net, now and after every later change, on each sheet it is on (the sheet\'s drawing becomes yours, as with place_symbol, and auto_draw redraws it but does not hand it back while a net on it is forced). label: a label or supply symbol at every pin, no wire between them. wire: wires and no label; a label stays only where no wire can go (another page or sheet, no clear path), and a supply keeps one symbol per drawn piece. null: no longer forced, drawn afresh: wires where they draw cleanly, labels where not. While it is forced, wire (draw_as label), label (draw_as wire) and erase on the net are refused. The app\'s net panel sets it: the user\'s choice, so change it only when asked'),
 });
 
@@ -236,7 +244,7 @@ export const SetPackageDefaultsOp = z.object({
   electrolytic: pkgName.describe('Polarized capacitors, e.g. "CAP-8x10", "RADIAL-D8"'),
   inductor: pkgName.describe('e.g. "IND-6x6"'),
   diode: pkgName.describe('e.g. "SMA", "DO-41"'),
-  led: pkgName.describe('e.g. "0805", "LED-5mm"'),
+  led: pkgName.describe('e.g. "0805", "LED-5mm", "LED-3535"'),
   passives: z.string().optional().describe('Shorthand: resistors, ceramic capacitors and LEDs at once, e.g. "0805" for hand soldering'),
   auto_size: z.boolean().optional().describe('Size up where the value demands it (capacitors ≥ 4.7 µF or > 25 V, resistor power, inductor/diode current); default on'),
 });
@@ -275,6 +283,7 @@ export const SetBoardOp = z.object({
   edge_clearance_mm: z.number().positive().optional().describe('Keep copper this far from the board edge (default 0.5)'),
   via_in_pad: z.boolean().optional().describe('Let the router put its vias inside pads, anywhere on the board (default false; only when the user asks for it, e.g. for tight BGA fan-out). Thermal vias in one pad need no such switch: add_vias kind pad'),
   corner_radius_mm: z.number().min(0).optional().describe('Rounded board corners: the radius (0 = square corners)'),
+  current_rise_c: z.union([z.literal(10), z.literal(20), z.literal(30)]).optional().describe('How much tracks and vias may heat with their net\'s current (°C): 10 (default), 20 or 30. A denser board may trade copper for heat; it changes what the current check (get_current_map) asks of the copper, not the copper'),
 }).describe('Board size, layers and design rules. With a fab profile chosen (set_fab_profile) a rule below the manufacturer\'s limit is refused.');
 
 const fabLimitsInput = z.object({
@@ -920,6 +929,13 @@ export const QueryOp = z.discriminatedUnion('op', [
     rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('Only copper with a point inside this rectangle (mm)'),
   }).describe('Drawn copper: every track (id, net, layer, width, points in mm, the pads its ends lie on) and via (id, net, at, drill, size), to edit or erase by id'),
   z.object({ op: z.literal('get_board') }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
+  z.object({
+    op: z.literal('get_current_map'),
+    nets: z.array(netName).optional().describe('Only these nets'),
+    rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('Only hotspots inside this rectangle (mm)'),
+    worst: z.number().int().min(0).max(200).optional().describe('Hotspots to list, worst first (default 20); the nets are always all listed'),
+    include_ok: z.boolean().optional().describe('Also list the copper that carries its current (ratio up to 1)'),
+  }).describe('The routed copper against its net\'s current: per net its max_current, status (ok: every track and the vias at its layer changes carry it, at the board\'s allowed heating; unverified: some copper does not carry all of max_current, and whether that much flows there is not known; unknown: a power net without max_current, never ok) and worst ratio; with loads stated, the drop to the load furthest down against 3 % of the net\'s voltage (ir_drop_mv, ir_budget_mv; DRC.IR_DROP); hotspots worst first (tracks too narrow for the current on their layer\'s copper, the vias that are the only way between two layers\' copper), each with what fixes it. Call it after routing'),
   z.object({
     op: z.literal('try_placements'),
     candidates: z

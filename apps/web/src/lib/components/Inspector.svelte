@@ -212,9 +212,11 @@
     kind: 'ground' | 'supply' | 'signal';
     attrs: { voltage?: number; maxCurrent?: number; external?: boolean; trackWidth?: number; drawAs?: 'label' | 'wire' };
     pins: string[];
-    track: { width_mm: number; why: string; suggested_mm?: number; for_current_a?: number; rules: { signal_mm: number; power_mm: number } };
+    track: { width_mm: number; why: string; suggested_mm?: Record<string, number>; for_current_a?: number; copper_um?: Record<string, number>; rise_c?: number; rules: { signal_mm: number; power_mm: number } };
   }
   let net = $state<NetInfo | null>(null);
+  /** The width the net's current needs on the outer layer (get_net gives it per layer). */
+  const suggested = $derived(net?.track.suggested_mm?.['F.Cu']);
   $effect(() => {
     const id = app.selectedNet;
     void app.k;
@@ -383,8 +385,8 @@
           <dd>
             <select class="pkgsel mono" value={net.attrs.trackWidth ? String(net.attrs.trackWidth) : ''} disabled={!!app.k?.proposal} title={app.k?.proposal ? 'Review the pending changes first' : 'Track width on the board'} onchange={(e) => setTrack((e.currentTarget as HTMLSelectElement).value)}>
               <option value="">{net.kind === 'signal' ? net.track.rules.signal_mm : net.track.rules.power_mm} mm · {net.kind === 'signal' ? 'signal' : 'power'} default</option>
-              {#each [...new Set([...WIDTHS, ...(net.track.suggested_mm ? [net.track.suggested_mm] : []), ...(net.attrs.trackWidth ? [net.attrs.trackWidth] : [])])].sort((a, b) => a - b) as w (w)}
-                <option value={String(w)}>{w} mm{w === net.track.suggested_mm ? ` · suggested for ${net.track.for_current_a} A` : ''}</option>
+              {#each [...new Set([...WIDTHS, ...(suggested ? [suggested] : []), ...(net.attrs.trackWidth ? [net.attrs.trackWidth] : [])])].sort((a, b) => a - b) as w (w)}
+                <option value={String(w)}>{w} mm{w === suggested ? ` · suggested for ${net.track.for_current_a} A` : ''}</option>
               {/each}
             </select>
           </dd>
@@ -394,9 +396,9 @@
         {:else if net.attrs.drawAs === 'wire' && net.kind !== 'signal'}
           <p class="note">A supply keeps one symbol on each wired piece.</p>
         {/if}
-        {#if net.track.suggested_mm && net.track.suggested_mm > net.track.width_mm}
-          <p class="note warn">For {net.track.for_current_a} A this net needs about {net.track.suggested_mm} mm (1 oz copper, 10 °C rise); it has {net.track.width_mm} mm.
-            <button class="link" disabled={!!app.k?.proposal} onclick={() => setTrack(String(net!.track.suggested_mm))}>Use {net.track.suggested_mm} mm</button></p>
+        {#if suggested && suggested > net.track.width_mm}
+          <p class="note warn">For {net.track.for_current_a} A this net needs about {suggested} mm on the outer layers ({net.track.copper_um?.['F.Cu'] ?? 35} µm copper, {net.track.rise_c ?? 10} °C rise); it has {net.track.width_mm} mm.
+            <button class="link" disabled={!!app.k?.proposal} onclick={() => setTrack(String(suggested))}>Use {suggested} mm</button></p>
         {:else if !net.attrs.maxCurrent}
           <p class="note">Enter the current it carries to get a suggested width.</p>
         {/if}

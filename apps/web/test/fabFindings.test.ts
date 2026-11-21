@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CopperCheck } from '@4k7/fab';
-import type { BoardView } from '@4k7/schema';
-import { FabWatch } from '../src/lib/fabFindings.ts';
+import type { BoardView, Diagnostic } from '@4k7/schema';
+import { FabWatch, fabRefusal } from '../src/lib/fabFindings.ts';
 
 /** A routed board of one part whose copper is told apart by `x` (where its track ends). */
 const board = (x: number, routing: BoardView['routing'] = 'done') =>
@@ -76,5 +76,23 @@ describe('the production files\' findings of the routed board', () => {
     const w = new FabWatch(() => Promise.reject(new Error('replaced by a newer check')), () => {}, 0);
     w.update(board(10), true);
     expect(await w.settled()).toEqual([]);
+  });
+});
+
+describe('propose with the production files\' findings open', () => {
+  it('is refused while a FAB.* error is open, naming the finding and where it is', async () => {
+    const { w } = watch();
+    w.update(board(10), true);
+    const r = fabRefusal(await w.settled());
+    expect(r?.count).toBe(1);
+    expect(r?.text).toMatch(/^Refused: the board's production files .* have 1 error\(s\)/);
+    expect(r?.text).toContain('- FAB.SHORT at 5.00, 3.00 J1.1,net:+5V,net:GND: Production files: GND and +5V');
+  });
+
+  it('is not refused for a warning (FAB.FLOATING) or for other checks\' errors', () => {
+    const floating = { code: 'FAB.FLOATING', severity: 'warning', message: 'Production files: copper joined to no pad', entities: [] } as unknown as Diagnostic;
+    const drc = { code: 'DRC.CLEARANCE', severity: 'error', message: 'too close', entities: [] } as unknown as Diagnostic;
+    expect(fabRefusal([floating, drc])).toBeNull();
+    expect(fabRefusal([])).toBeNull();
   });
 });

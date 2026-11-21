@@ -70,8 +70,10 @@ copper: a placed board not routed yet has none, a change of copper drops them un
 done, an undo to copper checked before brings its findings back at once. They are listed with the DRC
 in the layout's checks (not waivable: a fault of the files is fixed, not marked intended), counted in
 the header's issues, and `get_diagnostics` adds them to the kernel's when the board is current
-(waiting for a check under way). They are not in `BoardView.diagnostics`, so `propose` does not yet
-refuse on them; refusing to propose while a `FAB.*` error is open is the next step.
+(waiting for a check under way). They are not in `BoardView.diagnostics`, so `propose` asks for them
+itself: on a routed or drawn board it waits for the board and its check, and refuses while a `FAB.*`
+error is open (`fabRefusal`), listing each with its spot; no argument lets the agent past it, since the
+files' faults are fixed, not waived. `FAB.FLOATING` (a warning) does not block.
 
 ## The netlist file (`packages/fab/src/ipc356.ts`)
 
@@ -122,9 +124,9 @@ turned every quarter, panels), each held against its netlist, and three read by 
 0.6.0 circle cut put back, all six fail on the shield pads.
 
 `fabFindings.test.ts` (app): the findings shown for the routed board's copper only, one check for
-edits in a row, none for a board not routed. `netcheck.test.ts` also holds the 0.6.0 cut through
+edits in a row, none for a board not routed; `propose` refused on a `FAB.*` error, not on a warning. `netcheck.test.ts` also holds the 0.6.0 cut through
 `fabDiagnostics`: a `FAB.SHORT` at the shield pad, and none for the board as built now.
 
-Not done: `propose` refusing while a `FAB.*` error is open (planned next), and the check on a panel's
+Not done: the check on a panel's
 files in the checks (the export and the viewer check those). The check knows nothing of the mask,
 paste and silkscreen files.

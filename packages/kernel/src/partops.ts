@@ -3,7 +3,7 @@
  * with, its polarity, what its pins do, the name of a part, and the defaults generic parts are
  * chosen by.
  */
-import { footprintFor, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOf, planUnits, standardPackage, symbolFor } from '@4k7/parts';
+import { closestPackages, footprintFor, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOf, planUnits, standardPackage, symbolFor } from '@4k7/parts';
 import { type Component, type Design, type EditOp, type ESeries, type OpResult, type PackageInfo, type PartCard, type PartPin, type SymbolLayout, type ValueSeries } from '@4k7/schema';
 import { cardOf, findComponent, natCmp, reject, resolveComponent, resolveUnitRef } from './doc.ts';
 import { remakeSymbols } from './drawing.ts';
@@ -252,7 +252,10 @@ export function setPackageDefaults(d: Design, op: Extract<EditOp, { op: 'set_pac
       continue;
     }
     const pkg = standardPackage(name);
-    if (!pkg) reject({ code: 'PARAM_INVALID', message: `Unknown package "${name}" for ${slot}s. Known e.g.: 0402, 0603, 0805, 1206, 2512, AXIAL-0.4, RADIAL-D8, CAP-8x10, IND-6x6, SOD-123, SMA, DO-41, LED-5mm.` });
+    if (!pkg) {
+      const near = closestPackages(name);
+      reject({ code: 'PARAM_INVALID', message: `Unknown package "${name}" for ${slot}s. Closest known: ${near.join(', ')}. Known e.g.: 0402, 0603, 0805, 1206, 2512, AXIAL-0.4, RADIAL-D8, CAP-8x10, IND-6x6, SOD-123, SMA, DO-41, LED-5mm, LED-3535.`, candidates: near });
+    }
     next[slot] = pkg.name;
     changes.push(`${slot}: ${pkg.name}`);
   }

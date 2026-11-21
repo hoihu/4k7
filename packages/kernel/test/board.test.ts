@@ -12,6 +12,12 @@ function buck() {
   return k;
 }
 
+/**
+ * The current check's findings: the router joins a pad to its plane with one via and runs supplies
+ * at the power width, sizing nothing for a net's current (that is the agent's: current.test.ts).
+ */
+const CURRENT = ['DRC.CURRENT_UNVERIFIED', 'DRC.VIA_CURRENT', 'DRC.CURRENT_UNKNOWN'];
+
 /** The route step (the last one), then the board. */
 function routed(k: Kernel) {
   k.transact({ summary: 'route', ops: [{ op: 'route' }] });
@@ -138,7 +144,7 @@ describe('parts on the bottom side (constrain layer)', () => {
     for (const c of caps) flip(k, c.refdes);
     const b = routed(k);
     expect(b.parts.filter((p) => p.side === 'bottom').map((p) => p.refdes)).toEqual(caps.map((c) => c.refdes));
-    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(b.diagnostics.filter((x) => x.severity === 'error' && !CURRENT.includes(x.code))).toEqual([]);
     expect(b.ratsnest).toEqual([]);
     expect(brokenNets(b)).toEqual([]);
   });
@@ -658,7 +664,7 @@ describe('routing', () => {
     expect(b.stats.unrouted).toBe(0);
     expect(b.stats.routed).toBe(b.stats.nets);
     expect(b.ratsnest).toEqual([]);
-    expect(b.diagnostics).toEqual([]);
+    expect(b.diagnostics.filter((x) => !CURRENT.includes(x.code))).toEqual([]);
     expect(brokenNets(b)).toEqual([]);
     // supply nets get the wide track where the pads allow it
     const sw = b.tracks.filter((t) => b.netNames[t.netId] === '+12V');
@@ -948,7 +954,7 @@ describe('planes', () => {
     const b = routed(k);
     expect(b.planes.map((p) => [b.netNames[p.netId], p.layer, p.auto])).toEqual([['GND', 'In1.Cu', false], ['+3V3', 'In2.Cu', false]]);
     expect(b.stats.unrouted).toBe(0);
-    expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
+    expect(b.diagnostics.filter((x) => x.severity === 'error' && !CURRENT.includes(x.code))).toEqual([]);
     expect(brokenNets(b)).toEqual([]);
     k.transact({ summary: 'no plane', ops: [{ op: 'set_plane', layer: 'In2.Cu', net: null }] });
     expect(k.board().planes.map((p) => p.layer)).toEqual(['In1.Cu']);
@@ -1921,6 +1927,27 @@ describe('package defaults', () => {
     expect(k.transact({ summary: 'tht', ops: [{ op: 'set_param', ref: 'R1', params: { package: 'AXIAL-0.4' } }] }).status).toBe('ok');
     expect(k.board().parts.find((p) => p.refdes === 'R1')!.pads.every((p) => !!p.drill)).toBe(true);
   });
+
+  it('takes the package names an agent guesses (3535, JST XH) and names the closest when it does not know one', () => {
+    const k = buck();
+    const r = k.transact({
+      summary: 'lamp',
+      ops: [
+        { op: 'add_part', part: 'generic:LED', refdes: 'D9', params: { color: 'white', package: '3535' } },
+        { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J9', params: { package: 'JST XH' } },
+      ],
+    });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    k.accept();
+    const d9 = k.board().parts.find((p) => p.refdes === 'D9')!;
+    expect(d9.pads.map((p) => p.number)).toEqual(['1', '2', 'EP']);
+    const j9 = k.board().parts.find((p) => p.refdes === 'J9')!;
+    expect(j9.pads.length === 2 && j9.pads.every((p) => !!p.drill)).toBe(true);
+    const bad = k.transact({ summary: 'bad', ops: [{ op: 'set_param', ref: 'J9', params: { package: 'JST-PH-2' } }] });
+    expect(bad.status).toBe('rejected');
+    expect(bad.rejection?.candidates).toContain('JST-XH-2');
+    expect(bad.rejection?.message).toContain('JST-XH-2');
+  });
 });
 
 describe('track width per net', () => {
@@ -1928,10 +1955,10 @@ describe('track width per net', () => {
     const k = buck();
     expect(k.transact({ summary: 'wide', ops: [{ op: 'set_net', net: '+12V', max_current: 2, track_mm: 0.8 }] }).status).toBe('ok');
     k.accept();
-    const info = k.query({ op: 'get_net', net: '+12V' }) as { track: { width_mm: number; suggested_mm: number; why: string } };
+    const info = k.query({ op: 'get_net', net: '+12V' }) as { track: { width_mm: number; suggested_mm: Record<string, number>; why: string } };
     expect(info.track.width_mm).toBe(0.8);
     expect(info.track.why).toBe('set for this net');
-    expect(info.track.suggested_mm).toBeGreaterThanOrEqual(0.7);
+    expect(info.track.suggested_mm['F.Cu']).toBeGreaterThanOrEqual(0.7);
     const b = routed(k);
     const nid = Object.entries(b.netNames).find(([, n]) => n === '+12V')![0];
     const widths = new Set(b.tracks.filter((t) => t.netId === nid).map((t) => t.width));

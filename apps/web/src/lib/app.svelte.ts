@@ -35,9 +35,10 @@ import { IngestState } from './ingest.svelte.ts';
 import { assemblyFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, placedLand, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
+import { currentLegend, currentOverlayOn } from './currentMap.ts';
 import { gerberViewer } from './gerberViewer.svelte.ts';
 import { checkBoard } from './netcheckClient.ts';
-import { FabWatch } from './fabFindings.ts';
+import { FabWatch, fabRefusal } from './fabFindings.ts';
 import { colourLegend, fabPicture } from './gerberDraw.ts';
 import { checkDesignCost, checkDesignStock, checkDesignValues, sourcingTool, type BoardFacts, type CostReport, type StockReport, type SupplierPart } from './sourcing.ts';
 import { fabRefreshPrompt } from './fabRefresh.ts';
@@ -185,6 +186,13 @@ class AppState {
   checksOpen = $state(false);
   /** Routing under way (the copper laid so far is drawn over the placed board), else null. */
   routeProgress = $state.raw<RouteProgress | null>(null);
+  /**
+   * The current heat map in the layout view: the user's choice this session (null: not chosen, on
+   * while a current finding is open), and a picture's forced setting (get_board_image overlay).
+   * See currentMap.ts.
+   */
+  currentOverlay = $state<boolean | null>(null);
+  overlayForce = $state<'current' | 'none' | null>(null);
   private boards = new BoardClient();
   /** The production files' netlist check of the routed board, FAB.* (fabFindings.ts): beside the board's own checks, not in them. */
   fabDiagnostics = $state.raw<Diagnostic[]>([]);
@@ -1255,17 +1263,28 @@ class AppState {
         const region = args.region ? { x: Math.min(args.region[0], args.region[2]), y: Math.min(args.region[1], args.region[3]), w: Math.abs(args.region[2] - args.region[0]), h: Math.abs(args.region[3] - args.region[1]) } : null;
         if (region && (region.w < 0.5 || region.h < 0.5)) return fail('board image', 'The region is too small: give x0, y0, x1, y1 in mm at least 0.5 mm apart.');
         const frame = args.area && seen?.view === 'board' ? seen.rect : (region ?? { x: -m, y: -m, w: b.outline.w + 2 * m, h: b.outline.h + 2 * m });
+        // the heat map as asked for this picture (else as the layout view shows it)
+        const heat = !!b.current && currentOverlayOn(b.diagnostics, this.currentOverlay, args.overlay ?? null);
+        if (args.overlay) {
+          this.overlayForce = args.overlay;
+          await tick();
+          await new Promise((r) => requestAnimationFrame(() => r(null)));
+        }
         try {
           const img = await renderBoardPng(args.width, frame);
           return {
-            content: `${b.outline.w} × ${b.outline.h} mm, ${b.routing === 'done' ? `${b.stats.routed}/${b.stats.nets} nets routed${b.ratsnest.length ? `, ${b.ratsnest.length} connection(s) open (thin straight lines)` : ''}` : 'not routed (thin straight lines: the connections to route)'}.`,
+            content:
+              `${b.outline.w} × ${b.outline.h} mm, ${b.routing === 'done' ? `${b.stats.routed}/${b.stats.nets} nets routed${b.ratsnest.length ? `, ${b.ratsnest.length} connection(s) open (thin straight lines)` : ''}` : 'not routed (thin straight lines: the connections to route)'}.` +
+              (heat ? ` ${currentLegend(b.current!.riseC)}` : ''),
             images: [img],
             isError: false,
             label: 'board image',
-            detail: `${args.width}px${args.area ? ' · the area' : region ? ' · region' : ''}`,
+            detail: `${args.width}px${args.area ? ' · the area' : region ? ' · region' : ''}${heat ? ' · current' : ''}`,
           };
         } catch (e) {
           return fail('board image', (e as Error).message);
+        } finally {
+          this.overlayForce = null;
         }
       }
       case 'view_gerbers': {
@@ -1506,6 +1525,15 @@ class AppState {
           if (hard.length) {
             log('propose', false, `refused: ${hard.length} hard copper rule(s)`);
             return text(`Refused: the drawn copper breaks ${hard.length} hard rule(s). Fix them (get_board_image region shows the spot; get_copper lists the copper by id):\n` + hard.slice(0, 20).map((x) => `- ${x.code}${x.at ? ` at ${x.at.x.toFixed(2)}, ${x.at.y.toFixed(2)}` : ''}: ${x.message}`).join('\n'), true);
+          }
+        }
+        // the routed board's production files read back clean (FAB.*, kept beside the board's own checks): errors are fixed, not waived
+        if (draftBoard?.routed || draftBoard?.drawn) {
+          await this.routedBoard();
+          const fab = fabRefusal(await this.fab.settled());
+          if (fab) {
+            log('propose', false, `refused: ${fab.count} production-file finding(s)`);
+            return text(fab.text, true);
           }
         }
         // a routed board is routed completely, or the agent says why not
