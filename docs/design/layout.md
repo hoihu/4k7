@@ -75,6 +75,15 @@ Lower is better. Moving or turning a part and reading the numbers again tells th
 helped, before it spends a routing run on it. A move makes the routing out of date, so the board
 worker only places (fast) until the next `route`.
 
+**Test points** (`add_test_points { nets }`, 2026-11-21): one `generic:TP` per net (a bare 1.5 mm
+round SMD pad, `padOnly`: out of the BOM, the pick-and-place and the 3D view), named TP<n>,
+`TP_<net>` on the silkscreen in place of the refdes, attached (`belongs`) to the pin the net comes
+from: an output pin, else the input connector, else the inductor or diode feeding it, else an IC.
+`"rails"` is every supply net but ground (`isPowerNet`). A net with a test point already gets none.
+The guide has the agent add them on the rails by default. `generic:TP_LOOP` is a through-hole
+loop (a BOM part). Not yet: a bring-up sheet in the design document, test points on the bottom
+side for a fixture, keeping them reachable through an enclosure.
+
 ## 5. Routing to completion
 
 ### 5.1 The router
@@ -612,6 +621,9 @@ Each step is useful alone.
     (a spring to the pin, so the part is hugged there; that pin counts as taken for the guessed
     caps) and guesses the rest, never closing a circle; parents are placed before their parts
     (by depth, then size). `get_board` `belongs_to` shows `U1.12`, `U1.12 (guessed)` or `none`.
+    Since 2026-11-21 a part at a part that is itself at an IC (a test point at the buck's inductor)
+    is hugged after its parent, where the parent ends up, and a two-pin parent's pads under its
+    body (a power inductor's) count as its ends, not as balls under an IC, so the part goes beside it.
     A part the agent or the placer put somewhere goes to its new parent; one the user placed stays,
     kept relative to the new parent. `remove_constraint` goes back to the guess. The relation stays
     a mechanism (a dragged IC takes its parts along), but the agent decides it. Benches unchanged
@@ -762,6 +774,15 @@ yet", unless `propose open_connections` says why). Warnings are soft, the agent'
 `DRAW.DANGLING` (a track end meeting no copper of its net), `DRAW.ANGLE` (a piece off 45°, the
 short jog onto a pad aside), `DRC.VIA_IN_PAD` in a small part's land pattern (a via over another
 net's pad is a short anyway), `DRC.PLANE_VIAS`, `PLANE.SPLIT_CROSSING`, `DRC.ACID_TRAP`, `DRC.NECK`, `DRC.THERMAL_SPOKES`, silkscreen.
+
+**Shorts in `get_diagnostics`.** The board's copper-to-copper findings (`DRC.SHORT`, `DRC.CLEARANCE`:
+pads, tracks, vias and pours of two nets, a pad on no net counting as a net of its own) are also in
+`get_diagnostics`, from the copper where the board is routed or drawn (`routedNow`), else from the
+placement (pads that touch, `padShorts`). Through 0.6.1, `get_diagnostics` carried the schematic's
+and cross checks and the production files' read-back, not the board DRC: on a drawn board a land pattern
+edit (`set_footprint`) that moved an unconnected pad under a GND track, and two parts' pads touching,
+showed only as `FAB.SHORT`. Each message names both copper items (`U1.3 (not connected)`, `track t1
+(GND)`) and what to do: move or erase the drawn copper by id, else move the part or route again.
 
 Bench (`bench/drawn.ts`, the 128-part board of `bench/board.ts`, 3 clusters):
 

@@ -368,6 +368,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
       description:
         "Import a part into the user's library from its datasheet PDF (the app's datasheet import: pins, package, footprint, " +
         'decoupling, checked and cross-checked by a second independent pass). Takes a few minutes; the part is then in the library for add_part. ' +
+        'One import runs at a time: another one while it runs or waits for review is queued and starts by itself after it (settle a review with pending_import). ' +
         'Needs the local server.',
       input_schema: schemaOf(ImportPartInput),
     },

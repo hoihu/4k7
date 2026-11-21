@@ -46,7 +46,9 @@ export function copperDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
       const layers = pad.drill ? b.layers : pad.layers;
       const shape = padShape(pad);
       for (const layer of layers) {
-        items.push({ net: pad.netId ?? `nc:${p.refdes}.${pad.number}`, layer, shape, bb: [pad.x - pad.w / 2, pad.y - pad.h / 2, pad.x + pad.w / 2, pad.y + pad.h / 2], what: `${p.refdes}.${pad.number}`, part: p.refdes, track: false });
+        // (a pad on no net is its own: copper over it is a short in the files all the same)
+        const net = pad.netId ? (b.netNames[pad.netId] ?? pad.netId) : 'not connected';
+        items.push({ net: pad.netId ?? `nc:${p.refdes}.${pad.number}`, layer, shape, bb: [pad.x - pad.w / 2, pad.y - pad.h / 2, pad.x + pad.w / 2, pad.y + pad.h / 2], what: `${p.refdes}.${pad.number} (${net})`, part: p.refdes, track: false });
       }
     }
   }
@@ -107,12 +109,20 @@ export function copperDrc(b: BoardView, focus?: Set<string>): Diagnostic[] {
     out.push({
       code: gap <= 0 ? 'DRC.SHORT' : 'DRC.CLEARANCE',
       severity: 'error',
-      message: gap <= 0 ? `${A.what} touches ${B.what} on ${A.layer} (short).` : `${A.what} is ${gap.toFixed(2)} mm from ${B.what} on ${A.layer} (min ${c} mm).`,
+      message: (gap <= 0 ? `${A.what} touches ${B.what} on ${A.layer} (short).` : `${A.what} is ${gap.toFixed(2)} mm from ${B.what} on ${A.layer} (min ${c} mm).`) + copperFix(A, B),
       at,
       entities: [A.part, B.part, A.id, B.id].filter((x): x is string => !!x),
     });
   }
   return [...viaIssues, ...out];
+}
+
+/** What to do about two copper items too close: move the drawn copper, else the part or the routing. */
+function copperFix(A: CopperItem, B: CopperItem): string {
+  const ids = [A.id, B.id].filter((x): x is string => !!x);
+  if (ids.length) return ` Move ${ids.join(' or ')} clear (edit_copper move or via), or erase_copper ${ids.join(', ')} and draw it again round it.`;
+  const part = A.part ?? B.part;
+  return part ? ` Move ${part}, or route again.` : ' Route again.';
 }
 
 /**

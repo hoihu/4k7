@@ -2,6 +2,7 @@
   import type { ProjectFile } from '@4k7/schema';
   import { app } from '../../app.svelte.ts';
   import { disk } from '../../disk.svelte.ts';
+  import { projectIdOf } from '../../projectFile.ts';
   import Field from './Field.svelte';
   import Section from './Section.svelte';
 
@@ -50,13 +51,14 @@
     if (!f || !leave()) return;
     try {
       const text = await f.text();
-      const id = f.name.replace(/\.twd\.json$|\.json$/, '');
-      // the open project's own file may lag behind a save in flight, so its name is enough
-      const inFolder = id === app.projectId || (app.projects.some((p) => p.id === id) && (await disk.loadProject(id).catch(() => undefined)) === text);
+      const id = projectIdOf(f.name);
+      // the open project's own file may lag behind a save in flight, so its name is enough; the list may
+      // not show a file copied into the folder since, so the folder itself is asked
+      const inFolder = id === app.projectId || (await disk.loadProject(id).catch(() => undefined)) === text;
       if (inFolder) {
         if (id !== app.projectId && !(await app.openProject(id))) return;
       } else {
-        await app.importDesign(JSON.parse(text) as ProjectFile);
+        await app.importDesign(JSON.parse(text) as ProjectFile, id);
         app.flash(`Copied ${f.name} into the projects folder`);
       }
       app.view = 'sch';

@@ -77,7 +77,16 @@ the user's local Claude Code through the server, like the app chat.
    project from another computer) has its PDF downloaded by the server on first read
    (`POST /api/datasheets/fetch`, once per link) and kept like an imported one; when that file is
    not the one the part was imported from, the agent is told its page numbers may be off.
-8. **Changing a saved part**: `import_part` refuses a part already in the library. `design_edit` ops
+8. **One import at a time, the agent's queued**: the app has one import and one review. An
+   `import_part` for another part while one runs or waits for review is queued, not refused
+   (`apps/web/src/lib/importPart.ts`): the answer says what it waits behind (a review is settled with
+   `pending_import`, or by the user in Parts), and it starts by itself once that review is saved or
+   discarded, or when the agent asks again after the import ahead failed. Calling `import_part` again
+   with the same part number waits for it.
+   A datasheet link that does not give a PDF (judged by its first bytes, not the content type) fails
+   with the link, where it was redirected to and what came back (an HTML page and its title, the HTTP
+   status), so the agent can look for the direct PDF link.
+9. **Changing a saved part**: `import_part` refuses a part already in the library. `design_edit` ops
    on a component using it change the design's copy of its card, and once committed `adoptParts`
    takes a footprint (`set_footprint`), a pin arrangement (`set_symbol layout`) and pin descriptions
    (`set_pin_descriptions`) back to the library part. Pin descriptions are marked `customPinText` on
