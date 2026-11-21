@@ -110,6 +110,20 @@ export function standardPackage(name: string, pins = 2): PackageInfo | null {
       return led3535();
   }
   if (VCHIP[n]) return vchip(n);
+  return testPoint(n);
+}
+
+/**
+ * Test points: TP-1.0 / TP-1.5, a bare round SMD pad of that diameter (a silkscreen ring round it);
+ * TP-LOOP, the 1.0 mm hole of a miniature wire loop (Keystone 5000 series) in a 2 mm pad.
+ */
+function testPoint(n: string): PackageInfo | null {
+  const pad = /^TP[-_ ]?(1\.0|1\.5|1)(?:MM)?$/.exec(n);
+  if (pad) {
+    const d = Number(pad[1]);
+    return { name: `TP-${d.toFixed(1)}`, family: 'other', pins: 1, body_mm: [d + 0.6, d + 0.6], body_shape: 'round', height_mm: 0.05, pads: [{ number: '1', x: 0, y: 0, w: d, h: d, shape: 'round' }] };
+  }
+  if (n === 'TP-LOOP') return { name: 'TP-LOOP', family: 'other', pins: 1, body_mm: [2.6, 2.6], body_shape: 'round', height_mm: 8.4, pads: [{ number: '1', x: 0, y: 0, w: 2, h: 2, shape: 'round', drill: 1.0 }] };
   return null;
 }
 
@@ -287,6 +301,8 @@ export function packageOptions(card: PartCard): string[] {
       return ['SOD-323', 'SOD-123', 'SMA', 'SMB', 'DO-35', 'DO-41', 'DO-15', 'DO-201AD'];
     case 'generic:LED':
       return ['0402', '0603', '0805', '1206', 'LED-3535', 'LED-3mm', 'LED-5mm'];
+    case 'generic:TP':
+      return ['TP-1.5', 'TP-1.0'];
     default:
       return card.category === 'connector' ? [`HDR-1x${card.pins.length}`, `JST-XH-${card.pins.length}`] : [];
   }

@@ -18,6 +18,7 @@ import { impedanceDrc, pourGaps, resolveImpedance, ruleWidth } from './lines.ts'
 import { padOfPin, pin1Chamfer, placeMarks, polarityOf } from './marks.ts';
 import { panelTabDrc, panelView } from './panel.ts';
 import { CORNER, cornerAt, type Item, padNet, placeParts, rotate, settingsPlanes, swapped } from './placer.ts';
+import { testPointLabel } from './testpoints.ts';
 import { route, type RouteInput, type RouteProgress } from './router.ts';
 import { capsuleCuts } from './routepours.ts';
 
@@ -647,6 +648,7 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
   const body = { ...rect(it.fp.body.w, it.fp.body.h), ...(it.fp.body.round ? { round: true } : {}) };
   // the footprint's own chamfered corners (an electrolytic's + side), turned with the part; else pin 1's corner
   const own = it.fp.body.chamfer && !it.fp.body.round ? { size: it.fp.body.chamfer.size, corners: it.fp.body.chamfer.corners.map((c) => cornerAt(...rotate(...CORNER[c], it.rot))) } : null;
+  const silk = testPointLabel(d, it.comp, it.card);
   const chamfer = own ?? (marked && polarity !== 'unknown' && polarity?.kind === 'pin1' ? pin1Chamfer(body, marked) : null);
   return {
     componentId: it.comp.id,
@@ -659,6 +661,8 @@ function toPart(d: Design, it: Item, layers: CopperLayer[]): BoardPart {
     ...(it.comp.params.lcsc ? { lcsc: it.comp.params.lcsc } : {}),
     ...(it.comp.params.eurocircuits ? { eurocircuits: it.comp.params.eurocircuits } : {}),
     ...(it.comp.dnp ? { dnp: true as const } : {}),
+    ...(it.card.padOnly ? { padOnly: true as const } : {}),
+    ...(silk ? { silk } : {}),
     pkg: it.pkg,
     pkgInfo: it.info,
     x: r3(it.x),

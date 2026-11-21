@@ -930,6 +930,10 @@ export interface BoardPart {
   eurocircuits?: string;
   /** Do not populate (set_dnp): on the board with its pads and copper, but out of the BOM and the pick-and-place. */
   dnp?: true;
+  /** A bare pad, no part (its card's padOnly: an SMD test point): out of the BOM, the pick-and-place and the 3D view. */
+  padOnly?: true;
+  /** The text on the silkscreen in place of the refdes (a test point's TP_<net>). */
+  silk?: string;
   /** Package name ("0603", "SOIC-8", "LQFP100"). */
   pkg: string;
   /** Package data the footprint was built from (3D bodies come from the same). */
