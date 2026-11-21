@@ -262,6 +262,7 @@ export type ConstraintKind =
   | 'param'
   | 'layer'
   | 'arrangement'
+  | 'room'
   | 'position'
   | 'sch_position'
   | 'sch_block'
@@ -287,6 +288,13 @@ export interface Constraint {
   value?: string;
   /** For `near`: maximum distance in mm (board). */
   maxMm?: number;
+  /**
+   * For `room`: the block (`key`, its title in the description) keeps its parts inside this
+   * rectangle of the board: `xMm`/`yMm` its top-left corner, `wMm`/`hMm` its size (mm).
+   * See docs/design/layout.md §15.
+   */
+  wMm?: number;
+  hMm?: number;
   /**
    * For `position`: board position of `a` (centre, mm) and clockwise rotation (absent: the
    * placer picks it). Hard = locked there; soft = the user's choice, which the placer keeps but

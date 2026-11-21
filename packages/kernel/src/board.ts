@@ -83,6 +83,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     return k.part && !host ? [] : [placeKeepout(k, layers, host)];
   });
   const diagnostics = placementChecks(parts, w, h, rules.edgeClearance, { outline: { w, h }, cornerRadius: cornerR, shape }, boardCutouts);
+  diagnostics.push(...roomChecks(d, parts));
   // silkscreen graphics: wholly on the board (the real outline, not its box), and clear of parts?
   const outlineOf = { outline: { w, h }, cornerRadius: cornerR, shape };
   const outlineKey = JSON.stringify([w, h, cornerR, shape, boardCutouts]);
@@ -706,6 +707,39 @@ export function ratsnest(parts: BoardPart[], connected?: (netId: string, a: Boar
         }
       }
     }
+  }
+  return out;
+}
+
+/**
+ * DRC.ROOM: a block with a room whose parts' courtyards are not all inside it (the room too small,
+ * a part someone placed outside it), or a room whose block the description no longer has.
+ * See docs/design/layout.md §15.
+ */
+function roomChecks(d: Design, parts: BoardPart[]): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind !== 'room') continue;
+    const block = d.description?.blocks.find((b) => b.title === k.key);
+    if (!block) {
+      out.push({ code: 'DRC.ROOM', severity: 'warning', message: `Room ${k.id} is for block "${k.key}", which the description no longer has; give the block's new title a room (constrain room) or remove_constraint ${k.id}.`, entities: [k.id] });
+      continue;
+    }
+    const [x0, y0, x1, y1] = [k.xMm ?? 0, k.yMm ?? 0, (k.xMm ?? 0) + (k.wMm ?? 0), (k.yMm ?? 0) + (k.hMm ?? 0)];
+    const outside = block.components
+      .map((id) => parts.find((p) => p.componentId === id))
+      .filter((p): p is BoardPart => !!p)
+      .filter(({ courtyard: c }) => c.x < x0 - 1e-6 || c.y < y0 - 1e-6 || c.x + c.w > x1 + 1e-6 || c.y + c.h > y1 + 1e-6)
+      .map((p) => p.refdes)
+      .sort(natCmp);
+    if (!outside.length) continue;
+    out.push({
+      code: 'DRC.ROOM',
+      severity: 'warning',
+      message: `Block "${k.key}" keeps to a room of ${k.wMm} × ${k.hMm} mm at (${k.xMm}, ${k.yMm}) (${k.id}), but ${outside.join(', ')} ${outside.length === 1 ? 'is' : 'are'} outside it (no space left in it, or placed there by hand). Make the room bigger, move parts out of the block, or remove_constraint ${k.id}.`,
+      at: { x: (x0 + x1) / 2, y: (y0 + y1) / 2 },
+      entities: outside,
+    });
   }
   return out;
 }

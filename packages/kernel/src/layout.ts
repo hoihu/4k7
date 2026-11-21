@@ -2202,7 +2202,7 @@ export function evaluateConstraints(d: Design, sheets: SheetView[]): { status: S
       continue;
     }
     if (!['left_of', 'right_of', 'above', 'below'].includes(k.kind)) {
-      if (k.kind === 'near' || k.kind === 'layer') status[k.id] = 'not_applicable';
+      if (k.kind === 'near' || k.kind === 'layer' || k.kind === 'room') status[k.id] = 'not_applicable';
       continue;
     }
     const a = (k.aUnit && where.get(`${k.a}#${k.aUnit}`)) || where.get(k.a ?? '');

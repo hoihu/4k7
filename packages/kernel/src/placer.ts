@@ -15,6 +15,8 @@
  *  - `position` constraints (the place op, dragging) pin a part; the placer never moves it.
  *  - `layer` constraints put a part on the bottom side: its footprint is mirrored (seen from the
  *    top), its SMD pads are on B.Cu, and it shares the area with the SMD parts on the top side.
+ *  - `room` constraints keep a functional block's parts inside a rectangle of the board, as the
+ *    outline keeps every part on it (docs/design/layout.md §15).
  */
 import { type Footprint, footprintFor, isTwoPin, packageOf } from '@4k7/parts';
 import { type BoardPart, type BodyCorner, type Component, type Constraint, type CopperLayer, cutoutBounds, DEFAULT_BOARD, type Design, insidePolygon, type MountingHole, type PackageInfo, padHasPin, padPins, type PartCard, placeCutout, placeKeepout, type PlaneArea, type PlaneStyle, type SchematicView } from '@4k7/schema';
@@ -30,6 +32,14 @@ const STEADY_ROUNDS = 30;
 const NUDGE_MM = 3;
 
 const GRID_MM = 0.1;
+
+/** A block's room on the board (mm): its parts' courtyards stay inside. */
+interface Room {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
 
 export interface Item {
   comp: Component;
@@ -531,12 +541,24 @@ function placerInputs(d: Design, sch: SchematicView) {
   const bySize = [...items].sort((a, b) => depth(a) - depth(b) || b.fp.pads.length - a.fp.pads.length || natCmp(a.comp.refdes, b.comp.refdes));
   const anchorOf = (it: Item) => (it.intent?.rel ? byComp.get(it.intent.rel) : undefined);
 
-  return { settings, rules, layers, missing, items, stored, centre, pts, area, sx, sy, byComp, padsOf, padPos, nets, weight, declared, springs, near, parent, positions, depth, bySize, anchorOf };
+  /* ---- rooms: a functional block's parts keep inside its rectangle (docs/design/layout.md §15) ---- */
+  const rooms = new Map<Item, Room>();
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind !== 'room') continue;
+    const block = d.description?.blocks.find((b) => b.title === k.key);
+    const [x0, y0] = [k.xMm ?? 0, k.yMm ?? 0];
+    for (const id of block?.components ?? []) {
+      const it = byComp.get(id);
+      if (it) rooms.set(it, { x0, y0, x1: x0 + (k.wMm ?? 0), y1: y0 + (k.hMm ?? 0) });
+    }
+  }
+
+  return { settings, rules, layers, missing, items, stored, centre, pts, area, sx, sy, byComp, padsOf, padPos, nets, weight, declared, springs, near, parent, positions, depth, bySize, anchorOf, rooms };
 }
 
 /** What moves parts: into the outline, towards their nets, turned, apart. */
 function placerMoves(d: Design, inputs: ReturnType<typeof placerInputs>) {
-  const { settings, rules, layers, items, stored, byComp, padsOf, padPos, nets, weight, springs, near, parent, positions, bySize, anchorOf } = inputs;
+  const { settings, rules, layers, items, stored, byComp, padsOf, padPos, nets, weight, springs, near, parent, positions, bySize, anchorOf, rooms } = inputs;
   // a proposed board fitted round the arrangement moves it as a whole: the choices' place on it
   const applyLocks = () => {
     for (const k of positions) {
@@ -618,6 +640,30 @@ function placerMoves(d: Design, inputs: ReturnType<typeof placerInputs>) {
     it.x = Math.min(Math.max(it.x, r.l), frame.outline.w - r.r);
     it.y = Math.min(Math.max(it.y, r.t), frame.outline.h - r.b);
     if (shape) pushInside(it);
+    intoRoom(it);
+  };
+  /*
+   * Rooms: the parts of a block with a room keep their courtyard inside it, as the outline keeps
+   * them on the board (the room wins where the two disagree). Not a part someone placed (it stays
+   * where it was put), nor one the room had no space left for (legalize put it outside). Half a
+   * grid step to spare, for the snapping. DRC.ROOM reports what is outside.
+   */
+  const outOfRoom = new Set<Item>();
+  const roomOf = (it: Item) => (it.fixed || it.intent || outOfRoom.has(it) ? undefined : rooms.get(it));
+  const intoRoom = (it: Item) => {
+    const room = roomOf(it);
+    if (!room) return;
+    const e = extent(it);
+    const into = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.min(Math.max(v, lo), hi));
+    const s = GRID_MM / 2;
+    it.x = into(it.x, room.x0 + e.w / 2 + s, room.x1 - e.w / 2 - s);
+    it.y = into(it.y, room.y0 + e.h / 2 + s, room.y1 - e.h / 2 - s);
+  };
+  const inRoom = (it: Item, x: number, y: number) => {
+    const room = roomOf(it);
+    if (!room) return true;
+    const e = extent(it);
+    return x - e.w / 2 >= room.x0 - 1e-6 && y - e.h / 2 >= room.y0 - 1e-6 && x + e.w / 2 <= room.x1 + 1e-6 && y + e.h / 2 <= room.y1 + 1e-6;
   };
   /** Into a free-form outline: moved inwards (up the distance field) until the part keeps its distance from the edge (keepsIn). */
   const pushInside = (it: Item) => {
@@ -881,6 +927,7 @@ function placerMoves(d: Design, inputs: ReturnType<typeof placerInputs>) {
   const within = (it: Item, x: number, y: number) => {
     const r = reach(it);
     if (x < r.l - 1e-6 || y < r.t - 1e-6 || x > frame.outline.w - r.r + 1e-6 || y > frame.outline.h - r.b + 1e-6) return false;
+    if (!inRoom(it, x, y)) return false;
     return !shape || !keepsIn(it).some((p) => insidePolygon(shape, x + p.x, y + p.y) < p.need - 1e-6);
   };
   const fits = (it: Item, x: number, y: number) => {
@@ -904,24 +951,33 @@ function placerMoves(d: Design, inputs: ReturnType<typeof placerInputs>) {
     const maxR = Math.hypot(frame.outline.w, frame.outline.h);
     for (const it of todo) {
       if (!items.some((o) => o !== it && closer(it, o, SPACING - GRID_MM))) continue; // freed by an earlier move
-      search: for (let r = 0.5; r <= maxR; r += 0.5) {
-        const n = Math.max(8, Math.round((2 * Math.PI * r) / 0.5));
-        for (let k = 0; k < n; k++) {
-          const a = (2 * Math.PI * k) / n;
-          const x = snap(it.x + r * Math.cos(a));
-          const y = snap(it.y + r * Math.sin(a));
-          if (fits(it, x, y)) {
-            it.x = x;
-            it.y = y;
-            snapItem(it);
-            break search;
-          }
-        }
+      // (a room with no space left for the part: the nearest free spot outside it)
+      for (const room of roomOf(it) ? [true, false] : [false]) {
+        if (!room && rooms.has(it)) outOfRoom.add(it);
+        if (nearestFit(it, maxR)) break;
       }
     }
   };
+  /** The part to the nearest spot where it fits (rings round where it is); whether there was one. */
+  const nearestFit = (it: Item, maxR: number) => {
+    for (let r = 0.5; r <= maxR; r += 0.5) {
+      const n = Math.max(8, Math.round((2 * Math.PI * r) / 0.5));
+      for (let k = 0; k < n; k++) {
+        const a = (2 * Math.PI * k) / n;
+        const x = snap(it.x + r * Math.cos(a));
+        const y = snap(it.y + r * Math.sin(a));
+        if (fits(it, x, y)) {
+          it.x = x;
+          it.y = y;
+          snapItem(it);
+          return true;
+        }
+      }
+    }
+    return false;
+  };
 
-  return { applyLocks, applyIntents, margin, DENSITY, userSize, shape, frame, reach, contain, relax, satellites, hugCaps, fixedItems, orient, flipTwoPin, settle, within, legalize };
+  return { applyLocks, applyIntents, margin, DENSITY, userSize, shape, frame, reach, contain, intoRoom, relax, satellites, hugCaps, fixedItems, orient, flipTwoPin, settle, within, legalize };
 }
 
 /**
@@ -931,8 +987,8 @@ function placerMoves(d: Design, inputs: ReturnType<typeof placerInputs>) {
 export function placeParts(d: Design, sch: SchematicView) {
   const inputs = placerInputs(d, sch);
   const moves = placerMoves(d, inputs);
-  const { settings, rules, layers, missing, items, stored, centre, area, sx, sy, padsOf, padPos, nets, declared, springs, parent, positions, bySize } = inputs;
-  const { applyLocks, applyIntents, margin, DENSITY, userSize, shape, frame, reach, contain, relax, satellites, hugCaps, fixedItems, orient, flipTwoPin, settle, within, legalize } = moves;
+  const { settings, rules, layers, missing, items, stored, centre, area, sx, sy, padsOf, padPos, nets, declared, springs, parent, positions, bySize, rooms } = inputs;
+  const { applyLocks, applyIntents, margin, DENSITY, userSize, shape, frame, reach, contain, intoRoom, relax, satellites, hugCaps, fixedItems, orient, flipTwoPin, settle, within, legalize } = moves;
   // from a stored placement: the parts that moved (only they are flipped, see flipTwoPin)
   let flipOnly: Set<Item> | undefined;
   /*
@@ -1051,6 +1107,8 @@ export function placeParts(d: Design, sch: SchematicView) {
       }
       const bb1 = bounds(items);
       frame.outline = { w: Math.max(frame.outline.w, Math.ceil(bb1.x1 + margin)), h: Math.max(frame.outline.h, Math.ceil(bb1.y1 + margin)) };
+      // (and round the rooms, so a block's parts keep to their room on the board)
+      for (const room of rooms.values()) frame.outline = { w: Math.max(frame.outline.w, Math.ceil(room.x1)), h: Math.max(frame.outline.h, Math.ceil(room.y1)) };
     }
     frame.containing = true;
   } else {
@@ -1268,6 +1326,7 @@ export function placeParts(d: Design, sch: SchematicView) {
           const r = reach(it);
           it.x = Math.min(Math.max(it.x, r.l), w - r.r);
           it.y = Math.min(Math.max(it.y, r.t), h - r.b);
+          intoRoom(it);
         };
         for (const it of movable) inside(it);
       } else {

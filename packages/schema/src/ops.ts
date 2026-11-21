@@ -115,13 +115,18 @@ export const ClearSheetOp = z.object({
 export const ConstrainOp = z.object({
   op: z.literal('constrain'),
   kind: z
-    .enum(['left_of', 'right_of', 'above', 'below', 'near', 'param', 'layer', 'arrangement', 'note'])
-    .describe('layer: the board side a part is mounted on, a = the part, value "top" (the default) | "bottom"; SMD parts on opposite sides may share the same area (a cap under its IC). arrangement: how a recognised sub-circuit is drawn; a = one of its parts. Bridge rectifier diode: "diamond" (default) | "inline". Regulator IC: "power_flow" (default, datasheet style) | "compact". A two-pin part at an IC\'s or connector\'s pin (a pull-up, a series resistor, a filter cap): "up" (standing above the pin\'s wire, its far end on top) | "down" (hanging below it); the layout\'s guess otherwise, which stands a pull-up up unless a part below another pin is in the way. An IC or connector in a block: "mirrored" (its left pins on the right) | "unmirrored", over the layout\'s choice (it mirrors a part so its pins face the part they connect to)'),
+    .enum(['left_of', 'right_of', 'above', 'below', 'near', 'param', 'layer', 'arrangement', 'room', 'note'])
+    .describe('room: a functional block (block, its title as in describe) keeps its parts inside a rectangle of the board (rect), courtyards included; one room per block, a new one replaces it. layer: the board side a part is mounted on, a = the part, value "top" (the default) | "bottom"; SMD parts on opposite sides may share the same area (a cap under its IC). arrangement: how a recognised sub-circuit is drawn; a = one of its parts. Bridge rectifier diode: "diamond" (default) | "inline". Regulator IC: "power_flow" (default, datasheet style) | "compact". A two-pin part at an IC\'s or connector\'s pin (a pull-up, a series resistor, a filter cap): "up" (standing above the pin\'s wire, its far end on top) | "down" (hanging below it); the layout\'s guess otherwise, which stands a pull-up up unless a part below another pin is in the way. An IC or connector in a block: "mirrored" (its left pins on the right) | "unmirrored", over the layout\'s choice (it mirrors a part so its pins face the part they connect to)'),
   a: componentRef.optional().describe('Subject component; for left_of/right_of/above/below also one unit of a split symbol, e.g. "U3B"'),
   b: componentRef.optional().describe('Reference component (left_of/right_of/above/below/near), or a unit such as "U3A"'),
   key: z.string().optional().describe('param: parameter name; layer: omit'),
   value: z.string().optional().describe('param: required value; layer: "top"|"bottom"; arrangement: see kind; note: free text'),
   max_mm: z.number().positive().optional().describe('near: maximum distance on the board in mm'),
+  block: z.string().optional().describe('room: the functional block\'s title, as in the description (describe) and get_schematic'),
+  rect: z
+    .object({ x: z.number().describe('Left edge, mm from the board\'s left edge'), y: z.number().describe('Top edge, mm from the board\'s top edge'), w: z.number().positive(), h: z.number().positive() })
+    .optional()
+    .describe('room: the area on the board in mm (top-left corner, width, height)'),
   strength: z.enum(['hard', 'soft']).default('soft'),
   quote: z.string().optional().describe("The user's words this constraint comes from"),
 });

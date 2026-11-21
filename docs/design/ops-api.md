@@ -84,7 +84,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 
 ### Constraints
 
-- `constrain`: add a placement, parameter, layer, arrangement or note constraint (soft or hard).
+- `constrain`: add a placement, parameter, layer, arrangement, room (a functional block keeps its parts inside a rectangle of the board) or note constraint (soft or hard).
 - `remove_constraint`: remove a constraint (also takes back an `attach`).
 
 ### Board
