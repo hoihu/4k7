@@ -101,6 +101,12 @@ export const ProposeInput = z.object({
     .describe('Only if the enclosure script changed and its last render still has findings you could not fix: why, and what the user could decide. Without it propose refuses an enclosure that was not rendered or whose report has errors.'),
 });
 
+/** A numbered plan shown to the user before the work starts (the plan step, opt-in per project; docs/design/ai-loop.md §6). */
+export const ProposePlanInput = z.object({
+  steps: z.array(z.string().trim().min(3)).min(1).max(30).describe('The plan, one step per entry in the order you will do them (no numbers: the app numbers them)'),
+  summary: z.string().optional().describe('One line: what the plan builds, shown above the steps'),
+});
+
 export const WaitForReviewInput = z.object({
   timeout_s: z.number().int().min(5).max(600).default(120).describe('How long to wait before returning "still pending"'),
 });
@@ -294,6 +300,7 @@ export const TOOL_NAMES = {
   ask: 'ask_user',
   propose: 'propose',
   waitForReview: 'wait_for_review',
+  proposePlan: 'propose_plan',
 } as const;
 
 /** The sourcing tool, shared by the in-app agent and the MCP server. */
@@ -454,8 +461,15 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
         }]),
     ...(engine === 'cli'
       ? [{
+          name: TOOL_NAMES.proposePlan,
+          description:
+            'Show the user a numbered plan before you start (the plan step; only when get_context says plan_step: on, else it is ' +
+            'refused), then wait_for_review: the user accepts or rejects it, with a comment. Steps are short plain text, e.g. ' +
+            '"U1 TPS54331 buck, 12 V → 3.3 V, parts per datasheet §8.2" or "USB-C connector on the left board edge".',
+          input_schema: schemaOf(ProposePlanInput),
+        }, {
           name: TOOL_NAMES.waitForReview,
-          description: 'Block until the user accepts or rejects the proposed changeset (or the timeout passes).',
+          description: 'Block until the user accepts or rejects the proposed plan or changeset (or the timeout passes).',
           input_schema: schemaOf(WaitForReviewInput),
         }]
       : []),

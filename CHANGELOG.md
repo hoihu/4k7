@@ -8,6 +8,9 @@ and every pull request of a release are on its [GitHub release](https://github.c
 ### Design document
 
 - **The design document can be downloaded as a file.** Until now it only came out through the browser's print dialog, and where that dialog did not open or was closed by mistake there was no other way to get it. Now *Download ⤓*, next to *Design document (print / PDF)* in the Layout view's panel, saves it as one HTML file named after the project (`<project>-design.html`), with the 3D pictures of the board inside it. It opens in any browser, offline, and prints from there the same way, to paper or to PDF.
+### Agents
+
+- **An agent can show you its plan before a larger task** (Settings → General → Plan step, off by default, set per project). With a long run from Claude Code or another coding agent in a terminal, a wrong early choice used to surface only when you reviewed the finished work, for example a placement with the connector on the wrong side. Now, with the plan step on, the agent first posts a numbered plan in the chat for any task that adds more than about 10 parts. You accept or reject it, with an optional comment such as "USB on the right edge", and the agent starts only once you accept. The agent answering the in-app chat does not use it yet.
 
 ### Assembly
 

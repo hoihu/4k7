@@ -113,7 +113,7 @@ describe('one agent, two engines', () => {
     const design = ['design_query', 'design_edit', 'calc', 'import_part', 'sourcing', 'pending_import', 'artwork', 'read_datasheet', 'get_schematic_image', 'get_board_image', 'view_gerbers', 'render_enclosure'];
     expect(names('app')).toEqual([...design, 'view_attachment', 'ask_user']);
     expect(names('chat')).toEqual(['get_context', ...design, 'view_attachment', 'propose']);
-    expect(names('cli')).toEqual(['get_context', ...design, 'propose', 'wait_for_review']);
+    expect(names('cli')).toEqual(['get_context', ...design, 'propose', 'propose_plan', 'wait_for_review']);
     expect(SYSTEM_PROMPT).toContain(DESIGN_GUIDE);
     expect(MCP_INSTRUCTIONS).toContain(DESIGN_GUIDE);
   });

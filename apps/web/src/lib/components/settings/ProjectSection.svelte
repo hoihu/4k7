@@ -104,6 +104,16 @@
       {:else}The chat is not saved: it is gone when you open another project. Keep it to have the conversation that led to the design in its file.{/if}
     {/snippet}
   </Field>
+  <Field label="Plan step">
+    <div class="seg">
+      <button aria-pressed={!app.planStep} onclick={() => app.planStep && app.setPlanStep(false)}>Off</button>
+      <button aria-pressed={app.planStep} onclick={() => !app.planStep && app.setPlanStep(true)}>Plan first</button>
+    </div>
+    {#snippet hint()}
+      {#if app.planStep}A coding agent working from the terminal (MCP) shows its plan in the chat before a task that adds more than about 10 parts. You accept or reject it, with a comment, before it starts.
+      {:else}Agents start on a task right away. Turn this on to approve the plan of a larger task first, so a wrong choice comes up before the work is done.{/if}
+    {/snippet}
+  </Field>
   <Field label="Open" hint="Files from elsewhere are copied into the projects folder.">
     <button class="btn" onclick={() => fileInput?.click()}>Open file…</button>
     <input type="file" accept=".json,application/json" hidden bind:this={fileInput} onchange={openFile} />

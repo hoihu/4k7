@@ -297,7 +297,7 @@ Deviations (deliberate, to revisit):
 - **Kernel in TypeScript** (no Rust toolchain on the dev machine yet). It sits behind the same RPC/API in a Web Worker, so the Rust/WASM kernel can replace it without touching the agent or UI.
 - **Plain JSON project files** (`.twd.json`, written by the local server) instead of a CRDT. The CRDT comes with branching/collaboration.
 - **Counter-based ids** (`c_1a`) instead of ULIDs, for deterministic tests and diffs.
-- **Autonomy modes**: Auto and Review. Step mode (plan approval) is not built yet.
+- **Autonomy modes**: Auto and Review. Step mode is not built; its first piece is the opt-in plan step for agents working from a terminal (`propose_plan`, [ai-loop §6](design/ai-loop.md)): they show a numbered plan, and the user accepts or rejects it with a comment.
 
 Pulled forward from M4: the **local server** (`tools/server`), an MCP server that relays to the open tab, so an external agent on the user's own plan can drive the design through the same op catalogue and review flow.
 
