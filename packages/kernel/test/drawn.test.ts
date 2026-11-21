@@ -498,12 +498,42 @@ describe('suggest_moves', () => {
     expect(openOf(k.board(), netId(k, 'A'))).toEqual([]);
   });
 
+  it('tries the parts at an open connection when their neighbours stand closer than the placer spaces its own', () => {
+    // R1's pad walled in (as above), R3 and R4 0.1 mm either side of R1's courtyard (as the placer
+    // and the agent pack small parts): the screen used to keep them 0.3 mm apart, so nothing fitted
+    const k = new Kernel();
+    const r = (refdes: string) => ({ op: 'add_part', part: 'generic:R', refdes, params: { resistance: '1k' } });
+    ok(k, [r('R1'), r('R2'), r('R3'), r('R4'), { op: 'connect', pins: ['R1.1', 'R2.1'], net: 'A' }, { op: 'connect', pins: ['R1.2', 'R2.2'], net: 'B' }, { op: 'set_board', width_mm: 24, height_mm: 14 }]);
+    k.accept();
+    ok(k, [{ op: 'place', ref: 'R1', x_mm: 10, y_mm: 7, rot: 0 }, { op: 'place', ref: 'R2', x_mm: 19, y_mm: 7, rot: 0 }]);
+    const w = k.board().parts.find((p) => p.refdes === 'R1')!.courtyard.w;
+    ok(k, [{ op: 'place', ref: 'R3', x_mm: 10 - w - 0.1, y_mm: 7, rot: 0 }, { op: 'place', ref: 'R4', x_mm: 10 + w + 0.1, y_mm: 7, rot: 0 }, { op: 'set_copper_mode', mode: 'drawn', keep: false }]);
+    const p = pad(k.board(), 'R1', '1');
+    const [x0, y0, x1, y1] = [p.x - p.w / 2 - 0.36, p.y - p.h / 2 - 0.36, p.x + p.w / 2 + 0.36, p.y + p.h / 2 + 0.36];
+    ok(k, [{ op: 'draw_track', net: 'B', from: [x0, y0], to: [x0, y0], via: [[x1, y0], [x1, y1], [x0, y1]], width_mm: 0.25 }]);
+    const b = k.board();
+    expect(b.diagnostics.filter((x) => x.code === 'DRC.COURTYARD_OVERLAP')).toEqual([]);
+    expect(openOf(b, netId(k, 'A')).length).toBeGreaterThan(0);
+    const s = k.query({ op: 'suggest_moves' }) as { suggestions: { change: string; apply: { ref: string }[]; closes: number; then?: unknown }[]; tried: number; parts_tried: string[] };
+    expect(s.parts_tried).toContain('R1');
+    expect(s.tried, JSON.stringify(s)).toBeGreaterThan(0);
+    const best = s.suggestions[0];
+    expect(best?.apply.map((o) => o.ref), JSON.stringify(s)).toContain('R1');
+    expect(best!.closes).toBeGreaterThan(0);
+    // applied, with the route it names: A connects
+    ok(k, [...(best!.apply as never[]), best!.then as never]);
+    expect(openOf(k.board(), netId(k, 'A'))).toEqual([]);
+  });
+
   it('asks to route first, and leaves main parts alone', () => {
     const k = buck();
     expect(k.query({ op: 'suggest_moves' })).toEqual({ error: 'Route first: a suggestion is measured by how the board routes with and without it.' });
     ok(k, [{ op: 'set_copper_mode', mode: 'drawn', keep: false }]);
-    const s = k.query({ op: 'suggest_moves', parts: ['U1'] }) as { suggestions: unknown[]; not_moved: string[] };
+    const s = k.query({ op: 'suggest_moves', parts: ['U1'] }) as { suggestions: unknown[]; not_moved: string[]; tried: number; note: string };
     expect(s.suggestions).toEqual([]);
     expect(s.not_moved).toEqual(['U1']);
+    // nothing tried: it says which parts stay and why
+    expect(s.tried).toBe(0);
+    expect(s.note).toMatch(/^Nothing tried: .*the parts here stay: U1 \(a main part\)/);
   });
 });

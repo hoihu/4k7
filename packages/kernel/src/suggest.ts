@@ -23,6 +23,12 @@ import { route } from './router.ts';
 /** Shifts tried (mm), each way along x and y. */
 const SHIFTS = [0.5, 1];
 const TURNS = [90, 180, 270];
+/**
+ * Then, behind those: a longer shift, diagonally, turned as well. On a packed board the small
+ * parts stand closer to each other than a short shift clears, and room is left only one way.
+ */
+const FAR_SHIFTS = [0.5, 1, 2];
+const WAYS = [[-1, 0, 'left'], [1, 0, 'right'], [0, -1, 'up'], [0, 1, 'down'], [-1, -1, 'up-left'], [1, -1, 'up-right'], [-1, 1, 'down-left'], [1, 1, 'down-right']] as const;
 /** An identical part this close (mm, centre to centre) is tried swapped. */
 const TWIN_MM = 6;
 /** Parts this close (mm) to a spot the agent names are tried. */
@@ -34,11 +40,15 @@ const PASSES = 3;
 const TRY_MS = 800;
 /** Tries routed (the best screened), and all of it together (ms). */
 const ROUTED = 12;
+/** Of those, kept for the far tries when there are any. */
+const FAR_ROUTED = 4;
 const TOTAL_MS = 15_000;
 /** A try may tangle the ratsnest this much (screen cost: 4 × crossings + mm + 8 × congestion mm) and still be routed: room for a path can cost a little. */
 const WORSE = 6;
 /** Open connections whose parts are tried when none are named. */
 const SPOTS = 4;
+/** Other parts the placer may move along with a try (followers, a nudge) for it to be routed. */
+const SPREAD = 3;
 /** Placement findings a try must not add (parts overlapping, off the board). */
 const PLACEMENT_CODES = new Set(['DRC.COURTYARD_OVERLAP', 'DRC.OFF_BOARD', 'DRC.EDGE_CLEARANCE', 'DRC.CUTOUT_OVERLAP']);
 
@@ -92,11 +102,14 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
   const parts = named.map((r) => byRef.get(r)).filter((p): p is BoardPart => !!p && movable(p));
   const skipped = named.filter((r) => byRef.has(r) && !movable(byRef.get(r)!));
   const why = 'main parts, connectors, locked parts and what the user placed stay';
-  if (!parts.length) return { open_now: cur.unrouted.length, suggestions: [], ...(skipped.length ? { not_moved: skipped } : {}), note: `No small part here that the placement may change (${why}). Move a main part on purpose, or compare arrangements with try_placements.` };
+  // each part that stays, and why: what the agent can act on
+  const stays = (p: BoardPart) => (p.locked ? 'locked' : user.has(p.refdes) ? 'placed by the user' : matingOf(p.pkgInfo) ? 'a connector' : 'a main part');
+  const kept = [...new Set(skipped.map((r) => stays(byRef.get(r)!)))].map((k) => `${skipped.filter((r) => stays(byRef.get(r)!) === k).join(', ')} (${k})`).join('; ');
+  if (!parts.length) return { open_now: cur.unrouted.length, tried: 0, suggestions: [], ...(skipped.length ? { not_moved: skipped } : {}), note: `Nothing tried: no small part here that the placement may change${kept ? `; the parts here stay: ${kept}` : ''}. Name other parts (parts) or a spot (at), move a main part on purpose, or compare arrangements with try_placements.` };
 
   // the tries: turned, swapped with a twin, shifted
   const at = (p: BoardPart, x: number, y: number, rot: number): Place => ({ op: 'place', ref: p.refdes, x_mm: r3(x), y_mm: r3(y), rot: (((rot % 360) + 360) % 360) as 0 | 90 | 180 | 270 });
-  const tries: { change: string; ops: Place[]; cost: number }[] = [];
+  const tries: { change: string; ops: Place[]; cost: number; far?: true }[] = [];
   for (const p of parts) {
     for (const t of TURNS) tries.push({ change: `${p.refdes} turned to ${(p.rot + t) % 360}°`, ops: [at(p, p.x, p.y, p.rot + t)], cost: 0 });
     for (const o of cur.parts) {
@@ -104,15 +117,25 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
       if (tries.some((t) => t.change === `${o.refdes} and ${p.refdes} swapped`)) continue;
       tries.push({ change: `${p.refdes} and ${o.refdes} swapped`, ops: [at(p, o.x, o.y, o.rot), at(o, p.x, p.y, p.rot)], cost: 0 });
     }
-    for (const s of SHIFTS) {
-      for (const [dx, dy, way] of [[-s, 0, 'left'], [s, 0, 'right'], [0, -s, 'up'], [0, s, 'down']] as const) tries.push({ change: `${p.refdes} ${s} mm ${way}`, ops: [at(p, p.x + dx, p.y + dy, p.rot)], cost: 0 });
+    for (const t of [0, ...TURNS]) {
+      for (const s of FAR_SHIFTS) {
+        for (const [dx, dy, way] of WAYS) {
+          const near = !t && !(dx && dy) && SHIFTS.includes(s);
+          tries.push({ change: `${p.refdes} ${s} mm ${way}${t ? `, turned to ${(p.rot + t) % 360}°` : ''}`, ops: [at(p, p.x + dx * s, p.y + dy * s, p.rot + t)], cost: 0, ...(near ? {} : { far: true as const }) });
+        }
+      }
     }
   }
   // screened on the ratsnest model: it must fit; the least tangling are routed
   const base = placeBoard(d, sch);
   const planeNets = new Set(base.planes.filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu' && !pl.area).map((pl) => pl.netId));
   const costs = screenMoves(base, planeNets, 1.5 + base.rules.edgeClearance, tries.map((t) => t.ops.map((o) => ({ refdes: o.ref, x: o.x_mm, y: o.y_mm, rot: o.rot! }))));
-  const screened = tries.flatMap((t, i) => (costs[i] === null || costs[i]! > WORSE ? [] : [{ ...t, cost: costs[i]! }])).sort((a, b) => a.cost - b.cost);
+  const fit = tries.flatMap((t, i) => (costs[i] === null || costs[i]! > WORSE ? [] : [{ ...t, cost: costs[i]! }])).sort((a, b) => a.cost - b.cost);
+  // the small changes routed first, with room kept for the best far ones
+  const near = fit.filter((t) => !t.far);
+  const far = fit.filter((t) => t.far);
+  const first = ROUTED - Math.min(far.length, FAR_ROUTED);
+  const screened = [...near.slice(0, first), ...far.slice(0, FAR_ROUTED), ...near.slice(first), ...far.slice(FAR_ROUTED)];
 
   const problems = (b: BoardView) => b.diagnostics.filter((x) => !x.waivedBy && PLACEMENT_CODES.has(x.code)).length;
   const problemsNow = problems(base);
@@ -155,10 +178,14 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
     return r;
   };
 
-  const found: { change: string; apply: Place[]; closes: number; open: number; errors: number; moved: string[]; nets: string[]; mm: number; vias: number }[] = [];
+  const found: { change: string; apply: Place[]; far: boolean; closes: number; open: number; errors: number; moved: string[]; nets: string[]; mm: number; vias: number }[] = [];
   let tried = 0;
+  let clashed = 0;
+  let spread = 0;
+  let looked = 0;
   for (const t of screened) {
     if (tried >= ROUTED || Date.now() - t0 > TOTAL_MS) break;
+    looked++;
     const w = clone(d);
     const followed: string[] = [];
     try {
@@ -172,13 +199,22 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
       throw e;
     }
     const b = placeBoard(w, sch);
-    if (problems(b) > problemsNow) continue; // overlaps a part, or off the board, as the placer places it
+    if (problems(b) > problemsNow) {
+      clashed++;
+      continue; // overlaps a part, or off the board, as the placer places it
+    }
     // the parts the change moved (the placer may nudge one more)
     const moved = b.parts.filter((p) => {
       const o = byRef.get(p.refdes);
       return !o || o.x !== p.x || o.y !== p.y || o.rot !== p.rot;
     });
     if (!moved.length) continue;
+    // the placer moved many more round it (a placement not settled): not a small change, and its
+    // rip-up would be most of the board, a trial routing that eats the budget of many
+    if (moved.length - t.ops.length > SPREAD) {
+      spread++;
+      continue;
+    }
     tried++;
     // router copper of other nets that the moved pads now meet: taken up and routed again too (as route would)
     const over = new Set<object>();
@@ -202,17 +238,23 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
     const errors = drawn ? checkCopper(w, new Set(followed)).filter((x) => x.severity === 'error').length - checkCopper(d, new Set(followed)).filter((x) => x.severity === 'error').length : 0;
     const closes = r0.open - r.open;
     if (closes - Math.max(0, errors) <= 0) continue;
-    found.push({ change: t.change, apply: t.ops, closes, open: r.open, errors, moved: moved.map((p) => p.refdes).filter((x) => !t.ops.some((o) => o.ref === x)), nets: [...r.nets].map(name), mm: Math.round(r.mm * 10) / 10, vias: r.vias });
+    found.push({ change: t.change, apply: t.ops, far: !!t.far, closes, open: r.open, errors, moved: moved.map((p) => p.refdes).filter((x) => !t.ops.some((o) => o.ref === x)), nets: [...r.nets].map(name), mm: Math.round(r.mm * 10) / 10, vias: r.vias });
   }
-  found.sort((a, b) => b.closes - Math.max(0, b.errors) - (a.closes - Math.max(0, a.errors)) || a.moved.length - b.moved.length || a.vias - b.vias || a.mm - b.mm);
+  found.sort((a, b) => b.closes - Math.max(0, b.errors) - (a.closes - Math.max(0, a.errors)) || a.moved.length - b.moved.length || +a.far - +b.far || a.vias - b.vias || a.mm - b.mm);
   // routing alone (no change) closes some: then route first
   const alone = Math.max(0, ...[...baselines.values()].map((r) => cur.unrouted.length - r.open));
+  const tangled = costs.filter((c) => c !== null && c > WORSE).length;
+  // nothing routed: why, so the agent can act on it
+  const placed = [clashed && `${clashed} overlap a part or the edge as the placer then places them`, spread && `${spread} make the placer move more than ${SPREAD} other parts (the placement is not settled: fix its overlaps first, or place the parts here yourself)`].filter(Boolean).join('; ');
+  const noRoom = !screened.length
+    ? `none of the ${tries.length} turns and shifts of ${parts.map((p) => p.refdes).join(', ')} fits (${tries.length - tangled} overlap a neighbour or come nearer the edge than ${base.rules.edgeClearance} mm${tangled ? `, ${tangled} tangle the ratsnest` : ''}): there is no room round them`
+    : `of the ${screened.length} that fit on the model, ${placed || 'none moves a part'}${looked < screened.length ? ` (time ran out after ${looked}: placing this board is slow)` : ''}`;
   return {
     open_now: cur.unrouted.length,
     tried,
-    screened: `${screened.length} of ${tries.length} tries fit and do not tangle the ratsnest; the best ${tried} routed`,
+    screened: `${screened.length} of ${tries.length} tries fit and do not tangle the ratsnest; the best ${tried} routed${spread ? ` (${spread} skipped: the placer moved more than ${SPREAD} other parts with them)` : ''}`,
     parts_tried: parts.map((p) => p.refdes),
-    ...(skipped.length ? { not_moved: skipped, why_not: why } : {}),
+    ...(skipped.length ? { not_moved: skipped, why_not: `${why}: ${kept}` } : {}),
     ...(alone ? { routing_alone: `routing these nets again, with no change, closes ${alone} connection(s): ${drawn ? 'route them (the helper) or draw them' : 'route again'} first` } : {}),
     suggestions: found.slice(0, q.max ?? 5).map((f) => ({
       change: f.change,
@@ -226,6 +268,6 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
     })),
     note: found.length
       ? `Each was routed for the nets it touches round the rest of the copper and measured against those nets routed again without it. Apply one with design_edit (its apply ops${drawn ? '; the copper by the part follows it, then route the nets in then, or draw them' : ', then route'}) and look at the spot again.`
-      : `No small change here closes a connection (${tried} routed). Move a main part on purpose (try_placements compares arrangements), give the area more room, or ${drawn ? 'draw round it on the other layer' : 'try 4 layers'}.`,
+      : `${tried ? `No small change here closes a connection (${tried} routed)` : `Nothing could be tried: ${noRoom}`}. Move a main part on purpose (try_placements compares arrangements), give the area more room, or ${drawn ? 'draw round it on the other layer' : 'try 4 layers'}.`,
   };
 }
