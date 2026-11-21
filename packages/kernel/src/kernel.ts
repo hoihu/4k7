@@ -497,12 +497,17 @@ export class Kernel {
         const routedNow = this.routedNow(d);
         const checked = routedNow ? (routedNow.current ?? currentCheck(d, routedNow)).nets.find((x) => x.netId === n.id) : undefined;
         const current = {
-          status: !amps ? 'unknown' : !routedNow ? 'not checked: not routed yet' : (checked?.status ?? 'no copper yet'),
+          status: !amps && !checked ? 'unknown' : !routedNow ? 'not checked: not routed yet' : (checked?.status ?? 'no copper yet'),
+          ...(checked && checked.status !== 'unknown' ? { basis: checked.basis } : {}),
           ...(checked?.worst !== undefined ? { worst_ratio: checked.worst } : {}),
+          ...(checked?.loads !== undefined ? { loads_a: checked.loads } : {}),
+          ...(checked?.unplaced !== undefined ? { unplaced_a: checked.unplaced } : {}),
           rise_c: rise,
-          note: !amps
+          note: !amps && !checked
             ? 'No max_current: the current check cannot tell whether its copper carries its current. Set it on a net that carries real current.'
-            : 'Every track and every via that is the only way between two layers is checked for all of max_current (unverified: some copper carries less; whether that much flows there is not known). get_current_map lists the pieces.',
+            : checked?.basis === 'split'
+              ? 'Split: each track and via is checked for its share of the loads stated (set_net loads), plus what of max_current no load places (over: too small for its share). get_current_map lists the pieces.'
+              : `Every track and every via that is the only way between two layers is checked for all of max_current (unverified: some copper carries less; whether that much flows there is not known: say what the pins draw with set_net loads).${checked?.why ? ` Loads not split: ${checked.why}.` : ''} get_current_map lists the pieces.`,
         };
         // the vias its pads drop onto its plane with: one each, those the agent placed (add_vias drop)
         const perVia = viaCurrentFor(rules.viaDrill);

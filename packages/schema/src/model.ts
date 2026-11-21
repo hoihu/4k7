@@ -172,6 +172,13 @@ export interface NetAttrs {
   power?: boolean;
   /** Expected maximum current in amps. */
   maxCurrent?: number;
+  /**
+   * What the net's pins draw (set_net loads), from the datasheets: the current check splits the
+   * net's current over its copper from these (docs/design/layout.md §14). A load names a component
+   * and the numbers of its pins on this net (a pin name like VDD on several pins: all of them, the
+   * current shared between them).
+   */
+  loads?: NetLoad[];
   /** Track width on the board (mm), the user's choice; absent: the signal or power width of the rules. */
   trackWidth?: number;
   /**
@@ -183,6 +190,13 @@ export interface NetAttrs {
   routeFirst?: boolean;
   /** The copper layer its tracks should keep to on the board: a cost on the others, not a ban. */
   layer?: 'F.Cu' | 'In1.Cu' | 'In2.Cu' | 'B.Cu';
+}
+
+export interface NetLoad {
+  componentId: string;
+  /** Pin numbers. */
+  pins: string[];
+  amps: number;
 }
 
 /**

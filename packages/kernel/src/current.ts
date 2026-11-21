@@ -6,8 +6,9 @@
  * docs/design/layout.md §14.
  */
 import { COPPER_ORDER, padPins, trackCurrentFor, trackRiseFor, trackWidthFor, viaCurrentFor } from '@4k7/schema';
-import type { BoardPad, BoardPart, BoardRules, BoardView, CopperLayer, CurrentTrack, CurrentView, CurrentVias, Design, Diagnostic, EditOp, QueryOp, Track } from '@4k7/schema';
-import { cardOf, isPowerNet } from './doc.ts';
+import type { BoardPad, BoardPart, BoardRules, BoardView, CopperLayer, CurrentBasis, CurrentStatus, CurrentTrack, CurrentView, CurrentVias, Design, Diagnostic, EditOp, NetLoad, QueryOp, Track } from '@4k7/schema';
+import { cardOf, isGroundNet, isPowerNet } from './doc.ts';
+import { powerSources } from './power.ts';
 import { idOf, pointSegDist, segmentsOf, segSegDist } from './geom.ts';
 import { padPointDist, padSegDist } from './keep.ts';
 
@@ -102,33 +103,122 @@ function sourcePads(d: Design): (part: BoardPart, pad: BoardPad) => boolean {
   };
 }
 
-/** The current check of the board's copper against its nets' max_current (BoardView.current of a routed board: layoutBoard works it out once). */
+/** The current a piece is checked for, and what follows: its status against its capacity. */
+type Share = { amps: number; basis: CurrentBasis; split?: number; dropMv?: number };
+const statusOf = (s: Share, capacity: number): CurrentStatus => ((s.split ?? (s.basis === 'split' ? s.amps : 0)) > capacity ? 'over' : s.amps > capacity ? 'unverified' : 'ok');
+
+/** The current check of the board's copper against its nets' max_current and loads (BoardView.current of a routed board: layoutBoard works it out once). */
 export function currentCheck(d: Design, b: BoardView): CurrentCheck {
   const riseC = currentRise(b.rules);
   const copperUm = layerCopper(b);
   const out: CurrentCheck = { riseC, copperUm, nets: [], tracks: [], vias: [] };
   if (!b.tracks.length && !b.vias.length && !b.zones.length) return out;
   const isSource = sourcePads(d);
+  const sources = powerSources(d);
   const has = new Set<string>([...b.tracks.map((t) => t.netId), ...b.vias.map((v) => v.netId), ...b.zones.filter((z) => !z.floating).map((z) => z.netId)]);
+  // GND without a max_current of its own: the sum of the rails', when every rail with copper has one
+  const rails = Object.values(d.nets).filter((n) => isPowerNet(n) && !isGroundNet(n));
+  const railSum = rails.some((n) => has.has(n.id)) && rails.every((n) => !has.has(n.id) || (n.attrs.maxCurrent ?? 0) > 0) ? rails.reduce((s, n) => s + (n.attrs.maxCurrent ?? 0), 0) : undefined;
   for (const n of Object.values(d.nets)) {
     if (!has.has(n.id)) continue;
-    const amps = n.attrs.maxCurrent && n.attrs.maxCurrent > 0 ? n.attrs.maxCurrent : undefined;
+    const own = n.attrs.maxCurrent && n.attrs.maxCurrent > 0 ? n.attrs.maxCurrent : undefined;
+    const fromRails = !own && isGroundNet(n) && railSum ? railSum : undefined;
+    const stated = netLoads(d, b, n.id);
+    const statedSum = stated.reduce((s, l) => s + l.amps, 0);
+    const amps = own ?? fromRails ?? (statedSum > 0 ? statedSum : undefined);
     if (!amps) {
       if (isPowerNet(n)) out.nets.push({ netId: n.id, name: n.name, basis: 'unknown', status: 'unknown' });
       continue;
     }
-    const tracks = netTracks(b, n.id, amps, riseC, copperUm);
-    const vias = netVias(b, n.id, amps, riseC, isSource);
+    const cu = netCopper(b, n.id);
+    // the split, where the loads are stated and the current comes in at one place
+    let split: ReturnType<typeof solveSplit> | undefined;
+    let why: string | undefined;
+    if (stated.length) {
+      const src = sources.get(n.id) ?? [];
+      const at = src.length === 1 ? cu.pads.flatMap(({ part, pad }, i) => (part.componentId === src[0]!.componentId && padPins(pad).some((x) => src[0]!.pins.includes(x)) ? [i] : [])) : [];
+      if (src.length > 1) why = `it has ${src.length} sources (${src.map((s) => d.components[s.componentId]?.refdes ?? s.componentId).join(', ')}) and how its current divides between them is not known`;
+      else if (!src.length) why = 'no source found (a pwr_out pin, a connector on an external net, or an inductor, ferrite, fuse or diode from a rail nearer the supply)';
+      else if (!at.length) why = 'its source is not on the board';
+      else split = solveSplit(b, cu, copperUm, at, stated.map((l) => ({ pads: cu.pads.flatMap(({ part, pad }, i) => (part.componentId === l.componentId && padPins(pad).some((x) => l.pins.includes(x.toUpperCase()) || l.pins.includes(x)) ? [i] : [])), amps: l.amps })));
+    }
+    // what no stated load the copper reaches places: it may flow anywhere
+    const rest = split ? Math.max(0, amps - split.placed) : 0;
+    const share = (s: number, dropMv?: number): Share => ({ amps: s + rest, basis: 'split', ...(rest > 1e-9 ? { split: s } : {}), ...(dropMv !== undefined ? { dropMv } : {}) });
+    const tracks = netTracks(b, n.id, riseC, copperUm, (ti) => (split ? share(split.trackAmps[cu.trackIndex.indexOf(ti)]!, split.trackDrop[cu.trackIndex.indexOf(ti)]) : { amps, basis: 'bound' }));
+    const vias: CurrentVias[] = [];
+    for (const g of netVias(cu, isSource)) {
+      const crossing = split ? g.vias.reduce((s, v) => s + split!.viaAmps[v]!, 0) : 0;
+      // bound: only a cut; split: a cut for its share and the rest, another group for its share alone
+      if (!g.cut && (!split || crossing < 1e-6)) continue;
+      const sh: Share = !split ? { amps, basis: 'bound' } : g.cut ? share(crossing) : { amps: crossing, basis: 'split' };
+      const per = viaCurrentFor(g.drill, riseC, VIA_PLATING_UM);
+      const capacity = g.vias.length * per;
+      vias.push({
+        netId: n.id,
+        at: g.at,
+        vias: g.vias.length,
+        drill: g.drill,
+        ids: g.ids,
+        layers: g.layers,
+        amps: sh.amps,
+        basis: sh.basis,
+        ...(sh.split !== undefined ? { split: sh.split } : {}),
+        status: statusOf(sh, capacity),
+        ...(g.cut ? {} : { shared: true }),
+        capacity,
+        ratio: sh.amps / capacity,
+        needs: Math.max(1, Math.ceil(sh.amps / per - 1e-6)),
+      });
+    }
     out.tracks.push(...tracks);
     out.vias.push(...vias);
-    const worst = Math.max(0, ...tracks.map((t) => t.ratio), ...vias.map((v) => v.ratio));
-    out.nets.push({ netId: n.id, name: n.name, amps, basis: 'bound', status: worst > 1 ? 'unverified' : 'ok', ...(worst > 0 ? { worst: r2(worst) } : {}) });
+    const all = [...tracks, ...vias];
+    const worst = Math.max(0, ...all.map((t) => t.ratio));
+    const status: CurrentStatus = all.some((t) => t.status === 'over') ? 'over' : all.some((t) => t.status === 'unverified') ? 'unverified' : 'ok';
+    out.nets.push({
+      netId: n.id,
+      name: n.name,
+      amps,
+      ...(fromRails ? { fromRails: true } : {}),
+      basis: split ? 'split' : 'bound',
+      status,
+      ...(worst > 0 ? { worst: r2(worst) } : {}),
+      ...(split ? { loads: r3(split.placed), ...(rest > 1e-9 ? { unplaced: r3(rest) } : {}), dropMv: r2(split.dropMv) } : {}),
+      ...(why ? { why } : {}),
+    });
   }
   return out;
 }
 
-/** The tracks of a net checked for its whole current; a piece inside the net's own pour on its layer, or a short one, is left out. */
-function netTracks(b: BoardView, netId: string, amps: number, riseC: number, copperUm: Partial<Record<CopperLayer, number>>): CurrentTrack[] {
+const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/**
+ * The loads stated on a net: set_net loads, and each pad with add_vias drop amps (its current
+ * through the pad) that no stated load names already (the stated one wins). Loads of a part or pin
+ * no longer on the net are left out.
+ */
+function netLoads(d: Design, b: BoardView, netId: string): NetLoad[] {
+  const net = d.nets[netId];
+  const out: NetLoad[] = [];
+  for (const l of net?.attrs.loads ?? []) {
+    const c = d.components[l.componentId];
+    const pins = c ? l.pins.filter((p) => c.pins[p] === netId) : [];
+    if (pins.length) out.push({ ...l, pins });
+  }
+  for (const g of d.board?.vias ?? []) {
+    if (g.kind !== 'drop' || g.netId !== netId || !g.amps || !g.pad) continue;
+    const part = b.parts.find((p) => p.componentId === g.pad!.componentId);
+    const pad = part?.pads.find((p) => p.number === g.pad!.number);
+    const pins = pad ? padPins(pad) : [g.pad.number];
+    if (out.some((l) => l.componentId === g.pad!.componentId && l.pins.some((p) => pins.includes(p)))) continue;
+    out.push({ componentId: g.pad.componentId, pins, amps: g.amps });
+  }
+  return out;
+}
+
+/** The tracks of a net checked for their current; a piece inside the net's own pour on its layer, or a short one, is left out. */
+function netTracks(b: BoardView, netId: string, riseC: number, copperUm: Partial<Record<CopperLayer, number>>, shareOf: (index: number) => Share): CurrentTrack[] {
   const out: CurrentTrack[] = [];
   const zones = b.zones.filter((z) => z.netId === netId);
   const pads = b.parts.flatMap((p) => p.pads.filter((q) => q.netId === netId).map((q) => ({ ref: `${p.refdes}.${q.number}`, pad: q })));
@@ -143,6 +233,8 @@ function netTracks(b: BoardView, netId: string, amps: number, riseC: number, cop
     const end = (x: number, y: number) => pads.find(({ pad }) => (pad.drill || pad.layers.includes(t.layer)) && padPointDist(pad, x, y) <= EPS)?.ref;
     const [from, to] = [end(t.pts[0]!, t.pts[1]!), end(t.pts.at(-2)!, t.pts.at(-1)!)];
     const id = idOf(t);
+    const sh = shareOf(index);
+    const amps = sh.amps;
     out.push({
       netId,
       index,
@@ -152,9 +244,12 @@ function netTracks(b: BoardView, netId: string, amps: number, riseC: number, cop
       length: r2(length),
       copperUm: cu,
       amps,
-      basis: 'bound',
+      basis: sh.basis,
+      ...(sh.split !== undefined ? { split: sh.split } : {}),
+      status: statusOf(sh, capacity),
       capacity,
       ratio: amps / capacity,
+      ...(sh.dropMv !== undefined ? { dropMv: r2(sh.dropMv) } : {}),
       rise: trackRiseFor(amps, t.width, cu),
       needs: trackWidthFor(amps, riseC, cu),
       at: { x: r2(t.pts[0]!), y: r2(t.pts[1]!) },
@@ -181,44 +276,95 @@ function inOwnPour(t: Track, zones: BoardView['zones']): boolean {
   return true;
 }
 
+/** Where two segments come closest: the parameter (0–1) along each. */
+function closestParams(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number): [number, number] {
+  const proj = (px: number, py: number, x0: number, y0: number, x1: number, y1: number) => {
+    const [ex, ey] = [x1 - x0, y1 - y0];
+    const l2 = ex * ex + ey * ey;
+    return l2 ? Math.max(0, Math.min(1, ((px - x0) * ex + (py - y0) * ey) / l2)) : 0;
+  };
+  const at = (t: number, u: number) => Math.hypot(ax + (bx - ax) * t - (cx + (dx - cx) * u), ay + (by - ay) * t - (cy + (dy - cy) * u));
+  const cands: [number, number][] = [
+    [0, proj(ax, ay, cx, cy, dx, dy)],
+    [1, proj(bx, by, cx, cy, dx, dy)],
+    [proj(cx, cy, ax, ay, bx, by), 0],
+    [proj(dx, dy, ax, ay, bx, by), 1],
+  ];
+  // crossing
+  const den = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
+  if (Math.abs(den) > 1e-12) {
+    const t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / den;
+    const u = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / den;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) cands.push([t, u]);
+  }
+  return cands.reduce((m, c) => (at(c[0], c[1]) < at(m[0], m[1]) ? c : m));
+}
+
+/** The part of a segment inside a rectangle grown by `g` (Liang–Barsky): its parameters, or null. */
+function clipSeg(ax: number, ay: number, bx: number, by: number, x: number, y: number, w: number, h: number, g: number): [number, number] | null {
+  let [t0, t1] = [0, 1];
+  const [dx, dy] = [bx - ax, by - ay];
+  const edges: [number, number][] = [
+    [-dx, ax - (x - g)],
+    [dx, x + w + g - ax],
+    [-dy, ay - (y - g)],
+    [dy, y + h + g - ay],
+  ];
+  for (const [p, q] of edges) {
+    if (Math.abs(p) < 1e-12) {
+      if (q < 0) return null;
+      continue;
+    }
+    const r = q / p;
+    if (p < 0) t0 = Math.max(t0, r);
+    else t1 = Math.min(t1, r);
+    if (t0 > t1) return null;
+  }
+  return [t0, t1];
+}
+
+/** Arc length (mm) along a track's polyline at segment `k`, parameter `t`. */
+function arcAt(t: Track, k: number, u: number): number {
+  let s = 0;
+  segmentsOf(t.pts).forEach(([ax, ay, bx, by], i) => {
+    const l = Math.hypot(bx - ax, by - ay);
+    if (i < k) s += l;
+    else if (i === k) s += l * u;
+  });
+  return s;
+}
+
+/** One element of a net's copper on one layer. */
+type Item = { layer: CopperLayer; box: [number, number, number, number]; kind: 'track' | 'pad' | 'via' | 'zone'; ref: number };
+/** Two items that touch; `sa`/`sb`: where along a track (mm) when that side is one. */
+type Contact = { a: number; b: number; sa?: number; sb?: number };
+
 /**
  * The net's copper as a graph: on each layer its tracks, pads, vias and each connected piece of its
- * pours joined where they touch (a through-hole pad joins its layers), the via groups between the
- * layers. A via group whose removal leaves copper with current on both sides (a pour, two pads or a
- * pad where current comes in) is the only way across: the whole current may pass it.
+ * pours (items), and where they touch (contacts: for a track, where along it). A through-hole pad's
+ * items are its layers; a via's, one per layer, joined by its barrel. The cut test and the split
+ * both read this one graph.
  */
-function netVias(b: BoardView, netId: string, amps: number, riseC: number, isSource: (part: BoardPart, pad: BoardPad) => boolean): CurrentVias[] {
-  const vias = b.vias.filter((v) => v.netId === netId);
-  if (!vias.length) return [];
+function netCopper(b: BoardView, netId: string) {
   const layers = b.layers;
-  // items: one per element and layer
-  type Item = { layer: CopperLayer; box: [number, number, number, number]; kind: 'track' | 'pad' | 'via' | 'zone'; ref: number };
   const items: Item[] = [];
-  const parent: number[] = [];
-  const add = (it: Item) => (items.push(it), parent.push(parent.length), items.length - 1);
-  const findRoot = (i: number): number => {
-    while (parent[i] !== i) i = parent[i] = parent[parent[i]!]!;
-    return i;
-  };
-  const union = (a: number, c: number) => {
-    const [x, y] = [findRoot(a), findRoot(c)];
-    if (x !== y) parent[x] = y;
-  };
+  const add = (it: Item) => (items.push(it), items.length - 1);
+  const contacts: Contact[] = [];
   const tracks = b.tracks.filter((t) => t.netId === netId);
-  tracks.forEach((t, i) => {
+  const trackIndex = b.tracks.flatMap((t, i) => (t.netId === netId ? [i] : []));
+  const trackItem = tracks.map((t, i) => {
     const xs = t.pts.filter((_, k) => k % 2 === 0);
     const ys = t.pts.filter((_, k) => k % 2 === 1);
     const r = t.width / 2;
-    add({ layer: t.layer, box: [Math.min(...xs) - r, Math.min(...ys) - r, Math.max(...xs) + r, Math.max(...ys) + r], kind: 'track', ref: i });
+    return add({ layer: t.layer, box: [Math.min(...xs) - r, Math.min(...ys) - r, Math.max(...xs) + r, Math.max(...ys) + r], kind: 'track', ref: i });
   });
   const pads: { part: BoardPart; pad: BoardPad }[] = [];
   for (const part of b.parts) for (const pad of part.pads) if (pad.netId === netId && !pad.npth) pads.push({ part, pad });
   const padItems: number[][] = pads.map(({ pad }, i) => {
     const on = pad.drill ? layers : pad.layers.filter((l) => layers.includes(l));
-    const its = on.map((layer) => add({ layer, box: [pad.x - pad.w / 2, pad.y - pad.h / 2, pad.x + pad.w / 2, pad.y + pad.h / 2], kind: 'pad', ref: i }));
-    for (const it of its.slice(1)) union(its[0]!, it);
-    return its;
+    return on.map((layer) => add({ layer, box: [pad.x - pad.w / 2, pad.y - pad.h / 2, pad.x + pad.w / 2, pad.y + pad.h / 2], kind: 'pad', ref: i }));
   });
+  const vias = b.vias.filter((v) => v.netId === netId);
   const viaItems: number[][] = vias.map((v, i) => layers.map((layer) => add({ layer, box: [v.x - v.pad / 2, v.y - v.pad / 2, v.x + v.pad / 2, v.y + v.pad / 2], kind: 'via', ref: i })));
   // the pours' islands
   const zoneParts: { layer: CopperLayer; index: ReturnType<typeof zoneIndex>; items: number[] }[] = [];
@@ -229,51 +375,120 @@ function netVias(b: BoardView, netId: string, amps: number, riseC: number, isSou
     for (let k = 0; k < index.count; k++) its.push(add({ layer: z.layer, box: [0, 0, 0, 0], kind: 'zone', ref: zoneParts.length }));
     zoneParts.push({ layer: z.layer, index, items: its });
   }
+  // where a track meets a pad or a via: an end on it, else the point nearest the other's centre
+  const onTrack = (t: Track, x: number, y: number, hit: (ax: number, ay: number, bx: number, by: number) => boolean, endOn: (x: number, y: number) => boolean): number | undefined => {
+    const segs = segmentsOf(t.pts);
+    if (endOn(t.pts[0]!, t.pts[1]!)) return 0;
+    if (endOn(t.pts.at(-2)!, t.pts.at(-1)!)) return arcAt(t, segs.length - 1, 1);
+    const k = segs.findIndex(([ax, ay, bx, by]) => hit(ax, ay, bx, by));
+    if (k < 0) return undefined;
+    const [ax, ay, bx, by] = segs[k]!;
+    const l2 = (bx - ax) ** 2 + (by - ay) ** 2;
+    return arcAt(t, k, l2 ? Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / l2)) : 0);
+  };
   // what touches on each layer
   const overlap = (a: Item['box'], c: Item['box'], g = 0) => a[0] - g <= c[2] && c[0] - g <= a[2] && a[1] - g <= c[3] && c[1] - g <= a[3];
-  const touch = (i: number, j: number): boolean => {
+  const touch = (i: number, j: number): void => {
     const [a, c] = [items[i]!, items[j]!];
-    if (a.kind === 'zone' || c.kind === 'zone') return false;
-    if (!overlap(a.box, c.box, EPS)) return false;
+    if (!overlap(a.box, c.box, EPS)) return;
     if (a.kind === 'track' && c.kind === 'track') {
       const [t, u] = [tracks[a.ref]!, tracks[c.ref]!];
       const reach = Math.min(t.width, u.width) / 2;
-      return segmentsOf(t.pts).some(([ax, ay, bx, by]) => segmentsOf(u.pts).some(([cx, cy, dx, dy]) => segSegDist(ax, ay, bx, by, cx, cy, dx, dy) <= reach));
+      segmentsOf(t.pts).forEach(([ax, ay, bx, by], k) =>
+        segmentsOf(u.pts).forEach(([cx, cy, dx, dy], m) => {
+          if (segSegDist(ax, ay, bx, by, cx, cy, dx, dy) > reach) return;
+          const [p, q] = closestParams(ax, ay, bx, by, cx, cy, dx, dy);
+          contacts.push({ a: i, b: j, sa: arcAt(t, k, p), sb: arcAt(u, m, q) });
+        }),
+      );
+      return;
     }
     if (a.kind === 'track' || c.kind === 'track') {
-      const [t, o] = a.kind === 'track' ? [tracks[a.ref]!, c] : [tracks[c.ref]!, a];
-      if (o.kind === 'pad') return segmentsOf(t.pts).some(([ax, ay, bx, by]) => padSegDist(pads[o.ref]!.pad, ax, ay, bx, by) <= EPS);
-      const v = vias[o.ref]!;
-      return segmentsOf(t.pts).some(([ax, ay, bx, by]) => pointSegDist(v.x, v.y, ax, ay, bx, by) <= v.pad / 2);
+      const [ti, oi] = a.kind === 'track' ? [i, j] : [j, i];
+      const [t, o] = [tracks[items[ti]!.ref]!, items[oi]!];
+      let s: number | undefined;
+      if (o.kind === 'pad') {
+        const p = pads[o.ref]!.pad;
+        s = onTrack(t, p.x, p.y, (ax, ay, bx, by) => padSegDist(p, ax, ay, bx, by) <= EPS, (x, y) => padPointDist(p, x, y) <= EPS);
+      } else {
+        const v = vias[o.ref]!;
+        s = onTrack(t, v.x, v.y, (ax, ay, bx, by) => pointSegDist(v.x, v.y, ax, ay, bx, by) <= v.pad / 2, (x, y) => Math.hypot(x - v.x, y - v.y) <= v.pad / 2);
+      }
+      if (s !== undefined) contacts.push({ a: ti, b: oi, sa: s });
+      return;
     }
-    if (a.kind === 'pad' && c.kind === 'via') return padPointDist(pads[a.ref]!.pad, vias[c.ref]!.x, vias[c.ref]!.y) <= vias[c.ref]!.pad / 2;
-    if (a.kind === 'via' && c.kind === 'pad') return padPointDist(pads[c.ref]!.pad, vias[a.ref]!.x, vias[a.ref]!.y) <= vias[a.ref]!.pad / 2;
-    return false;
+    const [pi, vi] = a.kind === 'pad' && c.kind === 'via' ? [a.ref, c.ref] : a.kind === 'via' && c.kind === 'pad' ? [c.ref, a.ref] : [-1, -1];
+    if (pi >= 0 && padPointDist(pads[pi]!.pad, vias[vi]!.x, vias[vi]!.y) <= vias[vi]!.pad / 2) contacts.push({ a: i, b: j });
   };
   for (const layer of layers) {
     const on = items.map((it, i) => (it.layer === layer && it.kind !== 'zone' ? i : -1)).filter((i) => i >= 0);
-    for (let x = 0; x < on.length; x++) for (let y = x + 1; y < on.length; y++) if (touch(on[x]!, on[y]!)) union(on[x]!, on[y]!);
-    // the pours: an element joins the islands it reaches
+    for (let x = 0; x < on.length; x++) for (let y = x + 1; y < on.length; y++) touch(on[x]!, on[y]!);
+    // the pours: an element joins the islands it reaches (a track where it enters and leaves each)
     for (const zp of zoneParts) {
       if (zp.layer !== layer) continue;
       for (const i of on) {
         const it = items[i]!;
         const g = it.kind === 'track' ? 0.1 : ZONE_REACH;
         const [x0, y0, x1, y1] = it.box;
+        const reached = new Map<number, [number, number]>();
         for (const k of zp.index.near(x0 - g, y0 - g, x1 + g, y1 + g)) {
           const isl = zp.index.island[k]!;
-          if (findRoot(zp.items[isl]!) === findRoot(i)) continue;
           const [rx, ry, rw, rh] = zp.index.box(k);
           if (!overlap(it.box, [rx, ry, rx + rw, ry + rh], g)) continue;
-          if (it.kind === 'track') {
-            const t = tracks[it.ref]!;
-            if (!segmentsOf(t.pts).some(([ax, ay, bx, by]) => segRectDist(ax, ay, bx, by, rx, ry, rw, rh) <= t.width / 2 + 0.1)) continue;
+          if (it.kind !== 'track') {
+            reached.set(isl, [0, 0]);
+            continue;
           }
-          union(i, zp.items[isl]!);
+          const t = tracks[it.ref]!;
+          segmentsOf(t.pts).forEach(([ax, ay, bx, by], m) => {
+            if (segRectDist(ax, ay, bx, by, rx, ry, rw, rh) > t.width / 2 + 0.1) return;
+            const c = clipSeg(ax, ay, bx, by, rx, ry, rw, rh, t.width / 2 + 0.1) ?? [0, 0];
+            const [s0, s1] = [arcAt(t, m, c[0]), arcAt(t, m, c[1])];
+            const had = reached.get(isl);
+            reached.set(isl, had ? [Math.min(had[0], s0), Math.max(had[1], s1)] : [s0, s1]);
+          });
+        }
+        for (const [isl, [s0, s1]] of reached) {
+          if (it.kind !== 'track') contacts.push({ a: i, b: zp.items[isl]! });
+          else contacts.push({ a: i, b: zp.items[isl]!, sa: s0 }, { a: i, b: zp.items[isl]!, sa: s1 });
         }
       }
     }
   }
+  return { layers, items, contacts, tracks, trackIndex, trackItem, pads, padItems, vias, viaItems, zoneParts };
+}
+type NetCopper = ReturnType<typeof netCopper>;
+
+/** A via group of the net that joins copper on two or more layers: `cut` when it is the only way across. */
+interface ViaGroup {
+  vias: number[];
+  cut: boolean;
+  drill: number;
+  layers: CopperLayer[];
+  ids: string[];
+  at: { x: number; y: number };
+}
+
+/**
+ * The via groups of a net's copper (vias within GROUP_GAP of each other, edge to edge) that join
+ * copper on different layers. A group whose removal leaves copper with current on both sides (a
+ * pour, two pads or a pad where current comes in) is the only way across (`cut`): the whole current
+ * may pass it.
+ */
+function netVias(cu: NetCopper, isSource: (part: BoardPart, pad: BoardPad) => boolean): ViaGroup[] {
+  const { items, vias, viaItems, pads, padItems, zoneParts, layers } = cu;
+  if (!vias.length) return [];
+  const parent = items.map((_, i) => i);
+  const findRoot = (i: number): number => {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]!]!;
+    return i;
+  };
+  const union = (a: number, c: number) => {
+    const [x, y] = [findRoot(a), findRoot(c)];
+    if (x !== y) parent[x] = y;
+  };
+  for (const its of padItems) for (const it of its.slice(1)) union(its[0]!, it);
+  for (const c of cu.contacts) union(c.a, c.b);
   // via groups: vias of the net within GROUP_GAP of each other, edge to edge
   const groupOf = vias.map((_, i) => i);
   const gRoot = (i: number): number => (groupOf[i] === i ? i : (groupOf[i] = gRoot(groupOf[i]!)));
@@ -304,7 +519,7 @@ function netVias(b: BoardView, netId: string, amps: number, riseC: number, isSou
   groupRoots.forEach((rs, gi) => {
     for (const r of rs) (byRegion.get(r) ?? byRegion.set(r, []).get(r)!).push(gi);
   });
-  const out: CurrentVias[] = [];
+  const out: ViaGroup[] = [];
   list.forEach((g, gi) => {
     const roots = groupRoots[gi]!;
     if (roots.size < 2) return;
@@ -329,28 +544,167 @@ function netVias(b: BoardView, netId: string, amps: number, riseC: number, isSou
       sides.push(side);
     }
     const carry = sides.filter((s) => s.pads > 0 && (s.zone || s.pads >= 2 || s.source));
-    if (carry.length < 2) return;
-    const drill = Math.min(...g.map((v) => vias[v]!.drill));
-    const per = viaCurrentFor(drill, riseC, VIA_PLATING_UM);
-    const capacity = g.length * per;
     // the layers where the group meets other copper of the net
     const joined = layers.filter((l, li) => g.some((v) => (size.get(findRoot(viaItems[v]![li]!)) ?? 0) > g.length));
-    const ids = g.map((v) => idOf(vias[v]!)).filter((x): x is string => !!x);
     out.push({
-      netId,
-      at: { x: r2(g.reduce((s, v) => s + vias[v]!.x, 0) / g.length), y: r2(g.reduce((s, v) => s + vias[v]!.y, 0) / g.length) },
-      vias: g.length,
-      drill,
-      ids,
+      vias: g,
+      cut: carry.length >= 2,
+      drill: Math.min(...g.map((v) => vias[v]!.drill)),
       layers: joined,
-      amps,
-      basis: 'bound',
-      capacity,
-      ratio: amps / capacity,
-      needs: Math.max(1, Math.ceil(amps / per - 1e-6)),
+      ids: g.map((v) => idOf(vias[v]!)).filter((x): x is string => !!x),
+      at: { x: r2(g.reduce((s, v) => s + vias[v]!.x, 0) / g.length), y: r2(g.reduce((s, v) => s + vias[v]!.y, 0) / g.length) },
     });
   });
   return out;
+}
+
+/** Copper's resistivity (Ω·m, 20 °C). */
+const RHO = 1.72e-8;
+/** Pieces of a track shorter than this (mm) join their ends without resistance. */
+const JOIN_MM = 0.001;
+
+/** The board's thickness (mm), what a via's barrel spans: the stack-up's, else 1.6. */
+function boardThickness(b: Pick<BoardView, 'stackup'>): number {
+  const s = b.stackup;
+  return s ? s.copper.reduce((x, c) => x + c, 0) + s.dielectric.reduce((x, c) => x + c.mm, 0) : 1.6;
+}
+
+/**
+ * The split (§14): the net's copper as a resistor network (each track piece between the points where
+ * something meets it w·t/(ρ·L), each via's barrel, pads and pours one node each), the source held at
+ * 0 V and each load drawing its current from its pads; solved by conjugate gradients on the network's
+ * Laplacian (a tree solves exactly as well). Gives each track's current (its largest piece's) and the
+ * drop along it, each via's current, each load's drop, and which loads the copper reaches at all.
+ */
+function solveSplit(b: BoardView, cu: NetCopper, copperUm: Partial<Record<CopperLayer, number>>, source: number[], loads: { pads: number[]; amps: number }[]) {
+  const { items, tracks, padItems, vias, viaItems } = cu;
+  const parent: number[] = items.map((_, i) => i);
+  const node = () => (parent.push(parent.length), parent.length - 1);
+  const findRoot = (i: number): number => {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]!]!;
+    return i;
+  };
+  const union = (a: number, c: number) => {
+    const [x, y] = [findRoot(a), findRoot(c)];
+    if (x !== y) parent[x] = y;
+  };
+  for (const its of padItems) for (const it of its.slice(1)) union(its[0]!, it);
+  // the source's pads are one point: the part joins them
+  for (const p of source.slice(1)) if (padItems[p]!.length && padItems[source[0]!]!.length) union(padItems[p]![0]!, padItems[source[0]!]![0]!);
+  // the points along each track where something meets it
+  const along: { s: number; n: number }[][] = tracks.map((t) => [
+    { s: 0, n: node() },
+    { s: segmentsOf(t.pts).reduce((x, [ax, ay, bx, by]) => x + Math.hypot(bx - ax, by - ay), 0), n: node() },
+  ]);
+  const at = (item: number, s: number) => {
+    const n = node();
+    along[items[item]!.ref]!.push({ s, n });
+    return n;
+  };
+  for (const c of cu.contacts) {
+    const a = c.sa !== undefined ? at(c.a, c.sa) : c.a;
+    const o = c.sb !== undefined ? at(c.b, c.sb) : c.b;
+    union(a, o);
+  }
+  type Edge = { a: number; b: number; g: number; track?: number; via?: number };
+  const edges: Edge[] = [];
+  along.forEach((pts, ti) => {
+    const t = tracks[ti]!;
+    pts.sort((x, y) => x.s - y.s);
+    const area = t.width * 1e-3 * (copperUm[t.layer] ?? 35) * 1e-6;
+    for (let k = 1; k < pts.length; k++) {
+      const len = pts[k]!.s - pts[k - 1]!.s;
+      if (len < JOIN_MM) union(pts[k - 1]!.n, pts[k]!.n);
+      else edges.push({ a: pts[k - 1]!.n, b: pts[k]!.n, g: area / (RHO * len * 1e-3), track: ti });
+    }
+  });
+  // a via: its barrel from each layer to the middle, half its length each (plated VIA_PLATING_UM)
+  const h = boardThickness(b) * 1e-3;
+  vias.forEach((v, vi) => {
+    const mid = node();
+    const g = (2 * Math.PI * v.drill * 1e-3 * VIA_PLATING_UM * 1e-6) / (RHO * h);
+    for (const it of viaItems[vi]!) edges.push({ a: mid, b: it, g, via: vi });
+  });
+  // the network on its roots, from the source
+  const root = (i: number) => findRoot(i);
+  const src = source.length && padItems[source[0]!]!.length ? root(padItems[source[0]!]![0]!) : -1;
+  const adj = new Map<number, { o: number; g: number }[]>();
+  for (const e of edges) {
+    const [x, y] = [root(e.a), root(e.b)];
+    if (x === y) continue;
+    (adj.get(x) ?? adj.set(x, []).get(x)!).push({ o: y, g: e.g });
+    (adj.get(y) ?? adj.set(y, []).get(y)!).push({ o: x, g: e.g });
+  }
+  const reach = new Set<number>(src >= 0 ? [src] : []);
+  const stack = [...reach];
+  while (stack.length) for (const { o } of adj.get(stack.pop()!) ?? []) if (!reach.has(o)) (reach.add(o), stack.push(o));
+  // the loads drawn where the copper reaches them (each shared over its pads)
+  const inject = new Map<number, number>();
+  let placed = 0;
+  const reached = loads.map((l) => {
+    const ns = l.pads.filter((p) => padItems[p]!.length).map((p) => root(padItems[p]![0]!));
+    if (!ns.length || !ns.every((n) => reach.has(n))) return false;
+    for (const n of ns) inject.set(n, (inject.get(n) ?? 0) - l.amps / ns.length);
+    placed += l.amps;
+    return true;
+  });
+  // G v = i, v = 0 at the source (conjugate gradients, Jacobi preconditioned)
+  const unknown = [...reach].filter((n) => n !== src);
+  const idx = new Map(unknown.map((n, i) => [n, i]));
+  const N = unknown.length;
+  const diag = new Float64Array(N);
+  unknown.forEach((n, i) => (diag[i] = (adj.get(n) ?? []).reduce((s, e) => s + e.g, 0)));
+  const mul = (x: Float64Array, out: Float64Array) => {
+    unknown.forEach((n, i) => {
+      let s = diag[i]! * x[i]!;
+      for (const e of adj.get(n) ?? []) {
+        const j = idx.get(e.o);
+        if (j !== undefined) s -= e.g * x[j]!;
+      }
+      out[i] = s;
+    });
+  };
+  const rhs = new Float64Array(N);
+  unknown.forEach((n, i) => (rhs[i] = inject.get(n) ?? 0));
+  const v = new Float64Array(N);
+  const r = Float64Array.from(rhs);
+  const z = r.map((x, i) => x / diag[i]!);
+  const p = Float64Array.from(z);
+  const ap = new Float64Array(N);
+  const dot = (x: Float64Array, y: Float64Array) => x.reduce((s, xi, i) => s + xi * y[i]!, 0);
+  const norm0 = Math.sqrt(dot(rhs, rhs));
+  let rz = dot(r, z);
+  for (let it = 0; norm0 > 0 && it < 20 * N + 100; it++) {
+    mul(p, ap);
+    const alpha = rz / dot(p, ap);
+    for (let i = 0; i < N; i++) {
+      v[i] = v[i]! + alpha * p[i]!;
+      r[i] = r[i]! - alpha * ap[i]!;
+    }
+    if (Math.sqrt(dot(r, r)) <= 1e-13 * norm0) break;
+    for (let i = 0; i < N; i++) z[i] = r[i]! / diag[i]!;
+    const rz2 = dot(r, z);
+    for (let i = 0; i < N; i++) p[i] = z[i]! + (rz2 / rz) * p[i]!;
+    rz = rz2;
+  }
+  const volt = (n: number) => {
+    const i = idx.get(root(n));
+    return i === undefined ? 0 : v[i]!;
+  };
+  // each track: its largest piece's current and the drop along it; each via: what crosses it
+  const trackAmps = tracks.map(() => 0);
+  const viaAmps = vias.map(() => 0);
+  for (const e of edges) {
+    const i = Math.abs(e.g * (volt(e.a) - volt(e.b)));
+    if (e.track !== undefined) trackAmps[e.track] = Math.max(trackAmps[e.track]!, i);
+    if (e.via !== undefined) viaAmps[e.via]! += i / 2;
+  }
+  const trackDrop = along.map((pts) => {
+    const vs = pts.map((x) => volt(x.n));
+    return (Math.max(...vs) - Math.min(...vs)) * 1000;
+  });
+  const loadDrop = Math.max(0, ...loads.flatMap((l, li) => (reached[li] ? l.pads.filter((q) => padItems[q]!.length).map((q) => -volt(padItems[q]![0]!) * 1000) : [])));
+  return { placed, trackAmps, trackDrop, viaAmps, dropMv: loadDrop };
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -367,10 +721,21 @@ export function viaFix(b: BoardView, v: CurrentVias): EditOp[] {
   return [{ op: 'add_vias', kind: 'tie', net: b.netNames[v.netId] ?? v.netId, at: [{ x_mm: v.at.x, y_mm: v.at.y }], amps: v.amps }];
 }
 
-/** The findings: DRC.CURRENT_UNVERIFIED (one per net), DRC.VIA_CURRENT (per cut via group), DRC.CURRENT_UNKNOWN (one per power net without max_current). */
+/** The findings: DRC.TRACK_CURRENT (split: one per net), DRC.CURRENT_UNVERIFIED (one per net), DRC.VIA_CURRENT (per via group), DRC.CURRENT_UNKNOWN (one per power net without max_current). */
 export function currentDrc(b: BoardView, c: CurrentCheck): Diagnostic[] {
   const out: Diagnostic[] = [];
   const severity = (ratio: number) => (ratio > 2 ? 'error' : 'warning');
+  // drawn copper: one edit per width needed; router copper: the net's width
+  const widen = (name: string, bad: CurrentTrack[]) => {
+    const drawn = bad.every((t) => t.id);
+    const hints: EditOp[] = drawn
+      ? [...new Set(bad.map((t) => t.needs))].map((w) => ({ op: 'edit_copper', ids: bad.filter((t) => t.needs === w).map((t) => t.id!), width_mm: w }))
+      : [{ op: 'set_net', net: name, track_mm: Math.max(...bad.map((t) => t.needs)) }];
+    const fix = drawn
+      ? `Widen them (edit_copper width_mm), or give the current a way round them.`
+      : `Widen the net (set_net track_mm) and route again; where the router narrowed a track to get through, make room there and route again (do not lower the net's width).`;
+    return { hints, fix };
+  };
   for (const n of c.nets) {
     if (n.status === 'unknown') {
       const t = b.tracks.find((x) => x.netId === n.netId);
@@ -386,35 +751,57 @@ export function currentDrc(b: BoardView, c: CurrentCheck): Diagnostic[] {
       continue;
     }
     const amps = n.amps!;
-    const bad = c.tracks.filter((t) => t.netId === n.netId && t.ratio > 1).sort((x, y) => y.ratio - x.ratio);
+    const tracks = c.tracks.filter((t) => t.netId === n.netId);
+    // too small for the current the stated loads draw through it
+    const over = tracks.filter((t) => t.status === 'over').sort((x, y) => y.ratio - x.ratio);
+    if (over.length) {
+      const worst = over[0]!;
+      const len = over.reduce((s, t) => s + t.length, 0);
+      const pieces = over.slice(0, 4).map((t) => `${t.id ? `${t.id} ` : ''}${t.width} mm on ${t.layer} (${t.copperUm} µm) carries ${fmt(t.split ?? t.amps)} A and needs ${t.needs} mm, about +${Math.round(t.rise)} °C`);
+      const { hints, fix } = widen(n.name, over);
+      out.push({
+        code: 'DRC.TRACK_CURRENT',
+        severity: severity((worst.split ?? worst.amps) / worst.capacity),
+        message: `${n.name}: ${plural(over.length, 'track piece')} (${fmt(len)} mm) ${over.length === 1 ? 'is' : 'are'} too narrow for the current the loads stated on it draw through ${over.length === 1 ? 'it' : 'them'} at ${c.riseC} °C: ${pieces.join('; ')}${over.length > 4 ? `; ${over.length - 4} more` : ''}. ${fix} get_current_map lists the pieces.`,
+        at: worst.at,
+        entities: [`net:${n.name}`, ...over.filter((t) => t.id).map((t) => t.id!)],
+        fixHints: hints,
+      });
+    }
+    const bad = tracks.filter((t) => t.status === 'unverified').sort((x, y) => y.ratio - x.ratio);
     if (bad.length) {
       const worst = bad[0]!;
       const narrowest = bad.reduce((m, t) => (t.width < m.width ? t : m));
       const len = bad.reduce((s, t) => s + t.length, 0);
       const needs = [...new Map(bad.map((t) => [t.layer, t])).values()].map((t) => `${t.needs} mm on ${t.layer} (${t.copperUm} µm)`);
-      const drawn = bad.every((t) => t.id);
-      const fix = drawn
-        ? `Widen them (edit_copper width_mm), or give the current a way round them.`
-        : `Widen the net (set_net track_mm) and route again; where the router narrowed a track to get through, make room there and route again (do not lower the net's width).`;
-      // drawn copper: one edit per width needed; router copper: the net's width
-      const hints: EditOp[] = drawn
-        ? [...new Set(bad.map((t) => t.needs))].map((w) => ({ op: 'edit_copper', ids: bad.filter((t) => t.needs === w).map((t) => t.id!), width_mm: w }))
-        : [{ op: 'set_net', net: n.name, track_mm: Math.max(...bad.map((t) => t.needs)) }];
+      const { hints, fix } = widen(n.name, bad);
+      const what =
+        n.basis === 'split'
+          ? `narrower than its share of the stated loads plus the ${fmt(n.unplaced ?? 0)} A of max_current no load places needs at ${c.riseC} °C`
+          : `narrower than ${n.fromRails ? `the rails' ${amps} A (GND has no max_current: the sum of the rails' is its bound)` : `its max_current of ${amps} A`} needs at ${c.riseC} °C`;
+      const known =
+        n.basis === 'split'
+          ? `The loads stated place ${fmt(n.loads ?? 0)} of ${amps} A; whether the rest flows there is not known: widen them, or state the rest (set_net loads).`
+          : `Whether ${amps} A flows there is not known (${n.fromRails ? 'the bound is every rail\'s current' : 'max_current is the whole net\'s current'}; a branch to a part that draws little carries less): widen them, or ${n.fromRails ? `give ${n.name} its own max_current (set_net max_current) where it returns less` : 'say what the pins draw (set_net loads)'}${n.why ? `, though the loads stated are not split: ${n.why}` : ''}.`;
       out.push({
         code: 'DRC.CURRENT_UNVERIFIED',
         severity: severity(worst.ratio),
-        message: `${n.name}: ${plural(bad.length, 'track piece')} (${fmt(len)} mm, narrowest ${narrowest.width} mm on ${narrowest.layer}) ${bad.length === 1 ? 'is' : 'are'} narrower than its max_current of ${amps} A needs at ${c.riseC} °C: ${needs.join(', ')}; the worst carries ${fmt(worst.capacity)} A and would heat about ${Math.round(worst.rise)} °C. Whether ${amps} A flows there is not known (max_current is the whole net's current; a branch to a part that draws little carries less). ${fix} get_current_map lists the pieces.`,
+        message: `${n.name}: ${plural(bad.length, 'track piece')} (${fmt(len)} mm, narrowest ${narrowest.width} mm on ${narrowest.layer}) ${bad.length === 1 ? 'is' : 'are'} ${what}: ${needs.join(', ')}; the worst carries ${fmt(worst.capacity)} A and would heat about ${Math.round(worst.rise)} °C. ${known} ${fix} get_current_map lists the pieces.`,
         at: worst.at,
         entities: [`net:${n.name}`, ...bad.filter((t) => t.id).map((t) => t.id!)],
         fixHints: hints,
       });
     }
-    for (const v of c.vias.filter((x) => x.netId === n.netId && x.ratio > 1)) {
+    for (const v of c.vias.filter((x) => x.netId === n.netId && x.status !== 'ok')) {
       const where = v.layers.length >= 2 ? ` between ${v.layers.join(' and ')}` : '';
+      const carry = `${v.vias === 1 ? 'it carries' : 'together they carry'} about ${fmt(v.capacity)} A at ${c.riseC} °C`;
+      const why = v.shared
+        ? `carry ${fmt(v.amps)} A of ${n.name}'s stated loads${where} (with the other ways across): ${carry} (${v.needs} vias)`
+        : `${v.vias === 1 ? 'is' : 'are'} the only way ${n.name}'s copper crosses${where}: ${carry}, and ${v.basis === 'split' ? `${fmt(v.split ?? v.amps)} A of the stated loads crosses here${v.split !== undefined ? ` (${fmt(v.amps)} A with what no load places)` : ''}` : `${n.name}'s max_current is ${amps} A`} (${v.needs} vias)`;
       out.push({
         code: 'DRC.VIA_CURRENT',
-        severity: severity(v.ratio),
-        message: `${plural(v.vias, 'via')} (${v.drill} mm drill) at (${v.at.x}, ${v.at.y}) ${v.vias === 1 ? 'is' : 'are'} the only way ${n.name}'s copper crosses${where}: ${v.vias === 1 ? 'it carries' : 'together they carry'} about ${fmt(v.capacity)} A at ${c.riseC} °C, and ${n.name}'s max_current is ${amps} A (${v.needs} vias). Add vias there (add_vias kind tie at that spot with amps), or join the copper on those layers another way.`,
+        severity: severity((v.status === 'over' ? (v.split ?? v.amps) : v.amps) / v.capacity),
+        message: `${plural(v.vias, 'via')} (${v.drill} mm drill) at (${v.at.x}, ${v.at.y}) ${why}. Add vias there (add_vias kind tie at that spot with amps), or join the copper on those layers another way.`,
         at: v.at,
         entities: [`net:${n.name}`, ...v.ids],
         fixHints: viaFix(b, v),
@@ -424,6 +811,8 @@ export function currentDrc(b: BoardView, c: CurrentCheck): Diagnostic[] {
   return out;
 }
 
+const trackCode = (t: { status: CurrentStatus }) => (t.status === 'over' ? 'DRC.TRACK_CURRENT' : t.status === 'unverified' ? 'DRC.CURRENT_UNVERIFIED' : undefined);
+
 /** design_query get_current_map: the nets with their status and the hotspots, worst first. */
 export function currentMapAnswer(d: Design, b: BoardView, q: Extract<QueryOp, { op: 'get_current_map' }>): unknown {
   // (the routed board's own check: what the DRC and the heat map read)
@@ -431,12 +820,14 @@ export function currentMapAnswer(d: Design, b: BoardView, q: Extract<QueryOp, { 
   const wanted = q.nets ? new Set(q.nets.map((n) => Object.values(d.nets).find((x) => x.name.toUpperCase() === n.toUpperCase() || x.id === n)?.id ?? n)) : null;
   const r = q.rect;
   const inRect = (p: { x: number; y: number }) => !r || (p.x >= r.x_mm && p.y >= r.y_mm && p.x <= r.x_mm + r.width_mm && p.y <= r.y_mm + r.height_mm);
-  const keep = (x: { netId: string; ratio: number; at: { x: number; y: number } }) => (!wanted || wanted.has(x.netId)) && (q.include_ok || x.ratio > 1) && inRect(x.at);
+  const keep = (x: { netId: string; status: CurrentStatus; at: { x: number; y: number } }) => (!wanted || wanted.has(x.netId)) && (q.include_ok || x.status !== 'ok') && inRect(x.at);
   const name = (id: string) => b.netNames[id] ?? id;
   const r1 = (v: number) => Math.round(v * 10) / 10;
+  // over first (what certainly flows), then by ratio
+  const rank = (s: { status: CurrentStatus; ratio: number }) => (s.status === 'over' ? 1000 : 0) + s.ratio;
   const spots = [
     ...c.tracks.filter(keep).map((t) => ({
-      ratio: t.ratio,
+      rank: rank(t),
       spot: {
         kind: 'track',
         net: name(t.netId),
@@ -448,17 +839,20 @@ export function currentMapAnswer(d: Design, b: BoardView, q: Extract<QueryOp, { 
         width_mm: t.width,
         length_mm: t.length,
         copper_um: t.copperUm,
-        amps: t.amps,
+        amps: r3(t.amps),
         basis: t.basis,
+        ...(t.split !== undefined ? { split_a: r3(t.split) } : {}),
+        status: t.status,
         capacity_a: r2(t.capacity),
         ratio: r2(t.ratio),
         rise_c: r1(t.rise),
+        ...(t.dropMv !== undefined ? { drop_mv: t.dropMv } : {}),
         needs_width_mm: t.needs,
-        ...(t.ratio > 1 ? { code: 'DRC.CURRENT_UNVERIFIED', fix: trackFix(b, t) } : {}),
+        ...(trackCode(t) ? { code: trackCode(t), fix: trackFix(b, t) } : {}),
       },
     })),
     ...c.vias.filter(keep).map((v) => ({
-      ratio: v.ratio,
+      rank: rank(v),
       spot: {
         kind: 'via_group',
         net: name(v.netId),
@@ -467,16 +861,18 @@ export function currentMapAnswer(d: Design, b: BoardView, q: Extract<QueryOp, { 
         ...(v.ids.length ? { ids: v.ids } : {}),
         drill_mm: v.drill,
         at: { x_mm: v.at.x, y_mm: v.at.y },
-        amps: v.amps,
+        amps: r3(v.amps),
         basis: v.basis,
+        ...(v.split !== undefined ? { split_a: r3(v.split) } : {}),
+        status: v.status,
         capacity_a: r2(v.capacity),
         ratio: r2(v.ratio),
-        only_path: true,
+        only_path: !v.shared,
         needs_vias: v.needs,
-        ...(v.ratio > 1 ? { code: 'DRC.VIA_CURRENT', fix: viaFix(b, v) } : {}),
+        ...(v.status !== 'ok' ? { code: 'DRC.VIA_CURRENT', fix: viaFix(b, v) } : {}),
       },
     })),
-  ].sort((x, y) => y.ratio - x.ratio);
+  ].sort((x, y) => y.rank - x.rank);
   return {
     basis: { rise_c: c.riseC, curve: 'IPC-2221 external, all layers', copper_um: c.copperUm, via_plating_um: VIA_PLATING_UM },
     // every net with a current, and every power net without one (unknown): never cut
@@ -484,11 +880,22 @@ export function currentMapAnswer(d: Design, b: BoardView, q: Extract<QueryOp, { 
       .filter((n) => !wanted || wanted.has(n.netId))
       .map((n) =>
         n.status === 'unknown'
-          ? { net: n.name, basis: 'unknown', status: 'unknown', why: 'no max_current: set it (set_net max_current) from what the net feeds' }
-          : { net: n.name, max_current_a: n.amps, basis: 'bound', status: n.status, ...(n.worst !== undefined ? { worst_ratio: n.worst } : {}) },
+          ? { net: n.name, basis: 'unknown', status: 'unknown', why: 'no max_current and no loads: set it (set_net max_current) from what the net feeds' }
+          : {
+              net: n.name,
+              max_current_a: n.amps,
+              basis: n.basis,
+              status: n.status,
+              ...(n.worst !== undefined ? { worst_ratio: n.worst } : {}),
+              ...(n.loads !== undefined ? { loads_a: n.loads } : {}),
+              ...(n.unplaced !== undefined ? { unplaced_a: n.unplaced, placed: `${fmt(n.loads ?? 0)} of ${fmt(n.amps!)} A placed: the rest may flow anywhere` } : {}),
+              ...(n.dropMv !== undefined ? { drop_mv: n.dropMv } : {}),
+              ...(n.fromRails ? { why: "no max_current of its own: the sum of the rails' max_current bounds it (each rail's current returns on it)" } : {}),
+              ...(n.why ? { why: `loads stated but not split: ${n.why}` } : {}),
+            },
       ),
     hotspots: spots.slice(0, q.worst ?? 20).map((s) => s.spot),
     ...(spots.length > (q.worst ?? 20) ? { more: spots.length - (q.worst ?? 20) } : {}),
-    note: 'bound: each track and each via group that is the only way between two layers is checked for all of the net\'s max_current (a branch that carries less shows as unverified, not over). A pour or plane counts as one piece of copper: its necks are not checked. Tracks inside their own pour and pieces up to 1 mm long are not counted.',
+    note: "split: the current the net's stated loads (set_net loads, add_vias drop amps) draw through each piece, solved over the copper from where the current comes in (with what of max_current no load places added: it may flow anywhere); over = too small for that. bound: each track and each via group that is the only way between two layers is checked for all of the net's max_current (a branch that carries less shows as unverified, not over). drop_mv: the drop the stated loads cause (report only). A pour or plane counts as one piece of copper: its necks are not checked. Tracks inside their own pour and pieces up to 1 mm long are not counted.",
   };
 }

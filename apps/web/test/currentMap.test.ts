@@ -36,10 +36,10 @@ describe('heat map styles', () => {
         { netId: 'n2', name: 'VBAT', basis: 'unknown', status: 'unknown' },
       ],
       tracks: [
-        { netId: 'n1', index: 0, layer: 'F.Cu', width: 1, length: 10, copperUm: 35, amps: 2, basis: 'bound', capacity: 2.39, ratio: 0.84, rise: 6.7, needs: 0.8, at: { x: 0, y: 0 } },
-        { netId: 'n1', index: 1, layer: 'F.Cu', width: 0.25, length: 10, copperUm: 35, amps: 2, basis: 'bound', capacity: 0.875, ratio: 2.29, rise: 66, needs: 0.8, at: { x: 0, y: 5 } },
+        { netId: 'n1', index: 0, layer: 'F.Cu', width: 1, length: 10, copperUm: 35, amps: 2, basis: 'bound', status: 'ok', capacity: 2.39, ratio: 0.84, rise: 6.7, needs: 0.8, at: { x: 0, y: 0 } },
+        { netId: 'n1', index: 1, layer: 'F.Cu', width: 0.25, length: 10, copperUm: 35, amps: 2, basis: 'bound', status: 'unverified', capacity: 0.875, ratio: 2.29, rise: 66, needs: 0.8, at: { x: 0, y: 5 } },
       ],
-      vias: [{ netId: 'n1', at: { x: 5, y: 5 }, vias: 1, drill: 0.3, ids: [], layers: ['F.Cu', 'B.Cu'], amps: 2, basis: 'bound', capacity: 0.9, ratio: 2.2, needs: 3 }],
+      vias: [{ netId: 'n1', at: { x: 5, y: 5 }, vias: 1, drill: 0.3, ids: [], layers: ['F.Cu', 'B.Cu'], amps: 2, basis: 'bound', status: 'unverified', capacity: 0.9, ratio: 2.2, needs: 3 }],
     },
   } as unknown as BoardView;
 
@@ -69,6 +69,28 @@ describe('heat map styles', () => {
     expect(v!.title).toContain('needs 3');
   });
 
+  it('split copper is drawn solid in its colour, over its capacity too; its tooltip says (split) and the drop', () => {
+    const split = {
+      ...board,
+      current: {
+        ...board.current!,
+        nets: [{ netId: 'n1', name: '+5V', amps: 2, basis: 'split', status: 'over', worst: 2.3, loads: 2, dropMv: 31 }],
+        tracks: [
+          { netId: 'n1', index: 0, layer: 'F.Cu', width: 1, length: 10, copperUm: 35, amps: 0.01, basis: 'split', status: 'ok', capacity: 2.39, ratio: 0.004, dropMv: 0.05, rise: 0, needs: 0.15, at: { x: 0, y: 0 } },
+          { netId: 'n1', index: 1, layer: 'F.Cu', width: 0.25, length: 10, copperUm: 35, amps: 2, basis: 'split', status: 'over', capacity: 0.875, ratio: 2.29, dropMv: 39.3, rise: 66, needs: 0.8, at: { x: 0, y: 5 } },
+        ],
+        vias: [],
+      },
+    } as unknown as BoardView;
+    const h = currentLayer(split)!;
+    expect(h.tracks.get(0)).toMatchObject({ colour: HEAT[0].colour, dashed: false });
+    const hot = h.tracks.get(1)!;
+    expect(hot).toMatchObject({ colour: HEAT[4].colour, dashed: false });
+    expect(hot.title).toContain('2 A (split)');
+    expect(hot.title).toContain('drop 39.3 mV');
+    expect(hot.title).not.toContain('?');
+  });
+
   it('nothing without the current check (not routed)', () => {
     expect(currentLayer({ ...board, current: undefined })).toBeNull();
     expect(currentLegend(20)).toContain('+20 °C');
@@ -78,6 +100,7 @@ describe('heat map styles', () => {
 describe('heat map on or off', () => {
   it('is on by itself while a current finding is open, off when none is', () => {
     expect(currentOverlayOn([diag('DRC.CURRENT_UNVERIFIED')], null)).toBe(true);
+    expect(currentOverlayOn([diag('DRC.TRACK_CURRENT')], null)).toBe(true);
     expect(currentOverlayOn([diag('DRC.VIA_CURRENT')], null)).toBe(true);
     expect(currentOverlayOn([diag('DRC.CURRENT_UNKNOWN')], null)).toBe(true);
     expect(currentOverlayOn([diag('DRC.CLEARANCE')], null)).toBe(false);
