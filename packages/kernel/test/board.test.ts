@@ -1921,6 +1921,27 @@ describe('package defaults', () => {
     expect(k.transact({ summary: 'tht', ops: [{ op: 'set_param', ref: 'R1', params: { package: 'AXIAL-0.4' } }] }).status).toBe('ok');
     expect(k.board().parts.find((p) => p.refdes === 'R1')!.pads.every((p) => !!p.drill)).toBe(true);
   });
+
+  it('takes the package names an agent guesses (3535, JST XH) and names the closest when it does not know one', () => {
+    const k = buck();
+    const r = k.transact({
+      summary: 'lamp',
+      ops: [
+        { op: 'add_part', part: 'generic:LED', refdes: 'D9', params: { color: 'white', package: '3535' } },
+        { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J9', params: { package: 'JST XH' } },
+      ],
+    });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    k.accept();
+    const d9 = k.board().parts.find((p) => p.refdes === 'D9')!;
+    expect(d9.pads.map((p) => p.number)).toEqual(['1', '2', 'EP']);
+    const j9 = k.board().parts.find((p) => p.refdes === 'J9')!;
+    expect(j9.pads.length === 2 && j9.pads.every((p) => !!p.drill)).toBe(true);
+    const bad = k.transact({ summary: 'bad', ops: [{ op: 'set_param', ref: 'J9', params: { package: 'JST-PH-2' } }] });
+    expect(bad.status).toBe('rejected');
+    expect(bad.rejection?.candidates).toContain('JST-XH-2');
+    expect(bad.rejection?.message).toContain('JST-XH-2');
+  });
 });
 
 describe('track width per net', () => {

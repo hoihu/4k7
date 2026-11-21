@@ -387,7 +387,9 @@ function moulded(pkg: PackageInfo, pads: Pad[]): Body3D {
 function header(pkg: PackageInfo): Body3D {
   const n = pkg.pins;
   const pitch = pkg.pitch_mm ?? 2.54;
-  const boxes: Box3[] = [box(-1.27, (-n * pitch) / 2, 0, 1.27, (n * pitch) / 2, 2.5, 'body')];
+  // a housing (JST XH) where body_mm gives one: a box round the pins, as high as the part
+  const [bw, bh] = pkg.body_mm ?? [2.54, n * pitch];
+  const boxes: Box3[] = [box(-bw / 2, -bh / 2, 0, bw / 2, bh / 2, pkg.body_mm ? (pkg.height_mm ?? 2.5) : 2.5, 'body')];
   for (let i = 0; i < n; i++) {
     const y = (i - (n - 1) / 2) * pitch;
     boxes.push(box(-0.32, y - 0.32, -3, 0.32, y + 0.32, 2.5 - 0.001, 'lead')); // below and inside the strip

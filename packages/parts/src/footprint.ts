@@ -140,8 +140,10 @@ function explicit(pkg: PackageInfo, pinNumbers: string[]): FootprintResult {
     const slot = p.slot && { w: r2(p.slot[0]), h: r2(p.slot[1]) };
     const drill = slot ? Math.min(slot.w, slot.h) : p.drill && r2(p.drill);
     const also = [...new Set(p.also ?? [])].filter((n) => n.toUpperCase() !== p.number.toUpperCase());
+    // an exposed (thermal) pad lands on the part's pin for it, if it has one
+    const number = p.number.toUpperCase() === 'EP' && pkg.exposed_pad_mm ? epNumber(pkg, pinNumbers)! : p.number;
     return {
-      number: p.number,
+      number,
       x: r2(p.x),
       y: r2(p.y),
       w: r2(p.w),
@@ -158,7 +160,7 @@ function explicit(pkg: PackageInfo, pinNumbers: string[]): FootprintResult {
     const known = new Set(pinNumbers.map((n) => n.toUpperCase()));
     const noPad = pinNumbers.filter((n) => !have.has(n.toUpperCase()));
     if (noPad.length) return { ok: false, reason: `pins without a pad: ${noPad.join(', ')}` };
-    const stray = [...new Set(pads.flatMap((p) => padPins(p)).filter((n) => !known.has(n.toUpperCase())))];
+    const stray = [...new Set(pads.flatMap((p) => padPins(p)).filter((n) => !known.has(n.toUpperCase()) && !(n === 'EP' && pkg.exposed_pad_mm)))];
     if (stray.length) return { ok: false, reason: `pads for pins the part does not have: ${stray.join(', ')} (pins: ${pinNumbers.join(', ')})` };
   }
   for (const p of pads) {
@@ -449,11 +451,13 @@ function header(pkg: PackageInfo): Footprint {
     shape: i === 0 ? 'rect' : 'round',
     drill: 1.0,
   }));
+  // a housing (JST XH) is the body where it is given, else the pin strip
+  const [bw, bh] = pkg.body_mm ?? [2.54, r2(n * pitch)];
   return {
     pads,
-    body: { w: 2.54, h: r2(n * pitch) },
-    courtyard: { w: 3.0, h: r2(n * pitch + 0.5) },
-    pin1: { x: -1.6, y: r2(-((n - 1) / 2) * pitch) },
+    body: { w: bw, h: bh },
+    courtyard: pkg.body_mm ? { w: r2(bw + 0.5), h: r2(bh + 0.5) } : { w: 3.0, h: r2(n * pitch + 0.5) },
+    pin1: { x: pkg.body_mm ? r2(-bw / 2 - 0.4) : -1.6, y: r2(-((n - 1) / 2) * pitch) },
     notes: [],
   };
 }

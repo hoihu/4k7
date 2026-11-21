@@ -1,7 +1,7 @@
 /**
  * The ops on the circuit: parts, connections, nets, sheets and the constraints of the ledger.
  */
-import { isBoxSymbol, isTwoPin, packageOptions, searchParts, standardPackage } from '@4k7/parts';
+import { closestPackages, isBoxSymbol, isTwoPin, packageOptions, searchParts, standardPackage } from '@4k7/parts';
 import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea } from '@4k7/schema';
 import { keepPlacement } from './board.ts';
 import { allocRefdes, cardOf, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
@@ -41,10 +41,13 @@ function validateParams(card: PartCard, params: Record<string, string | null>, r
     }
     if (key === 'package' && value && !card.packageInfo && !standardPackage(value, card.pins.length)) {
       const opts = packageOptions(card);
+      const near = closestPackages(value, card.pins.length);
       reject({
         code: 'PARAM_INVALID',
-        message: `${refdes}: unknown package "${value}".${opts.length ? ` Known for this part: ${opts.join(', ')} (and KiCad names like R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm, CP_Radial_D8.0mm_P3.50mm).` : ''}`,
-        candidates: opts,
+        message:
+          `${refdes}: unknown package "${value}". Closest known: ${near.join(', ')}.` +
+          (opts.length ? ` Known for this part: ${opts.join(', ')} (and KiCad names like R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm, CP_Radial_D8.0mm_P3.50mm).` : ''),
+        candidates: [...new Set([...near, ...opts])],
       });
     }
     if (spec.values && value !== null && !spec.values.includes(value.trim().toLowerCase())) {
