@@ -12,3 +12,4 @@ export * from './datasheet.ts';
 export * from './eurocircuits.ts';
 export * from './pcbway.ts';
 export * from './land.ts';
+export * from './thermal.ts';
