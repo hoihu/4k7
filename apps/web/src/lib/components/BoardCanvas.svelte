@@ -2,6 +2,7 @@
   import { boardPolygon, bodyOutline, cutoutPolygon, type BoardView, type CopperLayer } from '@4k7/schema';
   import { Dropped, SvgView, linePath as path, pastDrag, plainKey, points, polyPath, zonePath, type Pan } from '../canvas.svelte.ts';
   import { boardDimensions, dimPaths } from '../dimensions.ts';
+  import { currentLayer } from '../currentMap.ts';
   import type { TopView } from '../three-body.ts';
 
   /** 2D board view (mm, top view): outline, pads, tracks, vias, silkscreen, ratsnest, dimensions. */
@@ -235,6 +236,11 @@
   const tracksOn = (l: CopperLayer) => board?.tracks.filter((t) => t.layer === l) ?? [];
   /** Each pour's cells as one path (thousands of them: built once per board, not on every frame). */
   const zonePaths = $derived(new Map(board?.zones.map((z) => [z, zonePath(z.rects)])));
+  /**
+   * The current heat map (show.current): power copper recoloured by its estimated heating against
+   * the allowed rise, the rest dimmed (currentMap.ts; the kernel's current check, BoardView.current).
+   */
+  const heat = $derived(show.current && board ? currentLayer(board) : null);
   /** Drawn copper's id (t3, v1): shown on hover, so the user can name it to the agent. */
   const copperId = (x: object) => (x as { id?: string }).id;
 </script>
@@ -247,6 +253,7 @@
   bind:clientHeight={ch}
   class="board"
   class:placing={show.placement}
+  class:heaton={!!heat}
   viewBox="{view.vb.x} {view.vb.y} {view.vb.w} {view.vb.h}"
   preserveAspectRatio="xMidYMid meet"
   role="application"
@@ -290,6 +297,16 @@
         </g>
       {/if}
     {/each}
+
+    {#if heat}
+      <!-- the current heat map over the copper: dashed where the current is not known to be carried (dashes survive the PNG snapshot) -->
+      <g class="heat">
+        {#each board.tracks as t, i (i)}
+          {@const s = show[t.layer] ? heat.tracks.get(i) : undefined}
+          {#if s}<path d={path(t.pts)} stroke={s.colour} stroke-width={t.width} stroke-linecap={s.dashed ? 'butt' : 'round'} stroke-dasharray={s.dashed ? `${r2(Math.max(t.width * 2, px * 6))} ${r2(Math.max(t.width, px * 4))}` : undefined} data-net={t.netId}><title>{s.title}</title></path>{/if}
+        {/each}
+      </g>
+    {/if}
 
     {#each keepouts as ko, i (ko.k.id)}
       <!-- a keep-out: tracks, vias, pours or parts not allowed here (hatched, translucent, with its label) -->
@@ -416,6 +433,17 @@
       </g>
     {/each}
 
+    {#if heat && anyCopper}
+      <!-- via groups that are the only way between two layers: a ring in the scale, with the count -->
+      {#each heat.vias as v, i (i)}
+        <g class="vring">
+          <circle cx={v.x} cy={v.y} r={v.r} stroke={v.colour} stroke-width={px * 2.5} stroke-dasharray={v.dashed ? `${r2(px * 5)} ${r2(px * 3)}` : undefined} />
+          <text x={v.x + v.r * 0.75} y={v.y - v.r * 0.75} font-size={px * 11} fill={v.colour}>{v.count}×</text>
+          <title>{v.title}</title>
+        </g>
+      {/each}
+    {/if}
+
     {#if show.ratsnest}
       {#each board.ratsnest as l, i (i)}
         <line class="rats" class:hot={hotNet === l.netId} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} />
@@ -460,6 +488,12 @@
   .in2 > path { stroke: #8e5cd6; }
   .layer.dim > path:not(.zone) { opacity: 0.7; }
   .layer > path.hot { stroke: #fff27a; }
+  /* the current heat map: the layers' own copper faint under it */
+  .board.heaton .layer > path:not(.zone) { opacity: 0.22; }
+  .board.heaton .via { opacity: 0.5; }
+  .heat path { fill: none; stroke-linejoin: round; }
+  .vring circle { fill: none; }
+  .vring text { font-family: var(--mono); font-weight: 700; dominant-baseline: auto; pointer-events: none; }
   /* parts on the top side: pads in the top copper's colour */
   .pad { fill: #d0564c; }
   .pad.tht { fill: #d8a24a; }

@@ -287,10 +287,11 @@ export const IC_PARTS: PartCard[] = [
     id: 'microchip:ATTINY85-20SU',
     mpn: 'ATTINY85-20SU',
     manufacturer: 'Microchip',
-    description: '8-bit AVR MCU, 8 KB flash, 1.8–5.5 V, SOIC-8',
+    description: '8-bit AVR MCU, 8 KB flash, 1.8–5.5 V, SOIC-8 208 mil',
     category: 'ic',
     refPrefix: 'U',
-    package: 'SOIC-8',
+    // "SU" is Microchip's 8S2: the 0.208" (5.3 mm) body; the 150 mil SOIC-8 is the -20SSU (S8S1)
+    package: 'SOIC-8-208mil',
     pins: [
       { number: '1', name: 'PB5/RESET', type: 'bidir', side: 'left' },
       { number: '2', name: 'PB3', type: 'bidir', side: 'left' },

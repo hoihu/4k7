@@ -25,6 +25,11 @@ export interface BoardRules {
   edgeClearance: number;
   /** Allow vias in pads (off by default: vias keep clear of every pad and of small parts' land patterns). */
   viaInPad?: boolean;
+  /**
+   * How much copper may heat with the net's current (°C): 10, 20 or 30; absent = 10. It sets the
+   * capacity of tracks and vias in the current check (docs/design/layout.md §14), not the copper.
+   */
+  currentRise?: 10 | 20 | 30;
 }
 
 export interface BoardSettings {
@@ -1040,6 +1045,157 @@ export interface UnroutedConnection extends RouteBlockage {
   near: string[];
 }
 
+/**
+ * The routed copper against its nets' current (kernel current.ts, docs/design/layout.md §14): what
+ * the DRC checks, get_current_map lists and the layout view's heat map draws, worked out once per
+ * routed board. `split`: the current the net's stated loads draw through each piece (set_net
+ * loads), solved over its copper; `bound`: the net's whole max_current is assumed in each piece (a
+ * branch may carry less); `unknown`: a power net without max_current, never fine. Status `over`: too
+ * small for its split current; `unverified`: too small for the bound (or for what an unplaced rest
+ * could add), nobody said whether that much flows there.
+ */
+export type CurrentBasis = 'split' | 'bound' | 'unknown';
+export type CurrentStatus = 'ok' | 'over' | 'unverified' | 'unknown';
+
+export interface CurrentTrack {
+  netId: string;
+  /** Index into BoardView.tracks. */
+  index: number;
+  /** Drawn copper: the track's id. */
+  id?: string;
+  layer: CopperLayer;
+  width: number;
+  length: number;
+  copperUm: number;
+  /** What it is checked for: the bound, or its split share (plus the net's unplaced rest, if any). */
+  amps: number;
+  basis: CurrentBasis;
+  /** split with an unplaced rest: its share of the stated loads alone (`amps` adds the rest). */
+  split?: number;
+  status: CurrentStatus;
+  capacity: number;
+  ratio: number;
+  /** split: the voltage drop along it (mV) from the stated loads. */
+  dropMv?: number;
+  /** Its estimated heating (°C) at `amps`. */
+  rise: number;
+  /** The width that carries `amps` on its layer. */
+  needs: number;
+  at: { x: number; y: number };
+  /** The pads its ends lie on. */
+  from?: string;
+  to?: string;
+}
+
+export interface CurrentVias {
+  netId: string;
+  at: { x: number; y: number };
+  vias: number;
+  drill: number;
+  /** Drawn copper: the vias' ids. */
+  ids: string[];
+  /** The layers whose copper they join. */
+  layers: CopperLayer[];
+  amps: number;
+  basis: CurrentBasis;
+  /** split with an unplaced rest: its share of the stated loads alone. */
+  split?: number;
+  status: CurrentStatus;
+  /** split: a group with another way round (not a cut), checked for the share it carries. */
+  shared?: boolean;
+  capacity: number;
+  ratio: number;
+  /** Vias of that drill that carry `amps`. */
+  needs: number;
+}
+
+/**
+ * A pad or via joined to its net's pour only through thermal-relief spokes, on the current's way
+ * (DRC.SPOKE_CURRENT): the spokes that connect against what flows through them.
+ */
+export interface CurrentJoint {
+  netId: string;
+  kind: 'pad' | 'via';
+  /** The pad ("U3.4"), or a drawn via's id. */
+  ref?: string;
+  at: { x: number; y: number };
+  /** The pours' layers it joins through spokes. */
+  layers: CopperLayer[];
+  /** Spokes that connect, on all those layers. */
+  spokes: number;
+  /** The narrowest spoke (mm). */
+  spokeWidth: number;
+  amps: number;
+  basis: CurrentBasis;
+  /** split with an unplaced rest: its share of the stated loads alone. */
+  split?: number;
+  status: CurrentStatus;
+  /** spokes × one spoke's capacity (its width, the layer's copper, the allowed rise). */
+  capacity: number;
+  ratio: number;
+  /** The spoke width that would carry `amps` (mm). */
+  needs: number;
+}
+
+export interface CurrentNet {
+  netId: string;
+  name: string;
+  /** max_current (or what bounds it: GND's from its rails, the loads' sum without one). */
+  amps?: number;
+  /** amps is GND's bound from the rails' max_current (it has none of its own). */
+  fromRails?: boolean;
+  basis: CurrentBasis;
+  status: CurrentStatus;
+  /** The worst ratio of current to capacity among the copper checked. */
+  worst?: number;
+  /** split: the stated loads that the copper reaches from the source (A). */
+  loads?: number;
+  /** split: what of max_current no stated load places (A); it may flow anywhere. */
+  unplaced?: number;
+  /** split: the worst drop from the source to a load (mV). */
+  dropMv?: number;
+  /** split: that drop against the rail's budget (DRC.IR_DROP). */
+  irDrop?: IrDrop;
+  /** bound with loads stated: why they are not split (two sources, no source on the board …). */
+  why?: string;
+}
+
+/** A piece of copper on the way from a net's source to its worst load, with the drop across it. */
+export type DropPiece =
+  | { kind: 'track'; /** Into BoardView.tracks. */ index: number; id?: string; layer: CopperLayer; width: number; amps: number; dropMv: number; at: { x: number; y: number } }
+  | { kind: 'via'; id?: string; drill: number; amps: number; dropMv: number; at: { x: number; y: number } };
+
+/** A split net's IR drop: from its source to the load pin furthest down, against IR_BUDGET of the rail. */
+export interface IrDrop {
+  /** The load pad furthest down ("U3.2"). */
+  load: string;
+  mv: number;
+  /** The rail's voltage (the net's voltage attribute); without it the budget is unknown. */
+  railV?: number;
+  budgetMv?: number;
+  pct?: number;
+  /** The pieces on the way, the largest drop first (up to 3). */
+  worst: DropPiece[];
+}
+
+/** The IR-drop budget: a share of the rail's voltage (3 %). See docs/design/layout.md §14. */
+export const IR_BUDGET = 0.03;
+
+export interface CurrentView {
+  /** The allowed heating (set_board current_rise_c, °C): the capacities and the heat map's colours are relative to it. */
+  riseC: number;
+  /** Each copper layer's thickness (µm) from the stack-up. */
+  copperUm: Partial<Record<CopperLayer, number>>;
+  /** Every net with a max_current and copper, and every power net with copper but none (unknown). */
+  nets: CurrentNet[];
+  /** Every track counted of a net with a current (not those inside the net's own pour, nor pieces up to 1 mm). */
+  tracks: CurrentTrack[];
+  /** The via groups that are the only way across between two layers' copper (cuts), of a net with a current. */
+  vias: CurrentVias[];
+  /** The pads and vias joined to a pour only through thermal reliefs, on the current's way. */
+  joints: CurrentJoint[];
+}
+
 export interface BoardView {
   outline: { w: number; h: number };
   layers: CopperLayer[];
@@ -1107,6 +1263,8 @@ export interface BoardView {
   graphics: BoardGraphic[];
   /** The fabrication panel, resolved for this outline (absent: none set). */
   panel?: PanelView;
+  /** The copper against its nets' current, once routed (the current check: DRC, get_current_map, the heat map). */
+  current?: CurrentView;
 }
 
 /** How get_board says where a part is plugged from (top view). */

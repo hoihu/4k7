@@ -16,7 +16,7 @@
  *  - `layer` constraints put a part on the bottom side: its footprint is mirrored (seen from the
  *    top), its SMD pads are on B.Cu, and it shares the area with the SMD parts on the top side.
  *  - `room` constraints keep a functional block's parts inside a rectangle of the board, as the
- *    outline keeps every part on it (docs/design/layout.md §14).
+ *    outline keeps every part on it (docs/design/layout.md §15).
  */
 import { type Footprint, footprintFor, isTwoPin, packageOf } from '@4k7/parts';
 import { type BoardPart, type BodyCorner, type Component, type Constraint, type CopperLayer, cutoutBounds, DEFAULT_BOARD, type Design, insidePolygon, type MountingHole, type PackageInfo, padHasPin, padPins, type PartCard, placeCutout, placeKeepout, type PlaneArea, type PlaneStyle, type SchematicView } from '@4k7/schema';
@@ -541,7 +541,7 @@ function placerInputs(d: Design, sch: SchematicView) {
   const bySize = [...items].sort((a, b) => depth(a) - depth(b) || b.fp.pads.length - a.fp.pads.length || natCmp(a.comp.refdes, b.comp.refdes));
   const anchorOf = (it: Item) => (it.intent?.rel ? byComp.get(it.intent.rel) : undefined);
 
-  /* ---- rooms: a functional block's parts keep inside its rectangle (docs/design/layout.md §14) ---- */
+  /* ---- rooms: a functional block's parts keep inside its rectangle (docs/design/layout.md §15) ---- */
   const rooms = new Map<Item, Room>();
   for (const k of Object.values(d.ledger)) {
     if (k.kind !== 'room') continue;

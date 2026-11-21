@@ -1,8 +1,8 @@
 /**
  * The ops on the circuit: parts, connections, nets, sheets and the constraints of the ledger.
  */
-import { isBoxSymbol, isTwoPin, packageOptions, searchParts, standardPackage } from '@4k7/parts';
-import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea } from '@4k7/schema';
+import { closestPackages, isBoxSymbol, isTwoPin, packageOptions, searchParts, standardPackage } from '@4k7/parts';
+import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, DEFAULT_BOARD, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea } from '@4k7/schema';
 import { keepPlacement } from './board.ts';
 import { allocRefdes, cardOf, closest, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
 import { isDrawn } from './drawing.ts';
@@ -41,10 +41,13 @@ function validateParams(card: PartCard, params: Record<string, string | null>, r
     }
     if (key === 'package' && value && !card.packageInfo && !standardPackage(value, card.pins.length)) {
       const opts = packageOptions(card);
+      const near = closestPackages(value, card.pins.length);
       reject({
         code: 'PARAM_INVALID',
-        message: `${refdes}: unknown package "${value}".${opts.length ? ` Known for this part: ${opts.join(', ')} (and KiCad names like R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm, CP_Radial_D8.0mm_P3.50mm).` : ''}`,
-        candidates: opts,
+        message:
+          `${refdes}: unknown package "${value}". Closest known: ${near.join(', ')}.` +
+          (opts.length ? ` Known for this part: ${opts.join(', ')} (and KiCad names like R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm, CP_Radial_D8.0mm_P3.50mm).` : ''),
+        candidates: [...new Set([...near, ...opts])],
       });
     }
     if (spec.values && value !== null && !spec.values.includes(value.trim().toLowerCase())) {
@@ -303,6 +306,23 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
     else a.maxCurrent = op.max_current;
     changes.push(`max_current=${op.max_current ?? '∅'}`);
   }
+  if (op.loads !== undefined) {
+    if (op.loads === null) delete a.loads;
+    else {
+      // each pin of the net (a name on several pins: those on this net), drawing more than nothing
+      a.loads = op.loads.map((l) => {
+        if (!(l.amps > 0)) reject({ code: 'PARAM_INVALID', message: `${l.pin} draws ${l.amps} A: give what it draws, more than 0 A (leave it out if it draws nothing).` });
+        const hs = resolvePins(d, l.pin);
+        const on = hs.filter((h) => h.comp.pins[h.pin.number] === net.id);
+        if (!on.length) {
+          const other = hs[0]!.comp.pins[hs[0]!.pin.number];
+          reject({ code: 'NET_MISMATCH', message: `${l.pin} is ${other ? `on ${d.nets[other]?.name ?? other}` : 'not connected'}, not on ${net.name}: a load is a pin of the net it draws from.` });
+        }
+        return { componentId: on[0]!.comp.id, pins: on.map((h) => h.pin.number), amps: l.amps };
+      });
+    }
+    changes.push(op.loads === null ? 'no loads' : `loads ${op.loads.map((l) => `${l.pin} ${l.amps} A`).join(', ')}`);
+  }
   if (op.track_mm !== undefined) {
     if (op.track_mm === null) delete a.trackWidth;
     else {
@@ -312,6 +332,21 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
       a.trackWidth = Math.round(op.track_mm * 1000) / 1000;
     }
     changes.push(`track ${op.track_mm === null ? 'default' : `${a.trackWidth} mm`}`);
+  }
+  if (op.route_first !== undefined) {
+    if (op.route_first) a.routeFirst = true;
+    else delete a.routeFirst;
+    changes.push(op.route_first ? 'routed first' : 'routed as any other');
+  }
+  if (op.layer !== undefined) {
+    if (op.layer === null) delete a.layer;
+    else {
+      const n = d.board?.layers ?? DEFAULT_BOARD.layers;
+      const has = n === 4 ? ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'] : ['F.Cu', 'B.Cu'];
+      if (!has.includes(op.layer)) reject({ code: 'BOARD_INVALID', message: `${op.layer} does not exist on a ${n}-layer board.`, candidates: has });
+      a.layer = op.layer;
+    }
+    changes.push(op.layer ? `tracks on ${op.layer} where they can` : 'tracks on any layer');
   }
   if (op.draw_as !== undefined && (op.draw_as ?? undefined) !== a.drawAs) {
     if (op.draw_as === null) delete a.drawAs;

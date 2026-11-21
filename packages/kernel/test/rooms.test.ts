@@ -1,6 +1,6 @@
 /**
  * Rooms: a functional block keeps its parts inside a rectangle of the board (constrain kind room).
- * See docs/design/layout.md §14.
+ * See docs/design/layout.md §15.
  */
 import { describe, expect, it } from 'vitest';
 import type { BoardPart, BoardView } from '@4k7/schema';

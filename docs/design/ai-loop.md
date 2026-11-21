@@ -53,7 +53,7 @@ Stable prefix content (system prompt, op schemas, recipe) is ordered so provider
 | Typed ops + kernel validation | Malformed or impossible edits are refused with reasons |
 | Hard constraints | Ledger `hard` entries can't be violated. Conflicts are reported, never silently resolved |
 | Semantic ERC from Part Cards | Datasheet requirements (decoupling, BOOT caps, pull-ups, abs-max) become checks |
-| Engineering calculators as tools | `calc.divider`, `calc.buck_inductor`, `calc.trace_width`, `calc.impedance`. The model calls them instead of doing maths in its head. Results are logged in the changeset |
+| Engineering calculators as tools | `calc.divider`, `calc.buck_inductor`, `calc.impedance`, `calc.track_current`. The model calls them instead of doing maths in its head. Results are logged in the changeset |
 | Checker role | Optional second model reviews a changeset against the request + ledger ("did it do what was asked?") |
 | Fix budget + escalation | No endless loops. Uncertainty becomes a question |
 | Autonomy modes | Review by default. Autopilot is opt-in per project |

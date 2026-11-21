@@ -2,7 +2,7 @@
  * Deterministic engineering calculators exposed to the agent as the `calc` tool.
  * The model decides *what* to compute; arithmetic and standard-value snapping happen here.
  */
-import { E_SERIES, eSeriesValues, formatQuantity, nearestInSeries, parseQuantity, type CalcCall, type DesignSummary, type ESeries, type ValueSeries } from '@4k7/schema';
+import { COPPER_ORDER, E_SERIES, eSeriesValues, formatQuantity, nearestInSeries, parseQuantity, trackCurrentFor, trackRiseFor, trackWidthFor, viaCurrentFor, type CalcCall, type DesignSummary, type ESeries, type ValueSeries } from '@4k7/schema';
 import { analyseLine, gapForLine, widthForLine, type LineSection } from '@4k7/kernel';
 
 export function seriesValues(name: string): number[] {
@@ -36,13 +36,16 @@ function num(args: CalcCall['args'], key: string, unit?: string, fallback?: numb
 
 /** The board's stack-up as the design summary gives it (calc impedance works on it by default). */
 export type CalcStackup = NonNullable<DesignSummary['stackup']>;
+/** The board as the calculators read it: its stack-up and its allowed heating (set_board current_rise_c). */
+export type CalcBoard = { stackup?: CalcStackup; currentRise?: number };
 
 /**
  * `design` is the design's value series (set_value_series): it replaces each calculator's own
  * default series for that kind of part; a `series` argument wins over both. `stackup`: the board's,
- * what impedance works on unless given h and er.
+ * what impedance works on unless given h and er; `currentRise`: the board's allowed heating, what
+ * track_current works at unless given rise_c.
  */
-export function runCalc(call: CalcCall, design: ValueSeries = {}, stackup?: CalcStackup): Record<string, string | number> {
+export function runCalc(call: CalcCall, design: ValueSeries = {}, stackup?: CalcStackup, currentRise = 10): Record<string, string | number> {
   const a = call.args;
   const given = a.series !== undefined ? String(a.series).toUpperCase() : undefined;
   const pick = (kind: keyof ValueSeries, fallback: ESeries): string => given ?? design[kind] ?? fallback;
@@ -133,7 +136,67 @@ export function runCalc(call: CalcCall, design: ValueSeries = {}, stackup?: Calc
     }
     case 'impedance':
       return impedance(a, stackup);
+    case 'track_current':
+      return trackCurrent(a, stackup, currentRise);
   }
+}
+
+/**
+ * A track's current, width and heating on one layer's copper: give two of width_mm, amps and rise_c
+ * (rise_c defaults to the board's current_rise_c) and get the third; with via_drill_mm also one
+ * via's capacity and the vias the current needs. The same functions as the current check
+ * (get_current_map), so the answer is what the check will say. See docs/design/layout.md §14.
+ */
+function trackCurrent(a: CalcCall['args'], stackup: CalcStackup | undefined, boardRise: number): Record<string, string | number> {
+  const has = (k: string) => a[k] !== undefined;
+  const pos = (k: string, what: string) => {
+    const v = num(a, k);
+    if (!(v > 0)) throw new CalcError(`${k} must be a positive ${what}`);
+    return v;
+  };
+  if (has('layer') && has('copper_um')) throw new CalcError('give layer (its copper from the stack-up) or copper_um, not both');
+  let copper: number;
+  let layer: string;
+  if (has('copper_um')) {
+    copper = pos('copper_um', 'copper thickness in µm (35 for 1 oz)');
+    layer = 'as given';
+  } else {
+    layer = has('layer') ? String(a.layer) : 'F.Cu';
+    const order = stackup ? COPPER_ORDER[stackup.copper.length as 2 | 4] : undefined;
+    if (!stackup || !order) throw new CalcError('no stack-up known: give copper_um');
+    const i = order.indexOf(layer as (typeof order)[number]);
+    if (i < 0) throw new CalcError(`layer is one of this board's copper layers: ${order.join(', ')}`);
+    copper = Math.round(stackup.copper[i]! * 1000 * 10) / 10;
+  }
+  const n = [has('width_mm'), has('amps'), has('rise_c')].filter(Boolean).length;
+  if (n === 3) throw new CalcError('give two of width_mm, amps and rise_c (rise_c defaults to the board\'s current_rise_c), and get the third');
+  if (n === 0 && !has('via_drill_mm')) throw new CalcError('give width_mm (for the current it carries), amps (for the width it needs) or both (for the heating), or via_drill_mm');
+  const solveRise = has('width_mm') && has('amps');
+  const rise = solveRise ? undefined : has('rise_c') ? pos('rise_c', 'heating in °C') : boardRise;
+  if (rise !== undefined && rise > 100) throw new CalcError('rise_c must be at most 100 °C (the curve\'s range)');
+  const out: Record<string, string | number> = {};
+  let amps = has('amps') ? pos('amps', 'current in A') : undefined;
+  if (has('width_mm') || amps !== undefined) {
+    const width = has('width_mm') ? pos('width_mm', 'width in mm') : trackWidthFor(amps!, rise, copper);
+    if (amps === undefined) amps = trackCurrentFor(width, copper, rise);
+    out.width_mm = mm(width);
+    out.amps = Number(amps.toFixed(3));
+    out.rise_c = Number((rise ?? trackRiseFor(amps, width, copper)).toFixed(1));
+  } else out.rise_c = rise!;
+  out.copper_um = copper;
+  out.layer = layer;
+  out.curve = 'IPC-2221 external';
+  if (has('via_drill_mm')) {
+    const perVia = viaCurrentFor(pos('via_drill_mm', 'drill in mm'), rise ?? boardRise);
+    out.via_drill_mm = num(a, 'via_drill_mm');
+    out.per_via_a = Number(perVia.toFixed(3));
+    if (amps !== undefined) out.vias_needed = Math.max(1, Math.ceil(amps / perVia - 1e-6));
+  }
+  out.note =
+    'The curve the current check uses, on every layer with its copper: conservative near a plane or pour (they carry heat away), about right for a long isolated outer track.' +
+    (has('amps') && !has('width_mm') ? ' The width is rounded up to 0.05 mm, at least 0.15 mm.' : '') +
+    (has('via_drill_mm') ? ' Vias: the plated barrel (25 µm), at the board\'s heating unless rise_c is given; vias within 1 mm of each other add up.' : '');
+  return out;
 }
 
 const mm = (v: number) => Number(v.toFixed(4));

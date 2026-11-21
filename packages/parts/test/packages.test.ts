@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_PARTS, body3dFor, footprintFor, isModule, packageOf, standardPackage } from '../src/index.ts';
+import { BUILTIN_PARTS, body3dFor, closestPackages, footprintFor, isModule, packageOf, standardPackage } from '../src/index.ts';
 
 describe('standard packages', () => {
   it('gives every library part a footprint with a pad for each pin, and a 3D body', () => {
@@ -30,6 +30,25 @@ describe('standard packages', () => {
     expect(p2!.x).toBeGreaterThan(0.6);
     expect(p2!.x).toBeLessThan(0.9); // KiCad: ±0.775
     expect(p1!.h).toBeCloseTo(0.95, 2);
+  });
+
+  it('gives the ATtiny85-20SU the 208 mil SOIC-8 (Microchip 8S2) land, not the 150 mil one', () => {
+    const card = BUILTIN_PARTS.find((c) => c.id === 'microchip:ATTINY85-20SU')!;
+    const pkg = packageOf(card)!;
+    expect(pkg.body_mm![0]).toBeCloseTo(5.3, 1); // 8S2: E1 5.18–5.40 mm
+    expect(pkg.pitch_mm).toBe(1.27);
+    const fp = footprintFor(pkg, card.pins.map((p) => p.number));
+    if (!fp.ok) throw new Error(fp.reason);
+    const pad = (n: string) => fp.footprint.pads.find((p) => p.number === n)!;
+    // pad rows ~7.2 mm apart centre to centre (KiCad's 8S2 land: ±3.6), the 150 mil SOIC-8's ~5.3 mm
+    expect(pad('8').x - pad('1').x).toBeGreaterThan(6.9);
+    expect(pad('8').x - pad('1').x).toBeLessThan(7.5);
+    // the pads reach past the 7.9 mm lead span (toe) and start inside the foot's heel, clear of the 5.3 mm body
+    expect(pad('8').x + pad('8').w / 2).toBeGreaterThan(7.9 / 2);
+    expect(pad('8').x - pad('8').w / 2).toBeLessThan(7.9 / 2 - 0.65);
+    expect(pad('8').x - pad('8').w / 2).toBeGreaterThanOrEqual(5.3 / 2);
+    // the 150 mil SOIC-8 stays as it was for the TI "D" parts
+    expect(packageOf(BUILTIN_PARTS.find((c) => c.id === 'ti:LM358DR')!)!.body_mm).toEqual([3.9, 4.9]);
   });
 
   it('puts the SOT-223 tab on the output pin', () => {
@@ -206,5 +225,44 @@ describe('passive packages: through-hole, defaults and sizing', () => {
     expect(packageChoice(R, { resistance: '1', power: '0.5W' })).toMatchObject({ name: '2010', why: 'auto' });
     // a through-hole default is not resized
     expect(packageChoice(R, { resistance: '1', power: '0.5W' }, { resistor: 'AXIAL-0.4' })).toEqual({ name: 'AXIAL-0.4', why: 'default' });
+  });
+  it('knows a 3535 power LED: two electrode strips and an isolated centre thermal pad', () => {
+    for (const n of ['3535', 'LED-3535', 'LED_3535', 'led3535', 'LED-3.5x3.5mm']) expect(standardPackage(n)?.name, n).toBe('LED-3535');
+    const pkg = standardPackage('3535')!;
+    const fp = footprintFor(pkg, ['1', '2']);
+    if (!fp.ok) throw new Error(fp.reason);
+    // pin 1 (the generic LED's cathode) left, anode right, the thermal pad on no pin
+    expect(fp.footprint.pads.map((p) => [p.number, p.x, p.w, p.h])).toEqual([['1', -1.4, 0.5, 3.3], ['2', 1.4, 0.5, 3.3], ['EP', 0, 1.3, 3.3]]);
+    expect(fp.footprint.body).toMatchObject({ w: 3.45, h: 3.45 });
+    // a card that numbers the thermal pad as its third pin lands it there
+    const three = footprintFor(pkg, ['1', '2', '3']);
+    expect(three.ok && three.footprint.pads.map((p) => p.number)).toEqual(['1', '2', '3']);
+    expect(body3dFor(pkg, ['1', '2']).ok).toBe(true);
+    const led = BUILTIN_PARTS.find((c) => c.id === 'generic:LED')!;
+    expect(packageOf(led, { package: '3535' })?.name).toBe('LED-3535');
+  });
+
+  it('knows JST XH connectors by the names they go by, pins from the name or the part', () => {
+    for (const n of ['JST-XH-2', 'JST XH 2', 'XH-2', 'XH 2.5mm 2 pin', 'B2B-XH-A', 'JST_XH_B2B-XH-A_1x02_P2.50mm_Vertical', 'S2B-XH-A']) {
+      expect(standardPackage(n)?.name, n).toBe('JST-XH-2');
+    }
+    expect(standardPackage('JST XH', 4)?.name).toBe('JST-XH-4');
+    expect(standardPackage('XH', 3)).toMatchObject({ name: 'JST-XH-3', family: 'HEADER', pins: 3, pitch_mm: 2.5 });
+    const fp = footprintFor(standardPackage('JST-XH-3')!, ['1', '2', '3']);
+    if (!fp.ok) throw new Error(fp.reason);
+    expect(fp.footprint.pads.map((p) => p.y)).toEqual([-2.5, 0, 2.5]);
+    expect(fp.footprint.pads.every((p) => !!p.drill)).toBe(true);
+    // the housing, not a pin strip: 5.75 mm deep, (n - 1) × 2.5 + 4.9 long
+    expect(fp.footprint.body).toMatchObject({ w: 5.75, h: 9.9 });
+    expect(body3dFor(standardPackage('JST-XH-3')!, ['1', '2', '3']).ok).toBe(true);
+    const conn = BUILTIN_PARTS.find((c) => c.id === 'generic:CONN_1x2')!;
+    expect(packageOf(conn, { package: 'JST XH' })?.name).toBe('JST-XH-2');
+  });
+
+  it('names the closest known packages for a name it does not know', () => {
+    expect(closestPackages('JST-PH-2', 2)).toContain('JST-XH-2');
+    expect(closestPackages('LED-3030')).toContain('LED-3535');
+    expect(closestPackages('SOT23-5')).toContain('SOT-23-5');
+    expect(closestPackages('0607').length).toBeLessThanOrEqual(6);
   });
 });

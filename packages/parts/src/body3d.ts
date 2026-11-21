@@ -114,10 +114,14 @@ export function body3dFor(pkg: PackageInfo, pinNumbers: string[] = []): Body3DRe
   }
 }
 
-/** The body of every part on the board that has one (by component id): the 3D view and the STEP export. */
-export function boardBodies(b: BoardView): Map<string, Body3D> {
+/**
+ * The body of every part on the board that has one (by component id): the 3D view and the STEP export.
+ * `fitted`: only the parts that are assembled (not DNP), for the Layout's 3D view of the assembled board.
+ */
+export function boardBodies(b: BoardView, opts: { fitted?: boolean } = {}): Map<string, Body3D> {
   const bodies = new Map<string, Body3D>();
   for (const p of b.parts) {
+    if (opts.fitted && p.dnp) continue;
     const r = body3dFor(p.pkgInfo, p.pads.map((x) => x.number));
     if (r.ok) bodies.set(p.componentId, r.body);
   }
@@ -387,7 +391,9 @@ function moulded(pkg: PackageInfo, pads: Pad[]): Body3D {
 function header(pkg: PackageInfo): Body3D {
   const n = pkg.pins;
   const pitch = pkg.pitch_mm ?? 2.54;
-  const boxes: Box3[] = [box(-1.27, (-n * pitch) / 2, 0, 1.27, (n * pitch) / 2, 2.5, 'body')];
+  // a housing (JST XH) where body_mm gives one: a box round the pins, as high as the part
+  const [bw, bh] = pkg.body_mm ?? [2.54, n * pitch];
+  const boxes: Box3[] = [box(-bw / 2, -bh / 2, 0, bw / 2, bh / 2, pkg.body_mm ? (pkg.height_mm ?? 2.5) : 2.5, 'body')];
   for (let i = 0; i < n; i++) {
     const y = (i - (n - 1) / 2) * pitch;
     boxes.push(box(-0.32, y - 0.32, -3, 0.32, y + 0.32, 2.5 - 0.001, 'lead')); // below and inside the strip

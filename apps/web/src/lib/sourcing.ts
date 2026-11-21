@@ -205,12 +205,17 @@ export async function sourcingTool(input: unknown, checks: DesignChecks, chosen:
       const r = await checks.stock(a.boards, h);
       const trouble = r.lines.filter(lineBlocks).length;
       const order = r.estimates ? `\nThe order: ${estimateLine(r.estimates, r.boards, h)}, fees included (not ${h.noCatalogue ? 'the parts, ' : ''}the bare boards, shipping or taxes); sourcing cost has the breakdown and what would make it cheaper.` : '';
+      const n = r.unsourced.length;
+      // with no part number at all there is nothing to check: say so rather than "0 fine to order"
+      const nothing = !h.noCatalogue && !r.lines.length && n > 0;
+      const without = `${n} part(s) without ${/^(LCSC|[aio])/i.test(h.numberName) ? 'an' : 'a'} ${h.numberName}`;
       const detail = h.noCatalogue
-        ? `${r.lines.length} part number(s) on the BOM${r.unsourced.length ? `, ${r.unsourced.length} without what ${h.name} needs` : ''}`
-        : trouble
-          ? `${trouble} part(s) stop the order`
-          : `${r.lines.length} part number(s) fine to order`;
-      return { content: stockReportText(r, h) + order, isError: false, label: `stock check · ${h.name} · ${r.boards} boards`, detail };
+        ? `${r.lines.length} part number(s) on the BOM${n ? `, ${n} without what ${h.name} needs` : ''}`
+        : nothing
+          ? `${without}, so the order can't be checked yet`
+          : `${trouble ? `${trouble} part(s) stop the order` : `${r.lines.length} part number(s) fine to order`}${n ? `, ${without}` : ''}`;
+      const lead = nothing ? `${n} part${n === 1 ? ' has' : 's have'} no ${h.numberName}, so the order can't be checked yet: give them one (sourcing search, then design_edit set_param ${h.param ?? 'mpn'}).\n` : '';
+      return { content: lead + stockReportText(r, h) + order, isError: false, label: `stock check · ${h.name} · ${r.boards} boards`, detail };
     }
     if (a.action === 'values') {
       const r = await checks.values(a.boards, h);
@@ -256,12 +261,20 @@ export async function sourcingTool(input: unknown, checks: DesignChecks, chosen:
     const what = a.kind ? `${a.kind} ${a.value ?? ''}${a.package ? ` ${a.package}` : ''}`.trim() : (a.text ?? '').trim();
     const parts = await catalogue.search(q);
     if (!parts.length) {
-      return {
-        content: `No ${h.name} parts in stock for "${what}"${a.no_fee ? ` among ${feeFreeTiers(h)} parts` : ''}. Try other words from a catalogue description, or drop the package filter.` + mirrorNote(parts, h),
-        isError: false,
-        label: `${h.name} · ${what}`,
-        detail: 'no results',
-      };
+      // tell "none in stock" from "not in the catalogue": the agent proceeds differently (a supercap at JLCPCB is the first)
+      const listed = await catalogue.search({ ...q, outOfStock: true }).catch(() => [] as SupplierPart[]);
+      const among = a.no_fee ? ` among ${feeFreeTiers(h)} parts` : '';
+      const otherwise =
+        `Otherwise keep the component without a part number and tell the user it is bought and fitted by hand (design_edit set_dnp keeps it off the assembly), ` +
+        'or try another house (house).';
+      const content = listed.length
+        ? [
+            `No ${h.name} parts in stock for "${what}"${among}. ${h.name} lists ${listed.length} matching part${listed.length > 1 ? 's' : ''} with none in stock now; they cannot be assembled until restocked:`,
+            ...listed.map((p) => `- ${describePart(p, h)}`),
+            `Check that one fits (sourcing lookup) before you count on a restock. ${otherwise}`,
+          ].join('\n')
+        : `No ${h.name} parts for "${what}"${among}, in stock or not: ${whose(h)} catalogue does not list it under these words. Try other words from a catalogue description (its category name, a maker's part number), or drop the package filter. ${otherwise}`;
+      return { content: content + mirrorNote(parts, h), isError: false, label: `${h.name} · ${what}`, detail: listed.length ? 'none in stock' : 'no results' };
     }
     const content = [
       `${parts.length} ${h.name} part(s) for ${what} (${feeFreeTiers(h)} first, then by stock; ${h.currency} per piece at the quantity given):`,

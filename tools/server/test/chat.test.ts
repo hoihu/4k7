@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { SERVER_PROTOCOL, type ServerToTab, type ChatEvent } from '@4k7/schema';
-import { LocalServer, ChatRunner, detectClaude, mcpHttpHandler, type ClaudeProfile } from '../src/index.ts';
+import { LocalServer, ChatRunner, detectClaude, mcpHttpHandler, pdfPages, type ClaudeProfile } from '../src/index.ts';
 
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 // on Windows behind an npm shim, like a real agent installed with npm
@@ -230,6 +230,10 @@ function tinyPdf(line: string): string {
 }
 
 describe('datasheet import via Claude Code', () => {
+  // pdf.js (and its fake worker, some 3 MB of modules) loads on the first PDF: that took 20-30 s on a busy Windows
+  // runner, inside the first import's 15 s. Loaded once here, the tests time the import itself.
+  beforeAll(() => pdfPages(new Uint8Array(Buffer.from(tinyPdf('warm up'), 'base64'))), 60_000);
+
   it('unpacks the PDF into a private folder and gives Claude only files + submit_part', async () => {
     const { run, calls, ingestDir } = await setup();
     const es = await run({ type: 'ingest', id: 'i1', mpn: 'STM32F777VIT6', pdf: { name: 'ds.pdf', base64: tinyPdf('Table 11. Pin definitions') }, model: 'sonnet' });
@@ -264,7 +268,6 @@ describe('datasheet import via Claude Code', () => {
   });
 
   it('extracts page text with table cells kept apart', async () => {
-    const { pdfPages } = await import('../src/index.ts');
     const pages = await pdfPages(new Uint8Array(Buffer.from(tinyPdf('PC0 | I/O'), 'base64')));
     expect(pages).toEqual(['PC0 | I/O']);
     const data = new Uint8Array(Buffer.from(tinyPdf('x'), 'base64'));

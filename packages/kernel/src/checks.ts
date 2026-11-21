@@ -17,8 +17,8 @@ import {
   type SchematicView,
   type Severity,
 } from '@4k7/schema';
-import { seriesPaths } from '@4k7/parts';
 import { sameValue, describeConstraint } from './netops.ts';
+import { powerWalk } from './power.ts';
 import { allocRefdes, applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 
 const DRIVERS = new Set(['out', 'bidir', 'tri', 'pwr_out', 'oc', 'passive']);
@@ -144,26 +144,7 @@ function powerChecks(ctx: Ctx) {
     if (net.attrs.external || isGroundNet(net) || pins.some((p) => p.pin.type === 'pwr_out')) driven.add(net.id);
   }
   // power flows through series elements (inductors, resistors, diodes, fuses, ferrite beads, a choke's windings)
-  const edges = new Map<string, string[]>();
-  for (const c of Object.values(d.components)) {
-    const card = cardOf(d, c.part);
-    for (const [x, y] of card ? seriesPaths(card) : []) {
-      const [a, b] = [c.pins[x], c.pins[y]];
-      if (!a || !b || a === b) continue;
-      edges.set(a, [...(edges.get(a) ?? []), b]);
-      edges.set(b, [...(edges.get(b) ?? []), a]);
-    }
-  }
-  const queue = [...driven];
-  while (queue.length) {
-    const n = queue.shift()!;
-    for (const m of edges.get(n) ?? []) {
-      if (!driven.has(m)) {
-        driven.add(m);
-        queue.push(m);
-      }
-    }
-  }
+  for (const n of powerWalk(d, [...driven]).keys()) driven.add(n);
   for (const net of netsSorted(d)) {
     const sinks = (members.get(net.id) ?? []).filter((p) => p.pin.type === 'pwr_in');
     if (sinks.length && !driven.has(net.id)) {
