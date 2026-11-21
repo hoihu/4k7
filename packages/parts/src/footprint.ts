@@ -461,3 +461,59 @@ function header(pkg: PackageInfo): Footprint {
     notes: [],
   };
 }
+
+/** How far a pad ring's rows or columns may lie off its centre before it is reported (mm). */
+export const LAND_RING_TOLERANCE = 0.05;
+
+/**
+ * A land whose pads run round all four sides (QFN, QFP, LGA modules): its left and right columns
+ * should be centred between its top and bottom rows, and those rows between the columns, whatever
+ * the land's offset from the body centre (a module's antenna end puts it off centre). A column or
+ * row off that centre is a land read wrongly off the drawing, as the bike lamp's ESP32-C3-MINI-1 got
+ * it (rows moved, side pads left where they were) and JLCPCB's footprint check caught. A row or
+ * column is three or more pads of one size on one line; the ring needs all four, the rows between
+ * the columns' ends and the columns between the rows (a grid or a two-sided land is not one). Null
+ * when it lines up or is no ring; else the worst line, by how much, in words.
+ */
+export function landRingOffset(pads: readonly { number: string; x: number; y: number; w: number; h?: number }[]): { offset: number; text: string } | null {
+  type Line = { at: number; lo: number; hi: number; numbers: string[] };
+  const lines = (along: 'x' | 'y'): Line[] => {
+    const across = along === 'x' ? 'y' : 'x';
+    const groups = new Map<string, typeof pads[number][]>();
+    for (const p of pads) {
+      const key = `${Math.round(p[across] * 100)}|${p.w}|${p.h ?? p.w}`;
+      groups.set(key, [...(groups.get(key) ?? []), p]);
+    }
+    return [...groups.values()]
+      .filter((g) => new Set(g.map((p) => p.number)).size >= 3)
+      .map((g) => ({ at: g[0]![across], lo: Math.min(...g.map((p) => p[along])), hi: Math.max(...g.map((p) => p[along])), numbers: g.map((p) => p.number) }));
+  };
+  const rows = lines('x');
+  const cols = lines('y');
+  if (rows.length < 2 || cols.length < 2) return null;
+  const pick = (ls: Line[], dir: 1 | -1) => ls.reduce((a, b) => (dir * (b.at - a.at) > 0 ? b : a));
+  const [top, bottom, left, right] = [pick(rows, -1), pick(rows, 1), pick(cols, -1), pick(cols, 1)];
+  // a ring: the rows lie between the columns and the columns between the rows
+  if (!(top.lo > left.at && top.hi < right.at && bottom.lo > left.at && bottom.hi < right.at)) return null;
+  if (!(left.lo > top.at && left.hi < bottom.at && right.lo > top.at && right.hi < bottom.at)) return null;
+  const cx = (left.at + right.at) / 2;
+  const cy = (top.at + bottom.at) / 2;
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  const span = (l: Line) => {
+    const ns = [...new Set(l.numbers)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return ns.length > 2 ? `${ns[0]}–${ns[ns.length - 1]}` : ns.join(', ');
+  };
+  const off = [
+    { line: left, name: 'left column', d: (left.lo + left.hi) / 2 - cy, axis: 'y' as const },
+    { line: right, name: 'right column', d: (right.lo + right.hi) / 2 - cy, axis: 'y' as const },
+    { line: top, name: 'top row', d: (top.lo + top.hi) / 2 - cx, axis: 'x' as const },
+    { line: bottom, name: 'bottom row', d: (bottom.lo + bottom.hi) / 2 - cx, axis: 'x' as const },
+  ].sort((a, b) => Math.abs(b.d) - Math.abs(a.d))[0]!;
+  if (Math.abs(off.d) <= LAND_RING_TOLERANCE) return null;
+  const between = off.axis === 'y' ? `the top and bottom rows (pads ${span(top)} at y ${r2(top.at)} and ${span(bottom)} at y ${r2(bottom.at)} mm, ${r2(bottom.at - top.at)} mm apart)` : `the left and right columns (pads ${span(left)} at x ${r2(left.at)} and ${span(right)} at x ${r2(right.at)} mm, ${r2(right.at - left.at)} mm apart)`;
+  const dir = off.axis === 'y' ? (off.d < 0 ? 'above' : 'below') : off.d < 0 ? 'left of' : 'right of';
+  return {
+    offset: r2(Math.abs(off.d)),
+    text: `the ${off.name} (pads ${span(off.line)}) is centred ${r2(Math.abs(off.d))} mm ${dir} the midpoint between ${between}`,
+  };
+}
