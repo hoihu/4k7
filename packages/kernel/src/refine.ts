@@ -199,11 +199,14 @@ function model(b: BoardView, planeNets: Set<string>, margin: number) {
   const { w, h } = b.outline;
   const shaped = b.cornerRadius > 0 || !!b.shape;
   const outline = { outline: b.outline, cornerRadius: b.cornerRadius, shape: b.shape };
-  const fits = (over: Map<number, Pose>, among?: Set<number>) => {
+  const fits = (over: Map<number, Pose>, among?: Set<number>, placing = false) => {
+    // placing: the moves become places someone gave (as suggest_moves applies them), which only
+    // the placement checks bind: copper the edge clearance from the edge, courtyards apart
+    const gap = placing ? 0 : SPACING;
     for (const [i, at] of over) {
       if (among && !among.has(i)) continue;
       const [x0, y0, x1, y1] = boxAt(i, at);
-      const keep = parts[i]!.placed ? b.rules.edgeClearance : margin;
+      const keep = parts[i]!.placed || placing ? b.rules.edgeClearance : margin;
       if (x0 < keep || y0 < keep || x1 > w - keep || y1 > h - keep) return false;
       const pts = [[x0, y0], [x1, y0], [x0, y1], [x1, y1], [at.x, at.y]] as const;
       if (shaped && pts.some(([px, py]) => insideBoard(outline, px, py) < keep)) return false;
@@ -215,7 +218,7 @@ function model(b: BoardView, planeNets: Set<string>, margin: number) {
         const o = parts[j]!;
         if (!me.tht && !o.tht && me.p.side !== o.p.side) continue;
         const [a0, b0, a1, b1] = boxAt(j, poseOf(j, over));
-        if (x0 < a1 + SPACING - 1e-6 && a0 < x1 + SPACING - 1e-6 && y0 < b1 + SPACING - 1e-6 && b0 < y1 + SPACING - 1e-6) return false;
+        if (x0 < a1 + gap - 1e-6 && a0 < x1 + gap - 1e-6 && y0 < b1 + gap - 1e-6 && b0 < y1 + gap - 1e-6) return false;
       }
     }
     return true;
@@ -283,7 +286,8 @@ const snap = (v: number) => Math.round(v * 10) / 10;
 
 /**
  * Sets of moves screened on the model (suggest_moves): for each, null where the parts would not
- * fit (overlapping, off the outline), else what it changes, as the refinement weighs it (crossing
+ * fit (courtyards overlapping, nearer the edge than the edge clearance: the moved parts are then
+ * placed, not left to the placer's own margins), else what it changes, as the refinement weighs it (crossing
  * ratsnest lines × CROSSING_MM, plus ratsnest mm, plus congestion mm × CONGESTION_WEIGHT; lower is better).
  */
 export function screenMoves(b: BoardView, planeNets: Set<string>, margin: number, sets: { refdes: string; x: number; y: number; rot: number }[][]): (number | null)[] {
@@ -295,7 +299,7 @@ export function screenMoves(b: BoardView, planeNets: Set<string>, margin: number
       if (i === undefined) return null;
       over.set(i, { x: mv.x, y: mv.y, rot: mv.rot });
     }
-    return m.fits(over) ? m.delta(over) : null;
+    return m.fits(over, undefined, true) ? m.delta(over) : null;
   });
 }
 

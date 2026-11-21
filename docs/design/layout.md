@@ -822,16 +822,35 @@ drawn mode.
 **The kernel finds the simple fixes** (`suggest.ts`, `design_query suggest_moves { parts? | at?,
 radius_mm?, max? }`; nothing given: the parts at the first open connections). The small parts
 there (two or three pads, not connectors, not locked, not the user's) are tried turned (90°, 180°,
-270°), swapped with an identical part within 6 mm, and shifted 0.5 and 1 mm each way. Each try is
-screened on refine.ts's ratsnest model (`screenMoves`: it must fit, and it may tangle the ratsnest
-only a little: room for a path can cost some), and the best twelve are routed: a local rip-up round
+270°), swapped with an identical part within 6 mm, and shifted 0.5 and 1 mm each way; behind those,
+the far tries: 0.5, 1 and 2 mm along x, y and diagonally, turned or not. Each try is screened on
+refine.ts's ratsnest model (`screenMoves`: it must fit, and it may tangle the ratsnest only a
+little: room for a path can cost some). A try is applied as a `place`, so it must fit as a placed
+part must, not as the placer keeps its own: its courtyard clear of the others' (not 0.3 mm off) and
+the edge clearance from the edge (not the placer's 1.5 mm more). The best twelve are routed, the
+small changes first with four kept for the far ones; a try after which the placer moves more than
+three other parts (a placement that is not settled) is skipped, since its rip-up would be most of
+the board. The routing is a local rip-up round
 the moved parts (router copper within 1 mm of where they stood, and copper of other nets their
 pads now meet, taken up; drawn copper follows the part instead) and their nets routed again round
 everything else, three passes. Each is measured against the same rip-up without the change (one
 per set of parts), so a try counts only for what the change itself closes; with drawn copper, the
 errors the moved copper makes count against it. What closes connections comes back best first,
 each with the place ops to apply (and with drawn copper the route to run after). When routing
-alone closes them, it says so. The app runs it in the trial worker, as try_placements.
+alone closes them, it says so. When nothing was routed, it says why: the parts at the open
+connections that stay (each with its reason: locked, placed by the user, a connector, a main
+part), no room round the parts tried, or tries that overlap or set the placer moving once placed.
+The app runs it in the trial worker, as try_placements.
+
+*Too few tries (2026-11-21).* Dogfooding found "none of 0 tries" and "none of 2 tries" with
+connections open. The screen held the tried parts to the placer's own spacing (0.3 mm between
+courtyards, 1.5 mm plus the edge clearance from the edge), but the placer packs its parts closer
+(0.03 to 0.25 mm apart), so on a crowded board nearly every turn and shift was dropped unrouted.
+On a placement that is not settled, each try also set the placer moving a dozen other parts, and
+the trial routed some 80 nets at 2.3 s a time against its 800 ms budget: two tries in the 15 s. On
+the 128-part bench at 51 × 57 mm, `parts` R508, R104, C51, R118: 81 of 402 tries fit (9 of 50
+before), the best 12 are routed in 9.6 s (9 in 4.7 s before), and "R508 1 mm left, turned to 180°"
+comes back.
 
 On the 128-part bench routed for only 1.5 s (8 open connections), it tries 12 changes in 8 s and
 finds "R104 0.5 mm right"; applied and routed again with the same 1.5 s, the board is complete.
