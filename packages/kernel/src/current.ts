@@ -6,7 +6,7 @@
  * docs/design/layout.md §14.
  */
 import { COPPER_ORDER, padPins, trackCurrentFor, trackRiseFor, trackWidthFor, viaCurrentFor } from '@4k7/schema';
-import type { BoardPad, BoardPart, BoardRules, BoardView, CopperLayer, Design, Diagnostic, EditOp, QueryOp, Track } from '@4k7/schema';
+import type { BoardPad, BoardPart, BoardRules, BoardView, CopperLayer, CurrentTrack, CurrentView, CurrentVias, Design, Diagnostic, EditOp, QueryOp, Track } from '@4k7/schema';
 import { cardOf, isPowerNet } from './doc.ts';
 import { idOf, pointSegDist, segmentsOf, segSegDist } from './geom.ts';
 import { padPointDist, padSegDist } from './keep.ts';
@@ -21,65 +21,9 @@ const SHORT_MM = 1;
 const ZONE_REACH = 0.5;
 const EPS = 0.01;
 
-export type CurrentStatus = 'ok' | 'unverified' | 'unknown';
-
-export interface CurrentTrack {
-  netId: string;
-  /** Index into BoardView.tracks. */
-  index: number;
-  /** Drawn copper: the track's id. */
-  id?: string;
-  layer: CopperLayer;
-  width: number;
-  length: number;
-  copperUm: number;
-  amps: number;
-  capacity: number;
-  ratio: number;
-  /** Its estimated heating (°C) at `amps`. */
-  rise: number;
-  /** The width that carries `amps` on its layer. */
-  needs: number;
-  at: { x: number; y: number };
-  /** The pads its ends lie on. */
-  from?: string;
-  to?: string;
-}
-
-export interface CurrentVias {
-  netId: string;
-  at: { x: number; y: number };
-  vias: number;
-  drill: number;
-  /** Drawn copper: the vias' ids. */
-  ids: string[];
-  /** The layers whose copper they join. */
-  layers: CopperLayer[];
-  amps: number;
-  capacity: number;
-  ratio: number;
-  /** Vias of that drill that carry `amps`. */
-  needs: number;
-}
-
-export interface CurrentNet {
-  netId: string;
-  name: string;
-  amps?: number;
-  status: CurrentStatus;
-  /** The worst ratio of current to capacity among the copper checked. */
-  worst?: number;
-}
-
-export interface CurrentCheck {
-  riseC: number;
-  copperUm: Partial<Record<CopperLayer, number>>;
-  nets: CurrentNet[];
-  /** Every track counted of a net with a current. */
-  tracks: CurrentTrack[];
-  /** The via groups that are the only way across between two layers' copper (cuts), of a net with a current. */
-  vias: CurrentVias[];
-}
+export type { CurrentNet, CurrentStatus, CurrentTrack, CurrentVias } from '@4k7/schema';
+/** The current check of a board (BoardView.current). */
+export type CurrentCheck = CurrentView;
 
 /** The allowed heating of the copper (set_board current_rise_c), °C. */
 export const currentRise = (rules: Pick<BoardRules, 'currentRise'>): number => rules.currentRise ?? 10;
@@ -158,7 +102,7 @@ function sourcePads(d: Design): (part: BoardPart, pad: BoardPad) => boolean {
   };
 }
 
-/** The current check of the board's copper against its nets' max_current. */
+/** The current check of the board's copper against its nets' max_current (BoardView.current of a routed board: layoutBoard works it out once). */
 export function currentCheck(d: Design, b: BoardView): CurrentCheck {
   const riseC = currentRise(b.rules);
   const copperUm = layerCopper(b);
@@ -170,7 +114,7 @@ export function currentCheck(d: Design, b: BoardView): CurrentCheck {
     if (!has.has(n.id)) continue;
     const amps = n.attrs.maxCurrent && n.attrs.maxCurrent > 0 ? n.attrs.maxCurrent : undefined;
     if (!amps) {
-      if (isPowerNet(n)) out.nets.push({ netId: n.id, name: n.name, status: 'unknown' });
+      if (isPowerNet(n)) out.nets.push({ netId: n.id, name: n.name, basis: 'unknown', status: 'unknown' });
       continue;
     }
     const tracks = netTracks(b, n.id, amps, riseC, copperUm);
@@ -178,7 +122,7 @@ export function currentCheck(d: Design, b: BoardView): CurrentCheck {
     out.tracks.push(...tracks);
     out.vias.push(...vias);
     const worst = Math.max(0, ...tracks.map((t) => t.ratio), ...vias.map((v) => v.ratio));
-    out.nets.push({ netId: n.id, name: n.name, amps, status: worst > 1 ? 'unverified' : 'ok', ...(worst > 0 ? { worst: r2(worst) } : {}) });
+    out.nets.push({ netId: n.id, name: n.name, amps, basis: 'bound', status: worst > 1 ? 'unverified' : 'ok', ...(worst > 0 ? { worst: r2(worst) } : {}) });
   }
   return out;
 }
@@ -208,6 +152,7 @@ function netTracks(b: BoardView, netId: string, amps: number, riseC: number, cop
       length: r2(length),
       copperUm: cu,
       amps,
+      basis: 'bound',
       capacity,
       ratio: amps / capacity,
       rise: trackRiseFor(amps, t.width, cu),
@@ -399,6 +344,7 @@ function netVias(b: BoardView, netId: string, amps: number, riseC: number, isSou
       ids,
       layers: joined,
       amps,
+      basis: 'bound',
       capacity,
       ratio: amps / capacity,
       needs: Math.max(1, Math.ceil(amps / per - 1e-6)),
@@ -480,7 +426,8 @@ export function currentDrc(b: BoardView, c: CurrentCheck): Diagnostic[] {
 
 /** design_query get_current_map: the nets with their status and the hotspots, worst first. */
 export function currentMapAnswer(d: Design, b: BoardView, q: Extract<QueryOp, { op: 'get_current_map' }>): unknown {
-  const c = currentCheck(d, b);
+  // (the routed board's own check: what the DRC and the heat map read)
+  const c = b.current ?? currentCheck(d, b);
   const wanted = q.nets ? new Set(q.nets.map((n) => Object.values(d.nets).find((x) => x.name.toUpperCase() === n.toUpperCase() || x.id === n)?.id ?? n)) : null;
   const r = q.rect;
   const inRect = (p: { x: number; y: number }) => !r || (p.x >= r.x_mm && p.y >= r.y_mm && p.x <= r.x_mm + r.width_mm && p.y <= r.y_mm + r.height_mm);
@@ -502,7 +449,7 @@ export function currentMapAnswer(d: Design, b: BoardView, q: Extract<QueryOp, { 
         length_mm: t.length,
         copper_um: t.copperUm,
         amps: t.amps,
-        basis: 'bound',
+        basis: t.basis,
         capacity_a: r2(t.capacity),
         ratio: r2(t.ratio),
         rise_c: r1(t.rise),
@@ -521,7 +468,7 @@ export function currentMapAnswer(d: Design, b: BoardView, q: Extract<QueryOp, { 
         drill_mm: v.drill,
         at: { x_mm: v.at.x, y_mm: v.at.y },
         amps: v.amps,
-        basis: 'bound',
+        basis: v.basis,
         capacity_a: r2(v.capacity),
         ratio: r2(v.ratio),
         only_path: true,

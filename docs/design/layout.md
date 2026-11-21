@@ -1095,9 +1095,32 @@ ratio, `only_path`, the vias needed, the fix). `get_net` gives the width the cur
 (`track.suggested_mm`, with the copper and rise it used) and a short `current` block (status, worst
 ratio). Both answer only on a routed board whose copper is kept (or drawn): they never route.
 
+**One check, three readers.** `layoutBoard` works the check out once per routed board and keeps it
+as `BoardView.current` (`CurrentView` in `packages/schema/src/board.ts`: the allowed rise, each
+layer's copper, the nets with basis and status, every track counted with its index into
+`BoardView.tracks`, amps, ratio and estimated rise, the via groups that are cuts). The findings,
+`get_current_map`, `get_net`'s `current` block and the heat map all read it, so the user and the
+agent see the same numbers. It is part of the routed board, not cached apart: a design with another
+`max_current` or `current_rise_c` is another board (both are in the placement memo's key with the
+rest of the design, `boardInputs`), so `test:derived` checks it with the board.
+
+**The heat map** (Layout → layers → Current · heat map; `apps/web/src/lib/currentMap.ts`, drawn by
+`BoardCanvas.svelte`). The power copper of `BoardView.current` is drawn over the layers in a
+sequential scale of its estimated heating against the allowed rise: under ¼, ¼–½, ½–1×, 1–2×, over
+2× (blue, green, yellow, orange, red); the rest of the copper is faint. A track that carries the
+whole `max_current` is solid; one that does not (`unverified`) is dashed in its colour, with "?" in
+its tooltip; a power net without `max_current` (`unknown`) is grey and dashed. Neither is ever in
+the cool end. The via groups that are cuts get a ring in the same scale (heating as the ratio to the
+power 1/0.44, the curve's exponent) with their count. Dashes, not pattern fills: the PNG snapshot
+the agent sees keeps them. Pours and planes stay in their layer colour, "not solved" in the legend.
+Tooltips read like "+5V · 0.25 mm · 35 µm · 2 A (bound?) · needs 0.8 mm · ≈ +66 °C". The map is on
+by itself while a current finding is open (`DRC.CURRENT_UNVERIFIED`, `DRC.VIA_CURRENT`,
+`DRC.CURRENT_UNKNOWN`, later `DRC.TRACK_CURRENT`), off when none is; the user's switch holds for
+the session either way. `get_board_image` shows it as the view does; `overlay: "current"` or
+`"none"` forces it on or off for one picture, and its text then names the colours.
+
 **Not yet** (follow-ups of the proposal): loads per pin (`set_net loads`) and the current split over
 the copper (then `DRC.TRACK_CURRENT` on the real current, and IR drop at 3 % of the rail), GND's
-bound from the rails it returns, a heat-map overlay in the layout view and in `get_board_image`,
-`calc track_current`, the current through thermal-relief spokes, pin currents (GPIO overload) and a
+bound from the rails it returns, `calc track_current`, the current through thermal-relief spokes, pin currents (GPIO overload) and a
 DC solve of pours and planes. Until the solve, a pour or plane counts as one node: a pour necked
 between two vias looks fine here.
