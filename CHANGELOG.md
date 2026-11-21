@@ -9,6 +9,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 - **The agent can show you the whole power tree in one answer.** Before, what feeds what came out piece by piece: the power checks, the current check and the linear regulator heat check each looked at their own part of it. Now ask the agent "what feeds what, and will anything run hot?" and it reads `get_power_tree`: for every supply rail, where its power comes from (a regulator, a connector, a battery, or unknown), the ferrites, fuses and resistors between, the rails it feeds, its loads and its current against its maximum current. For a linear regulator it also gives the heat, for example 0.85 W where a SOT-23 sheds 0.29 W, the same numbers as `SEM.LDO_DISSIPATION`. A rail without a maximum current or stated loads shows its current as unknown, never as fine.
 
+### Enclosure
+
+- **An enclosure can have a clear window, and the 3D view shows what is behind it.** A box with a window in front of an LED or a display, such as a bike lamp's lid, used to show the window as solid as the rest of the box, so neither you nor the agent could see the LED behind it. Now the agent can make the window a piece in clear filament (`material: 'clear'` in the script's inlays), and the Enclosure view and the agent's pictures draw it see-through, with the LED and the board behind it in view. In the 3MF it is a part of its own in the lid's object, as an inlay is: give it the clear filament in your slicer.
+
 ### Design document
 
 - **The design document can be downloaded as a file.** Until now it only came out through the browser's print dialog, and where that dialog did not open or was closed by mistake there was no other way to get it. Now *Download ⤓*, next to *Design document (print / PDF)* in the Layout view's panel, saves it as one HTML file named after the project (`<project>-design.html`), with the 3D pictures of the board inside it. It opens in any browser, offline, and prints from there the same way, to paper or to PDF.

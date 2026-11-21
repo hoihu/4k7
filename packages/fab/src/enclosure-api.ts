@@ -11,6 +11,7 @@ export const ENCLOSURE_API = `// The script is JavaScript on the Manifold geomet
 //   const pieces = ['base', 'lid'];               required: plain names, each a function of that name
 //   const print = { lid: [180, 0, 0] };           how a piece is turned for printing (rotate's angles); plain numbers; a piece not named prints as built
 //   const inlays = { lid_logo: { host: 'lid', colour: 'white' } };   pieces printed in another filament with their host; plain text
+//   const inlays = { lid_window: { host: 'lid', material: 'clear' } };   material 'clear': a window in clear filament (in front of an LED, a display), drawn see-through
 //   function base() { return difference(shell(), cavity(), mating_path('J1', { grow: 0.3 })); }
 // No import or export, and nothing from outside: everything below is a global, and JavaScript's own (Math is in radians). Your own names shadow them. A solid's own methods work too (.translate, .subtract, .trimByPlane …).
 //

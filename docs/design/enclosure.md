@@ -120,7 +120,10 @@ right way round, and a way to get the user's logo into a script that may not rea
 - **Two colours.** `const inlays = { lid_logo: { host: 'lid', colour: 'white' } };` names pieces that
   fill an engraving in another filament. An inlay is printed with its host: turned the same way, and in the 3MF one
   object of components, which the slicers open as one object with a part each. The 3D view draws
-  it in its colour and lifts it with the host. It is not checked against its host for overlap
+  it in its colour and lifts it with the host; `material: 'clear'` (a window in clear filament) is
+  drawn see-through (opacity 0.3, writing no depth, so the parts behind it show). The print files
+  carry no colour or material: a window is a part of its own in its host's 3MF object, and the
+  user gives it the clear filament in the slicer. It is not checked against its host for overlap
   (the two meet face to face), nor for thin walls or overhangs.
 - **Checks.** ENC.THIN already finds strokes and ridges too fine to print. `render_enclosure faces`
   takes pictures of chosen faces, tilted about 20° so an engraving shows (straight on, its floor
