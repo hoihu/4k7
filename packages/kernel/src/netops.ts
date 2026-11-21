@@ -4,7 +4,7 @@
 import { isBoxSymbol, isTwoPin, packageOptions, searchParts, standardPackage } from '@4k7/parts';
 import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea } from '@4k7/schema';
 import { keepPlacement } from './board.ts';
-import { allocRefdes, cardOf, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
+import { allocRefdes, cardOf, closest, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
 import { isDrawn } from './drawing.ts';
 import { drawNet } from './netdraw.ts';
 
@@ -548,6 +548,23 @@ export function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): 
     k.value = op.value;
     // the part turns over where the user sees it: the rest of the board stays as it is
     if (!d.board?.placement && Object.keys(d.components).length) keepPlacement(d);
+  } else if (op.kind === 'room') {
+    need(op.block, '"block" (a functional block\'s title)');
+    if (!op.rect) reject({ code: 'CONSTRAINT_INVALID', message: 'room needs "rect" (x, y, w, h in mm: the area on the board the block keeps to).' });
+    const blocks = d.description?.blocks ?? [];
+    const want = op.block!.trim();
+    const block = blocks.find((b) => b.title === want) ?? blocks.find((b) => b.title.toLowerCase() === want.toLowerCase());
+    if (!block) {
+      reject({
+        code: 'REF_UNKNOWN',
+        message: blocks.length ? `room: no block "${op.block}".` : 'room: the design has no functional blocks yet: group its parts first (describe blocks: a title and the parts of each).',
+        candidates: closest(want, blocks.map((b) => b.title)),
+      });
+    }
+    k.key = block!.title;
+    Object.assign(k, { xMm: op.rect!.x, yMm: op.rect!.y, wMm: op.rect!.w, hMm: op.rect!.h });
+    // the block moves into its room where the user sees the board: the rest stays as it is
+    if (!d.board?.placement && Object.keys(d.components).length) keepPlacement(d);
   } else {
     need(op.value, '"value" (the note text)');
     if (op.a) k.a = resolveComponent(d, op.a).id;
@@ -564,6 +581,7 @@ export function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): 
       (k.kind === 'near' && old.kind === 'near' && samePair) ||
       (k.kind === 'param' && old.kind === 'param' && old.a === k.a && old.key === k.key) ||
       (k.kind === 'layer' && old.kind === 'layer' && old.a === k.a) ||
+      (k.kind === 'room' && old.kind === 'room' && old.key === k.key) ||
       // (a regulator's power_flow / compact and its mirroring are two choices, kept side by side)
       (k.kind === 'arrangement' && old.kind === 'arrangement' && old.a === k.a && mirrors(old.value) === mirrors(k.value));
     if (!clash) continue;
@@ -603,6 +621,8 @@ export function describeConstraint(d: Design, k: Constraint): string {
       return `near(${n(k.a)}, ${n(k.b)}, ≤${k.maxMm}mm)`;
     case 'layer':
       return `layer(${n(k.a)}) = ${k.value}`;
+    case 'room':
+      return `room("${k.key}") = ${k.wMm} × ${k.hMm} mm at (${k.xMm}, ${k.yMm})`;
     case 'arrangement':
       return `arrangement(${n(k.a)}) = ${k.value}`;
     case 'belongs':

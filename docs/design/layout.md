@@ -787,7 +787,7 @@ Next steps, not done: offer the suggestions unasked (get_board's open connection
 best one, computed in the board worker after routing); let the router try them itself when it is
 stuck (with the user's parts out of bounds, reported in the effect); pin and gate swaps (two
 channels of an op-amp, equivalent MCU pins), which change the schematic and need the user's say;
-and blocks as areas the parts keep to (rooms).
+and blocks as areas the parts keep to (rooms, done: §14).
 
 ## 11. A steadier placer, and congestion as a placement measure (2026-10-29)
 
@@ -993,3 +993,37 @@ a pattern fill is lost in the PNG the agent looks at. The design document's boar
 
 **Limits**: inner-layer-only keep-outs hold no parts; a polygon's bounding box is what the placer
 keeps parts out of (the check is exact); the router keeps its grid's distance, not the exact one.
+
+## 14. Rooms: a block keeps its parts inside an area (constrain room, 2026-11-21)
+
+Keeping a functional block together on the board used to take many `near` / `left_of` constraints,
+and the next `propose_placement` partly undid them. A room says it once: `constrain { kind: 'room',
+block, rect: { x, y, w, h } }`, the block's title as in the description (`describe`, matched like
+`place_block`, case-insensitive as a fallback) and a rectangle of the board in mm (top-left corner
+from the board's top-left, width, height). Rectangles only. One room per block: a new one replaces
+the old (`remove_constraint` takes it away). The ledger entry is `kind: 'room'`, `key` = the
+block's title, `xMm`/`yMm`/`wMm`/`hMm`. An unknown block is refused (`REF_UNKNOWN` with the closest
+titles), as is a room without `rect` (`CONSTRAINT_INVALID`). On a board that is placed already the
+op keeps the placement, so only the block's parts move (into the room) and what they push into.
+
+**The placer** (`placer.ts`) clamps each of the block's parts into the room wherever it clamps parts
+into the outline (`contain`: during the relaxation, the settling, the alignment and the keep-out
+pass), the courtyard inside with half a grid step to spare for the snapping; where the outline and
+the room disagree the room wins. `within`, which `legalize` and the stored-placement path use to
+decide what fits and what is out of place, also asks for the room, so a part outside its room on a
+stored placement is moved in. A proposed (auto-sized) board grows to cover the rooms. Locked parts
+and parts someone placed (`position` constraints) stay where they are; a room does not move them.
+
+**A room too small** for its parts: they are clamped in and pushed apart; what still overlaps goes
+to the nearest spot in the room where it fits, and when there is none, to the nearest free spot
+outside it (that part is then left out of the room for the rest of that placement, so the
+alignment does not pull it back onto the others). Placement stays deterministic and a stored
+placement is stable under later changes.
+
+**DRC.ROOM** (warning, `board.ts roomChecks`): the block's parts whose courtyard is not inside the
+room (no space left, or placed there by hand), named with the block, the room and its id; also a
+room whose block the description no longer has (renamed or removed).
+
+**Not done**: the congestion estimate (§11.2), `refine_placement`, `suggest_moves` and the
+`try_placements` explore step do not know about rooms (a refined part may step out by a millimetre;
+DRC.ROOM says so). No polygons, no rooms in the 2D view yet.
