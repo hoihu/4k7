@@ -196,6 +196,18 @@ describe('4k7pcb app', () => {
       for (let i = 0; i < 50 && opened().length < 2; i++) await new Promise((r) => setTimeout(r, 100));
       expect(opened()).toHaveLength(2);
     }
-    expect(readFileSync(join(stub, 'home', 'server.log'), 'utf8')).toContain('on 127.0.0.1:');
+    // the server answers before it logs where it listens (it first looks for the dev app, which on Windows takes
+    // a while to be refused): wait for the line, as long as the server runs
+    const log = () => (existsSync(join(stub, 'home', 'server.log')) ? readFileSync(join(stub, 'home', 'server.log'), 'utf8') : '');
+    const running = () => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (let i = 0; i < 100 && !log().includes('on 127.0.0.1:') && running(); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(log(), running() ? 'no listen line within 10 s' : 'the server stopped without logging its listen line').toContain('on 127.0.0.1:');
   });
 });
