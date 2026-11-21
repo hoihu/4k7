@@ -32,6 +32,7 @@ import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
+import { PartImports } from './importPart.ts';
 import { assemblyFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, placedLand, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
@@ -225,7 +226,9 @@ class AppState {
 
   private kernel = createKernel();
   /** Datasheet import (Parts view). */
-  ingest = new IngestState(this.kernel);
+  ingest = new IngestState(this.kernel, () => this.imports.settled());
+  /** The import_part tool, queueing imports behind the one under way. */
+  imports = new PartImports(this.ingest, { flash: (m) => this.flash(m) });
   artwork = new ArtworkLibrary(this.kernel);
   private agent!: Agent;
   private abort: AbortController | null = null;
@@ -761,51 +764,6 @@ class AppState {
     return this.userEdit(`${ref} on the ${side} side`, [...old, ...(side === 'bottom' ? [{ op: 'constrain', kind: 'layer', a: ref, value: 'bottom' }] : [])]);
   }
 
-  /**
-   * The import_part tool: the datasheet import of the Parts view, started by the agent. A clean
-   * result (accepted, both passes agree) goes straight into the library; disagreements between
-   * the passes wait for the user's review in Parts.
-   */
-  private async importPart(args: { mpn: string; datasheet_url: string; notes?: string; timeout_s: number }): Promise<ToolResult> {
-    const text = (content: string, isError = false): ToolResult => ({ content, isError });
-    const ing = this.ingest;
-    const same = ing.request?.mpn.toLowerCase() === args.mpn.trim().toLowerCase();
-    const known = ing.library.find((p) => p.mpn?.toLowerCase() === args.mpn.trim().toLowerCase());
-    if (known && !(same && ing.phase !== 'idle')) return text(`${args.mpn} is already in the library as ${known.id}; add it with add_part. To change it, use design_edit on a component using it (set_pin_descriptions, set_footprint, set_symbol, set_mating, set_polarity, rename_part), not a new import.`);
-    if (ing.phase === 'running' && !same) return text(`Another import (${ing.request?.mpn}) is running; try again when it has finished.`, true);
-    if (ing.phase === 'review' && !same) return text(`The import of ${ing.request?.mpn} is waiting for the user's review in Parts; ask them to save or discard it first.`, true);
-    if (ing.phase !== 'running' && !(same && ing.phase === 'review')) {
-      await ing.start({ mpn: args.mpn, url: args.datasheet_url, ...(args.notes ? { notes: args.notes } : {}), model: 'sonnet', verify: true });
-      this.flash(`Importing ${args.mpn} from its datasheet`);
-    }
-    const until = Date.now() + args.timeout_s * 1000;
-    while (ing.phase === 'running' && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
-    if (ing.phase === 'running') return text(`Still importing ${args.mpn} (${ing.log.at(-1) ?? 'working'}). Call import_part again with the same mpn to keep waiting.`);
-    if (ing.phase === 'failed') return text(`The import of ${args.mpn} failed: ${ing.error ?? 'unknown error'}`, true);
-    const card = ing.card;
-    const warnings = ing.issues.filter((i) => i.severity === 'warning').map((i) => `- ${i.message}`);
-    if (!card) return text(`The import of ${args.mpn} produced no usable part:\n${ing.issues.map((i) => `- ${i.message}`).join('\n')}`, true);
-    if (ing.disagreements.length || ing.secondPassFailed || warnings.length) {
-      const why = [
-        ing.secondPassFailed && `the cross-check pass did not finish (${ing.secondPassFailed})`,
-        ing.disagreements.length && `the two independent passes read ${ing.disagreements.length} fact(s) differently`,
-        warnings.length && `the checks raised ${warnings.length} warning(s)`,
-      ].filter(Boolean).join(', and ');
-      this.flash(`${args.mpn}: import waiting for review`);
-      return text(
-        `${card.id} was extracted, but ${why}; it is not in the library yet. Settle it with pending_import (get, then pick or correct pins/package from the datasheet with read_datasheet, then save), ` +
-          `or leave it to the user in Parts.\n${ing.agentSummary()}`,
-      );
-    }
-    const saved = await ing.save();
-    if (!saved) return text(`Saving ${args.mpn} failed.`, true);
-    this.flash(`${saved.mpn ?? saved.id} added to your library`);
-    return text(
-      `Imported ${saved.id}: ${saved.pins.length} pins, package ${saved.package ?? '?'}, both passes agree; it is in the library now (add_part part "${saved.id}").` +
-        (warnings.length ? `\nWarnings (the user can check them in Parts):\n${warnings.join('\n')}` : ''),
-    );
-  }
-
   /** Every file attached in this conversation, #1 first. */
   private chatFiles(): ChatFile[] {
     return this.chat.flatMap((c) => c.files ?? []);
@@ -1153,7 +1111,7 @@ class AppState {
       case 'import_part': {
         const args = ImportPartInput.safeParse(input);
         if (!args.success) return fail('import', args.error.message);
-        const out = await this.importPart(args.data);
+        const out = await this.imports.run(args.data);
         return { ...out, label: `import · ${args.data.mpn}`, detail: first(out.content) };
       }
       case 'artwork': {
