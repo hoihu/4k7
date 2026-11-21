@@ -261,12 +261,20 @@ export async function sourcingTool(input: unknown, checks: DesignChecks, chosen:
     const what = a.kind ? `${a.kind} ${a.value ?? ''}${a.package ? ` ${a.package}` : ''}`.trim() : (a.text ?? '').trim();
     const parts = await catalogue.search(q);
     if (!parts.length) {
-      return {
-        content: `No ${h.name} parts in stock for "${what}"${a.no_fee ? ` among ${feeFreeTiers(h)} parts` : ''}. Try other words from a catalogue description, or drop the package filter.` + mirrorNote(parts, h),
-        isError: false,
-        label: `${h.name} · ${what}`,
-        detail: 'no results',
-      };
+      // tell "none in stock" from "not in the catalogue": the agent proceeds differently (a supercap at JLCPCB is the first)
+      const listed = await catalogue.search({ ...q, outOfStock: true }).catch(() => [] as SupplierPart[]);
+      const among = a.no_fee ? ` among ${feeFreeTiers(h)} parts` : '';
+      const otherwise =
+        `Otherwise keep the component without a part number and tell the user it is bought and fitted by hand (design_edit set_dnp keeps it off the assembly), ` +
+        'or try another house (house).';
+      const content = listed.length
+        ? [
+            `No ${h.name} parts in stock for "${what}"${among}. ${h.name} lists ${listed.length} matching part${listed.length > 1 ? 's' : ''} with none in stock now; they cannot be assembled until restocked:`,
+            ...listed.map((p) => `- ${describePart(p, h)}`),
+            `Check that one fits (sourcing lookup) before you count on a restock. ${otherwise}`,
+          ].join('\n')
+        : `No ${h.name} parts for "${what}"${among}, in stock or not: ${whose(h)} catalogue does not list it under these words. Try other words from a catalogue description (its category name, a maker's part number), or drop the package filter. ${otherwise}`;
+      return { content: content + mirrorNote(parts, h), isError: false, label: `${h.name} · ${what}`, detail: listed.length ? 'none in stock' : 'no results' };
     }
     const content = [
       `${parts.length} ${h.name} part(s) for ${what} (${feeFreeTiers(h)} first, then by stock; ${h.currency} per piece at the quantity given):`,

@@ -64,6 +64,24 @@ describe('sourcing tool', () => {
     expect(miss).toMatchObject({ isError: true, content: "C1 is not in JLCPCB's catalogue (or the number is wrong)." });
   });
 
+  it('says why a search found nothing: the house lists the parts with none in stock, or lists none at all', async () => {
+    // jlcpcb.com's Supercapacitors, as on 2026-11-21: seven 2.5 V parts, none in stock
+    const edlc: SupplierPart = { ...r10k, sku: 'C4360962', mpn: 'DZ-2R5D207S57T', package: 'Plugin', stock: 0, tier: 'Extended', fee: true, attributes: {}, category: 'Supercapacitors' };
+    server.search.mockImplementation(async (_house: string, q: { outOfStock?: boolean }) => (q.outOfStock ? [edlc] : []));
+    const out = await sourcingTool({ action: 'search', text: 'supercapacitor' }, noCheck);
+    expect(server.search).toHaveBeenLastCalledWith('jlcpcb', { text: 'supercapacitor', outOfStock: true, limit: 8 });
+    expect(out.detail).toBe('none in stock');
+    expect(out.content).toContain('No JLCPCB parts in stock for "supercapacitor". JLCPCB lists 1 matching part with none in stock now');
+    expect(out.content).toContain('- C4360962 · DZ-2R5D207S57T · Plugin · Extended · stock 0');
+    expect(out.content).toContain('set_dnp');
+
+    server.search.mockResolvedValue([]);
+    const none = await sourcingTool({ action: 'search', text: 'supercapacitor 5.5V 1.5F' }, noCheck);
+    expect(none.detail).toBe('no results');
+    expect(none.content).toContain("No JLCPCB parts for \"supercapacitor 5.5V 1.5F\", in stock or not: JLCPCB's catalogue does not list it under these words.");
+    expect(none.content).toContain('set_dnp');
+  });
+
   it('remembers live answers, but a mirror answer only for a minute', async () => {
     vi.useFakeTimers();
     try {

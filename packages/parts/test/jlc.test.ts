@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { fromEasyEda, fromJlcpcb, jlcpcbSource, JLCPCB_SEARCH, normalizeEasyEdaPackage, parsePriceBreaks, tscircuitSource } from '../src/index.ts';
+import { parseQuantity } from '@4k7/schema';
+import { formatFarads, fromEasyEda, fromJlcpcb, jlcpcbSource, JLCPCB_SEARCH, normalizeEasyEdaPackage, parsePriceBreaks, tscircuitSource } from '../src/index.ts';
 
 /** A fetch that answers from a table of path → body (404 for the rest) and records what was asked. */
 function fakeFetch(routes: Record<string, unknown>) {
@@ -194,6 +195,19 @@ describe('jlcpcb.com', () => {
     ]);
     expect(parts.map((p) => p.sku)).toEqual(['C25804', 'C98220']);
     await expect(jlcpcbSource(fetchFn).search({ kind: 'capacitor' })).rejects.toThrow(/value/);
+  });
+
+  it('searches a capacitor of farads as the catalogue writes it, and can ask for the parts it has none of', async () => {
+    // a supercap: "5F", not "5000mF"; jlcpcb.com lists its Supercapacitors with no stock (checked 2026-11-21)
+    const edlc = item({ componentCode: 'C4360962', componentModelEn: 'DZ-2R5D207S57T', componentSpecificationEn: 'Plugin', componentLibraryType: 'expand', stockCount: 0, componentTypeEn: 'Supercapacitors', attributes: [] });
+    const { fetchFn, bodies } = fakePost(page(null), page(null), page([edlc]));
+    const src = jlcpcbSource(fetchFn);
+    expect(await src.search({ kind: 'capacitor', value: '5 F' })).toEqual([]);
+    expect(bodies.map((b) => b.keyword)).toEqual(['5F', '5F']);
+    expect((await src.search({ text: 'Supercapacitor', outOfStock: true })).map((p) => [p.sku, p.stock])).toEqual([['C4360962', 0]]);
+    expect(bodies[2]).toEqual({ currentPage: 1, pageSize: 50, keyword: 'Supercapacitor', stockFlag: false });
+    expect([5, 1.5, 0.47, 3.3e-3, 4.7e-6].map(formatFarads)).toEqual(['5F', '1.5F', '470mF', '3.3mF', '4.7uF']);
+    expect(['5F', '1.5 F', '470mF', '4.7µF', '4u7F'].map((v) => formatFarads(parseQuantity(v)!.value))).toEqual(['5F', '1.5F', '470mF', '4.7uF', '4.7uF']);
   });
 
   it("joins the package to the words when JLCPCB names it otherwise, and adds Basic parts for a fee-free search", async () => {
