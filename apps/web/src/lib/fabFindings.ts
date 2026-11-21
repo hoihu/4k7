@@ -70,3 +70,23 @@ export class FabWatch {
     for (const w of this.waiters.splice(0)) w();
   }
 }
+
+/**
+ * What `propose` answers while the production files of the routed board have an open error (FAB.*),
+ * or null: warnings (FAB.FLOATING) are the agent's call. Not waivable: a fault of the files is fixed.
+ * See docs/design/fab-check.md.
+ */
+export function fabRefusal(findings: Diagnostic[]): { count: number; text: string } | null {
+  const errors = findings.filter((d) => d.code.startsWith('FAB.') && d.severity === 'error');
+  if (!errors.length) return null;
+  return {
+    count: errors.length,
+    text:
+      `Refused: the board's production files (Gerber and drill, read back) have ${errors.length} error(s) the board does not show. ` +
+      'They cannot be waived: change the copper there (move or reroute the tracks, vias or zones at the spot; get_board_image region shows it, view_gerbers shows the files) until the read-back is clean:\n' +
+      errors
+        .slice(0, 20)
+        .map((d) => `- ${d.code}${d.at ? ` at ${d.at.x.toFixed(2)}, ${d.at.y.toFixed(2)}` : ''}${d.entities.length ? ` ${d.entities.join(',')}` : ''}: ${d.message}`)
+        .join('\n'),
+  };
+}
