@@ -467,6 +467,7 @@ export class Kernel {
           category: card?.category,
           params: c.params,
           ...(c.dnp ? { dnp: true } : {}),
+          ...(card?.padOnly ? { padOnly: true } : {}),
           /** The board side it is mounted on (a layer constraint; top unless told otherwise). */
           side: Object.values(d.ledger).some((k) => k.kind === 'layer' && k.a === c.id && k.value === 'bottom') ? 'bottom' : 'top',
           /** Every parameter this component may carry (the card's and the universal lcsc), for editors. */

@@ -108,8 +108,12 @@ export class IngestState {
   /** The datasheet stored for the pending review (removed again if the import is discarded). */
   #storedSheet: string | null = null;
 
-  constructor(kernel: KernelParts) {
+  /** Called when the import is saved or discarded, so a queued one can start (importPart.ts). */
+  #onSettled: () => void;
+
+  constructor(kernel: KernelParts, onSettled: () => void = () => {}) {
     this.#kernel = kernel;
+    this.#onSettled = onSettled;
     // keep the review across reloads: saved on every change, cleared when saved or discarded
     $effect.root(() => {
       $effect(() => {
@@ -398,6 +402,7 @@ export class IngestState {
     if (this.datasheet) await saveDatasheet(this.datasheet.hash, { name: this.datasheet.name, data: this.datasheet.data });
     await this.#store(plain);
     this.#reset();
+    this.#onSettled();
     return plain;
   }
 
@@ -442,6 +447,7 @@ export class IngestState {
     if (hash && !this.library.some((p) => p.provenance.document === `sha256:${hash}`)) void deleteDatasheet(hash);
     this.#storedSheet = null;
     this.#reset();
+    this.#onSettled();
   }
 
   async remove(id: string) {

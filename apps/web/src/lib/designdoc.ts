@@ -2,7 +2,8 @@
  * The design document: what the design does (the description the agent wrote: an overview, then
  * each functional block with its parts, its schematic and its place on the board), the layout,
  * a dimensioned drawing of the outline and mounting holes, an assembly drawing (only the parts, for populating a board), the BOM and the schematic pages.
- * Printed like the schematic, through the browser's print dialog (which also saves a PDF);
+ * Printed like the schematic, through the browser's print dialog (which also saves a PDF), or downloaded
+ * as one self-contained HTML file (`docfile.ts`);
  * schematic and board are drawn by the same canvas components as on screen.
  */
 import { bomLines, copperText, FINISH_TEXT, impedanceLines, notesStackup, stackupLines, stackupSource, thicknessText } from '@4k7/fab';
@@ -11,7 +12,8 @@ import { PAPERS, planeNames, type BoardView, type CopperLayer, type DescriptionV
 import BoardCanvas from './components/BoardCanvas.svelte';
 import { boardDimensions } from './dimensions.ts';
 import { markdown } from './markdown.ts';
-import { SCHEMATIC_STYLE, drawOffscreen, drawSheets, esc, printHtml, sheetSvg } from './print.ts';
+import { designDocFileName, standaloneHtml } from './docfile.ts';
+import { SCHEMATIC_STYLE, downloadFile, drawOffscreen, drawSheets, esc, printHtml, sheetSvg } from './print.ts';
 
 export interface DesignDocInput {
   name: string;
@@ -130,7 +132,7 @@ section { break-before: page; }
 .cover .tag { font-size: 12pt; line-height: 1.45; color: #334155; max-width: 150mm; }
 .cover .tag p { margin: 0; }
 .hero { flex: 1; min-height: 0; margin: 8mm 0; border-radius: 4mm; background: radial-gradient(ellipse at 50% 38%, #334155 0%, #0f172a 70%); display: grid; place-items: center; overflow: hidden; }
-.hero canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
+.hero canvas, .hero img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .hero.flat { background: #f1f5f9; border: 0.2mm solid #e2e8f0; }
 .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3mm; margin: 0 0 7mm; }
 .facts div { border-top: 0.6mm solid ${ACCENT}; background: #fff; padding: 2.5mm 0 0; }
@@ -180,8 +182,8 @@ figcaption b { color: ${INK}; font-weight: 650; }
 .pair { display: flex; flex-wrap: wrap; gap: 4mm; justify-content: center; }
 .pair figure { margin: 0 0 3mm; }
 .card.dark { background: radial-gradient(ellipse at 50% 38%, #334155 0%, #0f172a 70%); border-color: transparent; }
-.card.dark canvas { display: block; max-width: 100%; max-height: 44mm; object-fit: contain; }
-.card.dark.half canvas { width: 76mm; height: 44mm; }
+.card.dark canvas, .card.dark img { display: block; max-width: 100%; max-height: 44mm; object-fit: contain; }
+.card.dark.half canvas, .card.dark.half img { width: 76mm; height: 44mm; }
 .key { display: inline-block; width: 2.6mm; height: 2.6mm; border-radius: 0.6mm; vertical-align: -0.3mm; margin: 0 1mm 0 3mm; }
 .schpage { page: land; break-before: page; }
 .schpage svg { display: block; width: 100%; aspect-ratio: ${PAPERS[paper].mm.w} / ${PAPERS[paper].mm.h - 1}; }
@@ -338,7 +340,29 @@ function firstSentence(text: string): string {
   return one.length > 140 ? `${one.slice(0, 137).trimEnd()}…` : one;
 }
 
+/** Print the design document (the browser's dialog also saves a PDF). */
 export async function printDesignDocument(input: DesignDocInput): Promise<void> {
+  const { html, pictures } = await buildDesignDocument(input);
+  /* the pictures go in as canvases, drawn from ours: nothing for the print to load or decode */
+  await printHtml(html, (doc) => {
+    for (const c of doc.querySelectorAll<HTMLCanvasElement>('canvas[data-pic]')) {
+      const src = pictures?.[c.dataset.pic as View3D];
+      if (!src) continue;
+      c.width = src.width;
+      c.height = src.height;
+      c.getContext('2d')!.drawImage(src, 0, 0);
+    }
+  });
+}
+
+/** Download the design document as one HTML file, its pictures inside it: it opens in any browser, which prints it as well. */
+export async function downloadDesignDocument(input: DesignDocInput): Promise<void> {
+  const { html, pictures } = await buildDesignDocument(input);
+  const urls = Object.fromEntries(Object.entries(pictures ?? {}).map(([v, c]) => [v, c.toDataURL('image/png')]));
+  downloadFile(new Blob([standaloneHtml(html, urls)], { type: 'text/html' }), designDocFileName(input.name));
+}
+
+async function buildDesignDocument(input: DesignDocInput): Promise<{ html: string; pictures: Record<View3D, HTMLCanvasElement> | null }> {
   const { name, view, summary, description, board } = input;
   const title = name && name !== 'untitled' ? name : 'Untitled design';
   const b = board && board.parts.some((p) => !isHole(p)) ? board : null;
@@ -579,15 +603,6 @@ export async function printDesignDocument(input: DesignDocInput): Promise<void> 
     hero +
     `<div class="facts">${facts.map(([v, l]) => `<div><b>${esc(v!)}</b><span>${esc(l!)}</span></div>`).join('')}</div>` +
     `<ol class="toc">${toc.join('')}</ol></div>`;
-  /* the pictures go in as canvases, drawn from ours: nothing for the print to load or decode */
-  const drawPictures = (doc: Document) => {
-    for (const c of doc.querySelectorAll<HTMLCanvasElement>('canvas[data-pic]')) {
-      const src = pictures?.[c.dataset.pic as View3D];
-      if (!src) continue;
-      c.width = src.width;
-      c.height = src.height;
-      c.getContext('2d')!.drawImage(src, 0, 0);
-    }
-  };
-  await printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} · design document</title><style>${style(title, view.paper)}</style></head><body>${cover}${body.join('')}</body></html>`, drawPictures);
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} · design document</title><style>${style(title, view.paper)}</style></head><body>${cover}${body.join('')}</body></html>`;
+  return { html, pictures };
 }

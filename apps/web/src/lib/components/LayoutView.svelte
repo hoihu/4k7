@@ -427,7 +427,10 @@
             <button class="btn" title="The board and its parts in 3D as a STEP file (.step), for a mechanical CAD program: the outline with its holes and cutouts, and every part body, named by designator" onclick={exportStep}>STEP ⤓</button>
           </div>
         {/if}
-        <button class="btn wide" onclick={() => app.designDocument()} disabled={!b.parts.length || app.docBusy} title="The functional blocks described, each with its schematic and its place on the board, then layout, assembly drawing, BOM and schematic">{app.docBusy ? 'Preparing…' : 'Design document (print / PDF)'}</button>
+        <div class="row2 doc">
+          <button class="btn" onclick={() => app.designDocument()} disabled={!b.parts.length || app.docBusy} title="The functional blocks described, each with its schematic and its place on the board, then layout, assembly drawing, BOM and schematic">{app.docBusy ? 'Preparing…' : 'Design document (print / PDF)'}</button>
+          <button class="btn" onclick={() => app.designDocument(true)} disabled={!b.parts.length || app.docBusy} title="The design document as one HTML file named after the project, its pictures inside: open it in any browser to read or print it">Download ⤓</button>
+        </div>
         <p class="small muted">
           {#if desc}{desc.blocks.length} block{desc.blocks.length === 1 ? '' : 's'} described{#if desc.undescribed.length}, <span class="stale">{desc.undescribed.length} part{desc.undescribed.length === 1 ? '' : 's'} in none</span>{/if}.
           {:else}No description yet. Ask the agent to describe the design.{/if}
@@ -475,7 +478,9 @@
   h4 { margin: 12px 0 4px; font-size: 12px; display: flex; gap: 4px; align-items: center; }
   .small { font-size: 11.5px; margin: 2px 0 6px; }
   .wide { width: 100%; margin: 2px 0 4px; }
-  .row2 + .wide { margin-top: 6px; }
+  .doc { margin: 2px 0 4px; }
+  .doc .btn:first-child { flex: 1; }
+  .row2 + .doc { margin-top: 6px; }
   .clamp { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .fold { display: flex; gap: 4px; align-items: center; border: 0; background: none; padding: 0; font: inherit; font-weight: inherit; color: inherit; cursor: pointer; }
   .chev { width: 10px; color: var(--txt-3); }

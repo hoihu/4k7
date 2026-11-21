@@ -32,6 +32,7 @@ import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
+import { PartImports } from './importPart.ts';
 import { assemblyFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, placedLand, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
@@ -225,7 +226,9 @@ class AppState {
 
   private kernel = createKernel();
   /** Datasheet import (Parts view). */
-  ingest = new IngestState(this.kernel);
+  ingest = new IngestState(this.kernel, () => this.imports.settled());
+  /** The import_part tool, queueing imports behind the one under way. */
+  imports = new PartImports(this.ingest, { flash: (m) => this.flash(m) });
   artwork = new ArtworkLibrary(this.kernel);
   private agent!: Agent;
   private abort: AbortController | null = null;
@@ -239,6 +242,8 @@ class AppState {
   private diskConnecting: Promise<void> | null = null;
   /** The design was renamed and its file not yet (the server was not reachable). */
   private renameFile = false;
+  /** The name a new project's file takes when it is created: the file it was opened from (else the design's name). */
+  private newFileName: string | undefined;
   /** Writes to the project files, one after the other (a new project's file is created once). */
   private writes: Promise<unknown> = Promise.resolve();
   /** The access key this tab started with: its address's, the dev server's (in development), or the one saved. */
@@ -759,51 +764,6 @@ class AppState {
     return this.userEdit(`${ref} on the ${side} side`, [...old, ...(side === 'bottom' ? [{ op: 'constrain', kind: 'layer', a: ref, value: 'bottom' }] : [])]);
   }
 
-  /**
-   * The import_part tool: the datasheet import of the Parts view, started by the agent. A clean
-   * result (accepted, both passes agree) goes straight into the library; disagreements between
-   * the passes wait for the user's review in Parts.
-   */
-  private async importPart(args: { mpn: string; datasheet_url: string; notes?: string; timeout_s: number }): Promise<ToolResult> {
-    const text = (content: string, isError = false): ToolResult => ({ content, isError });
-    const ing = this.ingest;
-    const same = ing.request?.mpn.toLowerCase() === args.mpn.trim().toLowerCase();
-    const known = ing.library.find((p) => p.mpn?.toLowerCase() === args.mpn.trim().toLowerCase());
-    if (known && !(same && ing.phase !== 'idle')) return text(`${args.mpn} is already in the library as ${known.id}; add it with add_part. To change it, use design_edit on a component using it (set_pin_descriptions, set_footprint, set_symbol, set_mating, set_polarity, rename_part), not a new import.`);
-    if (ing.phase === 'running' && !same) return text(`Another import (${ing.request?.mpn}) is running; try again when it has finished.`, true);
-    if (ing.phase === 'review' && !same) return text(`The import of ${ing.request?.mpn} is waiting for the user's review in Parts; ask them to save or discard it first.`, true);
-    if (ing.phase !== 'running' && !(same && ing.phase === 'review')) {
-      await ing.start({ mpn: args.mpn, url: args.datasheet_url, ...(args.notes ? { notes: args.notes } : {}), model: 'sonnet', verify: true });
-      this.flash(`Importing ${args.mpn} from its datasheet`);
-    }
-    const until = Date.now() + args.timeout_s * 1000;
-    while (ing.phase === 'running' && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
-    if (ing.phase === 'running') return text(`Still importing ${args.mpn} (${ing.log.at(-1) ?? 'working'}). Call import_part again with the same mpn to keep waiting.`);
-    if (ing.phase === 'failed') return text(`The import of ${args.mpn} failed: ${ing.error ?? 'unknown error'}`, true);
-    const card = ing.card;
-    const warnings = ing.issues.filter((i) => i.severity === 'warning').map((i) => `- ${i.message}`);
-    if (!card) return text(`The import of ${args.mpn} produced no usable part:\n${ing.issues.map((i) => `- ${i.message}`).join('\n')}`, true);
-    if (ing.disagreements.length || ing.secondPassFailed || warnings.length) {
-      const why = [
-        ing.secondPassFailed && `the cross-check pass did not finish (${ing.secondPassFailed})`,
-        ing.disagreements.length && `the two independent passes read ${ing.disagreements.length} fact(s) differently`,
-        warnings.length && `the checks raised ${warnings.length} warning(s)`,
-      ].filter(Boolean).join(', and ');
-      this.flash(`${args.mpn}: import waiting for review`);
-      return text(
-        `${card.id} was extracted, but ${why}; it is not in the library yet. Settle it with pending_import (get, then pick or correct pins/package from the datasheet with read_datasheet, then save), ` +
-          `or leave it to the user in Parts.\n${ing.agentSummary()}`,
-      );
-    }
-    const saved = await ing.save();
-    if (!saved) return text(`Saving ${args.mpn} failed.`, true);
-    this.flash(`${saved.mpn ?? saved.id} added to your library`);
-    return text(
-      `Imported ${saved.id}: ${saved.pins.length} pins, package ${saved.package ?? '?'}, both passes agree; it is in the library now (add_part part "${saved.id}").` +
-        (warnings.length ? `\nWarnings (the user can check them in Parts):\n${warnings.join('\n')}` : ''),
-    );
-  }
-
   /** Every file attached in this conversation, #1 first. */
   private chatFiles(): ChatFile[] {
     return this.chat.flatMap((c) => c.files ?? []);
@@ -941,7 +901,7 @@ class AppState {
    * package, and its land as it lies on the board (held against the house's footprint for the part).
    */
   private async sourcedComponents(): Promise<SourcedComponent[]> {
-    type Info = { refdes: string; part: string; category?: SourcedComponent['category']; params: Record<string, string>; package?: { name: string }; dnp?: boolean };
+    type Info = { refdes: string; part: string; category?: SourcedComponent['category']; params: Record<string, string>; package?: { name: string }; dnp?: boolean; padOnly?: boolean };
     const refs = this.k?.summary.components.map((c) => c.refdes) ?? [];
     const [infos, board] = await Promise.all([
       Promise.all(refs.map((ref) => this.kernel.query({ op: 'get_component', ref }))) as Promise<(Info | { error: string })[]>,
@@ -955,7 +915,7 @@ class AppState {
       const mpn = c.params.mpn ?? card?.mpn;
       const p = placed.get(c.refdes);
       const land = p && card ? placedLand(p, (pin) => card.pins.find((x) => x.number === pin)?.name) : undefined;
-      return [{ refdes: c.refdes, ...(c.category ? { category: c.category } : {}), params: c.params, ...(pkg ? { pkg } : {}), ...(mpn ? { mpn } : {}), ...(land ? { land } : {}), ...(c.dnp ? { dnp: true } : {}) }];
+      return [{ refdes: c.refdes, ...(c.category ? { category: c.category } : {}), params: c.params, ...(pkg ? { pkg } : {}), ...(mpn ? { mpn } : {}), ...(land ? { land } : {}), ...(c.dnp || c.padOnly ? { dnp: true } : {}) }];
     });
   }
 
@@ -1151,7 +1111,7 @@ class AppState {
       case 'import_part': {
         const args = ImportPartInput.safeParse(input);
         if (!args.success) return fail('import', args.error.message);
-        const out = await this.importPart(args.data);
+        const out = await this.imports.run(args.data);
         return { ...out, label: `import · ${args.data.mpn}`, detail: first(out.content) };
       }
       case 'artwork': {
@@ -1619,8 +1579,9 @@ class AppState {
       try {
         if (this.projectId) await disk.saveProject(this.projectId, json);
         else {
-          this.projectId = await disk.createProject(json);
-          this.renameFile = false; // named after the design already
+          this.projectId = await disk.createProject(json, this.newFileName);
+          this.newFileName = undefined;
+          this.renameFile = false; // named after the design, or the file it came from, already
           void this.updateSettings({ project: this.projectId });
           await this.refreshProjects();
         }
@@ -1638,17 +1599,17 @@ class AppState {
   docBusy = $state(false);
 
   /**
-   * The design document through the print dialog: the description, each block with its
-   * schematic and its place on the board, layout, assembly drawing, BOM and schematic pages.
+   * The design document through the print dialog, or (`download`) as one HTML file: the description,
+   * each block with its schematic and its place on the board, layout, assembly drawing, BOM and schematic pages.
    */
-  async designDocument() {
+  async designDocument(download = false) {
     if (!this.k || this.docBusy) return;
     this.docBusy = true;
     try {
       const board = this.k.summary.components.length ? await this.routedBoard() : null;
-      const { printDesignDocument } = await import('./designdoc.ts');
+      const { downloadDesignDocument, printDesignDocument } = await import('./designdoc.ts');
       const k = this.k;
-      await printDesignDocument({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal });
+      await (download ? downloadDesignDocument : printDesignDocument)({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal });
     } catch (e) {
       this.flash(`The design document failed: ${(e as Error).message}`);
     } finally {
@@ -1679,8 +1640,11 @@ class AppState {
     return this.projectText(await this.kernel.exportDesign());
   }
 
-  /** Open a design (a project file: with the conversation it keeps) as a new project (its own file, named after the design). */
-  async importDesign(file: ProjectFile) {
+  /**
+   * Open a design (a project file: with the conversation it keeps) as a new project: its own file, named
+   * `fileName` (the file it was opened from) or else after the design; a number only when that name is taken.
+   */
+  async importDesign(file: ProjectFile, fileName?: string) {
     if (this.running) {
       this.flash('Wait for the agent to finish first.');
       return;
@@ -1690,6 +1654,7 @@ class AppState {
     await this.queueWrite(async () => {
       await this.kernel.load(d);
       this.projectId = null;
+      this.newFileName = fileName;
       this.renameFile = false;
       this.restoreConversation(conversation);
     });

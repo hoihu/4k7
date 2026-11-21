@@ -122,6 +122,7 @@ export function boardBodies(b: BoardView, opts: { fitted?: boolean } = {}): Map<
   const bodies = new Map<string, Body3D>();
   for (const p of b.parts) {
     if (opts.fitted && p.dnp) continue;
+    if (p.padOnly) continue; // a bare pad (a test point): no part on it
     const r = body3dFor(p.pkgInfo, p.pads.map((x) => x.number));
     if (r.ok) bodies.set(p.componentId, r.body);
   }
