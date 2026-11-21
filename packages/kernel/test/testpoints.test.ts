@@ -74,7 +74,10 @@ describe('add_test_points', () => {
     k.transact({ summary: 'route', ops: [{ op: 'route' }] });
     const b = k.board();
     expect(b.routing).toBe('done');
-    expect(b.diagnostics).toEqual([]);
+    // The router sizes nothing for a net's current, so the buck's rails get the current check's
+    // findings with or without test points; left out as in board.test.ts (current.test.ts tests them).
+    const CURRENT = ['DRC.CURRENT_UNVERIFIED', 'DRC.VIA_CURRENT', 'DRC.CURRENT_UNKNOWN'];
+    expect(b.diagnostics.filter((x) => !CURRENT.includes(x.code))).toEqual([]);
   });
 
   it('a pad test point is no part to buy or place; its silkscreen names the net', () => {
