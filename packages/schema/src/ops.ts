@@ -277,6 +277,7 @@ export const SetBoardOp = z.object({
   edge_clearance_mm: z.number().positive().optional().describe('Keep copper this far from the board edge (default 0.5)'),
   via_in_pad: z.boolean().optional().describe('Let the router put its vias inside pads, anywhere on the board (default false; only when the user asks for it, e.g. for tight BGA fan-out). Thermal vias in one pad need no such switch: add_vias kind pad'),
   corner_radius_mm: z.number().min(0).optional().describe('Rounded board corners: the radius (0 = square corners)'),
+  current_rise_c: z.union([z.literal(10), z.literal(20), z.literal(30)]).optional().describe('How much tracks and vias may heat with their net\'s current (°C): 10 (default), 20 or 30. A denser board may trade copper for heat; it changes what the current check (get_current_map) asks of the copper, not the copper'),
 }).describe('Board size, layers and design rules. With a fab profile chosen (set_fab_profile) a rule below the manufacturer\'s limit is refused.');
 
 const fabLimitsInput = z.object({
@@ -922,6 +923,13 @@ export const QueryOp = z.discriminatedUnion('op', [
     rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('Only copper with a point inside this rectangle (mm)'),
   }).describe('Drawn copper: every track (id, net, layer, width, points in mm, the pads its ends lie on) and via (id, net, at, drill, size), to edit or erase by id'),
   z.object({ op: z.literal('get_board') }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
+  z.object({
+    op: z.literal('get_current_map'),
+    nets: z.array(netName).optional().describe('Only these nets'),
+    rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('Only hotspots inside this rectangle (mm)'),
+    worst: z.number().int().min(0).max(200).optional().describe('Hotspots to list, worst first (default 20); the nets are always all listed'),
+    include_ok: z.boolean().optional().describe('Also list the copper that carries its current (ratio up to 1)'),
+  }).describe('The routed copper against its net\'s current: per net its max_current, status (ok: every track and the vias at its layer changes carry it, at the board\'s allowed heating; unverified: some copper does not carry all of max_current, and whether that much flows there is not known; unknown: a power net without max_current, never ok) and worst ratio; hotspots worst first (tracks too narrow for the current on their layer\'s copper, the vias that are the only way between two layers\' copper), each with what fixes it. Call it after routing'),
   z.object({
     op: z.literal('try_placements'),
     candidates: z

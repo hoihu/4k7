@@ -7,6 +7,7 @@ import { type BoardCutout, type BoardPad, type BoardPart, type BoardRules, board
 import { stableJson } from './canonical.ts';
 import { type Board as CongestionBoard, congestion } from './congestion.ts';
 import { boardInputs, Memo } from './derive.ts';
+import { currentCheck, currentDrc } from './current.ts';
 import { applyWaivers, boardCopy, cardOf, clone, isGroundNet, isPowerNet, natCmp, valueOf } from './doc.ts';
 import { viewOf } from './drawing.ts';
 import { acidDrc, copperDrc, deadCopperDrc, drawnDrc, edgeDrc, neckDrc, padShorts, planeViaDrc, splitDrc, thermalDrc } from './drc.ts';
@@ -139,7 +140,9 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
   // (keys sorted: a design read back from its file has them in another order than one just edited)
   // the connections the agent laid for the router, where their pads stand now (drawn copper has none)
   const laidPlan = settings.drawn ? null : planLaid(settings.laid ?? [], parts, d);
-  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, ...(boardKeepouts.length ? [boardKeepouts] : []), layers, rules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : []), ...(viaPlan.along ? [viaPlan.along] : [])] : []), ...(laidPlan?.view.length ? ['laid', laidPlan.view] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
+  // (the allowed heating changes the current check, not the copper: not in the key)
+  const { currentRise: _rise, ...copperRules } = rules;
+  const placementKey = hash(stableJson([w, h, cornerR, shape, boardCutouts, ...(boardKeepouts.length ? [boardKeepouts] : []), layers, copperRules, planes, ...(viaPlan.groups.length ? [viaPlan.fixed, viaPlan.fill, ...(viaPlan.drops ? [viaPlan.drops] : []), ...(viaPlan.along ? [viaPlan.along] : [])] : []), ...(laidPlan?.view.length ? ['laid', laidPlan.view] : []), parts.map((p) => [p.componentId, p.x, p.y, p.rot, p.side, p.pads.map((q) => q.netId ?? '')])]));
   const drawn = settings.drawn ? drawnCopper(settings.drawn, parts) : null;
   const view: BoardView = {
     outline: { w, h },
@@ -380,7 +383,7 @@ export function layoutBoard(d: Design, b: BoardView, opts: { budgetMs?: number; 
   const marked = placeMarks(routed);
   routed.parts = marked.parts;
   const name = (id: string) => d.nets[id]?.name ?? id;
-  const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY' && x.code !== 'DRC.KEEPOUT' && !x.code.startsWith('PANEL.TAB_')).map((x) => ({ ...x })), ...marked.diagnostics, ...panelTabDrc(routed), ...keepoutDrc(routed), ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...acidDrc(routed), ...neckDrc(routed, (id, layer) => ruleWidth(b.impedance, id, layer) ?? netWidths[id] ?? (powerNets.has(id) ? b.rules.powerTrack : b.rules.track)), ...thermalDrc(routed), ...deadCopperDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
+  const diags = [...b.diagnostics.filter((x) => x.code !== 'DRC.SILK_POLARITY' && x.code !== 'DRC.KEEPOUT' && !x.code.startsWith('PANEL.TAB_')).map((x) => ({ ...x })), ...marked.diagnostics, ...panelTabDrc(routed), ...keepoutDrc(routed), ...copperDrc(routed), ...edgeDrc(routed, !!b.drawn), ...fabCopperDrc(routed), ...splitDrc(routed, (id) => !powerNets.has(id)), ...planeViaDrc(routed), ...acidDrc(routed), ...neckDrc(routed, (id, layer) => ruleWidth(b.impedance, id, layer) ?? netWidths[id] ?? (powerNets.has(id) ? b.rules.powerTrack : b.rules.track)), ...thermalDrc(routed), ...currentDrc(routed, currentCheck(d, routed)), ...deadCopperDrc(routed), ...(b.drawn ? drawnDrc(routed) : []), ...impedanceDrc(routed, undefined, powerNets)].map((x) => (b.drawn ? softened(x) : x));
   // a connection the agent laid that found no way: the router routed it its own way, and says why
   for (const t of routed.laid ?? []) {
     if (t.laid !== false) continue;

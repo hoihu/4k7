@@ -186,13 +186,31 @@ export interface NetAttrs {
 }
 
 /**
- * Track width (mm) an outer-layer track needs to carry `amps` with about `riseC` °C of heating
- * (IPC-2221, 1 oz / 35 µm copper), rounded up to 0.05 mm, at least 0.15 mm.
+ * Track width (mm) a track needs to carry `amps` with about `riseC` °C of heating (IPC-2221's
+ * external curve, `copperUm` thick: 1 oz / 35 µm by default), rounded up to 0.05 mm, at least 0.15 mm.
  */
 export function trackWidthFor(amps: number, riseC = 10, copperUm = 35): number {
   const areaMil2 = Math.pow(amps / (0.048 * Math.pow(riseC, 0.44)), 1 / 0.725);
   const widthMm = (areaMil2 / (copperUm / 25.4)) * 0.0254;
   return Math.max(0.15, Math.ceil(widthMm * 20 - 0.02) / 20); // (a hair over a step does not round up)
+}
+
+/** IPC-2221's cross-section of a track (mil²): width × copper thickness. */
+const trackAreaMil2 = (widthMm: number, copperUm: number) => (widthMm / 0.0254) * (copperUm / 25.4);
+
+/**
+ * Current (A) a track carries with about `riseC` °C of heating: IPC-2221's external curve,
+ * I = 0.048 · ΔT^0.44 · A^0.725 (A in mil²), used for every layer with that layer's copper (inner
+ * layers are not worse than outer ones, IPC-2152). Conservative near a plane, about right for a
+ * long isolated outer track. See docs/design/layout.md §14.
+ */
+export function trackCurrentFor(widthMm: number, copperUm = 35, riseC = 10): number {
+  return 0.048 * Math.pow(riseC, 0.44) * Math.pow(trackAreaMil2(widthMm, copperUm), 0.725);
+}
+
+/** The heating (°C) of a track carrying `amps`, from the same curve as trackCurrentFor. */
+export function trackRiseFor(amps: number, widthMm: number, copperUm = 35): number {
+  return Math.pow(amps / (0.048 * Math.pow(trackAreaMil2(widthMm, copperUm), 0.725)), 1 / 0.44);
 }
 
 /**
