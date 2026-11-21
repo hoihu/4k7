@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BoardPad, BoardPart, BoardRules, BoardView, CopperLayer, Design } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { neckDrc } from '../src/drc.ts';
+import { segDist, segmentsOf } from '../src/geom.ts';
 import { route } from '../src/router.ts';
 import { buckTransaction } from './fixtures.ts';
 
@@ -211,6 +212,58 @@ describe('a net wider than its pads', () => {
     const found = neckDrc(view, (id) => (id === 'P' ? 1.2 : 0.25));
     expect(found.length).toBeGreaterThan(0);
     expect(found.every((d) => d.code === 'DRC.NECK' && /\+12V runs at 1\.2 mm/.test(d.message) && /make room there/.test(d.message))).toBe(true);
+  });
+  describe('a connection the agent laid (draw_track) on a power net, to a 0.25 mm pad', () => {
+    // P from a 0.25 mm pad at (2, 5) to a 1 mm pad at (18, 5): the power width is 0.5 mm
+    const ends = () => [chip('U1', [pad('1', 2, 5, 0.25, 0.25, 'P')]), part('J1', [[18, 5, 'P']])];
+    const laid = [{ id: 't1', netId: 'P', from: 0, to: 1, layer: 'F.Cu' as const, points: [] }];
+    const wall = (net: string, ys: number[]) => ys.map((y): [number, number, string] => [10, y, net]);
+    const at = (parts: BoardPart[]) => route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts, powerNets: new Set(['P']), laid });
+    const widthOf = (id: string) => (id === 'P' ? RULES.powerTrack : RULES.track);
+
+    it("is laid at the net's width, necked only in a short stretch at the small pad", () => {
+      const parts = ends();
+      const r = at(parts);
+      expect(r.laid).toEqual([{ id: 't1', laid: true }]);
+      const mine = r.tracks.filter((t) => t.laid === 't1');
+      expect(mine.length).toBeGreaterThan(0);
+      const len = lengths(mine, 'P');
+      expect([...len.keys()].sort()).toEqual([0.25, 0.5]);
+      expect(len.get(0.5)!).toBeGreaterThan(13);
+      // the neck: within the neck zone round the pad (twice neckReach(0.5) = 2 mm, as DRC.NECK)
+      expect(len.get(0.25)!).toBeLessThanOrEqual(2);
+      for (const t of mine.filter((t) => t.width === RULES.track)) expect(Math.min(Math.hypot(t.pts[0]! - 2, t.pts[1]! - 5), Math.hypot(t.pts.at(-2)! - 2, t.pts.at(-1)! - 5))).toBeLessThan(0.2);
+      expect(r.connected('P', parts[0]!.pads[0]!, parts[1]!.pads[0]!)).toBe(true);
+      clearOfPads(r, parts, RULES.clearance);
+      expect(neckDrc({ parts, tracks: r.tracks, netNames: {} } as unknown as BoardView, widthOf)).toEqual([]);
+    });
+
+    it('where the wide track with a neck finds no way, is laid at the width the pads take', () => {
+      // a wall of pads with a 0.8 mm gap, far from the small pad: only 0.25 mm passes
+      const parts = [...ends(), part('W1', wall('X', [0.5, 1.5, 2.5, 3.5])), part('W2', wall('Y', [5.3, 6.3, 7.3, 8.3, 9.3]))];
+      const r = at(parts);
+      expect(r.laid).toEqual([{ id: 't1', laid: true }]);
+      const mine = r.tracks.filter((t) => t.laid === 't1');
+      expect(mine.length).toBeGreaterThan(0);
+      // at the signal width all along (a power track is not widened again), through the gap
+      const len = lengths(mine, 'P');
+      expect([...len.keys()]).toEqual([RULES.track]);
+      expect(len.get(RULES.track)!).toBeGreaterThan(15);
+      expect(mine.some((t) => segmentsOf(t.pts).some(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(10, 4.4) < 0.2))).toBe(true);
+      expect(r.connected('P', parts[0]!.pads[0]!, parts[1]!.pads[0]!)).toBe(true);
+      expect(r.failed.filter((f) => f.netId === 'P')).toEqual([]);
+      clearOfPads(r, parts, RULES.clearance);
+      // longer than a neck: DRC.NECK says so
+      expect(neckDrc({ parts, tracks: r.tracks, netNames: {} } as unknown as BoardView, widthOf).map((d) => d.code)).toEqual(['DRC.NECK']);
+    });
+
+    it('with no way at either width, is not laid and says why', () => {
+      // the wall from edge to edge, one layer
+      const parts = [...ends(), part('W1', wall('X', [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5]))];
+      const r = at(parts);
+      expect(r.laid).toEqual([{ id: 't1', laid: false, why: 'no way for a 0.25 mm track from U1.1 to J1.1 on F.Cu', at: { x: 18, y: 5 } }]);
+      expect(r.tracks.some((t) => t.laid)).toBe(false);
+    });
   });
 });
 
