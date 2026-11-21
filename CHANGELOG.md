@@ -17,6 +17,8 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 - **Parts that only JLCPCB's Standard assembly takes are named.** JLCPCB marks some parts "Standard only" (WS2812-type LEDs, some electrolytic capacitors), and one such part sends the whole order to Standard: a higher setup and stencil fee, and a loading fee for every part number, not only the Extended ones. The cost check used to price these orders at the cheaper Economic service anyway: a 2-board order estimated at $80 was billed $133. Now Economic says it cannot take the order and names the parts. The stock check tags them "Standard only" and prefers replacements that Economic takes. The cost check says what replacing them would save and names a like-for-like part where it finds one.
 
+- **The stock check no longer reads as an all-clear when nothing could be checked.** With no LCSC numbers on any part, the agent's stock check at JLCPCB said "0 part number(s) fine to order". Now it says how many parts have no part number and that the order can't be checked yet; when only some parts have one, it also says how many have none.
+
 ### Board
 
 - **Power tracks keep their width up to the pin**: the router now runs a power net, or a net whose width you set (`set_net track_mm`), at that width all along, and narrows it only in a short neck of about a millimetre right at a pad too small for it, such as a QFN or SOT-23 pin. Until now one such pad made the whole connection narrow: a 0.5 mm supply track to a QFN pin was laid at the 0.25 mm signal width for its full length, 11 mm on a test board, where it is now 0.5 mm for all but the last 1.2 mm. Boards routed with an earlier version are routed again the first time you open their layout.

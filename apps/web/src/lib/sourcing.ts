@@ -205,12 +205,17 @@ export async function sourcingTool(input: unknown, checks: DesignChecks, chosen:
       const r = await checks.stock(a.boards, h);
       const trouble = r.lines.filter(lineBlocks).length;
       const order = r.estimates ? `\nThe order: ${estimateLine(r.estimates, r.boards, h)}, fees included (not ${h.noCatalogue ? 'the parts, ' : ''}the bare boards, shipping or taxes); sourcing cost has the breakdown and what would make it cheaper.` : '';
+      const n = r.unsourced.length;
+      // with no part number at all there is nothing to check: say so rather than "0 fine to order"
+      const nothing = !h.noCatalogue && !r.lines.length && n > 0;
+      const without = `${n} part(s) without ${/^(LCSC|[aio])/i.test(h.numberName) ? 'an' : 'a'} ${h.numberName}`;
       const detail = h.noCatalogue
-        ? `${r.lines.length} part number(s) on the BOM${r.unsourced.length ? `, ${r.unsourced.length} without what ${h.name} needs` : ''}`
-        : trouble
-          ? `${trouble} part(s) stop the order`
-          : `${r.lines.length} part number(s) fine to order`;
-      return { content: stockReportText(r, h) + order, isError: false, label: `stock check · ${h.name} · ${r.boards} boards`, detail };
+        ? `${r.lines.length} part number(s) on the BOM${n ? `, ${n} without what ${h.name} needs` : ''}`
+        : nothing
+          ? `${without}, so the order can't be checked yet`
+          : `${trouble ? `${trouble} part(s) stop the order` : `${r.lines.length} part number(s) fine to order`}${n ? `, ${without}` : ''}`;
+      const lead = nothing ? `${n} part${n === 1 ? ' has' : 's have'} no ${h.numberName}, so the order can't be checked yet: give them one (sourcing search, then design_edit set_param ${h.param ?? 'mpn'}).\n` : '';
+      return { content: lead + stockReportText(r, h) + order, isError: false, label: `stock check · ${h.name} · ${r.boards} boards`, detail };
     }
     if (a.action === 'values') {
       const r = await checks.values(a.boards, h);
