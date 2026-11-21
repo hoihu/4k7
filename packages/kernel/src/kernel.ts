@@ -55,6 +55,7 @@ import { keepForcedNets } from './netdraw.ts';
 import { blockAssignment } from './layout.ts';
 import { copperKey, layoutBoard, placedOf, planePlan } from './board.ts';
 import { currentCheck, currentMapAnswer, currentRise, layerCopper } from './current.ts';
+import { powerTreeAnswer } from './powertree.ts';
 import type { RouteProgress } from './router.ts';
 import { HELPER_TX_MS, annotateChecks, drawsCopper, followParts, movesParts, type HelperHooks } from './copperops.ts';
 import { canonicalJson, migrate } from './canonical.ts';
@@ -549,6 +550,8 @@ export class Kernel {
         if (!b) return { routed: false, note: 'The board is not routed (or its routing is out of date): route it first, then ask again.' };
         return currentMapAnswer(d, b, q);
       }
+      case 'get_power_tree':
+        return powerTreeAnswer(d);
       case 'get_fab_profiles': {
         const layers = d.board?.layers ?? 2;
         const cur = d.board?.fab;
