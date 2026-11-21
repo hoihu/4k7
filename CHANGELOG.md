@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Design document
+
+- **The design document can be downloaded as a file.** Until now it only came out through the browser's print dialog, and where that dialog did not open or was closed by mistake there was no other way to get it. Now *Download ⤓*, next to *Design document (print / PDF)* in the Layout view's panel, saves it as one HTML file named after the project (`<project>-design.html`), with the 3D pictures of the board inside it. It opens in any browser, offline, and prints from there the same way, to paper or to PDF.
+
 ### Assembly
 
 - **Parts can be marked do-not-populate (DNP).** Ask the agent to leave a part off the assembly, such as a 0 Ω strap, a spare pull-up or a matching network left open, and to fit it again later. Before, every part in the design was bought and assembled. Now a DNP part stays on the board with its pads and tracks, so you can still solder it by hand, but it is left out of the BOM and the pick-and-place file you upload, and out of the stock and cost checks. The schematic shows "DNP" under its value. A DNP capacitor or resistor no longer counts for a datasheet requirement, so leaving off a decoupling capacitor or a pull-up is reported.
