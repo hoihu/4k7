@@ -27,6 +27,7 @@ export interface Style {
 
 export const CENTRE_COST = 0.5; // per step and grid step off the middle of the gap between two IC pins
 export const CLIP_COST = 3; // a step whose copper runs half over one of the net's own pads, off its centre line
+export const LAYER_COST = 1; // a step off the layer a net keeps to (set_net layer), in grid steps
 export const NECK_COST = 2; // a step where the track narrows to a neck (routesearch.ts), in grid steps
 export const NECK_MIN = 5; // shortest stretch at the full width between two necks, in grid steps
 export const SPLIT_COST = 8; // per step on the band along a split plane's edge (signal nets), in grid steps

@@ -490,6 +490,8 @@ export class Kernel {
           why: n.attrs.trackWidth ? 'set for this net' : kind === 'signal' ? 'signal width (rules)' : 'power width (rules)',
           ...(amps ? { suggested_mm: Object.fromEntries(Object.entries(copper).map(([l, um]) => [l, trackWidthFor(amps, rise, um)])), for_current_a: amps, copper_um: copper, rise_c: rise } : {}),
           rules: { signal_mm: rules.track, power_mm: rules.powerTrack },
+          ...(n.attrs.routeFirst ? { routed_first: true } : {}),
+          ...(n.attrs.layer ? { keeps_to: n.attrs.layer } : {}),
         };
         // how its copper on the board carries that current (get_current_map has the pieces)
         const routedNow = this.routedNow(d);

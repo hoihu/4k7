@@ -4,10 +4,10 @@
  */
 import { keepoutDistance } from '@4k7/schema';
 import { Heap } from './heap.ts';
-import { CLIP_COST, COARSE, G, NECK_COST, now, type PassGrid, type Style, TURN_COST } from './routegrid.ts';
+import { CLIP_COST, COARSE, G, LAYER_COST, NECK_COST, now, type PassGrid, type Style, TURN_COST } from './routegrid.ts';
 
 export function passSearch(grid: PassGrid) {
-  const { input, pads, deadline, history, style, rules, layers, W, H, N, L, widths, searching, stitching, maps, CW, CH, CN, crow, ccol, coarseOf, padDist, viaAt, viaNear, ownCopper, ownInset, toCentre, touch, offMiddle, splitCost, pays, clips, offCentre } = grid;
+  const { input, pads, deadline, history, style, rules, layers, layerIdx, netNum, W, H, N, L, widths, searching, stitching, maps, CW, CH, CN, crow, ccol, coarseOf, padDist, viaAt, viaNear, ownCopper, ownInset, toCentre, touch, offMiddle, splitCost, pays, clips, offCentre } = grid;
   /** Where searches stop (with a pour, the signals stop a little earlier), and the searches so far. */
   const clock = { until: deadline, searches: 0 };
   // A* buffers
@@ -31,6 +31,8 @@ export function passSearch(grid: PassGrid) {
   const FLOOD_AFTER = Math.max(1 << 16, S >> 3);
   // 1 F.Cu (prefers horizontal steps), 2 B.Cu (vertical), 0 inner
   const layerKind = layers.map((l) => (l === 'F.Cu' ? 1 : l === 'B.Cu' ? 2 : 0));
+  /** Per net (number), the layer its tracks keep to (set_net layer). */
+  const layerPref = new Map(Object.entries(input.netLayers ?? {}).flatMap(([id, l]) => (netNum.has(id) && layerIdx.has(l) ? [[netNum.get(id)!, layerIdx.get(l)!] as const] : [])));
   const DX = [1, 1, 0, -1, -1, -1, 0, 1];
   const DY = [0, 1, 1, 1, 0, -1, -1, -1];
   const STEP = [1, Math.SQRT2, 1, Math.SQRT2, 1, Math.SQRT2, 1, Math.SQRT2];
@@ -138,6 +140,8 @@ export function passSearch(grid: PassGrid) {
     const inPad = widths[k]! / 2 - 0.01;
     // a neck point where the track's own width does not fit: the narrow width there
     const nr = neck.run;
+    // the layer the net keeps to (not for a connection the agent laid: it takes the layers given)
+    const prefL = steady ? -1 : (layerPref.get(net) ?? -1);
     const narrowOk = (l: number, c: number) => nr !== 0 && neck.at[c] === nr && freeFor(net, neck.k[c]!)(l, c);
     // a track wider than a via pad may not fit where a via does (its clearance reaches farther):
     // only then must a via's landing be checked for the track as well
@@ -278,7 +282,7 @@ export function passSearch(grid: PassGrid) {
         // diagonal steps: both orthogonal neighbours must be clear too (no corner cutting)
         if (dx !== 0 && dy !== 0 && (!ok(y * W + nx) || !ok(ny * W + x))) continue;
         const off = kind === 1 ? dy !== 0 : kind === 2 ? dx !== 0 : false;
-        const nc = base + STEP[d]! + (nr !== 0 && !wideOk(ni) ? NECK_COST : 0) + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? sty.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + (split !== null ? split[ns]! : 0) + hist[ns]!;
+        const nc = base + STEP[d]! + (nr !== 0 && !wideOk(ni) ? NECK_COST : 0) + (prefL >= 0 && l !== prefL ? LAYER_COST : 0) + (dir >= 0 && dir !== d ? TURN_COST : 0) + (off ? sty.offAxis : 0) + (tch !== null && tch[ns] !== 0 && clips(net, k, l, ni, dx, dy) ? CLIP_COST : 0) + offMiddle[ns]! + (split !== null ? split[ns]! : 0) + hist[ns]!;
         if (nc < costOf(ns)) {
           seenAt[ns] = run;
           cost[ns] = nc;
