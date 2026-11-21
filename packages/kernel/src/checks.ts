@@ -18,6 +18,8 @@ import {
   type Severity,
 } from '@4k7/schema';
 import { sameValue, describeConstraint } from './netops.ts';
+import { packageThermal, THERMAL_AMBIENT_C, THERMAL_JUNCTION_C } from '@4k7/parts';
+import { statedLoads } from './current.ts';
 import { powerWalk } from './power.ts';
 import { allocRefdes, applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 
@@ -38,6 +40,7 @@ export function runChecks(d: Design, placement?: SchematicView['constraintStatus
   powerChecks(ctx);
   requirementChecks(ctx);
   ratingChecks(ctx);
+  ldoChecks(ctx);
   seriesChecks(ctx);
   ledgerChecks(ctx, placement, why);
   applyWaivers(d, ctx.out);
@@ -306,6 +309,66 @@ function ratingChecks(ctx: Ctx) {
 const RATINGS = [6.3, 10, 16, 25, 35, 50, 63, 100];
 function suggestRating(v: number): number {
   return RATINGS.find((r) => r >= v * 1.5) ?? Math.ceil(v * 2);
+}
+
+/* ------------------------- linear regulators' heat ------------------------ */
+
+/** A card that names itself a switching regulator: never a linear one, however its pins look. */
+const SWITCHER = /\b(buck|boost|switch(ing|er)?|converter|charge pump|inverter|sepic|flyback)\b/i;
+const w2 = (v: number) => `${Math.round(v * 100) / 100}`;
+
+/**
+ * SEM.LDO_DISSIPATION: a linear regulator burns (Vin − Vout) × I, and a small package cannot shed
+ * much of it. A linear regulator is told the way flow.ts tells a regulator (an IC with a power
+ * input, a power output and a ground pin, one rail each), less a switcher: an inductor on the
+ * output net, or a card that calls itself a buck, boost or converter. An MCU (bidirectional pins)
+ * is not one. I is the output rail's max_current, else the loads stated on it; the package's limit
+ * is a typical one (packages/parts/src/thermal.ts). What is not known is said to be unknown, not
+ * fine, as DRC.CURRENT_UNKNOWN does.
+ */
+function ldoChecks(ctx: Ctx) {
+  const { d } = ctx;
+  const inductorNets = new Set<string>();
+  for (const c of Object.values(d.components)) if (!c.dnp && cardOf(d, c.part)?.category === 'inductor') for (const n of Object.values(c.pins)) if (n) inductorNets.add(n);
+  for (const c of componentsSorted(d)) {
+    const card = cardOf(d, c.part);
+    if (!card || c.dnp || card.category !== 'ic' || SWITCHER.test(card.description) || card.pins.some((p) => p.type === 'bidir')) continue;
+    const pinNets = (type: PartPin['type']) => [...new Set(card.pins.filter((p) => p.type === type).map((p) => c.pins[p.number]).filter((n): n is string => !!n && !isGroundNet(d.nets[n]!)))];
+    const [ins, outs] = [pinNets('pwr_in'), pinNets('pwr_out')];
+    const grounded = card.pins.some((p) => c.pins[p.number] && isGroundNet(d.nets[c.pins[p.number]!]!));
+    if (ins.length !== 1 || outs.length !== 1 || !grounded || ins[0] === outs[0] || inductorNets.has(outs[0]!)) continue;
+    const [inNet, outNet] = [d.nets[ins[0]!]!, d.nets[outs[0]!]!];
+    const [vin, vout] = [inNet.attrs.voltage, outNet.attrs.voltage];
+    if (vin !== undefined && vout !== undefined && vin <= vout) continue; // nothing dropped: a load switch, not a regulator at work
+    const pkg = c.params.package || card.packageInfo?.name || card.package;
+    const who = `${c.refdes} (${card.mpn ?? card.id}${pkg ? `, ${pkg}` : ''})`;
+    const entities = [c.refdes, netRef(outNet)];
+    const unknown = (why: string, set: string) =>
+      push(ctx, 'info', 'SEM.LDO_DISSIPATION', entities, `${who} is a linear regulator from ${inNet.name} to ${outNet.name}, but ${why}, so whether it overheats is unknown (not checked, not fine). ${set}`, { source: card.id });
+    if (vin === undefined || vout === undefined) {
+      const net = vin === undefined ? inNet : outNet;
+      unknown(`${net.name} has no voltage`, `Set it (set_net voltage).`);
+      continue;
+    }
+    const own = outNet.attrs.maxCurrent && outNet.attrs.maxCurrent > 0 ? outNet.attrs.maxCurrent : undefined;
+    const amps = own ?? statedLoads(d, outNet.id).reduce((s, l) => s + l.amps, 0);
+    if (!(amps > 0)) {
+      unknown(`${outNet.name} has no max_current`, `Set it from what the rail feeds (set_net max_current: its DC current, the sum of its loads' from their datasheets).`);
+      continue;
+    }
+    const watts = (vin - vout) * amps;
+    const drop = `(${vin} V − ${vout} V) × ${w2(amps)} A = ${w2(watts)} W`;
+    const limit = packageThermal(pkg);
+    if (!limit) {
+      unknown(`it dissipates ${drop} and its package (${pkg ?? 'none given'}) has no typical limit here`, `Check it with the datasheet's θJA: ${w2(watts)} W × θJA + ${THERMAL_AMBIENT_C} °C ambient must stay below the junction maximum (usually ${THERMAL_JUNCTION_C} °C).`);
+      continue;
+    }
+    if (watts <= limit.maxW) continue;
+    const bigger = ['SOT-89', 'SOT-223', 'DPAK', 'D2PAK'].map((n) => packageThermal(n)!).filter((t) => t.maxW > limit.maxW).map((t) => `${t.name} sheds about ${t.maxW} W`);
+    push(ctx, watts > 2 * limit.maxW ? 'error' : 'warning', 'SEM.LDO_DISSIPATION', entities,
+      `${who} drops ${inNet.name} to ${outNet.name} at ${w2(amps)} A${own ? ' (max_current)' : ' (the loads stated)'}: ${drop}, over the ${limit.maxW} W a ${limit.name} sheds at ${THERMAL_AMBIENT_C} °C ambient (typical θJA ${limit.thetaJA} °C/W, junction at ${THERMAL_JUNCTION_C} °C); it overheats or shuts down. ` +
+        `Use ${bigger.length ? `a linear regulator in a bigger package (${bigger.join(', ')}), ` : ''}a buck converter, a lower input voltage, or less current on ${outNet.name}.`, { source: card.id });
+  }
 }
 
 /* ------------------------------ value series ------------------------------ */

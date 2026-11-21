@@ -13,6 +13,7 @@ import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
 import { addPart, addSheet, clearSheet, connect, constrain, disconnect, moveToSheet, noConnect, remove, removeSheet, rename, setDnp, setNet, setParam } from './netops.ts';
 import { renamePart, setFootprint, setMating, setPackageDefaults, setPinDescriptions, setPolarity, setSymbol, setValueSeries } from './partops.ts';
 import { autoDraw, describe, placeBlock, placeSymbol, setPaper } from './sheetops.ts';
+import { addTestPoints } from './testpoints.ts';
 import { tuneLength } from './tune.ts';
 
 /**
@@ -94,6 +95,8 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return place(d, op, by);
     case 'attach':
       return attach(d, op, by);
+    case 'add_test_points':
+      return addTestPoints(d, op, by);
     case 'place_symbol':
       return placeSymbol(d, op, by);
     case 'place_text':

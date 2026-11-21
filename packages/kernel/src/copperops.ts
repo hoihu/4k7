@@ -921,6 +921,7 @@ const COPPER_AFTER: Record<EditOp['op'], 'follow' | 'check' | null> = {
   set_fab_profile: 'follow',
   place: 'follow',
   attach: 'follow',
+  add_test_points: 'follow',
   place_symbol: null,
   place_text: null,
   auto_draw: null,

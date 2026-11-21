@@ -242,6 +242,8 @@ class AppState {
   private diskConnecting: Promise<void> | null = null;
   /** The design was renamed and its file not yet (the server was not reachable). */
   private renameFile = false;
+  /** The name a new project's file takes when it is created: the file it was opened from (else the design's name). */
+  private newFileName: string | undefined;
   /** Writes to the project files, one after the other (a new project's file is created once). */
   private writes: Promise<unknown> = Promise.resolve();
   /** The access key this tab started with: its address's, the dev server's (in development), or the one saved. */
@@ -899,7 +901,7 @@ class AppState {
    * package, and its land as it lies on the board (held against the house's footprint for the part).
    */
   private async sourcedComponents(): Promise<SourcedComponent[]> {
-    type Info = { refdes: string; part: string; category?: SourcedComponent['category']; params: Record<string, string>; package?: { name: string }; dnp?: boolean };
+    type Info = { refdes: string; part: string; category?: SourcedComponent['category']; params: Record<string, string>; package?: { name: string }; dnp?: boolean; padOnly?: boolean };
     const refs = this.k?.summary.components.map((c) => c.refdes) ?? [];
     const [infos, board] = await Promise.all([
       Promise.all(refs.map((ref) => this.kernel.query({ op: 'get_component', ref }))) as Promise<(Info | { error: string })[]>,
@@ -913,7 +915,7 @@ class AppState {
       const mpn = c.params.mpn ?? card?.mpn;
       const p = placed.get(c.refdes);
       const land = p && card ? placedLand(p, (pin) => card.pins.find((x) => x.number === pin)?.name) : undefined;
-      return [{ refdes: c.refdes, ...(c.category ? { category: c.category } : {}), params: c.params, ...(pkg ? { pkg } : {}), ...(mpn ? { mpn } : {}), ...(land ? { land } : {}), ...(c.dnp ? { dnp: true } : {}) }];
+      return [{ refdes: c.refdes, ...(c.category ? { category: c.category } : {}), params: c.params, ...(pkg ? { pkg } : {}), ...(mpn ? { mpn } : {}), ...(land ? { land } : {}), ...(c.dnp || c.padOnly ? { dnp: true } : {}) }];
     });
   }
 
@@ -1577,8 +1579,9 @@ class AppState {
       try {
         if (this.projectId) await disk.saveProject(this.projectId, json);
         else {
-          this.projectId = await disk.createProject(json);
-          this.renameFile = false; // named after the design already
+          this.projectId = await disk.createProject(json, this.newFileName);
+          this.newFileName = undefined;
+          this.renameFile = false; // named after the design, or the file it came from, already
           void this.updateSettings({ project: this.projectId });
           await this.refreshProjects();
         }
@@ -1596,17 +1599,17 @@ class AppState {
   docBusy = $state(false);
 
   /**
-   * The design document through the print dialog: the description, each block with its
-   * schematic and its place on the board, layout, assembly drawing, BOM and schematic pages.
+   * The design document through the print dialog, or (`download`) as one HTML file: the description,
+   * each block with its schematic and its place on the board, layout, assembly drawing, BOM and schematic pages.
    */
-  async designDocument() {
+  async designDocument(download = false) {
     if (!this.k || this.docBusy) return;
     this.docBusy = true;
     try {
       const board = this.k.summary.components.length ? await this.routedBoard() : null;
-      const { printDesignDocument } = await import('./designdoc.ts');
+      const { downloadDesignDocument, printDesignDocument } = await import('./designdoc.ts');
       const k = this.k;
-      await printDesignDocument({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal });
+      await (download ? downloadDesignDocument : printDesignDocument)({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal });
     } catch (e) {
       this.flash(`The design document failed: ${(e as Error).message}`);
     } finally {
@@ -1637,8 +1640,11 @@ class AppState {
     return this.projectText(await this.kernel.exportDesign());
   }
 
-  /** Open a design (a project file: with the conversation it keeps) as a new project (its own file, named after the design). */
-  async importDesign(file: ProjectFile) {
+  /**
+   * Open a design (a project file: with the conversation it keeps) as a new project: its own file, named
+   * `fileName` (the file it was opened from) or else after the design; a number only when that name is taken.
+   */
+  async importDesign(file: ProjectFile, fileName?: string) {
     if (this.running) {
       this.flash('Wait for the agent to finish first.');
       return;
@@ -1648,6 +1654,7 @@ class AppState {
     await this.queueWrite(async () => {
       await this.kernel.load(d);
       this.projectId = null;
+      this.newFileName = fileName;
       this.renameFile = false;
       this.restoreConversation(conversation);
     });
