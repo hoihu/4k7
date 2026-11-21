@@ -1302,10 +1302,22 @@ function summarize(files: FabFileRead[], notes: string[]): FabSummary {
   if (files.length && !files.some((f) => f.layer.kind === 'drill')) notes.push('no drill file');
   if (board?.fromOutline) {
     const [x0, y0, x1, y1] = [board.x, board.y, board.x + board.w, board.y + board.h];
+    // only what a layer draws dark: a clear (LPC) object takes away (a pour's edge clearance is drawn
+    // clear along the outline and reaches past it), so it never puts anything past the edge
+    const edges = ['left', 'bottom', 'right', 'top'] as const;
     for (const f of files) {
-      if (!f.box || f.layer.kind === 'outline') continue;
-      const past = Math.max(x0 - f.box[0], y0 - f.box[1], f.box[2] - x1, f.box[3] - y1);
-      if (past > 0.5) notes.push(`${f.layer.id} (${f.name}) reaches ${past.toFixed(1)} mm past the board outline`);
+      if (f.layer.kind === 'outline') continue;
+      let worst: { past: number; edge: number; o: FabObject } | null = null;
+      for (const o of f.objects) {
+        if (!o.dark) continue;
+        const by = [x0 - o.box[0], y0 - o.box[1], o.box[2] - x1, o.box[3] - y1];
+        const edge = by.indexOf(Math.max(...by));
+        if (!worst || by[edge]! > worst.past) worst = { past: by[edge]!, edge, o };
+      }
+      if (worst && worst.past > 0.5) {
+        const [cx, cy] = [(worst.o.box[0] + worst.o.box[2]) / 2, (worst.o.box[1] + worst.o.box[3]) / 2];
+        notes.push(`${f.layer.id} (${f.name}) reaches ${worst.past.toFixed(1)} mm past the board outline at its ${edges[worst.edge]} edge, round x ${cx.toFixed(1)}, y ${cy.toFixed(1)} mm`);
+      }
     }
   }
   const sizes = [...drills.values()].sort((a, b) => a.d - b.d || Number(b.plated ?? 0) - Number(a.plated ?? 0));

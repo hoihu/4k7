@@ -198,6 +198,24 @@ describe('reading production files', () => {
     expect(set.summary.notes).toEqual(['no board outline (Edge.Cuts, profile): the size is that of everything drawn', 'no drill file']);
   });
 
+  it('does not count what a clear (LPC) layer cuts away as copper past the outline; names where real copper is', () => {
+    // trimmed from a pour that meets a 10 × 10 mm outline: the pour, then its 0.5 mm edge clearance
+    // drawn clear with a 1 mm line along the outline's centreline, and a clear block 0.75 mm past the top
+    const head = '%FSLAX46Y46*%\n%MOMM*%\n%LPD*%\nG01*\n%ADD10C,0.100000*%\n%ADD11C,1.000000*%\n%ADD12R,1.000000X1.000000*%\n';
+    const edge = 'X0Y0D02*\nX10000000Y0D01*\nX10000000Y10000000D01*\nX0Y10000000D01*\nX0Y0D01*\n';
+    const outline = `${head}%TF.FileFunction,Profile,NP*%\nD10*\n${edge}M02*\n`;
+    const pour = 'G36*\nX0Y0D02*\nX10000000Y0D01*\nX10000000Y10000000D01*\nX0Y10000000D01*\nX0Y0D01*\nG37*\n';
+    const cut = `%LPC*%\nD11*\n${edge}G36*\nX4000000Y8000000D02*\nX6000000Y8000000D01*\nX6000000Y10750000D01*\nX4000000Y10750000D01*\nX4000000Y8000000D01*\nG37*\n%LPD*%\n`;
+    const copper = `${head}%TF.FileFunction,Copper,L1,Top*%\n${pour}${cut}M02*\n`;
+    const files = [{ name: 'b-Edge_Cuts.gbr', content: outline }, { name: 'b-F_Cu.gbr', content: copper }, { name: 'b.drl', content: 'M48\nMETRIC\nT1C0.3\n%\nT1\nX5.0Y5.0\nM30\n' }];
+    expect(readFabFiles(files).summary.notes).toEqual([]);
+    // a pad that does stick out: 1.5 mm past the right edge, half-way up
+    const pad = copper.replace('M02*', 'D12*\nX11000000Y5000000D03*\nM02*');
+    expect(readFabFiles([files[0]!, { name: 'b-F_Cu.gbr', content: pad }, files[2]!]).summary.notes).toEqual([
+      'F.Cu (b-F_Cu.gbr) reaches 1.5 mm past the board outline at its right edge, round x 11.0, y 5.0 mm',
+    ]);
+  });
+
   it('unzips a stored and a deflated zip', async () => {
     const files = [{ name: 'a-F_Cu.gbr', content: '%FSLAX46Y46*%\nM02*\n' }, { name: 'b.drl', content: 'M48\nM30\n' }];
     const stored = await unzip(zip(files));
