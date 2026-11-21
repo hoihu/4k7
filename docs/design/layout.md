@@ -763,6 +763,15 @@ yet", unless `propose open_connections` says why). Warnings are soft, the agent'
 short jog onto a pad aside), `DRC.VIA_IN_PAD` in a small part's land pattern (a via over another
 net's pad is a short anyway), `DRC.PLANE_VIAS`, `PLANE.SPLIT_CROSSING`, `DRC.ACID_TRAP`, `DRC.NECK`, `DRC.THERMAL_SPOKES`, silkscreen.
 
+**Shorts in `get_diagnostics`.** The board's copper-to-copper findings (`DRC.SHORT`, `DRC.CLEARANCE`:
+pads, tracks, vias and pours of two nets, a pad on no net counting as a net of its own) are also in
+`get_diagnostics`, from the copper where the board is routed or drawn (`routedNow`), else from the
+placement (pads that touch, `padShorts`). Through 0.6.1, `get_diagnostics` carried the schematic's
+and cross checks and the production files' read-back, not the board DRC: on a drawn board a land pattern
+edit (`set_footprint`) that moved an unconnected pad under a GND track, and two parts' pads touching,
+showed only as `FAB.SHORT`. Each message names both copper items (`U1.3 (not connected)`, `track t1
+(GND)`) and what to do: move or erase the drawn copper by id, else move the part or route again.
+
 Bench (`bench/drawn.ts`, the 128-part board of `bench/board.ts`, 3 clusters):
 
 | | router | drawn, empty | helper on everything | view after it | taken over from the router | U10 moved 0.5, 0.5 mm |
