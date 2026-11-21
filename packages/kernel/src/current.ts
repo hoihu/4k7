@@ -259,19 +259,24 @@ function irDropOf(cu: NetCopper, split: ReturnType<typeof solveSplit>, voltage: 
   };
 }
 
+/** The loads set_net loads states on a net, less those of a part or pin no longer on it (the schematic's part of netLoads: SEM.LDO_DISSIPATION uses it too). */
+export function statedLoads(d: Design, netId: string): NetLoad[] {
+  const out: NetLoad[] = [];
+  for (const l of d.nets[netId]?.attrs.loads ?? []) {
+    const c = d.components[l.componentId];
+    const pins = c ? l.pins.filter((p) => c.pins[p] === netId) : [];
+    if (pins.length) out.push({ ...l, pins });
+  }
+  return out;
+}
+
 /**
  * The loads stated on a net: set_net loads, and each pad with add_vias drop amps (its current
  * through the pad) that no stated load names already (the stated one wins). Loads of a part or pin
  * no longer on the net are left out.
  */
 function netLoads(d: Design, b: BoardView, netId: string): NetLoad[] {
-  const net = d.nets[netId];
-  const out: NetLoad[] = [];
-  for (const l of net?.attrs.loads ?? []) {
-    const c = d.components[l.componentId];
-    const pins = c ? l.pins.filter((p) => c.pins[p] === netId) : [];
-    if (pins.length) out.push({ ...l, pins });
-  }
+  const out = statedLoads(d, netId);
   for (const g of d.board?.vias ?? []) {
     if (g.kind !== 'drop' || g.netId !== netId || !g.amps || !g.pad) continue;
     const part = b.parts.find((p) => p.componentId === g.pad!.componentId);
