@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Agents
+
+- **An agent can show you its plan before a larger task** (Settings → General → Plan step, off by default, set per project). With a long run from Claude Code or another coding agent in a terminal, a wrong early choice used to surface only when you reviewed the finished work, for example a placement with the connector on the wrong side. Now, with the plan step on, the agent first posts a numbered plan in the chat for any task that adds more than about 10 parts. You accept or reject it, with an optional comment such as "USB on the right edge", and the agent starts only once you accept. The agent answering the in-app chat does not use it yet.
+
 ### Assembly
 
 - **Parts can be marked do-not-populate (DNP).** Ask the agent to leave a part off the assembly, such as a 0 Ω strap, a spare pull-up or a matching network left open, and to fit it again later. Before, every part in the design was bought and assembled. Now a DNP part stays on the board with its pads and tracks, so you can still solder it by hand, but it is left out of the BOM and the pick-and-place file you upload, and out of the stock and cost checks. The schematic shows "DNP" under its value. The Layout's 3D view leaves a DNP part out, so you see its bare pads and holes as the assembled board will have them. A DNP capacitor or resistor no longer counts for a datasheet requirement, so leaving off a decoupling capacitor or a pull-up is reported.

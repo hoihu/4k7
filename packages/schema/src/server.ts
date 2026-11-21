@@ -209,6 +209,8 @@ Workflow:
 2. Work on the design as described below.
 3. When the design has zero errors, call propose with a one-line summary, then wait_for_review. If the user rejects, ask them what to change.
 
+Plan step: when get_context says plan_step: on (the user turned it on for this project), a task that adds more than about 10 parts starts with a plan. After step 1, call propose_plan with the steps you will take (the blocks and their main parts, where the connectors go, the choices that are hard to undo later), then wait_for_review. Start on the design only once the plan is accepted, and take the user's comment into account. If the user rejects it, send a revised plan or ask what to change. When plan_step is off, do not call propose_plan.
+
 ${DESIGN_GUIDE}
 
 The app must be open in the browser: if a tool reports the tab is not connected, give the user the app link from the error message (opening it connects the app).`;

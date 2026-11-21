@@ -48,8 +48,20 @@ export interface ChatItem {
    * was still pending when the project was closed (a pending proposal is not saved).
    */
   changeset?: { state: 'pending' | 'accepted' | 'rejected' | 'superseded' | 'unreviewed'; note?: string };
+  /**
+   * A plan an external agent proposed (propose_plan, the plan step): the steps as it wrote them, and the user's
+   * decision with their comment. `unreviewed`: still pending when the conversation ended.
+   */
+  plan?: ChatPlan;
   /** Tokens this turn used (live while it runs), with the cost: estimated, or as the coding agent reported it. */
   usage?: TokenCount & { costUsd: number; exact: boolean };
+}
+
+export interface ChatPlan {
+  steps: string[];
+  summary?: string;
+  state: 'pending' | 'accepted' | 'rejected' | 'superseded' | 'unreviewed';
+  comment?: string;
 }
 
 export const CONVERSATION_FORMAT = 1;
@@ -68,5 +80,8 @@ export interface ConversationSession {
   items: ChatItem[];
 }
 
-/** A project file: the design, and the conversation when the project keeps it. */
-export type ProjectFile = Design & { conversation?: Conversation };
+/**
+ * A project file: the design, and the conversation when the project keeps it. `planStep`: an external agent shows
+ * a plan before a larger task (Settings → General → Plan step; off when absent).
+ */
+export type ProjectFile = Design & { planStep?: boolean; conversation?: Conversation };

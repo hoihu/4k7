@@ -32,6 +32,22 @@ describe('project file with a conversation', () => {
     expect(k.exportDesign()).toBe(design);
   });
 
+  it('keeps the plan step in the file when it is on, with or without a conversation', () => {
+    expect(readProject(JSON.parse(design) as ProjectFile).planStep).toBe(false);
+    for (const c2 of [null, c]) {
+      const text = projectJson(design, c2, true);
+      const back = readProject(JSON.parse(text) as ProjectFile);
+      expect(back.planStep).toBe(true);
+      expect(back.conversation).toEqual(c2);
+      expect(back.design).toEqual(emptyDesign('blinky'));
+    }
+  });
+
+  it('marks a plan still pending as not decided', () => {
+    const plan = { steps: ['Buck 12 V → 3.3 V'], state: 'pending' as const };
+    expect(restoredSessions(conv([agent(1, 'Plan', { plan })]))[0]!.items[0]!.plan).toEqual({ ...plan, state: 'unreviewed' });
+  });
+
   it('refuses a conversation from a newer version', () => {
     expect(() => readProject({ ...emptyDesign(), conversation: { format: 2 as 1, sessions: [] } })).toThrow(/newer version/);
   });

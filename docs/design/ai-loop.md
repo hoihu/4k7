@@ -136,6 +136,17 @@ claude mcp add --scope user 4k7 -- node <repo>/tools/server/src/main.ts
   `get_context` (design state + canvas selection + pending changeset), `propose` (hands the working copy to the user;
   **refused while errors are open**, commits directly in Auto mode) and, from a terminal, `wait_for_review` (blocks until
   the user accepts or rejects); the in-app agent gets the state with each message and asks with `ask_user`.
+- **Plan step** (opt-in per project, Settings → General → Plan step; `"planStep": true` in the project file beside the
+  conversation, off when absent): from a terminal the agent also gets `propose_plan { steps: string[], summary? }`. The
+  app shows the steps, numbered, as a card in the chat, read-only, with Accept / Reject and a comment box. `wait_for_review`
+  returns the decision with the comment (`plan accepted. The user's comment: …`), and the plan comes before a pending changeset.
+  A decision made before the agent waits is kept for its next `wait_for_review`. A newer plan supersedes a pending one;
+  clearing the chat or opening another project leaves it undecided. Auto mode does not accept a plan by itself.
+  `get_context` reports `plan_step: on|off`, and the server `instructions` tell the agent to send a plan first when it is on,
+  for any task that adds more than about 10 parts. The tool is listed whenever the server runs for a terminal agent, and the
+  tab refuses it when the project has the step off ("the plan step is off for this project …"). The tool list is fixed when
+  the client connects, and only the tab knows which project is open. Not yet: tracking the steps, editing them, or
+  linking a later `propose` to a step. Logic in `apps/web/src/lib/plan.ts`.
 - **Prompt**: the design guidance is one text (`DESIGN_GUIDE`, `packages/schema/src/guide.ts`); the in-app system prompt
   and the server `instructions` (the external agent's equivalent of the system prompt) only add their engine's framing.
 - The in-app agent and an external agent never edit at the same time: server calls are refused while the in-app agent runs.
