@@ -46,7 +46,7 @@ export async function runKernelTool(kernel: KernelPort, name: string, input: unk
         const parsed = CalcCall.safeParse(input);
         if (!parsed.success) return { content: `Invalid calc input: ${parsed.error.message}`, isError: true, label: 'calc', detail: 'invalid input' };
         const { summary } = await kernel.snapshot();
-        const out = runCalc(parsed.data, summary.valueSeries, summary.stackup);
+        const out = runCalc(parsed.data, summary.valueSeries, summary.stackup, summary.currentRise);
         return { content: JSON.stringify(out), isError: false, label: `calc · ${parsed.data.fn}`, detail: Object.entries(out).filter(([k]) => k !== 'note').map(([k, v]) => `${k}=${v}`).join(', ') };
       }
       default:

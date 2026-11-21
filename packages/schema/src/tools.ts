@@ -9,7 +9,7 @@ import { ASSEMBLY_HOUSES, feeFreeTiers } from './sourcing.ts';
 
 export const CalcCall = z.object({
   fn: z
-    .enum(['divider', 'buck', 'led_resistor', 'rc', 'nearest_e', 'impedance'])
+    .enum(['divider', 'buck', 'led_resistor', 'rc', 'nearest_e', 'impedance', 'track_current'])
     .describe(
       'divider: {vout, vref, r_bottom?, series?} → E-series R top/bottom and resulting vout. ' +
         'buck: {vin, vout, iout, fsw, ripple_ratio?, series?} → inductance, ripple current, peak current. ' +
@@ -17,6 +17,7 @@ export const CalcCall = z.object({
         'rc: {r?, c?, f?, series?} → give two, get the third (f = 1/(2πRC)). ' +
         'nearest_e: {value, kind?, series?, round?} → standard value (kind resistor/capacitor/inductor takes the design\'s series; round up/down). ' +
         'impedance: {ohms?, width?, gap?, diff?, coplanar_gap?, layer?, h?, er?, t?, mask?, f?} → a track\'s impedance from a field solver: ohms gives the width for it, width the impedance it gives; gap makes it a differential pair (ohms: its differential impedance; diff: 1 with width and ohms finds the gap), coplanar_gap puts ground beside it on its layer; f (Hz) adds the wavelength on the line. Default: the board\'s stack-up, layer F.Cu (or B.Cu) over the plane next to it, with its solder mask; h (mm to the plane) with er, t (copper mm) and mask: 0 override it. ' +
+        'track_current: {width_mm?, amps?, rise_c?, layer?, copper_um?, via_drill_mm?} → the same IPC-2221 numbers the current check (get_current_map) uses: two of width_mm, amps and rise_c give the third (width_mm: the current it carries; amps: the width it needs; both: its heating); rise_c defaults to the board\'s current_rise_c, the copper to layer\'s in the stack-up (default F.Cu) or copper_um; via_drill_mm adds per_via_a and the vias_needed for amps. ' +
         'series: E3, E6, E12, E24, E48, E96 or E192; default: the design\'s series for that kind (set_value_series), else E96 for resistors, E12 caps, E6 inductors.',
     ),
   args: z.record(z.string(), z.union([z.number(), z.string()])),
