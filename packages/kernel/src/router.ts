@@ -142,6 +142,13 @@ export interface RouteInput {
    * part one is attached to), no vias where they forbid vias, the pours cleared where they forbid pours.
    */
   keepouts?: BoardKeepout[];
+  /** Nets routed before the others (set_net route_first): their connections first, in every pass. */
+  routeFirst?: Set<string>;
+  /**
+   * Per net, the layer its tracks keep to (set_net layer): a step on another layer costs more
+   * (LAYER_COST in routegrid.ts). Not for the connections the agent laid.
+   */
+  netLayers?: Record<string, CopperLayer>;
   /** A free-form outline (closed polygon): no copper outside it or within the edge clearance. */
   shape?: number[];
 }
@@ -212,7 +219,9 @@ function routeNets(input: RouteInput, passes = 40): RouteResult {
   const planeOnly = conns.filter((c) => (dedicated.has(c.netId) || viaArea(c)) && inScope(c));
   const throughPlane = new Set(planeOnly);
   const pairs: Conn[] = (input.drawn?.only?.pairs ?? []).map(([a, b]) => ({ netId: a.netId!, a: pads.indexOf(a), b: pads.indexOf(b), len: Math.hypot(a.x - b.x, a.y - b.y) }));
-  const firstOrder = [...pairs, ...conns.filter((c) => !throughPlane.has(c) && inScope(c) && !dedicated.has(c.netId) && !viaArea(c))].sort((x, y) => x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
+  // shortest first; the nets asked to go first (route_first) before all others, in every pass
+  const first = (c: Conn) => (input.routeFirst?.has(c.netId) ? 0 : 1);
+  const firstOrder = [...pairs, ...conns.filter((c) => !throughPlane.has(c) && inScope(c) && !dedicated.has(c.netId) && !viaArea(c))].sort((x, y) => first(x) - first(y) || x.len - y.len || x.netId.localeCompare(y.netId) || x.a - y.a);
   let order = firstOrder;
   const t0 = now();
   const deadline = t0 + (input.budgetMs ?? 90_000);
@@ -317,6 +326,7 @@ function routeNets(input: RouteInput, passes = 40): RouteResult {
     const failed = new Set(r.failed);
     early = failed;
     order = [...order.filter((c) => failed.has(c)), ...order.filter((c) => !failed.has(c))];
+    if (input.routeFirst?.size) order = [...order.filter((c) => !first(c)), ...order.filter((c) => first(c))];
   }
   return result(best ?? routeOnce(input, pads, owner, order, deadline, planeOnly, new Set(), history, style, keptNow(), undefined, laid), ran);
 

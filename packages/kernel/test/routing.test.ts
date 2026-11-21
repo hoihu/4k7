@@ -214,6 +214,84 @@ describe('a net wider than its pads', () => {
   });
 });
 
+describe('steering the router (set_net route_first, layer)', () => {
+  /** Two through-hole pads of net A, 14 mm apart. */
+  const tht = () => {
+    const parts = [part('P1', [[3, 5, 'A']]), part('P2', [[17, 5, 'A']])];
+    for (const p of parts) Object.assign(p.pads[0]!, { layers: ['F.Cu', 'B.Cu'], drill: 0.6 });
+    return parts;
+  };
+  const two = (parts: BoardPart[], more: Partial<Parameters<typeof route>[0]> = {}) => route({ outline: { w: 20, h: 10 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts, powerNets: new Set(), ...more });
+
+  it('a net keeps to its layer where it can', () => {
+    expect(two(tht()).tracks.map((t) => t.layer)).toEqual(['F.Cu']);
+    expect(two(tht(), { netLayers: { A: 'B.Cu' } }).tracks.map((t) => t.layer)).toEqual(['B.Cu']);
+  });
+
+  it('a cost, not a ban: SMD pads close together stay on their layer, and a net changes layer where it must', () => {
+    // two vias down to B.Cu cost more than 2 mm on F.Cu
+    const near = [part('P1', [[8, 5, 'A']]), part('P2', [[10, 5, 'A']])];
+    const r = two(near, { netLayers: { A: 'B.Cu' } });
+    expect(r.failed).toEqual([]);
+    expect(r.vias).toEqual([]);
+    expect(r.tracks.every((t) => t.layer === 'F.Cu')).toBe(true);
+    // a pad on F.Cu and one on B.Cu: kept to F.Cu, it still goes through a via to reach B.Cu
+    const apart = [part('P1', [[3, 5, 'A']]), part('P2', [[17, 5, 'A']])];
+    apart[1]!.pads[0]!.layers = ['B.Cu'];
+    const s = two(apart, { netLayers: { A: 'F.Cu' } });
+    expect(s.failed).toEqual([]);
+    expect(s.vias.length).toBeGreaterThan(0);
+  });
+
+  it('a connection the agent laid takes the layers it is given, not the net\'s', () => {
+    const laid = [{ id: 't1', netId: 'A', from: 0, to: 1, points: [] }];
+    const plain = two(tht(), { laid });
+    const kept = two(tht(), { laid, netLayers: { A: 'B.Cu' } });
+    expect(kept.laid).toEqual([{ id: 't1', laid: true }]);
+    expect(kept.tracks.map((t) => t.layer)).toEqual(plain.tracks.map((t) => t.layer));
+    expect(kept.tracks.map((t) => t.layer)).toEqual(['F.Cu']);
+  });
+
+  it('a net routed first gets the way the others want', () => {
+    // a wall with a gap one track wide; X (shorter) goes first unless Y is asked to
+    const wall = (ys: number[]) => ys.map((y): [number, number, string] => [10, y, 'W']);
+    const parts = [part('W1', wall([0.5, 1.5, 2.5, 3.5])), part('W2', wall([5.4, 6.4, 7.4, 8.4, 9.4])), part('X1', [[5, 4.45, 'X']]), part('X2', [[15, 4.45, 'X']]), part('Y1', [[2, 4.45, 'Y']]), part('Y2', [[18, 4.45, 'Y']])];
+    const input = { outline: { w: 20, h: 10 }, layers: ['F.Cu'] as CopperLayer[], rules: RULES, parts, powerNets: new Set<string>() };
+    expect(route(input).failed.map((f) => f.netId)).toEqual(['Y']);
+    expect(route({ ...input, routeFirst: new Set(['Y']) }).failed.map((f) => f.netId)).toEqual(['X']);
+  });
+
+  it('set_net route_first and layer: kept with the net, shown by get_net, the board routed again without going out of date', () => {
+    const k = buck();
+    k.transact({ summary: 'route', ops: [{ op: 'route' }] });
+    k.accept();
+    const before = k.board();
+    expect(k.keepCopper(before.newCopper!)).toBe(true);
+    expect(k.transact({ summary: 'steer', ops: [{ op: 'set_net', net: 'FB', route_first: true, layer: 'B.Cu' }] }).status).toBe('ok');
+    const net = k.query({ op: 'get_net', net: 'FB' }) as { track: { routed_first?: boolean; keeps_to?: string } };
+    expect(net.track.routed_first).toBe(true);
+    expect(net.track.keeps_to).toBe('B.Cu');
+    // routing stays done: the board routes again with the change, keeping the other nets' copper
+    const b = k.board();
+    expect(b.routing).toBe('done');
+    expect(b.newCopper).toBeDefined();
+    expect(b.newCopper!.key).not.toBe(before.newCopper!.key);
+    expect(b.reused?.tracks).toBeGreaterThan(0);
+    expect(b.unrouted).toEqual([]);
+    // the board has no In1.Cu; null clears both
+    const bad = k.transact({ summary: 'bad', ops: [{ op: 'set_net', net: 'FB', layer: 'In1.Cu' }] });
+    expect(bad.status).toBe('rejected');
+    expect(bad.rejection?.code).toBe('BOARD_INVALID');
+    expect(k.transact({ summary: 'clear', ops: [{ op: 'set_net', net: 'FB', route_first: null, layer: null }] }).status).toBe('ok');
+    const cleared = k.query({ op: 'get_net', net: 'FB' }) as { track: { routed_first?: boolean; keeps_to?: string } };
+    expect(cleared.track.routed_first).toBeUndefined();
+    expect(cleared.track.keeps_to).toBeUndefined();
+    // back to the copper the design keeps: used as it is
+    expect(k.board().routing).toBe('done');
+    expect(k.board().newCopper).toBeUndefined();
+  });
+});
+
 describe('copper the agent locked (lock_copper)', () => {
   // B from the top edge to the bottom edge (its pads reach the edge clearance), routed alone first
   const bOnly = [part('Q1', [[10, 1, 'B']]), part('Q2', [[10, 9, 'B']])];
@@ -238,6 +316,27 @@ describe('copper the agent locked (lock_copper)', () => {
     expect(r.locked![0]!.heldTracks).toBe(0);
     expect(r.failed).toEqual([]);
     expect(r.tracks.some((t) => t.locked)).toBe(false);
+  });
+
+  it('a locked net routed first and kept to another layer keeps its locked copper as it lies; the hints steer only what is routed', () => {
+    const b = first();
+    expect(b.tracks.every((t) => t.layer === 'F.Cu')).toBe(true);
+    // B locked on F.Cu, asked to keep to B.Cu and be routed first; A is routed round it on B.Cu
+    const parts = [part('P1', [[0.5, 5, 'A']]), part('P2', [[19.5, 5, 'A']]), ...bOnly];
+    for (const p of parts) Object.assign(p.pads[0]!, { layers: ['F.Cu', 'B.Cu'], drill: 0.6 });
+    const steer = { routeFirst: new Set(['B']), netLayers: { B: 'B.Cu' as CopperLayer } };
+    const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts, powerNets: new Set(), locked: { tracks: b.tracks, vias: [] }, ...steer });
+    expect(r.tracks.filter((t) => t.netId === 'B')).toEqual(b.tracks.map((t) => ({ ...t, locked: true })));
+    expect(r.vias.filter((v) => v.netId === 'B')).toEqual([]);
+    expect(r.locked).toEqual([{ netId: 'B', tracks: b.tracks.length, vias: 0, heldTracks: b.tracks.length, heldVias: 0 }]);
+    expect(r.failed).toEqual([]);
+    // what is not locked still follows the hint: with a part moved off it, B is routed again on B.Cu
+    const moved = [parts[0]!, parts[1]!, parts[2]!, part('Q2', [[14, 9, 'B']])];
+    Object.assign(moved[3]!.pads[0]!, { layers: ['F.Cu', 'B.Cu'], drill: 0.6 });
+    const s = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu', 'B.Cu'], rules: RULES, parts: moved, powerNets: new Set(), locked: { tracks: b.tracks, vias: [] }, ...steer });
+    expect(s.locked![0]!.heldTracks).toBe(0);
+    expect(s.failed).toEqual([]);
+    expect(s.tracks.filter((t) => t.netId === 'B').every((t) => !t.locked && t.layer === 'B.Cu')).toBe(true);
   });
 
   it('a connection the agent laid is not closed off either: its net is named in the way', () => {

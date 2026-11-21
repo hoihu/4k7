@@ -62,7 +62,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `connect`: put pins on a net.
 - `disconnect`: take pins off their net.
 - `no_connect`: mark pins as deliberately unconnected.
-- `set_net`: rename a net and set its voltage, external/power flags, max current, track width and how it is drawn.
+- `set_net`: rename a net and set its voltage, external/power flags, max current, track width, how it is drawn, and on the board whether the router routes it first and the layer its tracks keep to (a cost, not a ban).
 - `describe`: the functional blocks (which group and order the schematic) and the design document text.
 
 ### Sheets and drawing
