@@ -15,6 +15,7 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ### Sourcing
 
+- **A part search that finds nothing says whether the house lists the part at all.** Searching JLCPCB for a part it has none of in stock, such as a supercapacitor, used to answer only "no parts in stock", and the agent could not tell an empty shelf from a part JLCPCB never carries. Now it names the matching parts JLCPCB lists with no stock (its supercapacitors are seven 2.5 V parts, none in stock), or says JLCPCB lists none under those words, and suggests what to do next: other words, another assembly house, or a part you buy and fit by hand (marked DNP). A capacitor search of 1 F or more now asks for "5F", not "5000mF".
 - **Parts that only JLCPCB's Standard assembly takes are named.** JLCPCB marks some parts "Standard only" (WS2812-type LEDs, some electrolytic capacitors), and one such part sends the whole order to Standard: a higher setup and stencil fee, and a loading fee for every part number, not only the Extended ones. The cost check used to price these orders at the cheaper Economic service anyway: a 2-board order estimated at $80 was billed $133. Now Economic says it cannot take the order and names the parts. The stock check tags them "Standard only" and prefers replacements that Economic takes. The cost check says what replacing them would save and names a like-for-like part where it finds one.
 
 ### Board

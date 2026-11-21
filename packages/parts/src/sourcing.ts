@@ -600,5 +600,5 @@ export function formatOhms(v: number): string {
 }
 
 export function formatFarads(v: number): string {
-  return v >= 1e-3 ? `${sig(v * 1e3)}mF` : v >= 1e-6 ? `${sig(v * 1e6)}uF` : v >= 1e-9 ? `${sig(v * 1e9)}nF` : `${sig(v * 1e12)}pF`;
+  return v >= 1 ? `${sig(v)}F` : v >= 1e-3 ? `${sig(v * 1e3)}mF` : v >= 1e-6 ? `${sig(v * 1e6)}uF` : v >= 1e-9 ? `${sig(v * 1e9)}nF` : `${sig(v * 1e12)}pF`;
 }

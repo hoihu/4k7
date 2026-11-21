@@ -111,6 +111,8 @@ export interface PartQuery {
   package?: string;
   /** Only parts without a fee. */
   noFee?: boolean;
+  /** Also the parts the house lists with none in stock (to tell an empty search's reason); a catalogue without stock ignores it. */
+  outOfStock?: boolean;
   limit?: number;
 }
 

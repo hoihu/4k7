@@ -169,6 +169,10 @@ export function partQuery(raw: unknown): PartQuery {
     if (typeof r.noFee !== 'boolean') throw bad('noFee is true or false');
     q.noFee = r.noFee;
   }
+  if (r.outOfStock !== undefined) {
+    if (typeof r.outOfStock !== 'boolean') throw bad('outOfStock is true or false');
+    q.outOfStock = r.outOfStock;
+  }
   if (r.limit !== undefined) {
     if (!Number.isInteger(r.limit) || (r.limit as number) < 1 || (r.limit as number) > 400) throw bad('limit is a whole number from 1 to 400');
     q.limit = r.limit as number;

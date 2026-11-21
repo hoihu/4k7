@@ -294,6 +294,10 @@ The design document's BOM has a column for each house's numbers the design has.
   `lookup` (one part by number: stock or how the house gets it, price breaks, lifecycle, datasheet link), `check` (the
   stock check above, with the number of boards; at PCBWay what goes on its BOM), `cost` (the cost check) and `values`
   (the values check). Results read from a mirror say so; at PCBWay search and lookup say why there is nothing to search.
+  A search that finds nothing in stock asks once more for the parts the house lists with none in stock
+  (`PartQuery.outOfStock`; jlcpcb.com without its stock filter) and names them, or says the house lists none under those
+  words, with what to do next (other words, another house, a part fitted by hand with `set_dnp`). JLCPCB, checked
+  2026-11-21, lists seven supercapacitors, all 2.5 V and none in stock, and the mirror none.
   Its prompt tells it how each house works, to source only when asked, to keep passives generic, to prefer fee-free
   parts and stock of at least 5 × the need (or kept in stock), to suggest reserving a scarce part, that unknown stock
   is not none, to compare houses with `house`, and to run the check before the user orders.
