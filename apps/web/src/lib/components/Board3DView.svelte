@@ -20,6 +20,8 @@
   let canvas: HTMLCanvasElement | undefined = $state();
   let viewer = $state.raw<BoardViewer | null>(null);
   let error = $state<string | null>(null);
+  /** Draw where connectors are plugged from (faint orange boxes); off by default, they clutter the board. */
+  let plugs = $state(false);
 
   $effect(() => {
     const c = canvas;
@@ -45,7 +47,7 @@
 
   $effect(() => {
     if (!viewer) return;
-    viewer.setBoard(board, boardBodies(board), { mating: true });
+    viewer.setBoard(board, boardBodies(board, { fitted: true }), { mating: plugs });
     if (!started) {
       started = true;
       if (from) viewer.flyFromTop(from);
@@ -68,6 +70,7 @@
   <canvas bind:this={canvas}></canvas>
   <div class="views">
     {#each views as [v, label] (v)}<button onclick={() => viewer?.view(v)}>{label}</button>{/each}
+    <button class:on={plugs} title="Show where connectors are plugged from" onclick={() => (plugs = !plugs)}>plugs</button>
   </div>
   {#if error}<div class="err">{error}</div>{/if}
 </div>
@@ -78,5 +81,6 @@
   canvas:active { cursor: grabbing; }
   .views { position: absolute; right: 10px; bottom: 32px; display: flex; gap: 2px; }
   .views button { border: 1px solid var(--line-2); background: var(--panel); color: var(--txt-2); font-size: 11px; padding: 2px 8px; border-radius: 5px; cursor: pointer; }
+  .views button.on { color: var(--txt); border-color: var(--txt-2); }
   .err { position: absolute; left: 10px; bottom: 32px; color: var(--err); font-size: 12px; }
 </style>

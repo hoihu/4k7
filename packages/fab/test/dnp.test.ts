@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Kernel } from '@4k7/kernel';
 import { bom, bomLines, fabFiles, pickAndPlace } from '../src/index.ts';
+import { boardBodies } from '@4k7/parts';
 import { buckTransaction } from '../../kernel/test/fixtures.ts';
 
 const placed = (csv: string, ref: string) => csv.split('\n').some((l) => l.startsWith(`${ref},`));
@@ -28,5 +29,23 @@ describe('do-not-populate parts in the production files', () => {
     const again = k.board();
     expect(bomLines(again).flatMap((l) => l.refs)).toContain('C4');
     expect(placed(pickAndPlace(again), 'C4')).toBe(true);
+  });
+
+  it('the 3D view of the assembled board draws no body for a DNP part; fitted parts are drawn as before', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    const before = boardBodies(k.board(), { fitted: true });
+    const id = (b: ReturnType<Kernel['board']>, ref: string) => b.parts.find((p) => p.refdes === ref)!.componentId;
+    expect(before.has(id(k.board(), 'C4'))).toBe(true);
+    k.transact({ summary: 'dnp', ops: [{ op: 'set_dnp', refs: ['C4'], dnp: true }] });
+    const b = k.board();
+    const fitted = boardBodies(b, { fitted: true });
+    expect(fitted.has(id(b, 'C4'))).toBe(false);
+    // its pads stay on the board; every other part keeps the very same body
+    expect(b.parts.find((p) => p.refdes === 'C4')!.pads.length).toBeGreaterThan(0);
+    expect([...fitted.keys()].sort()).toEqual([...before.keys()].filter((k) => k !== id(b, 'C4')).sort());
+    for (const [k, body] of fitted) expect(body).toEqual(before.get(k));
+    // the STEP export and the enclosure still see every part
+    expect(boardBodies(b).has(id(b, 'C4'))).toBe(true);
   });
 });
