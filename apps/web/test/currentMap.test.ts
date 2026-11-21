@@ -40,6 +40,10 @@ describe('heat map styles', () => {
         { netId: 'n1', index: 1, layer: 'F.Cu', width: 0.25, length: 10, copperUm: 35, amps: 2, basis: 'bound', status: 'unverified', capacity: 0.875, ratio: 2.29, rise: 66, needs: 0.8, at: { x: 0, y: 5 } },
       ],
       vias: [{ netId: 'n1', at: { x: 5, y: 5 }, vias: 1, drill: 0.3, ids: [], layers: ['F.Cu', 'B.Cu'], amps: 2, basis: 'bound', status: 'unverified', capacity: 0.9, ratio: 2.2, needs: 3 }],
+      joints: [
+        { netId: 'n1', kind: 'pad', ref: 'J1.1', at: { x: 1, y: 1 }, layers: ['F.Cu'], spokes: 4, spokeWidth: 0.25, amps: 5, basis: 'split', status: 'over', capacity: 3.5, ratio: 1.43, needs: 0.45 },
+        { netId: 'n1', kind: 'pad', ref: 'C1.1', at: { x: 2, y: 1 }, layers: ['F.Cu'], spokes: 4, spokeWidth: 0.25, amps: 0.1, basis: 'split', status: 'ok', capacity: 3.5, ratio: 0.03, needs: 0.15 },
+      ],
     },
   } as unknown as BoardView;
 
@@ -67,6 +71,14 @@ describe('heat map styles', () => {
     const [v] = currentLayer(board)!.vias;
     expect(v).toMatchObject({ x: 5, y: 5, count: 1, colour: HEAT[4].colour, dashed: true });
     expect(v!.title).toContain('needs 3');
+  });
+
+  it('a relief joint too thin for its current gets a ring with its spokes; one that carries it is not drawn', () => {
+    const rings = currentLayer(board)!.vias.filter((v) => v.title.includes('spoke'));
+    expect(rings).toHaveLength(1);
+    // 1.43 times its capacity heats about 1.43^(1/0.44) = 2.25 times the allowed rise: red
+    expect(rings[0]).toMatchObject({ x: 1, y: 1, count: 4, colour: HEAT[4].colour, dashed: false });
+    expect(rings[0]!.title).toBe('+5V · J1.1 · 4 spokes of 0.25 mm · 5 A (split) · carry 3.5 A · needs 0.45 mm spokes');
   });
 
   it('split copper is drawn solid in its colour, over its capacity too; its tooltip says (split) and the drop', () => {
@@ -104,6 +116,7 @@ describe('heat map on or off', () => {
     expect(currentOverlayOn([diag('DRC.IR_DROP')], null)).toBe(true);
     expect(currentOverlayOn([diag('DRC.VIA_CURRENT')], null)).toBe(true);
     expect(currentOverlayOn([diag('DRC.CURRENT_UNKNOWN')], null)).toBe(true);
+    expect(currentOverlayOn([diag('DRC.SPOKE_CURRENT')], null)).toBe(true);
     expect(currentOverlayOn([diag('DRC.CLEARANCE')], null)).toBe(false);
     expect(currentOverlayOn([], null)).toBe(false);
     // a waived finding is not open

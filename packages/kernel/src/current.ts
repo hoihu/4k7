@@ -6,7 +6,7 @@
  * docs/design/layout.md §14.
  */
 import { COPPER_ORDER, IR_BUDGET, padPins, trackCurrentFor, trackRiseFor, trackWidthFor, viaCurrentFor } from '@4k7/schema';
-import type { BoardPad, BoardPart, BoardRules, BoardView, CopperLayer, CurrentBasis, CurrentStatus, CurrentTrack, CurrentView, CurrentVias, Design, Diagnostic, DropPiece, IrDrop, EditOp, NetLoad, QueryOp, Track } from '@4k7/schema';
+import type { BoardPad, BoardPart, BoardRules, BoardView, CopperLayer, CurrentBasis, CurrentJoint, CurrentStatus, CurrentTrack, CurrentView, CurrentVias, Design, Diagnostic, DropPiece, IrDrop, EditOp, NetLoad, QueryOp, Track } from '@4k7/schema';
 import { cardOf, isGroundNet, isPowerNet } from './doc.ts';
 import { powerSources } from './power.ts';
 import { idOf, pointSegDist, segmentsOf, segSegDist } from './geom.ts';
@@ -22,7 +22,7 @@ const SHORT_MM = 1;
 const ZONE_REACH = 0.5;
 const EPS = 0.01;
 
-export type { CurrentNet, CurrentStatus, CurrentTrack, CurrentVias } from '@4k7/schema';
+export type { CurrentJoint, CurrentNet, CurrentStatus, CurrentTrack, CurrentVias } from '@4k7/schema';
 /** The current check of a board (BoardView.current). */
 export type CurrentCheck = CurrentView;
 
@@ -111,7 +111,7 @@ const statusOf = (s: Share, capacity: number): CurrentStatus => ((s.split ?? (s.
 export function currentCheck(d: Design, b: BoardView): CurrentCheck {
   const riseC = currentRise(b.rules);
   const copperUm = layerCopper(b);
-  const out: CurrentCheck = { riseC, copperUm, nets: [], tracks: [], vias: [] };
+  const out: CurrentCheck = { riseC, copperUm, nets: [], tracks: [], vias: [], joints: [] };
   if (!b.tracks.length && !b.vias.length && !b.zones.length) return out;
   const isSource = sourcePads(d);
   const sources = powerSources(d);
@@ -134,13 +134,19 @@ export function currentCheck(d: Design, b: BoardView): CurrentCheck {
     // the split, where the loads are stated and the current comes in at one place
     let split: ReturnType<typeof solveSplit> | undefined;
     let why: string | undefined;
+    let loadPads: { pads: number[]; amps: number }[] = [];
+    let srcPads: number[] = [];
     if (stated.length) {
       const src = sources.get(n.id) ?? [];
       const at = src.length === 1 ? cu.pads.flatMap(({ part, pad }, i) => (part.componentId === src[0]!.componentId && padPins(pad).some((x) => src[0]!.pins.includes(x)) ? [i] : [])) : [];
       if (src.length > 1) why = `it has ${src.length} sources (${src.map((s) => d.components[s.componentId]?.refdes ?? s.componentId).join(', ')}) and how its current divides between them is not known`;
       else if (!src.length) why = 'no source found (a pwr_out pin, a connector on an external net, or an inductor, ferrite, fuse or diode from a rail nearer the supply)';
       else if (!at.length) why = 'its source is not on the board';
-      else split = solveSplit(b, cu, copperUm, at, stated.map((l) => ({ pads: cu.pads.flatMap(({ part, pad }, i) => (part.componentId === l.componentId && padPins(pad).some((x) => l.pins.includes(x.toUpperCase()) || l.pins.includes(x)) ? [i] : [])), amps: l.amps })));
+      else {
+        loadPads = stated.map((l) => ({ pads: cu.pads.flatMap(({ part, pad }, i) => (part.componentId === l.componentId && padPins(pad).some((x) => l.pins.includes(x.toUpperCase()) || l.pins.includes(x)) ? [i] : [])), amps: l.amps }));
+        srcPads = at;
+        split = solveSplit(b, cu, copperUm, at, loadPads);
+      }
     }
     // what no stated load the copper reaches places: it may flow anywhere
     const rest = split ? Math.max(0, amps - split.placed) : 0;
@@ -171,9 +177,44 @@ export function currentCheck(d: Design, b: BoardView): CurrentCheck {
         needs: Math.max(1, Math.ceil(sh.amps / per - 1e-6)),
       });
     }
+    // the relief joints on the current's way: a cut for the bound (or its split share and the rest), else the share that crosses
+    const joints: CurrentJoint[] = [];
+    for (const j of netJoints(b, cu, isSource, riseC, copperUm)) {
+      let sh: Share;
+      if (!split) {
+        if (!j.cut) continue;
+        sh = { amps, basis: 'bound' };
+      } else {
+        // what crosses the joint: what the loads on its side draw, less what the source there gives
+        const drawn = loadPads.reduce((s, l, li) => {
+          const on = l.pads.filter((p) => cu.padItems[p]!.length);
+          return split!.reached[li] && on.length ? s + (l.amps * on.filter((p) => j.side.has(p)).length) / on.length : s;
+        }, 0);
+        const crossing = Math.abs(drawn - (srcPads.some((p) => j.side.has(p)) ? split.placed : 0));
+        if (!j.cut && crossing < 1e-6) continue;
+        sh = j.cut ? share(crossing) : { amps: crossing, basis: 'split' };
+      }
+      joints.push({
+        netId: n.id,
+        kind: j.kind,
+        ...(j.ref ? { ref: j.ref } : {}),
+        at: j.at,
+        layers: j.layers,
+        spokes: j.spokes,
+        spokeWidth: j.spokeWidth,
+        amps: sh.amps,
+        basis: sh.basis,
+        ...(sh.split !== undefined ? { split: sh.split } : {}),
+        status: statusOf(sh, j.capacity),
+        capacity: j.capacity,
+        ratio: sh.amps / j.capacity,
+        needs: trackWidthFor(sh.amps / j.spokes, riseC, j.copperUm),
+      });
+    }
     out.tracks.push(...tracks);
     out.vias.push(...vias);
-    const all = [...tracks, ...vias];
+    out.joints.push(...joints);
+    const all = [...tracks, ...vias, ...joints];
     const worst = Math.max(0, ...all.map((t) => t.ratio));
     const status: CurrentStatus = all.some((t) => t.status === 'over') ? 'over' : all.some((t) => t.status === 'unverified') ? 'unverified' : 'ok';
     out.nets.push({
@@ -392,13 +433,13 @@ function netCopper(b: BoardView, netId: string) {
   const vias = b.vias.filter((v) => v.netId === netId);
   const viaItems: number[][] = vias.map((v, i) => layers.map((layer) => add({ layer, box: [v.x - v.pad / 2, v.y - v.pad / 2, v.x + v.pad / 2, v.y + v.pad / 2], kind: 'via', ref: i })));
   // the pours' islands
-  const zoneParts: { layer: CopperLayer; index: ReturnType<typeof zoneIndex>; items: number[] }[] = [];
+  const zoneParts: { layer: CopperLayer; zone: BoardView['zones'][number]; index: ReturnType<typeof zoneIndex>; items: number[] }[] = [];
   for (const z of b.zones) {
     if (z.netId !== netId || !layers.includes(z.layer)) continue;
     const index = zoneIndex(z.rects);
     const its: number[] = [];
     for (let k = 0; k < index.count; k++) its.push(add({ layer: z.layer, box: [0, 0, 0, 0], kind: 'zone', ref: zoneParts.length }));
-    zoneParts.push({ layer: z.layer, index, items: its });
+    zoneParts.push({ layer: z.layer, zone: z, index, items: its });
   }
   // where a track meets a pad or a via: an end on it, else the point nearest the other's centre
   const onTrack = (t: Track, x: number, y: number, hit: (ax: number, ay: number, bx: number, by: number) => boolean, endOn: (x: number, y: number) => boolean): number | undefined => {
@@ -583,6 +624,111 @@ function netVias(cu: NetCopper, isSource: (part: BoardPart, pad: BoardPad) => bo
   return out;
 }
 
+/** A pad or via joined to its net's pour only through thermal-relief spokes, and what lies on its side of them. */
+interface Joint {
+  kind: 'pad' | 'via';
+  ref?: string;
+  at: { x: number; y: number };
+  layers: CopperLayer[];
+  spokes: number;
+  spokeWidth: number;
+  /** The thinnest copper its spokes are on (µm), for the width they need. */
+  copperUm: number;
+  capacity: number;
+  /** Its spokes are the only way between copper that carries current on both sides (as a via group's cut). */
+  cut: boolean;
+  /** The net's pads (into NetCopper.pads) on its side of the spokes. */
+  side: Set<number>;
+}
+
+/**
+ * The relief joints of a net (DRC.SPOKE_CURRENT): each pad or via whose contacts with the net's
+ * pours are thermal reliefs (not a plane joined solid, a pad with vias in it, or a grouped via:
+ * those join solid, layout.md §7 item 9), with the spokes that connect (the zone's added copper
+ * starting at its centre) and their capacity. Only a joint whose spokes are the only way from the
+ * element to those pours is kept: where other copper joins them too (a drop's stub to its grouped
+ * vias, a track into the pour), the joint is not the bottleneck. `cut` as for a via group: both
+ * sides carry current (the element's side has a pour, two pads or a pad where current comes in;
+ * the pour's side a pad).
+ */
+function netJoints(b: BoardView, cu: NetCopper, isSource: (part: BoardPart, pad: BoardPad) => boolean, riseC: number, copperUm: Partial<Record<CopperLayer, number>>): Joint[] {
+  const { items, pads, padItems, vias, viaItems, zoneParts, contacts } = cu;
+  if (!zoneParts.length) return [];
+  const solidPlane = (z: BoardView['zones'][number]) => b.planes.find((pl) => pl.netId === z.netId && pl.layer === z.layer)?.style?.thermal === false;
+  const elements: { kind: 'pad' | 'via'; index: number; x: number; y: number; items: number[] }[] = [
+    ...pads.flatMap(({ pad }, i) => (b.vias.some((v) => v.inPad && v.netId === pad.netId && padPointDist(pad, v.x, v.y) < EPS) ? [] : [{ kind: 'pad' as const, index: i, x: pad.x, y: pad.y, items: padItems[i]! }])),
+    ...vias.flatMap((v, i) => (v.group ? [] : [{ kind: 'via' as const, index: i, x: v.x, y: v.y, items: viaItems[i]! }])),
+  ];
+  // each item's contacts with a pour
+  const withZone = new Map<number, number[]>();
+  contacts.forEach((c, ci) => {
+    for (const [e, o] of [[c.a, c.b], [c.b, c.a]] as const) if (items[o]!.kind === 'zone' && items[e]!.kind !== 'zone') (withZone.get(e) ?? withZone.set(e, []).get(e)!).push(ci);
+  });
+  const out: Joint[] = [];
+  for (const el of elements) {
+    const mine = new Set(el.items);
+    // its contacts with the pours, each a relief with the spokes that start at its centre
+    const reliefs: { contact: number; zone: number; layer: CopperLayer; spokes: number; width: number }[] = [];
+    el.items.flatMap((it) => withZone.get(it) ?? []).forEach((ci) => {
+      const c = contacts[ci]!;
+      const o = mine.has(c.a) ? c.b : c.a;
+      const z = zoneParts[items[o]!.ref]!.zone;
+      if (!z.shape || solidPlane(z)) return;
+      const adds = z.shape.adds.filter((a) => Math.abs(a.pts[0]! - el.x) < 0.002 && Math.abs(a.pts[1]! - el.y) < 0.002);
+      reliefs.push({ contact: ci, zone: o, layer: z.layer, spokes: adds.length, width: Math.min(...adds.map((a) => a.w)) });
+    });
+    const spokes = reliefs.reduce((s, r) => s + r.spokes, 0);
+    // (no spokes at all: cut off, DRC.THERMAL_SPOKES says so)
+    if (!spokes) continue;
+    // the copper without its spokes: a pad's layers and a via's barrel joined, every other contact
+    const cut = new Set(reliefs.map((r) => r.contact));
+    const parent = items.map((_, i) => i);
+    const root = (i: number): number => {
+      while (parent[i] !== i) i = parent[i] = parent[parent[i]!]!;
+      return i;
+    };
+    const union = (a: number, c: number) => {
+      const [x, y] = [root(a), root(c)];
+      if (x !== y) parent[x] = y;
+    };
+    for (const its of [...padItems, ...viaItems]) for (const it of its.slice(1)) union(its[0]!, it);
+    contacts.forEach((c, ci) => cut.has(ci) || union(c.a, c.b));
+    const here = root(el.items[0]!);
+    if (reliefs.some((r) => root(r.zone) === here)) continue; // joined another way too
+    const side = new Set<number>();
+    let source = false;
+    const beyond = new Map<number, number>();
+    pads.forEach((p, i) => {
+      if (!padItems[i]!.length) return;
+      const r = root(padItems[i]![0]!);
+      if (r === here) {
+        side.add(i);
+        if (isSource(p.part, p.pad)) source = true;
+      } else beyond.set(r, (beyond.get(r) ?? 0) + 1);
+    });
+    const zoneHere = zoneParts.some((zp) => zp.items.some((it) => root(it) === here));
+    const carries = side.size > 0 && (zoneHere || side.size >= 2 || source);
+    const fed = reliefs.some((r) => (beyond.get(root(r.zone)) ?? 0) > 0);
+    const counted = reliefs.filter((r) => r.spokes);
+    const capacity = counted.reduce((s, r) => s + r.spokes * trackCurrentFor(r.width, copperUm[r.layer] ?? 35, riseC), 0);
+    const p = el.kind === 'pad' ? pads[el.index]! : undefined;
+    const id = el.kind === 'via' ? idOf(vias[el.index]!) : undefined;
+    out.push({
+      kind: el.kind,
+      ...(p ? { ref: `${p.part.refdes}.${p.pad.number}` } : id ? { ref: id } : {}),
+      at: { x: r2(el.x), y: r2(el.y) },
+      layers: [...new Set(counted.map((r) => r.layer))],
+      spokes,
+      spokeWidth: Math.min(...counted.map((r) => r.width)),
+      copperUm: Math.min(...counted.map((r) => copperUm[r.layer] ?? 35)),
+      capacity,
+      cut: carries && fed,
+      side,
+    });
+  }
+  return out;
+}
+
 /** Copper's resistivity (Ω·m, 20 °C). */
 const RHO = 1.72e-8;
 /** Pieces of a track shorter than this (mm) join their ends without resistance. */
@@ -751,7 +897,7 @@ function solveSplit(b: BoardView, cu: NetCopper, copperUm: Partial<Record<Copper
       n = best.o;
     }
   }
-  return { placed, trackAmps, trackDrop, viaAmps, dropMv: worst?.mv ?? 0, worst, pathTracks, pathVias };
+  return { placed, reached, trackAmps, trackDrop, viaAmps, dropMv: worst?.mv ?? 0, worst, pathTracks, pathVias };
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -768,7 +914,43 @@ export function viaFix(b: BoardView, v: CurrentVias): EditOp[] {
   return [{ op: 'add_vias', kind: 'tie', net: b.netNames[v.netId] ?? v.netId, at: [{ x_mm: v.at.x, y_mm: v.at.y }], amps: v.amps }];
 }
 
-/** The findings: DRC.TRACK_CURRENT (split: one per net), DRC.CURRENT_UNVERIFIED (one per net), DRC.VIA_CURRENT (per via group), DRC.CURRENT_UNKNOWN (one per power net without max_current). */
+/**
+ * A relief joint's fix: a pad drops onto its pour with grouped vias beside it (one per spoke that
+ * connects, on the spoke's side: there the pour reaches it), a via gets a tie at its spot; and
+ * wider spokes on its pours where 2 mm or less carries it.
+ */
+export function jointFix(b: BoardView, j: CurrentJoint): EditOp[] {
+  const net = b.netNames[j.netId] ?? j.netId;
+  const out: EditOp[] = [];
+  const amps = r2(j.amps);
+  if (j.kind === 'pad' && j.ref) {
+    const dot = j.ref.lastIndexOf('.');
+    const [refdes, number] = [j.ref.slice(0, dot), j.ref.slice(dot + 1)];
+    const part = b.parts.find((p) => p.refdes === refdes);
+    const pad = part?.pads.find((p) => p.number === number);
+    const size = b.rules.viaPad;
+    const at = (pad ? spokeDirs(b, j) : []).map(([dx, dy]) => ({ x_mm: r2(pad!.x + dx * (pad!.w / 2 + size / 2 + b.rules.clearance + 0.05)), y_mm: r2(pad!.y + dy * (pad!.h / 2 + size / 2 + b.rules.clearance + 0.05)) }));
+    if (at.length) out.push({ op: 'add_vias', kind: 'drop', ref: refdes, pad: number, at, amps });
+  } else if (j.kind === 'via') out.push({ op: 'add_vias', kind: 'tie', net, at: [{ x_mm: j.at.x, y_mm: j.at.y }], amps });
+  if (j.needs <= 2) for (const layer of j.layers) out.push({ op: 'set_plane_style', layer, net, spoke_mm: j.needs });
+  return out;
+}
+
+/** The directions (unit steps) of a joint's spokes that connect. */
+function spokeDirs(b: BoardView, j: CurrentJoint): [number, number][] {
+  const out: [number, number][] = [];
+  for (const z of b.zones) {
+    if (z.netId !== j.netId || !j.layers.includes(z.layer)) continue;
+    for (const a of z.shape?.adds ?? []) {
+      if (Math.abs(a.pts[0]! - j.at.x) > 0.006 || Math.abs(a.pts[1]! - j.at.y) > 0.006) continue;
+      const d: [number, number] = [Math.sign(Math.round((a.pts[2]! - a.pts[0]!) * 1000)), Math.sign(Math.round((a.pts[3]! - a.pts[1]!) * 1000))];
+      if (!out.some((o) => o[0] === d[0] && o[1] === d[1])) out.push(d);
+    }
+  }
+  return out;
+}
+
+/** The findings: DRC.TRACK_CURRENT (split: one per net), DRC.CURRENT_UNVERIFIED (one per net), DRC.VIA_CURRENT (per via group), DRC.SPOKE_CURRENT (per relief joint), DRC.CURRENT_UNKNOWN (one per power net without max_current). */
 export function currentDrc(b: BoardView, c: CurrentCheck): Diagnostic[] {
   const out: Diagnostic[] = [];
   const severity = (ratio: number) => (ratio > 2 ? 'error' : 'warning');
@@ -854,6 +1036,19 @@ export function currentDrc(b: BoardView, c: CurrentCheck): Diagnostic[] {
         fixHints: viaFix(b, v),
       });
     }
+    for (const j of c.joints.filter((x) => x.netId === n.netId && x.status !== 'ok')) {
+      const what = j.kind === 'pad' ? (j.ref ?? 'A pad') : `The via${j.ref ? ` ${j.ref}` : ''}`;
+      const flows = j.basis === 'split' ? `${fmt(j.split ?? j.amps)} A of the stated loads flows through it${j.split !== undefined ? ` (${fmt(j.amps)} A with what no load places)` : ''}` : `they are the only way ${n.name}'s current comes ${j.kind === 'pad' ? 'from the pad' : 'from the via'} into the pour, and its max_current is ${amps} A (whether that much flows here is not known: set_net loads says)`;
+      const cure = j.kind === 'pad' ? `Drop the pad onto the pour with add_vias kind drop (ref, pad, at: right beside it, amps): grouped vias join their pours solid` : `Put a tie there (add_vias kind tie at the via with amps): grouped vias join their pours solid`;
+      out.push({
+        code: 'DRC.SPOKE_CURRENT',
+        severity: severity((j.status === 'over' ? (j.split ?? j.amps) : j.amps) / j.capacity),
+        message: `${what} at (${j.at.x}, ${j.at.y}) joins the ${n.name} pour on ${j.layers.join(' and ')} through ${j.spokes} thermal spoke${j.spokes === 1 ? '' : 's'} of ${j.spokeWidth} mm: together about ${fmt(j.capacity)} A at ${c.riseC} °C, and ${flows}. ${cure}; or widen the spokes (set_plane_style spoke_mm ${j.needs <= 2 ? j.needs : 2}${j.needs > 2 ? ', not enough by itself' : ''}).`,
+        at: j.at,
+        entities: [`net:${n.name}`, ...(j.ref ? [j.ref] : [])],
+        fixHints: jointFix(b, j),
+      });
+    }
     const ir = n.irDrop;
     if (ir?.budgetMv !== undefined && ir.mv > ir.budgetMv) {
       const at = ir.worst[0]?.at;
@@ -936,6 +1131,27 @@ export function currentMapAnswer(d: Design, b: BoardView, q: Extract<QueryOp, { 
         ...(trackCode(t) ? { code: trackCode(t), fix: trackFix(b, t) } : {}),
       },
     })),
+    ...c.joints.filter(keep).map((j) => ({
+      rank: rank(j),
+      spot: {
+        kind: 'relief',
+        net: name(j.netId),
+        element: j.kind,
+        ...(j.ref ? { ref: j.ref } : {}),
+        layers: j.layers,
+        at: { x_mm: j.at.x, y_mm: j.at.y },
+        spokes: j.spokes,
+        spoke_mm: j.spokeWidth,
+        amps: r3(j.amps),
+        basis: j.basis,
+        ...(j.split !== undefined ? { split_a: r3(j.split) } : {}),
+        status: j.status,
+        capacity_a: r2(j.capacity),
+        ratio: r2(j.ratio),
+        needs_spoke_mm: j.needs,
+        ...(j.status !== 'ok' ? { code: 'DRC.SPOKE_CURRENT', fix: jointFix(b, j) } : {}),
+      },
+    })),
     ...c.vias.filter(keep).map((v) => ({
       rank: rank(v),
       spot: {
@@ -993,6 +1209,6 @@ export function currentMapAnswer(d: Design, b: BoardView, q: Extract<QueryOp, { 
       ),
     hotspots: spots.slice(0, q.worst ?? 20).map((s) => s.spot),
     ...(spots.length > (q.worst ?? 20) ? { more: spots.length - (q.worst ?? 20) } : {}),
-    note: "split: the current the net's stated loads (set_net loads, add_vias drop amps) draw through each piece, solved over the copper from where the current comes in (with what of max_current no load places added: it may flow anywhere); over = too small for that. bound: each track and each via group that is the only way between two layers is checked for all of the net's max_current (a branch that carries less shows as unverified, not over). ir_drop_mv: the drop from the source to the load pin furthest down (ir_load) the stated loads cause, checked against 3 % of the net's voltage (ir_budget_mv, DRC.IR_DROP; unknown without set_net voltage); ir_worst: the pieces on that way that drop the most; drop_mv per piece. A pour or plane counts as one piece of copper: its necks are not checked, and it drops nothing. Tracks inside their own pour and pieces up to 1 mm long are not counted.",
+    note: "split: the current the net's stated loads (set_net loads, add_vias drop amps) draw through each piece, solved over the copper from where the current comes in (with what of max_current no load places added: it may flow anywhere); over = too small for that. bound: each track and each via group that is the only way between two layers is checked for all of the net's max_current (a branch that carries less shows as unverified, not over). ir_drop_mv: the drop from the source to the load pin furthest down (ir_load) the stated loads cause, checked against 3 % of the net's voltage (ir_budget_mv, DRC.IR_DROP; unknown without set_net voltage); ir_worst: the pieces on that way that drop the most; drop_mv per piece. A pour or plane counts as one piece of copper: its necks are not checked, and it drops nothing. Tracks inside their own pour and pieces up to 1 mm long are not counted. relief: a pad or via joined to its pour only through thermal spokes, where the current comes through them (spokes that connect × one spoke's capacity; DRC.SPOKE_CURRENT); a joint whose current is unknown is not listed, and not fine.",
   };
 }

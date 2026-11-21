@@ -482,3 +482,88 @@ describe('IR drop against 3 % of the rail (DRC.IR_DROP)', () => {
     expect(r.ir_drop_mv).toBeGreaterThan(99);
   });
 });
+
+describe('thermal-relief joints against their current (DRC.SPOKE_CURRENT)', () => {
+  type Relief = { kind: string; net: string; ref?: string; spokes: number; spoke_mm: number; amps: number; basis: string; status: string; capacity_a: number; code?: string; fix?: unknown[] };
+  const reliefs = (k: Kernel) => (k.query({ op: 'get_current_map', include_ok: true, worst: 200 }) as { hotspots: Relief[] }).hotspots.filter((h) => h.kind === 'relief');
+  // a +3V3 pour on F.Cu round L1.2 (where +3V3 comes in: the inductor), C2.1 and R1.1, every pad
+  // joined to it through four 0.25 mm spokes and nothing else
+  const pour = (more: unknown[] = []) =>
+    drawnBuck([
+      { op: 'set_plane', layer: 'F.Cu', net: '+3V3', rect: { x_mm: 13, y_mm: 0.6, width_mm: 11, height_mm: 17 } },
+      { op: 'set_plane_style', layer: 'F.Cu', net: '+3V3', spoke_mm: 0.25 },
+      ...more,
+    ]);
+  // one 0.25 mm spoke on 35 µm: 9.84 mil × 1.378 mil = 13.56 mil²; 0.048 · 10^0.44 · 13.56^0.725 =
+  // 0.1322 · 6.62 = 0.875 A, so four carry 3.5 A at 10 °C: a 2 A pad passes (with 1 oz copper a 2 A
+  // pad needs fewer spokes or thinner copper to fail), 5 A is 1.43 times that, 8 A over twice
+  const four = 4 * trackCurrentFor(0.25, 35, 10);
+
+  it('the pad where the current comes in, through 4 × 0.25 mm spokes at 5 A: a warning; 2 A passes, 8 A is an error', () => {
+    expect(four).toBeCloseTo(3.5, 1);
+    const k = pour([{ op: 'set_net', net: '+3V3', max_current: 5 }]);
+    const fs = find(k.board(), 'DRC.SPOKE_CURRENT');
+    expect(fs).toHaveLength(1);
+    const [f] = fs;
+    expect(f!.severity).toBe('warning');
+    expect(f!.at).toEqual({ x: 17.8, y: 3.6 });
+    expect(f!.entities).toEqual(['net:+3V3', 'L1.2']);
+    expect(f!.message).toMatch(/L1\.2 .*4 thermal spokes of 0\.25 mm: together about 3\.5 A at 10 °C.*5 A/);
+    expect(f!.message).toMatch(/add_vias kind drop/);
+    expect(f!.message).not.toMatch(/max_current lower|lower the/);
+    expect(f!.fixHints).toContainEqual(expect.objectContaining({ op: 'add_vias', kind: 'drop', ref: 'L1', pad: '2', amps: 5 }));
+    expect(f!.fixHints).toContainEqual({ op: 'set_plane_style', layer: 'F.Cu', net: '+3V3', spoke_mm: 0.45 });
+    const [r] = reliefs(k);
+    expect(r).toMatchObject({ ref: 'L1.2', spokes: 4, spoke_mm: 0.25, amps: 5, basis: 'bound', status: 'unverified', code: 'DRC.SPOKE_CURRENT' });
+    expect(r!.capacity_a).toBeCloseTo(four, 2);
+    // the 2 A of the fixture fits; 8 A is over twice
+    expect(find(pour().board(), 'DRC.SPOKE_CURRENT')).toEqual([]);
+    expect(find(pour([{ op: 'set_net', net: '+3V3', max_current: 8 }]).board(), 'DRC.SPOKE_CURRENT')[0]?.severity).toBe('error');
+  });
+
+  it('thicker copper or a higher allowed rise carries more: 2 oz and 30 °C each clear 5 A', () => {
+    // 70 µm: 3.5 · 2^0.725 = 5.79 A; 30 °C: 3.5 · 3^0.44 = 5.67 A
+    expect(4 * trackCurrentFor(0.25, 70, 10)).toBeGreaterThan(5);
+    expect(4 * trackCurrentFor(0.25, 35, 30)).toBeGreaterThan(5);
+    const thick = pour([{ op: 'set_fab_profile', preset: 'jlcpcb/2l-2oz' }, { op: 'set_net', net: '+3V3', max_current: 5 }]);
+    expect(thick.board().current!.copperUm['F.Cu']).toBe(70);
+    expect(find(thick.board(), 'DRC.SPOKE_CURRENT')).toEqual([]);
+    expect(reliefs(thick).find((r) => r.ref === 'L1.2')).toMatchObject({ status: 'ok' });
+    const warm = pour([{ op: 'set_board', current_rise_c: 30 }, { op: 'set_net', net: '+3V3', max_current: 5 }]);
+    expect(find(warm.board(), 'DRC.SPOKE_CURRENT')).toEqual([]);
+  });
+
+  it('the same pad dropped onto the pour with grouped vias joins solid: no finding', () => {
+    const k = pour([
+      { op: 'set_net', net: '+3V3', max_current: 5 },
+      { op: 'add_vias', kind: 'drop', ref: 'L1', pad: '2', at: [{ x_mm: 20.45, y_mm: 3.6 }, { x_mm: 15.15, y_mm: 3.6 }, { x_mm: 17.8, y_mm: 2.25 }], amps: 5 },
+    ]);
+    expect(find(k.board(), 'DRC.SPOKE_CURRENT')).toEqual([]);
+    expect(reliefs(k).find((r) => r.ref === 'L1.2')).toBeUndefined();
+  });
+
+  it('with the loads stated: a pad drawing 4 A is over, a pull-up drawing 1 mA passes, and the lone pads are not checked for the bound', () => {
+    const bound = pour([{ op: 'set_net', net: '+3V3', max_current: 5 }]);
+    // (C2.1 and R1.1 alone on the pour: whether 5 A flows through them is not known, so not flagged)
+    expect(reliefs(bound).map((r) => r.ref)).toEqual(['L1.2']);
+    const k = pour([{ op: 'set_net', net: '+3V3', max_current: 5, loads: [{ pin: 'C2.1', amps: 4 }, { pin: 'R1.1', amps: 0.001 }] }]);
+    const fs = find(k.board(), 'DRC.SPOKE_CURRENT');
+    // (L1.2 too: all 5 A comes in through its spokes, 4 A of it placed)
+    expect(fs.map((f) => f.entities[1]).sort()).toEqual(['C2.1', 'L1.2']);
+    expect(fs.find((f) => f.entities[1] === 'C2.1')!.message).toMatch(/4 A of the stated loads/);
+    expect(reliefs(k).find((r) => r.ref === 'C2.1')).toMatchObject({ basis: 'split', status: 'over', amps: 4 });
+    expect(reliefs(k).find((r) => r.ref === 'R1.1')).toMatchObject({ basis: 'split', status: 'ok', amps: 0.001 });
+  });
+
+  it('a net whose current is unknown: no finding, and no joint reported as fine', () => {
+    const k = drawnBuck([
+      { op: 'set_plane', layer: 'F.Cu', net: '+12V', rect: { x_mm: 0.6, y_mm: 4, width_mm: 12, height_mm: 8 } },
+      { op: 'set_plane_style', layer: 'F.Cu', net: '+12V', spoke_mm: 0.15 },
+    ]);
+    const b = k.board();
+    expect(find(b, 'DRC.SPOKE_CURRENT')).toEqual([]);
+    expect(b.current!.joints.filter((j) => b.netNames[j.netId] === '+12V')).toEqual([]);
+    expect(reliefs(k).filter((r) => r.net === '+12V')).toEqual([]);
+    expect(currentMap(k).nets.find((n) => n.net === '+12V')).toMatchObject({ status: 'unknown' });
+  });
+});

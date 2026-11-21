@@ -1124,7 +1124,7 @@ power 1/0.44, the curve's exponent) with their count. Dashes, not pattern fills:
 the agent sees keeps them. Pours and planes stay in their layer colour, "not solved" in the legend.
 Tooltips read like "+5V · 0.25 mm · 35 µm · 2 A (bound?) · needs 0.8 mm · ≈ +66 °C". The map is on
 by itself while a current finding is open (`DRC.CURRENT_UNVERIFIED`, `DRC.VIA_CURRENT`,
-`DRC.CURRENT_UNKNOWN`, `DRC.TRACK_CURRENT`), off when none is; the user's switch holds for
+`DRC.CURRENT_UNKNOWN`, `DRC.TRACK_CURRENT`, `DRC.IR_DROP`, `DRC.SPOKE_CURRENT`), off when none is; the user's switch holds for
 the session either way. `get_board_image` shows it as the view does; `overlay: "current"` or
 `"none"` forces it on or off for one picture, and its text then names the colours.
 
@@ -1193,7 +1193,33 @@ message and `ir_note` say the real drop can be higher. It errs low in two ways: 
 one node and carries no drop (a necked pour looks lossless), and copper is taken at 20 °C (a hot
 track drops about 4 % more per 10 °C).
 
-**Not yet** (follow-ups of the proposal): GND's split from the loads' returns, a ratio between two sources, the current
-through thermal-relief spokes, pin currents (GPIO overload) and a DC solve of pours and planes.
+**Relief joints** (2026-11-21, `DRC.SPOKE_CURRENT`). A pad or via of a net with a current that
+joins its pour through thermal-relief spokes (§7: a ring with four spokes, drawn back where no other
+net is in the way) is often the narrowest copper on the current's way. Its capacity is the spokes
+that connect (the zone's added copper starting at its centre, on every pour it joins) times one
+spoke's, on the same curve as a track: the spoke's width, the layer's copper from the stack-up, the
+allowed rise (four 0.25 mm spokes on 35 µm carry about 3.5 A at 10 °C). Never checked: a pad or via
+joined solid (a plane with `thermal: false`, a pad with vias in it, a grouped via: §7 item 9, so
+`add_vias drop` on a pad clears it), one with no spoke at all (`DRC.THERMAL_SPOKES`), and one whose
+pour other copper of the net reaches too (a drop's stub to its grouped vias, a track into the
+pour), because the spokes are not its only way. The current is the numbers above, no second solve:
+on a `bound` net a joint is checked for `max_current` only where its spokes are a cut in the sense
+of the via groups (the pad's side carries current: where current comes in, a second pad or a pour;
+the pour's side has a pad), so a decoupling pad on its pour is not flagged; on a `split` net it
+carries what the loads on its side draw less what the source there gives (plus the unplaced rest
+where it is a cut), and is listed only where that is more than nothing. A net without a current
+has no joints: no finding, and nothing reported as fine. One finding per joint, `at` the pad or via,
+entities the net and the pad (`U3.4`) or the via's id; warning over the capacity, error over twice.
+Fix hints: `add_vias kind drop` beside a pad (one via per spoke side, where the pour reaches it) or
+a tie at a via, and `set_plane_style spoke_mm` with the width that carries it (up to 2 mm); never a
+lower current. `get_current_map` lists them as `kind: "relief"` (spokes, `spoke_mm`, amps, capacity,
+`needs_spoke_mm`), the heat map draws a ring with the spoke count round each one flagged, and the
+finding turns the map on like the others.
+
+| Code | When | Severity | Fix hints |
+|---|---|---|---|
+| `DRC.SPOKE_CURRENT` | A pad or via joined to its pour only through relief spokes, on the current's way (above), that carry less than its current | error over twice the capacity, else warning | `add_vias kind: "drop"` beside the pad (grouped vias join solid), `add_vias kind: "tie"` at a via, `set_plane_style spoke_mm` |
+
+**Not yet** (follow-ups of the proposal): GND's split from the loads' returns, a ratio between two sources, pin currents (GPIO overload) and a DC solve of pours and planes.
 Until that solve, a pour or plane counts as one node: a pour necked between two vias looks fine
 here, and carries no drop.

@@ -13,7 +13,7 @@
 import type { BoardView, Diagnostic } from '@4k7/schema';
 
 /** The findings that turn the heat map on by themselves while one is open. */
-export const CURRENT_CODES = ['DRC.CURRENT_UNVERIFIED', 'DRC.VIA_CURRENT', 'DRC.CURRENT_UNKNOWN', 'DRC.TRACK_CURRENT', 'DRC.IR_DROP'];
+export const CURRENT_CODES = ['DRC.CURRENT_UNVERIFIED', 'DRC.VIA_CURRENT', 'DRC.CURRENT_UNKNOWN', 'DRC.TRACK_CURRENT', 'DRC.IR_DROP', 'DRC.SPOKE_CURRENT'];
 
 /** The scale: estimated heating as a share of the allowed rise, cool to hot. */
 export const HEAT = [
@@ -77,6 +77,14 @@ export function currentLayer(b: BoardView): { tracks: Map<number, HeatStyle>; un
     const head = `${name(v.netId)} · ${v.vias} via${v.vias === 1 ? '' : 's'}, ${v.drill} mm drill · ${n2(v.amps)} A (${v.basis}${unverified ? '?' : ''}) · carry ${n2(v.capacity)} A · needs ${v.needs} · ≈ +${Math.round(rise)} °C`;
     return { x: v.at.x, y: v.at.y, r, count: v.vias, colour: HEAT[heatBucket(rise, c.riseC)]!.colour, dashed: unverified, title: unverified ? `${head} · ? the only way between ${v.layers.join(' and ')}: whether ${n2(v.amps)} A crosses here is not known` : v.shared ? `${head} · its share (another way across)` : head };
   });
+  // pads and vias whose relief spokes are too thin for what comes through them: a ring with the spoke count
+  for (const j of c.joints) {
+    if (j.status === 'ok') continue;
+    const rise = c.riseC * Math.pow(j.ratio, 1 / 0.44);
+    const unverified = j.status === 'unverified';
+    const head = `${name(j.netId)} · ${j.ref ?? (j.kind === 'via' ? 'via' : 'pad')} · ${j.spokes} spoke${j.spokes === 1 ? '' : 's'} of ${j.spokeWidth} mm · ${n2(j.amps)} A (${j.basis}${unverified ? '?' : ''}) · carry ${n2(j.capacity)} A · needs ${j.needs} mm spokes`;
+    vias.push({ x: j.at.x, y: j.at.y, r: 0.8, count: j.spokes, colour: HEAT[heatBucket(rise, c.riseC)]!.colour, dashed: unverified, title: unverified ? `${head} · ? whether ${n2(j.amps)} A comes through here is not known` : head });
+  }
   return { tracks, unknown, vias };
 }
 
@@ -86,6 +94,6 @@ export function currentLegend(riseC: number): string {
   return (
     `Current heat map on: power copper coloured by its estimated heating at its current against the allowed +${riseC} °C (${HEAT.map((h, i) => `${names[i]} ${h.label}`).join(', ')}): the net's max_current (bound), or its share of the loads stated (split); ` +
     'dashed in its colour: unverified (too small for the whole max_current, or for what no stated load places; whether that much flows there is not known); grey dashed: a power net with no max_current (unknown); ' +
-    'a ring with a count: the vias that are the only way between two layers (split: also those carrying a share); signal copper faint; pours and planes in their layer colour (not solved). get_current_map has the numbers.'
+    'a ring with a count: the vias that are the only way between two layers (split: also those carrying a share), or a pad or via whose thermal spokes (the count) are too thin for its current; signal copper faint; pours and planes in their layer colour (not solved). get_current_map has the numbers.'
   );
 }
