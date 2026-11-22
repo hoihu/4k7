@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { MCP_INSTRUCTIONS, agentTools, ingestTools } from '@4k7/schema';
+import { MCP_INSTRUCTIONS, TOOL_NAMES, agentTools, ingestTools } from '@4k7/schema';
 import pkg from '../../../package.json' with { type: 'json' };
 import type { LocalServer, HttpHandler } from './server.ts';
 
@@ -16,8 +16,11 @@ export const VERSION: string = pkg.version;
 /** Server instructions for the runs the server starts itself; their real prompt comes with the run (system prompt or first message). */
 const RUN_INSTRUCTIONS = '4k7 tools. How to use them is in your instructions.';
 
-/** 'cli': Claude Code CLI drives the app; 'chat': it answers the app's chat; 'ingest': it imports a datasheet. */
-export type McpMode = 'cli' | 'chat' | 'ingest';
+/**
+ * 'cli': Claude Code CLI drives the app; 'chat': it answers the app's chat; 'ingest': it imports a datasheet;
+ * 'eval': the headless eval server, the cli tools plus ask_user, answered from the task's script (docs/ARCHITECTURE.md §3.9).
+ */
+export type McpMode = 'cli' | 'chat' | 'ingest' | 'eval';
 
 export function createMcpServer(server: LocalServer, opts: { mode?: McpMode } = {}): Server {
   const mode = opts.mode ?? 'cli';
@@ -25,9 +28,14 @@ export function createMcpServer(server: LocalServer, opts: { mode?: McpMode } = 
     { name: '4k7', version: VERSION },
     // chat and ingest runs are started by this server, which appends their prompt to the system prompt
     // (chat.ts); repeating it here would send it twice with every message
-    { capabilities: { tools: {} }, instructions: mode === 'cli' ? MCP_INSTRUCTIONS : RUN_INSTRUCTIONS },
+    { capabilities: { tools: {} }, instructions: mode === 'cli' || mode === 'eval' ? MCP_INSTRUCTIONS : RUN_INSTRUCTIONS },
   );
-  const tools = mode === 'ingest' ? ingestTools() : agentTools(mode);
+  const tools =
+    mode === 'ingest'
+      ? ingestTools()
+      : mode === 'eval'
+        ? [...agentTools('cli'), ...agentTools('app').filter((t) => t.name === TOOL_NAMES.ask)]
+        : agentTools(mode);
 
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema as { type: 'object' } })),

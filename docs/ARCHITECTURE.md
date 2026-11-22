@@ -149,9 +149,27 @@ to compare two versions of the code). The **agent eval runner** (`packages/agent
 (a JSON file: prompt, starting `*.twd.json`, expectations, and a script for the scripted provider) through
 the agent loop against an in-process kernel, with no browser, and prints a score: open ERC errors, DRC
 errors found without routing (pads that short), violated ledger constraints, ops applied and rejected,
-model calls and tokens (`npm run eval -- packages/agent/eval/tasks/decouple-led.json`). It runs only
-scripted tasks so far. Planned: an **agent eval harness** that runs golden tasks against
-golden designs with real models, for example "add a USB-C PD sink for 20 V", "fan out this BGA on 6 layers", "import this
+model calls and tokens (`npm run eval -- packages/agent/eval/tasks/decouple-led.json`). A task's `answers`
+reply to the agent's `ask_user` questions, in order or by `match` (a substring of the question); a question
+left without an answer ends the run not ok. `expect.values` checks a part's value (`"R1": ["240", "270"]`).
+
+The **golden tasks** (`led-current`, `second-led`, `power-input` in `eval/tasks/`) are for real agents; each also
+carries a script that solves it, so `npm test` checks without a model that the task loads and its checks can be met.
+`npm run eval:mcp -- <task.json> [claude options]` runs one with Claude Code, by hand and on your own account
+(nothing in CI spends on a model): it starts the **headless eval server** (`eval/headless.ts`: the server's
+token-gated `/mcp` endpoint on a free loopback port, with the cli tools plus `ask_user`, answered from an
+in-process kernel loaded from the task's design instead of a browser tab; the turn tools are answered as in
+Auto mode, `propose` refusing while errors are open), runs `claude -p --output-format json` against it with
+only the 4k7 tools, and prints the score with Claude's turns, tokens and `cost_usd`:
+
+```sh
+npm run eval:mcp -- packages/agent/eval/tasks/led-current.json --model sonnet --max-turns 30
+```
+
+`CLAUDE_BIN` picks the program. Tools that need the app (pictures, sourcing, datasheets, imports, artwork)
+answer with an error there, and the queries the app answers off the kernel worker (`get_board` routed,
+`try_placements`, `suggest_moves`, `list_blocks`) get the kernel's own answer, without routing or projects. Planned: running the golden tasks against
+golden designs with several models, for example "add a USB-C PD sink for 20 V", "fan out this BGA on 6 layers", "import this
 datasheet", scored on ERC/DRC cleanliness, constraint satisfaction, part-extraction accuracy, op count
 and token cost, with a model compatibility table so users know which BYO models work well.
 

@@ -1,0 +1,28 @@
+{
+  "name": "second-led",
+  "prompt": "Add a second indicator LED, D2, with its own 330 Ω series resistor R2, from +3V3 to GND like D1 and R1.",
+  "design": "led.twd.json",
+  "answers": [{ "match": "colo", "answer": "Green." }, { "match": "package", "answer": "0603" }],
+  "expect": { "parts": ["D1", "R1", "D2", "R2"], "nets": ["+3V3", "GND"], "values": { "R2": ["330"] } },
+  "script": [
+    [{ "type": "tool_use", "id": "", "name": "ask_user", "input": { "question": "Which colour should D2 be?", "options": ["Red", "Green", "Blue"] } }],
+    [
+      {
+        "type": "tool_use",
+        "id": "",
+        "name": "design_edit",
+        "input": {
+          "summary": "Second indicator LED",
+          "ops": [
+            { "op": "add_part", "part": "generic:LED", "refdes": "D2", "params": { "color": "green" } },
+            { "op": "add_part", "part": "generic:R", "refdes": "R2", "params": { "resistance": "330" } },
+            { "op": "connect", "pins": ["R2.1"], "net": "+3V3" },
+            { "op": "connect", "pins": ["R2.2", "D2.A"], "net": "LED2" },
+            { "op": "connect", "pins": ["D2.K"], "net": "GND" }
+          ]
+        }
+      }
+    ],
+    [{ "type": "text", "text": "D2 (green) with R2 330 Ω, from +3V3 to GND." }]
+  ]
+}

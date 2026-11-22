@@ -43,6 +43,11 @@ export interface LocalServerOptions {
   /** How Claude Code starts this server, when the app cannot know from its build (the downloaded app). */
   mcpCommand?: string;
   log?: (msg: string) => void;
+  /**
+   * Answers tool calls itself instead of forwarding them to a tab: the headless eval server, with an
+   * in-process kernel and no browser (packages/agent/eval/headless.ts). See docs/ARCHITECTURE.md §3.9.
+   */
+  local?: (tool: string, input: unknown) => Promise<CallResult>;
 }
 
 export type HttpHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
@@ -219,6 +224,7 @@ export class LocalServer {
 
   /** Forward a tool call to the tab and wait for its result. */
   call(tool: string, input: unknown): Promise<CallResult> {
+    if (this.#opts.local) return this.#opts.local(tool, input);
     if (!this.#tab) {
       return Promise.resolve(
         errorResult(
