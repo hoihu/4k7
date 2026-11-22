@@ -99,6 +99,7 @@ export function draftToCard(input: unknown): IngestResult {
     ...(p.functions?.length || p.description ? { description: [p.description, p.functions?.length ? `alt: ${p.functions.join(', ')}` : ''].filter(Boolean).join(' · ') } : {}),
     // a pin's own limit (EN, logic inputs) is what SEM.ABS_MAX checks it against; supplies take the supply's
     ...(p.max_v ? { maxVoltage: p.max_v } : draft.supply_max_v && p.type === 'pwr_in' && !/^(VSS|GND)/i.test(p.name) ? { maxVoltage: draft.supply_max_v } : {}),
+    ...(p.max_ma ? { maxCurrent: p.max_ma / 1000 } : {}),
     ...(p.page ? { page: p.page } : {}),
   }));
   const card: PartCard = {

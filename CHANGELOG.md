@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Checks
+
+- **A microcontroller pin asked to drive more current than it can is flagged.** An LED or relay coil wired straight to a GPIO used to pass the checks, even when it draws 30 mA from a pin the datasheet rates for 12 mA. Now, where a part's card gives a pin's maximum current and the net it drives has its loads stated (`set_net loads`), the new check `SEM.PIN_CURRENT` names the part, the pin, the current and the limit, and says what fixes it: a transistor or driver between pin and load, or less current. It is a warning over the limit and an error over twice it. Datasheet import now reads the per-pin current where the datasheet states one, and the bundled ATtiny85's I/O pins carry their 40 mA. The part card's *Max* column shows it. Pins without a stated limit are not checked, and supply rails stay with the existing current checks.
+
 ### Part import
 
 - **A datasheet that cannot be imported now says why and what to try next.** When a datasheet link led to a product page instead of the PDF, the import said only that it was not a PDF. Now it gives the page's title and, where the page links to a PDF, that link, so the agent can try it. A file that starts like a PDF but cannot be opened (a damaged or cut-short download) is reported as such, with the advice to download it again or download it in a browser and attach it. A scanned datasheet without a text layer is named as one: the import and `read_datasheet` tell the agent to read its pages as pictures instead of calling it unreadable.

@@ -41,6 +41,7 @@ export function runChecks(d: Design, placement?: SchematicView['constraintStatus
   requirementChecks(ctx);
   ratingChecks(ctx);
   ldoChecks(ctx);
+  pinCurrentChecks(ctx);
   seriesChecks(ctx);
   ledgerChecks(ctx, placement, why);
   applyWaivers(d, ctx.out);
@@ -309,6 +310,38 @@ function ratingChecks(ctx: Ctx) {
 const RATINGS = [6.3, 10, 16, 25, 35, 50, 63, 100];
 function suggestRating(v: number): number {
   return RATINGS.find((r) => r >= v * 1.5) ?? Math.ceil(v * 2);
+}
+
+/* ------------------------------ pin currents ------------------------------ */
+
+/** Pin types that drive a signal net and so source or sink what its loads draw. */
+const OUTPUTS = new Set(['out', 'bidir', 'tri', 'oc']);
+const ma = (a: number) => `${Math.round(a * 10000) / 10}`;
+
+/**
+ * SEM.PIN_CURRENT: an output pin with a stated limit, on a signal net whose loads draw more (a GPIO
+ * lighting an LED or a relay coil directly). The pin's current is the load stated on it, else the
+ * sum of the loads of other parts. Power rails are the current checks'. See docs/design/layout.md §14.
+ */
+function pinCurrentChecks(ctx: Ctx) {
+  const { d } = ctx;
+  for (const net of Object.values(d.nets)) {
+    if (isPowerNet(net)) continue;
+    const loads = statedLoads(d, net.id);
+    if (!loads.length) continue;
+    for (const { comp, pin } of ctx.members.get(net.id) ?? []) {
+      if (pin.maxCurrent === undefined || !OUTPUTS.has(pin.type)) continue;
+      const own = loads.filter((l) => l.componentId === comp.id);
+      const amps = own.length
+        ? own.reduce((s, l) => s + (l.pins.includes(pin.number) ? l.amps / l.pins.length : 0), 0)
+        : loads.reduce((s, l) => s + l.amps, 0);
+      if (amps <= pin.maxCurrent) continue;
+      push(ctx, amps > 2 * pin.maxCurrent ? 'error' : 'warning', 'SEM.PIN_CURRENT', [pinRef(comp, pin), netRef(net)],
+        `${pinRef(comp, pin)} drives ${net.name}, whose loads draw ${ma(amps)} mA; the pin is rated ${ma(pin.maxCurrent)} mA. ` +
+        `Drive the load through a transistor or driver (a small N-MOSFET or NPN switching it from the supply), or lower its current (a bigger series resistor).`,
+        { source: cardOf(d, comp.part)?.id });
+    }
+  }
 }
 
 /* ------------------------- linear regulators' heat ------------------------ */

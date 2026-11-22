@@ -94,6 +94,11 @@ export const DraftPin = z.object({
     .positive()
     .optional()
     .describe('Absolute maximum voltage of this pin, from the absolute maximum ratings table, where it is lower than the supply\'s: an enable, logic or sense input of a regulator or driver (EN of a 32 V LDO: 6.5). Leave out where the table gives none or only one relative to a supply (VCC + 0.3 V)'),
+  max_ma: z
+    .number()
+    .positive()
+    .optional()
+    .describe('Most current this output or I/O pin may source or sink (mA), where the datasheet states one per pin (a GPIO\'s 12 mA or 20 mA). Leave out where it gives none'),
 });
 export type DraftPin = z.infer<typeof DraftPin>;
 

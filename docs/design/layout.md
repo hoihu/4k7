@@ -1290,8 +1290,9 @@ finding turns the map on like the others.
 | Code | When | Severity | Fix hints |
 |---|---|---|---|
 | `DRC.SPOKE_CURRENT` | A pad or via joined to its pour only through relief spokes, on the current's way (above), that carry less than its current | error over twice the capacity, else warning | `add_vias kind: "drop"` beside the pad (grouped vias join solid), `add_vias kind: "tie"` at a via, `set_plane_style spoke_mm` |
+| `SEM.PIN_CURRENT` | An output or I/O pin whose card states its most current (`maxCurrent`, from the import's `max_ma`) drives a signal net (not a power rail) whose stated loads draw more: the load stated on the pin itself, else the sum of the other parts' loads (a GPIO lighting a 30 mA LED, rated 12 mA). A pin without a limit is not checked. Schematic only | error over twice the limit, else warning | none: drive the load through a transistor or driver, or lower its current |
 
-**Not yet** (follow-ups of the proposal): GND's split from the loads' returns, a ratio between two sources, pin currents (GPIO overload) and a DC solve of pours and planes.
+**Not yet** (follow-ups of the proposal): GND's split from the loads' returns, a ratio between two sources and a DC solve of pours and planes.
 Until that solve, a pour or plane counts as one node: a pour necked between two vias looks fine
 here, and carries no drop.
 
