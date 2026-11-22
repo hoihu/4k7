@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./reuse": "./src/reuse.ts"
   },
   "dependencies": {
     "@4k7/parts": "0.1.0",
