@@ -550,5 +550,6 @@ describe('the router lays no acid traps', () => {
     }
     expect(traps).toBe(0);
     expect(open).toBeLessThanOrEqual(15);
-  });
+    // 40 boards of full routing take about 2 s here and 5 s on a CI runner
+  }, 30_000);
 });
