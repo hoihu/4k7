@@ -30,6 +30,7 @@ import schematicGuide from '../../../../docs/design/schematic.md?raw';
 import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
+import { blocksOfProject } from '@4k7/kernel/reuse';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
 import { PartImports } from './importPart.ts';
@@ -59,6 +60,7 @@ import {
 import { disk, type ProjectEntry } from './disk.svelte.ts';
 import { fitConversation, projectJson, readProject, restoredSessions } from './conversation.ts';
 import { PLAN_STEP_OFF, PlanReview } from './plan.ts';
+import { addRecent, renameRecent } from './recentProjects.ts';
 
 /** A tool's answer before the chat's label is put on it. */
 type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
@@ -403,7 +405,7 @@ class AppState {
     this.agent.reset();
     this.chat = [];
     this.hunkOff = {};
-    if (this.settings.project !== id) void this.updateSettings({ project: id });
+    this.rememberProject(id);
     await this.ingest.adoptParts(design).catch(() => {});
     await this.refresh();
     return true;
@@ -474,6 +476,12 @@ class AppState {
     clearTimeout(this.conversationTimer);
     this.conversationTimer = null;
     void this.persist();
+  }
+
+  /** The project open now: opened first next time, and at the front of the recent projects. */
+  private rememberProject(id: string) {
+    if (this.settings.project === id && this.settings.recentProjects?.[0] === id) return;
+    void this.updateSettings({ project: id, recentProjects: addRecent(this.settings.recentProjects, id) });
   }
 
   async refreshProjects() {
@@ -862,7 +870,12 @@ class AppState {
     }
     if (!ds) return text(`${card.id} has no datasheet: neither a stored PDF nor a link.`, true);
     const { openPdf, pageText, pageCount, cropPage } = await import('./pdf.ts');
-    const doc = await openPdf(ds.hash, ds.data);
+    let doc: Awaited<ReturnType<typeof openPdf>>;
+    try {
+      doc = await openPdf(ds.hash, ds.data);
+    } catch (e) {
+      return text(`${card.id}'s datasheet ${ds.name} starts like a PDF but cannot be opened (${(e as Error).message}): it is damaged or was cut short. Ask the user to download it in a browser and attach it.`, true);
+    }
     const n = pageCount(doc);
     // the card's page numbers were read from the file it was imported from
     const other = card.provenance.document?.startsWith('sha256:') && card.provenance.document !== `sha256:${ds.hash}`;
@@ -896,6 +909,7 @@ class AppState {
     return text(
       [
         `${card.id} datasheet ${ds.name}, ${n} pages${caveat}.`,
+        !pages.some((t) => t.trim()) && 'It has no text layer, likely a scanned PDF: read its pages (page: n) as pictures; find cannot search it.',
         known && `Noted at import: ${known}.`,
         headings.length && `Design sections (by heading): ${headings.map((h) => `p.${h.page} ${h.heading}`).join(' · ')}.`,
         'Pages:',
@@ -1112,6 +1126,19 @@ class AppState {
         if ((input as { op?: string })?.op === 'get_enclosure') {
           const out = await this.enclosureQuery();
           return { content: JSON.stringify(out), isError: false, label: 'query · get_enclosure', detail: (out as { open_questions: string[] }).open_questions.length ? 'questions open' : 'ok' };
+        }
+        // another project's blocks, read from the projects folder: only a project it lists (docs/design/ops-api.md §7)
+        if ((input as { op?: string })?.op === 'list_blocks') {
+          const id = String((input as { project?: unknown }).project ?? '');
+          if (disk.status !== 'ok') return fail('query · list_blocks', 'No projects folder: the app is not connected to the 4k7 server.');
+          try {
+            const known = (await disk.listProjects()).map((p) => p.id);
+            const out = blocksOfProject(id, known.includes(id) ? await disk.loadProject(id) : undefined, known);
+            if ('error' in out) return fail('query · list_blocks', JSON.stringify(out));
+            return { content: JSON.stringify(out), isError: false, label: 'query · list_blocks', detail: `${id}: ${out.blocks.length} block(s)` };
+          } catch (e) {
+            return fail('query · list_blocks', (e as Error).message);
+          }
         }
         if ((input as { op?: string })?.op === 'get_guide') {
           const topic = (input as { topic?: string }).topic;
@@ -1618,7 +1645,7 @@ class AppState {
           this.projectId = await disk.createProject(json, this.newFileName);
           this.newFileName = undefined;
           this.renameFile = false; // named after the design, or the file it came from, already
-          void this.updateSettings({ project: this.projectId });
+          this.rememberProject(this.projectId);
           await this.refreshProjects();
         }
         this.unsaved = false;
@@ -1731,7 +1758,7 @@ class AppState {
     try {
       this.projectId = await disk.renameProject(id, name);
       this.renameFile = false;
-      if (this.projectId !== id) void this.updateSettings({ project: this.projectId });
+      if (this.projectId !== id) void this.updateSettings({ project: this.projectId, recentProjects: renameRecent(this.settings.recentProjects, id, this.projectId) });
       await this.refreshProjects();
     } catch (e) {
       this.flash(`The file keeps its name: ${(e as Error).message}`);

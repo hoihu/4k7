@@ -234,4 +234,16 @@ describe('enclosure graphics', () => {
     expect(scriptProblems(inlaid.replace("lid_text: { host: 'lid', colour: '#ffffff' }", "lid_text: { host: 'lid' }, lid: { host: 'base' }")).join(' ')).toContain('itself an inlay');
     expect(scriptProblems(inlaid.replace("{ host: 'lid', colour: '#ffffff' }", '"lid"')).join(' ')).toContain('inlays is plain text');
   });
+
+  it('reads a clear window: an inlay in clear filament, kept with the script', () => {
+    const windowed = `${SCRIPT.replace("['base', 'lid']", "['base', 'lid', 'lid_window']")}function lid_window() { return cube(1); }\nconst inlays = { lid_window: { host: 'lid', material: 'clear' } };\n`;
+    expect(scriptProblems(windowed)).toEqual([]);
+    expect(scriptInlays(windowed)).toEqual({ lid_window: { host: 'lid', material: 'clear' } });
+    expect(scriptInlays(windowed.replace("material: 'clear'", "material: 'clear', colour: '#ffcc00'"))).toEqual({ lid_window: { host: 'lid', material: 'clear', colour: '#ffcc00' } });
+    expect(scriptProblems(windowed.replace("'clear'", "'glass'")).join(' ')).toContain('material');
+    // set on the design and read back from it
+    const k = kernel();
+    expect(k.transact({ summary: 'box', ops: [{ op: 'set_enclosure_script', script: windowed }] }).status).toBe('ok');
+    expect(scriptInlays((k.query({ op: 'get_enclosure' }) as { script: string }).script)).toEqual({ lid_window: { host: 'lid', material: 'clear' } });
+  });
 });

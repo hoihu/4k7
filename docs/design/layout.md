@@ -587,7 +587,10 @@ Each step is useful alone.
     **Etching and pour checks** (2026-10-29, all in drc.ts, run with the routed or drawn copper and on each
     drawn op). `DRC.ACID_TRAP` (`acidDrc`, warning): two tracks of one net meeting at less than 90° (a bend, a
     junction, or a track ending on the side of another) with nothing of the net in the wedge between them: a pad,
-    via, pour or other track of the net filling it, or a junction inside a pad or via, clears it. `DRC.NECK`
+    via, pour or other track of the net filling it, or a junction inside a pad or via, clears it. The router
+    lays none of its own: a path that ends on the side of a track of its net at 45° turns before it and meets it
+    square, with a stub at 90° onto its centre line, or on the bend where that piece ends (`squareJoin` in
+    routetracks.ts, 2026-11-22; only with exact clearance, else the join stays as it was). `DRC.NECK`
     (`neckDrc`, warning): a track narrower than its net's width (`set_net`, its impedance rule, else the power or
     signal width), unless it is a neck (§5.7): an end on or within `neckReach` of a pad too small for that width,
     and no longer than twice that.
@@ -628,6 +631,12 @@ Each step is useful alone.
     kept relative to the new parent. `remove_constraint` goes back to the guess. The relation stays
     a mechanism (a dragged IC takes its parts along), but the agent decides it. Benches unchanged
     (2 and 4 layers: same board, tracks and vias).
+    Since 2026-11-21 a `place` (the agent's or a drag of the user's) is in board coordinates: it is
+    kept relative only to a parent declared with `attach`, no longer to the guessed one. Before, a
+    placed connector or part followed the IC the placer guessed it belonged with, so moving that IC
+    moved every part placed round it (on one board the agent locked ~50 parts to stop it). A place
+    of a part also turns the choices still kept relative to it without such a declaration (saved
+    earlier) into board coordinates where they stand. Parts the placer put down still follow.
 13. **Next.** (a) The placer's guesses softened one by one, judged on the benches: the board
     density, the margin to the edge, satellites always at the courtyard (the alignment snapping
     and the re-run of every guess on each move are done, §11). (b) Planes in try_placements
@@ -783,6 +792,17 @@ and cross checks and the production files' read-back, not the board DRC: on a dr
 edit (`set_footprint`) that moved an unconnected pad under a GND track, and two parts' pads touching,
 showed only as `FAB.SHORT`. Each message names both copper items (`U1.3 (not connected)`, `track t1
 (GND)`) and what to do: move or erase the drawn copper by id, else move the part or route again.
+
+**A footprint that changes under the copper.** A value can change a part's package (`set_param`
+voltage 50V on a generic 0603 capacitor sizes it up to 0805, `packageChoice`). The placement key
+leaves pad sizes out, so the routing stays done and the copper kept with the design is checked
+against the bigger land as it is: `get_diagnostics` and the board find a pad now over or too close
+to a via, the same in the session as after a reload. The transaction's own checks are the
+schematic's, so such an edit used to answer with nothing new. Now the `set_param` effect names the
+change (`C1: voltage=50V; package 0603 → 0805 (50V rating): …`), and where the board's copper is
+current (kept for this placement, or drawn) the transaction lays it once more and adds the
+`DRC.SHORT`, `DRC.CLEARANCE` and `DRC.VIA_IN_PAD` findings at that part's land to `introduced`
+(those that were not there before). An edit that changes no package lays nothing.
 
 Bench (`bench/drawn.ts`, the 128-part board of `bench/board.ts`, 3 clusters):
 

@@ -1,7 +1,7 @@
 /**
  * The ops on the circuit: parts, connections, nets, sheets and the constraints of the ledger.
  */
-import { closestPackages, isBoxSymbol, isTwoPin, packageOptions, searchParts, standardPackage } from '@4k7/parts';
+import { closestPackages, isBoxSymbol, isTwoPin, packageChoice, packageOf, packageOptions, searchParts, standardPackage } from '@4k7/parts';
 import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, DEFAULT_BOARD, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea, type SwapGroup } from '@4k7/schema';
 import { keepPlacement } from './board.ts';
 import { allocRefdes, cardOf, closest, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
@@ -125,6 +125,7 @@ export function setParam(d: Design, ref: string, params: Record<string, string |
   const c = resolveComponent(d, ref);
   const card = requireCard(d, c);
   validateParams(card, params, c.refdes);
+  const pkgBefore = packageOf(card, c.params, d.packageDefaults)?.name;
   for (const [key, value] of Object.entries(params)) {
     for (const k of hardParamConstraints(d, c.id, key)) {
       if (value === null || !sameValue(value, k.value ?? '')) {
@@ -138,7 +139,15 @@ export function setParam(d: Design, ref: string, params: Record<string, string |
     if (value === null) delete c.params[key];
     else c.params[key] = value;
   }
-  return { op: 'set_param', effect: `${c.refdes}: ${Object.entries(params).map(([k, v]) => `${k}=${v ?? '∅'}`).join(', ')}`, ids: [c.id] };
+  // a value that sizes the part up (or back down) changes its footprint: say so, the board's land changes with it
+  const pkgAfter = packageOf(card, c.params, d.packageDefaults)?.name;
+  let moved = '';
+  if (pkgBefore && pkgAfter && pkgBefore !== pkgAfter) {
+    const choice = packageChoice(card, c.params, d.packageDefaults);
+    const why = choice?.why === 'auto' && choice.reason ? ` (${choice.reason})` : '';
+    moved = `; package ${pkgBefore} → ${pkgAfter}${why}: its footprint on the board changes with it`;
+  }
+  return { op: 'set_param', effect: `${c.refdes}: ${Object.entries(params).map(([k, v]) => `${k}=${v ?? '∅'}`).join(', ')}${moved}`, ids: [c.id] };
 }
 
 /** Do not populate, or fit again (docs/design/assembly.md §8): the part stays in the netlist and on the board. */

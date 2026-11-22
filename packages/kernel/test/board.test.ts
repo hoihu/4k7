@@ -214,7 +214,7 @@ describe('dragging a part (place)', () => {
     k.accept(undefined, 'user');
     const after = k.board();
     const moved = after.parts.find((p) => p.refdes === 'C4')!;
-    expect([moved.x, moved.y, moved.locked, moved.intent]).toEqual([c4.x - 1, c4.y, false, { anchor: 'U1' }]);
+    expect([moved.x, moved.y, moved.locked, moved.intent]).toEqual([c4.x - 1, c4.y, false, {}]);
     expect(after.outline).toEqual(before.outline);
     // parts that did not have to give way stay exactly where they were
     const same = before.parts.filter((p) => {
@@ -278,18 +278,18 @@ const r = (v: number) => Math.round(v * 1000) / 1000;
 describe('the user\'s placement choices', () => {
   const at = (k: Kernel, ref: string) => k.board().parts.find((p) => p.refdes === ref)!;
 
-  it('a choice is kept relative to the parent part; moving the parent brings its parts along', () => {
+  it('a choice is kept relative to a parent it was attached to; moving the parent brings its parts along', () => {
     const k = buck();
     const c4 = at(k, 'C4');
     const c1 = at(k, 'C1');
     const u1 = at(k, 'U1');
-    // the user puts C4 somewhere else next to U1, then moves U1
-    k.transact({ summary: 'c4', ops: [{ op: 'place', ref: 'C4', x_mm: c4.x - 1, y_mm: c4.y }] });
+    // the user puts C4 somewhere else next to U1 (which it is attached to), then moves U1
+    k.transact({ summary: 'c4', ops: [{ op: 'attach', ref: 'C4', to: 'U1' }, { op: 'place', ref: 'C4', x_mm: c4.x - 1, y_mm: c4.y }] });
     k.transact({ summary: 'u1', ops: [{ op: 'place', ref: 'U1', x_mm: u1.x + 1, y_mm: u1.y + 1 }] });
     const c4b = at(k, 'C4');
     const u1b = at(k, 'U1');
     expect([u1b.x, u1b.y]).toEqual([u1.x + 1, u1.y + 1]);
-    // C4 (the user's choice, relative to U1) and C1 (placed automatically, U1's) follow U1
+    // C4 (the user's choice, relative to U1 as attached) and C1 (placed automatically, U1's) follow U1
     expect([c4b.x - u1b.x, c4b.y - u1b.y].map((v) => Math.round(v * 1000) / 1000)).toEqual([c4.x - 1 - u1.x, c4.y - u1.y].map((v) => Math.round(v * 1000) / 1000));
     const c1b = at(k, 'C1');
     expect(Math.hypot(c1b.x - u1b.x - (c1.x - u1.x), c1b.y - u1b.y - (c1.y - u1.y))).toBeLessThan(0.6);
@@ -350,7 +350,7 @@ describe('the user\'s placement choices', () => {
     const c4 = at(k, 'C4');
     k.transact({ summary: 'c', ops: [{ op: 'place', ref: 'C4', x_mm: c4.x - 1, y_mm: c4.y }, { op: 'place', ref: 'J1', x_mm: 4, y_mm: 8, lock: true }] });
     k.transact({ summary: 'again', ops: [{ op: 'propose_placement' }] });
-    expect(at(k, 'C4').intent).toEqual({ anchor: 'U1' });
+    expect(at(k, 'C4').intent).toEqual({});
     expect(at(k, 'J1').locked).toBe(true);
     k.transact({ summary: 'fresh', ops: [{ op: 'propose_placement', keep_choices: false }] });
     expect(at(k, 'C4').intent).toBeUndefined();
@@ -475,7 +475,7 @@ describe('who placed a part: the user\'s placement and the agent\'s', () => {
     expect(['C4', 'J1', 'R3', 'C5'].map((r) => at(k, r).by)).toEqual(['user', 'user', 'agent', 'user']);
     expect(at(k, 'U1').by).toBeUndefined();
     const s = boardSummary(k.board(), false);
-    expect(s.parts.find((p) => p.refdes === 'C4')!.placed).toBe('user (relative to U1)');
+    expect(s.parts.find((p) => p.refdes === 'C4')!.placed).toBe('user');
     expect(s.parts.find((p) => p.refdes === 'J1')!.placed).toBe('locked by the user');
     expect(s.parts.find((p) => p.refdes === 'R3')!.placed).toMatch(/^agent/);
     expect(s.user_placed!.parts).toEqual(['C4', 'C5', 'J1']);
@@ -1662,6 +1662,16 @@ describe('set_footprint (a land pattern from the datasheet drawing)', () => {
     expect(bz.pads.map((p) => p.number).sort()).toEqual(['1', '2']);
     expect(bz.body).toMatchObject({ w: 12, h: 12, round: true });
     expect(Math.hypot(bz.pads[0]!.x - bz.pads[1]!.x, bz.pads[0]!.y - bz.pads[1]!.y)).toBeCloseTo(7.6, 3);
+  });
+
+  it('mirrors pads read off a bottom-view drawing to the top view (view: bottom)', () => {
+    const k = withBuzzer();
+    const r = k.transact({ summary: 'footprint from a bottom view', ops: [{ op: 'set_footprint', ref: 'BZ1', name: 'BUZ12', pads, view: 'bottom' }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const bz = k.board().parts.find((p) => p.refdes === 'BZ1')!;
+    const [p1, p2] = ['1', '2'].map((n) => bz.pads.find((p) => p.number === n)!);
+    expect(p1!.x).toBeGreaterThan(p2!.x); // pin 1, drawn left from below, is right from above
+    expect(r.results[0]!.effect).toContain('mirrored from the bottom view');
   });
 
   it('refuses a land pattern that misses a pin', () => {
