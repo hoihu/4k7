@@ -862,7 +862,12 @@ class AppState {
     }
     if (!ds) return text(`${card.id} has no datasheet: neither a stored PDF nor a link.`, true);
     const { openPdf, pageText, pageCount, cropPage } = await import('./pdf.ts');
-    const doc = await openPdf(ds.hash, ds.data);
+    let doc: Awaited<ReturnType<typeof openPdf>>;
+    try {
+      doc = await openPdf(ds.hash, ds.data);
+    } catch (e) {
+      return text(`${card.id}'s datasheet ${ds.name} starts like a PDF but cannot be opened (${(e as Error).message}): it is damaged or was cut short. Ask the user to download it in a browser and attach it.`, true);
+    }
     const n = pageCount(doc);
     // the card's page numbers were read from the file it was imported from
     const other = card.provenance.document?.startsWith('sha256:') && card.provenance.document !== `sha256:${ds.hash}`;
@@ -896,6 +901,7 @@ class AppState {
     return text(
       [
         `${card.id} datasheet ${ds.name}, ${n} pages${caveat}.`,
+        !pages.some((t) => t.trim()) && 'It has no text layer, likely a scanned PDF: read its pages (page: n) as pictures; find cannot search it.',
         known && `Noted at import: ${known}.`,
         headings.length && `Design sections (by heading): ${headings.map((h) => `p.${h.page} ${h.heading}`).join(' · ')}.`,
         'Pages:',

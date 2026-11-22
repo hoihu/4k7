@@ -1,11 +1,11 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { SERVER_PROTOCOL, type ServerToTab, type ChatEvent } from '@4k7/schema';
-import { LocalServer, ChatRunner, detectClaude, mcpHttpHandler, pdfPages, type ClaudeProfile } from '../src/index.ts';
+import { LocalServer, ChatRunner, detectClaude, mcpHttpHandler, pdfPages, prepareDatasheet, type ClaudeProfile } from '../src/index.ts';
 
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 // on Windows behind an npm shim, like a real agent installed with npm
@@ -273,6 +273,15 @@ describe('datasheet import via Claude Code', () => {
     const data = new Uint8Array(Buffer.from(tinyPdf('x'), 'base64'));
     await pdfPages(data);
     expect(data.byteLength).toBeGreaterThan(0); // the caller's buffer is left intact
+  });
+
+  it('says when a PDF has no text layer, and when it starts like a PDF but cannot be opened', async () => {
+    const { run, ingestDir } = await setup();
+    const scan = mkdtempSync(join(ingestDir, 'scan-'));
+    expect(await prepareDatasheet(scan, new Uint8Array(Buffer.from(tinyPdf(''), 'base64')))).toEqual({ pages: 1, text: false });
+    expect(readFileSync(join(scan, 'index.txt'), 'utf8')).toContain('no text layer, likely a scanned PDF');
+    const es = await run({ type: 'ingest', id: 'i4', mpn: 'X', pdf: { name: 'x.pdf', base64: Buffer.from('%PDF-1.4\n<html>cut short').toString('base64') } });
+    expect(es.at(-1)).toMatchObject({ kind: 'done', ok: false, error: expect.stringContaining('starts like a PDF but cannot be opened') });
   });
 
   it('rejects files that are not PDFs', async () => {

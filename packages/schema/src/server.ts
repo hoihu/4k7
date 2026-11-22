@@ -166,7 +166,7 @@ export function ingestPrompt(): string {
 
 The current folder contains only the datasheet:
 - pages/page-NNN.txt: text of every page (tables are rows with " | " between cells; multi-line cells wrap onto following lines)
-- index.txt: one line per page with its first heading, to find sections quickly
+- index.txt: one line per page with its first heading, to find sections quickly (where its first line says the PDF has no text layer, it is a scan: read the pages of datasheet.pdf instead)
 - datasheet.pdf: the original, for figures if the text is ambiguous (read specific pages only)
 You can use Read, Grep and Glob in this folder, and the tool mcp__4k7__submit_part. Nothing else.
 
