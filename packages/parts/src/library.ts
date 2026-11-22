@@ -306,6 +306,7 @@ export const IC_PARTS: PartCard[] = [
     requirements: [{ kind: 'decouple', pin: 'V+', min: '100nF', src: builtin() }],
     provenance: builtin(),
     notes: ['Unused op-amp: connect as follower with + input to a defined voltage.'],
+    swapGroups: [{ name: 'op-amp channels', members: [['3', '2', '1'], ['5', '6', '7']] }],
   },
   {
     id: 'microchip:ATTINY85-20SU',

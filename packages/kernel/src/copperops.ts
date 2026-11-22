@@ -894,6 +894,7 @@ const COPPER_AFTER: Record<EditOp['op'], 'follow' | 'check' | null> = {
   rename: null,
   connect: 'follow',
   disconnect: 'follow',
+  swap_pins: 'follow',
   no_connect: 'follow',
   set_net: null,
   add_sheet: 'follow',

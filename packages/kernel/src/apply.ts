@@ -10,7 +10,7 @@ import { eraseOp, labelOp, moveSupplyOp, textOp, wireOp } from './drawops.ts';
 import { setEnclosureBrief, setEnclosureGraphic, setEnclosureScript } from './enclosureops.ts';
 import { addKeepout, editKeepout, removeKeepout } from './keepout.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
-import { addPart, addSheet, clearSheet, connect, constrain, disconnect, moveToSheet, noConnect, remove, removeSheet, rename, setDnp, setNet, setParam } from './netops.ts';
+import { addPart, addSheet, clearSheet, connect, constrain, disconnect, moveToSheet, noConnect, remove, removeSheet, rename, setDnp, setNet, setParam, swapPins } from './netops.ts';
 import { renamePart, setFootprint, setMating, setPackageDefaults, setPinDescriptions, setPolarity, setSymbol, setValueSeries } from './partops.ts';
 import { autoDraw, describe, placeBlock, placeSymbol, setPaper } from './sheetops.ts';
 import { addTestPoints } from './testpoints.ts';
@@ -37,6 +37,8 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return connect(d, op.pins, op.net);
     case 'disconnect':
       return disconnect(d, op.pins);
+    case 'swap_pins':
+      return swapPins(d, op.a, op.b);
     case 'no_connect':
       return noConnect(d, op.pins);
     case 'set_net':

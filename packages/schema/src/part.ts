@@ -160,6 +160,23 @@ export interface PartCard {
    * out of the BOM, the pick-and-place, the stock and cost checks, and has no 3D body.
    */
   padOnly?: boolean;
+  /**
+   * Pins or gates that may be swapped for each other (swap_pins) without changing what the part
+   * does: the pins of a resistor array, the channels of a dual op-amp. Only what the datasheet
+   * says is interchangeable; never guessed. See docs/design/data-model.md.
+   */
+  swapGroups?: SwapGroup[];
+}
+
+/**
+ * One group of interchangeable members. A member is one pin, or a gate: an ordered tuple of pins
+ * that moves together (an op-amp channel is [IN+, IN−, OUT]). Pins are given by number; every
+ * member of a group has the same length, position i of one gate matching position i of the others.
+ */
+export interface SwapGroup {
+  /** What the members are, e.g. "op-amp channels", "resistors". */
+  name: string;
+  members: string[][];
 }
 
 /** PDF pages of a datasheet's sections, as the importer found them. */
