@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Projects
+
+- **Switch to a recent project in one click** (Settings → General → Recent). Moving between two designs used to mean picking the file again with *Open file…* every time, and the app did not show which projects you had opened. Now the last 8 projects you opened are listed under *Open file…*, most recent first, without the one that is open; click one to open it. A project whose file is no longer in the projects folder (moved, renamed or deleted outside the app) is shown greyed out. A project renamed in the app keeps its place in the list.
+
 ### Power
 
 - **The agent can show you the whole power tree in one answer.** Before, what feeds what came out piece by piece: the power checks, the current check and the linear regulator heat check each looked at their own part of it. Now ask the agent "what feeds what, and will anything run hot?" and it reads `get_power_tree`: for every supply rail, where its power comes from (a regulator, a connector, a battery, or unknown), the ferrites, fuses and resistors between, the rails it feeds, its loads and its current against its maximum current. For a linear regulator it also gives the heat, for example 0.85 W where a SOT-23 sheds 0.29 W, the same numbers as `SEM.LDO_DISSIPATION`. A rail without a maximum current or stated loads shows its current as unknown, never as fine.
