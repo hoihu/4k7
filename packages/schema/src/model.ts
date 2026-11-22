@@ -190,6 +190,12 @@ export interface NetAttrs {
   routeFirst?: boolean;
   /** The copper layer its tracks should keep to on the board: a cost on the others, not a ban. */
   layer?: 'F.Cu' | 'In1.Cu' | 'In2.Cu' | 'B.Cu';
+  /**
+   * The MCU pin functions this net uses (set_net needs), by the names of the part card's swap
+   * group: "GPIO" for plain digital I/O, a name such as "SCL", or "ADC*" for any channel of a
+   * kind. swap_pins moves the net only to a pin that offers them all. See docs/design/layout.md §10.
+   */
+  needs?: string[];
 }
 
 export interface NetLoad {
