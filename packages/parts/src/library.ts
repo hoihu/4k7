@@ -27,6 +27,26 @@ export const GENERIC_PARTS: PartCard[] = [
     provenance: builtin('generic'),
   },
   {
+    id: 'generic:R_ARRAY_4',
+    title: 'Resistor array 4×',
+    description: 'Resistor array, 4 isolated resistors of one value, convex 0603×4 (4D03, YC164)',
+    category: 'resistor',
+    refPrefix: 'RN',
+    package: '0603x4',
+    pins: ['1', '2', '3', '4', '5', '6', '7', '8'].map((n) => ({ ...passive(n), side: Number(n) <= 4 ? ('left' as const) : ('right' as const) })),
+    params: {
+      resistance: { unit: 'Ω', required: true, description: 'Each of the four' },
+      tolerance: { description: 'e.g. 1%' },
+    },
+    provenance: builtin('generic'),
+    notes: ['Four isolated resistors: R1 between pins 1 and 8, R2 2–7, R3 3–6, R4 4–5. Whole resistors and the two ends of one swap freely (swap_pins).'],
+    // the resistors as gates (both ends move together), and each resistor's two ends
+    swapGroups: [
+      { name: 'resistors', members: [['1', '8'], ['2', '7'], ['3', '6'], ['4', '5']] },
+      ...[1, 2, 3, 4].map((n) => ({ name: `R${n} ends`, members: [[String(n)], [String(9 - n)]] })),
+    ],
+  },
+  {
     id: 'generic:C',
     title: 'Capacitor',
     description: 'Capacitor, non-polarized (ceramic)',

@@ -37,7 +37,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `get_current_map`: the routed copper against each net's current: per net ok, unverified or unknown (and, with loads stated, the drop to the furthest load against 3 % of the rail), and the tracks and vias that do not carry it, worst first, with their fixes (see [layout](layout.md) §14).
 - `get_power_tree`: what feeds what: per power rail its source, the series parts it is fed through, the rails it feeds, its loads, current budget and a linear regulator's dissipation (shape in §6).
 - `try_placements`: compare arrangements of the main parts without changing the design.
-- `suggest_moves`: small-part moves (turn, swap, shift) that close open connections, without applying them.
+- `suggest_moves`: small-part moves (turn, swap, shift) that close open connections, without applying them; and, under *swaps*, the pin and gate swaps the part cards declare that make the ratsnest shorter or cross less, each with its `swap_pins` op, the crossings and ratsnest mm before and after, and `schematic_change: true` (`layout.md` §10).
 - `list_blocks`: the functional blocks of another stored project, to reuse one: parts, internal and boundary nets (shape in §7).
 - `get_enclosure`: the enclosure brief, script, board API and last render report.
 - `get_guide`: an agent guide (schematic, cost, mechanics, high_speed).
