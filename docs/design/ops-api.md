@@ -38,6 +38,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `get_power_tree`: what feeds what: per power rail its source, the series parts it is fed through, the rails it feeds, its loads, current budget and a linear regulator's dissipation (shape in §6).
 - `try_placements`: compare arrangements of the main parts without changing the design.
 - `suggest_moves`: small-part moves (turn, swap, shift) that close open connections, without applying them.
+- `list_blocks`: the functional blocks of another stored project, to reuse one: parts, internal and boundary nets (shape in §7).
 - `get_enclosure`: the enclosure brief, script, board API and last render report.
 - `get_guide`: an agent guide (schematic, cost, mechanics, high_speed).
 
@@ -262,3 +263,29 @@ only between two power nets, as elsewhere it is a pull-up or a divider), away fr
 neither is `unknown`. `dissipation` is on the rail a linear regulator drives directly; a switcher's rail
 has none. The budget is `unknown` without max_current, and where a switcher is fed (its input current
 depends on its efficiency).
+
+## 7. Blocks of another project (`list_blocks`)
+
+`design_query list_blocks { project }` reads another project in the projects folder, by its id (the file
+name without `.twd.json`), and lists its functional blocks (its `describe` blocks), so the agent can reuse a
+proven one. The app answers it: it reads the file through the server only when the server lists that id
+(the server refuses ids with path characters), and `blocksOfProject` (`packages/kernel/src/reuse.ts`)
+turns it into the answer. Neither project changes.
+
+```jsonc
+{ "project": "usb-lamp",
+  "blocks": [
+    { "block": 1, "title": "5 V in and 3.3 V LDO", "text": "…",   // describe order, from 1; text may be ""
+      "parts": [{ "ref": "C1", "part": "generic:C", "params": { "capacitance": "10uF" } }], // dnp: true where set
+      "internal_nets": ["FB"],                                     // only this block's parts are on them
+      "boundary_nets": [
+        { "net": "+3V3", "why": "parts outside", "pins": ["C2.1", "U1.VOUT"], "outside": ["R1"] },
+        { "net": "+5V", "why": "supply", "pins": ["C1.1", "J1.1", "U1.VIN"] } ] } ], // why: parts outside | off-board | supply
+  "not_in_a_block": ["R9"],                                        // left out when every part is in a block
+  "note": "…" }
+```
+
+A boundary net leaves the block: a part outside the block is on it, it is marked external (off the board),
+or it is a supply or ground, which the importing design has its own of even where only this block uses it.
+A project without blocks answers `blocks: []` with a note; an unknown or unreadable project answers
+`{ "error", "projects" }` (the ids the folder has). The edit op `import_block` that copies a block in comes next.

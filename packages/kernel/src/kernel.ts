@@ -660,6 +660,8 @@ export class Kernel {
         return { brief: d.enclosure?.brief ?? null, script: d.enclosure?.script ?? null, graphics: enclosureGraphicsInfo(d.enclosure?.graphics) };
       case 'get_guide':
         return { error: 'The guides are served by the app.' };
+      case 'list_blocks':
+        return { error: 'list_blocks is answered by the app, which reads the projects folder.' };
     }
   }
 

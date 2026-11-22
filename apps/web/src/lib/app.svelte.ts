@@ -30,6 +30,7 @@ import schematicGuide from '../../../../docs/design/schematic.md?raw';
 import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
+import { blocksOfProject } from '@4k7/kernel/reuse';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
 import { PartImports } from './importPart.ts';
@@ -1112,6 +1113,19 @@ class AppState {
         if ((input as { op?: string })?.op === 'get_enclosure') {
           const out = await this.enclosureQuery();
           return { content: JSON.stringify(out), isError: false, label: 'query · get_enclosure', detail: (out as { open_questions: string[] }).open_questions.length ? 'questions open' : 'ok' };
+        }
+        // another project's blocks, read from the projects folder: only a project it lists (docs/design/ops-api.md §7)
+        if ((input as { op?: string })?.op === 'list_blocks') {
+          const id = String((input as { project?: unknown }).project ?? '');
+          if (disk.status !== 'ok') return fail('query · list_blocks', 'No projects folder: the app is not connected to the 4k7 server.');
+          try {
+            const known = (await disk.listProjects()).map((p) => p.id);
+            const out = blocksOfProject(id, known.includes(id) ? await disk.loadProject(id) : undefined, known);
+            if ('error' in out) return fail('query · list_blocks', JSON.stringify(out));
+            return { content: JSON.stringify(out), isError: false, label: 'query · list_blocks', detail: `${id}: ${out.blocks.length} block(s)` };
+          } catch (e) {
+            return fail('query · list_blocks', (e as Error).message);
+          }
         }
         if ((input as { op?: string })?.op === 'get_guide') {
           const topic = (input as { topic?: string }).topic;
