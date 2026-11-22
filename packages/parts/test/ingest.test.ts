@@ -135,6 +135,38 @@ describe('draft → part card', () => {
   });
 });
 
+describe('a pad drawing in bottom view (D19)', () => {
+  /** A Cree XP-G3-like LED whose datasheet draws the pads from below: the anode on the left as drawn. */
+  const xpg3 = (pads_view?: 'top' | 'bottom'): PartDraft => ({
+    mpn: 'XPGDRY-L1-0000-00501', manufacturer: 'Cree LED', description: 'XP-G3 white power LED, 3.45 mm', category: 'led',
+    package: {
+      name: 'XP-G3', family: 'other', pins: 2, body_mm: [3.45, 3.45], body_chamfer: { mm: 0.3, corners: ['tl'] },
+      pads: [{ number: '2', x: -1.4, y: 0, w: 0.5, h: 3.3, shape: 'rect' }, { number: '1', x: 1.4, y: 0, w: 0.5, h: 3.3, shape: 'rect' }],
+      ...(pads_view ? { pads_view } : {}),
+    },
+    pins: [{ number: '1', name: 'K', type: 'passive', page: 3 }, { number: '2', name: 'A', type: 'passive', page: 3 }],
+  });
+
+  it('mirrors a bottom-view drawing to the top view once, so the anode lands on the right', () => {
+    const { card, issues } = draftToCard(xpg3('bottom'));
+    expect(issues.filter((i) => i.severity === 'error')).toEqual([]);
+    const pkg = card!.packageInfo!;
+    expect(pkg.pads!.find((p) => p.number === '2')!.x).toBe(1.4); // anode, seen from above
+    expect(pkg.pads!.find((p) => p.number === '1')!.x).toBe(-1.4);
+    expect(pkg.body_chamfer!.corners).toEqual(['tr']);
+    expect(pkg.pads_view).toBeUndefined(); // stored pads are top view
+    const fp = footprintFor(pkg, ['1', '2']);
+    if (!fp.ok) throw new Error(fp.reason);
+    expect(fp.footprint.pads.find((p) => p.number === '2')!.x).toBeGreaterThan(0);
+  });
+
+  it('keeps a top-view drawing as drawn, and warns when the drawing\'s view is not said', () => {
+    expect(draftToCard(xpg3('top')).card!.packageInfo!.pads!.find((p) => p.number === '2')!.x).toBe(-1.4);
+    const { issues } = draftToCard(xpg3());
+    expect(issues.some((i) => i.severity === 'warning' && /bottom view/.test(i.message))).toBe(true);
+  });
+});
+
 describe('two-pass reconciliation', () => {
   it('finds pin and package disagreements and merges the chosen values', async () => {
     const { compareDrafts, mergeDrafts } = await import('../src/index.ts');

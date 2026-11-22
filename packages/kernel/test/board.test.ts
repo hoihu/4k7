@@ -1664,6 +1664,16 @@ describe('set_footprint (a land pattern from the datasheet drawing)', () => {
     expect(Math.hypot(bz.pads[0]!.x - bz.pads[1]!.x, bz.pads[0]!.y - bz.pads[1]!.y)).toBeCloseTo(7.6, 3);
   });
 
+  it('mirrors pads read off a bottom-view drawing to the top view (view: bottom)', () => {
+    const k = withBuzzer();
+    const r = k.transact({ summary: 'footprint from a bottom view', ops: [{ op: 'set_footprint', ref: 'BZ1', name: 'BUZ12', pads, view: 'bottom' }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const bz = k.board().parts.find((p) => p.refdes === 'BZ1')!;
+    const [p1, p2] = ['1', '2'].map((n) => bz.pads.find((p) => p.number === n)!);
+    expect(p1!.x).toBeGreaterThan(p2!.x); // pin 1, drawn left from below, is right from above
+    expect(r.results[0]!.effect).toContain('mirrored from the bottom view');
+  });
+
   it('refuses a land pattern that misses a pin', () => {
     const k = withBuzzer();
     const r = k.transact({ summary: 'bad', ops: [{ op: 'set_footprint', ref: 'BZ1', name: 'BUZ', pads: [pads[0]!] }] });
