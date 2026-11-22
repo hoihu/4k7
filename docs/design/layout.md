@@ -878,7 +878,8 @@ finds "R104 0.5 mm right"; applied and routed again with the same 1.5 s, the boa
 Next steps, not done: offer the suggestions unasked (get_board's open connections could carry the
 best one, computed in the board worker after routing); let the router try them itself when it is
 stuck (with the user's parts out of bounds, reported in the effect); pin and gate swaps (two
-channels of an op-amp, equivalent MCU pins), which change the schematic and need the user's say;
+channels of an op-amp, equivalent MCU pins), which change the schematic and need the user's say
+(the `swap_pins` op exists, inside the part card's swap groups; suggest_moves does not offer it yet);
 and blocks as areas the parts keep to (rooms, done: §15).
 
 ## 11. A steadier placer, and congestion as a placement measure (2026-10-29)

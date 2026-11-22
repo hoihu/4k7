@@ -62,6 +62,8 @@ export type RejectionCode =
   | 'PIN_UNKNOWN'
   | 'REFDES_TAKEN'
   | 'PIN_ALREADY_CONNECTED'
+  /** swap_pins outside a swap group the part card declares. */
+  | 'SWAP_INVALID'
   | 'NET_MERGE_AMBIGUOUS'
   | 'NET_UNKNOWN'
   | 'NET_NAME_TAKEN'

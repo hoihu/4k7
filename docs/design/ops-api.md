@@ -64,6 +64,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `rename`: change a component's reference designator.
 - `connect`: put pins on a net.
 - `disconnect`: take pins off their net.
+- `swap_pins`: swap two pins, or two gates, of one component (`a: "U1.INA+", b: "U1.INB+"`): their nets, no-connect marks and net loads change places. Only inside a swap group the part card declares (`swapGroups`, `data-model.md` §2); a gate swap moves every pin of the gate (an op-amp channel's IN+, IN− and OUT), and the two pins named must sit at the same place in their gates. Refused (`SWAP_INVALID`) for pins of two components, a pin in no group, pins in different groups, two pins of one gate, a name on several pins, and gates of different lengths. It changes the netlist, so the schematic, the board and drawn copper follow as for `connect`; Optimize refuses it.
 - `no_connect`: mark pins as deliberately unconnected.
 - `set_net`: rename a net and set its voltage, external/power flags, max current, the loads its pins draw (`loads: [{ pin: "U3.VDD", amps: 0.35 }]`, null clears; each pin must be on the net and draw more than 0 A; the current check splits the net's current over its copper from them, `layout.md` §14), track width, how it is drawn, and on the board whether the router routes it first and the layer its tracks keep to (a cost, not a ban).
 - `describe`: the functional blocks (which group and order the schematic) and the design document text.
@@ -213,6 +214,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 | `REF_UNKNOWN` | name doesn't resolve; response lists the closest matches |
 | `PIN_TYPE_CONFLICT` | e.g. two `pwr_out` pins on one net |
 | `PARAM_OUT_OF_RANGE` | value outside the part card's allowed range |
+| `SWAP_INVALID` | `swap_pins` outside one swap group of the part card |
 | `CONSTRAINT_CONFLICT` | new hard constraint contradicts an existing one; both are returned |
 | `CURRENT_CAPACITY` | net class width can't carry the net's declared current |
 | `FAB_LIMIT` | rule below the selected fab profile |

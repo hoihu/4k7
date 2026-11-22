@@ -65,6 +65,12 @@ export const DisconnectOp = z.object({
   pins: z.array(pinRef).min(1),
 });
 
+export const SwapPinsOp = z.object({
+  op: z.literal('swap_pins'),
+  a: pinRef.describe('A pin of the component, e.g. "RN1.2", or a pin of one gate, e.g. "U1.INA+"'),
+  b: pinRef.describe('The pin (or the pin at the same place in the other gate, e.g. "U1.INB+") of the same component to swap with'),
+}).describe('Swap two pins, or two gates (an op-amp channel: all its pins move together), of one component, where its part card declares them interchangeable (get_part swapGroups): their nets change places. This changes the netlist; the schematic and the board follow. Refused for pins in no group or in different groups.');
+
 export const NoConnectOp = z.object({
   op: z.literal('no_connect'),
   pins: z.array(pinRef).min(1).describe('Pins deliberately left unconnected'),
@@ -838,6 +844,7 @@ export const EditOp = z.discriminatedUnion('op', [
   RenameOp,
   ConnectOp,
   DisconnectOp,
+  SwapPinsOp,
   NoConnectOp,
   SetNetOp,
   AddSheetOp,

@@ -2,7 +2,7 @@
  * The ops on the circuit: parts, connections, nets, sheets and the constraints of the ledger.
  */
 import { closestPackages, isBoxSymbol, isTwoPin, packageChoice, packageOf, packageOptions, searchParts, standardPackage } from '@4k7/parts';
-import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, DEFAULT_BOARD, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea } from '@4k7/schema';
+import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, DEFAULT_BOARD, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea, type SwapGroup } from '@4k7/schema';
 import { keepPlacement } from './board.ts';
 import { allocRefdes, cardOf, closest, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
 import { isDrawn } from './drawing.ts';
@@ -259,6 +259,57 @@ export function disconnect(d: Design, refs: string[]): OpResult {
   const pins = flatPins(d, refs);
   for (const h of pins) delete h.comp.pins[h.pin.number];
   return { op: 'disconnect', effect: `disconnected ${pins.map(pinLabel).join(', ')}` };
+}
+
+/**
+ * Swaps two pins, or the two gates they sit in, of one component: only inside a swap group of its
+ * part card (a wrong swap is a dead board, so nothing is guessed). Their nets, no-connect marks and
+ * the net loads naming them change places. See docs/design/ops-api.md.
+ */
+export function swapPins(d: Design, refA: string, refB: string): OpResult {
+  const one = (ref: string): PinHandle => {
+    const hs = resolvePins(d, ref);
+    if (hs.length > 1) reject({ code: 'SWAP_INVALID', message: `${ref} names ${hs.length} pins; give one by number (${hs.map((h) => `${h.comp.refdes}.${h.pin.number}`).join(', ')}).` });
+    return hs[0]!;
+  };
+  const a = one(refA);
+  const b = one(refB);
+  const bad = (message: string): never => reject({ code: 'SWAP_INVALID', message });
+  if (a.comp.id !== b.comp.id) bad(`${pinLabel(a)} and ${pinLabel(b)} are on different components; a swap stays inside one part.`);
+  if (a.pin.number === b.pin.number) bad(`${pinLabel(a)} and ${pinLabel(b)} are the same pin.`);
+  const card = requireCard(d, a.comp);
+  const groups = card.swapGroups ?? [];
+  if (!groups.length) bad(`${card.id} declares no swappable pins: its pins stay where they are.`);
+  const memberOf = (g: SwapGroup, n: string) => g.members.find((m) => m.includes(n));
+  const list = groups.map((g) => `${g.name} (${g.members.map((m) => m.join('/')).join(', ')})`).join('; ');
+  for (const h of [a, b]) if (!groups.some((g) => memberOf(g, h.pin.number))) bad(`${pinLabel(h)} is in no swap group of ${card.id}; groups: ${list}.`);
+  // a pin may be in several groups (an array's resistor ends, and the resistors as gates): the one holding both
+  const g = groups.find((x) => memberOf(x, a.pin.number) && memberOf(x, b.pin.number) && memberOf(x, a.pin.number) !== memberOf(x, b.pin.number));
+  if (!g) {
+    if (groups.some((x) => memberOf(x, a.pin.number) && memberOf(x, a.pin.number) === memberOf(x, b.pin.number))) bad(`${pinLabel(a)} and ${pinLabel(b)} are in the same gate; swap whole gates (pins at the same place in two gates).`);
+    bad(`${pinLabel(a)} and ${pinLabel(b)} are in different swap groups of ${card.id}, so they are not interchangeable; groups: ${list}.`);
+  }
+  const [ga, gb] = [a, b].map((h) => {
+    const m = memberOf(g!, h.pin.number)!;
+    return { m, at: m.indexOf(h.pin.number) };
+  }) as [{ m: string[]; at: number }, { m: string[]; at: number }];
+  if (ga.m.length !== gb.m.length) bad(`The members of ${pinLabel(a)} and ${pinLabel(b)} have different shapes (${ga.m.length} and ${gb.m.length} pins); ${card.id}'s swap group ${g!.name} is malformed.`);
+  if (ga.at !== gb.at) bad(`${pinLabel(a)} and ${pinLabel(b)} sit at different places in their gates (${ga.at + 1} and ${gb.at + 1} of ${ga.m.join('/')} and ${gb.m.join('/')}); name the matching pins, e.g. two IN+ pins.`);
+  const c = a.comp;
+  const other = new Map<string, string>();
+  ga.m.forEach((n, i) => (other.set(n, gb.m[i]!), other.set(gb.m[i]!, n)));
+  const pins = { ...c.pins };
+  for (const [n, o] of other) {
+    if (pins[o]) c.pins[n] = pins[o];
+    else delete c.pins[n];
+  }
+  c.noConnect = c.noConnect.map((n) => other.get(n) ?? n);
+  for (const net of Object.values(d.nets)) {
+    for (const l of net.attrs.loads ?? []) if (l.componentId === c.id) l.pins = l.pins.map((n) => other.get(n) ?? n);
+  }
+  const name = (n: string) => card.pins.find((p) => p.number === n)!;
+  const moved = [...other].map(([n]) => `${pinLabel({ comp: c, pin: name(n) })} → ${c.pins[n] ? d.nets[c.pins[n]]!.name : 'unconnected'}`);
+  return { op: 'swap_pins', effect: `swapped ${moved.join(', ')}`, ids: [c.id] };
 }
 
 export function noConnect(d: Design, refs: string[]): OpResult {
