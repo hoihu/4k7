@@ -214,7 +214,7 @@ The app loads the pieces' triangles into the 3D view with the board (`Board3DVie
 renders, for the agent:
 
 - two angled views (front-left-top and back-right-top),
-- the box opened: the lid lifted by its height plus 10 mm,
+- the box opened: the lid lifted by its height plus 10 mm (the Enclosure view draws it closer, by a share the user sets with a slider),
 - a section through every opening the brief asks for, cut across the wall at the part's centre
   (three.js clipping planes), which shows a plug's path, the wall's thickness and the fit,
 - the base from above without the lid, which shows posts, ribs and the board on them.

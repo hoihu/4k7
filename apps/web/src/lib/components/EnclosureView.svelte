@@ -45,6 +45,24 @@
 
   /* the 3D view */
   let open = $state(false);
+  /**
+   * How far apart the opened view draws the pieces: a share of the full lift (the box's height and
+   * 10 mm per piece), kept in this browser. A third keeps a tall stack in view and still shows each piece.
+   */
+  const SPREAD_KEY = '4k7.enclosure.spread';
+  let spread = $state(readSpread());
+  function readSpread(): number {
+    try {
+      const v = Number(localStorage.getItem(SPREAD_KEY));
+      if (v >= 0.05 && v <= 1) return v;
+    } catch {}
+    return 0.3;
+  }
+  $effect(() => {
+    try {
+      localStorage.setItem(SPREAD_KEY, String(spread));
+    } catch {}
+  });
   let hidden = $state<Record<string, boolean>>({});
   /** The board with its parts, shown in the box (off: how the box holds it). */
   let pcb = $state(true);
@@ -55,7 +73,7 @@
   const hosts = $derived(pieces.filter((p) => !inlays[p.name] || !pieces.some((h) => h.name === inlays[p.name]!.host)));
   const openings = $derived(brief?.openings ?? []);
   const scene = $derived(b && last ? { board: b, facts: last.facts, pieces, findings: last.report.findings, openings, inlays } : null);
-  const options = $derived({ open: open ? 1 : 0, show: hosts.filter((p) => !hidden[p.name]).map((p) => p.name), marks: true, board: pcb });
+  const options = $derived({ open: open ? spread : 0, show: hosts.filter((p) => !hidden[p.name]).map((p) => p.name), marks: true, board: pcb });
 
   /*
    * The cut: a plane through the box, across x, y or z. It starts in the middle, the half the
@@ -72,7 +90,7 @@
   let lastCut: Section | null = null;
   let view3d: Enclosure3DView | undefined = $state();
   /** What the cut goes through: the board and the pieces as shown (opened: the lifted ones too). */
-  const cutBox = $derived(last ? contentBox(last.facts, pieces, open ? liftStep(pieces) * (hosts.length - 1) : 0) : null);
+  const cutBox = $derived(last ? contentBox(last.facts, pieces, open ? liftStep(pieces) * spread * (hosts.length - 1) : 0) : null);
   /** Where the cut can go, on the slider's 0.1 mm steps. */
   const cutRange = $derived.by(() => {
     if (!cut || !cutBox) return null;
@@ -195,6 +213,12 @@
         {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
         {#if pieces.length}
           <div class="seg"><button aria-pressed={!open} onclick={() => (open = false)}>Closed</button><button aria-pressed={open} onclick={() => (open = true)}>Opened</button></div>
+          {#if open && hosts.length > 1}
+            <label class="slide" title="How far apart the opened pieces are drawn">
+              <input type="range" min="0.05" max="1" step="0.01" bind:value={spread} />
+              <span class="mono">{Math.round(liftStep(pieces) * spread)} mm apart</span>
+            </label>
+          {/if}
           <div class="seg">
             <button aria-pressed={pcb} title="Show or hide the board with its parts (hide it to see how the box holds it)" onclick={() => (pcb = !pcb)}>PCB</button>
             {#each hosts as p (p.name)}<button aria-pressed={!hidden[p.name]} title="Show or hide the {p.name}" onclick={() => (hidden = { ...hidden, [p.name]: !hidden[p.name] })}>{p.name}</button>{/each}
