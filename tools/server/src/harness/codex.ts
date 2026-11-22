@@ -4,9 +4,10 @@
  * ~/.codex/config.toml; their login, provider and model stay) switch off what it would add, and the user's own MCP
  * servers by name: `codex mcp list` tells which there are, and a run that cannot tell does not start.
  *
- * Three things cannot be switched off and are harmless here: `apply_patch` (the read-only sandbox refuses every patch),
- * `list_mcp_resources` and its kin (the 4k7 server has none) and, on current models, `exec`/`wait` (JavaScript with no
- * files, no network and none of the 4k7 tools, which stay plain tools). `scripts/check-codex.mjs` runs the real CLI
+ * Four things cannot be switched off and are harmless here: `apply_patch` (the read-only sandbox refuses every patch),
+ * `list_mcp_resources` and its kin (the 4k7 server has none), on current models `exec`/`wait` (JavaScript with no
+ * files, no network and none of the 4k7 tools, which stay plain tools) and, where the model catalog lists it,
+ * `send_message_to_user_async` (it only adds an `agent_message`, which the chat shows like any other). `scripts/check-codex.mjs` runs the real CLI
  * and fails on anything else: a new Codex can add a tool this file does not know of.
  *
  * Text comes a whole message at a time: the JSON output has no deltas. Token totals are per session, as with Copilot.

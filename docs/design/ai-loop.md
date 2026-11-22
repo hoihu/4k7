@@ -177,7 +177,8 @@ claude mcp add --scope user 4k7 -- node <repo>/tools/server/src/main.ts
     cancels a call it would ask about), `tool_input_schema_max_bytes` (above 5,000 bytes it strips a schema to nothing, and
     `design_edit`'s is 90,000) and `features.code_mode.direct_only_tool_namespaces` (current models otherwise reach MCP tools only
     from a script). `apply_patch` stays on offer, because only the model catalog decides that, and the read-only sandbox refuses it;
-    `exec`/`wait`, on current models, are JavaScript with no files or network. Output comes a message at a time, and its token totals
+    `exec`/`wait`, on current models, are JavaScript with no files or network; `send_message_to_user_async`, which the catalog gives
+    some models (Codex 0.171), only adds a message to the reply. Output comes a message at a time, and its token totals
     are per session like Copilot's. `npm run check:codex` runs the real CLI through the harness against a stand-in for the API and
     fails on any other tool, because a new Codex can add one the harness does not know of. Needs Codex 0.158 or newer: older ones
     strip the schema whatever the setting.

@@ -16,7 +16,7 @@ import { ChatRunner, CodexHarness, LocalServer, mcpHttpHandler } from '../tools/
 const bin = process.argv[2] ?? 'codex';
 const SERVER = 'mcp__4k7_chat';
 /** What cannot be switched off (see harness/codex.ts). Anything else the model is offered is a finding. */
-const HARMLESS = new Set(['exec', 'wait', 'apply_patch', 'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource']);
+const HARMLESS = new Set(['exec', 'wait', 'send_message_to_user_async', 'apply_patch', 'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource']);
 const HARMLESS_IN_SCRIPTS = new Set(['apply_patch', 'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource', 'clock__curr_time']);
 
 let failures = 0;
