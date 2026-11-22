@@ -16,7 +16,7 @@ import { renamePart, setFootprint, setMating, setPackageDefaults, setPinDescript
 import { autoDraw, describe, placeBlock, placeSymbol, setPaper } from './sheetops.ts';
 import { addTestPoints } from './testpoints.ts';
 import { tuneLength } from './tune.ts';
-import { addBoard, assignBoard, boardFor, boardList, commitFocus, focusBoard, multiBoard, removeBoard, renameBoard } from './boards.ts';
+import { addBoard, assignBoard, boardFor, boardList, boardsNow, commitFocus, focusBoard, leftBoard, multiBoard, removeBoard, renameBoard, resolveBoard } from './boards.ts';
 
 /**
  * The ops that work on one board: on a design of several, on the board they name (or the board of
@@ -47,6 +47,17 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return removeBoard(d, op);
     case 'assign_board':
       return assignBoard(d, op);
+    case 'move_to_sheet': {
+      // a sheet of another board takes the parts there
+      const was = boardsNow(d);
+      const r = moveToSheet(d, op.refs, op.sheet);
+      leftBoard(d, was);
+      return r;
+    }
+    case 'add_test_points':
+      // on the whole design (refdes counted across the boards), for the board of the nets
+      if (multiBoard(d)) return addTestPoints(d, op, by, boardFor(d, op));
+      break;
     case 'set_fab_profile':
       // one fab house for every board (docs/design/multi-board.md §5)
       if (multiBoard(d)) {
@@ -116,8 +127,10 @@ function applyOne(d: Design, op: EditOp, by: 'user' | 'agent', ctx?: OpContext):
     }
     case 'add_waiver': {
       const id = nextId(d, 'w');
-      d.waivers[id] = { id, code: op.code, entities: [...op.entities], reason: op.reason, by };
-      return { op: op.op, effect: `waived ${op.code} for ${op.entities.join(', ')}`, ids: [id] };
+      // several boards: a board check's finding is waived on its board (the same check finds the same on another)
+      const on = op.board !== undefined && multiBoard(d) ? resolveBoard(d, op.board) : undefined;
+      d.waivers[id] = { id, code: op.code, entities: [...op.entities], reason: op.reason, by, ...(on ? { board: on.id } : {}) };
+      return { op: op.op, effect: `waived ${op.code} for ${op.entities.join(', ')}${on ? ` on board "${on.name}"` : ''}`, ids: [id] };
     }
     case 'set_symbol':
       return setSymbol(d, op);

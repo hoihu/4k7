@@ -173,6 +173,7 @@ export const RemoveConstraintOp = z.object({
 
 export const AddWaiverOp = z.object({
   op: z.literal('add_waiver'),
+  board: z.string().min(1).optional().describe('A design of several boards: the board whose finding this is (a board check: DRC, placement, production files), by name or id. Without it the waiver holds on every board'),
   code: z.string().describe('Diagnostic code to waive, e.g. "SEM.EN_FLOATING"'),
   entities: z.array(z.string()).min(1).describe('Entities exactly as listed in the diagnostic'),
   reason: z.string().min(8),

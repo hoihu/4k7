@@ -33,9 +33,18 @@ people already split such a schematic ("Main", "Display"), so in practice the ag
 sheets and hardly ever single parts.
 
 `board` may be left out wherever there is only one board. With two, a board op without it works
-on the board of the parts it names (`place R4`), and one that names none is refused
-(`BOARD_AMBIGUOUS`) with the boards as candidates; one that names a part of another board is
-refused too (`BOARD_INVALID`). The app's own edits (a drag, the panel's tabs) are for the board
+on the board of the parts it names (`place R4`), else of the nets it names when they are on one
+board only (`add_test_points LED_A`); one that says neither is refused (`BOARD_AMBIGUOUS`) with
+the boards as candidates, and one that names a part of another board is refused too
+(`BOARD_INVALID`). Parts are read only from the fields that name parts and pins (`ref`, `refs`,
+`parts`, `near`, `under`, `part`, a track's `from`/`to`), so a net, a copper or graphic id or a
+silkscreen text that looks like a refdes is none. The first board is called Main until renamed,
+with one board or several. A part that moves to another board (`assign_board`, `remove_board`,
+`move_to_sheet` to a sheet of another board, a changeset accepted in part) leaves its placement
+and its fixed position behind. Test points are numbered across the boards and go on the sheet of
+the part they are at. A waiver can name its board (`add_waiver board`): a board check finds the
+same on each board, the same net or the same copper id, and a waiver without it holds on every
+board. The app's own edits (a drag, the panel's tabs) are for the board
 shown. Queries: `get_board` without `board` answers for every board; `get_copper`,
 `get_current_map`, `try_placements` and `suggest_moves` need it. `get_summary` lists the boards
 (name, sheets, parts), each part's board, and the boards a net spans. `get_board_image` and

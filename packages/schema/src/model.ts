@@ -366,6 +366,8 @@ export interface Waiver {
   entities: string[];
   reason: string;
   by: 'user' | 'agent';
+  /** A design of several boards: the board whose findings it covers (absent: every board). */
+  board?: string;
 }
 
 export function emptyDesign(name = 'untitled'): Design {

@@ -600,8 +600,7 @@ class AppState {
    */
   async showBoard(ref: string | undefined): Promise<string | null> {
     if (ref === undefined || !this.k) return null;
-    const want = ref.trim().toLowerCase();
-    const b = this.k.boards.find((x) => x.id === ref) ?? this.k.boards.find((x) => x.name.toLowerCase() === want);
+    const b = this.findBoard(ref);
     if (!b) return `No board "${ref}". The design's boards: ${this.k.boards.map((x) => x.name).join(', ')}.`;
     if (b.id === this.shownBoard) return null;
     this.shownBoard = b.id;
@@ -610,6 +609,18 @@ class AppState {
     this.boardRev = -1;
     await this.refreshBoard();
     return null;
+  }
+
+  /** A board of the design by id or name (any case). */
+  private findBoard(ref: string): { id: string; name: string } | undefined {
+    const want = ref.trim().toLowerCase();
+    return this.k?.boards.find((x) => x.id === ref) ?? this.k?.boards.find((x) => x.name.toLowerCase() === want);
+  }
+
+  /** An area the user looked at is on the board shown then: asked for another board, the area means nothing there. */
+  private areaElsewhere(ref: string | undefined): string | null {
+    const b = ref === undefined ? undefined : this.findBoard(ref);
+    return b && b.id !== this.shownBoard ? `There is no area on board "${b.name}": the user was looking at board "${this.shownBoardName ?? this.shownBoard}". Leave area out for the whole board, or pass region.` : null;
   }
 
   /** The name of the board shown, when the design has several (else null). */
@@ -651,12 +662,20 @@ class AppState {
     return !this.boards.busy && !!this.board && this.boardStage === 'routed' && this.boardRev === this.rev;
   }
 
-  /** The routed board of the current design, for agents (computed if needed). */
+  /**
+   * The routed board of the current design, for agents (computed if needed): of the board shown
+   * when asked, even if another is picked while it is computed (that board is shown again).
+   */
   private async routedBoard(): Promise<BoardView | null> {
-    if (this.boardCurrent) return this.board;
-    const next = this.boards.next();
-    if (!this.boards.busy) void this.refreshBoard();
-    return next;
+    const want = this.shownBoard;
+    for (let tries = 0; ; tries++) {
+      if (this.shownBoard !== want) await this.showBoard(want);
+      if (this.boardCurrent) return this.board;
+      const next = this.boards.next();
+      if (!this.boards.busy) void this.refreshBoard();
+      const b = await next;
+      if (this.shownBoard === want || tries >= 2) return this.shownBoard === want ? b : null;
+    }
   }
 
   /**
@@ -1305,6 +1324,8 @@ class AppState {
         const args = parsed.data;
         const seen = this.turnView ?? this.currentView();
         if (args.area && seen?.view !== 'board') return fail('board image', 'There is no area: the user was not looking at the board. Leave area out for the whole board, or pass region.');
+        const elsewhere = args.area ? this.areaElsewhere(args.board) : null;
+        if (elsewhere) return fail('board image', elsewhere);
         const noBoard = await this.showBoard(args.board);
         if (noBoard) return fail('board image', noBoard);
         if (this.view !== 'lay') {
@@ -1350,6 +1371,8 @@ class AppState {
         const args = parsed.data;
         const seen = this.turnView ?? this.currentView();
         if (args.area && seen?.view !== 'gerbers') return fail('Gerber viewer', 'There is no area: the user was not looking at the Gerber viewer. Leave area out for the whole board, or pass region.');
+        const elsewhere = args.area ? this.areaElsewhere(args.board) : null;
+        if (elsewhere) return fail('Gerber viewer', elsewhere);
         const noBoard = await this.showBoard(args.board);
         if (noBoard) return fail('Gerber viewer', noBoard);
         const gv = gerberViewer;
@@ -1596,46 +1619,50 @@ class AppState {
         // drawn copper: the hard rules (errors of the copper DRC) hold; warnings are the agent's call
         const draftDesign = await this.kernel.draftDesign();
         const shownBefore = this.shownBoard;
-        for (const { id: boardId, name: boardName } of this.k?.boards ?? [{ id: 'b_1', name: 'Board' }]) {
-          const draftBoard = boardId === 'b_1' ? draftDesign.board : draftDesign.boards?.[boardId]?.settings;
-          const boardHunk = p.hunks.some((h) => h.id === (boardId === 'b_1' ? 'board:board' : `board:${boardId}`));
-          if (!draftBoard?.routed && !draftBoard?.drawn) continue;
-          // each board in turn, shown while it is checked (several boards: say which)
-          await this.showBoard(boardId);
-          const on = (this.k?.boards.length ?? 1) > 1 ? ` (board "${boardName}": pass board "${boardName}" to its tools)` : '';
-          if (boardHunk && draftBoard?.drawn) {
-            const b = await this.routedBoard();
-            const hard = (b?.diagnostics ?? []).filter((x) => x.severity === 'error' && !x.waivedBy && x.code !== 'DRC.UNROUTED');
-            if (hard.length) {
-              log('propose', false, `refused: ${hard.length} hard copper rule(s)`);
-              return text(`Refused: the drawn copper${on} breaks ${hard.length} hard rule(s). Fix them (get_board_image region shows the spot; get_copper lists the copper by id):\n` + hard.slice(0, 20).map((x) => `- ${x.code}${x.at ? ` at ${x.at.x.toFixed(2)}, ${x.at.y.toFixed(2)}` : ''}: ${x.message}`).join('\n'), true);
+        // the board shown before is shown again, also after a refusal
+        try {
+          for (const { id: boardId, name: boardName } of this.k?.boards ?? [{ id: 'b_1', name: 'Main' }]) {
+            const draftBoard = boardId === 'b_1' ? draftDesign.board : draftDesign.boards?.[boardId]?.settings;
+            const boardHunk = p.hunks.some((h) => h.id === (boardId === 'b_1' ? 'board:board' : `board:${boardId}`));
+            if (!draftBoard?.routed && !draftBoard?.drawn) continue;
+            // each board in turn, shown while it is checked (several boards: say which)
+            await this.showBoard(boardId);
+            const on = (this.k?.boards.length ?? 1) > 1 ? ` (board "${boardName}": pass board "${boardName}" to its tools)` : '';
+            if (boardHunk && draftBoard?.drawn) {
+              const b = await this.routedBoard();
+              const hard = (b?.diagnostics ?? []).filter((x) => x.severity === 'error' && !x.waivedBy && x.code !== 'DRC.UNROUTED');
+              if (hard.length) {
+                log('propose', false, `refused: ${hard.length} hard copper rule(s)`);
+                return text(`Refused: the drawn copper${on} breaks ${hard.length} hard rule(s). Fix them (get_board_image region shows the spot; get_copper lists the copper by id):\n` + hard.slice(0, 20).map((x) => `- ${x.code}${x.at ? ` at ${x.at.x.toFixed(2)}, ${x.at.y.toFixed(2)}` : ''}: ${x.message}`).join('\n'), true);
+              }
+            }
+            // the routed board's production files read back clean (FAB.*, kept beside the board's own checks): errors are fixed, not waived
+            if (draftBoard?.routed || draftBoard?.drawn) {
+              await this.routedBoard();
+              const fab = fabRefusal(await this.fab.settled());
+              if (fab) {
+                log('propose', false, `refused: ${fab.count} production-file finding(s)`);
+                return text(on ? `${fab.text}\n(This is board "${boardName}".)` : fab.text, true);
+              }
+            }
+            // a routed board is routed completely, or the agent says why not
+            if (boardHunk && !args.data.open_connections?.trim()) {
+              const b = await this.routedBoard();
+              if (b?.routing === 'done' && b.unrouted.length) {
+                log('propose', false, `refused: ${b.unrouted.length} open connection(s)`);
+                const name = (id: string) => b.netNames[id] ?? id;
+                return text(
+                  `Refused${on}: ${b.drawn ? 'the drawn copper leaves' : 'the board is routed but'} ${b.unrouted.length} connection(s) ${b.drawn ? '' : 'are '}open, and a board with an open connection does not work. ${b.drawn ? 'Draw them' : 'Make room and route again'} (get_board lists them with what blocks them; get_board_image region shows the spot):\n` +
+                    b.unrouted.slice(0, 12).map((u) => `- ${name(u.netId)} ${u.from} → ${u.to}${u.blockedBy?.length ? `, blocked by ${u.blockedBy.map(name).join(', ')}` : u.enclosed ? ', closed off' : u.plane ? `, no room for the via to ${u.plane}` : ''}${u.near.length ? `, near ${u.near.join(', ')}` : ''}`).join('\n') +
+                    '\nIf you cannot close them, propose with open_connections saying why and what the user could decide.',
+                  true,
+                );
+              }
             }
           }
-          // the routed board's production files read back clean (FAB.*, kept beside the board's own checks): errors are fixed, not waived
-          if (draftBoard?.routed || draftBoard?.drawn) {
-            await this.routedBoard();
-            const fab = fabRefusal(await this.fab.settled());
-            if (fab) {
-              log('propose', false, `refused: ${fab.count} production-file finding(s)`);
-              return text(on ? `${fab.text}\n(This is board "${boardName}".)` : fab.text, true);
-            }
-          }
-          // a routed board is routed completely, or the agent says why not
-          if (boardHunk && !args.data.open_connections?.trim()) {
-            const b = await this.routedBoard();
-            if (b?.routing === 'done' && b.unrouted.length) {
-              log('propose', false, `refused: ${b.unrouted.length} open connection(s)`);
-              const name = (id: string) => b.netNames[id] ?? id;
-              return text(
-                `Refused${on}: ${b.drawn ? 'the drawn copper leaves' : 'the board is routed but'} ${b.unrouted.length} connection(s) ${b.drawn ? '' : 'are '}open, and a board with an open connection does not work. ${b.drawn ? 'Draw them' : 'Make room and route again'} (get_board lists them with what blocks them; get_board_image region shows the spot):\n` +
-                  b.unrouted.slice(0, 12).map((u) => `- ${name(u.netId)} ${u.from} → ${u.to}${u.blockedBy?.length ? `, blocked by ${u.blockedBy.map(name).join(', ')}` : u.enclosed ? ', closed off' : u.plane ? `, no room for the via to ${u.plane}` : ''}${u.near.length ? `, near ${u.near.join(', ')}` : ''}`).join('\n') +
-                  '\nIf you cannot close them, propose with open_connections saying why and what the user could decide.',
-                true,
-              );
-            }
-          }
+        } finally {
+          await this.showBoard(shownBefore);
         }
-        await this.showBoard(shownBefore);
         // a changed enclosure script (or its graphics) was rendered and its report is clean, or the agent says why not
         if (p.hunks.some((h) => h.id === 'enclosure:script' || h.id === 'enclosure:graphics') && !args.data.enclosure_findings?.trim()) {
           const enc = (await this.kernel.draftDesign()).enclosure;

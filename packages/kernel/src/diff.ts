@@ -7,7 +7,7 @@ import { layoutText } from '@4k7/parts';
 import { describeConstraint } from './netops.ts';
 import { clone, gcNets, gcParts, natCmp, valueOf } from './doc.ts';
 import { FIRST_BOARD, type BoardEntry, type BoardSettings } from '@4k7/schema';
-import { formatFor, multiBoard } from './boards.ts';
+import { boardsNow, formatFor, leftBoard, multiBoard, tidyPlacements } from './boards.ts';
 
 const netName = (d: Design, id?: string) => (id ? d.nets[id]?.name ?? '?' : '∅');
 const boardName = (d: Design, id?: string) => d.boards?.[id ?? FIRST_BOARD]?.name ?? (id && id !== FIRST_BOARD ? id : 'Main');
@@ -467,6 +467,9 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
   for (const x of [...Object.values(d.sheets), ...Object.values(d.components)]) if (x.board && !d.boards?.[x.board]) delete x.board;
   if (d.boards && Object.keys(d.boards).length <= 1 && (d.boards[FIRST_BOARD]?.name ?? 'Main') === 'Main') delete d.boards;
   d.format = formatFor(d);
+  // a part on another board than the draft put it (its board not accepted): what it had there goes
+  leftBoard(d, boardsNow(draft));
+  tidyPlacements(d);
   gcNets(d);
   gcParts(d);
   return { design: d, notes };

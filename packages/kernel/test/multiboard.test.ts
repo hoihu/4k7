@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { canonicalJson } from '../src/canonical.ts';
+import { focusBoard } from '../src/boards.ts';
 import { buckTransaction } from './fixtures.ts';
 
 /**
@@ -105,7 +106,7 @@ describe('several boards in one design', () => {
     k.accept();
     const before = k.exportDesign();
     expect(k.transact({ summary: 'route', ops: [{ op: 'route' }] }).status).toBe('ok');
-    expect(k.boardList()).toEqual([{ id: 'b_1', name: 'Board' }]);
+    expect(k.boardList()).toEqual([{ id: 'b_1', name: 'Main' }]);
     expect(JSON.parse(before).boards).toBeUndefined();
   });
 
@@ -205,5 +206,70 @@ describe('several boards in one design', () => {
     expect(s.nets.find((n) => n.name === 'LED_A')!.boards).toBeUndefined();
     expect(s.components.find((c) => c.refdes === 'J3')!.board).toBe('LED board');
   });
-});
 
+  it('reads part names only where an op names parts', () => {
+    const k = twoBoards();
+    // text that looks like a refdes (R4 is on the LED board) is no part
+    const g = k.transact({ summary: 'label', ops: [{ op: 'add_graphic', board: 'Main', text: 'R4', x_mm: 2, y_mm: 2 }] });
+    expect(g.status, JSON.stringify(g.rejection)).toBe('ok');
+    // a net on one board only says the board
+    const n = k.transact({ summary: 'tp', ops: [{ op: 'add_test_points', nets: ['LED_A'] }] });
+    expect(n.status, JSON.stringify(n.rejection)).toBe('ok');
+    // a net on both boards does not
+    expect(k.transact({ summary: 'tp', ops: [{ op: 'add_test_points', nets: ['+3V3'] }] }).rejection?.code).toBe('BOARD_AMBIGUOUS');
+  });
+
+  it('numbers test points across the boards, and puts them on the board asked for', () => {
+    const k = twoBoards();
+    const ok = (ops: Transaction['ops']) => {
+      const r = k.transact({ summary: 'x', ops });
+      expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    };
+    ok([{ op: 'add_test_points', board: 'Main', nets: ['+3V3'] }]);
+    ok([{ op: 'add_test_points', board: 'LED board', nets: ['+3V3'] }]);
+    const d = k.draftDesign();
+    const tps = Object.values(d.components).filter((c) => c.refdes.startsWith('TP'));
+    expect(new Set(tps.map((c) => c.refdes)).size).toBe(tps.length);
+    expect(refs(k, 'LED board').filter((r) => r.startsWith('TP'))).toHaveLength(1);
+    const led = tps.find((c) => refs(k, 'LED board').includes(c.refdes))!;
+    expect(d.sheets[led.sheet]!.name).toBe('LED');
+  });
+
+  it('names the first board Main, with one board or several', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    expect(k.transact({ summary: 'x', ops: [{ op: 'add_board', name: 'main' }] }).rejection?.code).toBe('INVALID_OP');
+    expect(k.transact({ summary: 'x', ops: [{ op: 'set_board', board: 'Main', width_mm: 40, height_mm: 30 }] }).status).toBe('ok');
+    expect(k.transact({ summary: 'x', ops: [{ op: 'add_board', name: 'Board' }] }).status).toBe('ok');
+    expect(k.boardList().map((b) => b.name)).toEqual(['Main', 'Board']);
+  });
+
+  it('drops what a part had on the board it left, also when its board is taken away', () => {
+    const k = twoBoards();
+    const ok = (ops: Transaction['ops']) => {
+      const r = k.transact({ summary: 'x', ops });
+      expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    };
+    ok([{ op: 'place', ref: 'R4', x_mm: 60, y_mm: 60, lock: true }]);
+    const r4 = Object.values(k.draftDesign().components).find((c) => c.refdes === 'R4')!.id;
+    const positions = () => Object.values(k.draftDesign().ledger).filter((x) => x.kind === 'position' && x.a === r4);
+    expect(positions()).toHaveLength(1);
+    ok([{ op: 'remove_board', board: 'LED board' }]);
+    expect(positions()).toHaveLength(0);
+    ok([{ op: 'add_board', name: 'LED board', sheets: ['LED'] }]);
+    ok([{ op: 'place', ref: 'R4', x_mm: 4, y_mm: 4, lock: true }]);
+    ok([{ op: 'move_to_sheet', refs: ['R4'], sheet: 'Main' }]);
+    expect(positions()).toHaveLength(0);
+    expect(k.draftDesign().boards!.b_2!.settings?.placement?.parts[r4]).toBeUndefined();
+  });
+
+  it('waives a board finding on its own board', () => {
+    const k = twoBoards();
+    const r = k.transact({ summary: 'w', ops: [{ op: 'add_waiver', board: 'LED board', code: 'DRC.X', entities: ['net:+3V3'], reason: 'checked by hand' }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const w = Object.values(k.draftDesign().waivers)[0]!;
+    expect(w.board).toBe('b_2');
+        expect(Object.keys(focusBoard(k.draftDesign(), 'b_1').waivers)).toHaveLength(0);
+    expect(Object.keys(focusBoard(k.draftDesign(), 'b_2').waivers)).toHaveLength(1);
+  });
+});
