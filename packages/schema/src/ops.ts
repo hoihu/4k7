@@ -69,7 +69,7 @@ export const SwapPinsOp = z.object({
   op: z.literal('swap_pins'),
   a: pinRef.describe('A pin of the component, e.g. "RN1.2", or a pin of one gate, e.g. "U1.INA+"'),
   b: pinRef.describe('The pin (or the pin at the same place in the other gate, e.g. "U1.INB+") of the same component to swap with'),
-}).describe('Swap two pins, or two gates (an op-amp channel: all its pins move together), of one component, where its part card declares them interchangeable (get_part swapGroups): their nets change places. This changes the netlist; the schematic and the board follow. Refused for pins in no group or in different groups.');
+}).describe('Swap two pins, or two gates (an op-amp channel: all its pins move together), of one component, where its part card declares them interchangeable (get_part swapGroups): their nets change places. This changes the netlist; the schematic and the board follow. Refused for pins in no group or in different groups, and, for MCU GPIOs, for a net moved to a pin lacking a function it needs (set_net needs).');
 
 export const NoConnectOp = z.object({
   op: z.literal('no_connect'),
@@ -93,6 +93,12 @@ export const SetNetOp = z.object({
   track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise)'),
   route_first: z.boolean().nullable().optional().describe('Board: the router routes this net before the others, in every pass, so it gets the short, clean ways (a switching node, a clock, the high-current path); null = as any other'),
   layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).nullable().optional().describe('Board: the copper layer its tracks should keep to (a cost on the others, not a ban: it still changes layer where it must; not for connections laid with draw_track); null = any'),
+  needs: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .nullable()
+    .optional()
+    .describe('The MCU pin functions this net uses, from the firmware\'s point of view, named as in the MCU card\'s swapGroups functions: "GPIO" (plain digital in/out), a function such as "SCL", "MOSI", "OC0A", or a kind ending in * where any channel serves ("ADC*", "PCINT*"; never for paired roles like AIN0/AIN1). swap_pins then moves the net only to a pin offering them all; without it, only to a pin offering the same functions. null clears it'),
   draw_as: z.enum(['label', 'wire']).nullable().optional().describe('Force how the schematic draws this net, now and after every later change, on each sheet it is on (the sheet\'s drawing becomes yours, as with place_symbol, and auto_draw redraws it but does not hand it back while a net on it is forced). label: a label or supply symbol at every pin, no wire between them. wire: wires and no label; a label stays only where no wire can go (another page or sheet, no clear path), and a supply keeps one symbol per drawn piece. null: no longer forced, drawn afresh: wires where they draw cleanly, labels where not. While it is forced, wire (draw_as label), label (draw_as wire) and erase on the net are refused. The app\'s net panel sets it: the user\'s choice, so change it only when asked'),
 });
 

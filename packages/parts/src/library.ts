@@ -353,6 +353,22 @@ export const IC_PARTS: PartCard[] = [
       { kind: 'pull', pin: 'PB5/RESET', direction: 'up', note: '10k to VCC recommended', src: builtin() },
     ],
     provenance: builtin(),
+    // Atmel-2586Q (08/2013), Figure 1-1 (p. 2) and Table 10-3 "Port B Pins Alternate Functions" (p. 60).
+    // "/OC1A", "/OC1B": the complementary (inverted) Timer/Counter1 outputs, drawn overbarred there.
+    // PB5 (RESET, dW, ADC0, PCINT5) stays out: it is the reset pin unless RSTDISBL is programmed.
+    swapGroups: [
+      {
+        name: 'GPIOs',
+        members: [['5'], ['6'], ['7'], ['2'], ['3']],
+        functions: {
+          '5': ['MOSI', 'DI', 'SDA', 'AIN0', 'OC0A', '/OC1A', 'AREF', 'PCINT0'],
+          '6': ['MISO', 'DO', 'AIN1', 'OC0B', 'OC1A', 'PCINT1'],
+          '7': ['SCK', 'USCK', 'SCL', 'ADC1', 'T0', 'INT0', 'PCINT2'],
+          '2': ['XTAL1', 'CLKI', '/OC1B', 'ADC3', 'PCINT3'],
+          '3': ['XTAL2', 'CLKO', 'OC1B', 'ADC2', 'PCINT4'],
+        },
+      },
+    ],
   },
 ];
 

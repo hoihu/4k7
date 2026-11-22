@@ -177,6 +177,14 @@ export interface SwapGroup {
   /** What the members are, e.g. "op-amp channels", "resistors". */
   name: string;
   members: string[][];
+  /**
+   * A group of MCU GPIOs: what each member pin offers besides plain digital I/O, by pin number,
+   * copied from the datasheet's pin-function table (["MOSI", "SDA", "ADC1", "PCINT0"]). With it,
+   * swap_pins moves a net only to a pin offering every function the net needs (NetAttrs.needs),
+   * or, when the net's needs are not recorded, only between pins offering the same functions.
+   * Reset, power and crystal-only pins are never members.
+   */
+  functions?: Record<string, string[]>;
 }
 
 /** PDF pages of a datasheet's sections, as the importer found them. */

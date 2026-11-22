@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Layout
+
+- **The agent can swap an ATtiny85's GPIO pins to untangle the board, without moving a signal to a pin that cannot do its job.** Swaps were offered for op-amp channels and resistor arrays only. Now the bundled ATtiny85 knows what each of PB0–PB4 can do, from its datasheet's pin table (SPI, I²C, ADC, timer outputs, the crystal), and the agent records what each net uses: plain on/off, `SCL`, an ADC input. A swap that would put, say, the I²C clock on a pin without it is refused with the reason, and a net whose use is not recorded stays where it is. The reset pin, VCC and GND never move. As with every swap, it comes to you as a change to review; the firmware's pin numbers change with it.
+
 ### Part import
 
 - **A datasheet that cannot be imported now says why and what to try next.** When a datasheet link led to a product page instead of the PDF, the import said only that it was not a PDF. Now it gives the page's title and, where the page links to a PDF, that link, so the agent can try it. A file that starts like a PDF but cannot be opened (a damaged or cut-short download) is reported as such, with the advice to download it again or download it in a browser and attach it. A scanned datasheet without a text layer is named as one: the import and `read_datasheet` tell the agent to read its pages as pictures instead of calling it unreadable.

@@ -874,6 +874,19 @@ then routed again. They are measured on the ratsnest, not routed, so the turns a
 order stay as they were; members with the same nets (both unconnected) are not tried, and at most
 24 swaps are, so it stays fast.
 
+*MCU GPIO swaps (2026-11-22).* A swap group can be a set of MCU GPIOs with `functions`: what each
+member pin offers besides plain digital I/O, copied from the datasheet's pin-function table. A wrong
+GPIO swap is a dead board (a UART RX moved to a pin without the UART), and nothing in a design says
+which function a net uses, so the net says it: `set_net needs` (`"GPIO"` for plain digital I/O, a
+function such as `"SCL"` or `"OC0B"`, or `"ADC*"` where any channel of a kind serves; never `*` for
+paired roles like the comparator's AIN0/AIN1). `swap_pins` moves each net of the swap (both ways)
+only to a pin offering all it needs; a net without `needs` moves only between pins offering the
+same functions. On the ATtiny85 no two GPIOs offer the same, so its swaps need the nets' needs set
+first, and `suggest_moves` offers none until they are (it applies `swap_pins`, so the rule is kept
+once). The bundled `microchip:ATTINY85-20SU` groups PB0–PB4 from Atmel-2586Q Table 10-3 (p. 60);
+PB5/RESET, VCC and GND are in no group. Imported MCUs get no groups yet: their functions come in as
+pin text (`alt: …`), not as a checked group.
+
 *Too few tries (2026-11-21).* Dogfooding found "none of 0 tries" and "none of 2 tries" with
 connections open. The screen held the tried parts to the placer's own spacing (0.3 mm between
 courtyards, 1.5 mm plus the edge clearance from the edge), but the placer packs its parts closer

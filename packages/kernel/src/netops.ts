@@ -298,6 +298,7 @@ export function swapPins(d: Design, refA: string, refB: string): OpResult {
   const c = a.comp;
   const other = new Map<string, string>();
   ga.m.forEach((n, i) => (other.set(n, gb.m[i]!), other.set(gb.m[i]!, n)));
+  if (g!.functions) gpioSwapCheck(d, c, card, g!, other, bad);
   const pins = { ...c.pins };
   for (const [n, o] of other) {
     if (pins[o]) c.pins[n] = pins[o];
@@ -310,6 +311,33 @@ export function swapPins(d: Design, refA: string, refB: string): OpResult {
   const name = (n: string) => card.pins.find((p) => p.number === n)!;
   const moved = [...other].map(([n]) => `${pinLabel({ comp: c, pin: name(n) })} → ${c.pins[n] ? d.nets[c.pins[n]]!.name : 'unconnected'}`);
   return { op: 'swap_pins', effect: `swapped ${moved.join(', ')}`, ids: [c.id] };
+}
+
+/** A need ("SCL", "GPIO", "ADC*") a pin function offers: the same name, or for "X*" X with a channel number. */
+const offersNeed = (fns: string[], need: string) =>
+  need === 'GPIO' || fns.some((f) => (need.endsWith('*') ? f.startsWith(need.slice(0, -1)) && /^\d+$/.test(f.slice(need.length - 1)) : f === need));
+
+/**
+ * A swap in a group of MCU GPIOs: each net moved needs on its new pin every function it uses
+ * (set_net needs); a net whose needs are not recorded moves only to a pin offering the same
+ * functions, as nothing tells which of them it uses. See docs/design/layout.md §10.
+ */
+function gpioSwapCheck(d: Design, c: Component, card: PartCard, g: SwapGroup, other: Map<string, string>, bad: (m: string) => never) {
+  const offers = (n: string) => g.functions![n] ?? [];
+  const label = (n: string) => pinLabel({ comp: c, pin: card.pins.find((p) => p.number === n)! });
+  const fnText = (n: string) => (offers(n).length ? offers(n).join(', ') : 'plain I/O only');
+  for (const [from, to] of other) {
+    const net = c.pins[from] ? d.nets[c.pins[from]!] : undefined;
+    if (!net) continue;
+    const needs = net.attrs.needs;
+    if (!needs) {
+      const same = offers(from).length === offers(to).length && offers(from).every((f) => offers(to).includes(f));
+      if (!same) bad(`${net.name} would move from ${label(from)} (${fnText(from)}) to ${label(to)} (${fnText(to)}), and nothing records which function it uses. Say it first with set_net needs (e.g. ["GPIO"] for plain digital I/O, ["SCL"], ["ADC*"]), from the circuit and the firmware.`);
+      continue;
+    }
+    const missing = needs.filter((x) => !offersNeed(offers(to), x));
+    if (missing.length) bad(`${net.name} needs ${missing.join(', ')}, which ${label(to)} does not offer (${fnText(to)}); moving it there would break it.`);
+  }
 }
 
 export function noConnect(d: Design, refs: string[]): OpResult {
@@ -407,6 +435,11 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
       a.layer = op.layer;
     }
     changes.push(op.layer ? `tracks on ${op.layer} where they can` : 'tracks on any layer');
+  }
+  if (op.needs !== undefined) {
+    if (op.needs === null) delete a.needs;
+    else a.needs = [...new Set(op.needs)];
+    changes.push(op.needs === null ? 'needs no recorded pin function' : `needs ${a.needs!.join(', ')}`);
   }
   if (op.draw_as !== undefined && (op.draw_as ?? undefined) !== a.drawAs) {
     if (op.draw_as === null) delete a.drawAs;
