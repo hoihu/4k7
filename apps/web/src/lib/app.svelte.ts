@@ -183,8 +183,14 @@ class AppState {
   projects = $state.raw<ProjectEntry[]>([]);
   /** Changes not written to the project file (the server is not reachable). */
   unsaved = $state(false);
-  /** Board view of the working copy, computed when the Layout view is open. */
+  /** Board view of the working copy, computed when the Layout view is open: of the board shown (`shownBoard`). */
   board = $state.raw<BoardView | null>(null);
+  /**
+   * The board the Layout view (and the Gerber viewer, the enclosure, the production files) shows,
+   * by id: the first board unless the design has several and another is picked, by the user or by
+   * the agent looking at one. See docs/design/multi-board.md.
+   */
+  shownBoard = $state('b_1');
   boardBusy = $state(false);
   boardStage = $state<BoardStage>('placed');
   /** What the board's checks found, once it is laid for the design as it is now (the header counts them with the schematic's). */
@@ -531,7 +537,10 @@ class AppState {
   /** The board anew: its placement from the kernel at once, then routing, pours and DRC in the board worker. */
   async refreshBoard() {
     const rev = this.rev;
-    const request = await this.kernel.boardRequest().catch((e: Error) => {
+    // a board that is gone (remove_board, undo) leaves its place to the first
+    if (this.k && !this.k.boards.some((b) => b.id === this.shownBoard)) this.shownBoard = this.k.boards[0]?.id ?? 'b_1';
+    const shownBoard = this.shownBoard;
+    const request = await this.kernel.boardRequest(shownBoard).catch((e: Error) => {
       this.boardBusy = false;
       this.routeProgress = null;
       this.boardCounts = null;
@@ -547,6 +556,7 @@ class AppState {
       request.design,
       request.placed,
       (stage, board) => {
+        if (shownBoard !== this.shownBoard) return; // another board was picked meanwhile
         this.routeProgress = null;
         const { newCopper, ...shown } = board;
         this.board = shown;
@@ -584,6 +594,29 @@ class AppState {
     await this.refreshBoard();
   }
 
+  /**
+   * Show another board of the design (by name or id) in the Layout view, laid anew. Returns an
+   * error to tell the agent when there is no such board; nothing happens for the board shown.
+   */
+  async showBoard(ref: string | undefined): Promise<string | null> {
+    if (ref === undefined || !this.k) return null;
+    const want = ref.trim().toLowerCase();
+    const b = this.k.boards.find((x) => x.id === ref) ?? this.k.boards.find((x) => x.name.toLowerCase() === want);
+    if (!b) return `No board "${ref}". The design's boards: ${this.k.boards.map((x) => x.name).join(', ')}.`;
+    if (b.id === this.shownBoard) return null;
+    this.shownBoard = b.id;
+    this.board = null;
+    this.boardCounts = null;
+    this.boardRev = -1;
+    await this.refreshBoard();
+    return null;
+  }
+
+  /** The name of the board shown, when the design has several (else null). */
+  get shownBoardName(): string | null {
+    return this.k && this.k.boards.length > 1 ? (this.k.boards.find((b) => b.id === this.shownBoard)?.name ?? null) : null;
+  }
+
   /** Keep copper the board worker routed with the design; saved when the committed design took it. */
   private async keepCopper(copper: NonNullable<BoardView['newCopper']>) {
     if (await this.kernel.keepCopper(copper)) await this.persist();
@@ -607,7 +640,10 @@ class AppState {
   /** The name the production files are written under. */
   get fabName(): string {
     const n = this.k?.summary.name;
-    return n && n !== 'untitled' ? n : '4k7-board';
+    const name = n && n !== 'untitled' ? n : '4k7-board';
+    // several boards: a set of files per board, named after it
+    const board = this.shownBoardName;
+    return board ? `${name}-${board.replace(/[^\w.-]+/g, '-')}` : name;
   }
 
   /** The board shown is the design as it is now, routed. */
@@ -742,7 +778,9 @@ class AppState {
       this.flash('Review the pending changes first.');
       return false;
     }
-    const r = await this.transactEdit({ summary, ops }, 'user');
+    // several boards: the user's board edits (a drag, the panel's tabs) are for the board shown (an op without a board field drops it)
+    const onShown = (this.k?.boards.length ?? 1) > 1 ? ops.map((o) => (o && typeof o === 'object' && !('board' in o) ? { ...o, board: this.shownBoard } : o)) : ops;
+    const r = await this.transactEdit({ summary, ops: onShown }, 'user');
     if (r.status !== 'ok') {
       this.flash(r.rejection?.message ?? 'Rejected');
       return false;
@@ -940,9 +978,10 @@ class AppState {
     const refs = this.k?.summary.components.map((c) => c.refdes) ?? [];
     const [infos, board] = await Promise.all([
       Promise.all(refs.map((ref) => this.kernel.query({ op: 'get_component', ref }))) as Promise<(Info | { error: string })[]>,
-      this.kernel.boardPlacement().catch(() => null),
+      this.kernel.boardPlacements().catch(() => null),
     ]);
-    const placed = new Map((board?.parts ?? []).map((p) => [p.refdes, p]));
+    // every board's parts (several boards: each part is on one)
+    const placed = new Map((board ?? []).flatMap((b) => b.parts).map((p) => [p.refdes, p]));
     return infos.flatMap((c) => {
       if (!('refdes' in c)) return [];
       const card = this.designParts[c.part];
@@ -956,6 +995,9 @@ class AppState {
 
   /** What the assembly fees depend on, read off the working copy's placed board (joints, sides, size); null when it cannot be placed. */
   private async boardFacts(): Promise<BoardFacts | null> {
+    // several boards: what their making and assembly cost together is not worked out yet
+    // (docs/design/multi-board.md §9): the parts only, as when the board is not known
+    if ((this.k?.boards.length ?? 1) > 1) return null;
     try {
       const b = await this.kernel.boardPlacement();
       return (assembled, kinds) => assemblyFacts(b, assembled, kinds);
@@ -1149,6 +1191,11 @@ class AppState {
           return { content: guide.replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''), isError: false, label: 'query · get_guide', detail: topic! };
         }
         if ((input as { op?: string })?.op !== 'get_board') break;
+        // several boards and none named: the kernel lists them all (placement, and what is routed)
+        const asked = (input as { board?: string }).board;
+        if (asked === undefined && (this.k?.boards.length ?? 1) > 1) break;
+        const notThere = await this.showBoard(asked);
+        if (notThere) return fail('query · get_board', notThere);
         // routed in the board worker, so the kernel stays responsive
         const b = await this.routedBoard();
         if (!b) return fail('query · get_board', 'The board could not be computed.');
@@ -1258,6 +1305,8 @@ class AppState {
         const args = parsed.data;
         const seen = this.turnView ?? this.currentView();
         if (args.area && seen?.view !== 'board') return fail('board image', 'There is no area: the user was not looking at the board. Leave area out for the whole board, or pass region.');
+        const noBoard = await this.showBoard(args.board);
+        if (noBoard) return fail('board image', noBoard);
         if (this.view !== 'lay') {
           this.view = 'lay';
           await tick();
@@ -1301,6 +1350,8 @@ class AppState {
         const args = parsed.data;
         const seen = this.turnView ?? this.currentView();
         if (args.area && seen?.view !== 'gerbers') return fail('Gerber viewer', 'There is no area: the user was not looking at the Gerber viewer. Leave area out for the whole board, or pass region.');
+        const noBoard = await this.showBoard(args.board);
+        if (noBoard) return fail('Gerber viewer', noBoard);
         const gv = gerberViewer;
         if (args.files === 'open' && !gv.set) return fail('Gerber viewer', 'Nothing is open in the Gerber viewer: files "board" makes this board\'s production files.');
         // files the user opened stay as they are; this board's (or its panel's) are made anew from the board as it is now
@@ -1422,7 +1473,8 @@ class AppState {
     // an undo), the helper searches again on it, a few times, then the kernel routes itself
     for (let attempt = 0; attempt < 3; attempt++) {
       const { design, rev } = await this.kernel.draftSnapshot();
-      if (!design.board?.drawn && !ops.some((o) => o?.op === 'set_copper_mode')) return this.kernel.transact(tx, by, undefined, undefined, sources);
+      const drawn = !!design.board?.drawn || Object.values(design.boards ?? {}).some((e) => e.settings?.drawn);
+      if (!drawn && !ops.some((o) => o?.op === 'set_copper_mode')) return this.kernel.transact(tx, by, undefined, undefined, sources);
       const run = await this.runHelper(design, tx, by ?? 'agent', ops.flatMap((o, i) => (o?.op === 'route' ? [i] : [])), what);
       if (!run) return this.kernel.transact(tx, by, undefined, undefined, sources);
       const r = await this.kernel.transact(tx, by, run.results, rev, sources);
@@ -1484,8 +1536,10 @@ class AppState {
       }
       case 'save': {
         const design = await this.kernel.draftDesign();
-        const g = design.board?.graphics?.find((x) => x.id.toUpperCase() === a.graphic.toUpperCase());
-        if (!g) return fail(`No silkscreen graphic "${a.graphic}" on the board (${(design.board?.graphics ?? []).map((x) => x.id).join(', ') || 'none'}).`);
+        // every board's graphics (several boards: the graphic ids are per board, the first found)
+        const all = [...(design.board?.graphics ?? []), ...Object.values(design.boards ?? {}).flatMap((e) => e.settings?.graphics ?? [])];
+        const g = all.find((x) => x.id.toUpperCase() === a.graphic.toUpperCase());
+        if (!g) return fail(`No silkscreen graphic "${a.graphic}" on the board (${all.map((x) => x.id).join(', ') || 'none'}).`);
         const saved = await this.artwork.saveGraphic(g, a.name.trim());
         this.flash(`Saved "${saved.name}" to the artwork library`);
         return ok('save', `${g.id} as "${saved.name}"`, `Saved ${g.id} as "${saved.name}" (${saved.w} × ${saved.h} mm). Place it with add_graphic artwork: "${saved.name}".`);
@@ -1540,38 +1594,48 @@ class AppState {
           );
         }
         // drawn copper: the hard rules (errors of the copper DRC) hold; warnings are the agent's call
-        const draftBoard = (await this.kernel.draftDesign()).board;
-        if (p.hunks.some((h) => h.id === 'board:board') && draftBoard?.drawn) {
-          const b = await this.routedBoard();
-          const hard = (b?.diagnostics ?? []).filter((x) => x.severity === 'error' && !x.waivedBy && x.code !== 'DRC.UNROUTED');
-          if (hard.length) {
-            log('propose', false, `refused: ${hard.length} hard copper rule(s)`);
-            return text(`Refused: the drawn copper breaks ${hard.length} hard rule(s). Fix them (get_board_image region shows the spot; get_copper lists the copper by id):\n` + hard.slice(0, 20).map((x) => `- ${x.code}${x.at ? ` at ${x.at.x.toFixed(2)}, ${x.at.y.toFixed(2)}` : ''}: ${x.message}`).join('\n'), true);
+        const draftDesign = await this.kernel.draftDesign();
+        const shownBefore = this.shownBoard;
+        for (const { id: boardId, name: boardName } of this.k?.boards ?? [{ id: 'b_1', name: 'Board' }]) {
+          const draftBoard = boardId === 'b_1' ? draftDesign.board : draftDesign.boards?.[boardId]?.settings;
+          const boardHunk = p.hunks.some((h) => h.id === (boardId === 'b_1' ? 'board:board' : `board:${boardId}`));
+          if (!draftBoard?.routed && !draftBoard?.drawn) continue;
+          // each board in turn, shown while it is checked (several boards: say which)
+          await this.showBoard(boardId);
+          const on = (this.k?.boards.length ?? 1) > 1 ? ` (board "${boardName}": pass board "${boardName}" to its tools)` : '';
+          if (boardHunk && draftBoard?.drawn) {
+            const b = await this.routedBoard();
+            const hard = (b?.diagnostics ?? []).filter((x) => x.severity === 'error' && !x.waivedBy && x.code !== 'DRC.UNROUTED');
+            if (hard.length) {
+              log('propose', false, `refused: ${hard.length} hard copper rule(s)`);
+              return text(`Refused: the drawn copper${on} breaks ${hard.length} hard rule(s). Fix them (get_board_image region shows the spot; get_copper lists the copper by id):\n` + hard.slice(0, 20).map((x) => `- ${x.code}${x.at ? ` at ${x.at.x.toFixed(2)}, ${x.at.y.toFixed(2)}` : ''}: ${x.message}`).join('\n'), true);
+            }
+          }
+          // the routed board's production files read back clean (FAB.*, kept beside the board's own checks): errors are fixed, not waived
+          if (draftBoard?.routed || draftBoard?.drawn) {
+            await this.routedBoard();
+            const fab = fabRefusal(await this.fab.settled());
+            if (fab) {
+              log('propose', false, `refused: ${fab.count} production-file finding(s)`);
+              return text(on ? `${fab.text}\n(This is board "${boardName}".)` : fab.text, true);
+            }
+          }
+          // a routed board is routed completely, or the agent says why not
+          if (boardHunk && !args.data.open_connections?.trim()) {
+            const b = await this.routedBoard();
+            if (b?.routing === 'done' && b.unrouted.length) {
+              log('propose', false, `refused: ${b.unrouted.length} open connection(s)`);
+              const name = (id: string) => b.netNames[id] ?? id;
+              return text(
+                `Refused${on}: ${b.drawn ? 'the drawn copper leaves' : 'the board is routed but'} ${b.unrouted.length} connection(s) ${b.drawn ? '' : 'are '}open, and a board with an open connection does not work. ${b.drawn ? 'Draw them' : 'Make room and route again'} (get_board lists them with what blocks them; get_board_image region shows the spot):\n` +
+                  b.unrouted.slice(0, 12).map((u) => `- ${name(u.netId)} ${u.from} → ${u.to}${u.blockedBy?.length ? `, blocked by ${u.blockedBy.map(name).join(', ')}` : u.enclosed ? ', closed off' : u.plane ? `, no room for the via to ${u.plane}` : ''}${u.near.length ? `, near ${u.near.join(', ')}` : ''}`).join('\n') +
+                  '\nIf you cannot close them, propose with open_connections saying why and what the user could decide.',
+                true,
+              );
+            }
           }
         }
-        // the routed board's production files read back clean (FAB.*, kept beside the board's own checks): errors are fixed, not waived
-        if (draftBoard?.routed || draftBoard?.drawn) {
-          await this.routedBoard();
-          const fab = fabRefusal(await this.fab.settled());
-          if (fab) {
-            log('propose', false, `refused: ${fab.count} production-file finding(s)`);
-            return text(fab.text, true);
-          }
-        }
-        // a routed board is routed completely, or the agent says why not
-        if (p.hunks.some((h) => h.id === 'board:board') && !args.data.open_connections?.trim() && (draftBoard?.routed || draftBoard?.drawn)) {
-          const b = await this.routedBoard();
-          if (b?.routing === 'done' && b.unrouted.length) {
-            log('propose', false, `refused: ${b.unrouted.length} open connection(s)`);
-            const name = (id: string) => b.netNames[id] ?? id;
-            return text(
-              `Refused: ${b.drawn ? 'the drawn copper leaves' : 'the board is routed but'} ${b.unrouted.length} connection(s) ${b.drawn ? '' : 'are '}open, and a board with an open connection does not work. ${b.drawn ? 'Draw them' : 'Make room and route again'} (get_board lists them with what blocks them; get_board_image region shows the spot):\n` +
-                b.unrouted.slice(0, 12).map((u) => `- ${name(u.netId)} ${u.from} → ${u.to}${u.blockedBy?.length ? `, blocked by ${u.blockedBy.map(name).join(', ')}` : u.enclosed ? ', closed off' : u.plane ? `, no room for the via to ${u.plane}` : ''}${u.near.length ? `, near ${u.near.join(', ')}` : ''}`).join('\n') +
-                '\nIf you cannot close them, propose with open_connections saying why and what the user could decide.',
-              true,
-            );
-          }
-        }
+        await this.showBoard(shownBefore);
         // a changed enclosure script (or its graphics) was rendered and its report is clean, or the agent says why not
         if (p.hunks.some((h) => h.id === 'enclosure:script' || h.id === 'enclosure:graphics') && !args.data.enclosure_findings?.trim()) {
           const enc = (await this.kernel.draftDesign()).enclosure;
@@ -1825,7 +1889,8 @@ class AppState {
     }
     if (this.view === 'lay') {
       const rect = this.visibleArea.board?.();
-      return this.board && rect ? boardViewInfo(this.board, rect) : null;
+      const board = this.shownBoardName;
+      return this.board && rect ? { ...boardViewInfo(this.board, rect), ...(board ? { boardName: board } : {}) } : null;
     }
     return null;
   }

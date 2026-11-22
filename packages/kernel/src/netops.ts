@@ -2,8 +2,9 @@
  * The ops on the circuit: parts, connections, nets, sheets and the constraints of the ledger.
  */
 import { closestPackages, isBoxSymbol, isTwoPin, packageChoice, packageOf, packageOptions, searchParts, standardPackage } from '@4k7/parts';
-import { approxEqual, ASSEMBLY_HOUSES, type Component, type Constraint, DEFAULT_BOARD, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea, type SwapGroup } from '@4k7/schema';
+import { approxEqual, ASSEMBLY_HOUSES, type BoardSettings, type Component, type Constraint, DEFAULT_BOARD, FIRST_BOARD, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea, type SwapGroup } from '@4k7/schema';
 import { keepPlacement } from './board.ts';
+import { boardList, boardOf, onBoard, settingsOf } from './boards.ts';
 import { allocRefdes, cardOf, closest, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
 import { isDrawn } from './drawing.ts';
 import { drawNet } from './netdraw.ts';
@@ -429,7 +430,9 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
   if (op.layer !== undefined) {
     if (op.layer === null) delete a.layer;
     else {
-      const n = d.board?.layers ?? DEFAULT_BOARD.layers;
+      // (several boards: the fewest layers of the boards its pins are on)
+      const on = new Set(Object.values(d.components).filter((c) => Object.values(c.pins).includes(net.id)).map((c) => boardOf(d, c)));
+      const n = Math.min(...[...(on.size ? on : [FIRST_BOARD])].map((id) => settingsOf(d, id)?.layers ?? DEFAULT_BOARD.layers));
       const has = n === 4 ? ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'] : ['F.Cu', 'B.Cu'];
       if (!has.includes(op.layer)) reject({ code: 'BOARD_INVALID', message: `${op.layer} does not exist on a ${n}-layer board.`, candidates: has });
       a.layer = op.layer;
@@ -575,7 +578,11 @@ const plural = (n: number, what: string) => (n ? [`${n} ${what}${n === 1 ? '' : 
  * no net. With no plane left the board is back to its automatic planes. Says what went.
  */
 function clearBoard(d: Design, wired: ReadonlySet<string>): string[] {
-  const b = d.board;
+  // every board's (several boards: each keeps its own objects)
+  return boardList(d).flatMap(({ id }) => clearSettings(d, settingsOf(d, id), wired));
+}
+
+function clearSettings(d: Design, b: BoardSettings | undefined, wired: ReadonlySet<string>): string[] {
   if (!b) return [];
   const said: string[] = [];
   const thin = <T>(list: T[], goes: (x: T) => boolean, what: string): T[] => {
@@ -674,8 +681,9 @@ export function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): 
     if (op.value !== 'top' && op.value !== 'bottom') reject({ code: 'CONSTRAINT_INVALID', message: 'layer: value must be "top" or "bottom".' });
     k.a = resolveComponent(d, op.a!).id;
     k.value = op.value;
-    // the part turns over where the user sees it: the rest of the board stays as it is
-    if (!d.board?.placement && Object.keys(d.components).length) keepPlacement(d);
+    // the part turns over where the user sees it: the rest of the board (its board) stays as it is
+    const on = boardOf(d, d.components[k.a]!);
+    if (!settingsOf(d, on)?.placement && Object.keys(d.components).length) onBoard(d, on, keepPlacement);
   } else if (op.kind === 'room') {
     need(op.block, '"block" (a functional block\'s title)');
     if (!op.rect) reject({ code: 'CONSTRAINT_INVALID', message: 'room needs "rect" (x, y, w, h in mm: the area on the board the block keeps to).' });
@@ -691,8 +699,10 @@ export function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): 
     }
     k.key = block!.title;
     Object.assign(k, { xMm: op.rect!.x, yMm: op.rect!.y, wMm: op.rect!.w, hMm: op.rect!.h });
-    // the block moves into its room where the user sees the board: the rest stays as it is
-    if (!d.board?.placement && Object.keys(d.components).length) keepPlacement(d);
+    // the block moves into its room where the user sees the board (its parts' board): the rest stays as it is
+    const first = d.components[block!.components.find((id) => d.components[id]) ?? ''];
+    const on = first ? boardOf(d, first) : FIRST_BOARD;
+    if (!settingsOf(d, on)?.placement && Object.keys(d.components).length) onBoard(d, on, keepPlacement);
   } else {
     need(op.value, '"value" (the note text)');
     if (op.a) k.a = resolveComponent(d, op.a).id;

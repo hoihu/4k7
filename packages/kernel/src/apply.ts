@@ -16,6 +16,23 @@ import { renamePart, setFootprint, setMating, setPackageDefaults, setPinDescript
 import { autoDraw, describe, placeBlock, placeSymbol, setPaper } from './sheetops.ts';
 import { addTestPoints } from './testpoints.ts';
 import { tuneLength } from './tune.ts';
+import { addBoard, assignBoard, boardFor, boardList, commitFocus, focusBoard, multiBoard, removeBoard, renameBoard } from './boards.ts';
+
+/**
+ * The ops that work on one board: on a design of several, on the board they name (or the board of
+ * the parts they name), through its focus (boards.ts).
+ */
+export const BOARD_OPS: ReadonlySet<EditOp['op']> = new Set([
+  'set_board', 'set_stackup', 'set_impedance', 'remove_impedance', 'place', 'attach', 'add_test_points', 'propose_placement', 'refine_placement',
+  'route', 'set_copper_mode', 'draw_track', 'draw_pair', 'draw_via', 'edit_copper', 'tune_length', 'erase_copper', 'lock_copper', 'unlock_copper',
+  'set_plane', 'set_plane_style', 'add_hole', 'remove_hole', 'add_vias', 'remove_vias', 'add_cutout', 'remove_cutout', 'add_keepout', 'edit_keepout',
+  'remove_keepout', 'add_graphic', 'edit_graphic', 'remove_graphic', 'set_outline', 'set_panel',
+]);
+
+/** The board an op works on (BOARD_OPS), or null for an op on the whole design. */
+export function opBoard(d: Design, op: EditOp): string | null {
+  return BOARD_OPS.has(op.op) ? boardFor(d, op as { op: string; board?: string }) : null;
+}
 
 /**
  * Applies one op. `by`: who asked for it (the app's own buttons and drags are the user's; the
@@ -24,6 +41,44 @@ import { tuneLength } from './tune.ts';
  */
 export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', ctx?: OpContext): OpResult {
   switch (op.op) {
+    case 'add_board':
+      return addBoard(d, op);
+    case 'remove_board':
+      return removeBoard(d, op);
+    case 'assign_board':
+      return assignBoard(d, op);
+    case 'set_fab_profile':
+      // one fab house for every board (docs/design/multi-board.md §5)
+      if (multiBoard(d)) {
+        const rs = boardList(d).map((b) => {
+          const f = focusBoard(d, b.id);
+          const r = applyOne(f, op, by, ctx);
+          commitFocus(d, b.id, f);
+          return r;
+        });
+        return { ...rs[0]!, effect: `${rs[0]!.effect} (every board)` };
+      }
+      break;
+  }
+  const id = opBoard(d, op);
+  if (op.op === 'set_board' && op.name !== undefined) {
+    renameBoard(d, id!, op.name);
+    const { op: _o, board: _b, name: _n, ...rest } = op;
+    if (!Object.values(rest).some((v) => v !== undefined)) return { op: 'set_board', effect: `board renamed "${op.name.trim()}"`, ids: [id!] };
+  }
+  if (id === null || !multiBoard(d)) return applyOne(d, op, by, ctx);
+  const f = focusBoard(d, id);
+  const r = applyOne(f, op, by, ctx);
+  commitFocus(d, id, f);
+  return r;
+}
+
+function applyOne(d: Design, op: EditOp, by: 'user' | 'agent', ctx?: OpContext): OpResult {
+  switch (op.op) {
+    case 'add_board':
+    case 'remove_board':
+    case 'assign_board':
+      throw new Error('applyOne: a design op');
     case 'add_part':
       return addPart(d, op);
     case 'remove':
