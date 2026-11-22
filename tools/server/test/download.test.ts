@@ -23,6 +23,8 @@ describe('datasheet download', () => {
   it('accepts a few bytes before the PDF header', async () => {
     serve(new TextEncoder().encode('\r\n\r\n%PDF-1.4\n...'), { type: 'application/pdf' });
     expect((await download(URL1)).byteLength).toBeGreaterThan(0);
+    serve(new TextEncoder().encode('\uFEFF %PDF-1.5\n...'), { type: 'binary/octet-stream' }); // a byte order mark, as S3 serves it
+    expect((await download(URL1)).byteLength).toBeGreaterThan(0);
   });
 
   it('names the link, where it was redirected and the HTML page that came back instead of the PDF', async () => {
@@ -36,6 +38,15 @@ describe('datasheet download', () => {
     expect((err as Error).message).toContain('redirected to https://cree-led.com/products/xlamp-leds-discrete/xlamp-xp-e2');
     expect((err as Error).message).toContain('an HTML page "XLamp XP-E2 LEDs | Cree LED" (text/html)');
     expect((err as Error).message).toContain('direct link');
+  });
+
+  it('names the PDF an HTML landing page links to', async () => {
+    const page = `<!doctype html><html><head><title>E73-2G4M08S1C</title></head><body>${'x'.repeat(8000)}<a href="/uploadfile/E73-2G4M08S1C_UserManual_EN.pdf?v=2&amp;x=1">Manual</a></body></html>`;
+    serve(page, { type: 'text/html', finalUrl: 'https://www.ebyte.com/en/product-view-news.html?id=1010' });
+    const err = (await download('https://www.ebyte.com/en/product-view-news.html?id=1010').catch((e: Error) => e)) as Error;
+    expect(err.message).toContain('an HTML page "E73-2G4M08S1C" (text/html)');
+    expect(err.message).toContain('It links to https://www.ebyte.com/uploadfile/E73-2G4M08S1C_UserManual_EN.pdf?v=2&x=1: try that link.');
+    expect(err.message).toContain('attach the file');
   });
 
   it('names the link and the status of a failed download', async () => {

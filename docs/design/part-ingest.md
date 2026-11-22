@@ -13,7 +13,10 @@ the user's local Claude Code through the server, like the app chat.
 
 1. **Server** (`tools/server/src/chat.ts`, `pdf.ts`): downloads or receives the PDF and makes a
    fresh folder `~/.4k7/ingest/<job>/` with `datasheet.pdf`, `pages/page-NNN.txt` (text,
-   table cells separated by ` | `) and `index.txt` (page → first heading). Then it starts
+   table cells separated by ` | `) and `index.txt` (page → first heading; a PDF without any text,
+   a scan, gets a first line saying so, as does the job's status; no OCR). A download is a PDF by its
+   first bytes, whatever the content type; an HTML page instead is refused with its title and the
+   first `.pdf` link on it, a failed one with the HTTP status and link (`download.ts`). Then it starts
    `claude -p` in that folder with `--tools Read,Grep,Glob`, `--permission-mode dontAsk` and an MCP
    token whose server exposes a single tool, `submit_part`. Reads outside the folder are denied
    (verified), and there is no shell, no web access and no design tools. The folder is deleted

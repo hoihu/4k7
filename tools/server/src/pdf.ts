@@ -59,15 +59,24 @@ export async function pdfPages(data: Uint8Array): Promise<string[]> {
   return pages;
 }
 
+/** Said where a PDF has no text at all: a scan, or text drawn as outlines. No OCR is done. */
+export const NO_TEXT = 'no text layer, likely a scanned PDF: its pages can only be read as pictures';
+
 /**
  * Write datasheet.pdf, pages/page-NNN.txt and index.txt (page → first heading-like line)
- * into `dir`. Returns the page count.
+ * into `dir`. Returns the page count and whether any page has text.
  */
-export async function prepareDatasheet(dir: string, data: Uint8Array): Promise<number> {
+export async function prepareDatasheet(dir: string, data: Uint8Array): Promise<{ pages: number; text: boolean }> {
   mkdirSync(join(dir, 'pages'), { recursive: true });
   writeFileSync(join(dir, 'datasheet.pdf'), data);
-  const pages = await pdfPages(data);
-  const index: string[] = [];
+  let pages: string[];
+  try {
+    pages = await pdfPages(data);
+  } catch (e) {
+    throw new Error(`the file starts like a PDF but cannot be opened (${(e as Error).message}): it is damaged or was cut short. Download it again, or download it in a browser and attach the file`);
+  }
+  const text = pages.some((t) => t.trim());
+  const index: string[] = text ? [] : [`(${NO_TEXT}: read the pages of datasheet.pdf)`];
   pages.forEach((text, i) => {
     const n = String(i + 1).padStart(3, '0');
     writeFileSync(join(dir, 'pages', `page-${n}.txt`), `[page ${i + 1} of ${pages.length}]\n${text}\n`);
@@ -75,5 +84,5 @@ export async function prepareDatasheet(dir: string, data: Uint8Array): Promise<n
     index.push(`${i + 1}: ${heading.slice(0, 100)}`);
   });
   writeFileSync(join(dir, 'index.txt'), index.join('\n') + '\n');
-  return pages.length;
+  return { pages: pages.length, text };
 }

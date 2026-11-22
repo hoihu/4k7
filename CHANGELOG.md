@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Part import
+
+- **A datasheet that cannot be imported now says why and what to try next.** When a datasheet link led to a product page instead of the PDF, the import said only that it was not a PDF. Now it gives the page's title and, where the page links to a PDF, that link, so the agent can try it. A file that starts like a PDF but cannot be opened (a damaged or cut-short download) is reported as such, with the advice to download it again or download it in a browser and attach it. A scanned datasheet without a text layer is named as one: the import and `read_datasheet` tell the agent to read its pages as pictures instead of calling it unreadable.
+
 ### Power
 
 - **The agent can show you the whole power tree in one answer.** Before, what feeds what came out piece by piece: the power checks, the current check and the linear regulator heat check each looked at their own part of it. Now ask the agent "what feeds what, and will anything run hot?" and it reads `get_power_tree`: for every supply rail, where its power comes from (a regulator, a connector, a battery, or unknown), the ferrites, fuses and resistors between, the rails it feeds, its loads and its current against its maximum current. For a linear regulator it also gives the heat, for example 0.85 W where a SOT-23 sheds 0.29 W, the same numbers as `SEM.LDO_DISSIPATION`. A rail without a maximum current or stated loads shows its current as unknown, never as fine.
