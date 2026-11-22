@@ -16,6 +16,7 @@ import { renamePart, setFootprint, setMating, setPackageDefaults, setPinDescript
 import { autoDraw, describe, placeBlock, placeSymbol, setPaper } from './sheetops.ts';
 import { addTestPoints } from './testpoints.ts';
 import { tuneLength } from './tune.ts';
+import { addMate, removeMate, tidyMates } from './mates.ts';
 import { addBoard, assignBoard, boardFor, boardList, boardsNow, commitFocus, focusBoard, leftBoard, multiBoard, removeBoard, renameBoard, resolveBoard } from './boards.ts';
 
 /**
@@ -40,7 +41,18 @@ export function opBoard(d: Design, op: EditOp): string | null {
  * results computed elsewhere are found by it).
  */
 export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', ctx?: OpContext): OpResult {
+  const r = applyDesignOp(d, op, by, ctx);
+  // a mate of a part taken off, or of a design back to one board, goes with it
+  tidyMates(d);
+  return r;
+}
+
+function applyDesignOp(d: Design, op: EditOp, by: 'user' | 'agent', ctx?: OpContext): OpResult {
   switch (op.op) {
+    case 'mate':
+      return addMate(d, op);
+    case 'remove_mate':
+      return removeMate(d, op);
     case 'add_board':
       return addBoard(d, op);
     case 'remove_board':
@@ -89,6 +101,8 @@ function applyOne(d: Design, op: EditOp, by: 'user' | 'agent', ctx?: OpContext):
     case 'add_board':
     case 'remove_board':
     case 'assign_board':
+    case 'mate':
+    case 'remove_mate':
       throw new Error('applyOne: a design op');
     case 'add_part':
       return addPart(d, op);

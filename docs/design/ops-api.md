@@ -96,6 +96,8 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `add_board`: another board in the design (a product of several boards), with the sheets whose parts go on it ([multi-board](multi-board.md)).
 - `remove_board`: take a board away; its sheets and parts go back to the first board.
 - `assign_board`: put whole sheets, or single parts, on a board.
+- `mate`: join two boards through a connector on each (stack, cable, edge, wire, or an explicit pin map); the checks then hold the nets to which pin meets which.
+- `remove_mate`: take a mate away (by its id or a connector).
 - `set_board`: board size, layers and design rules (clearance, track and power-track width, via drill and pad, edge clearance, vias in pads, corner radius, and current_rise_c: how much copper may heat with its net's current, 10, 20 or 30 °C, default 10, which sets what the current check asks of tracks and vias, not the copper), and the board's name. On a design of several boards every board op takes a board argument (name or id); without it the op works on the board of the parts it names, else on the board of the nets it names if they are on one board, and is refused (`BOARD_AMBIGUOUS`) when it says neither.
 - `set_outline`: a free-form board outline.
 - `add_cutout`: a rectangular, round or slot cutout.
