@@ -3,6 +3,7 @@
   import { app } from '../../app.svelte.ts';
   import { disk } from '../../disk.svelte.ts';
   import { projectIdOf } from '../../projectFile.ts';
+  import { recentEntries } from '../../recentProjects.ts';
   import Field from './Field.svelte';
   import Section from './Section.svelte';
 
@@ -67,6 +68,13 @@
     }
   }
 
+  const recent = $derived(recentEntries(app.settings.recentProjects, app.projectId, app.projects.map((p) => p.id)));
+
+  /** A recent project opens the way a file from the projects folder does. */
+  async function openRecent(id: string) {
+    if (leave() && (await app.openProject(id))) app.view = 'sch';
+  }
+
   function keepConversation(on: boolean) {
     if (on === app.keepConversation) return;
     if (!on && !window.confirm('Remove the conversation from the project file? The chat on screen stays until you clear it.')) return;
@@ -118,6 +126,15 @@
     <button class="btn" onclick={() => fileInput?.click()}>Open file…</button>
     <input type="file" accept=".json,application/json" hidden bind:this={fileInput} onchange={openFile} />
   </Field>
+  {#if recent.length}
+    <Field label="Recent" hint={recent.some((r) => r.missing) ? 'Greyed out: the file is no longer in the projects folder (moved, renamed or deleted).' : undefined}>
+      <div class="row">
+        {#each recent as r (r.id)}
+          <button class="btn" onclick={() => openRecent(r.id)} disabled={r.missing || disk.status !== 'ok'} title={r.missing ? 'Not in the projects folder' : disk.projectFile(r.id)}>{r.id}</button>
+        {/each}
+      </div>
+    </Field>
+  {/if}
   <Field label="New">
     <form class="row" onsubmit={newProject}>
       <input class="text grow" aria-label="New project name" placeholder="untitled" bind:value={newName} />

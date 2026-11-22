@@ -279,6 +279,8 @@ export interface Settings {
   serverPort: number | null;
   /** The project open last (its file's name in the projects folder); '' = the newest. */
   project: string;
+  /** The projects opened last, most recent first (recentProjects.ts). */
+  recentProjects: string[];
   /** The user's notes on how they want schematics drawn, sent to the agent with every request; '' = none. */
   schematicNotes: string;
   /** The user's levels and limits for the drawing checks (SCH.*), only where they differ from the shipped ones. */
@@ -311,6 +313,7 @@ export const DEFAULT_SETTINGS: Settings = {
   serverAccessKey: '',
   serverPort: null,
   project: '',
+  recentProjects: [],
   schematicNotes: '',
   schematicChecks: {},
   layoutNotes: '',

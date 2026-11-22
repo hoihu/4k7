@@ -59,6 +59,7 @@ import {
 import { disk, type ProjectEntry } from './disk.svelte.ts';
 import { fitConversation, projectJson, readProject, restoredSessions } from './conversation.ts';
 import { PLAN_STEP_OFF, PlanReview } from './plan.ts';
+import { addRecent, renameRecent } from './recentProjects.ts';
 
 /** A tool's answer before the chat's label is put on it. */
 type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
@@ -403,7 +404,7 @@ class AppState {
     this.agent.reset();
     this.chat = [];
     this.hunkOff = {};
-    if (this.settings.project !== id) void this.updateSettings({ project: id });
+    this.rememberProject(id);
     await this.ingest.adoptParts(design).catch(() => {});
     await this.refresh();
     return true;
@@ -474,6 +475,12 @@ class AppState {
     clearTimeout(this.conversationTimer);
     this.conversationTimer = null;
     void this.persist();
+  }
+
+  /** The project open now: opened first next time, and at the front of the recent projects. */
+  private rememberProject(id: string) {
+    if (this.settings.project === id && this.settings.recentProjects?.[0] === id) return;
+    void this.updateSettings({ project: id, recentProjects: addRecent(this.settings.recentProjects, id) });
   }
 
   async refreshProjects() {
@@ -1624,7 +1631,7 @@ class AppState {
           this.projectId = await disk.createProject(json, this.newFileName);
           this.newFileName = undefined;
           this.renameFile = false; // named after the design, or the file it came from, already
-          void this.updateSettings({ project: this.projectId });
+          this.rememberProject(this.projectId);
           await this.refreshProjects();
         }
         this.unsaved = false;
@@ -1737,7 +1744,7 @@ class AppState {
     try {
       this.projectId = await disk.renameProject(id, name);
       this.renameFile = false;
-      if (this.projectId !== id) void this.updateSettings({ project: this.projectId });
+      if (this.projectId !== id) void this.updateSettings({ project: this.projectId, recentProjects: renameRecent(this.settings.recentProjects, id, this.projectId) });
       await this.refreshProjects();
     } catch (e) {
       this.flash(`The file keeps its name: ${(e as Error).message}`);
