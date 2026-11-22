@@ -38,7 +38,7 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
       }
       return true;
     };
-    const octo = (a: number, b: number): { corner: number; cells: number[] } | null => {
+    const octo = (a: number, b: number, ok: (corner: number) => boolean = () => true): { corner: number; cells: number[] } | null => {
       const ax = a % W;
       const ay = (a - ax) / W;
       const dx = (b % W) - ax;
@@ -48,7 +48,7 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
       const straightFirst = (ay + dy - Math.sign(dy) * m) * W + ax + dx - Math.sign(dx) * m;
       for (const corner of [diagFirst, straightFirst]) {
         const out: number[] = [];
-        if (walk(a, corner, out) && walk(corner, b, out)) return { corner, cells: out };
+        if (ok(corner) && walk(a, corner, out) && walk(corner, b, out)) return { corner, cells: out };
       }
       return null;
     };
@@ -71,7 +71,25 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
       verts.push(cells[next]!);
       i = next;
     }
-    if (!recentre(l, verts, free, clip)) return { verts, covered };
+    // a corner sharper than 90° (a hairpin: an acid trap inside the track, DRC.ACID_TRAP), where
+    // the maze path turns back or a piece's order leaves it arriving against the next one: its
+    // two pieces become one between their outer ends, if that is clear and turns 90° or wider
+    const sharp = (a: number, b: number, c: number) =>
+      Math.sign((b % W) - (a % W)) * Math.sign((c % W) - (b % W)) + Math.sign(Math.floor(b / W) - Math.floor(a / W)) * Math.sign(Math.floor(c / W) - Math.floor(b / W)) < 0;
+    let unhooked = false;
+    for (let k = 1; k + 1 < verts.length; k++) {
+      const [a, b] = [verts[k - 1]!, verts[k + 1]!];
+      if (a === b || !sharp(a, verts[k]!, b)) continue;
+      const around = (corner: number) => {
+        const seq = [...(k >= 2 ? [verts[k - 2]!] : []), a, ...(corner !== a && corner !== b ? [corner] : []), b, ...(k + 2 < verts.length ? [verts[k + 2]!] : [])];
+        return seq.every((v, q) => q === 0 || q + 1 === seq.length || !sharp(seq[q - 1]!, v, seq[q + 1]!));
+      };
+      const piece = octo(a, b, around);
+      if (!piece) continue;
+      verts.splice(k, 1, ...(piece.corner !== a && piece.corner !== b ? [piece.corner] : []));
+      unhooked = true;
+    }
+    if (!recentre(l, verts, free, clip) && !unhooked) return { verts, covered };
     // pieces moved: the copper they cover now
     const moved = [verts[0]!];
     for (let q = 0; q + 1 < verts.length; q++) {
