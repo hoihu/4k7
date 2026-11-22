@@ -5,7 +5,7 @@
  * instead of silently becoming a broken symbol.
  */
 import { PartDraft, padPins, type DatasheetPages, type IngestIssue, type PartCard, type PartRequirement } from '@4k7/schema';
-import { bgaRowName, footprintFor } from './footprint.ts';
+import { bgaRowName, footprintFor, toTopView } from './footprint.ts';
 import { planSymbolLayout } from './symbolgen.ts';
 
 export interface IngestResult {
@@ -27,7 +27,10 @@ export function draftToCard(input: unknown): IngestResult {
   const issues: IngestIssue[] = [];
   const err = (message: string) => issues.push({ severity: 'error', message });
   const warn = (message: string) => issues.push({ severity: 'warning', message });
-  const pkg = draft.package;
+  if (draft.package.pads?.length && !draft.package.pads_view) {
+    warn('The pads do not say which way the drawing is seen (pads_view): check its label ("bottom view", "viewed from below", "pad side") and the polarity mark; a bottom view taken as top view puts every pad on the wrong side.');
+  }
+  const pkg = toTopView(draft.package);
 
   /* ---- pin numbers ---- */
   const seen = new Map<string, number>();
@@ -160,7 +163,7 @@ export interface Disagreement {
   b: string;
 }
 
-const PKG_FIELDS = ['family', 'pins', 'pitch_mm', 'body_mm', 'span_mm', 'lead_length_mm', 'lead_width_mm', 'exposed_pad_mm', 'grid', 'ball_mm'] as const;
+const PKG_FIELDS = ['pads_view', 'family', 'pins', 'pitch_mm', 'body_mm', 'span_mm', 'lead_length_mm', 'lead_width_mm', 'exposed_pad_mm', 'grid', 'ball_mm'] as const;
 
 const normName = (s: string) => s.toUpperCase().replace(/[\s_]/g, '');
 /** Main name without the suffixes datasheets add for extra functions: "PH0-OSC_IN" → "PH0", "PA13(JTMS)" → "PA13". */

@@ -46,6 +46,10 @@ export const Mating = z.object({
 });
 export type Mating = z.infer<typeof Mating>;
 
+/** Which way a pad drawing is seen; bottom-view drawings are mirrored left to right once, on the way in. */
+export const PadsView = z.enum(['top', 'bottom']);
+export type PadsView = z.infer<typeof PadsView>;
+
 export const PackageInfo = z.object({
   name: z.string().min(2).describe('Package name as in the datasheet, e.g. "LQFP100", "UFQFPN48", "TFBGA216"'),
   family: PackageFamily.describe('AXIAL (through-hole, leads out of both ends: body_mm = length × diameter, pitch_mm = lead spacing) and RADIAL (both leads underneath: body_mm = diameter × diameter) for THT passives; QFP for LQFP/TQFP, QFN for (U)FQFPN/VQFN, BGA for (T/U)FBGA; MODULE for a small carrier board with its pins in two rows along the long edges (Raspberry Pi Pico, ESP32/WROOM modules, Arduino Nano …): body_mm = the board, span_mm[0] = distance between the two pin rows, height_mm = board thickness'),
@@ -69,6 +73,9 @@ export const PackageInfo = z.object({
     .array(LandPad)
     .optional()
     .describe('Explicit land pattern, for packages no family fits (buzzers, relays, switches, terminal blocks, odd connectors; family "other"): one pad per pin, from the recommended footprint or the package drawing. Overrides the generated pads.'),
+  pads_view: PadsView.optional().describe(
+    'Which way the drawing the pads (and body_chamfer, mating) were read off is seen: top, or bottom ("bottom view", "viewed from below", "pad side", as many LED, connector and module datasheets draw it). Give the coordinates as drawn; a bottom view is mirrored to the top view once, on import. Required with pads',
+  ),
   mating: Mating.optional().describe('Connectors, card slots, switches: where the plug, card or finger comes in (from the package drawing)'),
 });
 export type PackageInfo = z.infer<typeof PackageInfo>;

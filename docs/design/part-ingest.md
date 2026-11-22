@@ -30,7 +30,11 @@ the user's local Claude Code through the server, like the app chat.
 3. **The tab checks every submission** with `draftToCard` (`packages/parts/src/ingest.ts`):
    schema, duplicate numbers, pin count against the package (exposed pad excluded), numbering 1…N
    for leaded packages, valid JEDEC ball names for BGA, supply/ground presence, pages present, and
-   whether a footprint can be generated with a pad for every pin. Errors go back to Claude as the
+   whether a footprint can be generated with a pad for every pin. Explicit pads carry the view of
+   the drawing they were read off (`pads_view`, `set_footprint` `view`): a bottom view ("viewed from
+   below", "pad side") is mirrored left to right once, on the way in (`toTopView` in `footprint.ts`),
+   so stored pads are always top view; pads without a view are kept as drawn and warned about, and
+   the two passes are compared on it. Errors go back to Claude as the
    tool result ("Missing pin numbers: 37–38"), and it resubmits.
 4. **Second pass (optional, on by default)**: the server starts a second, fresh Claude Code session
    (no memory of the first) with an extra instruction to work in a different order (count groups
