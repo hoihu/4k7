@@ -628,6 +628,12 @@ Each step is useful alone.
     kept relative to the new parent. `remove_constraint` goes back to the guess. The relation stays
     a mechanism (a dragged IC takes its parts along), but the agent decides it. Benches unchanged
     (2 and 4 layers: same board, tracks and vias).
+    Since 2026-11-21 a `place` (the agent's or a drag of the user's) is in board coordinates: it is
+    kept relative only to a parent declared with `attach`, no longer to the guessed one. Before, a
+    placed connector or part followed the IC the placer guessed it belonged with, so moving that IC
+    moved every part placed round it (on one board the agent locked ~50 parts to stop it). A place
+    of a part also turns the choices still kept relative to it without such a declaration (saved
+    earlier) into board coordinates where they stand. Parts the placer put down still follow.
 13. **Next.** (a) The placer's guesses softened one by one, judged on the benches: the board
     density, the margin to the edge, satellites always at the courtyard (the alignment snapping
     and the re-run of every guess on each move are done, §11). (b) Planes in try_placements
