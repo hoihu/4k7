@@ -1,7 +1,7 @@
 /**
  * Reusing a functional block from another project: design_query list_blocks reads a project the
  * server stores and lists its blocks (the describe blocks) with their parts and the nets inside and
- * at the edge of each. Read-only; import_block, which copies one into the open design, comes next.
+ * at the edge of each. Read-only; import_block (importops.ts) copies one into the open design.
  * See docs/design/ops-api.md §7 and docs/design/ai-loop.md §5.
  *
  * The app reads the file (only a project the projects folder lists) and calls blocksOfProject;
@@ -75,22 +75,28 @@ export function listBlocks(project: string, file: Design): ListBlocksAnswer {
     blocks: listed,
     ...(loose.length ? { not_in_a_block: loose } : {}),
     note: blocks.length
-      ? 'Boundary nets leave the block (to parts outside it, off the board, or a supply or ground the importing design has its own of): each must be joined to a net of the open design. Values were chosen for that project: check them against this one. import_block, which copies a block in, is not there yet.'
+      ? 'Boundary nets leave the block (to parts outside it, off the board, or a supply or ground the importing design has its own of): each must be joined to a net of the open design. Values were chosen for that project: check them against this one. design_edit import_block copies a block in, with every boundary net mapped.'
       : `${project} has no functional blocks (describe blocks): there is nothing to reuse from it until it is grouped.`,
   };
 }
 
 /**
- * list_blocks for project `id`: `text` is its file as the server gave it, `known` the projects the
+ * Project `id`'s design, migrated: `text` is its file as the server gave it, `known` the projects the
  * projects folder lists. An id it does not list is never read; an unreadable file is an error.
  */
-export function blocksOfProject(id: string, text: string | undefined, known: string[]): ListBlocksAnswer | { error: string; projects?: string[] } {
+export function readProject(id: string, text: string | undefined, known: string[]): Design | { error: string; projects?: string[] } {
   if (!known.includes(id) || text === undefined) return { error: `No project "${id}" in the projects folder.`, projects: [...known].sort(natCmp) };
   try {
     const { conversation: _c, planStep: _p, ...design } = JSON.parse(text) as Design & { conversation?: unknown; planStep?: unknown };
     if (!design.components || !design.nets) throw new Error('not a design');
-    return listBlocks(id, design);
+    return migrate(design);
   } catch (e) {
     return { error: `${id} could not be read: ${(e as Error).message}.` };
   }
+}
+
+/** list_blocks for project `id` (readProject). */
+export function blocksOfProject(id: string, text: string | undefined, known: string[]): ListBlocksAnswer | { error: string; projects?: string[] } {
+  const d = readProject(id, text, known);
+  return 'error' in d ? d : listBlocks(id, d);
 }

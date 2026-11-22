@@ -31,6 +31,7 @@ import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
 import { blocksOfProject } from '@4k7/kernel/reuse';
+import type { ImportSources } from '@4k7/kernel';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
 import { PartImports } from './importPart.ts';
@@ -1391,30 +1392,44 @@ class AppState {
    * copper fill in and may stop it; the kernel then applies the transaction with what the helper
    * found (the same copper, without routing again). Everything else goes straight to the kernel.
    */
-  private transactEdit(tx: unknown, by?: 'user'): Promise<TransactionResult> {
+  private async transactEdit(tx: unknown, by?: 'user'): Promise<TransactionResult> {
     const ops = (tx as { ops?: RouteAsk[] })?.ops;
-    if (!Array.isArray(ops) || !ops.some((o) => o?.op === 'route')) return this.kernel.transact(tx, by);
+    const sources = await this.importSources(ops);
+    if (!Array.isArray(ops) || !ops.some((o) => o?.op === 'route')) return this.kernel.transact(tx, by, undefined, undefined, sources);
     // one at a time (the agent may send two at once): each starts from the design the one before left
-    const run = this.helperQueue.then(() => this.transactHelped(tx, by, ops));
+    const run = this.helperQueue.then(() => this.transactHelped(tx, by, ops, sources));
     this.helperQueue = run.catch(() => {});
     return run;
   }
   private helperQueue: Promise<unknown> = Promise.resolve();
 
-  private async transactHelped(tx: unknown, by: 'user' | undefined, ops: RouteAsk[]): Promise<TransactionResult> {
+  /** The stored projects a transaction's import_block ops copy from: only ids the projects folder lists are read (docs/design/ops-api.md §7). */
+  private async importSources(ops: unknown): Promise<ImportSources | undefined> {
+    const ids = Array.isArray(ops) ? [...new Set(ops.filter((o) => o?.op === 'import_block').map((o) => String(o.project ?? '')))] : [];
+    if (!ids.length || disk.status !== 'ok') return undefined;
+    const projects = (await disk.listProjects()).map((p) => p.id);
+    const files: Record<string, string> = {};
+    for (const id of ids.filter((x) => projects.includes(x))) {
+      const text = await disk.loadProject(id).catch(() => undefined);
+      if (text !== undefined) files[id] = text;
+    }
+    return { projects, files };
+  }
+
+  private async transactHelped(tx: unknown, by: 'user' | undefined, ops: RouteAsk[], sources?: ImportSources): Promise<TransactionResult> {
     const what = ops.filter((o) => o?.op === 'route').map((o) => (o.nets?.length ? o.nets.join(', ') : o.from ? `${o.from} → ${o.to}` : 'every open connection') + (o.fresh ? ', its own copper again' : '')).join('; ');
     // the results are laid only on the working copy they were found for; changed meanwhile (a drag,
     // an undo), the helper searches again on it, a few times, then the kernel routes itself
     for (let attempt = 0; attempt < 3; attempt++) {
       const { design, rev } = await this.kernel.draftSnapshot();
-      if (!design.board?.drawn && !ops.some((o) => o?.op === 'set_copper_mode')) return this.kernel.transact(tx, by);
+      if (!design.board?.drawn && !ops.some((o) => o?.op === 'set_copper_mode')) return this.kernel.transact(tx, by, undefined, undefined, sources);
       const run = await this.runHelper(design, tx, by ?? 'agent', ops.flatMap((o, i) => (o?.op === 'route' ? [i] : [])), what);
-      if (!run) return this.kernel.transact(tx, by);
-      const r = await this.kernel.transact(tx, by, run.results, rev);
+      if (!run) return this.kernel.transact(tx, by, undefined, undefined, sources);
+      const r = await this.kernel.transact(tx, by, run.results, rev, sources);
       if (r.rejection?.code !== 'STALE') return r;
       if (run.stopped) return { ...r, rejection: { ...r.rejection, message: 'The route helper was stopped, and the design changed while it searched: nothing was laid. Route again.' } };
     }
-    return this.kernel.transact(tx, by);
+    return this.kernel.transact(tx, by, undefined, undefined, sources);
   }
 
   /**

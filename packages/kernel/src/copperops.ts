@@ -9,6 +9,7 @@
  * drawn already. The app runs that search in a worker and hands the transaction its result
  * (RouteHelperResult), so the kernel stays responsive and the user can watch and stop it.
  */
+import type { ImportSources } from './importops.ts';
 import { DEFAULT_BOARD, padHasPin, type Diagnostic, type CopperLayer, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type LaidTrack, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
 import { boardRouteInput, copperKey, placedOf, softened, storedPlacement } from './board.ts';
 import { rotate } from './placer.ts';
@@ -777,6 +778,8 @@ export interface OpContext {
   helper?: HelperHooks;
   /** When the transaction's route ops must be done by (Date.now() ms). */
   deadline?: number;
+  /** The stored projects the app read for the transaction's import_block ops. */
+  sources?: ImportSources;
 }
 
 /** All route ops of one transaction together (ms), well inside the server's minute for a tool call. */
@@ -895,6 +898,7 @@ const COPPER_AFTER: Record<EditOp['op'], 'follow' | 'check' | null> = {
   connect: 'follow',
   disconnect: 'follow',
   swap_pins: 'follow',
+  import_block: 'follow',
   no_connect: 'follow',
   set_net: null,
   add_sheet: 'follow',

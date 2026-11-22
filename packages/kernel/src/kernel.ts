@@ -57,6 +57,7 @@ import { copperKey, layoutBoard, placedOf, planePlan } from './board.ts';
 import { currentCheck, currentMapAnswer, currentRise, layerCopper } from './current.ts';
 import { powerTreeAnswer } from './powertree.ts';
 import type { RouteProgress } from './router.ts';
+import type { ImportSources } from './importops.ts';
 import { HELPER_TX_MS, annotateChecks, drawsCopper, followParts, movesParts, type HelperHooks } from './copperops.ts';
 import { canonicalJson, migrate } from './canonical.ts';
 import { MIN_FREE, circuitSignature, guardOp, measure, positions, resolveScope, ripple, widenScope, type ResolvedScope } from './scope.ts';
@@ -243,8 +244,9 @@ export class Kernel {
    * Validate and apply a transaction to the working copy (or dry-run it). `by`: who asked for it,
    * the agent unless the app says the user. `helper`: the route helper's results computed elsewhere
    * (a worker), or hooks to follow it while it routes here (drawn copper, see copperops.ts).
+   * `sources`: the stored projects the app read for its import_block ops (importops.ts).
    */
-  transact(input: unknown, by: 'user' | 'agent' = 'agent', helper?: HelperHooks): TransactionResult {
+  transact(input: unknown, by: 'user' | 'agent' = 'agent', helper?: HelperHooks, sources?: ImportSources): TransactionResult {
     const parsed = Transaction.safeParse(input);
     if (!parsed.success) {
       return this.rejected({ opIndex: indexOfIssue(parsed.error.issues), code: 'INVALID_OP', message: formatZod(parsed.error.issues) }, false);
@@ -268,7 +270,7 @@ export class Kernel {
         // (drawn copper follows the parts an op moves)
         const placed = work.board?.drawn && movesParts(op) ? (placedNow ?? placedOf(work)) : null;
         if (!work.board?.drawn) placedNow = null;
-        const r = applyOp(work, op, by, { index: i, deadline, ...(helper ? { helper } : {}) });
+        const r = applyOp(work, op, by, { index: i, deadline, ...(helper ? { helper } : {}), ...(sources ? { sources } : {}) });
         if (placed) {
           placedNow = placedOf(work);
           const f = followParts(work, placed, placedNow);
