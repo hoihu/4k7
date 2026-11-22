@@ -177,6 +177,16 @@ describe('the faces a cut shows through the box', () => {
     expect(new Set(facesOf(g).map(hex)).size).toBe(3);
   });
 
+  it('draws a clear inlay see-through (three draws it after the solid pieces), so what is behind it shows', () => {
+    const g = group([base, lid, logo], {}, { logo: { host: 'lid', material: 'clear' } });
+    const fronts = g.children.filter((o): o is THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial> => o instanceof THREE.Mesh && !isFace(o));
+    const [b, l, w] = fronts.map((m) => m.material);
+    expect(w!.transparent).toBe(true);
+    expect(w!.opacity).toBeLessThan(0.5);
+    expect(w!.depthWrite).toBe(false);
+    for (const m of [b!, l!]) expect(m.transparent).toBe(false);
+  });
+
   it('counts a lifted piece where it is, and its face reaches it', () => {
     const g = group([base, lid], { open: 1 });
     cut(g);

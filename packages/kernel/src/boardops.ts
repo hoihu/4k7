@@ -672,8 +672,9 @@ export function addVias(d: Design, op: Extract<EditOp, { op: 'add_vias' }>): OpR
 
 
 /**
- * Place a part: the user's choice (a soft position constraint, relative to the part's parent so
- * it follows when that moves), or with `lock` exactly there (hard). One per part; placing again
+ * Place a part: the user's choice (a soft position constraint in board coordinates; relative to
+ * its parent only if that was declared with attach, so it follows when that moves), or with
+ * `lock` exactly there (hard). One per part; placing again
  * replaces it, keeping a rotation chosen before unless a new one is given.
  */
 export function place(d: Design, op: Extract<EditOp, { op: 'place' }>, by: 'user' | 'agent' = 'agent'): OpResult {
@@ -682,7 +683,6 @@ export function place(d: Design, op: Extract<EditOp, { op: 'place' }>, by: 'user
   const flipped = op.side ? setSide(d, comp, op.side) : false;
   const now = placedOf(d);
   let rot: number | undefined = op.rot;
-  let prevRel: string | undefined;
   let wasUsers = false;
   for (const k of Object.values(d.ledger)) {
     if (k.kind !== 'position' || k.a !== comp.id) continue;
@@ -692,16 +692,26 @@ export function place(d: Design, op: Extract<EditOp, { op: 'place' }>, by: 'user
       const anchor = k.rel ? now.parts.find((p) => p.componentId === k.rel) : undefined;
       rot = anchor ? (anchor.rot + k.rot) % 360 : k.rot;
     }
-    prevRel = k.rel;
     delete d.ledger[k.id];
   }
   const id = nextId(d, 'k');
   const r = (v: number) => Math.round(v * 1000) / 1000;
   // the agent placing a part on the user's word makes it the user's choice
   const source: Constraint['source'] = by === 'user' ? { type: 'user' } : op.quote ? { type: 'user', quote: op.quote } : { type: 'agent' };
-  const part = now.parts.find((p) => p.componentId === comp.id);
-  const anchorRef = part?.follows ?? (prevRel ? d.components[prevRel]?.refdes : undefined);
-  const anchor = !op.lock && anchorRef ? now.parts.find((p) => p.refdes === anchorRef) : undefined;
+  // kept relative only to a parent declared with attach, not to the placer's guess: a placed part
+  // stays where it was put when another part moves (docs/design/layout.md §12)
+  const declared = Object.values(d.ledger).find((k) => k.kind === 'belongs' && k.a === comp.id)?.b;
+  const anchor = !op.lock && declared ? now.parts.find((p) => p.componentId === declared) : undefined;
+  // and the parts placed relative to this one without such a declaration (designs saved
+  // earlier kept every placed part relative to its guessed parent) stay where they stand
+  for (const k of Object.values(d.ledger)) {
+    if (k.kind !== 'position' || k.rel !== comp.id || !k.a) continue;
+    if (Object.values(d.ledger).some((b) => b.kind === 'belongs' && b.a === k.a && b.b === comp.id)) continue;
+    const stands = now.parts.find((p) => p.componentId === k.a);
+    if (!stands) continue;
+    delete k.rel;
+    Object.assign(k, { xMm: stands.x, yMm: stands.y, ...(k.rot !== undefined ? { rot: stands.rot } : {}) });
+  }
   if (anchor) {
     // offset and rotation in the anchor's frame
     const dx = op.x_mm - anchor.x;

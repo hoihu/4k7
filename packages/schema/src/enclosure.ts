@@ -139,13 +139,23 @@ const NOT_THERE = new Set(['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource'
 
 const PIECE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** The materials an inlay can be printed in besides plain filament: `clear`, a window (a light, a display behind it). */
+export const INLAY_MATERIALS = ['clear'] as const;
+
+/** A piece printed with its host in another filament: the colour it is shown in, and `material: 'clear'` for a window the 3D view draws see-through. */
+export interface Inlay {
+  host: string;
+  colour?: string;
+  material?: (typeof INLAY_MATERIALS)[number];
+}
+
 /** What a script says, read without running it. */
 interface ScriptInfo {
   /** What is wrong with it (empty: nothing). */
   problems: string[];
   pieces: string[] | null;
   print: Record<string, [number, number, number]>;
-  inlays: Record<string, { host: string; colour?: string }>;
+  inlays: Record<string, Inlay>;
   /** The graphics it draws by name: graphic('logo', …). */
   graphics: string[];
 }
@@ -233,10 +243,14 @@ function readScript(script: string): ScriptInfo {
 
   const inlays = value('inlays');
   if (inlays !== undefined) {
-    const ok = !!inlays && typeof inlays === 'object' && !Array.isArray(inlays) && Object.values(inlays).every((x: { host?: unknown; colour?: unknown }) => !!x && typeof x.host === 'string' && (x.colour === undefined || typeof x.colour === 'string'));
+    const ok = !!inlays && typeof inlays === 'object' && !Array.isArray(inlays) && Object.values(inlays).every((x: { host?: unknown; colour?: unknown; material?: unknown }) => !!x && typeof x.host === 'string' && (x.colour === undefined || typeof x.colour === 'string') && (x.material === undefined || typeof x.material === 'string'));
     if (!ok) info.problems.push('inlays is plain text, read without running the script: const inlays = { lid_logo: { host: \'lid\', colour: \'white\' } };.');
     else {
-      for (const [name, x] of Object.entries(inlays as Record<string, { host: string; colour?: string }>)) info.inlays[name] = { host: x.host, ...(x.colour ? { colour: x.colour } : {}) };
+      for (const [name, x] of Object.entries(inlays as Record<string, { host: string; colour?: string; material?: string }>)) {
+        const clear = x.material !== undefined && (INLAY_MATERIALS as readonly string[]).includes(x.material);
+        if (x.material !== undefined && !clear) info.problems.push(`The inlay ${name} has material "${x.material}": the materials are ${INLAY_MATERIALS.map((m) => `'${m}'`).join(', ')} (leave it out for plain filament).`);
+        info.inlays[name] = { host: x.host, ...(clear ? { material: x.material as Inlay['material'] } : {}), ...(x.colour ? { colour: x.colour } : {}) };
+      }
       for (const [inlay, { host }] of Object.entries(info.inlays)) {
         if (!info.pieces.includes(inlay)) info.problems.push(`inlays names "${inlay}", which is not in pieces.`);
         else if (!info.pieces.includes(host)) info.problems.push(`The inlay ${inlay} belongs to "${host}", which is not in pieces.`);
@@ -269,11 +283,11 @@ export function scriptPrintRotations(script: string): Record<string, [number, nu
 
 /**
  * Pieces printed in another colour, inside or on a piece they belong to: the script's
- * `const inlays = { lid_logo: { host: 'lid', colour: 'white' } };` (the colour it is shown in). An
- * inlay prints with its host (turned the same, one object in the 3MF, its own part for a second
- * filament) and lifts with it in the opened view.
+ * `const inlays = { lid_logo: { host: 'lid', colour: 'white' } };` (the colour it is shown in;
+ * `material: 'clear'` for a window, drawn see-through). An inlay prints with its host (turned the
+ * same, one object in the 3MF, its own part for a second filament) and lifts with it in the opened view.
  */
-export function scriptInlays(script: string): Record<string, { host: string; colour?: string }> {
+export function scriptInlays(script: string): Record<string, Inlay> {
   return scriptInfo(script).inlays;
 }
 
