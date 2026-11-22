@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Fixes
+
+- **A project folder the app cannot read is reported once, with what to do.** When the server could not read the projects folder, the message "Could not read the project files" came back every four seconds for as long as the app was open. Now it shows once (and again only if the reason changes) while the app keeps trying in the background. On a Mac, where the cause is usually that macOS keeps Documents from the program that started the server, the message says so and points to System Settings → Privacy & Security → Files and Folders.
+
 ## 0.7.0 — 2026-11-22
 
 This release checks the current and power on a board: a microcontroller pin asked to drive more than it is rated for is flagged, tracks, vias and thermal spokes are checked against the current they carry, and a heat map shows where the copper works hardest. The agent can copy a block you already built in another project into the open design, give an enclosure a clear window, and swap pins and gates, including an ATtiny85's GPIO pins, to untangle the board. Parts can be marked do-not-populate, test points go on the power rails, and the design document can be downloaded as a file.

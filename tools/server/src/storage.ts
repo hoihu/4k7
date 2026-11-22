@@ -337,12 +337,28 @@ export function storageHandler(opts: StorageOptions): HttpHandler {
     } catch (e) {
       const err = e as Error & { status?: number };
       opts.log?.(`storage ${m} ${url.pathname}: ${err.message}`);
-      if (!res.headersSent) res.writeHead(err.status ?? (e instanceof SyntaxError ? 400 : 500), { 'content-type': 'text/plain; charset=utf-8' }).end(err.message);
+      const message = blockedByMacOS(e) ? macOSBlockMessage(e as NodeJS.ErrnoException) : err.message;
+      if (!res.headersSent) res.writeHead(err.status ?? (e instanceof SyntaxError ? 400 : 500), { 'content-type': 'text/plain; charset=utf-8' }).end(message);
     }
   };
   return async (req, res) => {
     await handle(req, res);
   };
+}
+
+/**
+ * macOS keeps Documents, Desktop and Downloads from programs the user has not let in (System Settings → Privacy &
+ * Security → Files and Folders). The server then gets EPERM for a folder its own user owns; say what to do instead.
+ */
+export function blockedByMacOS(e: unknown, platform = process.platform): boolean {
+  return platform === 'darwin' && (e as NodeJS.ErrnoException)?.code === 'EPERM' && typeof (e as NodeJS.ErrnoException).path === 'string';
+}
+
+function macOSBlockMessage(e: NodeJS.ErrnoException): string {
+  return (
+    `macOS does not let the 4k7 server into ${e.path}. Allow the program that started it (Terminal, your editor, ...) ` +
+    'in System Settings → Privacy & Security → Files and Folders, or start the server from a program that has access'
+  );
 }
 
 /** The design's name, for the file of a new project. */

@@ -248,6 +248,8 @@ class AppState {
   private diskLoaded = false;
   private diskTimer: ReturnType<typeof setTimeout> | null = null;
   private diskConnecting: Promise<void> | null = null;
+  /** The last reason the project files could not be read, so a retry does not toast it again. */
+  private diskLoadError: string | null = null;
   /** The design was renamed and its file not yet (the server was not reachable). */
   private renameFile = false;
   /** The name a new project's file takes when it is created: the file it was opened from (else the design's name). */
@@ -343,8 +345,12 @@ class AppState {
       if (newer) this.flash(`${newer} saved ${newer === 1 ? 'library item was' : 'library items were'} written by a newer version of the app and not loaded`);
       await this.ingest.adoptParts(JSON.parse(await this.kernel.exportDesign()) as Design).catch(() => {});
       this.diskLoaded = true;
+      this.diskLoadError = null;
     } catch (e) {
-      this.flash(`Could not read the project files: ${(e as Error).message}`);
+      // retried every few seconds: say it once, and again only when the reason changes
+      const msg = `Could not read the project files: ${(e as Error).message}`;
+      if (msg !== this.diskLoadError) this.flash(msg, 10000);
+      this.diskLoadError = msg;
       this.diskTimer = setTimeout(() => void this.connectDisk(), DISK_RETRY_MS);
       return;
     }
