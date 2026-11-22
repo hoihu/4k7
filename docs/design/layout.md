@@ -590,7 +590,11 @@ Each step is useful alone.
     via, pour or other track of the net filling it, or a junction inside a pad or via, clears it. The router
     lays none of its own: a path that ends on the side of a track of its net at 45° turns before it and meets it
     square, with a stub at 90° onto its centre line, or on the bend where that piece ends (`squareJoin` in
-    routetracks.ts, 2026-11-22; only with exact clearance, else the join stays as it was). `DRC.NECK`
+    routetracks.ts, 2026-11-22; only with exact clearance, else the join stays as it was). Nor a hairpin inside
+    one track: where the straightening leaves a corner under 90° (the maze path turning back, or one piece's
+    order, diagonal or straight first, arriving against the next), its two pieces become one shape between their
+    outer ends that is clear and turns 90° or wider at both, else the corner stays (`straighten`, 2026-11-22). The
+    hooks left are into a pad that another net's pad crowds on one side, where the pad fills the wedge. `DRC.NECK`
     (`neckDrc`, warning): a track narrower than its net's width (`set_net`, its impedance rule, else the power or
     signal width), unless it is a neck (§5.7): an end on or within `neckReach` of a pad too small for that width,
     and no longer than twice that.

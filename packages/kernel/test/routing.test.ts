@@ -535,6 +535,21 @@ describe('the router lays no acid traps', () => {
     expect(r.failed).toEqual([]);
   });
 
+  it('a track does not turn back on itself where the straightening cuts across a bend of the maze path', () => {
+    // (seed 274 of the boards below: B ran down to 13.7, 8 and back up at 45° to 14.1, 7.6)
+    const { r, traps } = routed(passives([[14.8, 5.3, 'C', 'B'], [12.6, 5.9, 'B', 'B'], [16.7, 7.5, 'C', 'C'], [14.7, 6.6, 'C', 'A'], [13.3, 9.3, 'B', 'A'], [9.3, 10.8, 'B', 'A'], [15.1, 6.9, 'B', 'C']]));
+    expect(traps).toEqual([]);
+    expect(r.failed.length).toBe(2); // (as before: A and C have no way)
+    const sharp = r.tracks.flatMap((t) =>
+      segmentsOf(t.pts).flatMap(([ax, ay, bx, by], i, s) => {
+        const [, , cx, cy] = s[i + 1] ?? [];
+        // the corner at (bx, by) under 90°: the piece on leads back towards where this one came from
+        return cx !== undefined && (ax - bx) * (cx - bx) + (ay - by) * (cy! - by) > 1e-9 ? [`${t.netId} at ${bx}, ${by}`] : [];
+      }),
+    );
+    expect(sharp).toEqual([]);
+  });
+
   it('on small boards of passives drawn at random: no acid traps, and no connection fewer', () => {
     // (seven of these 40 boards had one before; 15 connections stayed open, as now)
     let [traps, open] = [0, 0];
