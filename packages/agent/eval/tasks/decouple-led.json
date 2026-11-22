@@ -1,0 +1,27 @@
+{
+  "name": "decouple-led",
+  "prompt": "Add a 100 nF decoupling capacitor across +3V3 and GND, next to J1.",
+  "design": "led.twd.json",
+  "expect": { "parts": ["C1"], "nets": ["+3V3", "GND"] },
+  "script": [
+    [{ "type": "tool_use", "id": "", "name": "design_query", "input": { "op": "get_summary" } }],
+    [
+      { "type": "text", "text": "Adding C1 between +3V3 and GND, near J1." },
+      {
+        "type": "tool_use",
+        "id": "",
+        "name": "design_edit",
+        "input": {
+          "summary": "100 nF decoupling at J1",
+          "ops": [
+            { "op": "add_part", "part": "generic:C", "refdes": "C1", "params": { "capacitance": "100nF", "voltage": "16V", "package": "0402" } },
+            { "op": "connect", "pins": ["C1.1"], "net": "+3V3" },
+            { "op": "connect", "pins": ["C1.2"], "net": "GND" },
+            { "op": "constrain", "kind": "near", "a": "C1", "b": "J1", "strength": "soft" }
+          ]
+        }
+      }
+    ],
+    [{ "type": "text", "text": "C1 decouples +3V3 next to J1." }]
+  ]
+}

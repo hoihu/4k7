@@ -46,6 +46,7 @@
     "prepare": "npm run package",
     "check:package": "node scripts/check-package.mjs",
     "check:codex": "node scripts/check-codex.mjs",
+    "eval": "node --experimental-transform-types --no-warnings packages/agent/eval/cli.ts",
     "changelog": "node scripts/changelog.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run check:package",
     "test": "vitest run",

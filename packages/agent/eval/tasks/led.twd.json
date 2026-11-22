@@ -1,0 +1,182 @@
+{
+  "components": {
+    "c_2": {
+      "id": "c_2",
+      "noConnect": [],
+      "params": {},
+      "part": "generic:CONN_1x2",
+      "pins": {
+        "1": "n_5",
+        "2": "n_7"
+      },
+      "refdes": "J1",
+      "sheet": "s_1"
+    },
+    "c_3": {
+      "id": "c_3",
+      "noConnect": [],
+      "params": {},
+      "part": "generic:LED",
+      "pins": {
+        "1": "n_7",
+        "2": "n_6"
+      },
+      "refdes": "D1",
+      "sheet": "s_1"
+    },
+    "c_4": {
+      "id": "c_4",
+      "noConnect": [],
+      "params": {
+        "resistance": "330"
+      },
+      "part": "generic:R",
+      "pins": {
+        "1": "n_5",
+        "2": "n_6"
+      },
+      "refdes": "R1",
+      "sheet": "s_1"
+    }
+  },
+  "format": 2,
+  "ledger": {},
+  "name": "untitled",
+  "nets": {
+    "n_5": {
+      "attrs": {
+        "external": true,
+        "voltage": 3.3
+      },
+      "id": "n_5",
+      "name": "+3V3"
+    },
+    "n_6": {
+      "attrs": {},
+      "id": "n_6",
+      "name": "N$1"
+    },
+    "n_7": {
+      "attrs": {},
+      "id": "n_7",
+      "name": "GND"
+    }
+  },
+  "parts": {
+    "generic:CONN_1x2": {
+      "category": "connector",
+      "description": "Connector, 1 row, 2 pins (header, terminal block)",
+      "id": "generic:CONN_1x2",
+      "notes": [
+        "Mark supply inputs with set_net(external: true, voltage)."
+      ],
+      "params": {
+        "mpn": {},
+        "package": {},
+        "pitch": {}
+      },
+      "pins": [
+        {
+          "name": "1",
+          "number": "1",
+          "side": "right",
+          "type": "passive"
+        },
+        {
+          "name": "2",
+          "number": "2",
+          "side": "right",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "J",
+      "title": "Connector 1×2"
+    },
+    "generic:LED": {
+      "category": "led",
+      "description": "LED. Pin 1 = cathode K, pin 2 = anode A",
+      "id": "generic:LED",
+      "params": {
+        "color": {},
+        "current": {
+          "description": "Operating current",
+          "unit": "A"
+        },
+        "package": {},
+        "vf": {
+          "description": "Forward voltage",
+          "unit": "V"
+        }
+      },
+      "pins": [
+        {
+          "name": "K",
+          "number": "1",
+          "type": "passive"
+        },
+        {
+          "name": "A",
+          "number": "2",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "D",
+      "title": "LED"
+    },
+    "generic:R": {
+      "category": "resistor",
+      "description": "Resistor",
+      "id": "generic:R",
+      "params": {
+        "package": {
+          "description": "e.g. 0402, 0603, 0805"
+        },
+        "power": {
+          "unit": "W"
+        },
+        "resistance": {
+          "required": true,
+          "unit": "Ω"
+        },
+        "tolerance": {
+          "description": "e.g. 1%"
+        }
+      },
+      "pins": [
+        {
+          "name": "1",
+          "number": "1",
+          "type": "passive"
+        },
+        {
+          "name": "2",
+          "number": "2",
+          "type": "passive"
+        }
+      ],
+      "provenance": {
+        "note": "generic",
+        "source": "builtin"
+      },
+      "refPrefix": "R",
+      "title": "Resistor"
+    }
+  },
+  "seq": 8,
+  "sheets": {
+    "s_1": {
+      "id": "s_1",
+      "name": "Main",
+      "order": 0
+    }
+  },
+  "waivers": {}
+}
