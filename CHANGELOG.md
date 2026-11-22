@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+## 0.7.0 — 2026-11-22
+
+This release checks the current and power on a board: a microcontroller pin asked to drive more than it is rated for is flagged, tracks, vias and thermal spokes are checked against the current they carry, and a heat map shows where the copper works hardest. The agent can copy a block you already built in another project into the open design, give an enclosure a clear window, and swap pins and gates, including an ATtiny85's GPIO pins, to untangle the board. Parts can be marked do-not-populate, test points go on the power rails, and the design document can be downloaded as a file.
+
 ### Checks
 
 - **A microcontroller pin asked to drive more current than it can is flagged.** An LED or relay coil wired straight to a GPIO used to pass the checks, even when it draws 30 mA from a pin the datasheet rates for 12 mA. Now, where a part's card gives a pin's maximum current and the net it drives has its loads stated (`set_net loads`), the new check `SEM.PIN_CURRENT` names the part, the pin, the current and the limit, and says what fixes it: a transistor or driver between pin and load, or less current. It is a warning over the limit and an error over twice it. Datasheet import now reads the per-pin current where the datasheet states one, and the bundled ATtiny85's I/O pins carry their 40 mA. The part card's *Max* column shows it. Pins without a stated limit are not checked, and supply rails stay with the existing current checks.
