@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Design } from '@4k7/schema';
-import { runTask, scriptedFor, type EvalTask } from '../eval/run.ts';
+import { Kernel } from '@4k7/kernel';
+import { answerer, runTask, scriptedFor, type EvalTask } from '../eval/run.ts';
 
 const dir = new URL('../eval/tasks/', import.meta.url);
 const load = <T>(name: string) => JSON.parse(readFileSync(new URL(name, dir), 'utf8')) as T;
@@ -50,5 +51,37 @@ describe('agent eval runner', () => {
     expect(score.ok).toBe(false);
     expect(score.ops_applied).toBe(1);
     expect(score.erc_errors).toBeGreaterThan(0);
+  });
+
+  it('answers questions in order or by substring, and fails on one it has no answer for', async () => {
+    const a = answerer(['first', { match: 'Package', answer: '0603' }, 'second']);
+    expect([a('which package?'), a('colour?'), a('size?'), a('package again?'), a('more?')]).toEqual(['0603', 'first', 'second', null, null]);
+
+    const ask = (question: string) => [{ type: 'tool_use' as const, id: '', name: 'ask_user', input: { question, options: ['a', 'b'] } }];
+    const task: EvalTask = { name: 'asks', prompt: 'p', answers: ['yes'], script: [ask('Shall I go on?'), ask('And again?')] };
+    const score = await runTask(undefined, task, scriptedFor(task));
+    expect(score).toMatchObject({ ok: false, turns: 2 });
+    expect(score.failures).toEqual(['the turn ended with question: no answer for "And again?"']);
+  });
+});
+
+describe('golden tasks', () => {
+  for (const file of ['led-current.json', 'second-led.json', 'power-input.json']) {
+    it(`${file} parses, its design loads clean, and its scripted solution scores ok`, async () => {
+      const task = load<EvalTask>(file);
+      expect(task.prompt.length).toBeGreaterThan(20);
+      expect(task.expect).toBeDefined();
+      const design = task.design ? load<Design>(task.design) : undefined;
+      expect(new Kernel(design).state().counts.errors).toBe(0);
+      const score = await runTask(design, task, scriptedFor(task));
+      expect(score.failures).toEqual([]);
+      expect(score.ok).toBe(true);
+    });
+  }
+
+  it('fails a part whose value is not one the task accepts', async () => {
+    const task = { ...load<EvalTask>('led-current.json'), script: [[{ type: 'text' as const, text: 'Done.' }]] };
+    const score = await runTask(load<Design>(task.design!), task, scriptedFor(task));
+    expect(score.failures).toEqual(['R1 is 330, not 240 or 270']);
   });
 });

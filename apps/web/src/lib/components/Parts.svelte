@@ -485,7 +485,7 @@
           onmouseleave={() => (hoverPin = null)}
           onclick={() => sheetDoc && showPin(p)}
         >
-          <td class="mono">{p.number}</td>{#if card.units?.length}<td class="mono">{unitName(card, p.number)}</td>{/if}<td class="mono">{p.name}</td><td>{p.type}</td><td class="mono">{p.maxVoltage ? `${p.maxVoltage} V` : ''}</td>
+          <td class="mono">{p.number}</td>{#if card.units?.length}<td class="mono">{unitName(card, p.number)}</td>{/if}<td class="mono">{p.name}</td><td>{p.type}</td><td class="mono">{[p.maxVoltage ? `${p.maxVoltage} V` : '', p.maxCurrent ? `${Math.round(p.maxCurrent * 1000)} mA` : ''].filter(Boolean).join(' · ')}</td>
           <td class="fn" title={p.description}>{p.description ?? ''}</td>
           {#if sheetDoc}<td class="mono muted">{p.page ?? ''}</td>{/if}
         </tr>

@@ -10,6 +10,9 @@ import { Agent } from '../src/loop.ts';
 import { ScriptedProvider } from '../src/providers/scripted.ts';
 import type { Block, KernelPort, Provider } from '../src/types.ts';
 
+/** A scripted answer to ask_user: taken in order, or the first one whose `match` is in the question (case-insensitive). */
+export type EvalAnswer = string | { match: string; answer: string };
+
 /** A task file (`eval/tasks/*.json`). */
 export interface EvalTask {
   name: string;
@@ -18,8 +21,10 @@ export interface EvalTask {
   design?: string;
   /** What the scripted provider answers, one entry per model call. Real providers ignore it. */
   script?: Block[][];
-  /** Checked after the run, on top of a clean design. */
-  expect?: { parts?: string[]; nets?: string[] };
+  /** What the user answers when asked (ask_user); a question with no answer left ends the run not ok. */
+  answers?: EvalAnswer[];
+  /** Checked after the run, on top of a clean design. values: a part's value (as get_summary gives it) is one of these. */
+  expect?: { parts?: string[]; nets?: string[]; values?: Record<string, string[]> };
 }
 
 export interface Score {
@@ -48,42 +53,59 @@ export function scriptedFor(task: EvalTask): Provider {
   return new ScriptedProvider([{ name: task.name, match: /[\s\S]*/, steps: task.script ?? [] }], { label: 'eval script' });
 }
 
-export async function runTask(design: Design | undefined, task: EvalTask, provider: Provider): Promise<Score> {
-  const k = new Kernel(design);
-  let applied = 0;
-  let rejected = 0;
+/** Answers a task's questions: a `match` entry when its text is in the question, else the next plain one. Null when none is left. */
+export function answerer(answers: EvalAnswer[] = []): (question: string) => string | null {
+  const used = new Set<number>();
+  return (question) => {
+    const q = question.toLowerCase();
+    let i = answers.findIndex((a, n) => !used.has(n) && typeof a !== 'string' && q.includes(a.match.toLowerCase()));
+    if (i < 0) i = answers.findIndex((a, n) => !used.has(n) && typeof a === 'string');
+    if (i < 0) return null;
+    used.add(i);
+    const a = answers[i]!;
+    return typeof a === 'string' ? a : a.answer;
+  };
+}
+
+/** An in-process kernel behind a KernelPort that counts the ops applied and the transactions rejected. */
+export function countingKernel(design: Design | undefined) {
+  const kernel = new Kernel(design);
+  const counts = { applied: 0, rejected: 0 };
   const port: KernelPort = {
     transact: async (tx) => {
-      const r: TransactionResult = k.transact(tx as Parameters<Kernel['transact']>[0]);
-      if (r.status === 'rejected') rejected++;
-      else if (!r.dryRun) applied += r.results.length;
+      const r: TransactionResult = kernel.transact(tx as Parameters<Kernel['transact']>[0]);
+      if (r.status === 'rejected') counts.rejected++;
+      else if (!r.dryRun) counts.applied += r.results.length;
       return r;
     },
-    query: async (q) => k.query(q as Parameters<Kernel['query']>[0]),
+    query: async (q) => kernel.query(q as Parameters<Kernel['query']>[0]),
     snapshot: async () => {
-      const s = k.state();
+      const s = kernel.state();
       return { summary: s.summary, diagnostics: s.diagnostics, counts: s.counts, ledger: s.ledger };
     },
   };
+  return { kernel, port, counts };
+}
 
-  let turns = 0;
-  let tokensIn = 0;
-  let tokensOut = 0;
-  let done: { reason: string; message?: string } = { reason: 'none' };
-  await new Agent({ provider, kernel: port }).run(task.prompt, { selection: [] }, (e) => {
-    if (e.type === 'usage') {
-      turns++;
-      tokensIn += e.usage.input + e.usage.cacheRead + e.usage.cacheWrite;
-      tokensOut += e.usage.output;
-    } else if (e.type === 'done') done = e;
-  });
+/** How a run went, from whichever engine ran it (the agent loop, or an external agent through the headless server). */
+export interface RunReport {
+  /** 'complete' when the agent finished its turn. */
+  done: { reason: string; message?: string };
+  counts: { applied: number; rejected: number };
+  turns: number;
+  tokensIn: number;
+  tokensOut: number;
+}
 
-  const open = (k.query({ op: 'get_diagnostics' }) as Diagnostic[]).filter((x) => x.severity === 'error' && !x.waivedBy);
+/** Scores the design a run left behind. */
+export function scoreRun(kernel: Kernel, task: EvalTask, run: RunReport): Score {
+  const open = (kernel.query({ op: 'get_diagnostics' }) as Diagnostic[]).filter((x) => x.severity === 'error' && !x.waivedBy);
   const drc = open.filter((x) => x.code.startsWith('DRC.')).length;
   const erc = open.length - drc;
-  const state = k.state();
+  const state = kernel.state();
   const violated = state.ledger.filter((l) => l.status === 'violated').length;
 
+  const { done } = run;
   const failures: string[] = [];
   if (done.reason !== 'complete') failures.push(`the turn ended with ${done.reason}${done.message ? `: ${done.message}` : ''}`);
   if (erc) failures.push(`${erc} ERC error(s)`);
@@ -93,6 +115,10 @@ export async function runTask(design: Design | undefined, task: EvalTask, provid
   const nets = new Set(state.summary.nets.map((n) => n.name));
   for (const p of task.expect?.parts ?? []) if (!refs.has(p)) failures.push(`no part ${p}`);
   for (const n of task.expect?.nets ?? []) if (!nets.has(n)) failures.push(`no net ${n}`);
+  for (const [ref, ok] of Object.entries(task.expect?.values ?? {})) {
+    const v = state.summary.components.find((c) => c.refdes === ref)?.value;
+    if (v !== undefined && !ok.includes(v)) failures.push(`${ref} is ${v}, not ${ok.join(' or ')}`);
+  }
 
   return {
     task: task.name,
@@ -100,11 +126,34 @@ export async function runTask(design: Design | undefined, task: EvalTask, provid
     erc_errors: erc,
     drc_errors: drc,
     constraint_failures: violated,
-    ops_applied: applied,
-    ops_rejected: rejected,
-    turns,
-    tokens_in: tokensIn,
-    tokens_out: tokensOut,
+    ops_applied: run.counts.applied,
+    ops_rejected: run.counts.rejected,
+    turns: run.turns,
+    tokens_in: run.tokensIn,
+    tokens_out: run.tokensOut,
     failures,
   };
+}
+
+/** Runs a task through the agent loop; the task's answers reply to its questions. */
+export async function runTask(design: Design | undefined, task: EvalTask, provider: Provider): Promise<Score> {
+  const { kernel, port, counts } = countingKernel(design);
+  const answer = answerer(task.answers);
+  const run: RunReport = { done: { reason: 'none' }, counts, turns: 0, tokensIn: 0, tokensOut: 0 };
+  const agent = new Agent({ provider, kernel: port });
+  let text: string | null = task.prompt;
+  while (text !== null) {
+    let question = '';
+    await agent.run(text, { selection: [] }, (e) => {
+      if (e.type === 'usage') {
+        run.turns++;
+        run.tokensIn += e.usage.input + e.usage.cacheRead + e.usage.cacheWrite;
+        run.tokensOut += e.usage.output;
+      } else if (e.type === 'question') question = e.question;
+      else if (e.type === 'done') run.done = e;
+    });
+    text = run.done.reason === 'question' ? answer(question) : null;
+    if (run.done.reason === 'question' && text === null) run.done = { reason: 'question', message: `no answer for "${question}"` };
+  }
+  return scoreRun(kernel, task, run);
 }

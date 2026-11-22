@@ -337,14 +337,15 @@ export const IC_PARTS: PartCard[] = [
     refPrefix: 'U',
     // "SU" is Microchip's 8S2: the 0.208" (5.3 mm) body; the 150 mil SOIC-8 is the -20SSU (S8S1)
     package: 'SOIC-8-208mil',
+    // I/O pins: 40 mA DC per pin, the datasheet's absolute maximum ratings (ATtiny25/45/85, §21.1)
     pins: [
-      { number: '1', name: 'PB5/RESET', type: 'bidir', side: 'left' },
-      { number: '2', name: 'PB3', type: 'bidir', side: 'left' },
-      { number: '3', name: 'PB4', type: 'bidir', side: 'left' },
+      { number: '1', name: 'PB5/RESET', type: 'bidir', side: 'left', maxCurrent: 0.04 },
+      { number: '2', name: 'PB3', type: 'bidir', side: 'left', maxCurrent: 0.04 },
+      { number: '3', name: 'PB4', type: 'bidir', side: 'left', maxCurrent: 0.04 },
       { number: '4', name: 'GND', type: 'pwr_in', side: 'bottom' },
-      { number: '5', name: 'PB0', type: 'bidir', side: 'right' },
-      { number: '6', name: 'PB1', type: 'bidir', side: 'right' },
-      { number: '7', name: 'PB2', type: 'bidir', side: 'right' },
+      { number: '5', name: 'PB0', type: 'bidir', side: 'right', maxCurrent: 0.04 },
+      { number: '6', name: 'PB1', type: 'bidir', side: 'right', maxCurrent: 0.04 },
+      { number: '7', name: 'PB2', type: 'bidir', side: 'right', maxCurrent: 0.04 },
       { number: '8', name: 'VCC', type: 'pwr_in', side: 'top', maxVoltage: 6 },
     ],
     params: {},

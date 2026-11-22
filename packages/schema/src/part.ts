@@ -28,6 +28,8 @@ export interface PartPin {
   side?: PinSide;
   /** Absolute maximum voltage relative to ground, used by semantic ERC. */
   maxVoltage?: number;
+  /** Most current (A) the pin may source or sink as an output, used by SEM.PIN_CURRENT. */
+  maxCurrent?: number;
   description?: string;
   /** Datasheet page this pin was read from (imported parts). */
   page?: number;
