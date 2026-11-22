@@ -18,7 +18,7 @@ import type { ClaudeProfile } from './config.ts';
 import { spawnCli, stopCli } from './claude-bin.ts';
 import { secretsMatch, type McpMode } from './mcp.ts';
 import { download, isPdf, MAX_PDF_BYTES, pdfName } from './download.ts';
-import { prepareDatasheet } from './pdf.ts';
+import { NO_TEXT, prepareDatasheet } from './pdf.ts';
 import { ClaudeHarness } from './harness/claude.ts';
 import type { ChatJob, DoneEvent, Harness, Invocation, RunSink } from './harness/types.ts';
 
@@ -191,8 +191,8 @@ export class ChatRunner {
       if (run.cancelled) return fail('Stopped.');
       clear();
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const pages = await prepareDatasheet(dir, data);
-      this.#emit(msg.id, { kind: 'status', text: `Datasheet: ${pages} pages, ${(data.byteLength / 1048576).toFixed(1)} MB` });
+      const { pages, text } = await prepareDatasheet(dir, data);
+      this.#emit(msg.id, { kind: 'status', text: `Datasheet: ${pages} pages, ${(data.byteLength / 1048576).toFixed(1)} MB${text ? '' : `, ${NO_TEXT}`}` });
     } catch (e) {
       return fail(`Could not read the datasheet: ${(e as Error).message}`);
     }

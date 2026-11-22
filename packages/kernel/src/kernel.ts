@@ -41,7 +41,7 @@ import {
   COPPER_ORDER,
   type SymbolView,
 } from '@4k7/schema';
-import { packageChoice, packageOptions, searchParts } from '@4k7/parts';
+import { packageChoice, packageOf, packageOptions, searchParts } from '@4k7/parts';
 import { applyOp } from './apply.ts';
 import { describeConstraint } from './netops.ts';
 import { descriptionView } from './sheetops.ts';
@@ -186,6 +186,30 @@ export class Kernel {
     return b.diagnostics.filter((x) => x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE');
   }
 
+  /**
+   * The copper findings at the parts whose footprint an edit changed (a value that sizes a part up
+   * picks a bigger package), on a board whose copper is current: the land against the tracks and
+   * vias already there. The transaction's own checks are the schematic's; without this an edit that
+   * puts a pad over a via reported nothing until the board was looked at again. Not new ones only:
+   * of `before`'s board where it was routed too. See docs/design/layout.md.
+   */
+  private landFindings(before: Design, work: Design): Diagnostic[] {
+    const grown = Object.values(work.components).filter((c) => {
+      const was = before.components[c.id];
+      const card = cardOf(work, c.part);
+      const cardWas = was && cardOf(before, was.part);
+      return was && card && cardWas && packageOf(card, c.params, work.packageDefaults)?.name !== packageOf(cardWas, was.params, before.packageDefaults)?.name;
+    });
+    if (!grown.length || !work.board || !(work.board.drawn || (work.board.copper && work.board.copper.key === copperKey(work)))) return [];
+    const b = layoutBoard(work, placedOf(work));
+    this.boards.set(work, b);
+    if (b.routing !== 'done') return [];
+    const refs = new Set(grown.map((c) => c.refdes));
+    const at = (x: Diagnostic) => (x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE' || x.code === 'DRC.VIA_IN_PAD') && !x.waivedBy && x.entities.some((e) => refs.has(e));
+    const had = new Set((this.routedNow(before)?.diagnostics ?? []).filter(at).map(diagKey));
+    return b.diagnostics.filter((x) => at(x) && !had.has(diagKey(x)));
+  }
+
   /** The board of the working copy: placement, routing and DRC (computed on demand, cached). `follow` follows the routing, if it routes (see layoutBoard). */
   board(follow: { onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
     const d = this.draft;
@@ -269,6 +293,7 @@ export class Kernel {
     }
     const analysed = this.analyse(work);
     const after = analysed.diagnostics;
+    const land = this.landFindings(this.draft, work);
     if (!tx.dry_run) {
       this.draft = work;
       this.rev++;
@@ -283,7 +308,7 @@ export class Kernel {
       results,
       diff,
       counts: countDiagnostics(after),
-      introduced: after.filter((x) => !x.waivedBy && !beforeKeys.has(diagKey(x))),
+      introduced: [...after.filter((x) => !x.waivedBy && !beforeKeys.has(diagKey(x))), ...land],
       resolved: before.filter((x) => !x.waivedBy && !afterKeys.has(diagKey(x))),
       ...(this.scoped ? { scope: this.scopeOutcome(analysed.view) } : {}),
     };

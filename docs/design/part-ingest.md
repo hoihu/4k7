@@ -13,7 +13,10 @@ the user's local Claude Code through the server, like the app chat.
 
 1. **Server** (`tools/server/src/chat.ts`, `pdf.ts`): downloads or receives the PDF and makes a
    fresh folder `~/.4k7/ingest/<job>/` with `datasheet.pdf`, `pages/page-NNN.txt` (text,
-   table cells separated by ` | `) and `index.txt` (page → first heading). Then it starts
+   table cells separated by ` | `) and `index.txt` (page → first heading; a PDF without any text,
+   a scan, gets a first line saying so, as does the job's status; no OCR). A download is a PDF by its
+   first bytes, whatever the content type; an HTML page instead is refused with its title and the
+   first `.pdf` link on it, a failed one with the HTTP status and link (`download.ts`). Then it starts
    `claude -p` in that folder with `--tools Read,Grep,Glob`, `--permission-mode dontAsk` and an MCP
    token whose server exposes a single tool, `submit_part`. Reads outside the folder are denied
    (verified), and there is no shell, no web access and no design tools. The folder is deleted
@@ -30,7 +33,11 @@ the user's local Claude Code through the server, like the app chat.
 3. **The tab checks every submission** with `draftToCard` (`packages/parts/src/ingest.ts`):
    schema, duplicate numbers, pin count against the package (exposed pad excluded), numbering 1…N
    for leaded packages, valid JEDEC ball names for BGA, supply/ground presence, pages present, and
-   whether a footprint can be generated with a pad for every pin. Errors go back to Claude as the
+   whether a footprint can be generated with a pad for every pin. Explicit pads carry the view of
+   the drawing they were read off (`pads_view`, `set_footprint` `view`): a bottom view ("viewed from
+   below", "pad side") is mirrored left to right once, on the way in (`toTopView` in `footprint.ts`),
+   so stored pads are always top view; pads without a view are kept as drawn and warned about, and
+   the two passes are compared on it. Errors go back to Claude as the
    tool result ("Missing pin numbers: 37–38"), and it resubmits.
 4. **Second pass (optional, on by default)**: the server starts a second, fresh Claude Code session
    (no memory of the first) with an extra instruction to work in a different order (count groups

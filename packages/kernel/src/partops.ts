@@ -3,7 +3,7 @@
  * with, its polarity, what its pins do, the name of a part, and the defaults generic parts are
  * chosen by.
  */
-import { closestPackages, footprintFor, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOf, planUnits, standardPackage, symbolFor } from '@4k7/parts';
+import { closestPackages, footprintFor, generatedLayout, isBoxSymbol, isTwoPin, layoutText, packageOf, planUnits, standardPackage, symbolFor, toTopView } from '@4k7/parts';
 import { type Component, type Design, type EditOp, type ESeries, type OpResult, type PackageInfo, type PartCard, type PartPin, type SymbolLayout, type ValueSeries } from '@4k7/schema';
 import { cardOf, findComponent, natCmp, reject, resolveComponent, resolveUnitRef } from './doc.ts';
 import { remakeSymbols } from './drawing.ts';
@@ -111,17 +111,20 @@ export function setFootprint(d: Design, op: Extract<EditOp, { op: 'set_footprint
   if (card.id.startsWith('generic:') && users.length > 1) {
     reject({ code: 'FOOTPRINT_INVALID', message: `${card.id} is a generic part used by ${users.join(', ')}; its footprint follows each component's package parameter (set_param package).` });
   }
-  const pkg: PackageInfo = {
+  // the op's pads (and mating) as drawn, mirrored once if the drawing is a bottom view; a mating kept from before is top view already
+  const pkg: PackageInfo = toTopView({
     name: op.name,
     family: 'other',
     pins: card.pins.length,
     pads: op.pads,
+    ...(op.view ? { pads_view: op.view } : {}),
     ...(op.body_mm ? { body_mm: op.body_mm } : {}),
     ...(op.round ? { body_shape: 'round' as const } : {}),
     ...(op.height_mm ? { height_mm: op.height_mm } : {}),
     ...(op.page ? { page: op.page } : {}),
-    ...(op.mating ? { mating: op.mating } : card.packageInfo?.mating ? { mating: card.packageInfo.mating } : {}),
-  };
+    ...(op.mating ? { mating: op.mating } : {}),
+  });
+  if (!op.mating && card.packageInfo?.mating) pkg.mating = card.packageInfo.mating;
   const fp = footprintFor(pkg, card.pins.map((p) => p.number));
   if (!fp.ok) reject({ code: 'FOOTPRINT_INVALID', message: `${op.name} for ${comp.refdes}: ${fp.reason}.`, candidates: card.pins.map((p) => `${p.number} ${p.name}`) });
   const copy: PartCard = structuredClone(card);
@@ -129,7 +132,7 @@ export function setFootprint(d: Design, op: Extract<EditOp, { op: 'set_footprint
   copy.package = op.name;
   d.parts[card.id] = copy;
   const f = fp.footprint;
-  return { op: 'set_footprint', effect: `${users.join(', ')}: footprint ${op.name}, ${f.pads.length} pads, ${f.courtyard.w} × ${f.courtyard.h} mm courtyard`, ids: [card.id] };
+  return { op: 'set_footprint', effect: `${users.join(', ')}: footprint ${op.name}, ${f.pads.length} pads${op.view === 'bottom' ? ' (mirrored from the bottom view)' : ''}, ${f.courtyard.w} × ${f.courtyard.h} mm courtyard`, ids: [card.id] };
 }
 
 /**

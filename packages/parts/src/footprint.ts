@@ -59,6 +59,29 @@ export function moduleSpan(pkg: PackageInfo): number {
   return pkg.span_mm?.[0] ?? Math.max(2.54, (pkg.body_mm?.[0] ?? 21) - 3.22);
 }
 
+/**
+ * A package as seen from above. Pads read off a bottom-view drawing (pads_view "bottom": many LED,
+ * connector and module datasheets draw the pad side) are mirrored left to right here, once, with the
+ * body's cut corners and the mating face; the result is top view and carries no pads_view. Imports
+ * and set_footprint pass through this, so stored pads are always top view (docs/design/part-ingest.md).
+ */
+export function toTopView(pkg: PackageInfo): PackageInfo {
+  const { pads_view, ...top } = pkg;
+  if (pads_view !== 'bottom') return top;
+  const corner: Record<BodyCorner, BodyCorner> = { tl: 'tr', tr: 'tl', bl: 'br', br: 'bl' };
+  const flip = (x: number) => (x === 0 ? 0 : -x);
+  if (top.pads) top.pads = top.pads.map((p) => ({ ...p, x: flip(p.x) }));
+  if (top.body_chamfer) top.body_chamfer = { ...top.body_chamfer, corners: top.body_chamfer.corners.map((c) => corner[c]) };
+  if (top.mating) {
+    const m = top.mating;
+    const face = m.face === 'left' ? 'right' : m.face === 'right' ? 'left' : m.face;
+    // along the top or bottom face runs in x and flips; along a side face runs in y and stays
+    const along = m.along_mm !== undefined && (m.face === 'top' || m.face === 'bottom') ? flip(m.along_mm) : m.along_mm;
+    top.mating = { ...m, face, ...(along !== undefined ? { along_mm: along } : {}) };
+  }
+  return top;
+}
+
 export function footprintFor(pkg: PackageInfo, pinNumbers: string[] = []): FootprintResult {
   const need = (what: (keyof PackageInfo)[]) => {
     const missing = what.filter((k) => pkg[k] === undefined);

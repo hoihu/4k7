@@ -4,7 +4,7 @@
  * See docs/design/ops-api.md.
  */
 import { z } from 'zod';
-import { LandPad, Mating } from './ingest.ts';
+import { LandPad, Mating, PadsView } from './ingest.ts';
 import { EnclosureBrief } from './enclosure.ts';
 import { PAPER_IDS, type PaperId } from './results.ts';
 import { E_SERIES } from './units.ts';
@@ -176,7 +176,8 @@ export const SetFootprintOp = z.object({
   op: z.literal('set_footprint'),
   ref: componentRef.describe('A component using the part, e.g. "BZ1"; applies to every component of that part'),
   name: z.string().min(2).describe('Package name, e.g. "Buzzer_12x9.5RM7.6"'),
-  pads: z.array(LandPad).min(1).describe('One pad per pin (pad number = pin number; pins the datasheet puts on one pad share it with also), from the datasheet\'s recommended footprint or package drawing, mm from the body centre, top view'),
+  pads: z.array(LandPad).min(1).describe('One pad per pin (pad number = pin number; pins the datasheet puts on one pad share it with also), from the datasheet\'s recommended footprint or package drawing, mm from the body centre, as drawn (view says which way)'),
+  view: PadsView.optional().describe('Which way the drawing is seen: top (default), or bottom ("bottom view", "viewed from below", "pad side", as many LED, connector and module datasheets draw it). A bottom view is mirrored to the top view here, once; check the label and the polarity mark (anode, cathode, pin 1) before you give the pads'),
   body_mm: z.tuple([z.number().positive(), z.number().positive()]).optional().describe('Body width × length (round: diameter × diameter); default: around the pads'),
   round: z.boolean().optional().describe('A cylindrical body (buzzer, electrolytic cap)'),
   height_mm: z.number().positive().optional().describe('Body height above the board'),
@@ -512,7 +513,7 @@ export const PlaceOp = z.object({
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
   rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation; omit it to keep the current one'),
   side: z.enum(['top', 'bottom']).optional().describe('The board side it is mounted on; omit it to keep the current one (top unless it was put on the bottom). On the bottom the footprint is mirrored (seen from the top), its SMD pads are on B.Cu and it shares the area with the SMD parts on the top side; through-hole parts occupy both. Putting a part on the bottom is a choice with a price: see the layout guide'),
-  lock: z.boolean().optional().describe('true: lock the part exactly there (a hard pin, e.g. connectors at the edge). Default: a choice for this part, kept relative to its parent part (a cap next to its IC follows the IC) and nudged only if it must'),
+  lock: z.boolean().optional().describe('true: lock the part exactly there (a hard pin, e.g. connectors at the edge). Default: a choice for this part, in board coordinates: it stays there when other parts move, nudged only if it must. Kept relative to (following) a parent part only if that was declared with attach'),
   quote: z.string().optional().describe("The user's words when they asked for this placement: it is then their choice, not yours"),
 });
 
