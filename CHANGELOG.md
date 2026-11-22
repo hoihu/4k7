@@ -27,6 +27,7 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ### Enclosure
 
+- **You choose how far apart the opened enclosure is drawn.** The Enclosure view's *Opened* lifted every piece by the whole box's height and 10 mm, so a box of five pieces stood so tall that each piece was a speck. Opened now draws the pieces a third as far apart, and a slider next to *Closed / Opened* sets the distance, shown in mm; the app remembers it.
 - **An enclosure can have a clear window, and the 3D view shows what is behind it.** A box with a window in front of an LED or a display, such as a bike lamp's lid, used to show the window as solid as the rest of the box, so neither you nor the agent could see the LED behind it. Now the agent can make the window a piece in clear filament (`material: 'clear'` in the script's inlays), and the Enclosure view and the agent's pictures draw it see-through, with the LED and the board behind it in view. In the 3MF it is a part of its own in the lid's object, as an inlay is: give it the clear filament in your slicer.
 
 ### Design document
