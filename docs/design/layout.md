@@ -862,6 +862,18 @@ connections that stay (each with its reason: locked, placed by the user, a conne
 part), no room round the parts tried, or tries that overlap or set the placer moving once placed.
 The app runs it in the trial worker, as try_placements.
 
+*Pin and gate swaps (2026-11-22).* Next to the moves, `swaps`: for the parts named or round the spot
+(nothing given: every part on the board), each swap of two members of a swap group the part card
+declares (`data-model.md` §2; an LM358's channels, a resistor array's resistors and ends) is applied
+with `swap_pins` itself on a copy, so a swap it refuses is never offered and no rule is kept twice,
+and the board placed again. A swap is kept when it gains at least 0.5 on placement_measures (4 ×
+crossings + ratsnest mm) and adds no placement finding; best first, each with its `swap_pins` op, the
+crossings and ratsnest mm before and after (as get_board measures them once it is applied), and
+`schematic_change: true`: it changes the netlist, so it is the user's to review in the changeset,
+then routed again. They are measured on the ratsnest, not routed, so the turns and shifts and their
+order stay as they were; members with the same nets (both unconnected) are not tried, and at most
+24 swaps are, so it stays fast.
+
 *Too few tries (2026-11-21).* Dogfooding found "none of 0 tries" and "none of 2 tries" with
 connections open. The screen held the tried parts to the placer's own spacing (0.3 mm between
 courtyards, 1.5 mm plus the edge clearance from the edge), but the placer packs its parts closer
@@ -877,10 +889,8 @@ finds "R104 0.5 mm right"; applied and routed again with the same 1.5 s, the boa
 
 Next steps, not done: offer the suggestions unasked (get_board's open connections could carry the
 best one, computed in the board worker after routing); let the router try them itself when it is
-stuck (with the user's parts out of bounds, reported in the effect); pin and gate swaps (two
-channels of an op-amp, equivalent MCU pins), which change the schematic and need the user's say
-(the `swap_pins` op exists, inside the part card's swap groups; suggest_moves does not offer it yet);
-and blocks as areas the parts keep to (rooms, done: §15).
+stuck (with the user's parts out of bounds, reported in the effect); equivalent MCU pins as swaps
+(swap groups with their alternate functions, from the datasheet's pin table); and blocks as areas the parts keep to (rooms, done: §15).
 
 ## 11. A steadier placer, and congestion as a placement measure (2026-10-29)
 

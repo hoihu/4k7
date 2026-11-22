@@ -9,12 +9,18 @@
  * followParts) and the nets they touch routed again round the rest, which stays. Measured against
  * the same rip-up without the change, the tries that close connections come back best first, as
  * place ops to apply. Nothing in the design changes.
+ *
+ * Next to them, swaps: for the parts whose card declares swap groups (an op-amp's channels, a
+ * resistor array's resistors), each swap of two members is applied as swap_pins applies it (what
+ * it refuses is never offered) and kept where the ratsnest crosses less or gets shorter. A swap
+ * changes the netlist, so it is a schematic change for the user to review. See docs/design/layout.md.
  */
 import { matingOf, userPlaced, type BoardPart, type BoardView, type Design, type EditOp, type SchematicView } from '@4k7/schema';
 import { applyOp } from './apply.ts';
 import { boardRouteInput, placeBoard } from './board.ts';
+import { CROSSING_MM } from './congestion.ts';
 import { checkCopper, followParts } from './copperops.ts';
-import { RejectError, clone, resolveComponent } from './doc.ts';
+import { RejectError, cardOf, clone, resolveComponent } from './doc.ts';
 import { r3 } from './geom.ts';
 import { padPointDist, padSegDist } from './keep.ts';
 import { screenMoves } from './refine.ts';
@@ -52,7 +58,12 @@ const SPREAD = 3;
 /** Placement findings a try must not add (parts overlapping, off the board). */
 const PLACEMENT_CODES = new Set(['DRC.COURTYARD_OVERLAP', 'DRC.OFF_BOARD', 'DRC.EDGE_CLEARANCE', 'DRC.CUTOUT_OVERLAP']);
 
+/** Swaps tried (each placed and measured), and the least they must gain (screen cost, as WORSE). */
+const SWAPS = 24;
+const SWAP_GAIN = 0.5;
+
 type Place = Extract<EditOp, { op: 'place' }>;
+type Swap = Extract<EditOp, { op: 'swap_pins' }>;
 
 export interface SuggestQuery {
   parts?: string[];
@@ -64,6 +75,47 @@ export interface SuggestQuery {
 
 /** How far a point is from a part's courtyard (0 inside). */
 const fromPart = (p: BoardPart, x: number, y: number) => Math.hypot(Math.max(p.courtyard.x - x, 0, x - p.courtyard.x - p.courtyard.w), Math.max(p.courtyard.y - y, 0, y - p.courtyard.y - p.courtyard.h));
+
+/**
+ * The swaps the cards of `refs` declare, each applied with swap_pins on a copy and the board placed
+ * again; those that make the ratsnest cross less or shorter (CROSSING_MM per crossing), best first.
+ */
+function swapsOf(d: Design, sch: SchematicView, base: BoardView, refs: string[], problems: (b: BoardView) => number) {
+  const tries: { change: string; op: Swap }[] = [];
+  for (const ref of refs) {
+    const c = Object.values(d.components).find((x) => x.refdes === ref);
+    const card = c && cardOf(d, c.part);
+    if (!c || !card?.swapGroups) continue;
+    const pinName = (n: string) => card.pins.find((p) => p.number === n)?.name ?? n;
+    for (const g of card.swapGroups) {
+      g.members.forEach((m, i) =>
+        g.members.slice(i + 1).forEach((o) => {
+          // two members on no net (or the same nets): the swap changes nothing
+          if (m.every((n, k) => c.pins[n] === c.pins[o[k]!])) return;
+          tries.push({ change: `${ref} ${g.name} ${m.map(pinName).join('/')} and ${o.map(pinName).join('/')} swapped`, op: { op: 'swap_pins', a: `${ref}.${m[0]}`, b: `${ref}.${o[0]}` } });
+        }),
+      );
+    }
+  }
+  const before = base.measures;
+  const out: { change: string; apply: Swap[]; crossings: [number, number]; ratsnest_mm: [number, number]; gain: number }[] = [];
+  for (const t of tries.slice(0, SWAPS)) {
+    const w = clone(d);
+    try {
+      applyOp(w, t.op, 'agent');
+    } catch (e) {
+      if (e instanceof RejectError) continue; // not a swap the card allows
+      throw e;
+    }
+    const b = placeBoard(w, sch);
+    if (problems(b) > problems(base)) continue;
+    const after = b.measures;
+    const gain = CROSSING_MM * (before.crossings - after.crossings) + before.ratsnestMm - after.ratsnestMm;
+    if (gain >= SWAP_GAIN) out.push({ change: t.change, apply: [t.op], crossings: [before.crossings, after.crossings], ratsnest_mm: [before.ratsnestMm, after.ratsnestMm], gain: Math.round(gain * 10) / 10 });
+  }
+  out.sort((a, b) => b.gain - a.gain);
+  return { tried: Math.min(tries.length, SWAPS), of: tries.length, found: out };
+}
 
 const mmOf = (pts: number[]) => pts.reduce((a, _, i) => (i >= 2 && i % 2 === 0 ? a + Math.hypot(pts[i]! - pts[i - 2]!, pts[i + 1]! - pts[i - 1]!) : a), 0);
 
@@ -78,6 +130,23 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
   const byRef = new Map(cur.parts.map((p) => [p.refdes, p]));
   const name = (id: string) => cur.netNames[id] ?? id;
 
+  const problems = (b: BoardView) => b.diagnostics.filter((x) => !x.waivedBy && PLACEMENT_CODES.has(x.code)).length;
+  let placed0: BoardView | undefined;
+  const base0 = () => (placed0 ??= placeBoard(d, sch));
+  /** The swaps of these parts, as fields of the answer (none: no fields). */
+  const swapsAt = (rs: string[]) => {
+    const s = swapsOf(d, sch, base0(), [...new Set(rs)], problems);
+    if (!s.of) return {};
+    return {
+      swaps_tried: `${s.tried}${s.of > s.tried ? ` of ${s.of}` : ''} swap(s) the part cards declare`,
+      swaps: s.found.slice(0, q.max ?? 5).map(({ gain: _, ...f }) => ({
+        ...f,
+        schematic_change: true,
+        then: { op: 'route' },
+        why: 'changes the netlist (the schematic follows): the user reviews it; route again after it, the copper at the swapped pins is on the old nets',
+      })),
+    };
+  };
   // where to try: the parts named, those round a spot, or those at the open connections
   let refs: string[];
   if (q.parts?.length) {
@@ -95,17 +164,19 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
     const [x, y] = q.at;
     refs = cur.parts.filter((p) => fromPart(p, x, y) <= (q.radius_mm ?? NEAR_MM)).sort((a, b) => fromPart(a, x, y) - fromPart(b, x, y)).map((p) => p.refdes);
   } else {
-    if (!cur.unrouted.length) return { open_now: 0, suggestions: [], note: 'No connection is open. Name parts (parts) or a spot (at) to try anyway.' };
+    if (!cur.unrouted.length) return { open_now: 0, suggestions: [], ...swapsAt(cur.parts.map((p) => p.refdes)), note: 'No connection is open. Name parts (parts) or a spot (at) to try anyway.' };
     refs = cur.unrouted.slice(0, SPOTS).flatMap((u) => [u.from.split('.')[0]!, u.to.split('.')[0]!, ...u.near]);
   }
   const named = [...new Set(refs)];
+  // the swaps: of the parts named or round the spot; at the open connections, of every part with swap groups
+  const swapped = swapsAt(q.parts?.length || q.at ? named : cur.parts.map((p) => p.refdes));
   const parts = named.map((r) => byRef.get(r)).filter((p): p is BoardPart => !!p && movable(p));
   const skipped = named.filter((r) => byRef.has(r) && !movable(byRef.get(r)!));
   const why = 'main parts, connectors, locked parts and what the user placed stay';
   // each part that stays, and why: what the agent can act on
   const stays = (p: BoardPart) => (p.locked ? 'locked' : user.has(p.refdes) ? 'placed by the user' : matingOf(p.pkgInfo) ? 'a connector' : 'a main part');
   const kept = [...new Set(skipped.map((r) => stays(byRef.get(r)!)))].map((k) => `${skipped.filter((r) => stays(byRef.get(r)!) === k).join(', ')} (${k})`).join('; ');
-  if (!parts.length) return { open_now: cur.unrouted.length, tried: 0, suggestions: [], ...(skipped.length ? { not_moved: skipped } : {}), note: `Nothing tried: no small part here that the placement may change${kept ? `; the parts here stay: ${kept}` : ''}. Name other parts (parts) or a spot (at), move a main part on purpose, or compare arrangements with try_placements.` };
+  if (!parts.length) return { open_now: cur.unrouted.length, tried: 0, suggestions: [], ...swapped, ...(skipped.length ? { not_moved: skipped } : {}), note: `Nothing tried: no small part here that the placement may change${kept ? `; the parts here stay: ${kept}` : ''}. Name other parts (parts) or a spot (at), move a main part on purpose, or compare arrangements with try_placements.` };
 
   // the tries: turned, swapped with a twin, shifted
   const at = (p: BoardPart, x: number, y: number, rot: number): Place => ({ op: 'place', ref: p.refdes, x_mm: r3(x), y_mm: r3(y), rot: (((rot % 360) + 360) % 360) as 0 | 90 | 180 | 270 });
@@ -127,7 +198,7 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
     }
   }
   // screened on the ratsnest model: it must fit; the least tangling are routed
-  const base = placeBoard(d, sch);
+  const base = base0();
   const planeNets = new Set(base.planes.filter((pl) => pl.layer !== 'F.Cu' && pl.layer !== 'B.Cu' && !pl.area).map((pl) => pl.netId));
   const costs = screenMoves(base, planeNets, 1.5 + base.rules.edgeClearance, tries.map((t) => t.ops.map((o) => ({ refdes: o.ref, x: o.x_mm, y: o.y_mm, rot: o.rot! }))));
   const fit = tries.flatMap((t, i) => (costs[i] === null || costs[i]! > WORSE ? [] : [{ ...t, cost: costs[i]! }])).sort((a, b) => a.cost - b.cost);
@@ -137,7 +208,6 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
   const first = ROUTED - Math.min(far.length, FAR_ROUTED);
   const screened = [...near.slice(0, first), ...far.slice(0, FAR_ROUTED), ...near.slice(first), ...far.slice(FAR_ROUTED)];
 
-  const problems = (b: BoardView) => b.diagnostics.filter((x) => !x.waivedBy && PLACEMENT_CODES.has(x.code)).length;
   const problemsNow = problems(base);
   const clearance = cur.rules.clearance;
   const stubs = new Set(base.tracks.map((t) => JSON.stringify(t)));
@@ -266,6 +336,7 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
       routed: `${f.nets.join(', ')}: ${f.mm} mm, ${f.vias} via(s)`,
       ...(drawn ? { then: { op: 'route', nets: f.nets } } : {}),
     })),
+    ...swapped,
     note: found.length
       ? `Each was routed for the nets it touches round the rest of the copper and measured against those nets routed again without it. Apply one with design_edit (its apply ops${drawn ? '; the copper by the part follows it, then route the nets in then, or draw them' : ', then route'}) and look at the spot again.`
       : `${tried ? `No small change here closes a connection (${tried} routed)` : `Nothing could be tried: ${noRoom}`}. Move a main part on purpose (try_placements compares arrangements), give the area more room, or ${drawn ? 'draw round it on the other layer' : 'try 4 layers'}.`,

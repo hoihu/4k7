@@ -108,6 +108,10 @@ export function standardPackage(name: string, pins = 2): PackageInfo | null {
     case 'LED-3.5X3.5':
     case 'LED-3.5X3.5MM':
       return led3535();
+    case '0603X4':
+    case '4D03':
+    case 'R-ARRAY-4X0603':
+      return array4x0603();
   }
   if (VCHIP[n]) return vchip(n);
   return testPoint(n);
@@ -163,6 +167,26 @@ function led3535(): PackageInfo {
   };
 }
 
+/**
+ * A convex 4 × 0603 resistor array (1632: Uniroyal 4D03, Yageo YC164, ROHM MNR14; JLCPCB calls it
+ * 0603x4): 8 terminals at 0.8 mm pitch, numbered like a SOIC, resistor n between pins n and 9 − n.
+ * The land is KiCad's R_Array_Convex_4x0603 (after ROHM's MNR14 drawing): 0.8 × 0.4 mm pads, the
+ * outer ones 0.5 mm, ±0.9 mm off the centre line.
+ */
+function array4x0603(): PackageInfo {
+  const ys = [-1.2, -0.4, 0.4, 1.2];
+  const pad = (number: number, x: number, y: number) => ({ number: String(number), x, y, w: 0.8, h: Math.abs(y) > 1 ? 0.5 : 0.4, shape: 'rect' as const });
+  return {
+    name: '0603x4',
+    family: 'other',
+    pins: 8,
+    pitch_mm: 0.8,
+    body_mm: [1.6, 3.2],
+    height_mm: 0.45,
+    pads: [...ys.map((y, i) => pad(i + 1, -0.9, y)), ...ys.map((y, i) => pad(8 - i, 0.9, y))],
+  };
+}
+
 /** Every package name standardPackage knows, in its own spelling (headers for `pins` pins). */
 function knownPackages(pins: number): string[] {
   const vchips = Object.values(VCHIP).map((v) => `CAP-${v.can[0]}x${v.can[1]}`);
@@ -173,7 +197,7 @@ function knownPackages(pins: number): string[] {
     ...vchips,
     ...Object.keys(AXIAL).map((k) => `AXIAL-${k}`),
     ...Object.keys(DIODES_AXIAL),
-    ...['RADIAL-D5', 'RADIAL-D6.3', 'RADIAL-D8', 'RADIAL-D10', 'RADIAL-D12.5', 'LED-3mm', 'LED-5mm', 'LED-3535'],
+    ...['RADIAL-D5', 'RADIAL-D6.3', 'RADIAL-D8', 'RADIAL-D10', 'RADIAL-D12.5', 'LED-3mm', 'LED-5mm', 'LED-3535', '0603x4'],
     `HDR-1x${pins}`,
     `JST-XH-${pins}`,
   ];
@@ -311,7 +335,8 @@ export function packageOptions(card: PartCard): string[] {
 /** The default-package slot of a generic part, if it has one. */
 function defaultSlot(card: PartCard): keyof Omit<PackageDefaults, 'autoSize'> | null {
   if (card.id === 'generic:CP') return 'electrolytic';
-  if (!card.id.startsWith('generic:')) return null;
+  // (a design's default chip size is for two-pin parts, not a resistor array)
+  if (!card.id.startsWith('generic:') || card.pins.length !== 2) return null;
   switch (card.category) {
     case 'resistor':
       return 'resistor';

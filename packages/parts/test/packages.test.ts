@@ -242,6 +242,19 @@ describe('passive packages: through-hole, defaults and sizing', () => {
     expect(packageOf(led, { package: '3535' })?.name).toBe('LED-3535');
   });
 
+  it('knows a 4 × 0603 convex resistor array: KiCad R_Array_Convex_4x0603, numbered like a SOIC', () => {
+    for (const n of ['0603x4', '4D03', 'R-ARRAY-4x0603']) expect(standardPackage(n, 8)?.name, n).toBe('0603x4');
+    const fp = footprintFor(standardPackage('0603x4', 8)!, ['1', '2', '3', '4', '5', '6', '7', '8']);
+    if (!fp.ok) throw new Error(fp.reason);
+    expect(fp.footprint.pads.map((p) => [p.number, p.x, p.y, p.w, p.h])).toEqual([
+      ['1', -0.9, -1.2, 0.8, 0.5], ['2', -0.9, -0.4, 0.8, 0.4], ['3', -0.9, 0.4, 0.8, 0.4], ['4', -0.9, 1.2, 0.8, 0.5],
+      ['8', 0.9, -1.2, 0.8, 0.5], ['7', 0.9, -0.4, 0.8, 0.4], ['6', 0.9, 0.4, 0.8, 0.4], ['5', 0.9, 1.2, 0.8, 0.5],
+    ]);
+    // the design's default resistor size is for the two-pin resistor, not the array
+    const rn = BUILTIN_PARTS.find((c) => c.id === 'generic:R_ARRAY_4')!;
+    expect(packageOf(rn, {}, { resistor: '0402' })?.name).toBe('0603x4');
+  });
+
   it('knows JST XH connectors by the names they go by, pins from the name or the part', () => {
     for (const n of ['JST-XH-2', 'JST XH 2', 'XH-2', 'XH 2.5mm 2 pin', 'B2B-XH-A', 'JST_XH_B2B-XH-A_1x02_P2.50mm_Vertical', 'S2B-XH-A']) {
       expect(standardPackage(n)?.name, n).toBe('JST-XH-2');
