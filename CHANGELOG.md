@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Design document
+
+- **The design document has a bring-up sheet for the first board back from the fab.** Before, working out what to power first, what each rail should read and where to probe it meant reading the schematic at the bench. Now the document's new *Bring-up* section lists the supply rails in the order to power them up (the rails from a connector or battery first, then each rail its regulator makes), each with the voltage to expect, the part that makes it, and its test point (for example `TP1` labelled `TP_+3V3`), or the pin to probe where it has none. For the rails that come in from outside it gives the current limit to set on the bench supply: 1.5 × what the board is expected to draw, from the loads and maximum currents stated on the rails (100 mA of load behind a linear regulator gives 150 mA). Where the current is not known it says *unknown — start low* instead of a number. The steps after the table go in order: check each rail for a short, power up, measure each rail. Print or download the document from the layout view as before; a design without supply rails has no such section.
+
 ## 0.7.0 — 2026-11-22
 
 This release checks the current and power on a board: a microcontroller pin asked to drive more than it is rated for is flagged, tracks, vias and thermal spokes are checked against the current they carry, and a heat map shows where the copper works hardest. The agent can copy a block you already built in another project into the open design, give an enclosure a clear window, and swap pins and gates, including an ATtiny85's GPIO pins, to untangle the board. Parts can be marked do-not-populate, test points go on the power rails, and the design document can be downloaded as a file.

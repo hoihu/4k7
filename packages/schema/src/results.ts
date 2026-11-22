@@ -377,3 +377,32 @@ export interface DesignSummary {
   /** The board's allowed heating (set_board current_rise_c, °C) when not the default 10 (what calc track_current works at). */
   currentRise?: 10 | 20 | 30;
 }
+
+/* -------------------------------- bring-up -------------------------------- */
+
+/**
+ * The bring-up sheet of the design document: the rails in the order to power them up, what each
+ * should read and where to probe it, and the bench supply's current limit for the rails that come
+ * in from outside. See docs/design/layout.md §4.
+ */
+export interface BringUpPlan {
+  rails: BringUpRail[];
+  /** The checks in order, as plain sentences. */
+  steps: string[];
+  /** Why there is nothing to bring up (no supply rails). */
+  note?: string;
+}
+
+export interface BringUpRail {
+  net: string;
+  voltage: number | 'unknown';
+  /** What makes it: "J1 (connector)", "U1 (linear regulator from +5V)", "U1 (switching regulator from +12V), through L1", or "unknown". */
+  source: string;
+  /** It comes in from outside (a connector or a battery): the bench supply feeds it. */
+  input: boolean;
+  /** The test points on it (refdes and silkscreen label), or where to probe without one. */
+  testPoints: { ref: string; label: string }[];
+  probeAt?: string;
+  /** Only on an input rail: what the board is expected to draw from it and the limit to set. */
+  supply?: { draw_a: number | 'unknown'; basis: 'loads' | 'max_current' | 'unknown'; limit_a: number | 'unknown' };
+}

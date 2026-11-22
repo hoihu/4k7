@@ -38,6 +38,8 @@ const methods = {
   draftDesign: () => kernel.draftDesign(),
   /** The working copy's board placed, not routed (fast): its parts, pads and sides, for what assembly costs. */
   boardPlacement: () => kernel.boardPlacement(),
+  /** The working copy's bring-up sheet, for the design document. */
+  bringUp: () => kernel.bringUp(),
   /** The working copy and its board placed, for the board worker. */
   boardRequest: () => kernel.boardRequest(),
   /** Copper the board worker routed, kept with the design (true: the committed design took it, save it). */
