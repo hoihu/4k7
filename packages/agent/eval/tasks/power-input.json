@@ -1,0 +1,27 @@
+{
+  "name": "power-input",
+  "prompt": "Start a board with a 2-pin supply connector J1 for a 5 V input (pin 1 +5V, pin 2 GND), mark +5V as an external 5 V supply, and put a 10 µF bulk capacitor C1 across it.",
+  "answers": ["0805"],
+  "expect": { "parts": ["J1", "C1"], "nets": ["+5V", "GND"] },
+  "script": [
+    [{ "type": "tool_use", "id": "", "name": "ask_user", "input": { "question": "Which package for C1?", "options": ["0603", "0805", "1206"] } }],
+    [
+      {
+        "type": "tool_use",
+        "id": "",
+        "name": "design_edit",
+        "input": {
+          "summary": "5 V input with bulk capacitor",
+          "ops": [
+            { "op": "add_part", "part": "generic:CONN_1x2", "refdes": "J1" },
+            { "op": "add_part", "part": "generic:C", "refdes": "C1", "params": { "capacitance": "10uF", "voltage": "16V", "package": "0805" } },
+            { "op": "connect", "pins": ["J1.1", "C1.1"], "net": "+5V" },
+            { "op": "connect", "pins": ["J1.2", "C1.2"], "net": "GND" },
+            { "op": "set_net", "net": "+5V", "external": true, "voltage": 5 }
+          ]
+        }
+      }
+    ],
+    [{ "type": "text", "text": "J1 brings in +5V; C1 10 µF 0805 across it." }]
+  ]
+}

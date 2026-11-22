@@ -1,0 +1,12 @@
+{
+  "name": "led-current",
+  "prompt": "D1 is a red LED (forward voltage about 2.0 V) fed from +3V3 through R1. Change R1 so D1 runs at about 5 mA, with a standard E24 value.",
+  "design": "led.twd.json",
+  "answers": [{ "match": "colo", "answer": "Red, Vf 2.0 V." }],
+  "expect": { "parts": ["D1", "R1"], "nets": ["+3V3", "GND"], "values": { "R1": ["240", "270"] } },
+  "script": [
+    [{ "type": "tool_use", "id": "", "name": "calc", "input": { "fn": "led_resistor", "args": { "vsupply": 3.3, "vf": 2.0, "i": 0.005, "series": "E24" } } }],
+    [{ "type": "tool_use", "id": "", "name": "design_edit", "input": { "summary": "R1 for 5 mA", "ops": [{ "op": "set_param", "ref": "R1", "params": { "resistance": "270" } }] } }],
+    [{ "type": "text", "text": "R1 is 270 Ω: (3.3 V − 2.0 V) / 270 Ω ≈ 4.8 mA." }]
+  ]
+}
