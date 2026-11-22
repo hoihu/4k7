@@ -5,10 +5,6 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
-### Fixes
-
-- **A project folder the app cannot read is reported once, with what to do.** When the server could not read the projects folder, the message "Could not read the project files" came back every four seconds for as long as the app was open. Now it shows once (and again only if the reason changes) while the app keeps trying in the background. On a Mac, where the cause is usually that macOS keeps Documents from the program that started the server, the message says so and points to System Settings → Privacy & Security → Files and Folders.
-
 ## 0.7.0 — 2026-11-22
 
 This release checks the current and power on a board: a microcontroller pin asked to drive more than it is rated for is flagged, tracks, vias and thermal spokes are checked against the current they carry, and a heat map shows where the copper works hardest. The agent can copy a block you already built in another project into the open design, give an enclosure a clear window, and swap pins and gates, including an ATtiny85's GPIO pins, to untangle the board. Parts can be marked do-not-populate, test points go on the power rails, and the design document can be downloaded as a file.
@@ -112,6 +108,7 @@ This release checks the current and power on a board: a microcontroller pin aske
 - **The built-in ATtiny85 (ATTINY85-20SU) has the footprint of the real part.** The library gave it the narrow 150 mil (3.9 mm) SOIC-8, but the ATTINY85-20SU comes in Microchip's 8S2 package, a SOIC-8 with a 208 mil (5.3 mm) body and leads about 7.9 mm across: on a board made with the old footprint its feet do not reach the pads (pad rows 5.3 mm apart instead of about 7.3 mm). It now has the 208 mil land and 3D body, named `SOIC-8-208mil` as JLCPCB lists the part. This goes back to 0.1.0. A design keeps the part as it was when the part was added, so in a design made before this version, delete its ATtiny85s and add them again, place and route them again, then export the production files again. The narrow SOIC-8 ATtiny85 is the ATTINY85-20SSU.
 - **Renaming a project to the same name in other case keeps the name.** On macOS and Windows, renaming project "lamp" to "Lamp" made it "Lamp 2", as if another project already had the name. It now becomes "Lamp". A project whose name really is taken still gets a number.
 - **A project opened from a copied file is named after that file.** Opening a copy such as `bike-lamp-rev2.twd.json` from outside the projects folder (Settings → General → Open file) made the project "bike-lamp 2", named after the design inside the file, and opening a copy you had just put into the projects folder made yet another copy. Now the project is called "bike-lamp-rev2", and a file already in the projects folder opens in place. A number is added only when another project already has that name, so no file is overwritten. This goes back to 0.2.0. A project already called "bike-lamp 2" can be renamed in Settings → General.
+- **A project folder the app cannot read is reported once, with what to do.** When the server could not read the projects folder, the message "Could not read the project files" came back every four seconds for as long as the app was open. Now it shows once (and again only if the reason changes) while the app keeps trying in the background. On a Mac, where the cause is usually that macOS keeps Documents from the program that started the server, the message says so and points to System Settings → Privacy & Security → Files and Folders.
 
 ## 0.6.1 — 2026-11-06
 
