@@ -258,6 +258,22 @@ the slicer gives it its own filament. The pieces-apart check leaves an inlay and
 and the thin-wall and overhang checks skip inlays. On the bed face, 0.4–0.6 mm deep (two or three
 layers) is enough; it needs a multi-material printer or a filament change. Say which in the brief.
 
+**A window (clear inlay).** A light pipe or window in front of an LED or a display is an inlay in
+clear filament (clear PETG): `material: 'clear'`, with an optional `colour` for a tint. The 3D view
+and the render pictures draw it see-through, so check in them that the LED shows behind it. It
+fills a hole through the wall, so make it the whole wall thick (1–1.5 mm lets light through and
+prints); the inlay checks apply to it as to any. The materials are `clear` only; leave it out for
+plain filament.
+
+```js
+const pieces = ['base', 'lid', 'lid_window'];
+const inlays = { lid_window: { host: 'lid', material: 'clear' } };
+const led = parts_info.find((p) => p.ref === 'D1');
+const window_ = () => translate([(led.min[0] + led.max[0]) / 2, (led.min[1] + led.max[1]) / 2, lid_top - wall], cylinder({ r: 3, h: wall }));
+function lid() { return difference(lid_body(), window_()); }
+function lid_window() { return intersection(lid_body(), window_()); }
+```
+
 ### 6.1 Names and logos at a print service
 
 Print and PCB services (JLC3DP, PCBWay and others) check uploads for names and logos and stop an

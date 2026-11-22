@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { boardBodies } from '@4k7/parts';
-import type { BoardView } from '@4k7/schema';
+import type { BoardView, Inlay } from '@4k7/schema';
 import type { EnclosureFacts, EnclosureFinding, EnclosurePiece } from '@4k7/fab';
 import { boardGroup, viewerCore, type Res } from './three-body.ts';
 import { extent, liftStep, type Box } from './section.ts';
@@ -25,8 +25,8 @@ export interface EnclosureScene {
   findings: EnclosureFinding[];
   /** Parts the brief says are used from outside: their ways out are drawn. */
   openings: string[];
-  /** Pieces in another colour that belong to a host piece (the script's inlays): drawn in their colour, lifted with the host. */
-  inlays?: Record<string, { host: string; colour?: string }>;
+  /** Pieces in another colour that belong to a host piece (the script's inlays): drawn in their colour, lifted with the host; a clear one see-through. */
+  inlays?: Record<string, Inlay>;
 }
 
 export interface SceneOptions {
@@ -52,6 +52,9 @@ const toViewer = (h: number) => new THREE.Matrix4().set(1, 0, 0, 0, 0, 0, 1, -T,
  */
 const PIECE_COLOURS = [0x6b727d, 0x4d6688, 0x8c7b5a, 0x5c7d66];
 const INLAY = 0x2a2e35;
+/** A clear inlay (a window): a pale tint, or its colour, see-through, so the LED or display behind it shows. */
+const CLEAR = 0xd8ecf5;
+const CLEAR_OPACITY = 0.3;
 const EDGE = 0x10141a;
 const CUT = [0xe0703a, 0xb8541f, 0xf09a62, 0x9c4316];
 /** A cut through the board (bare FR4), a part's body and its leads: not the box's colour, to tell them from it. */
@@ -164,8 +167,9 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
     const i = order.indexOf(host);
     const geo = pieceGeometry(p, h);
     let colour: THREE.ColorRepresentation = PIECE_COLOURS[i % PIECE_COLOURS.length]!;
+    const clear = host !== p.name && inlay?.material === 'clear';
     if (host !== p.name) {
-      colour = INLAY;
+      colour = clear ? CLEAR : INLAY;
       try {
         if (inlay?.colour) colour = new THREE.Color().setStyle(inlay.colour);
       } catch {
@@ -173,7 +177,9 @@ export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}
       }
     }
     // (pushed back, so its edges stay clear of it)
-    const front = new THREE.MeshStandardMaterial({ color: colour, roughness: 0.6, metalness: 0.05, side: THREE.FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    // (a clear one in three's transparent pass, after the solids, and writing no depth: they stay visible behind it)
+    const glass = clear ? { transparent: true, opacity: CLEAR_OPACITY, depthWrite: false, roughness: 0.1 } : {};
+    const front = new THREE.MeshStandardMaterial({ color: colour, roughness: 0.6, metalness: 0.05, side: THREE.FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, ...glass });
     const edge = new THREE.LineBasicMaterial({ color: EDGE, transparent: true, opacity: 0.55 });
     owned.push(front, edge);
     cuts.push([host === p.name ? CUT[i % CUT.length]! : colour, [front]]);
