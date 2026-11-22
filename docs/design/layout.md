@@ -587,7 +587,10 @@ Each step is useful alone.
     **Etching and pour checks** (2026-10-29, all in drc.ts, run with the routed or drawn copper and on each
     drawn op). `DRC.ACID_TRAP` (`acidDrc`, warning): two tracks of one net meeting at less than 90° (a bend, a
     junction, or a track ending on the side of another) with nothing of the net in the wedge between them: a pad,
-    via, pour or other track of the net filling it, or a junction inside a pad or via, clears it. `DRC.NECK`
+    via, pour or other track of the net filling it, or a junction inside a pad or via, clears it. The router
+    lays none of its own: a path that ends on the side of a track of its net at 45° turns before it and meets it
+    square, with a stub at 90° onto its centre line, or on the bend where that piece ends (`squareJoin` in
+    routetracks.ts, 2026-11-22; only with exact clearance, else the join stays as it was). `DRC.NECK`
     (`neckDrc`, warning): a track narrower than its net's width (`set_net`, its impedance rule, else the power or
     signal width), unless it is a neck (§5.7): an end on or within `neckReach` of a pad too small for that width,
     and no longer than twice that.

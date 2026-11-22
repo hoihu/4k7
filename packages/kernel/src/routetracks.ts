@@ -286,6 +286,9 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
     // an end on a track of the net (a join): exactly onto that track's centre line
     if (startPad < 0 && first && !(lines.length === 1 && endVia)) first.pts = keepJoins(first, reversePts(joinTrack(reversePts(simplify(first.pts)), first.l, net, first.width)));
     if (endPad < 0 && !endVia) last.pts = keepJoins(last, joinTrack(simplify(last.pts), last.l, net, last.width));
+    // and meeting that track square, not at 45° (an acid trap, DRC.ACID_TRAP)
+    if (startPad < 0 && first && !(lines.length === 1 && endVia)) first.pts = keepJoins(first, reversePts(squareJoin(reversePts(simplify(first.pts)), first.l, net, first.width)));
+    if (endPad < 0 && !endVia) last.pts = keepJoins(last, squareJoin(simplify(last.pts), last.l, net, last.width));
     for (const line of lines) line.pts = dejog(simplify(line.pts), line.l, net, line.width);
     // a net whose width is set (or a laid connection's asked width, `own`), routed narrower all
     // along for a pad too small for it (its width with necks found no way, see routeConn): narrow
@@ -513,6 +516,76 @@ export function passTracks(grid: PassGrid, finder: PassSearch) {
     }
     if (!clearOf(net, l, width, [[ax, ay, q[0], q[1]]])) return pts;
     return [...pts.slice(0, 2 * n - 2), q[0], q[1]];
+  };
+
+  /*
+   * A path that ends on the side (or the end) of a track of its net, on its centre line, arriving
+   * at 45° to it: the narrow wedge between the two is an acid trap (DRC.ACID_TRAP, drc.ts). The
+   * last piece turns before the track and meets it square: from a point B on the last piece a
+   * stub at 90° to the track's piece onto its centre line (B may be the piece's start A: the whole
+   * piece turns), or onto the bend where that piece ends. Every angle at the new end, and at the corner it makes, is
+   * 90° or wider; only with exact clearance, else the track stays as it was. Inside a pad or a via
+   * of the net the copper is whole there: nothing to do.
+   */
+  const squareJoin = (pts: number[], l: number, net: number, width: number): number[] => {
+    const n = pts.length / 2;
+    if (n < 2) return pts;
+    const layer = layers[l]!;
+    /** Directions leaving (x, y) along the net's tracks on this layer that pass through it. */
+    const arms = (x: number, y: number) => {
+      const out: [number, number][] = [];
+      for (const t of tracks) {
+        if (t.layer !== layer || numOf(t.netId) !== net) continue;
+        for (let q = 0; q + 3 < t.pts.length; q += 2) {
+          const [cx, cy, dx, dy] = [t.pts[q]!, t.pts[q + 1]!, t.pts[q + 2]!, t.pts[q + 3]!];
+          if (Math.hypot(dx - cx, dy - cy) < 1e-6 || segDist(cx, cy, dx, dy)(x, y) > 0.01) continue;
+          if (Math.hypot(cx - x, cy - y) > 0.01) out.push([cx - x, cy - y]);
+          if (Math.hypot(dx - x, dy - y) > 0.01) out.push([dx - x, dy - y]);
+        }
+      }
+      return out;
+    };
+    const cos = (a: [number, number], b: [number, number]) => (a[0] * b[0] + a[1] * b[1]) / (Math.hypot(...a) * Math.hypot(...b));
+    // (an angle under 90° less half a degree, as the check counts it)
+    const acute = (a: [number, number], b: [number, number]) => cos(a, b) > Math.cos((89.5 * Math.PI) / 180) && cos(a, b) < Math.cos(Math.PI / 180);
+    const [px, py] = [pts[2 * n - 2]!, pts[2 * n - 1]!];
+    const [ax, ay] = [pts[2 * n - 4]!, pts[2 * n - 3]!];
+    const at = arms(px, py);
+    if (!at.some((m) => acute([ax - px, ay - py], m))) return pts;
+    if (pads.some((p, q) => padNet[q] === net && (p.drill || p.layers.includes(layer)) && padDist(p)(px, py) < 1e-6)) return pts;
+    if (vias.some((v) => numOf(v.netId) === net && Math.hypot(v.x - px, v.y - py) < v.pad / 2)) return pts;
+    const z: [number, number] | null = n >= 3 ? [pts[2 * n - 6]!, pts[2 * n - 5]!] : null;
+    const len = Math.hypot(px - ax, py - ay);
+    const [ux, uy] = [(px - ax) / len, (py - ay) / len];
+    for (const [vx, vy] of at) {
+      // the normal to that piece, pointing from A's side onto its line; h: how far A is from the line
+      const vl = Math.hypot(vx, vy);
+      let [nx, ny] = [-vy / vl, vx / vl];
+      let h = (px - ax) * nx + (py - ay) * ny;
+      if (h < 0) [nx, ny, h] = [-nx, -ny, -h];
+      const un = ux * nx + uy * ny; // (how fast the last piece closes on the line)
+      if (h < 1e-3 || un < 1e-3) continue;
+      // the end moves along the line by hb · slide (towards the arm's end, or away from it): a stub
+      // that lands just on that end (a bend of the track, where its next piece may meet the stub at 45°)
+      const slide = (-ux * vx - uy * vy) / vl / un;
+      const toEnd = slide > 1e-6 ? vl / slide : -1;
+      const tries = [Math.min(h, Math.max(width, 0.25)), h, h / 2, toEnd, width / 2, 0.1, 0.05].filter((v) => v >= 0.02 && v <= h + 1e-9);
+      for (const hb of [...new Set(tries)]) {
+        // B on the last piece, hb from the line (B = A: the whole piece turns); Q its foot on the line
+        const fromA = hb >= h - 1e-9;
+        const [bx, by] = fromA ? [ax, ay] : [px - (ux * hb) / un, py - (uy * hb) / un];
+        const [qx, qy] = [bx + nx * hb, by + ny * hb];
+        const stub: [number, number] = [bx - qx, by - qy];
+        const back: [number, number] | null = fromA ? (z ? [z[0] - ax, z[1] - ay] : null) : [ax - bx, ay - by];
+        // the end lands on the net's copper and meets all of it at 90° or wider; the corner at B is 90° or wider
+        const there = arms(qx, qy);
+        if (!there.length || there.some((m) => acute(stub, m))) continue;
+        if (back && cos(back, [-stub[0], -stub[1]]) > 1e-6) continue;
+        if (!clearOf(net, l, width, [[bx, by, qx, qy]])) continue;
+        return [...pts.slice(0, 2 * n - 2), ...(fromA ? [] : [bx, by]), qx, qy];
+      }
+    }
+    return pts;
   };
 
   /*

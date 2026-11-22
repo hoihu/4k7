@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardPad, BoardPart, BoardRules, BoardView, CopperLayer, Design } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
-import { neckDrc } from '../src/drc.ts';
+import { acidDrc, neckDrc } from '../src/drc.ts';
 import { segDist, segmentsOf } from '../src/geom.ts';
 import { route } from '../src/router.ts';
 import { buckTransaction } from './fixtures.ts';
@@ -513,3 +513,43 @@ describe('stopping the routing', () => {
   });
 });
 
+
+describe('the router lays no acid traps', () => {
+  /** Two-pad passives (0.9 × 0.95 mm pads, 1.6 mm apart) at (x, y), their pads on the nets given. */
+  const passives = (list: [number, number, string, string][]) =>
+    list.map(([x, y, n1, n2], i) => {
+      const pads: BoardPad[] = [[x, n1], [x + 1.6, n2]].map(([px, netId], q) => ({ number: String(q + 1), x: px as number, y, w: 0.9, h: 0.95, shape: 'rect', netId: netId as string, layers: ['F.Cu'] }));
+      return { componentId: `R${i}`, refdes: `R${i}`, x: 0, y: 0, rot: 0, pads, courtyard: { x: x - 1, y: y - 1, w: 3.6, h: 2 } } as unknown as BoardPart;
+    });
+  const routed = (parts: BoardPart[], power: string[] = []) => {
+    const input = { outline: { w: 20, h: 15 }, layers: ['F.Cu'] as CopperLayer[], rules: RULES, parts, powerNets: new Set(power) };
+    const r = route(input);
+    const view = { ...input, tracks: r.tracks, vias: r.vias, zones: r.zones, planes: [], graphics: [], netNames: { A: 'A', B: 'B', C: 'C' } } as unknown as BoardView;
+    return { r, traps: acidDrc(view) };
+  };
+
+  it('a connection that ends on the side of a track of its net meets it square, not at 45°', () => {
+    // A: R1.2 runs right onto the diagonal from R6.1 down to R0.1 (it met it at 45° at 12.1, 4.9)
+    const { r, traps } = routed(passives([[12, 5.7, 'A', 'B'], [8.7, 4.9, 'B', 'A'], [15.7, 4, 'C', 'A'], [6.5, 11.1, 'A', 'C'], [9.9, 10.8, 'B', 'B'], [10.1, 3, 'A', 'B'], [17, 3.8, 'A', 'B']]));
+    expect(traps).toEqual([]);
+    expect(r.failed).toEqual([]);
+  });
+
+  it('on small boards of passives drawn at random: no acid traps, and no connection fewer', () => {
+    // (seven of these 40 boards had one before; 15 connections stayed open, as now)
+    let [traps, open] = [0, 0];
+    for (let seed = 1; seed <= 40; seed++) {
+      let s = seed;
+      const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+      const net = () => 'ABC'[Math.floor(rnd() * 3)]!;
+      const list: [number, number, string, string][] = [];
+      for (let i = 0; i < 7; i++) list.push([2 + Math.round(rnd() * 160) / 10, 2 + Math.round(rnd() * 110) / 10, net(), net()]);
+      const res = routed(passives(list), rnd() < 0.5 ? ['A'] : []);
+      traps += res.traps.length;
+      open += res.r.failed.length;
+    }
+    expect(traps).toBe(0);
+    expect(open).toBeLessThanOrEqual(15);
+    // 40 boards of full routing take about 2 s here and 5 s on a CI runner
+  }, 30_000);
+});
