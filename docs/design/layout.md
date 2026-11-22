@@ -784,6 +784,17 @@ edit (`set_footprint`) that moved an unconnected pad under a GND track, and two 
 showed only as `FAB.SHORT`. Each message names both copper items (`U1.3 (not connected)`, `track t1
 (GND)`) and what to do: move or erase the drawn copper by id, else move the part or route again.
 
+**A footprint that changes under the copper.** A value can change a part's package (`set_param`
+voltage 50V on a generic 0603 capacitor sizes it up to 0805, `packageChoice`). The placement key
+leaves pad sizes out, so the routing stays done and the copper kept with the design is checked
+against the bigger land as it is: `get_diagnostics` and the board find a pad now over or too close
+to a via, the same in the session as after a reload. The transaction's own checks are the
+schematic's, so such an edit used to answer with nothing new. Now the `set_param` effect names the
+change (`C1: voltage=50V; package 0603 → 0805 (50V rating): …`), and where the board's copper is
+current (kept for this placement, or drawn) the transaction lays it once more and adds the
+`DRC.SHORT`, `DRC.CLEARANCE` and `DRC.VIA_IN_PAD` findings at that part's land to `introduced`
+(those that were not there before). An edit that changes no package lays nothing.
+
 Bench (`bench/drawn.ts`, the 128-part board of `bench/board.ts`, 3 clusters):
 
 | | router | drawn, empty | helper on everything | view after it | taken over from the router | U10 moved 0.5, 0.5 mm |
