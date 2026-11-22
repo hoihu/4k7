@@ -86,7 +86,12 @@ export type RejectionCode =
   /** No layer of the board can carry a line at that impedance (set_impedance). */
   | 'IMPEDANCE_IMPOSSIBLE'
   /** The route helper's results were computed for an earlier working copy (it changed meanwhile). */
-  | 'STALE';
+  | 'STALE'
+  /** import_block: a project the projects folder does not list, or one that cannot be read. */
+  | 'PROJECT_UNKNOWN'
+  | 'BLOCK_UNKNOWN'
+  /** import_block: a boundary net of the block that is not mapped to a net of this design. */
+  | 'NET_UNMAPPED';
 
 export interface Rejection {
   /** Index of the failing op within the transaction. */
@@ -104,6 +109,19 @@ export interface OpResult {
   effect: string;
   /** Ids of created/affected entities. */
   ids?: string[];
+  /** import_block: what came in and what to look at again (also in `effect`). */
+  imported?: ImportReport;
+}
+
+export interface ImportReport {
+  project: string;
+  block: string;
+  /** Refdes and internal net names that were taken here: the source's → the new one. */
+  renamed: { refdes: Record<string, string>; nets: Record<string, string> };
+  /** Part ids, by where their card came from: this design or the library, or the source project's file. */
+  cards: { library: string[]; project: string[] };
+  /** Values chosen for the other design: per part (new refdes), its params and why to look. */
+  recheck: { ref: string; params: Record<string, string>; why: string }[];
 }
 
 export interface DiffSummary {

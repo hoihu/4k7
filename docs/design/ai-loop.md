@@ -109,11 +109,13 @@ A recipe is a small package: `recipe.json` (name, match hints, tool allow-list, 
 constraints) + `prompt.md` + optional reference sub-circuit (`.twd` fragment). Examples:
 "USB-C sink with ESD", "STM32 minimum system", "Buck, TPS5433x family", "RS-485 with isolation".
 
-### Blocks from other projects, first step implemented
+### Blocks from other projects, implemented
 The proven blocks of the user's own earlier projects are the first reference sub-circuits.
 `design_query list_blocks { project }` lists the functional blocks of another project in the
 projects folder (parts, params, internal and boundary nets; [ops-api](ops-api.md) §7), read-only.
-Next is the edit op `import_block`, which copies one in and asks for every boundary net's target.
+`design_edit import_block { project, block, nets }` copies one in once every boundary net has a target
+here; the agent then rechecks the values its result lists against this design's requirements (a
+feedback divider set for 5 V, a current limit) with set_param. Shipped recipes come later.
 
 ## 6. Local relay (`tools/server`), implemented
 

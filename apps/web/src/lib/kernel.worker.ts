@@ -4,6 +4,7 @@
  * structured-cloneable arguments; the Rust/WASM kernel will slot in behind the same RPC.
  */
 import { Kernel, registerArtwork, unregisterArtwork } from '@4k7/kernel';
+import type { ImportSources } from '@4k7/kernel';
 import { registerUserParts, unregisterUserPart } from '@4k7/parts';
 import type { Artwork, CheckSettings, Design, OptimizeScope, PartCard, RouteHelperResult, StoredCopper } from '@4k7/schema';
 
@@ -13,9 +14,11 @@ const methods = {
   /**
    * `by`: the user for the app's own edits (drags, buttons); the agent's tool calls leave it out.
    * `routed`: what the route helper found for the transaction's route ops on drawn copper, in the
-   * helper worker (by op index): laid as found, without routing here.
+   * helper worker (by op index): laid as found, without routing here. `sources`: the stored projects
+   * the app read for the transaction's import_block ops.
    */
-  transact: (tx: unknown, by?: 'user' | 'agent', routed?: Record<number, RouteHelperResult>, rev?: number) => kernel.transact(tx, by, routed ? { results: routed, ...(rev !== undefined ? { rev } : {}) } : undefined),
+  transact: (tx: unknown, by?: 'user' | 'agent', routed?: Record<number, RouteHelperResult>, rev?: number, sources?: ImportSources) =>
+    kernel.transact(tx, by, routed ? { results: routed, ...(rev !== undefined ? { rev } : {}) } : undefined, sources),
   /** The working copy with its revision (the route helper's worker routes it; transact refuses its results if it changed). */
   draftSnapshot: () => kernel.draftSnapshot(),
   query: (q: unknown) => kernel.query(q),

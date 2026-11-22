@@ -8,6 +8,7 @@ import { drawPair, drawTrack, drawVia, editCopper, eraseCopper, lockCopper, unlo
 import { boardCopy, nextId, reject } from './doc.ts';
 import { eraseOp, labelOp, moveSupplyOp, textOp, wireOp } from './drawops.ts';
 import { setEnclosureBrief, setEnclosureGraphic, setEnclosureScript } from './enclosureops.ts';
+import { importBlock } from './importops.ts';
 import { addKeepout, editKeepout, removeKeepout } from './keepout.ts';
 import { removeImpedance, setImpedance, setStackup } from './lineops.ts';
 import { addPart, addSheet, clearSheet, connect, constrain, disconnect, moveToSheet, noConnect, remove, removeSheet, rename, setDnp, setNet, setParam, swapPins } from './netops.ts';
@@ -83,6 +84,8 @@ export function applyOp(d: Design, op: EditOp, by: 'user' | 'agent' = 'agent', c
       return renamePart(d, op);
     case 'describe':
       return describe(d, op);
+    case 'import_block':
+      return importBlock(d, op, ctx?.sources);
     case 'set_package_defaults':
       return setPackageDefaults(d, op);
     case 'set_value_series':

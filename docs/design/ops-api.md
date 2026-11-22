@@ -68,6 +68,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `no_connect`: mark pins as deliberately unconnected.
 - `set_net`: rename a net and set its voltage, external/power flags, max current, the loads its pins draw (`loads: [{ pin: "U3.VDD", amps: 0.35 }]`, null clears; each pin must be on the net and draw more than 0 A; the current check splits the net's current over its copper from them, `layout.md` §14), track width, how it is drawn, and on the board whether the router routes it first and the layer its tracks keep to (a cost, not a ban).
 - `describe`: the functional blocks (which group and order the schematic) and the design document text.
+- `import_block`: copy one functional block of another stored project into this design, with every boundary net mapped to a net here (§7). Refused (`NET_UNMAPPED`, `BLOCK_UNKNOWN`, `PROJECT_UNKNOWN`, `PART_UNKNOWN`) with nothing changed; the effect lists the renames and the values to recheck.
 
 ### Sheets and drawing
 
@@ -266,7 +267,7 @@ neither is `unknown`. `dissipation` is on the rail a linear regulator drives dir
 has none. The budget is `unknown` without max_current, and where a switcher is fed (its input current
 depends on its efficiency).
 
-## 7. Blocks of another project (`list_blocks`)
+## 7. Blocks of another project (`list_blocks`, `import_block`)
 
 `design_query list_blocks { project }` reads another project in the projects folder, by its id (the file
 name without `.twd.json`), and lists its functional blocks (its `describe` blocks), so the agent can reuse a
@@ -290,4 +291,26 @@ turns it into the answer. Neither project changes.
 A boundary net leaves the block: a part outside the block is on it, it is marked external (off the board),
 or it is a supply or ground, which the importing design has its own of even where only this block uses it.
 A project without blocks answers `blocks: []` with a note; an unknown or unreadable project answers
-`{ "error", "projects" }` (the ids the folder has). The edit op `import_block` that copies a block in comes next.
+`{ "error", "projects" }` (the ids the folder has).
+
+`design_edit import_block { project, block, nets, prefix? }` copies one block in. `block` is its number or
+title, `nets` maps every boundary net to a net of this design (`{ "+5V": "VBUS", "GND": "GND" }`; a name that
+does not exist here is made, with the source net's attributes). It is refused, and nothing changes, when a
+boundary net is not mapped (`NET_UNMAPPED`, the missing ones as candidates), a mapped name is no boundary net
+(`NET_UNKNOWN`), the block or project is unknown, or a part cannot be resolved (`PART_UNKNOWN`).
+
+- Parts are resolved by id in this design and the library first; a part neither has comes with the card the
+  source project stores (a project embeds the cards it uses). A card here that lacks a pin the block connects
+  is refused. Params, no-connect marks and DNP are copied.
+- A refdes taken here gets the next free number of its letters (R1 → R2 when R1 is used here); internal nets are made anew,
+  `prefix` put before their names, `_2`, `_3` … where the name is taken. Net loads on the block's pins come along.
+- The block's `describe` entry (title, text; ` (2)` after a title that is taken) is appended, with the
+  constraints between its parts that say how it is drawn (`left_of`, `right_of`, `above`, `below`,
+  `arrangement`) and its notes. Positions, rooms and param constraints stay behind.
+- The result's `imported` (and the effect) gives the refdes and net renames, which cards came from the
+  source file, and the values to recheck: each part with params, marked `sets U1.FB` where it is on a net
+  with an IC pin such as FB, ILIM, RT, SS or EN, else chosen for the other project.
+
+The app reads the source file the same way as for `list_blocks` (only an id the server lists) before the
+transaction and hands it to `Kernel.transact` beside the ops (`sources`, `packages/kernel/src/importops.ts`),
+so the op is an ordinary edit: dry run, review, accept and undo work as for any other.
