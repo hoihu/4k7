@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { projectFileName, renameRetrying, storageHandler } from '../src/storage.ts';
+import { blockedByMacOS, projectFileName, renameRetrying, storageHandler } from '../src/storage.ts';
 
 const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 const cleanups: (() => void)[] = [];
@@ -198,5 +198,12 @@ describe('files on Windows', () => {
     expect(() => renameRetrying('a', 'b', flaky, 'darwin')).toThrow('EPERM');
     expect(calls).toBe(1);
     expect(() => renameRetrying('a', 'b', () => { throw busy('ENOENT'); }, 'win32')).toThrow('ENOENT');
+  });
+
+  it('knows a folder macOS keeps from the server', () => {
+    const err = (code: string) => Object.assign(new Error(code), { code, path: '/Users/x/Documents/4k7' });
+    expect(blockedByMacOS(err('EPERM'), 'darwin')).toBe(true);
+    expect(blockedByMacOS(err('EACCES'), 'darwin')).toBe(false);
+    expect(blockedByMacOS(err('EPERM'), 'linux')).toBe(false);
   });
 });
