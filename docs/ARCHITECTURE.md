@@ -145,8 +145,13 @@ The user's schematic notes and check levels live with the settings in IndexedDB,
 ### 3.9 Quality is measured
 The kernel's benches (`packages/kernel/bench`) measure the router, the schematic drawing against a
 baseline, and what an edit costs on a saved design (`edits.ts`, which also snapshots what edits produce,
-to compare two versions of the code). Planned: an **agent eval harness** that runs task scripts against
-golden designs, for example "add a USB-C PD sink for 20 V", "fan out this BGA on 6 layers", "import this
+to compare two versions of the code). The **agent eval runner** (`packages/agent/eval/`) runs one task
+(a JSON file: prompt, starting `*.twd.json`, expectations, and a script for the scripted provider) through
+the agent loop against an in-process kernel, with no browser, and prints a score: open ERC errors, DRC
+errors found without routing (pads that short), violated ledger constraints, ops applied and rejected,
+model calls and tokens (`npm run eval -- packages/agent/eval/tasks/decouple-led.json`). It runs only
+scripted tasks so far. Planned: an **agent eval harness** that runs golden tasks against
+golden designs with real models, for example "add a USB-C PD sink for 20 V", "fan out this BGA on 6 layers", "import this
 datasheet", scored on ERC/DRC cleanliness, constraint satisfaction, part-extraction accuracy, op count
 and token cost, with a model compatibility table so users know which BYO models work well.
 
@@ -301,7 +306,7 @@ Deviations (deliberate, to revisit):
 
 Pulled forward from M4: the **local server** (`tools/server`), an MCP server that relays to the open tab, so an external agent on the user's own plan can drive the design through the same op catalogue and review flow.
 
-Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models (§3.9; not built yet), and layout quality on 30+ part designs. For layout quality, the drawing the agent owns is built: stored in the design and checked against the netlist, with the user's notes and drawing checks, functional blocks, and a drawing eval of twelve circuits up to 29 parts with a baseline (`kernel/bench/schematic-eval.ts`): [schematic-drawing](design/schematic-drawing.md) (decided 2026-10-13, built 2026-10-12 to 2026-10-31; its known weaknesses are listed in §8 there).
+Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models (§3.9; the runner is built, the golden tasks are not), and layout quality on 30+ part designs. For layout quality, the drawing the agent owns is built: stored in the design and checked against the netlist, with the user's notes and drawing checks, functional blocks, and a drawing eval of twelve circuits up to 29 parts with a baseline (`kernel/bench/schematic-eval.ts`): [schematic-drawing](design/schematic-drawing.md) (decided 2026-10-13, built 2026-10-12 to 2026-10-31; its known weaknesses are listed in §8 there).
 
 ### M2/M3 first slice: board, routing, fab (2026-09-26)
 
