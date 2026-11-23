@@ -251,8 +251,8 @@ class AppState {
   private kernel = createKernel();
   /** Datasheet import (Parts view). */
   ingest = new IngestState(this.kernel, () => this.imports.settled());
-  /** The import_part tool, queueing imports behind the one under way. */
-  imports = new PartImports(this.ingest, { flash: (m) => this.flash(m) });
+  /** The import_part tool, queueing imports behind the one under way (extracted while it waits for review). */
+  imports: PartImports<IngestState> = new PartImports(this.ingest, { spare: () => new IngestState(this.kernel, () => this.imports.settled()), flash: (m) => this.flash(m) });
   artwork = new ArtworkLibrary(this.kernel);
   private agent!: Agent;
   private abort: AbortController | null = null;
@@ -1666,7 +1666,7 @@ class AppState {
   /** Execute one tool call forwarded by the local server: the turn tools here, the design tools in runTool. */
   async handleServerCall(tool: string, input: unknown): Promise<{ isError: boolean; content: ToolContent[] }> {
     const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
-    if (tool === 'submit_part') return this.ingest.submit(input); // datasheet import, not a design change
+    if (tool === 'submit_part') return this.imports.extracting.submit(input); // datasheet import, not a design change
     if (this.inAppBusy) return text('The in-app agent is working on this design right now. Try again when it has finished.', true);
 
     // the activity block is created lazily, so waiting for review does not open a new one

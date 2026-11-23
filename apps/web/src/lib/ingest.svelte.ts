@@ -108,7 +108,7 @@ export class IngestState {
   /** The datasheet stored for the pending review (removed again if the import is discarded). */
   #storedSheet: string | null = null;
 
-  /** Called when the import is saved or discarded, so a queued one can start (importPart.ts). */
+  /** Called when the import finishes, is saved or is discarded, so a queued one can go on (importPart.ts). */
   #onSettled: () => void;
 
   constructor(kernel: KernelParts, onSettled: () => void = () => {}) {
@@ -254,6 +254,7 @@ export class IngestState {
               this.split = this.drafts[0].pins.length > SPLIT_ABOVE;
               this.phase = 'review';
             } else fail(e.ok ? 'Claude Code finished without an accepted part.' : (e.error ?? 'The import failed.'));
+            this.#onSettled();
             break;
         }
       },
@@ -372,6 +373,36 @@ export class IngestState {
 
   cancel() {
     if (this.#run) server.cancelChat(this.#run);
+  }
+
+  /**
+   * Show another slot's finished extraction for review here: a queued import, extracted in a slot not
+   * shown in Parts while this one waited for review (importPart.ts). That slot is freed.
+   */
+  adopt(other: IngestState) {
+    if (other.phase !== 'review' || this.phase === 'running' || this.phase === 'review') return;
+    const r = $state.snapshot(other.#pendingRecord()) as PendingRecord;
+    const sheet = other.datasheet;
+    const log = [...other.log];
+    other.#reset();
+    this.#reset();
+    this.request = r.request;
+    this.passes = r.passes;
+    this.drafts = r.drafts;
+    this.takeB = r.takeB;
+    this.split = r.split;
+    this.secondPassFailed = r.secondPassFailed;
+    this.costUsd = r.costUsd;
+    this.tokens = r.tokens;
+    this.reply = r.reply;
+    this.datasheet = sheet;
+    this.log = log;
+    this.phase = 'review';
+  }
+
+  /** Read the library again (a part was saved through another slot). */
+  refresh() {
+    this.library = listUserParts();
   }
 
   /** submit_part from the importer: check the draft, answer with what to fix. */
