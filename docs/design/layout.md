@@ -81,8 +81,24 @@ round SMD pad, `padOnly`: out of the BOM, the pick-and-place and the 3D view), n
 from: an output pin, else the input connector, else the inductor or diode feeding it, else an IC.
 `"rails"` is every supply net but ground (`isPowerNet`). A net with a test point already gets none.
 The guide has the agent add them on the rails by default. `generic:TP_LOOP` is a through-hole
-loop (a BOM part). Not yet: a bring-up sheet in the design document, test points on the bottom
-side for a fixture, keeping them reachable through an enclosure.
+loop (a BOM part). Not yet: test points on the bottom side for a fixture, keeping them reachable
+through an enclosure.
+
+**Bring-up sheet** (`bringup.ts`, 2026-11-22): the design document's *Bring-up* section, for the
+first board back from the fab. It reads the power tree (`get_power_tree`) and the test points:
+the rails in power-up order (the rails no other rail feeds, those from a connector or battery
+first, then down the tree breadth first), per rail its voltage, what makes it, and its test points
+(refdes and `TP_<net>`) or, without one, the pin to probe (the one `add_test_points` would attach
+to). For a rail that comes in from outside, the bench supply's current limit: 1.5 × the expected
+draw, rounded up to 10 mA. The draw is the rail's stated loads plus what the rails it feeds draw
+from it (a series part or a linear regulator passes their current; a switching regulator takes
+Vout·Iout / (Vin·0.8)); a rail below without loads counts with its `max_current`; where neither
+is known the limit is "unknown — start low", never a guessed number. Then the steps at the bench
+in order: check each rail for a short to ground unpowered, power the inputs at that limit, check
+each rail at its probe point. A design without supply rails has no such section. On a design of
+several boards it is of the board shown, as the rest of the document (docs/design/multi-board.md).
+It is not an op:
+the app asks the kernel for it when it builds the document (a `get_bring_up` query could follow).
 
 ## 5. Routing to completion
 

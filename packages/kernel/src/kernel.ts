@@ -22,6 +22,7 @@ import {
   type TransactionResult,
   type BoardPlace,
   type BoardView,
+  type BringUpPlan,
   type DescriptionView,
   type SheetView,
   type StoredCopper,
@@ -58,6 +59,7 @@ import { blockAssignment } from './layout.ts';
 import { copperKey, layoutBoard, placedOf, planePlan } from './board.ts';
 import { currentCheck, currentMapAnswer, currentRise, layerCopper } from './current.ts';
 import { powerTreeAnswer } from './powertree.ts';
+import { bringUpPlan } from './bringup.ts';
 import type { RouteProgress } from './router.ts';
 import type { ImportSources } from './importops.ts';
 import { HELPER_TX_MS, annotateChecks, drawsCopper, followParts, movesParts, type HelperHooks } from './copperops.ts';
@@ -198,6 +200,11 @@ export class Kernel {
   /** The working copy and its revision, together (for the route helper's worker: see HelperHooks.rev). */
   draftSnapshot(): { design: Design; rev: number } {
     return { design: clone(this.draft), rev: this.rev };
+  }
+
+  /** The working copy's bring-up sheet, for the design document (bringup.ts): of board `board` (several boards). */
+  bringUp(board: string = FIRST_BOARD): BringUpPlan {
+    return bringUpPlan(this.focus(this.draft, board));
   }
 
   /** Placement only (fast): parts, outline, ratsnest and placement checks. */

@@ -27,7 +27,7 @@ export function testPointLabel(d: Design, c: Component, card: PartCard): string 
  * else the connector it comes in on, else the series part feeding it (an inductor, a diode), else
  * an IC on it, else its first part.
  */
-function sourcePin(d: Design, net: Net, onBoard: (c: Component) => boolean): { comp: Component; pin: string } | undefined {
+export function sourcePin(d: Design, net: Net, onBoard: (c: Component) => boolean = () => true): { comp: Component; pin: string } | undefined {
   const rank = (card: PartCard, type: string) =>
     type === 'pwr_out' || type === 'out' ? 0 : card.category === 'connector' ? 1 : card.category === 'inductor' ? 2 : card.category === 'diode' ? 3 : card.category === 'ic' ? 4 : 5;
   const on: { comp: Component; pin: string; rank: number }[] = [];

@@ -1,18 +1,20 @@
 /**
  * The design document: what the design does (the description the agent wrote: an overview, then
  * each functional block with its parts, its schematic and its place on the board), the layout,
- * a dimensioned drawing of the outline and mounting holes, an assembly drawing (only the parts, for populating a board), the BOM and the schematic pages.
+ * a dimensioned drawing of the outline and mounting holes, an assembly drawing (only the parts, for populating a board), the BOM,
+ * the bring-up sheet (`bringupdoc.ts`) and the schematic pages.
  * Printed like the schematic, through the browser's print dialog (which also saves a PDF), or downloaded
  * as one self-contained HTML file (`docfile.ts`);
  * schematic and board are drawn by the same canvas components as on screen.
  */
 import { bomLines, copperText, FINISH_TEXT, impedanceLines, notesStackup, stackupLines, stackupSource, thicknessText } from '@4k7/fab';
 import type { Body3D } from '@4k7/parts';
-import { PAPERS, planeNames, type BoardView, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@4k7/schema';
+import { PAPERS, planeNames, type BoardView, type BringUpPlan, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@4k7/schema';
 import BoardCanvas from './components/BoardCanvas.svelte';
 import { boardDimensions } from './dimensions.ts';
 import { markdown } from './markdown.ts';
 import { designDocFileName, standaloneHtml } from './docfile.ts';
+import { bringUpHtml } from './bringupdoc.ts';
 import { SCHEMATIC_STYLE, downloadFile, drawOffscreen, drawSheets, esc, printHtml, sheetSvg } from './print.ts';
 
 export interface DesignDocInput {
@@ -25,6 +27,8 @@ export interface DesignDocInput {
   board: BoardView | null;
   /** Changes waiting for review are in it. */
   pending: boolean;
+  /** The rails in power-up order, where to probe them, the bench supply's limit; null when it could not be computed. */
+  bringUp: BringUpPlan | null;
 }
 
 /** The widest (inside a figure's card) and the tallest figure (mm) on the portrait pages. */
@@ -578,7 +582,11 @@ async function buildDesignDocument(input: DesignDocInput): Promise<{ html: strin
     );
   }
 
-  /* 6 schematic: the pages as printed with ⌘P, landscape where the browser can mix page sizes */
+  /* 6 bring-up: the rails in power-up order, where to probe them, the bench supply's limit (none without supply rails) */
+  const bringUp = bringUpHtml(input.bringUp);
+  if (bringUp) section('Bring-up', bringUp, plural(input.bringUp!.rails.length, 'rail'));
+
+  /* 7 schematic: the pages as printed with ⌘P, landscape where the browser can mix page sizes */
   const pages = view.sheets.flatMap((sheet) => (sheet.symbols.length ? sheet.pages.map((p) => sheetSvg(sheets.get(sheet.id)!, p.rect)) : []));
   if (pages.length) {
     sectionNo++;
