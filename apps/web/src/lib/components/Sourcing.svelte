@@ -99,6 +99,7 @@
 {#if showCost && c}
   <p class="sum"><b>{estimateLine(c.estimates, c.boards, house)}</b></p>
   <p class="small muted">{time(c.at)}{#if !c.live}<span class="bad"> · not all live{c.note ? ` (${c.note})` : ''}</span>{/if}</p>
+  {#if c.perBoard}<p class="small">An order per board, added up{c.service ? ` (${c.service})` : ''}: {c.perBoard.map((x) => `${x.name} ${cash(x.estimate.total)}`).join(' · ')}</p>{/if}
   <ul class="est">
     {#each c.estimates as e (e.service)}
       <li class:off={!!e.unavailable}>

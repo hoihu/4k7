@@ -457,6 +457,11 @@ export interface CostReport {
   offer?: boolean;
   /** The stock check it ran on. */
   stock: StockReport;
+  /**
+   * A design of several boards (docs/design/multi-board.md §5): each board's own order at the
+   * service the whole is cheapest at (the estimates above are their sum).
+   */
+  perBoard?: { name: string; estimate: CostEstimate }[];
 }
 
 /** Placement kinds by designator, where the house's catalogue says how it places a part. */
@@ -669,6 +674,91 @@ export async function checkCost(
   };
 }
 
+/* ------------------------------------ several boards ------------------------------------ */
+
+/**
+ * A design of several boards at one house: each board is an order of its own (its own setup,
+ * stencil, losses and minimums: a part on both boards is bought for each), so the order's estimate
+ * at a service is the boards' estimates added up. A service that cannot take one board's order
+ * cannot take the whole.
+ */
+export function combineEstimates(per: { name: string; estimates: CostEstimate[] }[]): CostEstimate[] {
+  const services = [...new Set(per.flatMap((b) => b.estimates.map((e) => e.service)))];
+  return services.map((service) => {
+    const each = per.map((b) => ({ name: b.name, e: b.estimates.find((x) => x.service === service) }));
+    const missing = each.find((x) => !x.e);
+    const blocked = each.find((x) => x.e?.unavailable);
+    const out: CostEstimate = {
+      service,
+      parts: 0,
+      fees: [],
+      total: 0,
+    };
+    if (missing || blocked) {
+      out.unavailable = missing ? `no estimate for board "${missing.name}"` : `board "${blocked!.name}": ${blocked!.e!.unavailable}`;
+      return out;
+    }
+    for (const { name, e } of each) {
+      out.parts += e!.parts;
+      out.total += e!.total;
+      out.fees.push(...e!.fees.map((f) => ({ name: `${name}: ${f.name}`, amount: f.amount })));
+    }
+    const needs = each.filter((x) => x.e!.needs).map((x) => `${x.name}: ${x.e!.needs}`);
+    if (needs.length) out.needs = needs.join('; ');
+    const notCounted = each.find((x) => x.e!.notCounted)?.e!.notCounted;
+    if (notCounted) out.notCounted = notCounted;
+    if (each.some((x) => x.e!.quoted)) out.quoted = true;
+    if (each.every((x) => x.e!.offer)) out.offer = true;
+    return out;
+  });
+}
+
+/**
+ * The cost check of a design of several boards: each board's own cost check, added up (see
+ * combineEstimates); the savings, the boards' hints and the parts without a number are each board's,
+ * named after it. `stock`: the design's stock check as a whole (the need of every board together).
+ */
+export function combineCosts(per: { name: string; report: CostReport }[], stock: StockReport): CostReport {
+  const estimates = combineEstimates(per.map((b) => ({ name: b.name, estimates: b.report.estimates })));
+  const low = estimateRange(estimates)?.low;
+  const named = <T extends { what: string }>(name: string, xs: T[]) => xs.map((x) => ({ ...x, what: `${name}: ${x.what}` }));
+  const union = (xs: string[][]) => [...new Set(xs.flat())].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+  return {
+    house: stock.house,
+    boards: stock.boards,
+    at: stock.at,
+    live: per.every((b) => b.report.live) && stock.live,
+    ...(stock.note ? { note: stock.note } : {}),
+    estimates,
+    ...(low ? { service: low.service } : {}),
+    savings: per.flatMap((b) => named(b.name, b.report.savings)),
+    unsourced: per.flatMap((b) => b.report.unsourced),
+    unmatched: union(per.map((b) => b.report.unmatched)),
+    unpriced: union(per.map((b) => b.report.unpriced)),
+    board: per.flatMap((b) => named(b.name, b.report.board)),
+    ...(low?.offer ? { offer: true } : {}),
+    stock,
+    ...(low ? { perBoard: per.map((b) => ({ name: b.name, estimate: b.report.estimates.find((e) => e.service === low.service)! })) } : {}),
+  };
+}
+
+/** Several boards' facts as one, for what compares parts by their fees (the values check): joints and placements added up. */
+export function mergeFacts(fs: AssemblyFacts[]): AssemblyFacts {
+  const [first, ...rest] = fs;
+  const out: AssemblyFacts = { ...first!, handRefs: [...first!.handRefs], bottomRefs: [...first!.bottomRefs], placements: { ...first!.placements }, chips: [...first!.chips] };
+  for (const f of rest) {
+    out.smtJoints += f.smtJoints;
+    out.handJoints += f.handJoints;
+    out.handRefs.push(...f.handRefs);
+    out.bottomRefs.push(...f.bottomRefs);
+    for (const [k, n] of Object.entries(f.placements ?? {}) as [PlacementKind, number][]) out.placements![k] = (out.placements![k] ?? 0) + n;
+    out.largeParts = (out.largeParts ?? 0) + (f.largeParts ?? 0);
+    out.layers = Math.max(out.layers, f.layers);
+    for (const c of f.chips) if (!out.chips.includes(c)) out.chips.push(c);
+  }
+  return out;
+}
+
 /* -------------------------------------- text -------------------------------------- */
 
 const trim = (n: number) => (n >= 1 ? n.toFixed(2) : n.toPrecision(2).replace(/0+$/, '').replace(/\.$/, ''));
@@ -701,6 +791,7 @@ export function costReportText(r: CostReport, house: AssemblyHouse): string {
     `Cost of ${r.boards} board${r.boards === 1 ? '' : 's'} at ${r.house} (${r.at.slice(0, 16).replace('T', ' ')} UTC${r.live ? ', prices read just now' : `, NOT all live${r.note ? `: ${r.note}` : ''}`}): ${estimateLine(r.estimates, r.boards, house)}.`,
   );
   out.push(...r.estimates.map((e) => `- ${estimateText(e, house)}`));
+  if (r.perBoard) out.push(`Each board is an order of its own (counted for ${r.service}): ${r.perBoard.map((b) => `${b.name} ${m(b.estimate.total)}`).join(', ')}. The savings below are each board's.`);
   if (r.offer && house.offer) out.push(`The ${house.offer.name}: ${house.offer.terms} (${house.offer.url}).`);
   if (r.unpriced.length && !house.noCatalogue) out.push(`Not priced (no record or no price): ${r.unpriced.join(', ')}.`);
   out.push(`Not included: ${house.notInEstimate}. Fees as ${whose(house)} ${house.prices.name ?? 'price page'} gave them ${house.services.some((s) => s.quoted) ? 'just now' : `on ${house.prices.checked}`} (${house.prices.url}).`);

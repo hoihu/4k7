@@ -40,6 +40,8 @@ const methods = {
   boardPlacement: (board?: string) => kernel.boardPlacement(board),
   /** The working copy's bring-up sheet, for the design document. `board`: which (several boards). */
   bringUp: (board?: string) => kernel.bringUp(board),
+  /** Where every board stands (the assembly), first board first. */
+  assembly: () => kernel.assembly(),
   /** Every board of the working copy placed, first board first. */
   boardPlacements: () => kernel.boardList().map((b) => kernel.boardPlacement(b.id)),
   /** The working copy's board `board` (as a design of its own) and its placement, for the board worker. */
