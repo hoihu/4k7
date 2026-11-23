@@ -152,7 +152,7 @@ export interface TransactionResult {
 
 /* ------------------------------- changesets ------------------------------- */
 
-export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'sheet' | 'board' | 'description' | 'drawing' | 'enclosure';
+export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'mate' | 'sheet' | 'board' | 'description' | 'drawing' | 'enclosure';
 
 export interface Hunk {
   /** Stable id: "<kind>:<entity id>". */
@@ -371,6 +371,8 @@ export interface DesignSummary {
   nets: { name: string; pins: number; voltage?: number; external?: boolean; boards?: string[] }[];
   /** Present when the design has several boards (add_board): each with its sheets and how many parts. */
   boards?: { name: string; id: string; sheets: string[]; parts: number }[];
+  /** How the boards are joined (mate): the connectors, the kind and which pin meets which ("1↔1"). */
+  mates?: { id: string; a: string; b: string; kind: string; pins: string; fit?: string }[];
   counts: DiagnosticCounts;
   ledger: number;
   waivers: number;

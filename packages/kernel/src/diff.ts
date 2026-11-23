@@ -8,6 +8,7 @@ import { describeConstraint } from './netops.ts';
 import { clone, gcNets, gcParts, natCmp, valueOf } from './doc.ts';
 import { FIRST_BOARD, type BoardEntry, type BoardSettings } from '@4k7/schema';
 import { boardsNow, formatFor, leftBoard, multiBoard, tidyPlacements } from './boards.ts';
+import { tidyMates } from './mates.ts';
 
 const netName = (d: Design, id?: string) => (id ? d.nets[id]?.name ?? '?' : '∅');
 const boardName = (d: Design, id?: string) => d.boards?.[id ?? FIRST_BOARD]?.name ?? (id && id !== FIRST_BOARD ? id : 'Main');
@@ -210,6 +211,14 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
       hunks.push({ id: `waiver:${id}`, kind: 'waiver', change: 'change', entityId: id, title: `waive ${b.code}`, details: [`${a.entities.join(', ')} → ${b.entities.join(', ')}`] });
     }
   }
+  for (const id of new Set([...Object.keys(base.mates ?? {}), ...Object.keys(draft.mates ?? {})])) {
+    const a = base.mates?.[id];
+    const b = draft.mates?.[id];
+    const refs = (d: Design, m: { a: string; b: string }) => `${d.components[m.a]?.refdes ?? '?'} ↔ ${d.components[m.b]?.refdes ?? '?'}`;
+    if (!a && b) hunks.push({ id: `mate:${id}`, kind: 'mate', change: 'add', entityId: id, title: `mate ${refs(draft, b)}`, details: [b.kind, ...(b.map ? ['pins as mapped'] : [])] });
+    if (a && !b) hunks.push({ id: `mate:${id}`, kind: 'mate', change: 'remove', entityId: id, title: `mate ${refs(base, a)}`, details: [] });
+    if (a && b && JSON.stringify(a) !== JSON.stringify(b)) hunks.push({ id: `mate:${id}`, kind: 'mate', change: 'change', entityId: id, title: `mate ${refs(draft, b)}`, details: [`${a.kind} → ${b.kind}`] });
+  }
   for (const id of Object.keys(draft.sheets)) {
     if (!base.sheets[id]) hunks.push({ id: `sheet:${id}`, kind: 'sheet', change: 'add', entityId: id, title: `sheet ${draft.sheets[id]!.name}`, details: [] });
   }
@@ -288,7 +297,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     });
   }
 
-  const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6, description: 7, drawing: 8, enclosure: 9 };
+  const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6, mate: 7, description: 8, drawing: 9, enclosure: 10 };
   const changeOrder = { add: 0, change: 1, remove: 2 };
   return hunks.sort((x, y) => order[x.kind] - order[y.kind] || changeOrder[x.change] - changeOrder[y.change] || natCmp(x.title, y.title));
 }
@@ -420,6 +429,12 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
         if (draft.waivers[entity]) d.waivers[entity] = clone(draft.waivers[entity]!);
         else delete d.waivers[entity];
         break;
+      case 'mate': {
+        const m = draft.mates?.[entity];
+        if (m) d.mates = { ...d.mates, [entity]: clone(m) };
+        else if (d.mates) delete d.mates[entity];
+        break;
+      }
       case 'drawing': {
         // the caller brings it in step with what else was accepted (syncDrawing)
         const sd = draft.drawing?.[entity];
@@ -470,6 +485,8 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
   // a part on another board than the draft put it (its board not accepted): what it had there goes
   leftBoard(d, boardsNow(draft));
   tidyPlacements(d);
+  // a mate whose connector or second board was not accepted goes
+  tidyMates(d);
   gcNets(d);
   gcParts(d);
   return { design: d, notes };

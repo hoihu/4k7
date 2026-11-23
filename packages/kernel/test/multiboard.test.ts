@@ -273,3 +273,104 @@ describe('several boards in one design', () => {
     expect(Object.keys(focusBoard(k.draftDesign(), 'b_2').waivers)).toHaveLength(1);
   });
 });
+
+describe('mates: the boards joined through a connector on each', () => {
+  const codes = (k: Kernel, code: string) => k.state().diagnostics.filter((x) => x.code === code && !x.waivedBy);
+  const ok = (k: Kernel, ops: Transaction['ops']) => {
+    const r = k.transact({ summary: 'x', ops });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    return r;
+  };
+
+  it('says a net crosses to another board through nothing, until the connectors are mated', () => {
+    const k = twoBoards();
+    expect(codes(k, 'ERC.BOARD_CROSSING').map((x) => x.entities[0])).toEqual(expect.arrayContaining(['net:+3V3', 'net:GND']));
+    const r = ok(k, [{ op: 'mate', a: 'J2', b: 'J3', kind: 'stack' }]);
+    expect(r.results[0]!.effect).toMatch(/1↔1, 2↔2/);
+    expect(codes(k, 'ERC.BOARD_CROSSING')).toEqual([]);
+    expect(codes(k, 'ERC.MATE_MISMATCH')).toEqual([]);
+    expect(k.summary().mates).toEqual([{ id: expect.any(String), a: 'J2', b: 'J3', kind: 'stack', pins: '1↔1, 2↔2' }]);
+  });
+
+  it('finds two nets joined at a reversed cable, and a signal that ends at the connector', () => {
+    const k = twoBoards();
+    ok(k, [{ op: 'mate', a: 'J2', b: 'J3', kind: 'cable', cable: 'reversed' }]);
+    expect(codes(k, 'ERC.MATE_MISMATCH').map((x) => x.entities)).toEqual(expect.arrayContaining([['J2.1', 'J3.2'], ['J2.2', 'J3.1']]));
+    expect(codes(k, 'ERC.MATE_MISMATCH').at(-1)!.message).toMatch(/mirrored, turned or one pin off/);
+    ok(k, [{ op: 'mate', a: 'J2', b: 'J3', kind: 'cable' }, { op: 'disconnect', pins: ['J3.2'] }]);
+    expect(codes(k, 'ERC.MATE_MISMATCH')).toEqual([]);
+    expect(codes(k, 'ERC.MATE_OPEN').map((x) => x.entities)).toEqual([['J3.2']]);
+    expect(k.summary().mates).toHaveLength(1);
+  });
+
+  it('pairs the pins of a stack from the footprints facing each other, so a mirrored layout shows', () => {
+    const k = twoBoards();
+    const d = k.committedDesign();
+    const card = (id: string) => ({
+      id,
+      mpn: id,
+      manufacturer: 'Acme',
+      description: '2×3 header',
+      category: 'connector' as const,
+      refPrefix: 'J',
+      package: id,
+      pins: [1, 2, 3, 4, 5, 6].map((n) => ({ number: String(n), name: String(n), type: 'passive' as const })),
+      params: {},
+      provenance: { source: 'datasheet' as const },
+    });
+    d.parts['acme:HDR'] = card('acme:HDR');
+    d.parts['acme:SKT'] = card('acme:SKT');
+    k.load(d);
+    // a 2×3 header on each board, the same footprint: face to face its rows swap
+    const pads = [1, 2, 3, 4, 5, 6].map((n) => ({ number: String(n), x: n % 2 ? -1.27 : 1.27, y: (Math.ceil(n / 2) - 2) * 2.54, w: 1.7, drill: 1 }));
+    ok(k, [
+      { op: 'add_part', part: 'acme:HDR', refdes: 'J4' },
+      { op: 'add_part', part: 'acme:SKT', refdes: 'J5', sheet: 'LED' },
+      { op: 'set_footprint', ref: 'J4', name: 'HDR_2x3', pads },
+      { op: 'set_footprint', ref: 'J5', name: 'HDR_2x3', pads },
+      ...[1, 2, 3, 4, 5, 6].map((n) => ({ op: 'connect' as const, pins: [`J4.${n}`, `J5.${n}`], net: `S${n}` })),
+      { op: 'mate', a: 'J4', b: 'J5', kind: 'stack' },
+    ]);
+    const pinsOf = () => k.summary().mates!.find((x) => x.a === 'J4')!.pins;
+    expect(pinsOf()).toBe('1↔2, 2↔1, 3↔4, 4↔3, 5↔6, 6↔5');
+    expect(codes(k, 'ERC.MATE_MISMATCH')).toHaveLength(6);
+    expect(codes(k, 'ERC.MATE_MISMATCH').at(-1)!.message).toMatch(/mirrored/);
+    // the socket's footprint drawn mirrored, as a socket's is: each pin meets its own
+    ok(k, [{ op: 'set_footprint', ref: 'J5', name: 'SKT_2x3', pads: pads.map((p) => ({ ...p, x: -p.x })) }]);
+    expect(pinsOf()).toBe('1↔1, 2↔2, 3↔3, 4↔4, 5↔5, 6↔6');
+    expect(codes(k, 'ERC.MATE_MISMATCH')).toEqual([]);
+    // another pitch does not plug in
+    ok(k, [{ op: 'set_footprint', ref: 'J5', name: 'SKT_2x3_2mm', pads: pads.map((p) => ({ ...p, x: -p.x * 0.787, y: p.y * 0.787 })) }]);
+    expect(codes(k, 'ERC.MATE_FIT').map((x) => x.entities)).toEqual([['J4', 'J5']]);
+  });
+
+  it('refuses a mate on one board, or a connector mated twice', () => {
+    const k = twoBoards();
+    expect(k.transact({ summary: 'x', ops: [{ op: 'mate', a: 'J2', b: 'U1', kind: 'stack' }] }).rejection?.code).toBe('BOARD_INVALID');
+    ok(k, [{ op: 'mate', a: 'J2', b: 'J3', kind: 'stack' }]);
+    expect(k.transact({ summary: 'x', ops: [{ op: 'mate', a: 'R4', b: 'J2', kind: 'wire', map: [['1', '1']] }] }).rejection?.code).toBe('INVALID_OP');
+    expect(k.transact({ summary: 'x', ops: [{ op: 'mate', a: 'J2', b: 'R4', kind: 'wire' }] }).rejection?.code).toBe('INVALID_OP');
+  });
+
+  it('takes a mate away with its connector, or with the second board', () => {
+    const k = twoBoards();
+    ok(k, [{ op: 'mate', a: 'J2', b: 'J3', kind: 'stack' }]);
+    ok(k, [{ op: 'remove', ref: 'J3' }]);
+    expect(k.draftDesign().mates).toBeUndefined();
+    ok(k, [{ op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J3', sheet: 'LED' }, { op: 'mate', a: 'J2', b: 'J3', kind: 'stack' }, { op: 'remove_board', board: 'LED board' }]);
+    expect(k.draftDesign().mates).toBeUndefined();
+  });
+
+  it('accepts a mate as a hunk of its own', () => {
+    const k = twoBoards();
+    ok(k, [{ op: 'mate', a: 'J2', b: 'J3', kind: 'stack' }]);
+    const hunks = k.state().proposal!.hunks;
+    expect(hunks.map((h) => h.kind)).toContain('mate');
+    k.accept(hunks.filter((h) => h.kind !== 'mate').map((h) => h.id));
+    expect(k.committedDesign().mates).toBeUndefined();
+    ok(k, [{ op: 'mate', a: 'J2', b: 'J3', kind: 'stack' }]);
+    k.accept();
+    expect(Object.keys(k.committedDesign().mates!)).toHaveLength(1);
+    expect(canonicalJson(JSON.parse(k.exportDesign()))).toBe(k.exportDesign());
+  });
+});

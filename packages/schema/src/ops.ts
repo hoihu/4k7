@@ -134,6 +134,27 @@ export const RemoveBoardOp = z.object({
   board: z.string().min(1).describe('The board to take away (name or id). Its sheets and parts go back to the first board; the first board itself stays'),
 });
 
+export const MateOp = z.object({
+  op: z.literal('mate'),
+  a: componentRef.describe('The connector on one board, e.g. "J1"'),
+  b: componentRef.describe('The connector it joins on another board, e.g. "J2"'),
+  kind: z
+    .enum(['stack', 'cable', 'edge', 'wire'])
+    .describe('stack: board to board, one plugged into the other (pin header into socket, mezzanine): each pin meets the pin it lands on, from the two footprints facing each other, so a mirrored footprint shows. cable: JST, ribbon, FFC/FPC, a harness (pin n to pin n, or reversed). edge: card edge into a slot, contact to contact by number. wire: solder pads and loose wires, map needed'),
+  cable: z.enum(['straight', 'reversed']).optional().describe('cable: pin n reaches pin n at the other end (straight, default) or pin N+1−n (reversed: an FFC/FPC or a cable whose end turns over; the cable\'s datasheet says which)'),
+  map: z
+    .array(z.tuple([z.string().min(1), z.string().min(1)]))
+    .min(1)
+    .optional()
+    .describe('Explicit pin pairs [pin of a, pin of b] by pin name or number, instead of what the kind says: anything odd, and wire'),
+  length_mm: z.number().positive().optional().describe('cable: its length'),
+}).describe('Join two boards through a connector on each (a design of several boards). The kernel then checks the connection: two mated pins on different nets (ERC.MATE_MISMATCH: the mirrored or shifted header), a signal that ends at a mated pin (ERC.MATE_OPEN), a stack whose footprints do not land on each other (ERC.MATE_FIT), and a net on two boards with no mated pin carrying it (ERC.BOARD_CROSSING). Mating the same pair again changes it. Put both connectors\' pins on the nets as for any part');
+
+export const RemoveMateOp = z.object({
+  op: z.literal('remove_mate'),
+  ref: z.string().min(1).describe('The mate\'s id, or one of its connectors ("J1")'),
+});
+
 export const AssignBoardOp = z.object({
   op: z.literal('assign_board'),
   board: z.string().min(1).describe('The board (name or id)'),
@@ -928,6 +949,8 @@ export const EditOp = z.discriminatedUnion('op', [
   AddBoardOp,
   RemoveBoardOp,
   AssignBoardOp,
+  MateOp,
+  RemoveMateOp,
   ConstrainOp,
   RemoveConstraintOp,
   AddWaiverOp,

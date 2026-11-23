@@ -67,6 +67,7 @@ import { suggestMoves } from './suggest.ts';
 import { impedanceText, resolveRule } from './lines.ts';
 import { lineBoard } from './lineops.ts';
 import { boardList, boardOf, commitFocus, focusBoard, multiBoard, resolveBoard, settingsOf } from './boards.ts';
+import { matePairs, pairsText } from './mates.ts';
 import { FIRST_BOARD } from '@4k7/schema';
 import { opBoard } from './apply.ts';
 
@@ -841,6 +842,14 @@ export class Kernel {
               sheets: Object.values(d.sheets).filter((s) => (s.board && d.boards![s.board] ? s.board : FIRST_BOARD) === b.id).sort((x, y) => x.order - y.order).map((s) => s.name),
               parts: Object.values(d.components).filter((c) => boardOf(d, c) === b.id).length,
             })),
+          }
+        : {}),
+      ...(d.mates && Object.keys(d.mates).length
+        ? {
+            mates: Object.values(d.mates).map((m) => {
+              const { pairs, fit } = matePairs(d, m);
+              return { id: m.id, a: d.components[m.a]?.refdes ?? '?', b: d.components[m.b]?.refdes ?? '?', kind: m.kind + (m.cable === 'reversed' ? ' (reversed)' : ''), pins: pairsText(d, m, pairs), ...(fit ? { fit } : {}) };
+            }),
           }
         : {}),
       components: componentsSorted(d).map((c) => ({ refdes: c.refdes, part: c.part, value: valueOf(d, c), sheet: d.sheets[c.sheet]?.name ?? '?', ...(multi ? { board: bname(boardOf(d, c)) } : {}) })),

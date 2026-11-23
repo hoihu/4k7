@@ -906,6 +906,8 @@ const COPPER_AFTER: Record<EditOp['op'], 'follow' | 'check' | null> = {
   add_board: 'follow',
   remove_board: 'follow',
   assign_board: 'follow',
+  mate: null,
+  remove_mate: null,
   remove_sheet: 'follow',
   clear_sheet: 'follow',
   constrain: 'follow',

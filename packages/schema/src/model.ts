@@ -36,6 +36,8 @@ export interface Design {
    * its own `board`, else its sheet's, else the first. See docs/design/multi-board.md.
    */
   boards?: Record<string, BoardEntry>;
+  /** How the boards are joined: a connector on each, mated (mate), by id. See docs/design/multi-board.md §3. */
+  mates?: Record<string, Mate>;
   /** Packages of generic parts without their own package parameter (set_package_defaults). */
   packageDefaults?: PackageDefaults;
   /** Standard-value series generic passives are chosen from (set_value_series); absent = any value. */
@@ -358,6 +360,27 @@ export interface ConstraintSource {
   /** The words that produced this entry, for traceability. */
   quote?: string;
 }
+
+/**
+ * Two connectors on two boards that are joined (mate): plugged into each other (stack, edge) or by
+ * a cable or wires. Which pin meets which comes from the kind (a stack: from the two footprints
+ * facing each other), or from `map`. See docs/design/multi-board.md §3.
+ */
+export interface Mate {
+  id: string;
+  /** The connectors, by component id. */
+  a: string;
+  b: string;
+  kind: MateKind;
+  /** cable: whether pin n reaches pin n at the other end (straight, default) or pin N+1−n (reversed). */
+  cable?: 'straight' | 'reversed';
+  /** Explicit pin pairs, [pin of a, pin of b] by pin number, instead of what the kind says. */
+  map?: [string, string][];
+  /** cable: its length, for the enclosure and the BOM. */
+  length_mm?: number;
+}
+
+export type MateKind = 'stack' | 'cable' | 'edge' | 'wire';
 
 export interface Waiver {
   id: string;

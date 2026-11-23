@@ -1,6 +1,6 @@
 # Several boards in one design
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3) and the system outputs are not built yet.
+> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3): the op and the checks built (2026-11-22); the assembly they place, the 3D view and the system outputs are not built yet.
 
 ## 1. Why
 
@@ -67,13 +67,24 @@ a stacking header to a cable later without touching the nets: swap the parts, ch
 | `kind` | What it is | Fixes the boards' relative position | Default pin map |
 |---|---|---|---|
 | `stack` | board-to-board: pin header into socket, mezzanine connector | yes: from the two footprints and the mated height | each pin to the pin it lands on (from the footprint geometry, so a mirrored footprint shows) |
-| `cable` | JST, ribbon/IDC, FFC/FPC, harness | no | by kind: `straight` (1→1), `ribbon` (IDC, as the cable mirrors), `fpc_same_side` / `fpc_opposite` |
-| `edge` | card edge into a slot | yes | contact to contact |
+| `cable` | JST, ribbon/IDC, FFC/FPC, harness | no | `cable: straight` (pin n to n, default) or `reversed` (n to N+1−n: an end that turns over); the cable's datasheet says which |
+| `edge` | card edge into a slot | yes | contact to contact, by number |
 | `wire` | solder pads and loose wires | no | pairs, explicit |
 
-`map` overrides the default with explicit pairs `[["1","2"],…]`, for anything odd. A mate
-stores the two component ids, the kind, the map and, for `cable`, a length (for the enclosure
-and the BOM).
+`map` overrides the default with explicit pairs `[["1","2"],…]` (pin names or numbers), for
+anything odd. A mate (`Design.mates`, `kernel/src/mates.ts`) stores the two component ids, the
+kind, the map and, for `cable`, a length (for the enclosure and the BOM). A connector mates once;
+mating the same pair again changes the mate. It goes with either connector, and with the second
+board (`remove_board`); in a changeset it is a hunk of its own (`mate:<id>`).
+
+**How a stack pairs its pins** (built): the two footprints face each other, so the second is
+seen mirrored, and the boards may stand at any quarter turn to each other. The pairs are those of
+the turn at which every pad lands on a pad (within 0.2 mm), pin 1 on pin 1 where a turn gives
+that, else the first turn that fits. So two identical 2×N headers face to face swap their rows
+(pin 1 meets pin 2: `ERC.MATE_MISMATCH` on every pin, with the hint that a footprint is
+mirrored), a socket whose footprint is drawn mirrored meets pin for pin, and another pitch or
+count does not fit (`ERC.MATE_FIT`). The placement does not enter: where the boards stand is the
+assembly's (§6), not built yet.
 
 ### 3.1 Nets across boards
 
@@ -85,6 +96,9 @@ Nets stay logical. The agent connects the MCU's `SDA` to the display's `SDA` as 
 - **`ERC.MATE_MISMATCH`** (error): two mated pins on different nets. This is the mirrored or
   shifted header.
 - **`ERC.MATE_OPEN`** (warning): a mated pin with a net on one side and nothing on the other.
+- **`ERC.MATE_FIT`** (error): the two connectors do not plug into each other (a stack's pads do
+  not land, or the pin counts differ without a map). **`ERC.MATE_SAME_BOARD`** (warning): both
+  connectors ended up on one board.
 - Current: a power net's current through a mate is checked against the connector's per-pin
   rating, when the card has one (the existing current check, [layout](layout.md) §14).
 
@@ -160,7 +174,8 @@ the hunk that added a board leaves its sheets and parts on the first board.
    board picker. The enclosure, the 3D view and the design document show the board shown; the
    cost estimate of a design of several boards counts its parts only (the boards' making and
    assembly need step 3).
-2. **Mates.** The op, the kinds and their pin maps, the three checks, the assembly position from
+2. **Mates.** The op, the kinds and their pin maps, the checks (built 2026-11-22; `get_summary`
+   lists the mates with their pin pairs). Still to come: the assembly position from
    `stack`/`edge` mates, 3D assembly view and STEP.
 3. **System outputs.** Shared fab profile, combined BOM, cost and order, the enclosure library
    with every board.
