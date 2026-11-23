@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boardSummary } from '@4k7/schema';
+import { boardSummary, type BoardView, type Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 
@@ -81,7 +81,7 @@ describe('draw_track with router copper', () => {
     k.transact({ summary: 'route', ops: [{ op: 'route' }] });
     const b = k.board();
     expect(b.laid![0]!.laid).toBe(false);
-    expect(b.laid![0]!.why).toMatch(/^\(16\.5, 10\.37\) has no room for a 0\.25 mm track on F\.Cu: .* too close \(GND is in the way\)$/);
+    expect(b.laid![0]!.why).toBe('(16.5, 10.37) has no room for a 0.25 mm track on F.Cu: pad U1.7 (GND) overlaps it (0.2 mm needed)');
     const w = b.diagnostics.find((x) => x.code === 'DRC.TRACK_NOT_LAID')!;
     expect(w.severity).toBe('warning');
     expect(w.message).toMatch(/^t1 \(U1\.8 → D1\.1, SW\) is not laid as asked: /);
@@ -135,4 +135,84 @@ describe('draw_track with router copper', () => {
     expect(bad({ from: 'U1.8', to: 'D1.1', bend: 'diagonal_first' }).status).toBe('rejected');
     expect(k.board().laid).toBeUndefined();
   });
+
+  it('names what blocks a stretch that finds no way: a track laid before it', () => {
+    const k = buck();
+    // t1 is GND from the top edge to the bottom one on F.Cu: SW on F.Cu cannot cross it
+    k.transact({ summary: 'wall', ops: [{ op: 'draw_track', from: 'D1.2', to: 'C5.2', layer: 'F.Cu', via: [[14, 0.9], [12.07, 21.1]] }] });
+    k.transact({ summary: 'sw', ops: [{ op: 'draw_track', from: 'C4.2', to: 'L1.1', layer: 'F.Cu' }] });
+    k.transact({ summary: 'route', ops: [{ op: 'route' }] });
+    const b = k.board();
+    expect(b.laid!.map((t) => t.laid)).toEqual([true, false]);
+    const why = /^no way for a 0\.25 mm track from C4\.2 to L1\.1 on F\.Cu: at \([\d.]+, [\d.]+\) on F\.Cu, a GND track \(t1, laid before this one\) (overlaps it|is [\d.]+ mm from it) \(0\.2 mm needed\)$/;
+    expect(b.laid![1]!.why).toMatch(why);
+    expect(notLaid(b, 't2')).toContain(b.laid![1]!.why);
+    expect(state(b, 't2')).toContain(b.laid![1]!.why);
+    // the place it names is on the way, not at the far end
+    expect(b.laid![1]!.at!.x).toBeLessThan(15);
+  });
+
+  it('names a keep-out that closes the way', () => {
+    const k = buck();
+    k.transact({ summary: 'ko', ops: [{ op: 'add_keepout', name: 'gap', rect: { x_mm: 12, y_mm: 0, width_mm: 0.8, height_mm: 22 }, layers: ['F.Cu'], forbid: ['tracks'] }] });
+    k.transact({ summary: 'sw', ops: [{ op: 'draw_track', from: 'C4.2', to: 'L1.1', layer: 'F.Cu' }] });
+    k.transact({ summary: 'route', ops: [{ op: 'route' }] });
+    expect(k.board().laid![0]!.why).toMatch(/^no way for a 0\.25 mm track from C4\.2 to L1\.1 on F\.Cu: at \([\d.]+, [\d.]+\) on F\.Cu, keep-out gap overlaps it$/);
+  });
+
+  it('names the pads too close to a via it asks for', () => {
+    const k = buck();
+    // (16.5, 11) between U1.7 and U1.6: a 0.25 mm track fits there, a 0.6 mm via does not
+    k.transact({ summary: 'sw', ops: [{ op: 'draw_track', from: 'U1.8', to: 'D1.1', layer: 'F.Cu', via: [[16.5, 11, 'B.Cu'], [14, 8.2, 'F.Cu']] }] });
+    k.transact({ summary: 'route', ops: [{ op: 'route' }] });
+    const b = k.board();
+    expect(b.laid![0]!.why).toBe('no room for a via at (16.5, 11): pad U1.7 (GND) is 0.07 mm from it (0.2 mm needed); pad U1.6 (COMP) is 0.08 mm from it (0.2 mm needed)');
+    expect(notLaid(b, 't1')).toContain('pad U1.7 (GND)');
+    expect(b.unrouted).toEqual([]);
+  });
+
+  it('says so when it is laid narrower than asked, and why', () => {
+    const k = buck();
+    // 1.2 mm does not fit past U1.1's way out at (9.6, 8.4); 0.5 mm, the widest both pads take, does
+    k.transact({ summary: 'sw', ops: [{ op: 'draw_track', from: 'U1.8', to: 'D1.1', layer: 'F.Cu', width_mm: 1.2, via: [[9.6, 8.4]] }] });
+    k.transact({ summary: 'route', ops: [{ op: 'route' }] });
+    const b = k.board();
+    expect(b.laid![0]!.laid).toBe(true);
+    expect(b.laid![0]!.why).toMatch(/^laid 0\.5 mm wide, not 1\.2 mm: \(9\.6, 8\.4\) has no room for a 1\.2 mm track on F\.Cu: the way out of pad U1\.1 \(BOOT\) is [\d.]+ mm from it \(0\.2 mm needed\)$/);
+    expect(state(b, 't1')).toBe(`laid, but ${b.laid![0]!.why}`);
+    expect(notLaid(b, 't1')).toBe('');
+  });
+
+  it('says why on the second board of a design too', () => {
+    const k = buck();
+    const ops: Transaction['ops'] = [
+      { op: 'add_sheet', name: 'LED' },
+      { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J3', sheet: 'LED' },
+      { op: 'add_part', part: 'generic:R', refdes: 'R4', params: { resistance: '1k' }, sheet: 'LED' },
+      { op: 'add_part', part: 'generic:LED', refdes: 'D2', sheet: 'LED' },
+      { op: 'connect', pins: ['J3.1', 'R4.1'], net: 'LED_V' },
+      { op: 'connect', pins: ['R4.2', 'D2.A'], net: 'LED_A' },
+      { op: 'connect', pins: ['J3.2', 'D2.K'], net: 'LED_K' },
+      { op: 'add_board', name: 'LED board', sheets: ['LED'] },
+    ];
+    expect(k.transact({ summary: 'LED board', ops }).status).toBe('ok');
+    k.transact({ summary: 'route', ops: [{ op: 'route', board: 'LED board' }] });
+    const at = (ref: string, n: string) => k.board({}, k.boardId('LED board')).parts.find((p) => p.refdes === ref)!.pads.find((p) => p.number === n)!;
+    const [k1, a2] = [at('D2', '1'), at('D2', '2')];
+    // a via between D2's two pads, and the main board's laid tracks untouched
+    const mid = [(k1.x + a2.x) / 2, (k1.y + a2.y) / 2] as const;
+    const r = k.transact({ summary: 'led', ops: [{ op: 'draw_track', board: 'LED board', from: 'R4.2', to: `D2.${a2.number}`, layer: 'F.Cu', via: [[mid[0], mid[1], 'B.Cu'], [mid[0] + 1.2, mid[1] + 2.3, 'F.Cu']] }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    k.transact({ summary: 'route', ops: [{ op: 'route', board: 'LED board' }] });
+    const b = k.board({}, k.boardId('LED board'));
+    expect(b.laid![0]!.laid).toBe(false);
+    expect(b.laid![0]!.why).toMatch(/^no room for a via at \([\d.]+, [\d.]+\): .*D2's land pattern .*pad D2\.1 \(LED_K\) is [\d.]+ mm from it \(0\.2 mm needed\)/);
+    expect(notLaid(b, 't1')).toContain("D2's land pattern");
+    expect(k.board({}, k.boardId('Main')).laid).toBeUndefined();
+  });
 });
+
+/** The DRC.TRACK_NOT_LAID message of laid track `id`. */
+const notLaid = (b: BoardView, id: string) => b.diagnostics.find((x) => x.code === 'DRC.TRACK_NOT_LAID' && x.message.startsWith(`${id} `))?.message ?? '';
+/** get_board's laid_tracks state of `id`. */
+const state = (b: BoardView, id: string) => (boardSummary(b) as { laid_tracks?: { id: string; state: string }[] }).laid_tracks?.find((t) => t.id === id)?.state ?? '';

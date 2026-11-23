@@ -123,7 +123,7 @@ describe('connections the agent laid (draw_track with router copper)', () => {
     const parts = [part('P1', [[3, 5, 'A']]), part('P2', [[17, 5, 'A']]), part('Q1', [[10, 8, 'B']]), part('Q2', [[15, 8, 'B']])];
     const pads = parts.flatMap((p) => p.pads);
     const r = route({ outline: { w: 20, h: 10 }, layers: ['F.Cu'], rules: RULES, parts, powerNets: new Set(), laid: [{ id: 't1', netId: 'A', from: 0, to: 1, points: [{ x: 10, y: 8 }] }] });
-    expect(r.laid).toEqual([{ id: 't1', laid: false, why: '(10, 8) has no room for a 0.25 mm track: other copper is too close', at: { x: 10, y: 8 }, blockedBy: 'B' }]);
+    expect(r.laid).toEqual([{ id: 't1', laid: false, why: '(10, 8) has no room for a 0.25 mm track: pad Q1.1 (B) overlaps it (0.2 mm needed)', at: { x: 10, y: 8 }, blockedBy: 'B' }]);
     expect(r.tracks.some((t) => t.laid)).toBe(false);
     expect(r.connected('A', pads[0]!, pads[1]!)).toBe(true);
   });
@@ -242,7 +242,8 @@ describe('a net wider than its pads', () => {
       // a wall of pads with a 0.8 mm gap, far from the small pad: only 0.25 mm passes
       const parts = [...ends(), part('W1', wall('X', [0.5, 1.5, 2.5, 3.5])), part('W2', wall('Y', [5.3, 6.3, 7.3, 8.3, 9.3]))];
       const r = at(parts);
-      expect(r.laid).toEqual([{ id: 't1', laid: true }]);
+      // laid, and says why not at the width asked: the gap in W2 is too narrow for it
+      expect(r.laid).toEqual([{ id: 't1', laid: true, why: expect.stringMatching(/^laid 0\.25 mm wide, not 0\.5 mm: no way for a 0\.5 mm track from U1\.1 to J1\.1 on F\.Cu: at \([\d.]+, [\d.]+\) on F\.Cu, pad W2\.\d \(Y\) is [\d.]+ mm from it \(0\.2 mm needed\)/), at: expect.any(Object) }]);
       const mine = r.tracks.filter((t) => t.laid === 't1');
       expect(mine.length).toBeGreaterThan(0);
       // at the signal width all along (a power track is not widened again), through the gap
@@ -261,7 +262,9 @@ describe('a net wider than its pads', () => {
       // the wall from edge to edge, one layer
       const parts = [...ends(), part('W1', wall('X', [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5]))];
       const r = at(parts);
-      expect(r.laid).toEqual([{ id: 't1', laid: false, why: 'no way for a 0.25 mm track from U1.1 to J1.1 on F.Cu', at: { x: 18, y: 5 } }]);
+      // where the wall closes the way, and the pads that close it
+      expect(r.laid).toEqual([{ id: 't1', laid: false, why: expect.stringMatching(/^no way for a 0\.25 mm track from U1\.1 to J1\.1 on F\.Cu: at \([\d.]+, [\d.]+\) on F\.Cu, pad W1\.\d+ \(X\) is [\d.]+ mm from it \(0\.2 mm needed\); pad W1\.\d+ \(X\)/), at: { x: expect.any(Number), y: expect.any(Number) } }]);
+      expect(Math.abs(r.laid![0]!.at!.x - 10)).toBeLessThan(1);
       expect(r.tracks.some((t) => t.laid)).toBe(false);
     });
   });
