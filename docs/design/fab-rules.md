@@ -37,7 +37,7 @@ Limits (all optional except track and clearance; an absent limit is simply not c
 | `maskBridge` | `DRC.FAB_MASK_WEB`: the solder-mask web between the openings of two pads |
 | the track limit | `DRC.FAB_SPOKE` also for a pour's thermal spokes (`set_plane_style spoke_mm`) |
 | `minBoard`, `maxBoard` | `DRC.FAB_BOARD_SIZE`, either orientation |
-| the profile's `layers` | `DRC.FAB_LAYERS` |
+| the profile's `layers` | `DRC.FAB_LAYERS` (entity: the board's name; waivable with `add_waiver` for it) |
 | rules kept below a limit (`keep_rules`) | `DRC.FAB_RULES` |
 
 All fab diagnostics are errors, so `propose` is refused while one is open, except spacing between
@@ -62,6 +62,9 @@ checked (an imported profile can give `mask_bridge_mm`). A limit not published i
 3. From then on `set_board` and `set_net` **refuse** a value below a limit (`FAB_LIMIT`), and
    moving to 4 layers raises the edge clearance to the inner-layer limit where that is larger.
 4. `none: true` removes the profile and leaves the rules as they are.
+
+On a design of several boards it does this on every board, or with `board` on that board only (a
+tier of the same house: [multi-board](multi-board.md) §5).
 
 `set_board` also gained `via_drill_mm`, `via_pad_mm` and `edge_clearance_mm`; those three rules
 were fixed defaults before.

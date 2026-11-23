@@ -75,7 +75,7 @@ export function listBlocks(project: string, file: Design): ListBlocksAnswer {
     blocks: listed,
     ...(loose.length ? { not_in_a_block: loose } : {}),
     note: blocks.length
-      ? 'Boundary nets leave the block (to parts outside it, off the board, or a supply or ground the importing design has its own of): each must be joined to a net of the open design. Values were chosen for that project: check them against this one. design_edit import_block copies a block in, with every boundary net mapped.'
+      ? 'Boundary nets leave the block (to parts outside it, off the board, or a supply or ground the importing design has its own of): each must be joined to a net of the open design. Values were chosen for that project: check them against this one. design_edit import_block copies a block in, with every boundary net mapped; map an internal net too where this design already has that net (else it is made anew, NTC_2 where NTC is taken).'
       : `${project} has no functional blocks (describe blocks): there is nothing to reuse from it until it is grouped.`,
   };
 }

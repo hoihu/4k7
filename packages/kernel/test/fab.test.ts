@@ -195,6 +195,19 @@ describe('fab DRC', () => {
     expect(codes(k)).not.toContain('DRC.FAB_LAYERS');
   });
 
+  it('names the board in the layer finding, so it can be waived', () => {
+    const k = buck();
+    ops(k, { op: 'set_fab_profile', preset: 'jlcpcb/2l-1oz' });
+    ops(k, { op: 'set_board', layers: 4 });
+    const layers = () => k.board().diagnostics.find((d) => d.code === 'DRC.FAB_LAYERS')!;
+    expect(layers().entities).toEqual(['Main']);
+    expect(ops(k, { op: 'set_fab_profile', board: 'Side', preset: 'jlcpcb/4l-1oz' }).rejection?.code).toBe('BOARD_UNKNOWN');
+    expect(ops(k, { op: 'add_waiver', code: 'DRC.FAB_LAYERS', entities: ['Main'], reason: 'the house makes it as a special order' }).status).toBe('ok');
+    expect(layers().waivedBy).toBeDefined();
+    expect(ops(k, { op: 'set_fab_profile', board: 'Main', preset: 'jlcpcb/4l-1oz' }).status).toBe('ok');
+    expect(codes(k)).not.toContain('DRC.FAB_LAYERS');
+  });
+
   it('flags a board outside the fab\'s size range', () => {
     const k = buck();
     ops(k, { op: 'set_board', width_mm: 40, height_mm: 40 });

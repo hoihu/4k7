@@ -12,7 +12,7 @@
  * grid passes follow (horizontal on F.Cu, vertical on B.Cu, vias cheap; see Style): a board
  * routed to the last connection matters more than tidy tracks or few vias. The best pass wins.
  */
-import { type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, type LaidStatus, type LockedStatus, roundPadDist, type RouteBlockage, type RoutedLine, type Track, type Via, type Zone } from '@4k7/schema';
+import { type BoardCutout, type BoardKeepout, type BoardPad, type BoardPart, type BoardRules, type CopperLayer, cutoutDistance, keepoutDistance, type LaidStatus, type LockedStatus, roundPadDist, type RouteBlockage, type RoutedLine, type Track, type Via, type Zone } from '@4k7/schema';
 import { neckReach, r3, segDist, segmentsOf } from './geom.ts';
 import { Heap } from './heap.ts';
 import { keptCopper, type KeptCopper } from './keep.ts';
@@ -35,6 +35,7 @@ const FREE_SHARE = 0.4;
 const STALE_PASSES = 8; // passes in a row without an improvement before the router gives up
 
 const PROBE_BUDGET_MS = 1500; // probes of one pass, in total
+const LAID_PROBE_MS = 100; // the probe saying where a connection the agent laid is blocked, per stretch that found no way
 
 const KEEP_ROUNDS = 1; // incremental routing: passes that let go of kept nets in the way, before routing from scratch
 
@@ -68,7 +69,7 @@ export interface RouteInput {
    * RouteResult.lines.
    */
   controlled?: { id: string; nets: string[]; layers: { layer: CopperLayer; width: number; gap?: number }[] }[];
-  /** Net names by id, for what the router says about lines at a set impedance. */
+  /** Net names by id, for what the router says about lines at a set impedance and about the connections the agent laid. */
   netNames?: Record<string, string>;
   /**
    * Planes: an inner layer dedicated to one net (no tracks there), or a pour on an outer layer
@@ -530,9 +531,102 @@ function routeOnce(
     };
     const [a, b] = [t.from, t.to];
     const [pa, pb] = [pads[a], pads[b]];
-    if (!pa || !pb || pa.netId !== t.netId || pb.netId !== t.netId) return { id: t.id, laid: false, why: 'its pads are not on its net' };
+    const name = (id: string) => input.netNames?.[id] ?? id;
+    const label = (idx: number) => `${owner[idx]!.refdes}.${pads[idx]!.number}`;
+    if (!pa || !pb) return { id: t.id, laid: false, why: 'its pads are not on the board' };
+    const off = [a, b].filter((idx) => pads[idx]!.netId !== t.netId);
+    if (off.length) return { id: t.id, laid: false, why: `${off.map((idx) => `${label(idx)} is on ${pads[idx]!.netId ? name(pads[idx]!.netId!) : 'no net'}`).join(' and ')}, not on ${name(t.netId)}`, at: { x: r2(pads[off[0]!]!.x), y: r2(pads[off[0]!]!.y) } };
     if (find(a) === find(b)) return { id: t.id, laid: false, why: 'its pads are joined already (by copper laid before it)', at: { x: r2(pa.x), y: r2(pa.y) } };
     const net = numOf(t.netId);
+    /*
+     * What keeps copper of this net w wide (a track, or a via with `via`) off the point (x, y) on
+     * the layers ls: the pads, copper, edge, cutouts and keep-outs within clearance, nearest first
+     * (at most three), each with how far it is and how far it must be. Only copper with
+     * `copperOnly`. It only says why: the routing does not read it.
+     */
+    const inWayAt = (x: number, y: number, w: number, ls: number[], via = false, copperOnly = false): string => {
+      const tol = G * 0.1;
+      const found: { gap: number; text: string }[] = [];
+      const add = (gap: number, need: number, what: string) => {
+        // (the grid keeps a little more than the clearance: at the clearance, said so)
+        if (gap < need + tol) found.push({ gap, text: `${what} ${gap <= 0 ? 'overlaps it' : `is ${gap < need ? Math.floor(gap * 100) / 100 : r2(gap)} mm from it`}${need > 0 ? ` (${need} mm needed${gap >= need ? `, ${r2(need + tol)} mm on the router's grid` : ''})` : ''}` });
+      };
+      const on = (layer: CopperLayer) => ls.some((l) => layers[l] === layer);
+      if (!copperOnly) {
+        pads.forEach((p, idx) => {
+          if (!p.drill && !p.layers.some(on)) return;
+          const gap = padDist(p)(x, y) - w / 2;
+          // (a via keeps off every pad, its own net's too, unless the board allows vias in pads)
+          if (p.netId === t.netId) {
+            if (via && !rules.viaInPad) add(gap, rules.clearance, `pad ${label(idx)} (its own net)`);
+            return;
+          }
+          // or its escape, the stub kept for its way out (see escapes in routegrid.ts), where that is nearer
+          const e = escapes[idx];
+          const out = e && ls.includes(e.l) ? Math.min(segDist(p.x, p.y, e.p1.x, e.p1.y)(x, y), segDist(e.p1.x, e.p1.y, e.ex, e.ey)(x, y)) - (rules.track + w) / 2 : Infinity;
+          if (out < gap && gap > 0) add(out, rules.clearance, `the way out of pad ${label(idx)} (${name(p.netId!)})`);
+          else add(gap, rules.clearance, p.netId ? `pad ${label(idx)} (${name(p.netId)})` : `${p.drill ? 'hole' : 'pad'} ${label(idx)} (no net)`);
+        });
+        // (nor in a small part's land pattern, see viaBlocked)
+        if (via && !rules.viaInPad) {
+          for (const part of input.parts) {
+            const c = part.courtyard;
+            if (part.pads.length <= 3) add(Math.hypot(Math.max(c.x - x, 0, x - c.x - c.w), Math.max(c.y - y, 0, y - c.y - c.h)) - w / 2, 0, `${part.refdes}'s land pattern (no vias between a small part's pads)`);
+          }
+        }
+      }
+      for (const tr of [...tracks, ...keptTracks]) {
+        if (tr.netId === t.netId || !on(tr.layer)) continue;
+        const gap = Math.min(...segmentsOf(tr.pts).map(([ax, ay, bx, by]) => segDist(ax, ay, bx, by)(x, y))) - (tr.width + w) / 2;
+        add(gap, rules.clearance, `a ${name(tr.netId)} track${tr.laid ? ` (${tr.laid}, laid before this one)` : tr.locked ? ' (locked)' : ''}`);
+      }
+      for (const v of [...vias, ...keptVias, ...(input.vias?.fixed ?? [])]) {
+        // (vias keep apart, of the same net too, unless one is reused as it is)
+        if (v.netId === t.netId && (!via || Math.hypot(v.x - x, v.y - y) < G / 2)) continue;
+        const gap = Math.hypot(v.x - x, v.y - y) - ((v.pad ?? rules.viaPad) + w) / 2;
+        add(gap, rules.clearance, `a ${name(v.netId)} via${'laid' in v && v.laid ? ` (${v.laid}, laid before this one)` : 'locked' in v && v.locked ? ' (locked)' : ''}`);
+      }
+      if (!copperOnly) {
+        const edge = grid.shaped ? grid.inside(x, y) : Math.min(x, y, input.outline.w - x, input.outline.h - y);
+        add(edge - w / 2, rules.edgeClearance, 'the board edge');
+        for (const c of input.cutouts ?? []) add(cutoutDistance(c, x, y) - w / 2, rules.edgeClearance, `cutout ${c.id}`);
+        for (const ko of input.keepouts ?? []) {
+          if (ko.forbid.includes(via ? 'vias' : 'tracks') && ko.layers.some(on)) add(keepoutDistance(ko, x, y) - w / 2, 0, `keep-out ${ko.name ?? ko.id}${ko.part ? ` (of ${ko.part})` : ''}`);
+        }
+        if (!via) for (const pl of input.planes ?? []) if (!OUTER.has(pl.layer) && on(pl.layer)) found.push({ gap: -1, text: `${pl.layer} is the ${name(pl.netId)} plane (no tracks there)` });
+      }
+      return found
+        .sort((p, q) => p.gap - q.gap)
+        .slice(0, 3)
+        .map((f) => f.text)
+        .join('; ');
+    };
+    const atCell = (st: number) => ({ x: ((st % N) % W) * G, y: Math.floor((st % N) / W) * G, l: Math.floor(st / N) });
+    /*
+     * Where a stretch that found no way is blocked, and by what: along the probe's way (the other
+     * nets' tracks and vias passable at a price, see probeFailed), the first point the track
+     * (class k) does not fit; failing that, along the straight line from (x0, y0) on layer l0.
+     */
+    const wayBlocked = (k: number, starts: number[], goals: number[], oneLayer: boolean, x0: number, y0: number, x1: number, y1: number, l0: number) => {
+      const free = freeNeck(net, k);
+      const ends = new Set([...starts, ...goals]);
+      const path = probe(net, starts, goals, now() + LAID_PROBE_MS, oneLayer);
+      for (const st of path ?? []) {
+        if (ends.has(st) || free(Math.floor(st / N), st % N)) continue;
+        const c = atCell(st);
+        const why = inWayAt(c.x, c.y, widths[classAt(net, k, st)]!, [c.l]);
+        if (why) return { ...c, why };
+      }
+      const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / (G / 2));
+      for (let q = 1; q < n; q++) {
+        const [x, y] = [x0 + ((x1 - x0) * q) / n, y0 + ((y1 - y0) * q) / n];
+        const c = Math.round(y / G) * W + Math.round(x / G);
+        if (free(l0, c) || ends.has(l0 * N + c)) continue;
+        const why = inWayAt(x, y, widths[k]!, [l0]);
+        if (why) return { x, y, l: l0, why };
+      }
+      return null;
+    };
     // the width: as for a routed connection (routeConn), the one asked for in place of the net's:
     // that width with a neck near a pad too small for it; failing that, the widest both end pads
     // take, all along (widened again where it fits once laid, commit)
@@ -552,7 +646,6 @@ function routeOnce(
         const p = pads[idx]!;
         return clearOf(net, e.l, w, [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]]);
       };
-      const label = (idx: number) => `${owner[idx]!.refdes}.${pads[idx]!.number}`;
       const on = (l: number | null) => (l === null ? '' : ` on ${layers[l]}`);
       let cur: number | null = null;
       if (t.layer) {
@@ -561,11 +654,19 @@ function routeOnce(
         cur = l;
       }
       const onCur = (st: number) => cur === null || Math.floor(st / N) === cur;
+      /** A pad with no start (or goal) on the layer: not on it, or its way out (escape) blocked. */
+      const noWayOut = (idx: number, p: BoardPad) => {
+        if (!padCells[idx]!.some(onCur)) return fail(`${label(idx)} is not${on(cur)}`, p.x, p.y);
+        const e = escapes[escapeOf.get(padCells[idx]!.find(onCur)!) ?? -1];
+        const why = e ? [[p.x, p.y, e.p1.x, e.p1.y], [e.p1.x, e.p1.y, e.ex, e.ey]].map(([ax, ay, bx, by]) => inWayAt((ax! + bx!) / 2, (ay! + by!) / 2, w, [e.l], false, true) || inWayAt(bx!, by!, w, [e.l], false, true)).find((x) => x) : '';
+        return fail(`${label(idx)} has no way out${on(cur)} for a ${w} mm track${why ? `: ${why}` : ''}`, p.x, p.y);
+      };
       let starts = padCells[a]!.filter((st) => onCur(st) && escapeOk(st));
-      if (!starts.length) return fail(`${label(a)} is not${on(cur)}`, pa.x, pa.y);
+      if (!starts.length) return noWayOut(a, pa);
       const full: number[] = [];
       const pins = new Set<number>();
       let from = label(a);
+      let fromAt = [pa.x, pa.y] as [number, number];
       for (const stop of [...t.points.map((p) => ({ ...p, pad: false })), { x: pb.x, y: pb.y, layer: undefined, pad: true }]) {
         const here = stop.pad ? label(b) : `(${r2(stop.x)}, ${r2(stop.y)})`;
         epoch++;
@@ -574,7 +675,7 @@ function routeOnce(
         let accept: ((st: number) => boolean) | undefined;
         if (stop.pad) {
           goals = padCells[b]!.filter((st) => onCur(st) && escapeOk(st));
-          if (!goals.length) return fail(`${here} is not${on(cur)}`, stop.x, stop.y);
+          if (!goals.length) return noWayOut(b, pb);
           // (as for a routed connection: on the pad's centre line where the track fits there)
           const fits = (st: number) => free(Math.floor(st / N), st % N);
           const centred = (st: number) => fits(st) && !offCentre(net, classAt(net, k, st), st);
@@ -590,7 +691,9 @@ function routeOnce(
           if (!goals.length) {
             const v = maps[k]![ls[0]!]![c]!;
             const what = v === EDGE ? 'the board edge (or a plane layer) is' : v === MULTI ? 'copper of other nets is' : 'other copper is';
-            return fail(`${here} has no room for a ${w} mm track${on(cur)}: ${what} too close`, stop.x, stop.y, v > 0 ? v : undefined);
+            const id = v > 0 ? [...netNum].find(([, n]) => n === v)?.[0] : undefined;
+            const why = inWayAt(i * G, j * G, w, ls) || `${what} too close${id ? ` (${name(id)} is in the way)` : ''}`;
+            return fail(`${here} has no room for a ${w} mm track${on(cur)}: ${why}`, stop.x, stop.y, v > 0 ? v : undefined);
           }
         }
         for (const st of goals) goal[st] = stamp;
@@ -609,7 +712,12 @@ function routeOnce(
           for (const r of [CORRIDOR, 3 * CORRIDOR]) if (!path) path = search(net, k, starts, isGoal, target, accept, widen(way, r), false, Infinity, steady);
           path ??= search(net, k, starts, isGoal, target, accept, 0, true, Infinity, steady);
         }
-        if (!path) return fail(`no way for a ${w} mm track from ${from} to ${here}${on(cur)}`, stop.x, stop.y);
+        if (!path) {
+          const [fx, fy] = fromAt;
+          const block = wayBlocked(k, starts, goals, cur !== null, fx, fy, stop.x, stop.y, cur ?? Math.floor(starts[0]! / N));
+          if (!block) return fail(`no way for a ${w} mm track from ${from} to ${here}${on(cur)}`, stop.x, stop.y);
+          return fail(`no way for a ${w} mm track from ${from} to ${here}${on(cur)}: at (${r2(block.x)}, ${r2(block.y)}) on ${layers[block.l]}, ${block.why}`, block.x, block.y);
+        }
         full.push(...(full.length && full.at(-1) === path[0] ? path.slice(1) : path));
         if (stop.pad) break;
         // a point: the track turns there as it is; a layer given goes on from there (a via)
@@ -621,13 +729,18 @@ function routeOnce(
           const next = layerIdx.get(stop.layer);
           if (next === undefined) return fail(`the board has no ${stop.layer}`, stop.x, stop.y);
           if (next !== Math.floor(end / N)) {
-            if (!viaFreeFor(net)(c) || !free(next, c)) return fail(`no room for a via at ${here}`, stop.x, stop.y);
+            if (!viaFreeFor(net)(c) || !free(next, c)) {
+              const [cx, cy] = [(c % W) * G, Math.floor(c / W) * G];
+              const why = viaFreeFor(net)(c) ? inWayAt(cx, cy, w, [next]) : inWayAt(cx, cy, rules.viaPad, layers.map((_, l) => l), true);
+              return fail(`no room for a via at ${here}${why ? `: ${why}` : ''}`, stop.x, stop.y);
+            }
             starts = [next * N + c];
             full.push(starts[0]!);
           }
           cur = next;
         }
         from = here;
+        fromAt = [stop.x, stop.y];
       }
       const [t0, v0] = [tracks.length, vias.length];
       const copper = commit(t.netId, net, k, full, padCells[a]!.includes(full[0]!) ? a : -1, padCells[b]!.includes(full.at(-1)!) ? b : -1, false, pins, own);
@@ -645,9 +758,11 @@ function routeOnce(
         neck.run = 0;
       }
     };
-    let done = lay(chosen, true);
-    if (!done.laid && narrow !== chosen) done = lay(narrow, false);
-    return done;
+    const first = lay(chosen, true);
+    if (first.laid || narrow === chosen) return first;
+    const done = lay(narrow, false);
+    // laid narrower than asked: still laid, and says why the width asked did not fit
+    return done.laid ? { ...done, why: `laid ${widths[narrow]} mm wide, not ${widths[chosen]} mm: ${first.why}`, ...(first.at ? { at: first.at } : {}) } : done;
   }
   /*
    * Fan-out first: pads on a net with a dedicated inner plane drop onto it before the signals are
@@ -1005,8 +1120,8 @@ function routeOnce(
     return out;
   }
 
-  /** The probe's search (see probeFailed): the path, null if there is none at all, undefined when out of time. */
-  function probe(net: number, starts: number[], goals: number[], stop: number): number[] | null | undefined {
+  /** The probe's search (see probeFailed): the path, null if there is none at all, undefined when out of time. On one layer only with `oneLayer`. */
+  function probe(net: number, starts: number[], goals: number[], stop: number, oneLayer = false): number[] | null | undefined {
     epoch++;
     const gs = epoch;
     for (const st of goals) goal[st] = gs;
@@ -1071,7 +1186,7 @@ function routeOnce(
           heap.push(ns, nc + h(ns));
         }
       }
-      if (L > 1 && !viaBlocked[i]) {
+      if (L > 1 && !oneLayer && !viaBlocked[i]) {
         let fits = true;
         for (let l2 = 0; l2 < L && fits; l2++) {
           const v = fixedMap[l2]![i]!;

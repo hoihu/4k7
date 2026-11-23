@@ -4,6 +4,7 @@
  * copper checks.
  */
 import { type BoardCutout, type BoardPad, type BoardPart, type BoardRules, boardStackup, type BoardView, type CopperLayer, cutoutDistance, cutoutPolygon, type Design, type Diagnostic, type DrawnCopper, type DrawnTrack, type DrawnVia, figureDepths, insideBoard, type LaidTrack, type PadAnchor, padCapsule, padPins, placeCutout, placeGraphic, placeKeepout, PLANE_AREA_MARGIN, type PlaneArea, type RatsLine, type SchematicView, type StoredCopper, type StoredPlacement, type Track, type UnroutedConnection, type Via, VIA_PITCH, viaCurrentFor, type ViaGroup, viasForCurrent } from '@4k7/schema';
+import { boardName } from './boards.ts';
 import { stableJson } from './canonical.ts';
 import { type Board as CongestionBoard, congestion } from './congestion.ts';
 import { boardInputs, Memo } from './derive.ts';
@@ -195,7 +196,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     view.diagnostics.push(...panelTabDrc(view));
   }
   // (pads that touch: a short, from the placement on, routed or not)
-  view.diagnostics.push(...fabPlacementDrc(view), ...keepoutDrc(view), ...padShorts(view));
+  view.diagnostics.push(...fabPlacementDrc(view, boardName(d), !!d.focus), ...keepoutDrc(view), ...padShorts(view));
   applyWaivers(d, view.diagnostics);
   return view;
 }
@@ -365,7 +366,7 @@ export function layoutBoard(d: Design, b: BoardView, opts: { budgetMs?: number; 
       ? {
           laid: b.laid.map((t) => {
             const st = copper.laid?.find((x) => x.id === t.id);
-            return st ? { ...t, laid: st.laid, ...(st.why ? { why: st.why + (st.blockedBy ? ` (${d.nets[st.blockedBy]?.name ?? st.blockedBy} is in the way)` : '') } : {}), ...(st.at ? { at: st.at } : {}) } : t;
+            return st ? { ...t, laid: st.laid, ...(st.why ? { why: st.why } : {}), ...(st.at ? { at: st.at } : {}) } : t;
           }),
         }
       : {}),
@@ -492,7 +493,7 @@ export function boardRouteInput(d: Design, b: BoardView, extra: Partial<RouteInp
     cutouts: b.cutouts,
     ...(b.keepouts?.length ? { keepouts: b.keepouts } : {}),
     ...(b.drawn ? { drawn: { tracks: b.drawn.tracks, vias: b.drawn.vias } } : {}),
-    ...(b.laid?.length && !b.drawn ? { laid: planLaid(d.board?.laid ?? [], b.parts, d).route } : {}),
+    ...(b.laid?.length && !b.drawn ? { laid: planLaid(d.board?.laid ?? [], b.parts, d).route, netNames: b.netNames } : {}),
     ...(d.board?.locked?.length && !b.drawn ? { locked: { tracks: d.board.locked.flatMap((l) => l.tracks), vias: d.board.locked.flatMap((l) => l.vias) } } : {}),
     ...extra,
   };

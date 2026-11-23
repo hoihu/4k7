@@ -53,6 +53,11 @@ export interface Design {
   drawing?: Record<string, SheetDrawing>;
   /** The enclosure: the brief agreed with the user and the script (docs/design/enclosure.md). */
   enclosure?: EnclosureSettings;
+  /**
+   * Only on a board's focus (a design of several boards seen as if that board were its only one):
+   * which board it is, for the checks that name the board. Never stored.
+   */
+  focus?: { id: string; name: string };
 }
 
 /**
