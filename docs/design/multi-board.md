@@ -1,6 +1,6 @@
 # Several boards in one design
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3): the op and the checks built (2026-11-22); the assembly they place, the 3D view and the system outputs are not built yet.
+> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3): the op and the checks built (2026-11-22); the assembly they place, the 3D view of every board and the STEP file of them all built (2026-11-23, §6). The enclosure with every board and the system outputs are not built yet.
 
 ## 1. Why
 
@@ -128,11 +128,26 @@ override could come later if it is asked for.
 
 ## 6. One enclosure, one assembly
 
-Each board has a place in the assembly: `{ x, y, z, rotation, flipped }` in mm against the first
+Each board has a place in the assembly: `{ x, y, z, rot, flipped }` in mm against the first
 board. A `stack` or `edge` mate derives it: the second board sits where the connector puts it,
 at the mated height. The agent does not compute stacking heights, the kernel does, and when the
 footprints cannot mate (wrong pitch, pins that do not land) that is the error. A `cable` leaves
 the place to the agent (`set_board placement3d`) or the enclosure script.
+
+**Built** (`kernel/src/assembly.ts`, `BoardPlace`): the frame is the first board's board view (x
+right, y down from its top-left corner, z up from its top surface). A `stack` mate places the
+board it reaches from a placed one: the pads of the mated pairs, as each board's placement has
+them, are fitted onto each other (a turn of any angle, snapped to a quarter turn where it is
+one). Connectors on opposite sides of their boards (a header on top, a socket underneath) leave
+the second board the right way up; on the same side, it is turned over about its own y axis.
+The height between the boards is the mate's `height_mm` (the connectors' stacking height from
+their datasheets), else the taller connector's body height, marked as assumed. Pads that do not
+land after the fit (over 0.3 mm), an `edge` mate (the card standing in its slot: not yet) and a
+board no stack reaches leave the board beside the others, 10 mm apart, with the reason in `by`.
+`get_board` without a board gives each board's `assembly`. The Layout view's 3D view shows every
+board where it stands, and the STEP export writes them all (each board a sub-assembly of its PCB
+and parts, named after it, placed by the same transform). Not yet: `set_board placement3d` for
+a cable's board, the enclosure library's boards (below).
 
 The enclosure library ([enclosure](enclosure.md) §3) keeps its single-board globals as the first
 board, so existing scripts run unchanged, and gains:
@@ -175,8 +190,9 @@ the hunk that added a board leaves its sheets and parts on the first board.
    cost estimate of a design of several boards counts its parts only (the boards' making and
    assembly need step 3).
 2. **Mates.** The op, the kinds and their pin maps, the checks (built 2026-11-22; `get_summary`
-   lists the mates with their pin pairs). Still to come: the assembly position from
-   `stack`/`edge` mates, 3D assembly view and STEP.
+   lists the mates with their pin pairs). The assembly position from `stack` mates, the 3D view of
+   every board and the STEP file of them all (built 2026-11-23). Still to come: an `edge` mate's
+   board standing in its slot, a place for a cable's board.
 3. **System outputs.** Shared fab profile, combined BOM, cost and order, the enclosure library
    with every board.
 4. **Agent guide.** A section in the layout guide: when to split a design, which mate kind to

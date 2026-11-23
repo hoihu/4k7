@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { boardFingerprint, boardNetDesign, boardStep, fabFiles, panelFabFiles, zip, type CopperCheck, type FabStamp } from '@4k7/fab';
+  import { assemblyStep, boardFingerprint, boardNetDesign, boardStep, fabFiles, panelFabFiles, zip, type CopperCheck, type FabStamp } from '@4k7/fab';
   import { checkFiles } from '../netcheckClient.ts';
   import { planeNames, userPlaced, whose, type Diagnostic, type CopperLayer, type HousePlacement } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
@@ -42,6 +42,18 @@
   });
   let show2d = $state(true);
   let switching = false;
+  // several boards: the 3D view shows them all, where the assembly puts them
+  let assembly = $state.raw<Awaited<ReturnType<typeof app.assemblyBoards>>>(null);
+  $effect(() => {
+    if (mode !== '3d') return;
+    void b;
+    void app.k;
+    let gone = false;
+    void app.assemblyBoards().then((a) => {
+      if (!gone) assembly = a;
+    }).catch(() => (assembly = null));
+    return () => (gone = true);
+  });
   function to3d() {
     if (mode === '3d' || switching) return;
     from2d = mode === '2d' ? (canvas2d?.getView() ?? null) : null;
@@ -231,12 +243,16 @@
   }
 
   /** The board and its parts in 3D as a STEP file, for a mechanical CAD program. */
-  function exportStep() {
+  async function exportStep() {
     if (!b) return;
-    const step = boardStep(b, projectName());
+    // several boards: all of them, where the assembly puts them
+    const all = await app.assemblyBoards().catch(() => null);
+    // (named after the design, not the board shown: it holds every board)
+    const design = app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : '4k7-board';
+    const step = all ? assemblyStep(all.map((x) => ({ b: x.board, name: x.at.name, at: x.at })), design) : boardStep(b, projectName());
     download(new Blob([step.content], { type: 'model/step' }), step.name);
     const without = step.without.length ? ` (no 3D body for ${step.without.join(', ')}: not in the file)` : '';
-    app.flash(`Exported the board and ${step.parts} part${step.parts === 1 ? '' : 's'} as STEP${without}`);
+    app.flash(`Exported ${all ? `the ${all.length} boards` : 'the board'} and ${step.parts} part${step.parts === 1 ? '' : 's'} as STEP${without}`);
   }
 
   function focus(d: Diagnostic) {
@@ -250,7 +266,7 @@
   <div class="col canvas">
     {#if mode === 'panel' && b?.panel}<div class="stagep"><PanelCanvas board={b} ontabs={(tabs) => app.userEdit('Panel tabs', [{ op: 'set_panel', tabs }])} /></div>
     {:else if mode === 'panel' && b?.parts.length}<div class="blank"><p><b>No panel yet.</b> A panel holds copies of the board in a frame, milled apart except at tabs with mouse bites. Make one in the side panel, or ask the agent.</p></div>{/if}
-    {#if mode === '3d' && b}<Board3DView bind:this={view3d} board={b} from={from2d} onready={() => (show2d = false)} />{/if}
+    {#if mode === '3d' && b}<Board3DView bind:this={view3d} board={b} {assembly} from={assembly && app.shownBoard !== 'b_1' ? null : from2d} onready={() => (show2d = false)} />{/if}
     <div class="stage2d" class:hidden={!show2d || mode === 'panel'}>
     <BoardCanvas
       bind:this={canvas2d}
