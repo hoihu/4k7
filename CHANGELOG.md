@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Fixes
+
+- **The agent can read every DRC finding of a board with many of them.** With dozens of findings, for example after a temporary 0.6 mm clearance to check the spacing round a high-voltage net, the board report the agent reads was cut off before its DRC list, so the agent saw only some of the findings or none of them. This happened in 0.7.0 and earlier. Now the report puts the findings first and lists 20 of them, errors first. It counts all of them by check, with the nets and parts each check names most, and says how many are not listed. The agent can ask for the next ones, or only those of one check, net or part.
+
 ## 0.7.0 — 2026-11-22
 
 This release checks the current and power on a board: a microcontroller pin asked to drive more than it is rated for is flagged, tracks, vias and thermal spokes are checked against the current they carry, and a heat map shows where the copper works hardest. The agent can copy a block you already built in another project into the open design, give an enclosure a clear window, and swap pins and gates, including an ATtiny85's GPIO pins, to untangle the board. Parts can be marked do-not-populate, test points go on the power rails, and the design document can be downloaded as a file.

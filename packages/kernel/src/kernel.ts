@@ -661,7 +661,7 @@ export class Kernel {
         // copper routes nothing: always computed)
         const routed = d.board?.drawn ? this.board() : this.boards.get(d);
         const b = routed ?? this.boardPlacement();
-        return { ...boardSummary(b, !!routed), plane_plan: planePlan(d, b) };
+        return { ...boardSummary(b, !!routed, q.drc), plane_plan: planePlan(d, b) };
       }
       case 'try_placements':
         return tryPlacements(d, this.analyse(d).view, q.candidates, !!q.route, this.boards.get(d), q.explore !== false);

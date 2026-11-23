@@ -962,7 +962,19 @@ export const QueryOp = z.discriminatedUnion('op', [
     nets: z.array(netName).optional().describe('Only these nets'),
     rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('Only copper with a point inside this rectangle (mm)'),
   }).describe('Drawn copper: every track (id, net, layer, width, points in mm, the pads its ends lie on) and via (id, net, at, drill, size), to edit or erase by id'),
-  z.object({ op: z.literal('get_board') }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
+  z.object({
+    op: z.literal('get_board'),
+    drc: z
+      .object({
+        code: z.string().min(1).optional().describe('Only findings with this code, e.g. "DRC.CLEARANCE"'),
+        net: netName.optional().describe('Only findings that name this net'),
+        ref: z.string().min(1).optional().describe('Only findings at this part (refdes), track or via (id)'),
+        offset: z.number().int().min(0).optional().describe('Skip this many of the matching findings (default 0): the next page'),
+        limit: z.number().int().min(1).max(200).optional().describe('List at most this many (default 20)'),
+      })
+      .optional()
+      .describe('get_board: which DRC findings to list. Many findings (a stricter clearance, say) do not fit in one answer: get_board lists 20, counts all of them by code (with the nets and parts they name most) and says how many are not listed; page on with offset or narrow by code, net or ref'),
+  }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results (up to 20 listed; drc pages and filters them)'),
   z.object({
     op: z.literal('get_current_map'),
     nets: z.array(netName).optional().describe('Only these nets'),

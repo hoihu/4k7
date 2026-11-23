@@ -1392,12 +1392,73 @@ function impedanceSummary(b: BoardView, routed: boolean) {
   });
 }
 
-/** Compact board description for agents (design_query get_board). */
-export function boardSummary(b: BoardView, routed = true) {
+/** Which DRC findings get_board lists (its drc parameter). */
+export interface DrcFilter {
+  code?: string;
+  net?: string;
+  ref?: string;
+  offset?: number;
+  limit?: number;
+}
+
+const DRC_LIMIT = 20;
+const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 } as const;
+
+/**
+ * The board's DRC findings as get_board lists them: the open (not waived) ones, errors first, at most
+ * `limit` from `offset` of those `filter` matches. When not all are listed, drc_found counts them by
+ * code, with the nets (pairs where a finding names two) and parts each code names most, and says
+ * how to list the rest: every finding stays reachable. See docs/design/ops-api.md.
+ */
+function drcList(b: BoardView, filter: DrcFilter = {}) {
+  const open = b.diagnostics.filter((x) => !x.waivedBy).sort((x, y) => SEVERITY_ORDER[x.severity] - SEVERITY_ORDER[y.severity]);
+  // the nets a finding names: in its entities (net:NAME) or its message ("track GND", "C29.2 (GND)")
+  const names = [...new Set(Object.values(b.netNames))].map((n) => ({ n, re: new RegExp(`(?<![\\w+~/-])${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w+~/-]|\\.\\d)`) }));
+  const netsOf = (x: Diagnostic) => {
+    const out = new Set(x.entities.filter((e) => e.startsWith('net:')).map((e) => e.slice(4)));
+    for (const { n, re } of names) if (re.test(x.message)) out.add(n);
+    return [...out];
+  };
+  const refsOf = (x: Diagnostic) => x.entities.filter((e) => !e.startsWith('net:'));
+  const matching = open.filter((x) => (!filter.code || x.code === filter.code) && (!filter.ref || refsOf(x).includes(filter.ref)) && (!filter.net || netsOf(x).includes(filter.net)));
+  const offset = filter.offset ?? 0;
+  const limit = filter.limit ?? DRC_LIMIT;
+  const page = matching.slice(offset, offset + limit);
+  // (drawn copper: with code and entities, which add_waiver takes for a soft rule kept on purpose)
+  const drc = page.map((x) => (b.drawn ? `${x.severity} ${x.code}${x.entities.length ? ` [${x.entities.join(', ')}]` : ''}: ${x.message}` : `${x.severity}: ${x.message}`));
+  const filtered = filter.code !== undefined || filter.net !== undefined || filter.ref !== undefined;
+  if (page.length === open.length) return { drc };
+  const top = (counts: Map<string, number>) => Object.fromEntries([...counts].sort((x, y) => y[1] - x[1]).slice(0, 6));
+  const byCode = new Map<string, { severity: string; count: number; nets: Map<string, number>; parts: Map<string, number> }>();
+  for (const x of matching) {
+    const c = byCode.get(x.code) ?? { severity: x.severity, count: 0, nets: new Map(), parts: new Map() };
+    byCode.set(x.code, c);
+    c.count++;
+    const nets = netsOf(x).sort();
+    for (const n of nets.length === 2 ? [nets.join(' / ')] : nets) c.nets.set(n, (c.nets.get(n) ?? 0) + 1);
+    for (const r of refsOf(x)) c.parts.set(r, (c.parts.get(r) ?? 0) + 1);
+  }
+  const after = matching.length - offset - page.length;
+  return {
+    drc,
+    drc_found: {
+      open: open.length,
+      ...(filtered ? { matching: matching.length } : {}),
+      listed: page.length ? `${offset + 1}–${offset + page.length} of ${matching.length}` : `none (offset ${offset} of ${matching.length})`,
+      by_code: Object.fromEntries([...byCode].map(([code, c]) => [code, { severity: c.severity, count: c.count, ...(c.nets.size ? { nets: top(c.nets) } : {}), ...(c.parts.size ? { at: top(c.parts) } : {}) }])),
+      more: `${matching.length - page.length} ${filtered ? 'matching ' : ''}finding(s) not listed${after > 0 ? `; get_board drc: { offset: ${offset + page.length}${filter.code ? `, code: "${filter.code}"` : ''}${filter.net ? `, net: "${filter.net}"` : ''}${filter.ref ? `, ref: "${filter.ref}"` : ''} } lists the next ${Math.min(after, limit)}` : ''}. drc: { code, net, ref } lists only the findings of one code, net or part (by_code counts them; nets and at name the six it finds most)${filtered ? '; drc without them lists all' : ''}.`,
+    },
+  };
+}
+
+/** Compact board description for agents (design_query get_board). `drc`: which DRC findings to list (drcList). */
+export function boardSummary(b: BoardView, routed = true, drc?: DrcFilter) {
   return {
     outline_mm: b.outline,
     layers: b.layers.length,
     rules: b.rules,
+    // early, so a long answer cut short for the agent still has its findings
+    ...drcList(b, drc),
     ...(b.stackup
       ? {
           stackup: {
@@ -1558,8 +1619,6 @@ export function boardSummary(b: BoardView, routed = true) {
           },
         }
       : {}),
-    // (drawn copper: with code and entities, which add_waiver takes for a soft rule kept on purpose)
-    drc: b.diagnostics.filter((x) => !x.waivedBy).map((x) => (b.drawn ? `${x.severity} ${x.code}${x.entities.length ? ` [${x.entities.join(', ')}]` : ''}: ${x.message}` : `${x.severity}: ${x.message}`)),
     missing_footprints: b.missing,
     ...(b.drawn ? { copper_note: 'Drawn copper: you lay every track and via (draw_track, draw_pair, draw_via, edit_copper, tune_length, erase_copper; route nets / from, to as a helper). Planes and pours still fill round your copper. Parts move only when moved on purpose; a part moved takes the copper by it along (its pads\' tracks as far as they stay by it, and the vias they end on), the piece beyond stretches: look at the spot after a move.' } : {}),
     note: 'Workflow: decide the main parts\' places and rotations (try_placements compares arrangements, propose_placement parts applies one; the placer puts the small parts round them), then fine-tune (place = a choice for a part, which stays where you put it when other parts move (relative to a parent only if you attached it to one), rot turns it; lock: true pins it exactly; set_board for the size; placement_measures say how the arrangement routes: shorter, fewer crossing ratsnest lines are better), then route as the last step, to 100 %. Later changes keep the placement and move only what they must; routing then shows as out of date until route runs again. Keep parts together with constrain near, put a part on the bottom side with constrain layer (value "bottom"; SMD parts on opposite sides may overlap), choose planes with set_plane (inner layers are dedicated planes, outer layers get a pour).',
