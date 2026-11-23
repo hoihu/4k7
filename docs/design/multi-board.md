@@ -109,17 +109,25 @@ ending at its connector pin. Nothing in them needs to know other boards exist.
 
 | Per board | For the system |
 |---|---|
-| outline, layers, stack-up, rules | the fab house (one profile for the design, §5) |
+| outline, layers, stack-up, rules, the fab tier (§5) | the fab house (one for the design, §5) |
 | placement, routing, copper, DRC | the ERC and the mate checks |
 | panel | the enclosure and the 3D assembly |
 | Gerber, drill, pick-and-place, fab check: one zip per board (`<design>-<board>.zip`) | the BOM: per board and combined; the cost and the order |
 
 ## 5. Same fab house
 
-One fab profile for every board: `set_fab_profile` sets it on each (built: stored per board, as
-the profile was, so the DRC of each board reads it where it always did; a new board starts with
-the first board's layers, rules and profile). Each board still has its own layer count, thickness
-and stack-up, checked against that one profile.
+One fab house for every board. `set_fab_profile` without `board` sets the profile on each (built:
+stored per board, as the profile was, so the DRC of each board reads it where it always did; a new
+board starts with the first board's layers, rules and profile). With `board` it sets that board's
+only, so a 4-layer main board and a 2-layer LED board each get the house's tier for their layer
+count (built 2026-11-23, after the bike lamp's boards were merged into one design: JLCPCB's 4-layer
+tier on both left the 2-layer board with a `DRC.FAB_LAYERS` that could not be fixed or waived). A
+board's profile must be of the house the other boards have (`FAB_INVALID` otherwise): the cost
+check prices every board at one house. A board for a different house is not supported.
+
+`DRC.FAB_LAYERS` names its board: the entity is the board's name, and the message says
+`set_fab_profile board: "<name>"`. Choosing the right tier is the fix; a board the user means to
+make that way is waived with `add_waiver` for that entity, which matches no other board's finding.
 
 **The cost and the stock** (built): each board is an assembly order of its own at the one house,
 as a house takes it (its own setup, stencil, losses and minimums, so a part used on both boards is

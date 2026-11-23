@@ -77,6 +77,63 @@ describe('several boards in one design', () => {
     expect(d.boards?.b_2?.settings?.fab?.house).toBe('JLCPCB');
   });
 
+  describe('a fab tier per board', () => {
+    const layersOn = (k: Kernel, board: string) => k.board({}, k.boardId(board)).diagnostics.filter((x) => x.code === 'DRC.FAB_LAYERS');
+    const ok = (k: Kernel, ops: Transaction['ops']) => {
+      const r = k.transact({ summary: 'x', ops });
+      expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+      return r;
+    };
+    /** A 4-layer main board and the 2-layer LED board, JLCPCB's 4-layer tier set on both. */
+    const fourAndTwo = () => {
+      const k = twoBoards();
+      ok(k, [{ op: 'set_board', board: 'Main', layers: 4 }, { op: 'set_fab_profile', preset: 'jlcpcb/4l-1oz' }]);
+      return k;
+    };
+
+    it('finds the tier on the board it does not fit, and names the board', () => {
+      const k = fourAndTwo();
+      expect(layersOn(k, 'Main')).toEqual([]);
+      const [x] = layersOn(k, 'LED board');
+      expect(x).toMatchObject({ severity: 'error', entities: ['LED board'] });
+      expect(x!.message).toMatch(/LED board/);
+      expect(x!.message).toMatch(/board: "LED board"/);
+    });
+
+    it('sets the profile of one board only, when board is given', () => {
+      const k = fourAndTwo();
+      const r = ok(k, [{ op: 'set_fab_profile', board: 'LED board', preset: 'jlcpcb/2l-1oz' }]);
+      expect(r.results[0]!.effect).toMatch(/LED board/);
+      const d = k.draftDesign();
+      expect(d.boards!.b_2!.settings!.fab!.id).toBe('jlcpcb/2l-1oz');
+      expect(d.board!.fab!.id).toBe('jlcpcb/4l-1oz');
+      expect(layersOn(k, 'LED board')).toEqual([]);
+      expect(layersOn(k, 'Main')).toEqual([]);
+      // without board: every board again
+      ok(k, [{ op: 'set_fab_profile', preset: 'jlcpcb/2l-2oz' }]);
+      const e = k.draftDesign();
+      expect([e.board!.fab!.id, e.boards!.b_2!.settings!.fab!.id]).toEqual(['jlcpcb/2l-2oz', 'jlcpcb/2l-2oz']);
+      expect(layersOn(k, 'Main')).toMatchObject([{ entities: ['Main'] }]);
+    });
+
+    it('refuses a board it does not know, and another house on one board', () => {
+      const k = fourAndTwo();
+      expect(k.transact({ summary: 'x', ops: [{ op: 'set_fab_profile', board: 'Lamp', preset: 'jlcpcb/2l-1oz' }] }).rejection?.code).toBe('BOARD_UNKNOWN');
+      expect(k.transact({ summary: 'x', ops: [{ op: 'set_fab_profile', board: 'LED board', preset: 'pcbway' }] }).rejection?.code).toBe('FAB_INVALID');
+    });
+
+    it('waives the finding on the board it names only', () => {
+      const k = fourAndTwo();
+      ok(k, [{ op: 'add_waiver', code: 'DRC.FAB_LAYERS', entities: ['LED board'], reason: 'made as 4 layers on purpose' }]);
+      expect(layersOn(k, 'LED board')[0]!.waivedBy).toBeDefined();
+      // the 2-layer tier on both: the main board's finding is not waived by the LED board's waiver
+      ok(k, [{ op: 'set_fab_profile', preset: 'jlcpcb/2l-1oz', keep_rules: true }]);
+      const [m] = layersOn(k, 'Main');
+      expect(m).toMatchObject({ entities: ['Main'] });
+      expect(m!.waivedBy).toBeUndefined();
+    });
+  });
+
   it('answers get_board per board, and for all of them', () => {
     const k = twoBoards();
     const all = k.query({ op: 'get_board' }) as { boards: { board: string }[] };

@@ -100,7 +100,10 @@ The nets do not change, only the parts and the mate:
 ## 6. The rest of the design
 
 - **The fab house** is shared: `set_fab_profile` sets it on every board. Each board keeps its own
-  layers, size and rules.
+  layers, size and rules. A board whose layer count the tier is not made in shows `DRC.FAB_LAYERS`
+  naming that board: give it the same house's tier for its layers with `set_fab_profile board:
+  "<board>"` (e.g. `jlcpcb/2l-1oz` for a 2-layer board beside a 4-layer one). Another house on one
+  board is refused.
 - **Cost**: the sourcing cost check prices each board as its own assembly order at the house (its
   own setup and stencil), added up. A second board adds those fees: say so when the user weighs a
   split.

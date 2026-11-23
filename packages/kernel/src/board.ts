@@ -4,6 +4,7 @@
  * copper checks.
  */
 import { type BoardCutout, type BoardPad, type BoardPart, type BoardRules, boardStackup, type BoardView, type CopperLayer, cutoutDistance, cutoutPolygon, type Design, type Diagnostic, type DrawnCopper, type DrawnTrack, type DrawnVia, figureDepths, insideBoard, type LaidTrack, type PadAnchor, padCapsule, padPins, placeCutout, placeGraphic, placeKeepout, PLANE_AREA_MARGIN, type PlaneArea, type RatsLine, type SchematicView, type StoredCopper, type StoredPlacement, type Track, type UnroutedConnection, type Via, VIA_PITCH, viaCurrentFor, type ViaGroup, viasForCurrent } from '@4k7/schema';
+import { boardName } from './boards.ts';
 import { stableJson } from './canonical.ts';
 import { type Board as CongestionBoard, congestion } from './congestion.ts';
 import { boardInputs, Memo } from './derive.ts';
@@ -195,7 +196,7 @@ export function placeBoard(d: Design, sch: SchematicView): BoardView {
     view.diagnostics.push(...panelTabDrc(view));
   }
   // (pads that touch: a short, from the placement on, routed or not)
-  view.diagnostics.push(...fabPlacementDrc(view), ...keepoutDrc(view), ...padShorts(view));
+  view.diagnostics.push(...fabPlacementDrc(view, boardName(d), !!d.focus), ...keepoutDrc(view), ...padShorts(view));
   applyWaivers(d, view.diagnostics);
   return view;
 }

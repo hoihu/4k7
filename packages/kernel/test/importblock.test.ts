@@ -61,6 +61,44 @@ function target(): Kernel {
 const importing = (k: Kernel, op: Omit<Extract<EditOp, { op: 'import_block' }>, 'op'>, src: ImportSources | null = sources()) =>
   k.transact({ summary: 'import', ops: [{ op: 'import_block', ...op }] }, 'agent', undefined, src ?? undefined);
 
+/** "led": one block, a thermistor TH1 and its header J1 on NTC, an internal net, and GND. */
+function ledFile(): Design {
+  const k = new Kernel();
+  const r = k.transact({
+    summary: 'led',
+    ops: [
+      { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J1' },
+      { op: 'add_part', part: 'generic:R', refdes: 'TH1', params: { resistance: '10k' } },
+      { op: 'connect', pins: ['J1.1', 'TH1.1'], net: 'NTC' },
+      { op: 'connect', pins: ['J1.2', 'TH1.2'], net: 'GND' },
+      { op: 'describe', blocks: [{ title: 'NTC', refs: ['J1', 'TH1'] }] },
+    ],
+  });
+  expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+  k.accept();
+  return JSON.parse(k.exportDesign()) as Design;
+}
+const ntcSources = (): ImportSources => ({ projects: ['led'], files: { led: JSON.stringify(ledFile()) } });
+
+/** The main board: J1 and R9 on its own NTC net; with `boards`, R9 sits on an LED board of its own. */
+function ntcTarget(boards = false): Kernel {
+  const k = new Kernel();
+  const r = k.transact({
+    summary: 'main',
+    ops: [
+      { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J1' },
+      ...(boards ? [{ op: 'add_sheet', name: 'LED' } as const] : []),
+      { op: 'add_part', part: 'generic:R', refdes: 'R9', params: { resistance: '10k' }, ...(boards ? { sheet: 'LED' } : {}) },
+      { op: 'connect', pins: ['J1.1', 'R9.1'], net: 'NTC' },
+      { op: 'connect', pins: ['J1.2', 'R9.2'], net: 'GND' },
+      ...(boards ? [{ op: 'add_board', name: 'LED board', sheets: ['LED'] } as const] : []),
+    ],
+  });
+  expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+  k.accept();
+  return k;
+}
+
 describe('import_block', () => {
   it('copies the parts, nets and describe block, and lists the values to recheck', () => {
     const k = target();
@@ -110,8 +148,53 @@ describe('import_block', () => {
     const before = JSON.stringify(k.draftSnapshot().design);
     const r = importing(k, { project: 'lamp', block: 'Power LED', nets: { GND: 'GND' } });
     expect(r.rejection).toMatchObject({ code: 'NET_UNMAPPED', candidates: ['+5V'] });
-    expect(importing(k, { project: 'lamp', block: 'Power LED', nets: { GND: 'GND', '+5V': '+3V3', LED_A: 'X' } }).rejection?.code).toBe('NET_UNKNOWN');
+    expect(importing(k, { project: 'lamp', block: 'Power LED', nets: { GND: 'GND', '+5V': '+3V3', FB: 'X' } }).rejection).toMatchObject({ code: 'NET_UNKNOWN', candidates: ['+5V', 'GND', 'LED_A'] });
     expect(JSON.stringify(k.draftSnapshot().design)).toBe(before);
+  });
+
+  it('joins an internal net the agent maps onto the net of that name here instead of making NTC_2', () => {
+    const plain = ntcTarget();
+    const r0 = importing(plain, { project: 'led', block: 'NTC', nets: { GND: 'GND' } }, ntcSources());
+    expect(r0.status, JSON.stringify(r0.rejection)).toBe('ok');
+    expect(r0.results[0]!.imported!.renamed.nets).toEqual({ NTC: 'NTC_2' }); // unmapped: made anew as before
+
+    const k = ntcTarget();
+    const r = importing(k, { project: 'led', block: 'NTC', nets: { GND: 'GND', NTC: 'NTC' } }, ntcSources());
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    expect(r.results[0]!.imported!.renamed).toEqual({ refdes: { J1: 'J2' }, nets: {} });
+    expect(r.results[0]!.effect).toMatch(/NTC → NTC/);
+    const d = k.draftSnapshot().design;
+    const by = (ref: string) => Object.values(d.components).find((c) => c.refdes === ref)!;
+    expect(Object.values(d.nets).map((n) => n.name).filter((n) => n.startsWith('NTC'))).toEqual(['NTC']);
+    expect(by('J2').pins['1']).toBe(by('R9').pins['1']);
+    expect(by('TH1').pins['1']).toBe(by('R9').pins['1']);
+  });
+
+  it('makes the net an internal net is mapped to where this design has none', () => {
+    const k = ntcTarget();
+    const r = importing(k, { project: 'led', block: 'NTC', nets: { GND: 'GND', NTC: 'TEMP' } }, ntcSources());
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const d = k.draftSnapshot().design;
+    const th = Object.values(d.components).find((c) => c.refdes === 'TH1')!;
+    expect(d.nets[th.pins['1']!]!.name).toBe('TEMP');
+    expect(Object.values(d.nets).filter((n) => n.name === 'NTC')).toHaveLength(1);
+  });
+
+  it('joins a mapped internal net on a design of two boards, and its parts can go on either board', () => {
+    const k = ntcTarget(true);
+    const r = importing(k, { project: 'led', block: 'NTC', nets: { GND: 'GND', NTC: 'NTC' } }, ntcSources());
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    k.accept();
+    const a = k.transact({ summary: 'to the LED board', ops: [{ op: 'assign_board', board: 'LED board', refs: ['TH1'] }] });
+    expect(a.status, JSON.stringify(a.rejection)).toBe('ok');
+    k.accept();
+    expect(k.boardPlacement(k.boardId('LED board')).parts.map((p) => p.refdes).sort()).toEqual(['R9', 'TH1']);
+    expect(k.boardPlacement(k.boardId('Main')).parts.map((p) => p.refdes)).toContain('J2');
+    const d = k.committedDesign();
+    const by = (ref: string) => Object.values(d.components).find((c) => c.refdes === ref)!;
+    expect(by('TH1').pins['1']).toBe(by('R9').pins['1']); // one NTC across both boards
+    expect(by('J2').pins['1']).toBe(by('R9').pins['1']);
+    expect(Object.values(d.nets).filter((n) => n.name.startsWith('NTC'))).toHaveLength(1);
   });
 
   it('refuses an unknown block or project, and without the projects folder', () => {

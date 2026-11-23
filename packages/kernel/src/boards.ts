@@ -47,6 +47,9 @@ export function resolveBoard(d: Design, ref: string): BoardEntry {
   return b!;
 }
 
+/** The name of the board a design (or a board's focus) is about: the focus's board, else the first. */
+export const boardName = (d: Design): string => d.focus?.name ?? firstEntry(d).name;
+
 /** A board's settings as stored (absent: the defaults). */
 export function settingsOf(d: Design, id: string): BoardSettings | undefined {
   return id === FIRST_BOARD ? d.board : d.boards?.[id]?.settings;
@@ -97,7 +100,7 @@ export function focusBoard(d: Design, id: string): Design {
   const waivers: Design['waivers'] = {};
   for (const w of Object.values(d.waivers)) if (!w.board || w.board === id) waivers[w.id] = w;
   const { boards: _b, ...rest } = d;
-  const f = { ...rest, format: DESIGN_FORMAT_VERSION, board: settingsOf(d, id), components, nets, ledger, waivers } as Design;
+  const f = { ...rest, format: DESIGN_FORMAT_VERSION, board: settingsOf(d, id), components, nets, ledger, waivers, focus: { id, name: d.boards?.[id]?.name ?? id } } as Design;
   held.set(f, { components: Object.keys(components), nets: Object.keys(nets), ledger: Object.keys(ledger), waivers: Object.keys(waivers) });
   return f;
 }
@@ -120,7 +123,7 @@ export function commitFocus(d: Design, id: string, f: Design) {
   merge(d.ledger, before.ledger, f.ledger);
   merge(d.waivers, before.waivers, f.waivers);
   for (const k of Object.keys(f) as (keyof Design)[]) {
-    if (k === 'components' || k === 'nets' || k === 'ledger' || k === 'waivers' || k === 'board' || k === 'format') continue;
+    if (k === 'components' || k === 'nets' || k === 'ledger' || k === 'waivers' || k === 'board' || k === 'format' || k === 'focus') continue;
     (d as unknown as Record<string, unknown>)[k] = f[k];
   }
   for (const k of Object.keys(d) as (keyof Design)[]) {
