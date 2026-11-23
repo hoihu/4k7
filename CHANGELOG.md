@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Fixes
+
+- **A track the agent lays no longer leaves other connections open.** Since 0.7.0, when the agent laid one connection with `draw_track` on a routed board and the router could not lay it round the copper already there, the router started again from scratch and preferred any result that laid the track, however much else it left open: a board with one open connection could come back with several more. Now the board with the fewest open connections always wins. Where the copper of another net is in the way, that net is routed again round the track and the rest of the board is kept, which is also quicker (about 1 s instead of 10 to 15 s on a small board). If the track still does not fit, it is not laid, the routing before stays, and `DRC.TRACK_NOT_LAID` says which net is in the way. Boards that showed the extra open connections only need to be routed again.
+
 ## 0.7.0 — 2026-11-22
 
 This release checks the current and power on a board: a microcontroller pin asked to drive more than it is rated for is flagged, tracks, vias and thermal spokes are checked against the current they carry, and a heat map shows where the copper works hardest. The agent can copy a block you already built in another project into the open design, give an enclosure a clear window, and swap pins and gates, including an ATtiny85's GPIO pins, to untangle the board. Parts can be marked do-not-populate, test points go on the power rails, and the design document can be downloaded as a file.
