@@ -17,7 +17,18 @@ const PART_SEGMENTS = 32;
 export function createBoardLib(w: ManifoldToplevel, api: CsgApi, facts: EnclosureFacts & { solids: PartSolids }, brief?: EnclosureBrief, graphics: EnclosureGraphic[] = []) {
   const { Manifold, CrossSection } = w;
 
-  const parts_info = facts.parts.map((p) => ({ ref: p.ref, kind: p.kind, min: p.min, max: p.max, side: p.side, approx: p.approx, mating: p.mating ? { facing: p.mating.facing, origin: p.mating.origin, dir: p.mating.dir, u: p.mating.u, v: p.mating.v, size: p.mating.size } : null }));
+  const parts_info = facts.parts.map((p) => ({ ref: p.ref, kind: p.kind, min: p.min, max: p.max, side: p.side, approx: p.approx, mating: p.mating ? { facing: p.mating.facing, origin: p.mating.origin, dir: p.mating.dir, u: p.mating.u, v: p.mating.v, size: p.mating.size } : null, ...(p.board ? { board: p.board } : {}) }));
+  // a design of several boards (docs/design/multi-board.md §6): the first board is the script's frame, the others where they stand
+  const boards = (facts.boards ?? []).map((b) => ({ id: b.id, name: b.name, at: b.at, rot: b.rot, flipped: b.flipped, by: b.by, size: b.size, thickness: b.thickness, outline: b.outline, cutouts: b.cutouts, holes: b.holes }));
+  /** A board by name or id; absent: the first. */
+  function boardOf(fn: string, ref: unknown) {
+    if (ref === undefined || ref === null) return null;
+    const b = facts.boards?.find((x) => x.id === ref || x.name === ref);
+    if (!b) throw new Error(`${fn}: no board ${JSON.stringify(ref)}: ${facts.boards ? `the boards are ${facts.boards.map((x) => x.name).join(', ')}` : 'the design has one board'}`);
+    return b === facts.boards![0] ? null : b;
+  }
+  const at = (m: number[][], p: readonly number[]) => [0, 1, 2].map((i) => m[i]![0]! * p[0]! + m[i]![1]! * p[1]! + m[i]![2]! * p[2]! + m[i]![3]!);
+  const placed = (m: number[][]) => [m[0]![0]!, m[1]![0]!, m[2]![0]!, 0, m[0]![1]!, m[1]![1]!, m[2]![1]!, 0, m[0]![2]!, m[1]![2]!, m[2]![2]!, 0, m[0]![3]!, m[1]![3]!, m[2]![3]!, 1] as const;
   const brief_openings = brief?.openings ?? [];
   const known = () => (parts_info.length ? `the parts are ${parts_info.map((p) => p.ref).join(', ')}` : 'the board has no parts');
 
@@ -43,13 +54,28 @@ export function createBoardLib(w: ManifoldToplevel, api: CsgApi, facts: Enclosur
   }
 
   let pcbSolid: Manifold | null = null;
-  function pcb(): Manifold {
+  const otherPcbs = new Map<string, Manifold>();
+  /** pcb(board?): the board, outline, cutouts and mounting holes; another board of several where it stands. */
+  function pcb(ref?: unknown): Manifold {
+    const b = boardOf('pcb', isOptions(ref) ? ref.board : ref);
+    if (b) {
+      const have = otherPcbs.get(b.id);
+      if (have) return have;
+      let shape = CrossSection.ofPolygons([b.outline], 'EvenOdd');
+      if (b.cutouts.length) shape = shape.subtract(CrossSection.ofPolygons(b.cutouts, 'EvenOdd'));
+      if (b.holes.length) shape = CrossSection.difference([shape, ...b.holes.map((h) => CrossSection.circle(h.d / 2, 32).translate([h.x, h.y]))]);
+      const solid = shape.extrude(b.thickness).transform(placed(b.matrix) as unknown as Parameters<Manifold['transform']>[0]);
+      otherPcbs.set(b.id, solid);
+      return solid;
+    }
     if (pcbSolid) return pcbSolid;
     const holes = facts.holes.map((h) => CrossSection.circle(h.d / 2, 32).translate([h.x, h.y]));
     const shape = holes.length ? CrossSection.difference([pcb_shape(), ...holes]) : pcb_shape();
     pcbSolid = shape.extrude(facts.thickness);
     return pcbSolid;
   }
+  /** Every board where it stands (one board: pcb()). */
+  const pcbs = (): Manifold => (facts.boards && facts.boards.length > 1 ? Manifold.union(facts.boards.map((b) => pcb(b.id))) : pcb());
 
   /** One solid of a part, in its body's coordinates with y flipped (up). */
   function partSolid(s: PartSolid): Manifold {
@@ -77,7 +103,7 @@ export function createBoardLib(w: ManifoldToplevel, api: CsgApi, facts: Enclosur
 
   let partsSolid: Manifold | null = null;
   const parts = (): Manifold => (partsSolid ??= Manifold.union(parts_info.map((p) => part(p.ref))));
-  const assembly = (): Manifold => pcb().add(parts());
+  const assembly = (): Manifold => pcbs().add(parts());
 
   /** The box round a part, grown by grow. */
   function part_box(ref: unknown, a?: unknown): Manifold {
@@ -107,11 +133,27 @@ export function createBoardLib(w: ManifoldToplevel, api: CsgApi, facts: Enclosur
     return Manifold.union([parts(), ...paths]);
   }
 
-  /** hole_posts(from, { d }): a post under each mounting hole, from z = from up to the board's underside. */
+  /**
+   * hole_posts(from, { d, board }): a post under each mounting hole, from z = from up to the board's
+   * underside; another board of several: under its holes where it stands (a standoff from the floor
+   * or from the board below: from is that board's top, pcb_thickness for the first).
+   */
   function hole_posts(from: unknown, a?: unknown): Manifold {
     const z = from as number;
+    const o = isOptions(a) ? a : {};
+    const d = (typeof a === 'number' ? a : (o.d ?? 6)) as number;
+    const b = boardOf('hole_posts', o.board);
+    if (b) {
+      const posts = b.holes.map((h) => {
+        const [x, y, z0] = at(b.matrix, [h.x, h.y, 0]);
+        const z1 = at(b.matrix, [h.x, h.y, b.thickness])[2]!;
+        const under = Math.min(z0!, z1);
+        if (typeof z !== 'number' || !Number.isFinite(z) || z >= under) throw new Error(`hole_posts: from is where the posts start, under board "${b.name}" (its underside is at z = ${Math.round(under * 1000) / 1000} there), got ${String(from)}`);
+        return Manifold.cylinder(under - z, d / 2, d / 2, 48).translate([x!, y!, z]);
+      });
+      return Manifold.union(posts);
+    }
     if (typeof z !== 'number' || !Number.isFinite(z) || z >= 0) throw new Error(`hole_posts: from is where the posts start, under the board (z < 0), got ${String(from)}`);
-    const d = (typeof a === 'number' ? a : isOptions(a) ? (a.d ?? 6) : 6) as number;
     return Manifold.union(facts.holes.map((h) => Manifold.cylinder(-z, d / 2, d / 2, 48).translate([h.x, h.y, z])));
   }
 
@@ -199,6 +241,8 @@ export function createBoardLib(w: ManifoldToplevel, api: CsgApi, facts: Enclosur
     tallest_top: facts.tallestTop,
     lowest_bottom: facts.lowestBottom,
     parts_info,
+    boards,
+    mates: facts.mates ?? [],
     brief_openings,
     lid_clearance: brief?.lid_clearance_mm ?? DEFAULT_LID_CLEARANCE,
     graphics: graphics.map((g) => ({ name: g.name, w: g.w, h: g.h })),
@@ -207,6 +251,7 @@ export function createBoardLib(w: ManifoldToplevel, api: CsgApi, facts: Enclosur
     face_frame,
     pcb_shape,
     pcb,
+    pcbs,
     part,
     parts,
     assembly,

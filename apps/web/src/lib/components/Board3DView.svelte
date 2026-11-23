@@ -1,14 +1,15 @@
 <script lang="ts">
   import { boardBodies } from '@4k7/parts';
-  import type { BoardView } from '@4k7/schema';
+  import type { BoardPlace, BoardView } from '@4k7/schema';
   import type { BoardViewer, TopView, ViewPreset } from '../three-body.ts';
 
   /**
    * The assembled board in 3D (three.js, loaded when first shown). With `from` (the 2D view's
    * area), it starts exactly at that top-down view and flies into 3D; `onready` once the first
-   * frame is drawn (so the 2D view can step aside without a blank moment).
+   * frame is drawn (so the 2D view can step aside without a blank moment). `assembly`: a design of
+   * several boards, every board where it stands (docs/design/multi-board.md §6).
    */
-  let { board, from = null, onready }: { board: BoardView; from?: TopView | null; onready?: () => void } = $props();
+  let { board, assembly = null, from = null, onready }: { board: BoardView; assembly?: { board: BoardView; at: BoardPlace }[] | null; from?: TopView | null; onready?: () => void } = $props();
   let started = false;
 
   /** Fly back to straight above the current point (before switching to 2D). */
@@ -47,7 +48,8 @@
 
   $effect(() => {
     if (!viewer) return;
-    viewer.setBoard(board, boardBodies(board, { fitted: true }), { mating: plugs });
+    if (assembly && assembly.length > 1) viewer.setAssembly(assembly.map((x) => ({ ...x, bodies: boardBodies(x.board, { fitted: true }) })), { mating: plugs });
+    else viewer.setBoard(board, boardBodies(board, { fitted: true }), { mating: plugs });
     if (!started) {
       started = true;
       if (from) viewer.flyFromTop(from);
