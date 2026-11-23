@@ -20,7 +20,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
 import { assemblyEnclosureFacts, copperCheckText, enclosureApiSummary, enclosureFacts, type PartSolids, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
@@ -251,8 +251,8 @@ class AppState {
   private kernel = createKernel();
   /** Datasheet import (Parts view). */
   ingest = new IngestState(this.kernel, () => this.imports.settled());
-  /** The import_part tool, queueing imports behind the one under way. */
-  imports = new PartImports(this.ingest, { flash: (m) => this.flash(m) });
+  /** The import_part tool, queueing imports behind the one under way (extracted while it waits for review). */
+  imports: PartImports<IngestState> = new PartImports(this.ingest, { spare: () => new IngestState(this.kernel, () => this.imports.settled()), flash: (m) => this.flash(m) });
   artwork = new ArtworkLibrary(this.kernel);
   private agent!: Agent;
   private abort: AbortController | null = null;
@@ -1291,15 +1291,17 @@ class AppState {
           return { content: guide.replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''), isError: false, label: 'query · get_guide', detail: topic! };
         }
         if ((input as { op?: string })?.op !== 'get_board') break;
+        const q = QueryOp.safeParse(input);
+        if (!q.success || q.data.op !== 'get_board') return fail('query · get_board', q.error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') ?? 'not get_board');
         // several boards and none named: the kernel lists them all (placement, and what is routed)
-        const asked = (input as { board?: string }).board;
+        const asked = q.data.board;
         if (asked === undefined && (this.k?.boards.length ?? 1) > 1) break;
         const notThere = await this.showBoard(asked);
         if (notThere) return fail('query · get_board', notThere);
         // routed in the board worker, so the kernel stays responsive
         const b = await this.routedBoard();
         if (!b) return fail('query · get_board', 'The board could not be computed.');
-        return { content: JSON.stringify(boardSummary(b)), isError: false, label: 'query · get_board', detail: `${b.stats.routed}/${b.stats.nets} nets routed` };
+        return { content: JSON.stringify(boardSummary(b, true, q.data.drc)), isError: false, label: 'query · get_board', detail: `${b.stats.routed}/${b.stats.nets} nets routed` };
       }
       case 'sourcing':
         return sourcingTool(input, { stock: (boards, h) => this.checkStock(boards, h), cost: (boards, h) => this.checkCost(boards, h), values: (boards, h) => this.checkValues(boards, h) }, this.house);
@@ -1666,7 +1668,7 @@ class AppState {
   /** Execute one tool call forwarded by the local server: the turn tools here, the design tools in runTool. */
   async handleServerCall(tool: string, input: unknown): Promise<{ isError: boolean; content: ToolContent[] }> {
     const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] });
-    if (tool === 'submit_part') return this.ingest.submit(input); // datasheet import, not a design change
+    if (tool === 'submit_part') return this.imports.extracting.submit(input); // datasheet import, not a design change
     if (this.inAppBusy) return text('The in-app agent is working on this design right now. Try again when it has finished.', true);
 
     // the activity block is created lazily, so waiting for review does not open a new one

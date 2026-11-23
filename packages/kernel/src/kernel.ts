@@ -29,6 +29,7 @@ import {
   type SchematicRule,
   PAGE,
   boardSummary,
+  type DrcFilter,
   resolveChecks,
   type CheckSettings,
   DEFAULT_BOARD,
@@ -561,7 +562,7 @@ export class Kernel {
       return {
         boards: boardList(all).map((b) => {
           const { board: _b, name: _n, ...place } = at.get(b.id)!;
-          return { board: b.name, id: b.id, assembly: place, ...this.boardAnswer(all, b.id) };
+          return { board: b.name, id: b.id, assembly: place, ...this.boardAnswer(all, b.id, q.drc) };
         }),
         assembly_frame: 'the first board\'s: x right, y down from its top-left corner, z up from its top surface (mm); a board\'s point (u, v) is at rot·(flipped ? −u : u, v) + (x, y)',
       };
@@ -766,7 +767,7 @@ export class Kernel {
         };
       }
       case 'get_board':
-        return this.boardAnswer(all, bid);
+        return this.boardAnswer(all, bid, q.drc);
       case 'try_placements':
         return tryPlacements(d, this.analyse(all).view, q.candidates, !!q.route, this.viewOfBoard(all, bid), q.explore !== false);
       case 'suggest_moves':
@@ -797,11 +798,11 @@ export class Kernel {
   }
 
   /** get_board for one board: routing is expensive, so the routed board where it has been computed, otherwise placement only (drawn copper routes nothing: always computed). */
-  private boardAnswer(all: Design, id: string) {
+  private boardAnswer(all: Design, id: string, drc?: DrcFilter) {
     const d = this.focus(all, id);
     const routed = d.board?.drawn ? this.board({}, id) : this.viewOfBoard(all, id);
     const b = routed ?? this.boardPlacement(id);
-    return { ...boardSummary(b, !!routed), plane_plan: planePlan(d, b) };
+    return { ...boardSummary(b, !!routed, drc), plane_plan: planePlan(d, b) };
   }
 
   /**

@@ -585,7 +585,7 @@ export const PlaceOp = z.object({
   ref: componentRef,
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
-  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation; omit it to keep the current one'),
+  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation as seen from the top, on either side; omit it to keep the current one. On the bottom the footprint is mirrored first, then turned the same way as on the top (so at rot 0 the pads a top part has on its left are on its right)'),
   side: z.enum(['top', 'bottom']).optional().describe('The board side it is mounted on; omit it to keep the current one (top unless it was put on the bottom). On the bottom the footprint is mirrored (seen from the top), its SMD pads are on B.Cu and it shares the area with the SMD parts on the top side; through-hole parts occupy both. Putting a part on the bottom is a choice with a price: see the layout guide'),
   lock: z.boolean().optional().describe('true: lock the part exactly there (a hard pin, e.g. connectors at the edge). Default: a choice for this part, in board coordinates: it stays there when other parts move, nudged only if it must. Kept relative to (following) a parent part only if that was declared with attach'),
   quote: z.string().optional().describe("The user's words when they asked for this placement: it is then their choice, not yours"),
@@ -691,7 +691,7 @@ export const PartPlacement = z.object({
   ref: componentRef,
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
-  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation (default 0): turn the part so its pins face what they connect to'),
+  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation as seen from the top (default 0; on the bottom the mirrored footprint is turned the same way): turn the part so its pins face what they connect to'),
   side: z.enum(['top', 'bottom']).optional().describe('The board side (default: as it is now, top unless put on the bottom). A big part on the bottom is the exception: see the layout guide'),
 });
 export type PartPlacement = z.infer<typeof PartPlacement>;
@@ -1050,7 +1050,20 @@ export const QueryOp = z.discriminatedUnion('op', [
     nets: z.array(netName).optional().describe('Only these nets'),
     rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('Only copper with a point inside this rectangle (mm)'),
   }).describe('Drawn copper: every track (id, net, layer, width, points in mm, the pads its ends lie on) and via (id, net, at, drill, size), to edit or erase by id'),
-  z.object({ op: z.literal('get_board'), board: boardRef }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
+  z.object({
+    op: z.literal('get_board'),
+    board: boardRef,
+    drc: z
+      .object({
+        code: z.string().min(1).optional().describe('Only findings with this code, e.g. "DRC.CLEARANCE"'),
+        net: netName.optional().describe('Only findings that name this net'),
+        ref: z.string().min(1).optional().describe('Only findings at this part (refdes), track or via (id)'),
+        offset: z.number().int().min(0).optional().describe('Skip this many of the matching findings (default 0): the next page'),
+        limit: z.number().int().min(1).max(200).optional().describe('List at most this many (default 20)'),
+      })
+      .optional()
+      .describe('get_board: which DRC findings to list. Many findings (a stricter clearance, say) do not fit in one answer: get_board lists 20, counts all of them by code (with the nets and parts they name most) and says how many are not listed; page on with offset or narrow by code, net or ref. With several boards and none named, it applies to each board'),
+  }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results (up to 20 listed; drc pages and filters them)'),
   z.object({
     op: z.literal('get_current_map'), board: boardRef,
     nets: z.array(netName).optional().describe('Only these nets'),

@@ -265,15 +265,26 @@ function routeNets(input: RouteInput, passes = 40): RouteResult {
     ran++;
     // each pass's copper, so even a quick pass shows (the next one starts from nothing)
     progress?.(r.tracks, r.vias, conns.length - r.failed.length);
-    // (a pass that lays more of the agent's connections as asked is better, whatever else it leaves open)
+    // fewer connections open is better; on a tie, laying more of the agent's connections as asked
+    // (a connection laid is not worth others it leaves open: one laid round copper the passes
+    // before kept, routed from scratch, could cost several, layout.md §5.8)
     const missing = (x: { laid: LaidStatus[] }) => x.laid.filter((t) => !t.laid).length;
-    const improved = !best || missing(r) < missing(best) || (missing(r) === missing(best) && (r.failed.length < best.failed.length || (r.failed.length === best.failed.length && pourOpen(r) < pourOpen(best))));
+    const improved = !best || r.failed.length < best.failed.length || (r.failed.length === best.failed.length && (missing(r) < missing(best) || (missing(r) === missing(best) && pourOpen(r) < pourOpen(best))));
     if (improved) {
       best = r;
       if (r.failed.length) input.onBest?.(result(r, ran));
     }
+    // the kept nets in the way of an open connection or of a connection the agent laid that found no way
+    const inWay = keeping ? new Set([...r.failed.flatMap((c) => r.blockage.get(c)?.blockedBy ?? []), ...r.laid.flatMap((t) => (!t.laid && t.blockedBy ? [t.blockedBy] : []))].filter((n) => keptNets.has(n) && !letGo.has(n))) : new Set<string>();
     if (keeping && missing(r) && !r.timedOut) {
-      // a connection the agent laid that found no way round the kept copper: route from scratch
+      // a connection the agent laid that found no way round the kept copper: the kept nets in its
+      // way are routed again round it, once; failing that, the board is routed from scratch
+      if (inWay.size && rounds < KEEP_ROUNDS) {
+        for (const n of inWay) letGo.add(n);
+        rounds++;
+        stale = 0;
+        continue;
+      }
       keeping = false;
       stale = 0;
       phaseBest = null;
@@ -293,7 +304,6 @@ function routeNets(input: RouteInput, passes = 40): RouteResult {
     let afresh = false;
     if (keeping) {
       // the kept nets in the way of an open connection are routed again with it
-      const inWay = new Set(r.failed.flatMap((c) => r.blockage.get(c)?.blockedBy ?? []).filter((n) => keptNets.has(n) && !letGo.has(n)));
       if (inWay.size && rounds < KEEP_ROUNDS) {
         for (const n of inWay) letGo.add(n);
         rounds++;
