@@ -378,6 +378,8 @@ export interface Mate {
   map?: [string, string][];
   /** cable: its length, for the enclosure and the BOM. */
   length_mm?: number;
+  /** stack: the distance between the two boards, mated (mm); absent: the taller connector's body height. */
+  height_mm?: number;
 }
 
 export type MateKind = 'stack' | 'cable' | 'edge' | 'wire';

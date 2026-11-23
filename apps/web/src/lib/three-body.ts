@@ -8,9 +8,9 @@
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { Body3D } from '@4k7/parts';
+import { boardBodies, type Body3D } from '@4k7/parts';
 import { enclosureFacts } from '@4k7/fab';
-import { boardPolygon, cutoutPolygon, type BoardView } from '@4k7/schema';
+import { boardPolygon, cutoutPolygon, type BoardPlace, type BoardView } from '@4k7/schema';
 
 export type ViewPreset = 'iso' | 'isoBelow' | 'top' | 'bottom' | 'front';
 
@@ -42,6 +42,8 @@ export interface TopView {
 export interface BoardViewer {
   /** Keeps the camera when only the content changes (same board size). `mating`: draw where connectors are plugged from. */
   setBoard(board: BoardView, bodies: Map<string, Body3D>, opts?: { mating?: boolean }): void;
+  /** Every board of the design where the assembly puts it (docs/design/multi-board.md §6). */
+  setAssembly(boards: { board: BoardView; bodies: Map<string, Body3D>; at: BoardPlace }[], opts?: { mating?: boolean }): void;
   view(preset: ViewPreset): void;
   /** Start exactly at this top-down view (the 2D view's), then fly into the 3D view. */
   flyFromTop(from: TopView): void;
@@ -736,6 +738,29 @@ export function createBodyViewer(canvas: HTMLCanvasElement): BodyViewer {
  * Where the board's connectors are plugged from: a faint orange box from each mating face outwards,
  * as wide as the plug (the way the enclosure leaves clear), so a wrong face shows on the board.
  */
+/** Every board of a design of several where it stands, in the first board's frame (docs/design/multi-board.md §6). */
+export function boardsGroup(boards: { board: BoardView; bodies?: Map<string, Body3D>; at: BoardPlace }[], res: Res, redraw?: () => void, opts: { mating?: boolean } = {}): THREE.Group {
+  const all = new THREE.Group();
+  for (const { board, bodies, at } of boards) {
+    const g = boardGroup(board, bodies ?? boardBodies(board), res, redraw);
+    if (opts.mating) g.add(matingMarks(board));
+    g.matrixAutoUpdate = false;
+    g.matrix.copy(placeMatrix(at));
+    all.add(g);
+  }
+  return all;
+}
+
+/**
+ * A board's place as a matrix on three's frame: (board x, height above its top, board y). A board
+ * turned over is turned about its own y axis, so x and the height change sign.
+ */
+function placeMatrix(at: BoardPlace): THREE.Matrix4 {
+  const a = (at.rot * Math.PI) / 180;
+  const [c, n, s] = [Math.cos(a), Math.sin(a), at.flipped ? -1 : 1];
+  return new THREE.Matrix4().set(c * s, 0, -n, at.x, 0, s, 0, at.z, n * s, 0, c, at.y, 0, 0, 0, 1);
+}
+
 function matingMarks(b: BoardView): THREE.Group {
   const g = new THREE.Group();
   const owned: { dispose(): void }[] = [];
@@ -771,6 +796,12 @@ export function createBoardViewer(canvas: HTMLCanvasElement): BoardViewer {
       const group = boardGroup(board, bodies, core.res, core.redraw);
       if (opts.mating) group.add(matingMarks(board));
       core.setContent(group, key === size);
+      size = key;
+    },
+    setAssembly(boards, opts = {}) {
+      const key = boards.map((b) => `${b.board.outline.w}x${b.board.outline.h}@${b.at.x},${b.at.y},${b.at.z},${b.at.rot},${b.at.flipped}`).join('|');
+      const all = boardsGroup(boards, core.res, core.redraw, opts);
+      core.setContent(all, key === size);
       size = key;
     },
     view: core.view,

@@ -86,14 +86,14 @@ Start with `docs/ARCHITECTURE.md` (overview, package table, roadmap).
 | `part-ingest.md` | Datasheet PDF to verified part (`packages/parts`) |
 | `schematic-drawing.md`, `schematic-rules.md`, `schematic.md` | Schematic drawing, notes/checks (`packages/schema/src/rules.ts`), and the agent guide (`get_guide schematic`) |
 | `layout.md`, `zoom-optimize.md`, `panel.md` | Placement/routing (`packages/kernel`), zoom & optimize, fabrication panels |
-| `multi-board.md` | Designs of several boards: board focus, per-board ops and outputs, mates (`packages/kernel/src/boards.ts`) |
+| `multi-board.md`, `boards.md` | Designs of several boards: board focus, per-board ops and outputs, mates (`packages/kernel/src/boards.ts`, `mates.ts`, `assembly.ts`); agent guide `get_guide boards` |
 | `impedance.md`, `high-speed.md` | Controlled-impedance lines; agent guide `get_guide high_speed` |
 | `fab-rules.md`, `fab-check.md`, `assembly.md` | Manufacturer limits; production files read back and checked (`packages/fab`); polarity marks, pick-and-place |
 | `sourcing.md`, `cost.md` | Catalogue lookup, stock check, order cost (`packages/parts`); `cost.md` is the cost agent's guide |
 | `enclosure.md`, `mechanics.md` | Enclosure script (`packages/fab`); agent guide `get_guide mechanics` |
 | `ui.md` | UI concept (`apps/web`); prototypes in `docs/ui/` |
 
-Several docs (`schematic.md`, `high-speed.md`, `cost.md`, `mechanics.md`) are text the agent itself reads: write them to the agent.
+Several docs (`schematic.md`, `high-speed.md`, `cost.md`, `mechanics.md`, `boards.md`) are text the agent itself reads: write them to the agent.
 
 ## Conventions
 

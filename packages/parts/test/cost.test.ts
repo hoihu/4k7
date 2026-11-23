@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EUROCIRCUITS_ASSEMBLY, JLCPCB_ASSEMBLY, PCBWAY_ASSEMBLY, type BoardPad, type PartQuery, type SupplierPart } from '@4k7/schema';
-import { assemblyFacts, boardHints, checkCost, checkStock, costReportText, estimateLine, estimateOrder, lineBuy, lineIssues, refsText, stockReportText, type AssemblyFacts, type AssemblyQuote, type PartSource, type QuoteOrder, type SourcedComponent, type StockLine } from '../src/index.ts';
+import { assemblyFacts, boardHints, checkCost, combineCosts, combineEstimates, mergeFacts, checkStock, costReportText, estimateLine, estimateOrder, lineBuy, lineIssues, refsText, stockReportText, type AssemblyFacts, type AssemblyQuote, type PartSource, type QuoteOrder, type SourcedComponent, type StockLine } from '../src/index.ts';
 
 const H = JLCPCB_ASSEMBLY;
 const part = (sku: string, o: Partial<SupplierPart> = {}): SupplierPart => ({ sku, mpn: 'X', package: '0603', description: '', stock: 1_000_000, tier: 'Basic', fee: false, price: [{ qty: 1, each: 0.01 }], attributes: {}, url: '', live: true, ...o });
@@ -386,5 +386,55 @@ describe('at a house that prices by quote', () => {
     const r = await checkCost(comps, failing, { house: PW, boards: 10, facts: () => facts({ handJoints: 0, handRefs: [], placements: { smd: 3 } }) });
     expect(r.estimates[0]).toMatchObject({ unavailable: 'PCBWay prices it only through its online quote, which could not be read (pcbway.com answered HTTP 403)' });
     expect(estimateLine(r.estimates, 10, PW)).toMatch(/^no service can take this order/);
+  });
+});
+
+describe('several boards at one house', () => {
+  it('adds up an order per board, service by service, fees named after their board', () => {
+    const lines = [line('C1', ['C1', 'C2'], 20, part('C1'))];
+    const main = estimateOrder(lines, facts(), 10, H);
+    const led = estimateOrder(lines, facts({ smtJoints: 4, handJoints: 0, handRefs: [] }), 10, H);
+    const both = combineEstimates([{ name: 'Main', estimates: main }, { name: 'LED', estimates: led }]);
+    for (const e of both) {
+      const [a, b] = [main.find((x) => x.service === e.service)!, led.find((x) => x.service === e.service)!];
+      if (a.unavailable || b.unavailable) {
+        expect(e.unavailable).toBeTruthy();
+        continue;
+      }
+      expect(e.total).toBeCloseTo(a.total + b.total, 9);
+      expect(e.parts).toBeCloseTo(a.parts + b.parts, 9);
+      // the setup is paid twice: each board an order of its own
+      expect(e.fees.filter((f) => f.name.startsWith('Main: ')).length).toBe(a.fees.length);
+      expect(e.fees.filter((f) => f.name.startsWith('LED: ')).length).toBe(b.fees.length);
+    }
+  });
+
+  it('cannot take the whole where one board cannot be taken', () => {
+    const ok = { service: 'S', parts: 1, fees: [], total: 1 };
+    const both = combineEstimates([{ name: 'Main', estimates: [ok] }, { name: 'LED', estimates: [{ ...ok, unavailable: 'too big' }] }]);
+    expect(both[0]!.unavailable).toBe('board "LED": too big');
+  });
+
+  it('names each board\'s savings and hints, and says what each board costs', () => {
+    const r = (total: number, what: string) => ({
+      house: 'JLCPCB', boards: 10, at: '2026-11-23T10:00:00Z', live: true, estimates: [{ service: 'S', parts: 1, fees: [], total }], service: 'S',
+      savings: [{ kind: 'cheaper' as const, refs: ['R1'], saves: 1, what }], unsourced: [], unmatched: [], unpriced: [], board: [{ what: 'small holes' }],
+      stock: { house: 'JLCPCB', boards: 10, at: '', lines: [], unsourced: [], live: true, unpriced: [] },
+    });
+    const stock = { house: 'JLCPCB', boards: 10, at: '2026-11-23T10:00:00Z', lines: [], unsourced: [], live: true, unpriced: [] };
+    const c = combineCosts([{ name: 'Main', report: r(30, 'R1: cheaper') }, { name: 'LED', report: r(12, 'R1: cheaper') }], stock);
+    expect(c.estimates[0]!.total).toBe(42);
+    expect(c.perBoard!.map((b) => [b.name, b.estimate.total])).toEqual([['Main', 30], ['LED', 12]]);
+    expect(c.savings.map((x) => x.what)).toEqual(['Main: R1: cheaper', 'LED: R1: cheaper']);
+    expect(c.board.map((x) => x.what)).toEqual(['Main: small holes', 'LED: small holes']);
+    expect(costReportText(c, H)).toMatch(/Each board is an order of its own \(counted for S\): Main \$30\.00, LED \$12\.00/);
+  });
+
+  it('merges the boards\' facts for comparing parts', () => {
+    const m = mergeFacts([facts({ placements: { smd: 3 } }), facts({ smtJoints: 4, placements: { smd: 1, th: 1 }, layers: 4, chips: ['0402'] })]);
+    expect(m.smtJoints).toBe(24);
+    expect(m.placements).toEqual({ smd: 4, th: 1 });
+    expect(m.layers).toBe(4);
+    expect(m.chips).toEqual(['0603', '0402']);
   });
 });

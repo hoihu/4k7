@@ -38,6 +38,8 @@ const methods = {
   draftDesign: () => kernel.draftDesign(),
   /** The working copy's board placed, not routed (fast): its parts, pads and sides, for what assembly costs. `board`: which (several boards). */
   boardPlacement: (board?: string) => kernel.boardPlacement(board),
+  /** Where every board stands (the assembly), first board first. */
+  assembly: () => kernel.assembly(),
   /** Every board of the working copy placed, first board first. */
   boardPlacements: () => kernel.boardList().map((b) => kernel.boardPlacement(b.id)),
   /** The working copy's board `board` (as a design of its own) and its placement, for the board worker. */
