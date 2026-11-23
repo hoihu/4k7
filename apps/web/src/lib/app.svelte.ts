@@ -20,7 +20,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
 import { copperCheckText, enclosureApiSummary, enclosureFacts, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
@@ -627,6 +627,16 @@ class AppState {
   private areaElsewhere(ref: string | undefined): string | null {
     const b = ref === undefined ? undefined : this.findBoard(ref);
     return b && b.id !== this.shownBoard ? `There is no area on board "${b.name}": the user was looking at board "${this.shownBoardName ?? this.shownBoard}". Leave area out for the whole board, or pass region.` : null;
+  }
+
+  /**
+   * Every board where the assembly puts it, for the 3D view and the STEP file of a design of
+   * several boards (null with one): the board shown as it is laid now, the others placed.
+   */
+  async assemblyBoards(): Promise<{ board: BoardView; at: BoardPlace }[] | null> {
+    if ((this.k?.boards.length ?? 1) < 2) return null;
+    const [places, views] = await Promise.all([this.kernel.assembly(), this.kernel.boardPlacements()]);
+    return places.map((at, i) => ({ at, board: at.board === this.shownBoard && this.board ? this.board : views[i]! }));
   }
 
   /** The name of the board shown, when the design has several (else null). */

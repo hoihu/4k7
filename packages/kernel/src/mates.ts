@@ -113,6 +113,7 @@ export function addMate(d: Design, op: Extract<EditOp, { op: 'mate' }>): OpResul
   }
   if (op.kind === 'wire' && !op.map) reject({ code: 'INVALID_OP', message: 'A wire mate needs map: which pin of each is wired to which.' });
   if (op.cable !== undefined && op.kind !== 'cable') reject({ code: 'INVALID_OP', message: 'cable is for kind cable.' });
+  if (op.height_mm !== undefined && op.kind !== 'stack') reject({ code: 'INVALID_OP', message: 'height_mm is for kind stack (the distance between the stacked boards).' });
   let map: [string, string][] | undefined;
   if (op.map) {
     const ca = cardOf(d, a.part)!;
@@ -130,7 +131,7 @@ export function addMate(d: Design, op: Extract<EditOp, { op: 'mate' }>): OpResul
     }
   }
   const id = same?.id ?? nextId(d, 'm');
-  const m: Mate = { id, a: a.id, b: b.id, kind: op.kind, ...(op.cable ? { cable: op.cable } : {}), ...(map ? { map } : {}), ...(op.length_mm ? { length_mm: op.length_mm } : {}) };
+  const m: Mate = { id, a: a.id, b: b.id, kind: op.kind, ...(op.cable ? { cable: op.cable } : {}), ...(map ? { map } : {}), ...(op.length_mm ? { length_mm: op.length_mm } : {}), ...(op.height_mm ? { height_mm: op.height_mm } : {}) };
   d.mates = { ...d.mates, [id]: m };
   const { pairs, fit } = matePairs(d, m);
   const said = fit ? `; they do not fit: ${fit}` : `: ${pairsText(d, m, pairs)}`;
