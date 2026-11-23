@@ -374,3 +374,53 @@ describe('mates: the boards joined through a connector on each', () => {
     expect(canonicalJson(JSON.parse(k.exportDesign()))).toBe(k.exportDesign());
   });
 });
+
+describe('the assembly: where the boards stand', () => {
+  const ok = (k: Kernel, ops: Transaction['ops']) => {
+    const r = k.transact({ summary: 'x', ops });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+  };
+  /** A pad of the board's connector where the assembly puts it, in the first board's frame. */
+  const placed = (k: Kernel, board: string, ref: string, pin: string) => {
+    const p = k.assembly().find((x) => x.name === board)!;
+    const q = k.boardPlacement(p.board).parts.find((x) => x.refdes === ref)!.pads.find((x) => x.number === pin)!;
+    const [c, n] = [Math.cos((p.rot * Math.PI) / 180), Math.sin((p.rot * Math.PI) / 180)];
+    const u = p.flipped ? -q.x : q.x;
+    return [c * u - n * q.y + p.x, n * u + c * q.y + p.y];
+  };
+
+  it('stacks the second board where its connector meets the first one\'s', () => {
+    const k = twoBoards();
+    expect(k.assembly()[1]!.by).toMatch(/beside/);
+    ok(k, [{ op: 'mate', a: 'J2', b: 'J3', kind: 'stack', height_mm: 11 }]);
+    const [, led] = k.assembly();
+    expect(led!.by).toBe('stacked on J2 ↔ J3');
+    // both connectors on top of their boards: the LED board is turned over, its top 11 mm above the main board's
+    expect(led!.flipped).toBe(true);
+    expect(led!.z).toBe(11);
+    for (const pin of ['1', '2']) {
+      const [x, y] = placed(k, 'LED board', 'J3', pin);
+      const q = k.boardPlacement('b_1').parts.find((p) => p.refdes === 'J2')!.pads.find((p) => p.number === pin)!;
+      expect(x).toBeCloseTo(q.x, 3);
+      expect(y).toBeCloseTo(q.y, 3);
+    }
+    // the socket on the LED board's underside: the board the right way up, its underside 11 mm up
+    ok(k, [{ op: 'constrain', kind: 'layer', a: 'J3', value: 'bottom', strength: 'hard' }]);
+    const [, up] = k.assembly();
+    expect(up!.flipped).toBe(false);
+    expect(up!.z).toBeCloseTo(12.6, 6);
+    const q = k.boardPlacement('b_1').parts.find((p) => p.refdes === 'J2')!.pads.find((p) => p.number === '1')!;
+    const [x, y] = placed(k, 'LED board', 'J3', '1');
+    expect(x).toBeCloseTo(q.x, 3);
+    expect(y).toBeCloseTo(q.y, 3);
+    expect((k.query({ op: 'get_board' }) as { boards: { assembly: { by: string } }[] }).boards[1]!.assembly.by).toBe('stacked on J2 ↔ J3');
+  });
+
+  it('puts a board joined by a cable beside the others', () => {
+    const k = twoBoards();
+    ok(k, [{ op: 'mate', a: 'J2', b: 'J3', kind: 'cable' }]);
+    const [main, led] = k.assembly();
+    expect(led!.x).toBeGreaterThan(k.boardPlacement(main!.board).outline.w);
+    expect(led!.z).toBe(0);
+  });
+});

@@ -44,6 +44,27 @@ export interface BoardEntry {
   settings?: BoardSettings;
 }
 
+/**
+ * Where a board stands in the assembly (docs/design/multi-board.md §6), in the first board's frame:
+ * x right and y down from its top-left corner, z up from its top surface, mm. The board's own point
+ * (u, v), w above its top, is at R(rot)·(flipped ? −u : u, v) + (x, y), height (flipped ? −w : w) + z;
+ * rot in degrees, flipped: turned over (about its v axis).
+ */
+export interface BoardPlace {
+  board: string;
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+  rot: number;
+  flipped: boolean;
+  /** What puts it there ("stacked on J2 ↔ J3", "beside the others …"). */
+  by: string;
+  /** A stack: the mated height between the boards (mm), and whether it is a guess (no height_mm on the mate). */
+  height_mm?: number;
+  height_assumed?: boolean;
+}
+
 export interface BoardSettings {
   /** Fixed outline; absent = sized to fit the placement. */
   width?: number;

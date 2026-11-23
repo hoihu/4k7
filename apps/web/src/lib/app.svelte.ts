@@ -20,12 +20,13 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
-import { copperCheckText, enclosureApiSummary, enclosureFacts, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
+import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { assemblyEnclosureFacts, copperCheckText, enclosureApiSummary, enclosureFacts, type PartSolids, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import costGuide from '../../../../docs/design/cost.md?raw';
 import highSpeedGuide from '../../../../docs/design/high-speed.md?raw';
+import boardsGuide from '../../../../docs/design/boards.md?raw';
 import schematicGuide from '../../../../docs/design/schematic.md?raw';
 import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
@@ -35,7 +36,7 @@ import type { ImportSources } from '@4k7/kernel';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
 import { PartImports } from './importPart.ts';
-import { assemblyFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, placedLand, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
+import { assemblyFacts, combineCosts, combineEstimates, mergeFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, placedLand, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
 import { currentLegend, currentOverlayOn } from './currentMap.ts';
@@ -139,6 +140,17 @@ export function tokenCost(t: TokenCount, fallbackModel: string): number {
 /** An op of a transaction, as far as the route helper's worker needs to know it (see transactEdit). */
 type RouteAsk = { op?: string; nets?: string[]; from?: string; to?: string; fresh?: boolean };
 
+/**
+ * An enclosure render: its report, the facts it was measured against, and the board those are of
+ * (the first board, with several: `boards` has every board where it stands).
+ */
+export interface EnclosureRender {
+  report: EnclosureReport;
+  facts: EnclosureFacts & { solids: PartSolids };
+  board: BoardView;
+  boards: { board: BoardView; at: BoardPlace }[] | null;
+}
+
 class AppState {
   view = $state<View>('sch');
   tab = $state<InspectorTab>('issues');
@@ -217,7 +229,7 @@ class AppState {
   helperRun = $state.raw<{ what: string; progress: RouteProgress | null } | null>(null);
   private helperStop: (() => void) | null = null;
   /** The last enclosure render (the report, its pieces, the board facts it was measured against). */
-  enclosure = $state.raw<{ report: EnclosureReport; facts: EnclosureFacts } | null>(null);
+  enclosure = $state.raw<EnclosureRender | null>(null);
   enclosureBusy = $state(false);
   /** The last stock check and cost check of the chosen house (the Layout view shows them; the agent's land here too), and which one it shows. */
   private lastStock = $state.raw<StockReport | null>(null);
@@ -629,6 +641,16 @@ class AppState {
     return b && b.id !== this.shownBoard ? `There is no area on board "${b.name}": the user was looking at board "${this.shownBoardName ?? this.shownBoard}". Leave area out for the whole board, or pass region.` : null;
   }
 
+  /**
+   * Every board where the assembly puts it, for the 3D view and the STEP file of a design of
+   * several boards (null with one): the board shown as it is laid now, the others placed.
+   */
+  async assemblyBoards(): Promise<{ board: BoardView; at: BoardPlace }[] | null> {
+    if ((this.k?.boards.length ?? 1) < 2) return null;
+    const [places, views] = await Promise.all([this.kernel.assembly(), this.kernel.boardPlacements()]);
+    return places.map((at, i) => ({ at, board: at.board === this.shownBoard && this.board ? this.board : views[i]! }));
+  }
+
   /** The name of the board shown, when the design has several (else null). */
   get shownBoardName(): string | null {
     return this.k && this.k.boards.length > 1 ? (this.k.boards.find((b) => b.id === this.shownBoard)?.name ?? null) : null;
@@ -688,17 +710,17 @@ class AppState {
    * Run the working copy's enclosure script and measure what it makes, in a worker of its own
    * (docs/design/enclosure.md §5). Keeps the result for the Enclosure view and the pictures.
    */
-  async renderEnclosure(): Promise<{ report: EnclosureReport; facts: EnclosureFacts } | { error: string }> {
+  async renderEnclosure(): Promise<EnclosureRender | { error: string }> {
     const design = await this.kernel.draftDesign();
     const script = design.enclosure?.script;
     if (!script) return { error: 'There is no enclosure script yet: write one with design_edit set_enclosure_script.' };
-    const b = await this.routedBoard();
-    if (!b) return { error: 'The board could not be computed.' };
-    const facts = enclosureFacts(b);
+    const at = await this.enclosureBoards();
+    if (!at) return { error: 'The board could not be computed.' };
+    const { facts } = at;
     this.enclosureBusy = true;
     try {
       const report = await renderScript({ facts, script, ...(design.enclosure?.brief ? { brief: design.enclosure.brief } : {}), ...(design.enclosure?.graphics ? { graphics: design.enclosure.graphics } : {}) });
-      const out = { report, facts };
+      const out = { report, ...at };
       this.enclosure = out;
       return out;
     } catch (e) {
@@ -708,14 +730,27 @@ class AppState {
     }
   }
 
-  /** Pictures of the last render for the agent (render_enclosure). */
-  private async enclosurePictures(req: RenderEnclosureInput, r: { report: EnclosureReport; facts: EnclosureFacts }): Promise<{ data: string; mimeType: string; title: string }[]> {
+  /**
+   * What the enclosure is built round: the board, or with several boards every board where it
+   * stands, the first board the script's frame (docs/design/multi-board.md §6).
+   */
+  private async enclosureBoards(): Promise<Omit<EnclosureRender, 'report'> | null> {
+    const all = await this.assemblyBoards().catch(() => null);
+    if (all) {
+      const mates = (this.k?.summary.mates ?? []).map((m) => ({ a: m.a, b: m.b, kind: m.kind, ...(m.height_mm !== undefined ? { height_mm: m.height_mm } : {}) }));
+      const facts = assemblyEnclosureFacts(all.map((x) => ({ b: x.board, id: x.at.board, name: x.at.name, at: x.at })), mates);
+      return { facts, board: all[0]!.board, boards: all };
+    }
     const b = await this.routedBoard();
-    if (!b) return [];
+    return b ? { facts: enclosureFacts(b), board: b, boards: null } : null;
+  }
+
+  /** Pictures of the last render for the agent (render_enclosure). */
+  private async enclosurePictures(req: RenderEnclosureInput, r: EnclosureRender): Promise<{ data: string; mimeType: string; title: string }[]> {
     const design = await this.kernel.draftDesign();
     try {
       const { enclosurePictures } = await import('./enclosure3d.ts');
-      return await enclosurePictures({ board: b, facts: r.facts, pieces: r.report.pieces, findings: r.report.findings, openings: design.enclosure?.brief?.openings ?? [], inlays: scriptInlays(r.report.script) }, req);
+      return await enclosurePictures({ board: r.board, ...(r.boards ? { boards: r.boards } : {}), facts: r.facts, pieces: r.report.pieces, findings: r.report.findings, openings: design.enclosure?.brief?.openings ?? [], inlays: scriptInlays(r.report.script) }, req);
     } catch (e) {
       this.flash(`Enclosure pictures failed: ${(e as Error).message}`);
       return [];
@@ -733,14 +768,14 @@ class AppState {
   private async enclosureQuery(): Promise<unknown> {
     const design = await this.kernel.draftDesign();
     const enc = design.enclosure;
-    const b = await this.routedBoard();
+    const at = await this.enclosureBoards();
     const last = this.enclosure;
     return {
       brief: enc?.brief ?? null,
       open_questions: openQuestions(enc?.brief).map((i) => `${i.topic}: ${i.question}`),
       script: enc?.script ?? null,
       graphics: enclosureGraphicsInfo(enc?.graphics),
-      board_api: b ? enclosureApiSummary(enclosureFacts(b), enc?.brief, enc?.graphics) : 'the board could not be computed',
+      board_api: at ? enclosureApiSummary(at.facts, enc?.brief, enc?.graphics) : 'the board could not be computed',
       last_render: !enc?.script ? 'no script yet' : last && last.report.key === enclosureKey(enc) ? reportText(last.report, last.facts) : 'not rendered since the script or its graphics last changed: render_enclosure',
       how: 'Read design_query get_guide topic "mechanics" before the first brief. 1. The brief (set_enclosure_brief): decide what you can, ask what only the user knows, in one brief; the user answers in the app. 2. The script (set_enclosure_script), JavaScript against board_api: never copy a number the board has, const pieces = [\'base\', \'lid\'];, one function per piece. 3. render_enclosure after every change: fix the report first, then what the pictures show. 4. propose when the report is clean.',
     };
@@ -1018,17 +1053,40 @@ class AppState {
     });
   }
 
-  /** What the assembly fees depend on, read off the working copy's placed board (joints, sides, size); null when it cannot be placed. */
-  private async boardFacts(): Promise<BoardFacts | null> {
-    // several boards: what their making and assembly cost together is not worked out yet
-    // (docs/design/multi-board.md §9): the parts only, as when the board is not known
-    if ((this.k?.boards.length ?? 1) > 1) return null;
+  /**
+   * What the assembly fees depend on, read off the working copy's placed board (joints, sides,
+   * size); null when it cannot be placed. Several boards and none named: all of them as one (for
+   * the values check, which compares parts by their fees; the stock and cost checks go board by
+   * board, see perBoard).
+   */
+  private async boardFacts(board?: string): Promise<BoardFacts | null> {
     try {
-      const b = await this.kernel.boardPlacement();
+      if (board === undefined && (this.k?.boards.length ?? 1) > 1) {
+        const all = await this.kernel.boardPlacements();
+        return (assembled, kinds) => mergeFacts(all.map((b) => assemblyFacts(b, assembled, kinds)));
+      }
+      const b = await this.kernel.boardPlacement(board);
       return (assembled, kinds) => assemblyFacts(b, assembled, kinds);
     } catch {
       return null;
     }
+  }
+
+  /**
+   * A design of several boards: each board's components and facts, for an order per board at the
+   * one house (docs/design/multi-board.md §5); null with one board.
+   */
+  private async perBoard(components: SourcedComponent[]): Promise<{ name: string; components: SourcedComponent[]; facts: BoardFacts }[] | null> {
+    const boards = this.k?.boards ?? [];
+    if (boards.length < 2) return null;
+    const on = new Map(this.k!.summary.components.map((c) => [c.refdes, c.board]));
+    return Promise.all(
+      boards.map(async (b) => {
+        const facts = await this.boardFacts(b.id);
+        if (!facts) throw new Error(`board "${b.name}" could not be placed, so its assembly fees cannot be counted`);
+        return { name: b.name, components: components.filter((c) => on.get(c.refdes) === b.name), facts };
+      }),
+    );
   }
 
   /** The assembly house the checks run for: the user's pick (Layout → Sourcing), else the board's manufacturer when it assembles, else the default. */
@@ -1045,8 +1103,15 @@ class AppState {
   async checkStock(boards?: number, house: AssemblyHouse = this.house): Promise<StockReport> {
     this.stockBusy = true;
     try {
-      const [components, facts] = await Promise.all([this.sourcedComponents(), this.boardFacts()]);
-      const report = await checkDesignStock(components, boards ?? this.settings.buildBoards, facts ?? undefined, house);
+      const components = await this.sourcedComponents();
+      const per = await this.perBoard(components).catch(() => null);
+      const n = boards ?? this.settings.buildBoards;
+      // several boards: the stock for every board together, the order board by board
+      const report = await checkDesignStock(components, n, per ? undefined : ((await this.boardFacts()) ?? undefined), house);
+      if (per) {
+        const each = await Promise.all(per.map(async (b) => ({ name: b.name, estimates: (await checkDesignStock(b.components, n, b.facts, house)).estimates ?? [] })));
+        report.estimates = combineEstimates(each);
+      }
       if (house.id === this.house.id) {
         this.lastStock = report;
         this.sourcingShown = 'stock';
@@ -1061,9 +1126,19 @@ class AppState {
   async checkCost(boards?: number, house: AssemblyHouse = this.house): Promise<CostReport> {
     this.stockBusy = true;
     try {
-      const [components, facts] = await Promise.all([this.sourcedComponents(), this.boardFacts()]);
-      if (!facts) throw new Error('the board could not be placed, so the assembly fees cannot be counted');
-      const report = await checkDesignCost(components, boards ?? this.settings.buildBoards, facts, house);
+      const components = await this.sourcedComponents();
+      const n = boards ?? this.settings.buildBoards;
+      const per = await this.perBoard(components);
+      let report: CostReport;
+      if (per) {
+        // several boards: an order per board at the one house, added up; the stock for them all together
+        const [stock, ...each] = await Promise.all([checkDesignStock(components, n, undefined, house), ...per.map((b) => checkDesignCost(b.components, n, b.facts, house))]);
+        report = combineCosts(per.map((b, i) => ({ name: b.name, report: each[i]! })), stock);
+      } else {
+        const facts = await this.boardFacts();
+        if (!facts) throw new Error('the board could not be placed, so the assembly fees cannot be counted');
+        report = await checkDesignCost(components, n, facts, house);
+      }
       if (house.id === this.house.id) {
         this.lastCost = report;
         this.lastStock = report.stock;
@@ -1210,8 +1285,8 @@ class AppState {
         }
         if ((input as { op?: string })?.op === 'get_guide') {
           const topic = (input as { topic?: string }).topic;
-          const guide = topic === 'mechanics' ? mechanicsGuide : topic === 'cost' ? costGuide : topic === 'high_speed' ? highSpeedGuide : topic === 'schematic' ? schematicGuide : null;
-          if (!guide) return fail('query · get_guide', 'Guides: schematic, mechanics, cost, high_speed.');
+          const guide = topic === 'mechanics' ? mechanicsGuide : topic === 'cost' ? costGuide : topic === 'high_speed' ? highSpeedGuide : topic === 'schematic' ? schematicGuide : topic === 'boards' ? boardsGuide : null;
+          if (!guide) return fail('query · get_guide', 'Guides: schematic, mechanics, cost, high_speed, boards.');
           // the guide is its docs/design file as it is, without its header for people
           return { content: guide.replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''), isError: false, label: 'query · get_guide', detail: topic! };
         }
