@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Fixes
+
+- **A datasheet import waiting for your review no longer holds up the agent's other imports.** Since 0.7.0 the agent could queue several `import_part` calls, but while one import waited for review in Parts, the ones queued behind it did not start until you saved or discarded it. A design needing several new parts sat idle while the review waited. Now the queued imports are read from their datasheets meanwhile, one after the other. One that both passes agree on goes straight into your library. One that needs your review is shown in Parts once you have saved or discarded the review before it, so reviews still come one at a time. A reload of the page keeps only the review shown in Parts; the agent imports the other parts again when it asks for them.
+
 ## 0.7.0 — 2026-11-22
 
 This release checks the current and power on a board: a microcontroller pin asked to drive more than it is rated for is flagged, tracks, vias and thermal spokes are checked against the current they carry, and a heat map shows where the copper works hardest. The agent can copy a block you already built in another project into the open design, give an enclosure a clear window, and swap pins and gates, including an ATtiny85's GPIO pins, to untangle the board. Parts can be marked do-not-populate, test points go on the power rails, and the design document can be downloaded as a file.
