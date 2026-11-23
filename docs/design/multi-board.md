@@ -208,8 +208,9 @@ the hunk that added a board leaves its sheets and parts on the first board.
 3. **System outputs.** Shared fab profile (built), the cost and stock checks of every board
    (built 2026-11-23), the enclosure library with every board (built 2026-11-23); still to come:
    a combined BOM file.
-4. **Agent guide.** A section in the layout guide: when to split a design, which mate kind to
-   choose, how to change from header to cable.
+4. **Agent guide** (built 2026-11-23): [boards.md](boards.md), `get_guide boards`, and a line in
+   the agent's instructions pointing to it: when to split a design, setting the boards up, which
+   mate kind to choose, the checks, how to change from header to cable.
 
 ## 10. Open questions
 

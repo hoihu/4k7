@@ -26,6 +26,7 @@ import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import costGuide from '../../../../docs/design/cost.md?raw';
 import highSpeedGuide from '../../../../docs/design/high-speed.md?raw';
+import boardsGuide from '../../../../docs/design/boards.md?raw';
 import schematicGuide from '../../../../docs/design/schematic.md?raw';
 import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
@@ -1284,8 +1285,8 @@ class AppState {
         }
         if ((input as { op?: string })?.op === 'get_guide') {
           const topic = (input as { topic?: string }).topic;
-          const guide = topic === 'mechanics' ? mechanicsGuide : topic === 'cost' ? costGuide : topic === 'high_speed' ? highSpeedGuide : topic === 'schematic' ? schematicGuide : null;
-          if (!guide) return fail('query · get_guide', 'Guides: schematic, mechanics, cost, high_speed.');
+          const guide = topic === 'mechanics' ? mechanicsGuide : topic === 'cost' ? costGuide : topic === 'high_speed' ? highSpeedGuide : topic === 'schematic' ? schematicGuide : topic === 'boards' ? boardsGuide : null;
+          if (!guide) return fail('query · get_guide', 'Guides: schematic, mechanics, cost, high_speed, boards.');
           // the guide is its docs/design file as it is, without its header for people
           return { content: guide.replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''), isError: false, label: 'query · get_guide', detail: topic! };
         }
