@@ -334,9 +334,15 @@ as asked; `erase_copper` takes it away.
 - **When it finds no way** (a point too close to other copper, no room for a via, a pad on
   another layer): it is not laid, the router routes the connection its own way (the board still
   works), and `DRC.TRACK_NOT_LAID` (warning) and `get_board` `laid_tracks` say why and where,
-  with the net in the way. A pass that lays more of them wins over one that leaves fewer
-  connections open. With copper kept from the routing before, one that finds no way sends the
-  router to a route from scratch (the kept copper may be what is in the way).
+  with the net in the way. A pass that leaves fewer connections open wins; of two that leave as
+  many, the one that lays more of them. With copper kept from the routing before, one that finds
+  no way lets go of the kept net it names as in the way (routed again round it, the rest kept,
+  once, as for an open connection, §5.5); failing that, or with no net named, the router routes
+  from scratch. (Found on the bike lamp: a hop laid through a point on another net's kept track
+  sent the router to scratch, and since laying it won over leaving fewer open, a board with every
+  connection made came back with 3 open; on that board 6 of 36 such tracks, one per connection,
+  0.6 mm off the router's way, each opened 1 to 4 connections of other nets. Now none does, and
+  2 of the 6 are laid in one more pass in about 1 s, where routing from scratch took 12 to 17 s.)
 - **It looks like any other copper** (the user's choice: nothing marks what the agent laid).
 
 The guide: route first and look, then lay only the few connections that matter (the switching
