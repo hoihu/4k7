@@ -928,9 +928,9 @@ export const ImportBlockOp = z.object({
   op: z.literal('import_block'),
   project: z.string().min(1).describe('Another project in the projects folder, by its id (as for design_query list_blocks)'),
   block: z.union([z.number().int().positive(), z.string().min(1)]).describe('The block: its number or its title, as list_blocks gives them'),
-  nets: z.record(z.string(), netName).describe('Every boundary net of the block (list_blocks boundary_nets) → the net of this design it joins, e.g. { "+5V": "VBUS", "GND": "GND" }; a net that does not exist yet is made'),
+  nets: z.record(z.string(), netName).describe('Every boundary net of the block (list_blocks boundary_nets) → the net of this design it joins, e.g. { "+5V": "VBUS", "GND": "GND" }; a net that does not exist yet is made. An internal net (list_blocks internal_nets) may be mapped too, to join a net already here instead of being made anew, e.g. { "NTC": "NTC" }'),
   prefix: z.string().min(1).optional().describe('Put before the names of the block\'s internal nets, e.g. "CH2_" for a second copy'),
-}).describe('Copy a functional block from another project into this design: its parts with their params, its internal nets (made anew, renamed where the name is taken), its describe block, its arrangement constraints and notes. Its boundary pins join the nets you map them to; refused unless every boundary net is mapped. A refdes that is taken gets the next free number. The effect lists the renames and the values to recheck: they were chosen for the other design');
+}).describe('Copy a functional block from another project into this design: its parts with their params, its internal nets (made anew, renamed where the name is taken, unless nets maps them), its describe block, its arrangement constraints and notes. Its boundary pins join the nets you map them to; refused unless every boundary net is mapped. A refdes that is taken gets the next free number. The effect lists the renames and the values to recheck: they were chosen for the other design');
 
 export const EditOp = z.discriminatedUnion('op', [
   AddPartOp,
