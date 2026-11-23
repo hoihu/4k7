@@ -458,7 +458,7 @@ function firstSheet(d: Design): string {
   return Object.values(d.sheets).sort((a, b) => a.order - b.order)[0]!.id;
 }
 
-function sheetByName(d: Design, name: string, hint = ' Add it with add_sheet first.'): string {
+export function sheetByName(d: Design, name: string, hint = ' Add it with add_sheet first.'): string {
   const s = Object.values(d.sheets).find((x) => x.name.toLowerCase() === name.toLowerCase() || x.id === name);
   if (!s) reject({ code: 'SHEET_UNKNOWN', message: `No sheet "${name}".${hint}`, candidates: Object.values(d.sheets).map((x) => x.name) });
   return s.id;

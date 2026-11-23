@@ -931,7 +931,9 @@ export const ImportBlockOp = z.object({
   block: z.union([z.number().int().positive(), z.string().min(1)]).describe('The block: its number or its title, as list_blocks gives them'),
   nets: z.record(z.string(), netName).describe('Every boundary net of the block (list_blocks boundary_nets) → the net of this design it joins, e.g. { "+5V": "VBUS", "GND": "GND" }; a net that does not exist yet is made. An internal net (list_blocks internal_nets) may be mapped too, to join a net already here instead of being made anew, e.g. { "NTC": "NTC" }'),
   prefix: z.string().min(1).optional().describe('Put before the names of the block\'s internal nets, e.g. "CH2_" for a second copy'),
-}).describe('Copy a functional block from another project into this design: its parts with their params, its internal nets (made anew, renamed where the name is taken, unless nets maps them), its describe block, its arrangement constraints and notes. Its boundary pins join the nets you map them to; refused unless every boundary net is mapped. A refdes that is taken gets the next free number. The effect lists the renames and the values to recheck: they were chosen for the other design');
+  sheet: z.string().min(1).optional().describe('The sheet its parts are drawn on (name or id, as for move_to_sheet); defaults to the first sheet'),
+  board: z.string().min(1).optional().describe('The board its parts go on (name or id, as for assign_board); defaults to the board of their sheet'),
+}).describe('Copy a functional block from another project into this design: its parts with their params, its internal nets (made anew, renamed where the name is taken, unless nets maps them), its describe block, its arrangement constraints and notes. With sheet and board, the parts go straight onto that sheet and board (a design of several boards: no move_to_sheet or assign_board afterwards). Its boundary pins join the nets you map them to; refused unless every boundary net is mapped. A refdes that is taken gets the next free number. The effect lists the renames and the values to recheck: they were chosen for the other design');
 
 export const EditOp = z.discriminatedUnion('op', [
   AddPartOp,
