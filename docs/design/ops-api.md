@@ -114,7 +114,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 
 ### Rules
 
-- `set_fab_profile`: the manufacturer and its limits (see [fab-rules](fab-rules.md)).
+- `set_fab_profile`: the manufacturer and its limits (see [fab-rules](fab-rules.md)); on several boards, every board or one named board (a tier of the same house).
 - `set_stackup`: the layer build-up (see [impedance](impedance.md)).
 - `set_impedance`: route a net or differential pair at a set impedance (see [impedance](impedance.md)).
 - `remove_impedance`: remove an impedance rule.

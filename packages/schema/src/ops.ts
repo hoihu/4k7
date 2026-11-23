@@ -374,6 +374,7 @@ export type FabLimitsInput = z.infer<typeof fabLimitsInput>;
 
 export const SetFabProfileOp = z.object({
   op: z.literal('set_fab_profile'),
+  board: z.string().min(1).optional().describe('A design of several boards: set the profile of this board only (name or id), e.g. the 2-layer tier of the same house for a 2-layer board. Without it every board gets the profile. One house for the design: a board takes another tier of it, not another house'),
   preset: z.string().optional().describe('A built-in profile: "jlcpcb", "pcbway" or "eurocircuits" (the tier matching the board\'s layers; Eurocircuits 6C), or a tier: "jlcpcb/4l-2oz", "pcbway/2l-1oz", "eurocircuits/7D" (any pattern class 3–9 with drill class A–E). design_query get_fab_profiles lists them'),
   none: z.boolean().optional().describe('true: remove the fab profile (no manufacturer limits are checked)'),
   house: z.string().min(1).optional().describe('Import: the manufacturer\'s name ("Seeed Fusion"), with tier, source_url and limits, read from its capabilities page. Never guess a number: leave out what the page does not state'),

@@ -17,7 +17,7 @@ import { autoDraw, describe, placeBlock, placeSymbol, setPaper } from './sheetop
 import { addTestPoints } from './testpoints.ts';
 import { tuneLength } from './tune.ts';
 import { addMate, removeMate, tidyMates } from './mates.ts';
-import { addBoard, assignBoard, boardFor, boardList, boardsNow, commitFocus, focusBoard, leftBoard, multiBoard, removeBoard, renameBoard, resolveBoard } from './boards.ts';
+import { addBoard, assignBoard, boardFor, boardList, boardsNow, commitFocus, focusBoard, leftBoard, multiBoard, removeBoard, renameBoard, resolveBoard, settingsOf } from './boards.ts';
 
 /**
  * The ops that work on one board: on a design of several, on the board they name (or the board of
@@ -70,18 +70,27 @@ function applyDesignOp(d: Design, op: EditOp, by: 'user' | 'agent', ctx?: OpCont
       // on the whole design (refdes counted across the boards), for the board of the nets
       if (multiBoard(d)) return addTestPoints(d, op, by, boardFor(d, op));
       break;
-    case 'set_fab_profile':
-      // one fab house for every board (docs/design/multi-board.md §5)
-      if (multiBoard(d)) {
-        const rs = boardList(d).map((b) => {
-          const f = focusBoard(d, b.id);
-          const r = applyOne(f, op, by, ctx);
-          commitFocus(d, b.id, f);
-          return r;
-        });
-        return { ...rs[0]!, effect: `${rs[0]!.effect} (every board)` };
+    case 'set_fab_profile': {
+      // one fab house for the design: every board, or one board's tier of it (docs/design/multi-board.md §5)
+      const one = op.board !== undefined ? resolveBoard(d, op.board) : undefined;
+      if (!multiBoard(d)) break;
+      const on = one ? [one] : boardList(d);
+      const rs = on.map((b) => {
+        const f = focusBoard(d, b.id);
+        const r = applyOne(f, op, by, ctx);
+        commitFocus(d, b.id, f);
+        return r;
+      });
+      if (one) {
+        // the cost check prices every board at one house: one board takes another tier of it, not another house
+        const house = (id: string) => settingsOf(d, id)?.fab?.house;
+        const other = boardList(d).find((b) => b.id !== one.id && house(one.id) && house(b.id) && house(b.id)!.toLowerCase() !== house(one.id)!.toLowerCase());
+        if (other) {
+          reject({ code: 'FAB_INVALID', message: `Board "${other.name}" is made by ${house(other.id)}: the boards of a design go to one house (a tier of it per board). Choose a ${house(other.id)} tier for "${one.name}", or set the house on every board (set_fab_profile without board).` });
+        }
       }
-      break;
+      return { ...rs[0]!, effect: `${rs[0]!.effect} (${one ? `board "${one.name}"` : 'every board'})` };
+    }
   }
   const id = opBoard(d, op);
   if (op.op === 'set_board' && op.name !== undefined) {

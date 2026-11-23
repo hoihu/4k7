@@ -116,8 +116,11 @@ function maskWebs(b: BoardView): Diagnostic[] {
   return out;
 }
 
-/** Layers, board size, rules, component holes and rings, mask webs, silkscreen lines and text: everything known at placement. */
-export function fabPlacementDrc(b: BoardView): Diagnostic[] {
+/**
+ * Layers, board size, rules, component holes and rings, mask webs, silkscreen lines and text: everything known at placement.
+ * `board`: the board's name, the entity of the findings about the whole board; `several`: the design has other boards (the message names it).
+ */
+export function fabPlacementDrc(b: BoardView, board = 'Main', several = false): Diagnostic[] {
   const fab = b.fab;
   if (!fab) return [];
   const l = fab.limits;
@@ -126,7 +129,11 @@ export function fabPlacementDrc(b: BoardView): Diagnostic[] {
 
   const layerCount = b.layers.length as 2 | 4;
   if (!fab.layers.includes(layerCount)) {
-    out.push({ code: 'DRC.FAB_LAYERS', severity: 'error', message: `${who} is not made with ${layerCount} layers (${fab.layers.join(' or ')}). Choose another tier with set_fab_profile.`, entities: [] });
+    // the board is the entity: a board made so on purpose is waived (add_waiver), on that board only (docs/design/fab-rules.md)
+    const how = several
+      ? `Choose a tier made with ${layerCount} layers for this board: set_fab_profile board: "${board}" (a tier of the same house; the other boards keep theirs).`
+      : 'Choose another tier with set_fab_profile.';
+    out.push({ code: 'DRC.FAB_LAYERS', severity: 'error', message: `${several ? `Board "${board}": ` : ''}${who} is not made with ${layerCount} layers (${fab.layers.join(' or ')}). ${how}`, entities: [board] });
   }
   for (const i of fabRuleIssues(b.rules, fab, layerCount)) {
     out.push({ code: 'DRC.FAB_RULES', severity: 'error', message: `The ${i.rule} rule (${mm(i.value)}) is below ${fab.house}'s limit (${mm(i.min)}); raise it with set_board.`, entities: [] });
