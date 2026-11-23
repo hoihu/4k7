@@ -88,6 +88,18 @@ one round those below; parts without a 3D body (`body3dFor` fails) are their foo
 outline at the package height, marked `approx`. The agent reads all of it except the solids
 (`design_query get_enclosure`, `enclosureApiSummary`).
 
+**Reading it in parts.** `get_enclosure` gives the brief (with its open questions, the graphics and
+how to work), the script, `board_api` and the last render's report (`last_render`). On a large
+design they do not fit in one tool result (16,000 characters, `TOOL_RESULT_CHARS`, where the app's
+agent cuts a result): two boards with 134 parts and a long script came to 149k characters, of which
+`board_api` was 30k and the script 102k. So with no `part` the answer is whole only when it fits;
+otherwise it is an overview: the brief, each text part's lines and characters, the report's first
+three lines, and how to read the rest. `part` gives one part; a text part comes in ranges of whole
+lines (`lines: [from, to]`, 1-based as `render_enclosure`'s errors count them), each at most 12,000
+characters as JSON (`ENCLOSURE_RANGE_CHARS`), with `total_lines` and the `next` range, so the agent
+reads a 100k script in nine calls and puts it back together exactly (`enclosureAnswer`). A single
+line longer than that is shown cut, and says so.
+
 **Where connectors face** was the one fact the board did not have. `PackageInfo.mating` gives the
 footprint face a plug comes in through (`left`, `right`, `top`, `bottom` of the drawing, or `up`:
 from above), the plug's size across its way in (the overmold of a cable plug), its height and its

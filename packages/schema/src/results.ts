@@ -4,6 +4,13 @@ import type { ScopeOutcome } from './scope.ts';
 import type { QuarterTurn, ValueSeries } from './model.ts';
 import { drawingFinding } from './rules.ts';
 
+/**
+ * The most a tool result should carry, in characters: the app's own agent cuts a longer one there
+ * (packages/agent/src/loop.ts), and an AI over MCP cannot read much more. A query whose answer can
+ * grow past it answers in parts (get_board's DRC pages, get_enclosure's parts and line ranges).
+ */
+export const TOOL_RESULT_CHARS = 16_000;
+
 /* ------------------------------ diagnostics ------------------------------- */
 
 export type Severity = 'error' | 'warning' | 'info';

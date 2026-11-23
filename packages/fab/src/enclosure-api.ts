@@ -2,7 +2,8 @@
  * What the agent reads about the enclosure script (get_enclosure): the board's facts as the script
  * finds them, and the geometry. It lives apart from csg/, which loads the WASM.
  */
-import { MATING_PATH_LENGTH, type EnclosureBrief, type EnclosureGraphic } from '@4k7/schema';
+import { enclosureGraphicsInfo, enclosureKey, MATING_PATH_LENGTH, openQuestions, type EnclosureBrief, type EnclosureGraphic, type EnclosureReadout, type EnclosureSettings } from '@4k7/schema';
+import { reportText, type EnclosureReport } from './enclosure.ts';
 import type { EnclosureFacts } from './scad.ts';
 
 /** The script's shape and what it can call. */
@@ -103,4 +104,22 @@ export function enclosureApiSummary(facts: EnclosureFacts, brief?: EnclosureBrie
   L.push('');
   L.push(ENCLOSURE_API);
   return L.join('\n');
+}
+
+
+/**
+ * get_enclosure's whole answer (enclosureAnswer cuts it to fit a tool result): the brief, the
+ * script, the board as the script finds it and what it can call, the last render if it is of this
+ * script. `facts`: null when the board could not be computed.
+ */
+export function enclosureReadout(enc: EnclosureSettings | undefined, facts: EnclosureFacts | null, last: { report: EnclosureReport; facts: EnclosureFacts } | null): EnclosureReadout {
+  return {
+    brief: enc?.brief ?? null,
+    open_questions: openQuestions(enc?.brief).map((i) => `${i.topic}: ${i.question}`),
+    script: enc?.script ?? null,
+    graphics: enclosureGraphicsInfo(enc?.graphics),
+    board_api: facts ? enclosureApiSummary(facts, enc?.brief, enc?.graphics) : 'the board could not be computed',
+    last_render: !enc?.script ? 'no script yet' : last && last.report.key === enclosureKey(enc) ? reportText(last.report, last.facts) : 'not rendered since the script or its graphics last changed: render_enclosure',
+    how: 'Read design_query get_guide topic "mechanics" before the first brief. 1. The brief (set_enclosure_brief): decide what you can, ask what only the user knows, in one brief; the user answers in the app. 2. The script (set_enclosure_script), JavaScript against board_api: never copy a number the board has, const pieces = [\'base\', \'lid\'];, one function per piece. 3. render_enclosure after every change: fix the report first, then what the pictures show. 4. propose when the report is clean.',
+  };
 }

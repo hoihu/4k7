@@ -6,6 +6,7 @@
 import { parse } from 'acorn';
 import { z } from 'zod';
 import type { Mating, PackageInfo } from './ingest.ts';
+import { TOOL_RESULT_CHARS } from './results.ts';
 
 /* --------------------------------- brief ---------------------------------- */
 
@@ -80,6 +81,82 @@ export function enclosureKey(e: EnclosureSettings | null | undefined): string {
 /** The brief's questions the user has not answered yet. */
 export function openQuestions(b: EnclosureBrief | undefined): BriefItem[] {
   return (b?.items ?? []).filter((i) => i.question && !i.decision);
+}
+
+/** The parts of get_enclosure's answer the agent can ask for one at a time (docs/design/enclosure.md §3). */
+export const ENCLOSURE_PARTS = ['brief', 'script', 'board_api', 'last_render'] as const;
+export type EnclosurePart = (typeof ENCLOSURE_PARTS)[number];
+
+/** get_enclosure's whole answer, before it is cut to fit. */
+export interface EnclosureReadout {
+  brief: EnclosureBrief | null;
+  open_questions?: string[];
+  script: string | null;
+  graphics: ReturnType<typeof enclosureGraphicsInfo>;
+  board_api?: string;
+  last_render?: string;
+  how?: string;
+}
+
+/** The text one ranged read carries at most (as JSON), leaving room for the rest of the answer under TOOL_RESULT_CHARS. */
+export const ENCLOSURE_RANGE_CHARS = 12_000;
+const TEXT_PARTS = ['script', 'board_api', 'last_render'] as const;
+
+/**
+ * get_enclosure as the agent reads it: the whole answer when it fits in a tool result, else an
+ * overview (the brief, each part's size, the report's first lines) saying how to read the rest;
+ * one part on its own with `part`, and a long text part in ranges of lines (`lines: [from, to]`,
+ * 1-based, as render_enclosure's errors count them), each answer as long as fits, with the total.
+ */
+export function enclosureAnswer(full: EnclosureReadout, q: { part?: EnclosurePart | undefined; lines?: [number, number] | undefined } = {}): Record<string, unknown> {
+  const part = q.part ?? (q.lines ? 'script' : undefined);
+  const head = { brief: full.brief, open_questions: full.open_questions ?? openQuestions(full.brief ?? undefined).map((i) => `${i.topic}: ${i.question}`), graphics: full.graphics, ...(full.how ? { how: full.how } : {}) };
+  if (part === 'brief') return head;
+  if (part) return textRange(part, full[part], q.lines);
+  const whole = JSON.stringify(full).length;
+  if (whole <= TOOL_RESULT_CHARS) return { ...full };
+  const sizes = Object.fromEntries(
+    TEXT_PARTS.map((p) => {
+      const t = full[p];
+      return [p, typeof t === 'string' ? { lines: t.split('\n').length, characters: t.length } : t ?? null];
+    }),
+  );
+  const read = `The whole answer is ${whole} characters, too long for one tool result: read the parts with design_query get_enclosure part "script", "board_api" or "last_render" (and "brief"). A long part comes in ranges of lines: lines [from, to], 1-based as render_enclosure's errors count them; each answer says total_lines and which lines come next.`;
+  const report = typeof full.last_render === 'string' ? full.last_render.split('\n').slice(0, 3).join('\n') : null;
+  const out = { ...head, parts: sizes, last_render_summary: report, read };
+  // a brief so long that the overview does not fit: read on its own
+  return JSON.stringify(out).length <= TOOL_RESULT_CHARS ? out : { ...out, brief: 'too long for the overview: part "brief"', open_questions: undefined };
+}
+
+function textRange(part: (typeof TEXT_PARTS)[number], text: string | null | undefined, lines?: [number, number]): Record<string, unknown> {
+  if (typeof text !== 'string') return { [part]: text ?? null };
+  const all = text.split('\n');
+  const total = all.length;
+  const from = lines?.[0] ?? 1;
+  const to = Math.min(lines?.[1] ?? total, total);
+  if (from > total || from > to) return { error: `lines [${lines?.join(', ')}] are outside the ${part}: it has ${total} line(s), 1 to ${total}`, total_lines: total };
+  // whole lines while they fit (a line counts as its JSON, with its newline); at least one, cut if it alone is too long
+  let end = from - 1;
+  let size = 0;
+  while (end < to) {
+    const n = JSON.stringify(all[end]!).length;
+    if (end >= from && size + n > ENCLOSURE_RANGE_CHARS) break;
+    size += n;
+    end++;
+  }
+  let body = all.slice(from - 1, end).join('\n');
+  let cut: string | undefined;
+  if (JSON.stringify(body).length > ENCLOSURE_RANGE_CHARS) {
+    body = body.slice(0, ENCLOSURE_RANGE_CHARS / 2);
+    cut = `line ${from} is ${all[from - 1]!.length} characters long: only its first ${body.length} are shown`;
+  }
+  return {
+    [part]: body,
+    lines: [from, end],
+    total_lines: total,
+    ...(cut ? { cut } : {}),
+    ...(end < to ? { next: `part "${part}" lines [${end + 1}, ${to}]` } : end < total ? { after: `lines ${end + 1} to ${total} not asked for` } : {}),
+  };
 }
 
 export const DEFAULT_LID_CLEARANCE = 1;

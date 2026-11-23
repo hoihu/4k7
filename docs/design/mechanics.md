@@ -11,7 +11,9 @@ in the brief.
 ## 1. Before you draw: the brief
 
 Read the board first: `get_board`, `get_enclosure`'s `board_api` (`parts_info`, `holes`,
-`tallest_top`, `lowest_bottom`), and the datasheets of the connectors. Then write the brief. Decide what the
+`tallest_top`, `lowest_bottom`), and the datasheets of the connectors. On a large design
+`get_enclosure` answers with an overview: ask for one part at a time (`part: "board_api"`), and a
+long one in ranges (`lines: [from, to]`) until the answer has no `next`. Then write the brief. Decide what the
 request, the board or a sensible default settles, with the reason. Ask what only the user knows.
 
 **Always ask** (unless the request or the notes already say it):

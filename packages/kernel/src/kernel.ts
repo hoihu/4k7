@@ -39,6 +39,7 @@ import {
   trackWidthFor,
   viaCurrentFor,
   viasForCurrent,
+  enclosureAnswer,
   enclosureGraphicsInfo,
   boardStackup,
   COPPER_ORDER,
@@ -789,7 +790,7 @@ export class Kernel {
       }
       // the app answers these with the board's facts and the guide; the kernel alone knows the design's part
       case 'get_enclosure':
-        return { brief: d.enclosure?.brief ?? null, script: d.enclosure?.script ?? null, graphics: enclosureGraphicsInfo(d.enclosure?.graphics) };
+        return enclosureAnswer({ brief: d.enclosure?.brief ?? null, script: d.enclosure?.script ?? null, graphics: enclosureGraphicsInfo(d.enclosure?.graphics) }, q);
       case 'get_guide':
         return { error: 'The guides are served by the app.' };
       case 'list_blocks':

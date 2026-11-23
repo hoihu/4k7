@@ -39,7 +39,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `try_placements`: compare arrangements of the main parts without changing the design.
 - `suggest_moves`: small-part moves (turn, swap, shift) that close open connections, without applying them; and, under *swaps*, the pin and gate swaps the part cards declare that make the ratsnest shorter or cross less, each with its `swap_pins` op, the crossings and ratsnest mm before and after, and `schematic_change: true` (`layout.md` §10).
 - `list_blocks`: the functional blocks of another stored project, to reuse one: parts, internal and boundary nets (shape in §7).
-- `get_enclosure`: the enclosure brief, script, board API and last render report.
+- `get_enclosure`: the enclosure brief, script, board API and last render report; on a large design an overview, with each part read on its own (part) and a long one in line ranges (lines) (`enclosure.md` §3).
 - `get_guide`: an agent guide (schematic, cost, mechanics, high_speed, boards).
 
 ### Library
