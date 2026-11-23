@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import { LandPad, Mating, PadsView } from './ingest.ts';
-import { EnclosureBrief } from './enclosure.ts';
+import { ENCLOSURE_PARTS, EnclosureBrief } from './enclosure.ts';
 import { PAPER_IDS, type PaperId } from './results.ts';
 import { E_SERIES } from './units.ts';
 
@@ -1102,7 +1102,11 @@ export const QueryOp = z.discriminatedUnion('op', [
   }),
   z.object({ op: z.literal('get_part'), id: z.string() }),
   z.object({ op: z.literal('list_blocks'), project: z.string().min(1).describe('Another project in the projects folder, by its id (the file name without .twd.json)') }).describe('The functional blocks of another stored project, to reuse a proven one (a USB-C input, a charger, a buck): per block its number, title and text (describe), its parts (ref, part id, params), its internal nets and its boundary nets (those that leave the block: to parts outside it, off the board, or a supply or ground), each with the block\'s pins on it. Read-only; it changes neither project'),
-  z.object({ op: z.literal('get_enclosure') }).describe("The enclosure: the brief, the script, board_api (the board as the script finds it: its variables and functions, the parts with where they are and which way they are plugged, and the geometry the script can call), the last render's report"),
+  z.object({
+    op: z.literal('get_enclosure'),
+    part: z.enum(ENCLOSURE_PARTS).optional().describe('get_enclosure: only this part: brief (with the open questions, the graphics and how to work), script, board_api or last_render. Without: everything when it fits in one answer, else an overview with each part\'s size'),
+    lines: z.tuple([z.number().int().min(1), z.number().int().min(1)]).optional().describe('get_enclosure, with part script, board_api or last_render: the lines [from, to], 1-based as render_enclosure\'s errors count them. A long part comes in ranges anyway: each answer has lines, total_lines and next'),
+  }).describe("The enclosure: the brief, the script, board_api (the board as the script finds it: its variables and functions, the parts with where they are and which way they are plugged, and the geometry the script can call), the last render's report. A large one (several boards, many parts, a long script) answers with an overview: then read each part with part, and a long one in ranges with lines"),
   z.object({ op: z.literal('get_guide'), topic: z.enum(['mechanics', 'cost', 'high_speed', 'schematic', 'boards']) }).describe('A guide: boards = a product of several boards in one design (a main board and a display board on a header or a cable): when to split, setting up the boards, which kind of mate, what the mate checks mean, changing from a header to a cable; read before you split a design or join boards; schematic = how to arrange a schematic that reads well (functional blocks, their order and place on the pages, what goes inside a block, wire or label), read before you arrange or tidy a sheet; cost = how to make a design cheaper to make (what costs money at the assembly house, how far each kind of part may move its value, series and parallel pairs, the board), read before optimising cost; mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script), read before the first brief; high_speed = how to lay out lines at a set impedance (fast interfaces such as USB, Ethernet, HDMI, LVDS, and RF lines to antennas and connectors): which lines need it, the stack-up, widths and gaps, planes and return paths, pairs, vias, antennas. Read it before routing such lines'),
 ]);
 export type QueryOp = z.infer<typeof QueryOp>;

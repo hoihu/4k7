@@ -3,7 +3,7 @@
  * finish a turn while the design has open errors (within a fix budget).
  * See docs/design/ai-loop.md.
  */
-import { AskUser, LAYOUT_SCH_RULES, TOOL_NAMES, agentTools, mustFix, type Diagnostic, type ScopeInfo, type ViewInfo } from '@4k7/schema';
+import { AskUser, LAYOUT_SCH_RULES, TOOL_NAMES, TOOL_RESULT_CHARS, agentTools, mustFix, type Diagnostic, type ScopeInfo, type ViewInfo } from '@4k7/schema';
 import { SYSTEM_PROMPT, formatDesignContext, formatReview, formatVerification } from './prompt.ts';
 import { runKernelTool, unknownTool, type ToolExecutor, type ToolOutcome } from './tools.ts';
 import type { AgentEvent, Block, KernelPort, Message, Provider } from './types.ts';
@@ -24,7 +24,7 @@ interface PendingQuestion {
   otherResults: Block[];
 }
 
-const MAX_RESULT_CHARS = 16000;
+const MAX_RESULT_CHARS = TOOL_RESULT_CHARS;
 
 export class Agent {
   readonly messages: Message[] = [];

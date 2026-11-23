@@ -20,8 +20,8 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
-import { assemblyEnclosureFacts, copperCheckText, enclosureApiSummary, enclosureFacts, type PartSolids, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
+import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, enclosureAnswer, type EnclosurePart, enclosureKey, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { assemblyEnclosureFacts, copperCheckText, enclosureReadout, enclosureFacts, type PartSolids, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import costGuide from '../../../../docs/design/cost.md?raw';
@@ -764,21 +764,11 @@ class AppState {
     return b ? boardScad(b, design.name, design.enclosure?.brief, design.enclosure?.graphics) : null;
   }
 
-  /** design_query get_enclosure: the brief, the script, the board as the script finds it and what it can call, the last render. */
-  private async enclosureQuery(): Promise<unknown> {
+  /** design_query get_enclosure: the brief, the script, the board as the script finds it and what it can call, the last render; in parts when it is long. */
+  private async enclosureQuery(q: { part?: EnclosurePart | undefined; lines?: [number, number] | undefined }): Promise<Record<string, unknown>> {
     const design = await this.kernel.draftDesign();
-    const enc = design.enclosure;
     const at = await this.enclosureBoards();
-    const last = this.enclosure;
-    return {
-      brief: enc?.brief ?? null,
-      open_questions: openQuestions(enc?.brief).map((i) => `${i.topic}: ${i.question}`),
-      script: enc?.script ?? null,
-      graphics: enclosureGraphicsInfo(enc?.graphics),
-      board_api: at ? enclosureApiSummary(at.facts, enc?.brief, enc?.graphics) : 'the board could not be computed',
-      last_render: !enc?.script ? 'no script yet' : last && last.report.key === enclosureKey(enc) ? reportText(last.report, last.facts) : 'not rendered since the script or its graphics last changed: render_enclosure',
-      how: 'Read design_query get_guide topic "mechanics" before the first brief. 1. The brief (set_enclosure_brief): decide what you can, ask what only the user knows, in one brief; the user answers in the app. 2. The script (set_enclosure_script), JavaScript against board_api: never copy a number the board has, const pieces = [\'base\', \'lid\'];, one function per piece. 3. render_enclosure after every change: fix the report first, then what the pictures show. 4. propose when the report is clean.',
-    };
+    return enclosureAnswer(enclosureReadout(design.enclosure, at?.facts ?? null, this.enclosure), q);
   }
 
   get pendingCount() {
@@ -1267,8 +1257,12 @@ class AppState {
           }
         }
         if ((input as { op?: string })?.op === 'get_enclosure') {
-          const out = await this.enclosureQuery();
-          return { content: JSON.stringify(out), isError: false, label: 'query · get_enclosure', detail: (out as { open_questions: string[] }).open_questions.length ? 'questions open' : 'ok' };
+          const q = QueryOp.safeParse(input);
+          if (!q.success || q.data.op !== 'get_enclosure') return fail('query · get_enclosure', q.error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') ?? 'not get_enclosure');
+          const out = await this.enclosureQuery(q.data);
+          if (typeof out.error === 'string') return fail('query · get_enclosure', out.error);
+          const part = q.data.part;
+          return { content: JSON.stringify(out), isError: false, label: 'query · get_enclosure', detail: (out.open_questions as string[] | undefined)?.length ? 'questions open' : part ? `${part}${out.lines ? ` lines ${(out.lines as number[]).join('–')} of ${out.total_lines}` : ''}` : out.read ? 'overview' : 'ok' };
         }
         // another project's blocks, read from the projects folder: only a project it lists (docs/design/ops-api.md §7)
         if ((input as { op?: string })?.op === 'list_blocks') {
