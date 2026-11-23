@@ -95,6 +95,32 @@ describe('the router keeps the copper that holds and routes the rest', () => {
   });
 });
 
+describe('a connection the agent laid where kept copper lies (layout.md §5.8)', () => {
+  it('is not laid where laying it would leave other connections open: the routing before stays', () => {
+    // A's point lies on B's kept track; laid through it A walls the board off (its pads too
+    // close to the edge to pass) and B, on one layer, cannot cross. Routed from scratch, every
+    // pass lays A and leaves B open: that must not win over the pass that keeps B and routes A round.
+    const parts = [part('P', [[1.2, 5, 'A'], [10, 2, 'B']]), part('Q', [[18.8, 5, 'A'], [10, 8, 'B']])];
+    const b = track('B', [10, 2, 10, 8]);
+    const r = route(board(parts, { keep: { tracks: [b], vias: [] }, laid: [{ id: 't1', netId: 'A', from: 0, to: 2, points: [{ x: 10, y: 5 }] }] }));
+    expect(r.failed).toEqual([]);
+    expect(r.laid).toEqual([expect.objectContaining({ id: 't1', laid: false, blockedBy: 'B' })]);
+    expect(r.tracks).toContainEqual(b);
+  });
+
+  it('kept copper in its way is routed again round it, the rest kept', () => {
+    // B's kept track runs round through A's point; let go, it goes straight and A is laid. C,
+    // out of the way, keeps its copper (no route from scratch).
+    const parts = [part('P', [[2, 2, 'A'], [8, 5, 'B'], [12, 1.5, 'C']]), part('Q', [[2, 8, 'A'], [16, 5, 'B'], [18, 1.5, 'C']])];
+    const keep = { tracks: [track('B', [8, 5, 5, 5, 5, 7, 16, 7, 16, 5]), track('C', [12, 1.5, 18, 1.5])], vias: [] };
+    const r = route(board(parts, { keep, laid: [{ id: 't1', netId: 'A', from: 0, to: 3, points: [{ x: 5, y: 5 }] }] }));
+    expect(r.failed).toEqual([]);
+    expect(r.laid).toEqual([{ id: 't1', laid: true }]);
+    expect(r.tracks).toContainEqual(keep.tracks[1]);
+    expect(r.reused).toEqual({ tracks: 1, vias: 0 });
+  });
+});
+
 describe('incremental routing in the design', () => {
   it('a part moved: the nets it does not touch keep their copper, the board is routed to 100 % and clean', () => {
     const { k, first } = routedBuck();

@@ -84,12 +84,16 @@ the user's local Claude Code through the server, like the app chat.
    project from another computer) has its PDF downloaded by the server on first read
    (`POST /api/datasheets/fetch`, once per link) and kept like an imported one; when that file is
    not the one the part was imported from, the agent is told its page numbers may be off.
-8. **One import at a time, the agent's queued**: the app has one import and one review. An
+8. **One review at a time, the agent's imports queued**: Parts shows one import and one review. An
    `import_part` for another part while one runs or waits for review is queued, not refused
    (`apps/web/src/lib/importPart.ts`): the answer says what it waits behind (a review is settled with
-   `pending_import`, or by the user in Parts), and it starts by itself once that review is saved or
-   discarded, or when the agent asks again after the import ahead failed. Calling `import_part` again
-   with the same part number waits for it.
+   `pending_import`, or by the user in Parts). The server runs one extraction at a time, but a review
+   does not hold the queue: while the shown import waits for review, the queued ones are extracted one
+   after the other in spare slots not shown in Parts. A clean result (both passes agree, no warnings)
+   goes into the library at once; one that needs review is shown once the reviews ahead are saved or
+   discarded, without being extracted again. A queued import that fails is reported to the agent's next
+   `import_part` for it. Calling `import_part` again with the same part number waits for it. The
+   queue and the spare slots live in the tab: a reload keeps only the shown review.
    A datasheet link that does not give a PDF (judged by its first bytes, not the content type) fails
    with the link, where it was redirected to and what came back (an HTML page and its title, the HTTP
    status), so the agent can look for the direct PDF link.
