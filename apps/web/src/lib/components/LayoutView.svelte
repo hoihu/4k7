@@ -284,6 +284,8 @@
     <div class="tools">
       {#if !app.chatOpen}<button class="ib" onclick={() => (app.chatOpen = true)}>⟩ Agent</button>{/if}
       <div class="seg"><button aria-pressed={mode === '2d'} onclick={to2d}>2D</button><button aria-pressed={mode === '3d'} onclick={to3d}>3D</button><button aria-pressed={mode === 'panel'} title="The fabrication panel: copies in a frame, tabs with mouse bites" onclick={toPanel}>Panel</button></div>
+      <!-- several boards (add_board): which one the view shows -->
+      {#if app.k && app.k.boards.length > 1}<div class="seg boards" role="group" aria-label="Board">{#each app.k.boards as bd (bd.id)}<button aria-pressed={app.shownBoard === bd.id} onclick={() => app.showBoard(bd.id)}>{bd.name}</button>{/each}</div>{/if}
       {#if app.boardBusy && !prog}<span class="busy">updating…</span>{/if}
     </div>
     {#if helper && mode === '2d'}
@@ -459,6 +461,7 @@
   .seg button:first-child { border-radius: 6px 0 0 6px; }
   .seg button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
   .seg button[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent-txt); }
+  .seg.boards button + button { border-left: 0; }
   .routing { flex-basis: 100%; max-width: 420px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; box-shadow: var(--shadow); font-size: 12px; }
   .routing .rl { display: flex; gap: 8px; align-items: baseline; }
   .routing .rl span { color: var(--txt-2); font-variant-numeric: tabular-nums; }

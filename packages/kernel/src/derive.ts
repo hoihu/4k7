@@ -75,11 +75,11 @@ export class Memo<T> {
 /**
  * What a sheet is drawn from, other than its own stored drawing: the netlist, the part cards (the
  * design's copies, then the library's), the paper, the blocks, the ledger. Not the board, the
- * enclosure, the waivers (they only mark findings) or the name and id counter, and not where parts
+ * enclosure, the other boards, the waivers (they only mark findings) or the name and id counter, and not where parts
  * stand on the board (`position` entries: a drag there moves no symbol).
  */
 export function drawingInputs(d: Design): string {
-  const { board: _b, enclosure: _e, waivers: _w, seq: _s, name: _n, drawing: _dr, ledger, ...rest } = d;
+  const { board: _b, boards: _bs, enclosure: _e, waivers: _w, seq: _s, name: _n, drawing: _dr, ledger, ...rest } = d;
   return `${partsRevision()}|${JSON.stringify(rest)}|${JSON.stringify(Object.values(ledger).filter((k) => k.kind !== 'position'))}`;
 }
 

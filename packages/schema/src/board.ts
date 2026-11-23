@@ -32,6 +32,18 @@ export interface BoardRules {
   currentRise?: 10 | 20 | 30;
 }
 
+/** The id of a design's first board: its settings are `Design.board`. */
+export const FIRST_BOARD = 'b_1';
+
+/** A board of a design of several (Design.boards). See docs/design/multi-board.md. */
+export interface BoardEntry {
+  id: string;
+  name: string;
+  order: number;
+  /** Its settings; absent for the first board (Design.board) and for a new board with the defaults. */
+  settings?: BoardSettings;
+}
+
 export interface BoardSettings {
   /** Fixed outline; absent = sized to fit the placement. */
   width?: number;

@@ -86,6 +86,7 @@ Start with `docs/ARCHITECTURE.md` (overview, package table, roadmap).
 | `part-ingest.md` | Datasheet PDF to verified part (`packages/parts`) |
 | `schematic-drawing.md`, `schematic-rules.md`, `schematic.md` | Schematic drawing, notes/checks (`packages/schema/src/rules.ts`), and the agent guide (`get_guide schematic`) |
 | `layout.md`, `zoom-optimize.md`, `panel.md` | Placement/routing (`packages/kernel`), zoom & optimize, fabrication panels |
+| `multi-board.md` | Designs of several boards: board focus, per-board ops and outputs, mates (`packages/kernel/src/boards.ts`) |
 | `impedance.md`, `high-speed.md` | Controlled-impedance lines; agent guide `get_guide high_speed` |
 | `fab-rules.md`, `fab-check.md`, `assembly.md` | Manufacturer limits; production files read back and checked (`packages/fab`); polarity marks, pick-and-place |
 | `sourcing.md`, `cost.md` | Catalogue lookup, stock check, order cost (`packages/parts`); `cost.md` is the cost agent's guide |

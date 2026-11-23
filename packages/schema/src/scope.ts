@@ -78,6 +78,8 @@ export interface AreaViewInfo {
   view: 'schematic' | 'board';
   /** Schematic: the sheet shown. */
   sheetName?: string;
+  /** Board, on a design of several boards: the board shown. */
+  boardName?: string;
   /** The area on screen: schematic in mils from the sheet's origin, board in mm. */
   rect: Rect;
   /** The whole sheet or board is in view (not zoomed in). */
