@@ -9,7 +9,7 @@
  * cylinders and a module's top picture is left out.
  */
 import { boardBodies, type Body3D } from '@4k7/parts';
-import { boardPolygon, cutoutPolygon, insidePolygon, type BoardView } from '@4k7/schema';
+import { boardPolygon, cutoutPolygon, insidePolygon, type BoardPlace, type BoardView } from '@4k7/schema';
 import type { FabFile } from './gerber.ts';
 
 /** Board thickness and copper (the 3D view's): parts sit on the copper. */
@@ -323,6 +323,32 @@ export interface StepExport extends FabFile {
 
 /** The board and its parts as a STEP assembly (see the top of this file). */
 export function boardStep(b: BoardView, project: string, date = new Date()): StepExport {
+  return writeStep([{ b, name: '', at: null }], project, date);
+}
+
+/**
+ * Every board of a design of several, each where the assembly puts it (docs/design/multi-board.md
+ * §6): an assembly of the boards, each an assembly of its PCB and parts, in the first board's
+ * frame (as boardStep's).
+ */
+export function assemblyStep(boards: { b: BoardView; name: string; at: BoardPlace }[], project: string, date = new Date()): StepExport {
+  return writeStep(boards, project, date);
+}
+
+/** A board's own STEP frame into the first board's, as its place in the assembly says. */
+function placeAxes(at: BoardPlace, h: number, first: number): { o: V3; z: V3; x: V3 } {
+  const a = (at.rot * Math.PI) / 180;
+  const [c, n, s] = [Math.cos(a), Math.sin(a), at.flipped ? -1 : 1];
+  const f = (p: V3): V3 => {
+    // its STEP point → its board view (y down, height above its top) → the assembly → the first board's STEP frame
+    const [u, v, w] = [s * p[0], h - p[1], p[2] - THICKNESS];
+    return [c * u - n * v + at.x, first - (n * u + c * v + at.y), s * w + at.z + THICKNESS];
+  };
+  const o = f([0, 0, 0]);
+  return { o, x: sub(f([1, 0, 0]), o), z: sub(f([0, 0, 1]), o) };
+}
+
+function writeStep(boards: { b: BoardView; name: string; at: BoardPlace | null }[], project: string, date: Date): StepExport {
   const base = project.replace(/[^\w.-]+/g, '_') || 'board';
   const title = project || 'board';
   const s = new StepWriter();
@@ -357,47 +383,74 @@ export function boardStep(b: BoardView, project: string, date = new Date()): Ste
     return { pd, rep, origin };
   };
 
+  type Use = { child: { pd: number; rep: number; origin: number }; placement: number; id: string; name: string; desc: string };
+  /** Children placed in a parent: the assembly links (each child's shape, moved to its placement). */
+  const relate = (parent: { pd: number }, parentRep: number, uses: Use[]) => {
+    for (const u of uses) {
+      const nauo = s.add(`NEXT_ASSEMBLY_USAGE_OCCURRENCE(${str(u.id)},${str(u.name)},${str(u.desc)},#${parent.pd},#${u.child.pd},$)`);
+      const idt = s.add(`ITEM_DEFINED_TRANSFORMATION('','',#${u.child.origin},#${u.placement})`);
+      const rel = s.add(`(REPRESENTATION_RELATIONSHIP('','',#${u.child.rep},#${parentRep})REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#${idt})SHAPE_REPRESENTATION_RELATIONSHIP())`);
+      s.add(`CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#${rel},#${s.add(`PRODUCT_DEFINITION_SHAPE('','',#${nauo})`)})`);
+    }
+  };
+  const without: string[] = [];
+  let parts = 0;
+  /** A board's PCB and parts, placed in its own frame (named after the board when there are several). */
+  const boardUses = (b: BoardView, name: string, placements: number[], uses: Use[]) => {
+    const pcb = leaf(name ? `${title} ${name} PCB` : `${title} PCB`, 'PCB', '', [{ prism: boardPrism(b), mat: 'board', name: 'PCB' }]);
+    const pcbAt = s.axis([0, 0, 0], [0, 0, 1], [1, 0, 0]);
+    placements.push(pcbAt);
+    uses.push({ child: pcb, placement: pcbAt, id: 'PCB', name: 'PCB', desc: '' });
+
+    const bodies = boardBodies(b);
+    for (const part of b.parts) {
+      const hole = part.componentId.startsWith('hole:');
+      const body = bodies.get(part.componentId);
+      const solids = body ? bodySolids(body, part.polarized) : [];
+      if (!solids.length) {
+        if (!hole) without.push(part.refdes);
+        continue;
+      }
+      // its own product, named by the designator (CAD programs show product names)
+      const child = leaf(part.refdes, part.refdes, [part.value, part.pkg].filter(Boolean).join(' '), solids);
+      // on the copper, turned clockwise as seen from the top; on the bottom, flipped over about its y axis first
+      const a = (-part.rot * Math.PI) / 180;
+      const bottom = part.side === 'bottom';
+      const xAxis: V3 = mul([Math.cos(a), Math.sin(a), 0], bottom ? -1 : 1);
+      const at = s.axis([part.x, b.outline.h - part.y, bottom ? -CU : THICKNESS + CU], [0, 0, bottom ? -1 : 1], xAxis);
+      placements.push(at);
+      uses.push({ child, placement: at, id: part.refdes, name: part.refdes, desc: part.value });
+      if (!hole) parts++;
+    }
+  };
+
   const top = product(title, title);
   const topOrigin = s.axis([0, 0, 0], [0, 0, 1], [1, 0, 0]);
   const placements: number[] = [topOrigin];
-  const uses: { child: ReturnType<typeof leaf>; placement: number; id: string; name: string; desc: string }[] = [];
-
-  const pcb = leaf(`${title} PCB`, 'PCB', '', [{ prism: boardPrism(b), mat: 'board', name: 'PCB' }]);
-  const pcbAt = s.axis([0, 0, 0], [0, 0, 1], [1, 0, 0]);
-  placements.push(pcbAt);
-  uses.push({ child: pcb, placement: pcbAt, id: 'PCB', name: 'PCB', desc: '' });
-
-  const bodies = boardBodies(b);
-  const without: string[] = [];
-  let parts = 0;
-  for (const part of b.parts) {
-    const hole = part.componentId.startsWith('hole:');
-    const body = bodies.get(part.componentId);
-    const solids = body ? bodySolids(body, part.polarized) : [];
-    if (!solids.length) {
-      if (!hole) without.push(part.refdes);
-      continue;
+  const uses: Use[] = [];
+  if (boards.length === 1) boardUses(boards[0]!.b, '', placements, uses);
+  else {
+    // each board an assembly of its own, placed where it stands
+    const first = boards[0]!.b.outline.h;
+    for (const { b, name, at } of boards) {
+      const board = product(`${title} ${name}`, name);
+      const origin = s.axis([0, 0, 0], [0, 0, 1], [1, 0, 0]);
+      const own: number[] = [origin];
+      const ownUses: Use[] = [];
+      boardUses(b, name, own, ownUses);
+      const rep = s.add(`SHAPE_REPRESENTATION(${str(name)},(${own.map((p) => `#${p}`).join(',')}),#${ctx})`);
+      s.add(`SHAPE_DEFINITION_REPRESENTATION(#${board.pds},#${rep})`);
+      relate(board, rep, ownUses);
+      const ax = at ? placeAxes(at, b.outline.h, first) : { o: [0, 0, 0] as V3, z: [0, 0, 1] as V3, x: [1, 0, 0] as V3 };
+      const placed = s.axis(ax.o, unit(ax.z), unit(ax.x));
+      placements.push(placed);
+      uses.push({ child: { pd: board.pd, rep, origin }, placement: placed, id: name, name, desc: '' });
     }
-    // its own product, named by the designator (CAD programs show product names)
-    const child = leaf(part.refdes, part.refdes, [part.value, part.pkg].filter(Boolean).join(' '), solids);
-    // on the copper, turned clockwise as seen from the top; on the bottom, flipped over about its y axis first
-    const a = (-part.rot * Math.PI) / 180;
-    const bottom = part.side === 'bottom';
-    const xAxis: V3 = mul([Math.cos(a), Math.sin(a), 0], bottom ? -1 : 1);
-    const at = s.axis([part.x, b.outline.h - part.y, bottom ? -CU : THICKNESS + CU], [0, 0, bottom ? -1 : 1], xAxis);
-    placements.push(at);
-    uses.push({ child, placement: at, id: part.refdes, name: part.refdes, desc: part.value });
-    if (!hole) parts++;
   }
 
   const topRep = s.add(`SHAPE_REPRESENTATION(${str(title)},(${placements.map((p) => `#${p}`).join(',')}),#${ctx})`);
   s.add(`SHAPE_DEFINITION_REPRESENTATION(#${top.pds},#${topRep})`);
-  for (const u of uses) {
-    const nauo = s.add(`NEXT_ASSEMBLY_USAGE_OCCURRENCE(${str(u.id)},${str(u.name)},${str(u.desc)},#${top.pd},#${u.child.pd},$)`);
-    const idt = s.add(`ITEM_DEFINED_TRANSFORMATION('','',#${u.child.origin},#${u.placement})`);
-    const rel = s.add(`(REPRESENTATION_RELATIONSHIP('','',#${u.child.rep},#${topRep})REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#${idt})SHAPE_REPRESENTATION_RELATIONSHIP())`);
-    s.add(`CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#${rel},#${s.add(`PRODUCT_DEFINITION_SHAPE('','',#${nauo})`)})`);
-  }
+  relate(top, topRep, uses);
   s.presentation(ctx);
 
   const name = `${base}.step`;
@@ -405,7 +458,7 @@ export function boardStep(b: BoardView, project: string, date = new Date()): Ste
   const content = [
     'ISO-10303-21;',
     'HEADER;',
-    `FILE_DESCRIPTION((${str(`${title}: board and parts`)}),'2;1');`,
+    `FILE_DESCRIPTION((${str(`${title}: ${boards.length > 1 ? 'boards' : 'board'} and parts`)}),'2;1');`,
     `FILE_NAME(${str(name)},'${stamp}',(''),(''),'4k7','4k7','');`,
     "FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));",
     'ENDSEC;',

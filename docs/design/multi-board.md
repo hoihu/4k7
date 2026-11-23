@@ -1,6 +1,6 @@
 # Several boards in one design
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3): the op and the checks built (2026-11-22); the assembly they place, the 3D view and the system outputs are not built yet.
+> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3): the op and the checks built (2026-11-22); the assembly they place, the 3D view of every board and the STEP file of them all built (2026-11-23, §6). The cost and stock checks of every board built (2026-11-23, §5), the enclosure script with every board (2026-11-23, §6); a combined BOM file is not built yet.
 
 ## 1. Why
 
@@ -119,20 +119,48 @@ ending at its connector pin. Nothing in them needs to know other boards exist.
 One fab profile for every board: `set_fab_profile` sets it on each (built: stored per board, as
 the profile was, so the DRC of each board reads it where it always did; a new board starts with
 the first board's layers, rules and profile). Each board still has its own layer count, thickness
-and stack-up, checked against that one profile. The cost and the order
-put both boards in one order with their own line items, and the parts' sourcing counts the
-combined quantities, so a part used on both boards is bought once.
+and stack-up, checked against that one profile.
+
+**The cost and the stock** (built): each board is an assembly order of its own at the one house,
+as a house takes it (its own setup, stencil, losses and minimums, so a part used on both boards is
+bought for each). The cost check runs per board (its parts, its placed board's joints, sides and
+size) and adds the estimates up service by service (`combineEstimates`, `combineCosts` in
+`parts/src/cost.ts`); a service that cannot take one board's order cannot take the whole. The
+report names each board's fees, savings and bare-board hints, and says what each board's order
+costs (`perBoard`). The stock check looks the parts up for every board together (the combined
+need, which is what the stock must cover), with the order estimate added up the same way. The
+values check compares parts with the boards' facts as one.
 
 A board that has to go to another house is not in scope: then it is two designs. A per-board
 override could come later if it is asked for.
 
 ## 6. One enclosure, one assembly
 
-Each board has a place in the assembly: `{ x, y, z, rotation, flipped }` in mm against the first
+Each board has a place in the assembly: `{ x, y, z, rot, flipped }` in mm against the first
 board. A `stack` or `edge` mate derives it: the second board sits where the connector puts it,
 at the mated height. The agent does not compute stacking heights, the kernel does, and when the
 footprints cannot mate (wrong pitch, pins that do not land) that is the error. A `cable` leaves
 the place to the agent (`set_board placement3d`) or the enclosure script.
+
+**Built** (`kernel/src/assembly.ts`, `BoardPlace`): the frame is the first board's board view (x
+right, y down from its top-left corner, z up from its top surface). A `stack` mate places the
+board it reaches from a placed one: the pads of the mated pairs, as each board's placement has
+them, are fitted onto each other (a turn of any angle, snapped to a quarter turn where it is
+one). Connectors on opposite sides of their boards (a header on top, a socket underneath) leave
+the second board the right way up; on the same side, it is turned over about its own y axis.
+The height between the boards is the mate's `height_mm` (the connectors' stacking height from
+their datasheets), else the taller connector's body height, marked as assumed. Pads that do not
+land after the fit (over 0.3 mm), an `edge` mate (the card standing in its slot: not yet) and a
+board no stack reaches leave the board beside the others, 10 mm apart, with the reason in `by`.
+`get_board` without a board gives each board's `assembly`. The Layout view's 3D view shows every
+board where it stands, and the STEP export writes them all (each board a sub-assembly of its PCB
+and parts, named after it, placed by the same transform). Not yet: `set_board placement3d` for
+a cable's board.
+
+The enclosure library (built, [enclosure](enclosure.md) §3): as sketched below, but `at` is the
+point of the script's frame where a board's own origin is, with `rot` and `flipped`; `parts_info`
+covers every board's parts where they stand; `pcbs()` is every board; `hole_posts(from, { board })`
+stands posts under another board's holes from z = from (the board below's top: standoffs).
 
 The enclosure library ([enclosure](enclosure.md) §3) keeps its single-board globals as the first
 board, so existing scripts run unchanged, and gains:
@@ -171,16 +199,18 @@ the hunk that added a board leaves its sheets and parts on the first board.
 
 1. **Boards in the model** (built 2026-11-22). `boards`, sheet and part assignment, `board` on the
    board ops and queries, per-board placement, routing, DRC, panel and production files, the
-   board picker. The enclosure, the 3D view and the design document show the board shown; the
-   cost estimate of a design of several boards counts its parts only (the boards' making and
-   assembly need step 3).
+   board picker. The enclosure and the design document show the board shown (the 3D view and
+   the cost: steps 2 and 3).
 2. **Mates.** The op, the kinds and their pin maps, the checks (built 2026-11-22; `get_summary`
-   lists the mates with their pin pairs). Still to come: the assembly position from
-   `stack`/`edge` mates, 3D assembly view and STEP.
-3. **System outputs.** Shared fab profile, combined BOM, cost and order, the enclosure library
-   with every board.
-4. **Agent guide.** A section in the layout guide: when to split a design, which mate kind to
-   choose, how to change from header to cable.
+   lists the mates with their pin pairs). The assembly position from `stack` mates, the 3D view of
+   every board and the STEP file of them all (built 2026-11-23). Still to come: an `edge` mate's
+   board standing in its slot, a place for a cable's board.
+3. **System outputs.** Shared fab profile (built), the cost and stock checks of every board
+   (built 2026-11-23), the enclosure library with every board (built 2026-11-23); still to come:
+   a combined BOM file.
+4. **Agent guide** (built 2026-11-23): [boards.md](boards.md), `get_guide boards`, and a line in
+   the agent's instructions pointing to it: when to split a design, setting the boards up, which
+   mate kind to choose, the checks, how to change from header to cable.
 
 ## 10. Open questions
 

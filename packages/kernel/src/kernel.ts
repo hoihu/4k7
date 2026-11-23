@@ -20,6 +20,7 @@ import {
   type ScopeInfo,
   type ScopeOutcome,
   type TransactionResult,
+  type BoardPlace,
   type BoardView,
   type DescriptionView,
   type SheetView,
@@ -68,6 +69,7 @@ import { impedanceText, resolveRule } from './lines.ts';
 import { lineBoard } from './lineops.ts';
 import { boardList, boardOf, commitFocus, focusBoard, multiBoard, resolveBoard, settingsOf } from './boards.ts';
 import { matePairs, pairsText } from './mates.ts';
+import { assemblyOf } from './assembly.ts';
 import { FIRST_BOARD } from '@4k7/schema';
 import { opBoard } from './apply.ts';
 
@@ -200,6 +202,11 @@ export class Kernel {
   /** Placement only (fast): parts, outline, ratsnest and placement checks. */
   boardPlacement(board: string = FIRST_BOARD): BoardView {
     return placedOf(this.focus(this.draft, board));
+  }
+
+  /** Where every board of the working copy stands (stacked by its mates, else beside), first board first. See docs/design/multi-board.md §6. */
+  assembly(): BoardPlace[] {
+    return assemblyOf(this.draft, new Map(boardList(this.draft).map((b) => [b.id, this.boardPlacement(b.id)])));
   }
 
   /** What the board worker lays the board from (layoutBoard): to send on, not to change. */
@@ -543,7 +550,14 @@ export class Kernel {
       }
     }
     if (q.op === 'get_board' && (q as { board?: string }).board === undefined && multiBoard(all)) {
-      return { boards: boardList(all).map((b) => ({ board: b.name, id: b.id, ...this.boardAnswer(all, b.id) })) };
+      const at = new Map(this.assembly().map((p) => [p.board, p]));
+      return {
+        boards: boardList(all).map((b) => {
+          const { board: _b, name: _n, ...place } = at.get(b.id)!;
+          return { board: b.name, id: b.id, assembly: place, ...this.boardAnswer(all, b.id) };
+        }),
+        assembly_frame: 'the first board\'s: x right, y down from its top-left corner, z up from its top surface (mm); a board\'s point (u, v) is at rot·(flipped ? −u : u, v) + (x, y)',
+      };
     }
     const d = onBoard ? this.focus(all, bid) : all;
     switch (q.op) {
@@ -848,7 +862,7 @@ export class Kernel {
         ? {
             mates: Object.values(d.mates).map((m) => {
               const { pairs, fit } = matePairs(d, m);
-              return { id: m.id, a: d.components[m.a]?.refdes ?? '?', b: d.components[m.b]?.refdes ?? '?', kind: m.kind + (m.cable === 'reversed' ? ' (reversed)' : ''), pins: pairsText(d, m, pairs), ...(fit ? { fit } : {}) };
+              return { id: m.id, a: d.components[m.a]?.refdes ?? '?', b: d.components[m.b]?.refdes ?? '?', kind: m.kind + (m.cable === 'reversed' ? ' (reversed)' : ''), pins: pairsText(d, m, pairs), ...(m.height_mm !== undefined ? { height_mm: m.height_mm } : {}), ...(fit ? { fit } : {}) };
             }),
           }
         : {}),

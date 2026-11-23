@@ -10,16 +10,19 @@
 import * as THREE from 'three';
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { boardBodies } from '@4k7/parts';
-import type { BoardView, Inlay } from '@4k7/schema';
+import type { BoardPlace, BoardView, Inlay } from '@4k7/schema';
 import type { EnclosureFacts, EnclosureFinding, EnclosurePiece } from '@4k7/fab';
-import { boardGroup, viewerCore, type Res } from './three-body.ts';
+import { boardGroup, boardsGroup, viewerCore, type Res } from './three-body.ts';
 import { extent, liftStep, type Box } from './section.ts';
 
 const T = 1.6;
 type V3 = readonly [number, number, number] | readonly number[];
 
 export interface EnclosureScene {
+  /** The board the script's frame is (the first, with several). */
   board: BoardView;
+  /** A design of several boards: every board where it stands (docs/design/multi-board.md §6). */
+  boards?: { board: BoardView; at: BoardPlace }[];
   facts: EnclosureFacts;
   pieces: EnclosurePiece[];
   findings: EnclosureFinding[];
@@ -149,7 +152,7 @@ export function sectionCaps(content: THREE.Group, kinds: [THREE.ColorRepresentat
 /** The board, the pieces and the marks, as one group for the viewer core. */
 export function enclosureGroup(s: EnclosureScene, res: Res, o: SceneOptions = {}, redraw?: () => void): THREE.Group {
   const h = s.board.outline.h;
-  const group = o.board === false ? new THREE.Group() : boardGroup(s.board, boardBodies(s.board), res, redraw);
+  const group = o.board === false ? new THREE.Group() : s.boards && s.boards.length > 1 ? boardsGroup(s.boards, res, redraw) : boardGroup(s.board, boardBodies(s.board), res, redraw);
   const owned: { dispose(): void }[] = [];
   const cuts: [THREE.ColorRepresentation, THREE.Material[]][] = [];
   const lift = liftStep(s.pieces) * (o.open ?? 0);

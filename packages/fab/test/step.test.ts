@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Kernel } from '@4k7/kernel';
 import type { BoardView } from '@4k7/schema';
-import { boardStep } from '../src/index.ts';
+import { assemblyStep, boardStep } from '../src/index.ts';
 import { buckTransaction } from '../../kernel/test/fixtures.ts';
 
 function kernel() {
@@ -148,5 +148,28 @@ describe('STEP export', () => {
     expect(step.content).toContain("PRODUCT('W\\X2\\00E4\\X0\\rme ''Test''',");
     expect(step.name).toBe('W_rme_Test_.step');
     expect(/[^\x20-\x7e\n]/.test(step.content)).toBe(false);
+  });
+});
+
+describe('assemblyStep (a design of several boards)', () => {
+  it('writes each board as an assembly of its own, placed where it stands', () => {
+    const k = kernel();
+    const b = k.boardPlacement();
+    const at = { board: 'b_2', name: 'Top', x: 5, y: 0, z: 11, rot: 90, flipped: true, by: 'test' };
+    const step = assemblyStep([{ b, name: 'Main', at: { ...at, board: 'b_1', name: 'Main', x: 0, z: 0, rot: 0, flipped: false } }, { b, name: 'Top', at }], 'two');
+    const e = entities(step.content);
+    const products = [...e.values()].filter((t) => t.startsWith('PRODUCT(')).map((t) => /^PRODUCT\('([^']*)'/.exec(t)![1]);
+    expect(products).toEqual(expect.arrayContaining(['two', 'two Main', 'two Top', 'two Main PCB', 'two Top PCB']));
+    // the boards in the top assembly, their parts in theirs
+    const uses = [...e.values()].filter((t) => t.startsWith('NEXT_ASSEMBLY_USAGE_OCCURRENCE')).map((t) => /^NEXT_ASSEMBLY_USAGE_OCCURRENCE\('([^']*)'/.exec(t)![1]);
+    expect(uses.filter((u) => u === 'Main' || u === 'Top')).toEqual(['Main', 'Top']);
+    expect(step.parts).toBe(2 * boardStep(b, 'one').parts);
+    // the second board's origin: turned over about its y axis and a quarter turn, its top 11 mm up
+    // (its STEP origin, the bottom-left of its underside, is its view point (0, h) 1.6 mm below its top)
+    const { w, h } = b.outline;
+    const points = [...e.values()].filter((t) => t.startsWith('CARTESIAN_POINT')).map((t) => /\(([-\d.E+]+),([-\d.E+]+),([-\d.E+]+)\)/.exec(t)!.slice(1).map(Number));
+    const near = (p: number[], q: number[]) => p.every((v, i) => Math.abs(v - q[i]!) < 1e-4);
+    expect(points.some((p) => near(p, [5 - h, h, 11 + 3.2]))).toBe(true);
+    void w;
   });
 });

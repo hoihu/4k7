@@ -372,7 +372,7 @@ export interface DesignSummary {
   /** Present when the design has several boards (add_board): each with its sheets and how many parts. */
   boards?: { name: string; id: string; sheets: string[]; parts: number }[];
   /** How the boards are joined (mate): the connectors, the kind and which pin meets which ("1↔1"). */
-  mates?: { id: string; a: string; b: string; kind: string; pins: string; fit?: string }[];
+  mates?: { id: string; a: string; b: string; kind: string; pins: string; height_mm?: number; fit?: string }[];
   counts: DiagnosticCounts;
   ledger: number;
   waivers: number;

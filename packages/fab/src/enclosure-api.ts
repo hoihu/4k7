@@ -84,8 +84,19 @@ export function enclosureApiSummary(facts: EnclosureFacts, brief?: EnclosureBrie
   L.push('// every part. min, max: the box round it; approx: no 3D body, the box is its footprint at the package height');
   L.push("// mating: null when it is not plugged, else facing: where it is plugged from (left, right, top, bottom = the board's edges as seen from above; above; below), origin: the face's centre, dir: the way out, u, v: across it, size: along u and v");
   L.push('parts_info = [');
-  for (const p of facts.parts) L.push(`  ${json({ ref: p.ref, kind: p.kind, min: p.min, max: p.max, side: p.side, approx: p.approx, mating: p.mating ?? null })},`);
+  for (const p of facts.parts) L.push(`  ${json({ ref: p.ref, kind: p.kind, min: p.min, max: p.max, side: p.side, approx: p.approx, mating: p.mating ?? null, ...(p.board ? { board: p.board } : {}) })},`);
   L.push(']');
+  if (facts.boards && facts.boards.length > 1) {
+    L.push('// several boards (docs: get_guide mechanics, "Several boards"): the pcb_* globals and holes are the first board\'s, and the frame is its; parts_info has every board\'s parts where they stand (board: which).');
+    L.push('// at: where a board\'s own origin (its bottom-left corner, underside) is; rot: turned (degrees, from above); flipped: turned over. outline and holes in its own frame, as pcb_outline is in the first\'s');
+    L.push('boards = [');
+    for (const b of facts.boards) L.push(`  ${json({ id: b.id, name: b.name, at: b.at, rot: b.rot, flipped: b.flipped, size: b.size, thickness: b.thickness, holes: b.holes, by: b.by })},`);
+    L.push(']');
+    L.push(`mates = ${json(facts.mates ?? [])}    // how the boards are joined (mate): height_mm, a stack's distance between the boards`);
+    L.push('// pcb(board)                                    another board where it stands (name or id); pcb() is the first');
+    L.push('// pcbs()                                        every board; assembly() is pcbs() and parts()');
+    L.push('// hole_posts(from, { board, d })               posts under that board\'s holes from z = from up to its underside: from the floor, or standoffs from the board below (from: its top)');
+  }
   L.push(`brief_openings = ${json(brief?.openings ?? [])}    // from the brief: the parts used from outside`);
   L.push(`lid_clearance = ${brief?.lid_clearance_mm ?? 1}    // from the brief: the room over the tallest part`);
   L.push(`graphics = ${json((graphics ?? []).map((g) => ({ name: g.name, w: g.w, h: g.h })))}    // set_enclosure_graphic; draw one with graphic(name)`);
