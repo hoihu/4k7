@@ -5,6 +5,7 @@
 import type { Component, Design, EditOp, Net, OpResult, PartCard } from '@4k7/schema';
 import { addPart, connect } from './netops.ts';
 import { cardOf, componentsSorted, findNet, isAutoNet, isGroundNet, isPowerNet, natCmp, nextId, reject } from './doc.ts';
+import { boardOf } from './boards.ts';
 
 /** The pad test point add_test_points adds (generic:TP, a 1.5 mm SMD pad). */
 const TEST_POINT = 'generic:TP';
@@ -26,31 +27,41 @@ export function testPointLabel(d: Design, c: Component, card: PartCard): string 
  * else the connector it comes in on, else the series part feeding it (an inductor, a diode), else
  * an IC on it, else its first part.
  */
-function sourcePin(d: Design, net: Net): { comp: Component; pin: string } | undefined {
+function sourcePin(d: Design, net: Net, onBoard: (c: Component) => boolean): { comp: Component; pin: string } | undefined {
   const rank = (card: PartCard, type: string) =>
     type === 'pwr_out' || type === 'out' ? 0 : card.category === 'connector' ? 1 : card.category === 'inductor' ? 2 : card.category === 'diode' ? 3 : card.category === 'ic' ? 4 : 5;
   const on: { comp: Component; pin: string; rank: number }[] = [];
   for (const c of componentsSorted(d)) {
     const card = cardOf(d, c.part);
-    if (!card || isTestPoint(card)) continue;
+    if (!card || isTestPoint(card) || !onBoard(c)) continue;
     for (const p of card.pins) if (c.pins[p.number] === net.id) on.push({ comp: c, pin: p.number, rank: rank(card, p.type) });
   }
   return on.sort((a, b) => a.rank - b.rank || natCmp(a.comp.refdes, b.comp.refdes) || natCmp(a.pin, b.pin))[0];
 }
 
-export function addTestPoints(d: Design, op: Extract<EditOp, { op: 'add_test_points' }>, by: 'user' | 'agent'): OpResult {
+/**
+ * `board`: a design of several boards, the board the test points go on (docs/design/multi-board.md).
+ * Run on the whole design, so a new TP's refdes is unused on every board; it goes on the sheet of
+ * the part it is at, on that board.
+ */
+export function addTestPoints(d: Design, op: Extract<EditOp, { op: 'add_test_points' }>, by: 'user' | 'agent', board?: string): OpResult {
+  const on = (c: Component) => board === undefined || boardOf(d, c) === board;
+  const here = new Set(Object.values(d.components).filter(on).flatMap((c) => Object.values(c.pins)));
   const nets: Net[] = [];
   for (const name of op.nets) {
     if (name.toLowerCase() === 'rails') {
-      nets.push(...Object.values(d.nets).filter((n) => isPowerNet(n) && !isGroundNet(n) && !isAutoNet(n)).sort((a, b) => natCmp(a.name, b.name)));
+      nets.push(...Object.values(d.nets).filter((n) => isPowerNet(n) && !isGroundNet(n) && !isAutoNet(n) && here.has(n.id)).sort((a, b) => natCmp(a.name, b.name)));
       continue;
     }
     const net = findNet(d, name);
-    if (!net) reject({ code: 'NET_UNKNOWN', message: `No net "${name}" to put a test point on ("rails" stands for every supply rail).`, candidates: Object.values(d.nets).filter((n) => !isAutoNet(n)).map((n) => n.name).sort(natCmp) });
-    nets.push(net);
+    if (!net || !here.has(net.id)) {
+      const where = board === undefined ? '' : ' on this board';
+      reject({ code: 'NET_UNKNOWN', message: `No net "${name}"${where} to put a test point on ("rails" stands for every supply rail).`, candidates: Object.values(d.nets).filter((n) => !isAutoNet(n) && here.has(n.id)).map((n) => n.name).sort(natCmp) });
+    }
+    nets.push(net!);
   }
-  // a net with a test point already (one added before, or the user's own) gets no second one
-  const probed = new Set(Object.values(d.components).flatMap((c) => (isTestPoint(cardOf(d, c.part)) ? Object.values(c.pins) : [])));
+  // a net with a test point already (one added before, or the user's own) gets no second one; on several boards, on that board
+  const probed = new Set(Object.values(d.components).flatMap((c) => (on(c) && isTestPoint(cardOf(d, c.part)) ? Object.values(c.pins) : [])));
   const added: string[] = [];
   const ids: string[] = [];
   for (const net of nets) {
@@ -60,7 +71,11 @@ export function addTestPoints(d: Design, op: Extract<EditOp, { op: 'add_test_poi
     const tp = d.components[id]!;
     connect(d, [`${tp.refdes}.1`], net.name);
     // at the pin the net comes from, as attach says it (the placer puts it there and it follows that part)
-    const src = sourcePin(d, net);
+    const src = sourcePin(d, net, on);
+    if (board !== undefined) {
+      if (src) tp.sheet = src.comp.sheet;
+      if (boardOf(d, tp) !== board) tp.board = board;
+    }
     if (src) {
       const k = nextId(d, 'k');
       d.ledger[k] = { id: k, kind: 'belongs', a: tp.id, b: src.comp.id, key: src.pin, domain: 'placement', strength: 'soft', source: { type: by } };

@@ -3,16 +3,21 @@
  * schematic and board geometry are derived views plus constraints.
  * See docs/design/data-model.md.
  */
-import type { BoardSettings } from './board.ts';
+import type { BoardEntry, BoardSettings } from './board.ts';
 import type { EnclosureSettings } from './enclosure.ts';
 import type { PartCard } from './part.ts';
 import type { LabelView, PaperId, Point, Rect, WireView } from './results.ts';
 import type { ESeries } from './units.ts';
 
 export const DESIGN_FORMAT_VERSION = 2;
+/**
+ * The format of a design of several boards (Design.boards): an app that knows only one board
+ * refuses it instead of putting every part on one board. A design of one board stays format 2.
+ */
+export const MULTI_BOARD_FORMAT = 3;
 
 export interface Design {
-  format: typeof DESIGN_FORMAT_VERSION;
+  format: typeof DESIGN_FORMAT_VERSION | typeof MULTI_BOARD_FORMAT;
   name: string;
   /** Monotonic counter for deterministic entity ids. */
   seq: number;
@@ -23,8 +28,14 @@ export interface Design {
   sheets: Record<string, Sheet>;
   ledger: Record<string, Constraint>;
   waivers: Record<string, Waiver>;
-  /** Board settings (outline, layers, rules); absent = defaults, outline sized to fit. */
+  /** Board settings (outline, layers, rules); absent = defaults, outline sized to fit. With several boards: the first board's. */
   board?: BoardSettings;
+  /**
+   * The boards of a design of several (add_board), by id; absent: one board, `board`. The first
+   * board (FIRST_BOARD) keeps its settings in `board`, the others in their entry. A component is on
+   * its own `board`, else its sheet's, else the first. See docs/design/multi-board.md.
+   */
+  boards?: Record<string, BoardEntry>;
   /** Packages of generic parts without their own package parameter (set_package_defaults). */
   packageDefaults?: PackageDefaults;
   /** Standard-value series generic passives are chosen from (set_value_series); absent = any value. */
@@ -161,6 +172,8 @@ export interface Component {
   /** Pin numbers deliberately left unconnected. */
   noConnect: string[];
   dnp?: boolean;
+  /** The board it is on when that is not its sheet's (assign_board refs); absent: its sheet's. */
+  board?: string;
 }
 
 export interface NetAttrs {
@@ -257,6 +270,8 @@ export interface Sheet {
   id: string;
   name: string;
   order: number;
+  /** The board its parts are on (assign_board); absent: the first board. */
+  board?: string;
 }
 
 export type ConstraintKind =
@@ -351,6 +366,8 @@ export interface Waiver {
   entities: string[];
   reason: string;
   by: 'user' | 'agent';
+  /** A design of several boards: the board whose findings it covers (absent: every board). */
+  board?: string;
 }
 
 export function emptyDesign(name = 'untitled'): Design {

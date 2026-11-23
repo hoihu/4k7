@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Layout
+
+- **A design can have several boards.** A product of two boards, such as a main board and a display board joined by a header, used to be two projects, with the connection between them checked by nobody. Now ask the agent to add a board and put a sheet on it ("put the LED sheet on its own board"): one schematic and netlist, and each board has its own outline, layers, placement, routing, panel and production files. The Layout view shows a picker with the board names once there is a second board; the production files and the Gerber viewer are those of the board shown, named after it. The fab house is shared, so choosing one sets it for every board. Not yet: checking that the two connectors' pins match, the boards together in 3D and in the enclosure, and a cost estimate for both boards together (until then the estimate counts the parts only). A project of several boards needs this version of 4k7 to open; one board is saved as before.
+
 ## 0.7.0 — 2026-11-22
 
 This release checks the current and power on a board: a microcontroller pin asked to drive more than it is rated for is flagged, tracks, vias and thermal spokes are checked against the current they carry, and a heat map shows where the copper works hardest. The agent can copy a block you already built in another project into the open design, give an enclosure a clear window, and swap pins and gates, including an ATtiny85's GPIO pins, to untangle the board. Parts can be marked do-not-populate, test points go on the power rails, and the design document can be downloaded as a file.

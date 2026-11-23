@@ -77,6 +77,10 @@ export type RejectionCode =
   | 'NO_PATH'
   | 'SHEET_UNKNOWN'
   | 'SHEET_NOT_EMPTY'
+  /** A board the design does not have (add_board lists them in get_summary). */
+  | 'BOARD_UNKNOWN'
+  /** A board op on a design of several boards that says neither the board nor a part on one. */
+  | 'BOARD_AMBIGUOUS'
   | 'WAIVER_UNKNOWN'
   | 'ENCLOSURE_INVALID'
   | 'STACKUP_INVALID'
@@ -363,8 +367,10 @@ export interface DesignSummary {
   sheets: string[];
   /** Printable pages across all sheets (derived by the layout). */
   pages: number;
-  components: { refdes: string; part: string; value: string; sheet: string }[];
-  nets: { name: string; pins: number; voltage?: number; external?: boolean }[];
+  components: { refdes: string; part: string; value: string; sheet: string; board?: string }[];
+  nets: { name: string; pins: number; voltage?: number; external?: boolean; boards?: string[] }[];
+  /** Present when the design has several boards (add_board): each with its sheets and how many parts. */
+  boards?: { name: string; id: string; sheets: string[]; parts: number }[];
   counts: DiagnosticCounts;
   ledger: number;
   waivers: number;

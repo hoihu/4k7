@@ -36,10 +36,12 @@ const methods = {
   hasPending: () => kernel.hasPending(),
   /** The working copy, for the board worker. */
   draftDesign: () => kernel.draftDesign(),
-  /** The working copy's board placed, not routed (fast): its parts, pads and sides, for what assembly costs. */
-  boardPlacement: () => kernel.boardPlacement(),
-  /** The working copy and its board placed, for the board worker. */
-  boardRequest: () => kernel.boardRequest(),
+  /** The working copy's board placed, not routed (fast): its parts, pads and sides, for what assembly costs. `board`: which (several boards). */
+  boardPlacement: (board?: string) => kernel.boardPlacement(board),
+  /** Every board of the working copy placed, first board first. */
+  boardPlacements: () => kernel.boardList().map((b) => kernel.boardPlacement(b.id)),
+  /** The working copy's board `board` (as a design of its own) and its placement, for the board worker. */
+  boardRequest: (board?: string) => kernel.boardRequest(board),
   /** Copper the board worker routed, kept with the design (true: the committed design took it, save it). */
   keepCopper: (copper: StoredCopper) => kernel.keepCopper(copper),
   /** The working copy's part cards (the design's own copies, e.g. with a footprint the agent gave). */

@@ -20,6 +20,11 @@ const pinRef = z
   .min(3)
   .describe('Pin reference "<refdes>.<pin name or number>", e.g. "U1.VIN" or "U1.2". A name shared by several pins (e.g. GND) addresses all of them.');
 const netName = z.string().min(1).describe('Net name, e.g. "+3V3", "GND", "SW"');
+const boardRef = z
+  .string()
+  .min(1)
+  .optional()
+  .describe('Which board, by name or id, when the design has several (add_board); absent: the only board, or the board of the part the op names. See docs/design/multi-board.md');
 
 /* ------------------------------- edit ops --------------------------------- */
 
@@ -118,6 +123,24 @@ export const RemoveSheetOp = z.object({
   sheet: z.string().describe('The sheet to take away. It must be empty: first move its parts to another sheet (move_to_sheet) or take them off (clear_sheet), in the same transaction if you like. A design keeps at least one sheet'),
 });
 
+export const AddBoardOp = z.object({
+  op: z.literal('add_board'),
+  name: z.string().min(1).describe('What the board is called ("Display"): how the user and the ops name it'),
+  sheets: z.array(z.string()).optional().describe('Sheets whose parts go on the new board (a sheet belongs to one board); later: assign_board'),
+}).describe('Another board in the design, for a product of several boards (a main board and a display board joined by a header or a cable). Its parts are those of the sheets assigned to it; each board has its own outline, layers, placement, copper, panel and production files, and the fab house is shared. The first board is the design\'s board as before');
+
+export const RemoveBoardOp = z.object({
+  op: z.literal('remove_board'),
+  board: z.string().min(1).describe('The board to take away (name or id). Its sheets and parts go back to the first board; the first board itself stays'),
+});
+
+export const AssignBoardOp = z.object({
+  op: z.literal('assign_board'),
+  board: z.string().min(1).describe('The board (name or id)'),
+  sheets: z.array(z.string()).optional().describe('Sheets whose parts go on it'),
+  refs: z.array(componentRef).optional().describe('Single parts that go on it whatever their sheet\'s board'),
+}).describe('Put parts on a board: whole sheets (the usual way: a sheet per board), or single parts. Their placement on the board they leave is dropped, and drawn copper or via groups on their pads stay behind as loose copper there');
+
 export const ClearSheetOp = z.object({
   op: z.literal('clear_sheet'),
   sheet: z.string(),
@@ -150,6 +173,7 @@ export const RemoveConstraintOp = z.object({
 
 export const AddWaiverOp = z.object({
   op: z.literal('add_waiver'),
+  board: z.string().min(1).optional().describe('A design of several boards: the board whose finding this is (a board check: DRC, placement, production files), by name or id. Without it the waiver holds on every board'),
   code: z.string().describe('Diagnostic code to waive, e.g. "SEM.EN_FLOATING"'),
   entities: z.array(z.string()).min(1).describe('Entities exactly as listed in the diagnostic'),
   reason: z.string().min(8),
@@ -290,6 +314,8 @@ export const RenamePartOp = z.object({
 
 export const SetBoardOp = z.object({
   op: z.literal('set_board'),
+  board: boardRef,
+  name: z.string().min(1).optional().describe('A new name for the board (several boards: add_board)'),
   width_mm: z.number().positive().nullable().optional().describe('Board width; null = size to fit the parts'),
   height_mm: z.number().positive().nullable().optional().describe('Board height; null = size to fit the parts'),
   layers: z.union([z.literal(2), z.literal(4)]).optional(),
@@ -346,6 +372,7 @@ const stackupDielectric = z.object({
 
 export const SetStackupOp = z.object({
   op: z.literal('set_stackup'),
+  board: boardRef,
   preset: z.string().optional().describe('A built-in stack-up: "JLC04161H-7628" (JLCPCB\'s standard 4 layers, 0.21 mm to the plane), "JLC04161H-3313", "JLC04161H-2116", "JLC04161H-1080" (thinner prepreg: narrower lines for the same impedance), "jlcpcb/2l-1.6", "pcbway/4l-1.6", "generic/2l-1.6", "generic/4l-1.6"'),
   none: z.boolean().optional().describe('true: back to the default for the board\'s fab and layer count (JLCPCB: JLC04161H-7628 on 4 layers)'),
   house: z.string().min(1).optional().describe('Import: the manufacturer, with name, copper_mm, dielectric and source_url read off its stack-up page. Never guess a number'),
@@ -368,6 +395,7 @@ export const SetStackupOp = z.object({
 
 export const SetImpedanceOp = z.object({
   op: z.literal('set_impedance'),
+  board: boardRef,
   nets: z.array(netName).min(1).max(2).describe('One net (a single-ended line: an RF feed to an antenna or a connector, a fast clock), or a differential pair\'s two nets, positive first (["USB_DP", "USB_DN"])'),
   ohms: z.number().min(20).max(200).describe('Target: a single line\'s impedance (RF: 50 Ω), or the pair\'s differential impedance (USB 90 Ω; Ethernet, LVDS, HDMI, MIPI 100 Ω; PCIe 85 Ω); the interface\'s spec or the part\'s datasheet says'),
   style: z.enum(['microstrip', 'coplanar']).optional().describe('microstrip: over its plane alone, other copper kept back; coplanar: with ground copper beside it on its own layer at coplanar_gap_mm too (narrower for the same impedance: the way on 2 layers and for RF lines, with a via fence). Default: microstrip on 4 layers, coplanar on 2'),
@@ -383,11 +411,13 @@ export const SetImpedanceOp = z.object({
 
 export const RemoveImpedanceOp = z.object({
   op: z.literal('remove_impedance'),
+  board: boardRef,
   id: z.string().describe('Rule id ("Z1", from get_board impedance) or "all"'),
 });
 
 export const SetOutlineOp = z.object({
   op: z.literal('set_outline'),
+  board: boardRef,
   svg_path: z.string().optional().describe('The outline as an SVG path (M L H V C S Q T A Z, absolute or relative, y down), in any units: it is scaled to width_mm / height_mm. One closed figure; cutouts are separate (add_cutout). E.g. a Christmas tree, a circle, a shield shape.'),
   points: z.array(z.tuple([z.number(), z.number()])).optional().describe('Or the outline as corner points [x, y] (y down), in any units'),
   width_mm: z.number().positive().optional().describe('Scale the shape to this width (only one of width/height: proportional)'),
@@ -399,6 +429,7 @@ const cutoutAnchor = z.enum(['top_left', 'top', 'top_right', 'left', 'center', '
 
 export const AddCutoutOp = z.object({
   op: z.literal('add_cutout'),
+  board: boardRef,
   shape: z.enum(['rect', 'circle', 'slot']).describe('rect: an opening (optionally with rounded corners); circle: a round cutout; slot: an oblong with round ends (e.g. an isolation slot)'),
   x_mm: z.number().describe('Centre x, measured from the anchor point (x right)'),
   y_mm: z.number().describe('Centre y, measured from the anchor point (y down)'),
@@ -412,6 +443,7 @@ export const AddCutoutOp = z.object({
 
 export const AddGraphicOp = z.object({
   op: z.literal('add_graphic'),
+  board: boardRef,
   svg_path: z.string().min(1).optional().describe('SVG path data of the graphic: a shape, logo or symbol (for words use text) (any units; M L H V C S Q T A Z, absolute or relative; several figures allowed). Filled: figures inside figures are holes (even-odd), as in a logo'),
   artwork: z.string().optional().describe('Instead of svg_path: a saved artwork by name (the artwork library); without width/height it keeps its saved size'),
   text: z.string().min(1).optional().describe('Instead of svg_path: silkscreen text in the board\'s stroke font (A–Z, drawn in capitals, 0–9, space and - + . / _ : , \' ( ) = < > ! ? *; "\\n" starts a new line). height_mm is the letter height (default 1.5; at least 1 reads well, 2–3 for labels meant to stand out); line_mm the stroke (default height / 7, at least 0.15). Always drawn as strokes, read the right way from its side (mirrored on the bottom). Use this for any words, names or pin labels: do not draw letters as paths'),
@@ -429,6 +461,7 @@ export const AddGraphicOp = z.object({
 
 export const EditGraphicOp = z.object({
   op: z.literal('edit_graphic'),
+  board: boardRef,
   id: z.string().describe('Graphic id ("G1")'),
   dx_mm: z.number().optional().describe('Move by this much (x right)'),
   dy_mm: z.number().optional().describe('Move by this much (y down)'),
@@ -446,11 +479,13 @@ export const EditGraphicOp = z.object({
 
 export const RemoveGraphicOp = z.object({
   op: z.literal('remove_graphic'),
+  board: boardRef,
   id: z.string().describe('Graphic id ("G1"), or "all"'),
 });
 
 export const RemoveCutoutOp = z.object({
   op: z.literal('remove_cutout'),
+  board: boardRef,
   id: z.string().describe('Cutout id ("CO1"), or "all"'),
 });
 
@@ -476,6 +511,7 @@ const keepoutShape = {
 export const AddKeepoutOp = z
   .object({
     op: z.literal('add_keepout'),
+    board: boardRef,
     name: z.string().min(1).max(40).optional().describe('What it is for ("antenna clearance", "no plane under L1"); drawn on the keep-out'),
     ...keepoutShape,
     part: componentRef.optional().describe('Attach it to this part: the area is in the part\'s frame and follows it (the antenna\'s clearance goes where the antenna goes; the part itself may stand in it)'),
@@ -485,6 +521,7 @@ export const AddKeepoutOp = z
 export const EditKeepoutOp = z
   .object({
     op: z.literal('edit_keepout'),
+    board: boardRef,
     id: z.string().describe('Keep-out id ("KO1")'),
     name: z.string().min(1).max(40).nullable().optional().describe('null removes the name'),
     ...keepoutShape,
@@ -494,6 +531,7 @@ export const EditKeepoutOp = z
 
 export const RemoveKeepoutOp = z.object({
   op: z.literal('remove_keepout'),
+  board: boardRef,
   id: z.string().describe('Keep-out id ("KO1"), or "all"'),
 });
 
@@ -501,6 +539,7 @@ const panelSide = z.enum(['top', 'right', 'bottom', 'left']);
 
 export const SetPanelOp = z.object({
   op: z.literal('set_panel'),
+  board: boardRef,
   none: z.boolean().optional().describe('true: remove the panel (single boards)'),
   cols: z.number().int().min(1).max(20).optional().describe('Copies side by side (default 2)'),
   rows: z.number().int().min(1).max(20).optional().describe('Copies one above the other (default 2)'),
@@ -520,6 +559,7 @@ export const SetPanelOp = z.object({
 
 export const PlaceOp = z.object({
   op: z.literal('place'),
+  board: boardRef,
   ref: componentRef,
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
@@ -531,6 +571,7 @@ export const PlaceOp = z.object({
 
 export const AttachOp = z.object({
   op: z.literal('attach'),
+  board: boardRef,
   ref: componentRef.describe('The part, e.g. a decoupling cap, a pull-up, a crystal'),
   to: componentRef.nullable().describe('The part it belongs with on the board (an IC it serves): it stays at that part and follows it when it moves. null: it stands on its own (a bulk cap at the input, a part the placer wrongly put at an IC)'),
   pin: z.string().optional().describe('The pin of `to` it serves (number or name), e.g. the VDD pin a decoupling cap is for: it goes right at that pin. It must share a net with it'),
@@ -538,6 +579,7 @@ export const AttachOp = z.object({
 
 export const AddTestPointsOp = z.object({
   op: z.literal('add_test_points'),
+  board: boardRef,
   nets: z.array(z.string().min(1)).min(1).describe('Nets to probe, e.g. ["+3V3", "GND"]; "rails" stands for every supply rail (a net with a voltage, marked power or external, or named like +3V3, VCC, VBUS; not ground)'),
 }).describe('Add a test point to each net: a bare round 1.5 mm SMD pad (generic:TP; nothing to buy or assemble) on the net, named TP<n>, with TP_<net> on the silkscreen, placed at the part that drives the net (its regulator or inductor, the input connector) as attach would. A net that already has a test point gets no second one, so it is safe to run again. Use add_part generic:TP with package TP-1.0 for a smaller pad, or generic:TP_LOOP for a through-hole loop a probe hooks onto.');
 
@@ -634,6 +676,7 @@ export type PartPlacement = z.infer<typeof PartPlacement>;
 
 export const ProposePlacementOp = z.object({
   op: z.literal('propose_placement'),
+  board: boardRef,
   parts: z
     .array(PartPlacement)
     .optional()
@@ -646,12 +689,14 @@ export const ProposePlacementOp = z.object({
 
 export const RefinePlacementOp = z.object({
   op: z.literal('refine_placement'),
+  board: boardRef,
   parts: z.array(componentRef).optional().describe('Only these small parts (default: all the placer put down)'),
   near: z.array(componentRef).optional().describe('Only the small parts within 5 mm of these parts (e.g. the parts round an open connection)'),
 }).describe('Refine the placement of the small parts the placer put down (resistors, capacitors, diodes; not the parts you or the user placed or locked, nor connectors): each is moved up to 2 mm and turned where that untangles the ratsnest and eases the congestion (the score: 4 × crossing lines + ratsnest mm + 8 × congestion mm), clear of the other parts, a decoupling cap staying at its pin. Kept only if placement_measures improve; the effect lists what moved. Routing is then out of date.');
 
 export const RouteOp = z.object({
   op: z.literal('route'),
+  board: boardRef,
   nets: z.array(netName).min(1).optional().describe('Drawn copper only: route just the open connections of these nets'),
   from: pinRef.optional().describe('Drawn copper only: route just this one connection, from this pin …'),
   to: pinRef.optional().describe('… to this pin (same net)'),
@@ -670,12 +715,14 @@ const bend = z
 
 export const SetCopperModeOp = z.object({
   op: z.literal('set_copper_mode'),
+  board: boardRef,
   mode: z.enum(['drawn', 'router']).describe('drawn: the copper is yours, drawn with draw_track and draw_via (route helps on request); router: the autorouter lays it (route)'),
   keep: z.boolean().optional().describe('Switching to drawn: start from the router\'s copper as it is now (default true; false starts empty)'),
 }).describe('Who lays the board\'s copper. In drawn mode you draw every track and via yourself (the router lays nothing unless you ask it with route nets / from, to); pours and planes still fill round your copper; get_board lists what is not connected yet and the DRC judges the copper. Switching to router throws the drawn copper away.');
 
 export const DrawTrackOp = z.object({
   op: z.literal('draw_track'),
+  board: boardRef,
   from: trackEnd,
   to: trackEnd,
   via: z
@@ -691,6 +738,7 @@ export const DrawTrackOp = z.object({
 
 export const DrawPairOp = z.object({
   op: z.literal('draw_pair'),
+  board: boardRef,
   from: z.tuple([trackEnd, trackEnd]).describe('Where the pair starts: its two pads (or your vias, or points), positive first, e.g. ["J1.D+", "J1.D-"]'),
   to: z.tuple([trackEnd, trackEnd]).describe('Where it ends: the two pads (vias, points), positive first, e.g. ["U1.DP", "U1.DM"]'),
   via: z.array(mmPoint).max(64).optional().describe('The pair\'s centre line between the two ends: its corners, in order. Leave room at each end for the tracks to come together from the pads (a few times the pads\' pitch)'),
@@ -702,6 +750,7 @@ export const DrawPairOp = z.object({
 
 export const DrawViaOp = z.object({
   op: z.literal('draw_via'),
+  board: boardRef,
   at: mmPoint,
   net: netName,
   drill_mm: z.number().positive().optional().describe('Default the board\'s via drill'),
@@ -710,6 +759,7 @@ export const DrawViaOp = z.object({
 
 export const EditCopperOp = z.object({
   op: z.literal('edit_copper'),
+  board: boardRef,
   ids: z.array(z.string()).min(1).describe('Your tracks and vias by id (t3, v1); they keep their ids'),
   move: z.tuple([z.number(), z.number()]).optional().describe('Shift them by [dx, dy] mm. Track ends on a via that moves go with it; a track end on a pad stays on its pad (the piece next to it stretches)'),
   via: z.array(mmPoint).max(64).optional().describe('One track: its new corners between its two ends, which stay'),
@@ -722,6 +772,7 @@ export const EditCopperOp = z.object({
 
 export const TuneLengthOp = z.object({
   op: z.literal('tune_length'),
+  board: boardRef,
   track: z.string().optional().describe('One of your tracks by id (t3): the meander goes into this track. Without it, net names the net and the meander goes into its longest straight stretch that has room'),
   net: netName.optional().describe('The net to lengthen (its drawn track; with several, the one with room). Required without track'),
   target_mm: z.number().positive().optional().describe('The length the net should have in all (its drawn copper, as get_board impedance counts it)'),
@@ -735,6 +786,7 @@ export const TuneLengthOp = z.object({
 
 export const EraseCopperOp = z.object({
   op: z.literal('erase_copper'),
+  board: boardRef,
   ids: z.array(z.string()).optional().describe('Tracks and vias by id (t3, v1)'),
   nets: z.array(netName).optional().describe('All drawn copper of these nets'),
   parts: z.array(componentRef).optional().describe('Tracks that end on these parts\' pads'),
@@ -747,16 +799,19 @@ export const EraseCopperOp = z.object({
 
 export const LockCopperOp = z.object({
   op: z.literal('lock_copper'),
+  board: boardRef,
   nets: z.array(netName).min(1).describe('The nets whose routed copper to keep as it is, e.g. ["SW", "+5V"]'),
 }).describe('Router copper: keep the router\'s copper for these nets exactly as it lies now, when a route got a net right (the switching loop tight, the power path short) and later routes should not change it. The board must be routed as it stands. Route then lays it before anything else and never rips it up; the rest is routed round it. Locking does not make the routing out of date. A part moved off locked copper breaks the pieces it touched: those are not laid (get_board locked_copper and DRC.LOCKED_BROKEN say so) but stay locked, and come back if the part does. Locking a net again takes its copper as it lies then; unlock_copper lets it go. Connections you laid with draw_track are laid as asked anyway (not part of the lock).');
 
 export const UnlockCopperOp = z.object({
   op: z.literal('unlock_copper'),
+  board: boardRef,
   nets: z.array(netName).min(1).describe('The nets to let go, or ["all"]'),
 }).describe('Let go of copper locked with lock_copper: the router may route those nets its own way again.');
 
 export const SetPlaneOp = z.object({
   op: z.literal('set_plane'),
+  board: boardRef,
   layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Copper layer; inner layers (4-layer boards) become dedicated planes, outer layers get a pour around the tracks'),
   net: netName.nullable().optional().describe('Net to pour on that layer (e.g. "GND", "+3V3"); null removes every plane from the layer'),
   under: z.array(componentRef).min(1).optional().describe('The plane covers only the area under these parts (their box plus margin_mm; it follows them when they move), e.g. +3V3 under the MCU while +5V fills the rest of an inner layer, or GND on F.Cu only round a regulator. Pads inside the area join it (drop onto an inner one with vias); the net\'s other pads are joined with tracks'),
@@ -771,6 +826,7 @@ export const SetPlaneOp = z.object({
 const planeMm = (what: string) => z.number().min(0).max(10).nullable().optional().describe(`${what} (mm); null: back to the default`);
 export const SetPlaneStyleOp = z.object({
   op: z.literal('set_plane_style'),
+  board: boardRef,
   layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']),
   net: netName.describe('The net of the plane on that layer (a full plane or an area plane)'),
   gap_mm: planeMm('An area plane: the gap between it and the plane round it, e.g. 0.5 to separate +3V3 from +5V clearly (default: the board\'s clearance)'),
@@ -782,6 +838,7 @@ export const SetPlaneStyleOp = z.object({
 
 export const AddHoleOp = z.object({
   op: z.literal('add_hole'),
+  board: boardRef,
   diameter_mm: z.number().positive().describe('Drill diameter, e.g. 3.2 for M3 clearance, 3.5'),
   corner: z.enum(['top_left', 'top_right', 'bottom_left', 'bottom_right', 'all']).optional().describe('Anchor to a board corner ("all" = one in each corner); the hole follows the board size'),
   inset_mm: z.number().positive().optional().describe('Corner holes: centre distance from both edges (default diameter + 0.5)'),
@@ -793,6 +850,7 @@ export const AddHoleOp = z.object({
 
 export const RemoveHoleOp = z.object({
   op: z.literal('remove_hole'),
+  board: boardRef,
   id: z.string().describe('Hole id ("MH1") or "all"'),
 });
 
@@ -806,6 +864,7 @@ const viaArea = {
 };
 export const AddViasOp = z.object({
   op: z.literal('add_vias'),
+  board: boardRef,
   kind: z
     .enum(['pad', 'points', 'grid', 'fence', 'tie', 'drop'])
     .describe('drop: the vias one pad drops onto its plane through, where a current flows through it (a pad on a high-current path: a regulator\'s input or output, an inductor, a connector\'s supply pin, a bulk cap, and their ground return): you place each one (at: their centres, right beside the pad, clear of it by the clearance, in a row along the side facing away from the part\'s body), and each is joined to the pad by its own short stub; they move and turn with the part; amps (default the net\'s max_current: about 0.9 A per 0.3 mm via) says whether they are enough. Every pad gets one via without it; pad: thermal vias, a grid filling one exposed or thermal pad (not a passive\'s pad: they wick its solder), allowed in the pad and moving with the part; points: vias at the given spots; tie: a tight block of vias at one spot (at, one point) joining a net\'s copper on two layers where its current crosses (a pour or a wide track on top to an inner plane), as many as the current needs (amps, default the net\'s max_current: about 0.9 A per 0.3 mm via; at least 2); grid: stitching vias over an area (GND pours on both sides tied together for the return currents and shielding, not for a supply\'s current: a tie carries that); fence: a row of vias round the edge of an area (GND round an antenna or an RF part)'),
@@ -823,6 +882,7 @@ export const AddViasOp = z.object({
 
 export const RemoveViasOp = z.object({
   op: z.literal('remove_vias'),
+  board: boardRef,
   id: z.string().describe('Via group id ("V1", from get_board via_groups) or "all"'),
 });
 
@@ -865,6 +925,9 @@ export const EditOp = z.discriminatedUnion('op', [
   MoveToSheetOp,
   RemoveSheetOp,
   ClearSheetOp,
+  AddBoardOp,
+  RemoveBoardOp,
+  AssignBoardOp,
   ConstrainOp,
   RemoveConstraintOp,
   AddWaiverOp,
@@ -959,12 +1022,13 @@ export const QueryOp = z.discriminatedUnion('op', [
   }).describe('Schematic drawing: each page (number, name, paper size in mils, drawn by the auto-layout or as you arranged it), the functional blocks (title, page, centre and size of the frame, their parts; guessed: parts in no block that the layout drew with it), where each symbol stands (centre and size in mils from the paper\'s top-left) and the net labels with the pins they sit on (auto: a connection your drawing does not show yet)'),
   z.object({
     op: z.literal('get_copper'),
+    board: boardRef,
     nets: z.array(netName).optional().describe('Only these nets'),
     rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('Only copper with a point inside this rectangle (mm)'),
   }).describe('Drawn copper: every track (id, net, layer, width, points in mm, the pads its ends lie on) and via (id, net, at, drill, size), to edit or erase by id'),
-  z.object({ op: z.literal('get_board') }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
+  z.object({ op: z.literal('get_board'), board: boardRef }).describe('Board layout: outline, part positions (mm, centre, clockwise rotation, pinned or placed automatically), routing stats and DRC results'),
   z.object({
-    op: z.literal('get_current_map'),
+    op: z.literal('get_current_map'), board: boardRef,
     nets: z.array(netName).optional().describe('Only these nets'),
     rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('Only hotspots inside this rectangle (mm)'),
     worst: z.number().int().min(0).max(200).optional().describe('Hotspots to list, worst first (default 20); the nets are always all listed'),
@@ -972,7 +1036,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   }).describe('The routed copper against its net\'s current: per net its max_current, status (ok: every track and the vias at its layer changes carry it, at the board\'s allowed heating; unverified: some copper does not carry all of max_current, and whether that much flows there is not known; unknown: a power net without max_current, never ok) and worst ratio; with loads stated, the drop to the load furthest down against 3 % of the net\'s voltage (ir_drop_mv, ir_budget_mv; DRC.IR_DROP); hotspots worst first (tracks too narrow for the current on their layer\'s copper, the vias that are the only way between two layers\' copper), each with what fixes it. Call it after routing'),
   z.object({ op: z.literal('get_power_tree') }).describe('What feeds what, and whether it runs hot: per power rail its voltage, source (the regulator, connector or battery nearest upstream, or unknown), the series parts between that source and the rail (through), the rails it feeds, the parts it supplies, its loads, its current (max_current, else the loads stated, else unknown) and budget (max_current against the loads plus what the rails it feeds draw: ok, over or unknown), and for a linear regulator\'s output its dissipation against the package (the numbers SEM.LDO_DISSIPATION uses). Unknown is never fine: set max_current where it says unknown. Works on the schematic alone'),
   z.object({
-    op: z.literal('try_placements'),
+    op: z.literal('try_placements'), board: boardRef,
     candidates: z
       .array(
         z.object({
@@ -988,7 +1052,7 @@ export const QueryOp = z.discriminatedUnion('op', [
     explore: z.boolean().optional().describe('Then improve on the best option (default true): turn its main parts, swap two of them, shift one a few mm, keeping each change that makes the ratsnest cross less and shorter; the result is one more option, with its parts to apply'),
   }).describe('Compare arrangements of the main parts without changing the design: each is placed as propose_placement would place it (small parts round them, refined) and measured (ratsnest length, crossing ratsnest lines, congestion, overlaps, board size; with route a trial routing). Then the kernel improves on the best (explore) and adds that as an option. Lists the current placement too, then the options best first. Apply the winner with design_edit propose_placement and its parts'),
   z.object({
-    op: z.literal('suggest_moves'),
+    op: z.literal('suggest_moves'), board: boardRef,
     parts: z.array(componentRef).optional().describe('Try these small parts (default: those at the open connections)'),
     at: z.tuple([z.number(), z.number()]).optional().describe('Or the small parts round this spot [x, y] (mm), e.g. where a track of yours detours'),
     radius_mm: z.number().positive().max(20).optional().describe('With at: how far round it (default 3 mm)'),
