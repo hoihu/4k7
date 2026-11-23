@@ -350,7 +350,15 @@ as asked; `erase_copper` takes it away.
 - **When it finds no way** (a point too close to other copper, no room for a via, a pad on
   another layer): it is not laid, the router routes the connection its own way (the board still
   works), and `DRC.TRACK_NOT_LAID` (warning) and `get_board` `laid_tracks` say why and where,
-  with the net in the way. A pass that leaves fewer connections open wins; of two that leave as
+  naming what is in the way, nearest first (at most three): a pad (`pad U1.7 (GND)`), a track
+  or via of a net (and whether it is locked or laid before this one), a small part's land
+  pattern (no vias), the board edge, a cutout, a keep-out or a plane layer, each with how far it
+  is and the clearance needed. For a stretch that finds no way, the place is the first point
+  where the track does not fit along the probe's way (§5.9: other nets' tracks and vias
+  passable) or, with none, along the straight line; for a pad with no way out, along its escape.
+  This is only said: what is laid does not change. Laid at a narrower width than asked (the
+  width does not fit, the widest both pads take does), it is laid and says so (`laid, but laid
+  0.25 mm wide, not 0.8 mm: …`). A pass that leaves fewer connections open wins; of two that leave as
   many, the one that lays more of them. With copper kept from the routing before, one that finds
   no way lets go of the kept net it names as in the way (routed again round it, the rest kept,
   once, as for an open connection, §5.5); failing that, or with no net named, the router routes

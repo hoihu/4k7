@@ -1591,7 +1591,7 @@ export function boardSummary(b: BoardView, routed = true, drc?: DrcFilter) {
             ...(t.layer ? { layer: t.layer } : {}),
             ...(t.width ? { width_mm: t.width } : {}),
             ...(t.through.length ? { through_mm: t.through.map((p) => (p.layer ? [p.x, p.y, p.layer] : [p.x, p.y])) } : {}),
-            state: t.laid === undefined ? 'laid by the route step' : t.laid ? 'laid as asked' : `not laid: ${t.why}; the router routed this connection its own way`,
+            state: t.laid === undefined ? 'laid by the route step' : t.laid ? (t.why ? `laid, but ${t.why}` : 'laid as asked') : `not laid: ${t.why}; the router routed this connection its own way`,
           })),
         }
       : {}),
