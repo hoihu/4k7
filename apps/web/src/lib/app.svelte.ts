@@ -35,7 +35,7 @@ import type { ImportSources } from '@4k7/kernel';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
 import { PartImports } from './importPart.ts';
-import { assemblyFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, placedLand, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
+import { assemblyFacts, combineCosts, combineEstimates, mergeFacts, describeDatasheetPages, findDesignSections, getBuiltinPart, placedLand, type Saving, type SourcedComponent, type StockLine, type UnsourcedGroup } from '@4k7/parts';
 import { ArtworkLibrary } from './artwork.svelte.ts';
 import { renderBoardPng, renderSchematicPng } from './snapshot.ts';
 import { currentLegend, currentOverlayOn } from './currentMap.ts';
@@ -1028,17 +1028,40 @@ class AppState {
     });
   }
 
-  /** What the assembly fees depend on, read off the working copy's placed board (joints, sides, size); null when it cannot be placed. */
-  private async boardFacts(): Promise<BoardFacts | null> {
-    // several boards: what their making and assembly cost together is not worked out yet
-    // (docs/design/multi-board.md §9): the parts only, as when the board is not known
-    if ((this.k?.boards.length ?? 1) > 1) return null;
+  /**
+   * What the assembly fees depend on, read off the working copy's placed board (joints, sides,
+   * size); null when it cannot be placed. Several boards and none named: all of them as one (for
+   * the values check, which compares parts by their fees; the stock and cost checks go board by
+   * board, see perBoard).
+   */
+  private async boardFacts(board?: string): Promise<BoardFacts | null> {
     try {
-      const b = await this.kernel.boardPlacement();
+      if (board === undefined && (this.k?.boards.length ?? 1) > 1) {
+        const all = await this.kernel.boardPlacements();
+        return (assembled, kinds) => mergeFacts(all.map((b) => assemblyFacts(b, assembled, kinds)));
+      }
+      const b = await this.kernel.boardPlacement(board);
       return (assembled, kinds) => assemblyFacts(b, assembled, kinds);
     } catch {
       return null;
     }
+  }
+
+  /**
+   * A design of several boards: each board's components and facts, for an order per board at the
+   * one house (docs/design/multi-board.md §5); null with one board.
+   */
+  private async perBoard(components: SourcedComponent[]): Promise<{ name: string; components: SourcedComponent[]; facts: BoardFacts }[] | null> {
+    const boards = this.k?.boards ?? [];
+    if (boards.length < 2) return null;
+    const on = new Map(this.k!.summary.components.map((c) => [c.refdes, c.board]));
+    return Promise.all(
+      boards.map(async (b) => {
+        const facts = await this.boardFacts(b.id);
+        if (!facts) throw new Error(`board "${b.name}" could not be placed, so its assembly fees cannot be counted`);
+        return { name: b.name, components: components.filter((c) => on.get(c.refdes) === b.name), facts };
+      }),
+    );
   }
 
   /** The assembly house the checks run for: the user's pick (Layout → Sourcing), else the board's manufacturer when it assembles, else the default. */
@@ -1055,8 +1078,15 @@ class AppState {
   async checkStock(boards?: number, house: AssemblyHouse = this.house): Promise<StockReport> {
     this.stockBusy = true;
     try {
-      const [components, facts] = await Promise.all([this.sourcedComponents(), this.boardFacts()]);
-      const report = await checkDesignStock(components, boards ?? this.settings.buildBoards, facts ?? undefined, house);
+      const components = await this.sourcedComponents();
+      const per = await this.perBoard(components).catch(() => null);
+      const n = boards ?? this.settings.buildBoards;
+      // several boards: the stock for every board together, the order board by board
+      const report = await checkDesignStock(components, n, per ? undefined : ((await this.boardFacts()) ?? undefined), house);
+      if (per) {
+        const each = await Promise.all(per.map(async (b) => ({ name: b.name, estimates: (await checkDesignStock(b.components, n, b.facts, house)).estimates ?? [] })));
+        report.estimates = combineEstimates(each);
+      }
       if (house.id === this.house.id) {
         this.lastStock = report;
         this.sourcingShown = 'stock';
@@ -1071,9 +1101,19 @@ class AppState {
   async checkCost(boards?: number, house: AssemblyHouse = this.house): Promise<CostReport> {
     this.stockBusy = true;
     try {
-      const [components, facts] = await Promise.all([this.sourcedComponents(), this.boardFacts()]);
-      if (!facts) throw new Error('the board could not be placed, so the assembly fees cannot be counted');
-      const report = await checkDesignCost(components, boards ?? this.settings.buildBoards, facts, house);
+      const components = await this.sourcedComponents();
+      const n = boards ?? this.settings.buildBoards;
+      const per = await this.perBoard(components);
+      let report: CostReport;
+      if (per) {
+        // several boards: an order per board at the one house, added up; the stock for them all together
+        const [stock, ...each] = await Promise.all([checkDesignStock(components, n, undefined, house), ...per.map((b) => checkDesignCost(b.components, n, b.facts, house))]);
+        report = combineCosts(per.map((b, i) => ({ name: b.name, report: each[i]! })), stock);
+      } else {
+        const facts = await this.boardFacts();
+        if (!facts) throw new Error('the board could not be placed, so the assembly fees cannot be counted');
+        report = await checkDesignCost(components, n, facts, house);
+      }
       if (house.id === this.house.id) {
         this.lastCost = report;
         this.lastStock = report.stock;
