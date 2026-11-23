@@ -102,7 +102,7 @@ export function formatView(v: ViewInfo): string {
       lines.push(`zoomed in${on ? ` on ${on} (mils from the paper's top-left corner)` : ' between the pages'}; get_schematic_image with area: true shows it`);
     }
   } else {
-    lines.push(`<view kind="board" zoomed="${v.whole ? 'no' : 'yes'}">`);
+    lines.push(`<view kind="board"${v.boardName ? ` board="${v.boardName}"` : ''} zoomed="${v.whole ? 'no' : 'yes'}">`);
     const r = v.rect;
     const mm = (n: number) => Math.round(n * 10) / 10;
     lines.push(v.whole ? 'the whole board' : `zoomed in: x ${r.x}–${mm(r.x + r.w)}, y ${r.y}–${mm(r.y + r.h)} mm (board coordinates, as place counts); get_board_image with area: true shows it`);

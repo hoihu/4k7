@@ -21,6 +21,7 @@ import { sameValue, describeConstraint } from './netops.ts';
 import { packageThermal, THERMAL_AMBIENT_C, THERMAL_JUNCTION_C, type PackageThermal } from '@4k7/parts';
 import { statedLoads } from './current.ts';
 import { powerWalk } from './power.ts';
+import { mateChecks } from './mates.ts';
 import { allocRefdes, applyWaivers, cardOf, componentsSorted, isGroundNet, isPowerNet, natCmp, netMembers, type NetPin } from './doc.ts';
 
 const DRIVERS = new Set(['out', 'bidir', 'tri', 'pwr_out', 'oc', 'passive']);
@@ -44,6 +45,7 @@ export function runChecks(d: Design, placement?: SchematicView['constraintStatus
   pinCurrentChecks(ctx);
   seriesChecks(ctx);
   ledgerChecks(ctx, placement, why);
+  ctx.out.push(...mateChecks(d));
   applyWaivers(d, ctx.out);
   return sortDiagnostics(ctx.out);
 }

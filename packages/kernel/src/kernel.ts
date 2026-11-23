@@ -66,6 +66,10 @@ import { tryPlacements } from './trial.ts';
 import { suggestMoves } from './suggest.ts';
 import { impedanceText, resolveRule } from './lines.ts';
 import { lineBoard } from './lineops.ts';
+import { boardList, boardOf, commitFocus, focusBoard, multiBoard, resolveBoard, settingsOf } from './boards.ts';
+import { matePairs, pairsText } from './mates.ts';
+import { FIRST_BOARD } from '@4k7/schema';
+import { opBoard } from './apply.ts';
 
 interface Analysis {
   view: SchematicView;
@@ -87,6 +91,8 @@ export interface KernelState {
   summary: DesignSummary;
   /** The design description (describe), or null while none is written. */
   description: DescriptionView | null;
+  /** The boards (id, name), first board first: one unless the design has several (add_board). */
+  boards: { id: string; name: string }[];
 }
 
 /** The SCH checks read the drawing and nothing of the board: a part moved there leaves them as they were. */
@@ -96,7 +102,10 @@ export class Kernel {
   private committed: Design;
   private draft: Design;
   private cache = new WeakMap<Design, Analysis>();
-  private boards = new WeakMap<Design, BoardView>();
+  /** Each design's boards as laid out (routing included), by board id. */
+  private boardViews = new WeakMap<Design, Map<string, BoardView>>();
+  /** Each design's board focuses (boards.ts) the views are computed from, by board id. */
+  private focuses = new WeakMap<Design, Map<string, Design>>();
   /** Bumped whenever the working copy changes (not by copper kept as a cache): what the route helper's results are for. */
   private rev = 0;
   private undoStack: { design: Design; entry: HistoryEntry }[] = [];
@@ -139,7 +148,38 @@ export class Kernel {
 
   private invalidate(d: Design) {
     this.cache.delete(d);
-    this.boards.delete(d);
+    this.boardViews.delete(d);
+    this.focuses.delete(d);
+  }
+
+  /** Board `id` of `d` as a design of its own (boards.ts), kept for the views: not to change. */
+  private focus(d: Design, id: string = FIRST_BOARD): Design {
+    if (!multiBoard(d)) return d;
+    let m = this.focuses.get(d);
+    if (!m) this.focuses.set(d, (m = new Map()));
+    let f = m.get(id);
+    if (!f) m.set(id, (f = focusBoard(d, id)));
+    return f;
+  }
+
+  private viewOfBoard(d: Design, id: string): BoardView | undefined {
+    return this.boardViews.get(d)?.get(id);
+  }
+
+  private keepView(d: Design, id: string, b: BoardView) {
+    let m = this.boardViews.get(d);
+    if (!m) this.boardViews.set(d, (m = new Map()));
+    m.set(id, b);
+  }
+
+  /** The board a query or a view is for: the one named, else the only one (several and none named: the first). */
+  boardId(ref?: string): string {
+    return ref === undefined ? FIRST_BOARD : (resolveBoardSafe(this.draft, ref) ?? FIRST_BOARD);
+  }
+
+  /** The design's boards (id, name), first board first. */
+  boardList(): { id: string; name: string }[] {
+    return boardList(this.draft).map((b) => ({ id: b.id, name: b.name }));
   }
 
   /** The working copy as a design (for the board worker, which computes the board separately). */
@@ -158,22 +198,24 @@ export class Kernel {
   }
 
   /** Placement only (fast): parts, outline, ratsnest and placement checks. */
-  boardPlacement(): BoardView {
-    return placedOf(this.draft);
+  boardPlacement(board: string = FIRST_BOARD): BoardView {
+    return placedOf(this.focus(this.draft, board));
   }
 
   /** What the board worker lays the board from (layoutBoard): to send on, not to change. */
-  boardRequest(): { design: Design; placed: BoardView } {
-    return { design: this.draft, placed: placedOf(this.draft) };
+  boardRequest(board: string = FIRST_BOARD): { design: Design; placed: BoardView } {
+    const f = this.focus(this.draft, board);
+    return { design: f, placed: placedOf(f) };
   }
 
   /**
    * The working copy's board where it is routed and computing it routes nothing (copper kept for
    * this placement, or drawn): for queries that read the copper.
    */
-  private routedNow(d: Design): BoardView | undefined {
-    const had = this.boards.get(d);
-    const b = had ?? (d === this.draft && (d.board?.drawn || (d.board?.copper && d.board.copper.key === copperKey(d))) ? this.board() : undefined);
+  private routedNow(d: Design, id: string = FIRST_BOARD): BoardView | undefined {
+    const had = this.viewOfBoard(d, id);
+    const f = this.focus(d, id);
+    const b = had ?? (d === this.draft && (f.board?.drawn || (f.board?.copper && f.board.copper.key === copperKey(f))) ? this.board({}, id) : undefined);
     return b?.routing === 'done' ? b : undefined;
   }
 
@@ -183,8 +225,10 @@ export class Kernel {
    * placement (pads that touch). The board's other findings are the layout's. See docs/design/layout.md.
    */
   private copperShorts(d: Design): Diagnostic[] {
-    const b = this.routedNow(d) ?? placedOf(d);
-    return b.diagnostics.filter((x) => x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE');
+    return boardList(d).flatMap(({ id }) => {
+      const b = this.routedNow(d, id) ?? placedOf(this.focus(d, id));
+      return b.diagnostics.filter((x) => x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE');
+    });
   }
 
   /**
@@ -201,23 +245,29 @@ export class Kernel {
       const cardWas = was && cardOf(before, was.part);
       return was && card && cardWas && packageOf(card, c.params, work.packageDefaults)?.name !== packageOf(cardWas, was.params, before.packageDefaults)?.name;
     });
-    if (!grown.length || !work.board || !(work.board.drawn || (work.board.copper && work.board.copper.key === copperKey(work)))) return [];
-    const b = layoutBoard(work, placedOf(work));
-    this.boards.set(work, b);
-    if (b.routing !== 'done') return [];
-    const refs = new Set(grown.map((c) => c.refdes));
-    const at = (x: Diagnostic) => (x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE' || x.code === 'DRC.VIA_IN_PAD') && !x.waivedBy && x.entities.some((e) => refs.has(e));
-    const had = new Set((this.routedNow(before)?.diagnostics ?? []).filter(at).map(diagKey));
-    return b.diagnostics.filter((x) => at(x) && !had.has(diagKey(x)));
+    if (!grown.length) return [];
+    return boardList(work).flatMap(({ id }) => {
+      const f = this.focus(work, id);
+      const mine = grown.filter((c) => f.components[c.id]);
+      if (!mine.length || !f.board || !(f.board.drawn || (f.board.copper && f.board.copper.key === copperKey(f)))) return [];
+      const b = layoutBoard(f, placedOf(f));
+      this.keepView(work, id, b);
+      if (b.routing !== 'done') return [];
+      const refs = new Set(mine.map((c) => c.refdes));
+      const at = (x: Diagnostic) => (x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE' || x.code === 'DRC.VIA_IN_PAD') && !x.waivedBy && x.entities.some((e) => refs.has(e));
+      const had = new Set((this.routedNow(before, id)?.diagnostics ?? []).filter(at).map(diagKey));
+      return b.diagnostics.filter((x) => at(x) && !had.has(diagKey(x)));
+    });
   }
 
   /** The board of the working copy: placement, routing and DRC (computed on demand, cached). `follow` follows the routing, if it routes (see layoutBoard). */
-  board(follow: { onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}): BoardView {
+  board(follow: { onProgress?: (p: RouteProgress) => void; onBest?: (c: StoredCopper) => void } = {}, id: string = FIRST_BOARD): BoardView {
     const d = this.draft;
-    let b = this.boards.get(d);
+    let b = this.viewOfBoard(d, id);
     if (!b) {
-      b = layoutBoard(d, placedOf(d), follow);
-      this.boards.set(d, b);
+      const f = this.focus(d, id);
+      b = layoutBoard(f, placedOf(f), follow);
+      this.keepView(d, id, b);
     }
     return b;
   }
@@ -230,10 +280,13 @@ export class Kernel {
   keepCopper(copper: StoredCopper): boolean {
     let committed = false;
     for (const d of this.draft === this.committed ? [this.draft] : [this.draft, this.committed]) {
-      if (!d.board || copperKey(d) !== copper.key) continue;
-      d.board.copper = copper;
-      this.boards.delete(d);
-      if (d === this.committed) committed = true;
+      for (const { id } of boardList(d)) {
+        const s = settingsOf(d, id);
+        if (!s || copperKey(this.focus(d, id)) !== copper.key) continue;
+        s.copper = copper; // (the focus shares the settings: it has the copper too)
+        this.boardViews.get(d)?.delete(id);
+        if (d === this.committed) committed = true;
+      }
     }
     return committed;
   }
@@ -258,27 +311,35 @@ export class Kernel {
     const before = this.analyse(this.draft).diagnostics;
     const work = workCopy(this.draft);
     const results = [];
-    // drawn copper: what each op drew, edited or moved, checked once the transaction is applied
-    const drawn = new Map<number, string[]>();
+    // drawn copper, per board: what each op drew, edited or moved, checked once the transaction is applied
+    const drawn = new Map<string, Map<number, string[]>>();
+    const drawnOn = (b: string) => drawn.get(b) ?? drawn.set(b, new Map()).get(b)!;
     const deadline = Date.now() + HELPER_TX_MS;
-    // the placement after the last op that may move parts (copper ops in between do not move any)
-    let placedNow: BoardView | null = null;
+    // per board, the placement after the last op that may move parts (copper ops in between do not move any)
+    const placedNow = new Map<string, BoardView>();
     for (let i = 0; i < tx.ops.length; i++) {
       const op = tx.ops[i]!;
       try {
         if (this.scoped) guardOp(work, op, this.scoped.sc);
-        // (drawn copper follows the parts an op moves)
-        const placed = work.board?.drawn && movesParts(op) ? (placedNow ?? placedOf(work)) : null;
-        if (!work.board?.drawn) placedNow = null;
+        // (drawn copper follows the parts an op moves: on its board, or on every board for an op on the design)
+        const target = opBoard(work, op);
+        const on = target ? [target] : boardList(work).map((b) => b.id);
+        const placed = new Map<string, BoardView>();
+        for (const b of boardList(work)) if (!settingsOf(work, b.id)?.drawn) placedNow.delete(b.id);
+        if (movesParts(op)) for (const b of on) if (settingsOf(work, b)?.drawn) placed.set(b, placedNow.get(b) ?? placedOf(focusBoard(work, b)));
         const r = applyOp(work, op, by, { index: i, deadline, ...(helper ? { helper } : {}), ...(sources ? { sources } : {}) });
-        if (placed) {
-          placedNow = placedOf(work);
-          const f = followParts(work, placed, placedNow);
-          if (f) {
-            if (f.note) r.effect += `; ${f.note}`;
-            drawn.set(i, f.ids);
+        for (const [b, before] of placed) {
+          const f = focusBoard(work, b);
+          const now = placedOf(f);
+          placedNow.set(b, now);
+          const fo = followParts(f, before, now);
+          commitFocus(work, b, f);
+          if (fo) {
+            if (fo.note) r.effect += `; ${fo.note}`;
+            drawnOn(b).set(i, fo.ids);
           }
-        } else if (work.board?.drawn && drawsCopper(op)) drawn.set(i, (r.ids ?? []).filter((id) => /^[tv]\d+$/.test(id)));
+        }
+        if (!placed.size && drawsCopper(op)) for (const b of on) if (settingsOf(work, b)?.drawn) drawnOn(b).set(i, (r.ids ?? []).filter((id) => /^[tv]\d+$/.test(id)));
         results.push(r);
       } catch (e) {
         if (e instanceof RejectError) return this.rejected({ opIndex: i, ...e.rejection }, !!tx.dry_run);
@@ -289,7 +350,11 @@ export class Kernel {
     gcParts(work);
     syncDrawing(work);
     keepForcedNets(work);
-    if (drawn.size) annotateChecks(work, results, drawn);
+    for (const [b, m] of drawn) {
+      const f = focusBoard(work, b);
+      annotateChecks(f, results, m);
+      commitFocus(work, b, f);
+    }
     if (this.scoped && circuitSignature(work) !== this.scoped.circuit) {
       return this.rejected({ opIndex: tx.ops.length - 1, code: 'OUT_OF_SCOPE', message: 'This would change the circuit (parts, values or connections). Optimize only changes how an area is drawn.' }, !!tx.dry_run);
     }
@@ -463,7 +528,24 @@ export class Kernel {
     const parsed = QueryOp.safeParse(input);
     if (!parsed.success) return { error: formatZod(parsed.error.issues) };
     const q = parsed.data;
-    const d = this.draft;
+    const all = this.draft;
+    // a board query reads one board: the design as if it were the only one
+    let bid = FIRST_BOARD;
+    const onBoard = q.op === 'get_board' || q.op === 'get_copper' || q.op === 'get_current_map' || q.op === 'try_placements' || q.op === 'suggest_moves';
+    if (onBoard) {
+      const ref = (q as { board?: string }).board;
+      if (ref !== undefined) {
+        const b = resolveBoardSafe(all, ref);
+        if (!b) return { error: `No board "${ref}".`, boards: boardList(all).map((x) => x.name) };
+        bid = b;
+      } else if (multiBoard(all) && q.op !== 'get_board') {
+        return { error: `The design has ${boardList(all).length} boards: say which with board.`, boards: boardList(all).map((x) => x.name) };
+      }
+    }
+    if (q.op === 'get_board' && (q as { board?: string }).board === undefined && multiBoard(all)) {
+      return { boards: boardList(all).map((b) => ({ board: b.name, id: b.id, ...this.boardAnswer(all, b.id) })) };
+    }
+    const d = onBoard ? this.focus(all, bid) : all;
     switch (q.op) {
       case 'get_summary':
         return this.summary(d);
@@ -513,13 +595,19 @@ export class Kernel {
       case 'get_net': {
         const n = findNet(d, q.net);
         if (!n) return { error: `No net ${q.net}`, nets: Object.values(d.nets).map((x) => x.name).sort(natCmp) };
-        const pins = (netMembers(d).get(n.id) ?? []).map((m) => `${m.comp.refdes}.${m.pin.name} (${m.pin.type})`);
+        const members = netMembers(d).get(n.id) ?? [];
+        const pins = members.map((m) => `${m.comp.refdes}.${m.pin.name} (${m.pin.type})`);
+        // several boards: the board facts below are those of the board of its first pin
+        const on = [...new Set(members.map((m) => boardOf(d, m.comp)))];
+        const nbid = on[0] ?? FIRST_BOARD;
+        const nd = this.focus(d, nbid);
+        const onBoards = multiBoard(d) ? { boards: on.map((id) => d.boards![id]!.name), board_facts_for: d.boards![nbid]!.name } : {};
         // the track it gets on the board: its own width, else the rules' power or signal width
-        const rules = (d.board ?? DEFAULT_BOARD).rules;
+        const rules = (nd.board ?? DEFAULT_BOARD).rules;
         const kind = isGroundNet(n) ? 'ground' : isPowerNet(n) ? 'supply' : 'signal';
         const width = n.attrs.trackWidth ?? (kind === 'signal' ? rules.track : rules.powerTrack);
         // the width its current needs, per layer: each layer's copper from the stack-up, at the board's allowed heating
-        const settings = d.board ?? DEFAULT_BOARD;
+        const settings = nd.board ?? DEFAULT_BOARD;
         const stack = boardStackup(settings);
         const copper = layerCopper({ layers: COPPER_ORDER[settings.layers], stackup: stack });
         const rise = currentRise(rules);
@@ -533,8 +621,8 @@ export class Kernel {
           ...(n.attrs.layer ? { keeps_to: n.attrs.layer } : {}),
         };
         // how its copper on the board carries that current (get_current_map has the pieces)
-        const routedNow = this.routedNow(d);
-        const checked = routedNow ? (routedNow.current ?? currentCheck(d, routedNow)).nets.find((x) => x.netId === n.id) : undefined;
+        const routedNow = this.routedNow(d, nbid);
+        const checked = routedNow ? (routedNow.current ?? currentCheck(nd, routedNow)).nets.find((x) => x.netId === n.id) : undefined;
         const current = {
           status: !amps && !checked ? 'unknown' : !routedNow ? 'not checked: not routed yet' : (checked?.status ?? 'no copper yet'),
           ...(checked && checked.status !== 'unknown' ? { basis: checked.basis } : {}),
@@ -550,7 +638,7 @@ export class Kernel {
         };
         // the vias its pads drop onto its plane with: one each, those the agent placed (add_vias drop)
         const perVia = viaCurrentFor(rules.viaDrill);
-        const drops = (d.board?.vias ?? []).filter((g) => g.kind === 'drop' && g.netId === n.id);
+        const drops = (nd.board?.vias ?? []).filter((g) => g.kind === 'drop' && g.netId === n.id);
         const asked = drops.map((g) => {
           const c = d.components[g.pad!.componentId];
           const amps = g.amps ?? n.attrs.maxCurrent;
@@ -566,14 +654,14 @@ export class Kernel {
           },
         };
         // a line at a set impedance: its rule worked out for the board
-        const rule = d.board?.impedance?.find((r) => r.nets.includes(n.id));
-        const impedance = rule ? { impedance: impedanceText(resolveRule(rule, lineBoard(d)), (id) => d.nets[id]?.name ?? id) } : {};
-        return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, track, current, ...impedance, ...vias };
+        const rule = nd.board?.impedance?.find((r) => r.nets.includes(n.id));
+        const impedance = rule ? { impedance: impedanceText(resolveRule(rule, lineBoard(nd)), (id) => d.nets[id]?.name ?? id) } : {};
+        return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, ...onBoards, track, current, ...impedance, ...vias };
       }
       case 'get_diagnostics':
         return [...this.analyse(d).diagnostics, ...this.copperShorts(d)];
       case 'get_current_map': {
-        const b = this.routedNow(d);
+        const b = this.routedNow(all, bid);
         if (!b) return { routed: false, note: 'The board is not routed (or its routing is out of date): route it first, then ask again.' };
         return currentMapAnswer(d, b, q);
       }
@@ -642,7 +730,7 @@ export class Kernel {
         };
       }
       case 'get_copper': {
-        const b = this.board();
+        const b = this.board({}, bid);
         if (!b.drawn) return { copper: 'the router\'s (set_copper_mode drawn makes it yours)', tracks: b.tracks.length, vias: b.vias.length };
         const nets = q.nets ? new Set(q.nets.map((n) => findNet(d, n)?.id ?? n)) : null;
         const r = q.rect;
@@ -656,17 +744,12 @@ export class Kernel {
           vias: b.drawn.vias.filter((v) => (!nets || nets.has(v.netId)) && inRect(v.x, v.y)).map((v) => ({ id: v.id, net: name(v.netId), at: [v.x, v.y], drill: v.drill, size: v.pad, ...(v.by ? { by: v.by } : {}) })),
         };
       }
-      case 'get_board': {
-        // routing is expensive: use it when it has been computed, otherwise placement only (drawn
-        // copper routes nothing: always computed)
-        const routed = d.board?.drawn ? this.board() : this.boards.get(d);
-        const b = routed ?? this.boardPlacement();
-        return { ...boardSummary(b, !!routed), plane_plan: planePlan(d, b) };
-      }
+      case 'get_board':
+        return this.boardAnswer(all, bid);
       case 'try_placements':
-        return tryPlacements(d, this.analyse(d).view, q.candidates, !!q.route, this.boards.get(d), q.explore !== false);
+        return tryPlacements(d, this.analyse(all).view, q.candidates, !!q.route, this.viewOfBoard(all, bid), q.explore !== false);
       case 'suggest_moves':
-        return suggestMoves(d, this.analyse(d).view, this.board(), q);
+        return suggestMoves(d, this.analyse(all).view, this.board({}, bid), q);
       case 'get_description':
         return descriptionView(d) ?? { description: null, hint: 'No description yet: write one with design_edit describe (overview and blocks).', parts: componentsSorted(d).map((c) => c.refdes) };
       case 'get_ledger':
@@ -690,6 +773,14 @@ export class Kernel {
       case 'list_blocks':
         return { error: 'list_blocks is answered by the app, which reads the projects folder.' };
     }
+  }
+
+  /** get_board for one board: routing is expensive, so the routed board where it has been computed, otherwise placement only (drawn copper routes nothing: always computed). */
+  private boardAnswer(all: Design, id: string) {
+    const d = this.focus(all, id);
+    const routed = d.board?.drawn ? this.board({}, id) : this.viewOfBoard(all, id);
+    const b = routed ?? this.boardPlacement(id);
+    return { ...boardSummary(b, !!routed), plane_plan: planePlan(d, b) };
   }
 
   /**
@@ -737,19 +828,43 @@ export class Kernel {
 
   summary(d: Design = this.draft): DesignSummary {
     const members = netMembers(d);
+    const multi = multiBoard(d);
+    const bname = (id: string) => d.boards?.[id]?.name ?? id;
     return {
       name: d.name,
       sheets: Object.values(d.sheets).sort((a, b) => a.order - b.order).map((s) => s.name),
       pages: this.analyse(d).view.sheets.reduce((n, s) => n + s.pages.length, 0),
-      components: componentsSorted(d).map((c) => ({ refdes: c.refdes, part: c.part, value: valueOf(d, c), sheet: d.sheets[c.sheet]?.name ?? '?' })),
+      ...(multi
+        ? {
+            boards: boardList(d).map((b) => ({
+              name: b.name,
+              id: b.id,
+              sheets: Object.values(d.sheets).filter((s) => (s.board && d.boards![s.board] ? s.board : FIRST_BOARD) === b.id).sort((x, y) => x.order - y.order).map((s) => s.name),
+              parts: Object.values(d.components).filter((c) => boardOf(d, c) === b.id).length,
+            })),
+          }
+        : {}),
+      ...(d.mates && Object.keys(d.mates).length
+        ? {
+            mates: Object.values(d.mates).map((m) => {
+              const { pairs, fit } = matePairs(d, m);
+              return { id: m.id, a: d.components[m.a]?.refdes ?? '?', b: d.components[m.b]?.refdes ?? '?', kind: m.kind + (m.cable === 'reversed' ? ' (reversed)' : ''), pins: pairsText(d, m, pairs), ...(fit ? { fit } : {}) };
+            }),
+          }
+        : {}),
+      components: componentsSorted(d).map((c) => ({ refdes: c.refdes, part: c.part, value: valueOf(d, c), sheet: d.sheets[c.sheet]?.name ?? '?', ...(multi ? { board: bname(boardOf(d, c)) } : {}) })),
       nets: Object.values(d.nets)
         .sort((a, b) => natCmp(a.name, b.name))
-        .map((n) => ({
-          name: n.name,
-          pins: members.get(n.id)?.length ?? 0,
-          ...(n.attrs.voltage !== undefined ? { voltage: n.attrs.voltage } : {}),
-          ...(n.attrs.external ? { external: true } : {}),
-        })),
+        .map((n) => {
+          const on = multi ? [...new Set((members.get(n.id) ?? []).map((m) => bname(boardOf(d, m.comp))))] : [];
+          return {
+            name: n.name,
+            pins: members.get(n.id)?.length ?? 0,
+            ...(n.attrs.voltage !== undefined ? { voltage: n.attrs.voltage } : {}),
+            ...(n.attrs.external ? { external: true } : {}),
+            ...(on.length > 1 ? { boards: on } : {}),
+          };
+        }),
       counts: countDiagnostics(this.analyse(d).diagnostics),
       ledger: Object.keys(d.ledger).length,
       waivers: Object.keys(d.waivers).length,
@@ -784,6 +899,7 @@ export class Kernel {
       nextRedo: this.redoStack.at(-1)?.entry ?? null,
       summary: this.summary(d),
       description: descriptionView(d),
+      boards: this.boardList(),
     };
   }
 
@@ -819,6 +935,15 @@ export class Kernel {
 }
 
 /* --------------------------------- helpers -------------------------------- */
+
+/** A board's id by name or id, or undefined. */
+function resolveBoardSafe(d: Design, ref: string): string | undefined {
+  try {
+    return resolveBoard(d, ref).id;
+  } catch {
+    return undefined;
+  }
+}
 
 type Issue = { path: PropertyKey[]; message: string };
 
