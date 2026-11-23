@@ -3,6 +3,7 @@ import type { BoardPart, BoardView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { describeConstraint } from '../src/netops.ts';
 import { Grid } from '../src/congestion.ts';
+import { rotate } from '../src/placer.ts';
 import { buckTransaction } from './fixtures.ts';
 
 function buck() {
@@ -115,6 +116,35 @@ describe('the footprint on the bottom', () => {
       expect([m.x, m.y]).toEqual([q.x, Math.round((22 - q.y) * 1000) / 1000]);
     }
   });
+
+  // the same pads however the part got there: placed on the bottom turned, turned on the top then
+  // turned over, or turned over then turned; locked or a choice; an IC and a polarised two-pin part
+  for (const ref of ['U1', 'D1']) {
+    for (const lock of [true, false]) {
+      it(`${ref}${lock ? ' locked' : ''} at every rot: mirrored, then turned clockwise, whichever op came first`, () => {
+        const r3 = (v: number) => Math.round(v * 1000) / 1000 || 0;
+        const offsets = (p: BoardPart) => Object.fromEntries(p.pads.map((q) => [q.number, [r3(q.x - p.x), r3(q.y - p.y)]]));
+        const k = buck();
+        ok(k, [{ op: 'place', ref, x_mm: 14, y_mm: 11, rot: 0, lock: true }]);
+        const own = offsets(part(k.board(), ref));
+        for (const rot of [0, 90, 180, 270]) {
+          const want = Object.fromEntries(Object.entries(own).map(([n, [x, y]]) => [n, rotate(-x!, y!, rot).map(r3)]));
+          const runs = [
+            [{ op: 'place', ref, x_mm: 14, y_mm: 11, rot, side: 'bottom', lock }],
+            [{ op: 'place', ref, x_mm: 14, y_mm: 11, rot, lock }, { op: 'place', ref, x_mm: 14, y_mm: 11, side: 'bottom', lock }],
+            [{ op: 'place', ref, x_mm: 14, y_mm: 11, rot: 0, side: 'bottom', lock }, { op: 'place', ref, x_mm: 14, y_mm: 11, rot, lock }],
+          ];
+          for (const run of runs) {
+            const a = buck();
+            for (const op of run) ok(a, [op]);
+            const p = part(a.board(), ref);
+            expect([p.rot, p.side]).toEqual([rot, 'bottom']);
+            expect(offsets(p)).toEqual(want);
+          }
+        }
+      });
+    }
+  }
 
   it('a through-hole part keeps its pads on every layer', () => {
     const k = buck();
