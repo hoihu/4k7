@@ -95,6 +95,21 @@ describe('get_board with many DRC findings', () => {
     expect(out.drc_found).toBeUndefined();
   });
 
+  it('pages and filters on a design of several boards, the board named or each of them', () => {
+    const two = crowded();
+    ok(two, [{ op: 'add_board', name: 'Spare' }]);
+    const named = two.query({ op: 'get_board', board: 'Main', drc: { offset: 20, limit: 5 } }) as Answer;
+    expect(named.drc).toHaveLength(5);
+    expect(named.drc_found!.listed).toBe(`21–25 of ${all.length}`);
+    const each = two.query({ op: 'get_board', drc: { code: 'DRC.CLEARANCE', limit: 3 } }) as { boards: ({ board: string } & Answer)[] };
+    expect(each.boards.map((b) => b.board)).toEqual(['Main', 'Spare']);
+    const main = each.boards[0]!;
+    expect(main.drc).toHaveLength(3);
+    expect(main.drc.every((x) => x.includes('DRC.CLEARANCE'))).toBe(true);
+    expect(main.drc_found!.matching).toBe(clearance.length);
+    expect(each.boards[1]!.drc.some((x) => x.includes('DRC.CLEARANCE'))).toBe(false);
+  });
+
   it('refuses a limit out of range', () => {
     expect(k.query({ op: 'get_board', drc: { limit: 0 } })).toHaveProperty('error');
   });

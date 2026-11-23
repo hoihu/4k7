@@ -77,6 +77,10 @@ export type RejectionCode =
   | 'NO_PATH'
   | 'SHEET_UNKNOWN'
   | 'SHEET_NOT_EMPTY'
+  /** A board the design does not have (add_board lists them in get_summary). */
+  | 'BOARD_UNKNOWN'
+  /** A board op on a design of several boards that says neither the board nor a part on one. */
+  | 'BOARD_AMBIGUOUS'
   | 'WAIVER_UNKNOWN'
   | 'ENCLOSURE_INVALID'
   | 'STACKUP_INVALID'
@@ -148,7 +152,7 @@ export interface TransactionResult {
 
 /* ------------------------------- changesets ------------------------------- */
 
-export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'sheet' | 'board' | 'description' | 'drawing' | 'enclosure';
+export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'mate' | 'sheet' | 'board' | 'description' | 'drawing' | 'enclosure';
 
 export interface Hunk {
   /** Stable id: "<kind>:<entity id>". */
@@ -363,8 +367,12 @@ export interface DesignSummary {
   sheets: string[];
   /** Printable pages across all sheets (derived by the layout). */
   pages: number;
-  components: { refdes: string; part: string; value: string; sheet: string }[];
-  nets: { name: string; pins: number; voltage?: number; external?: boolean }[];
+  components: { refdes: string; part: string; value: string; sheet: string; board?: string }[];
+  nets: { name: string; pins: number; voltage?: number; external?: boolean; boards?: string[] }[];
+  /** Present when the design has several boards (add_board): each with its sheets and how many parts. */
+  boards?: { name: string; id: string; sheets: string[]; parts: number }[];
+  /** How the boards are joined (mate): the connectors, the kind and which pin meets which ("1↔1"). */
+  mates?: { id: string; a: string; b: string; kind: string; pins: string; fit?: string }[];
   counts: DiagnosticCounts;
   ledger: number;
   waivers: number;

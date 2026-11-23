@@ -159,6 +159,7 @@ export const ImageInput = z.object({
 });
 
 export const BoardImageInput = z.object({
+  board: z.string().min(1).optional().describe('Which board, by name or id, when the design has several (get_summary boards); the app then shows that board. Absent: the board shown'),
   area: z.boolean().optional().describe('The area the user zoomed into on the board (the <view> block) instead of the whole board'),
   region: z
     .tuple([z.number(), z.number(), z.number(), z.number()])
@@ -172,6 +173,7 @@ export const BoardImageInput = z.object({
 });
 
 export const GerberViewInput = z.object({
+  board: z.string().min(1).optional().describe('Which board, by name or id, when the design has several (get_summary boards); the app then shows that board. Absent: the board shown'),
   files: z
     .enum(['board', 'panel', 'open'])
     .optional()

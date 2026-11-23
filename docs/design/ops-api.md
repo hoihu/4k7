@@ -33,7 +33,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `get_fab_profiles`: the built-in manufacturer profiles and the one this board uses.
 - `get_schematic`: the schematic drawing: pages, blocks, where each symbol and net label stands.
 - `get_copper`: drawn tracks and vias with their ids, optionally by net or area.
-- `get_board`: board outline, part positions, routing stats and DRC results. The open DRC findings come first in the answer, errors first, at most 20 of them; when there are more, *drc_found* counts them all by code (with the nets, or net pairs, and the parts each code names most) and says how many are not listed. The *drc* parameter pages them (*offset*, *limit* up to 200) and narrows them to one *code*, *net* or *ref* (a part, track or via), so every finding can be read however many there are.
+- `get_board`: board outline, part positions, routing stats and DRC results; on a design of several boards, every board's, or the one named with its board argument (as `get_copper`, `get_current_map`, `try_placements` and `suggest_moves` take it). The open DRC findings come first in the answer, errors first, at most 20 of them; when there are more, *drc_found* counts them all by code (with the nets, or net pairs, and the parts each code names most) and says how many are not listed. The *drc* parameter pages them (*offset*, *limit* up to 200) and narrows them to one *code*, *net* or *ref* (a part, track or via), so every finding can be read however many there are; with several boards and none named, it applies to each board's list.
 - `get_current_map`: the routed copper against each net's current: per net ok, unverified or unknown (and, with loads stated, the drop to the furthest load against 3 % of the rail), and the tracks and vias that do not carry it, worst first, with their fixes (see [layout](layout.md) §14).
 - `get_power_tree`: what feeds what: per power rail its source, the series parts it is fed through, the rails it feeds, its loads, current budget and a linear regulator's dissipation (shape in §6).
 - `try_placements`: compare arrangements of the main parts without changing the design.
@@ -93,7 +93,12 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 
 ### Board
 
-- `set_board`: board size, layers and design rules (clearance, track and power-track width, via drill and pad, edge clearance, vias in pads, corner radius, and current_rise_c: how much copper may heat with its net's current, 10, 20 or 30 °C, default 10, which sets what the current check asks of tracks and vias, not the copper).
+- `add_board`: another board in the design (a product of several boards), with the sheets whose parts go on it ([multi-board](multi-board.md)).
+- `remove_board`: take a board away; its sheets and parts go back to the first board.
+- `assign_board`: put whole sheets, or single parts, on a board.
+- `mate`: join two boards through a connector on each (stack, cable, edge, wire, or an explicit pin map); the checks then hold the nets to which pin meets which.
+- `remove_mate`: take a mate away (by its id or a connector).
+- `set_board`: board size, layers and design rules (clearance, track and power-track width, via drill and pad, edge clearance, vias in pads, corner radius, and current_rise_c: how much copper may heat with its net's current, 10, 20 or 30 °C, default 10, which sets what the current check asks of tracks and vias, not the copper), and the board's name. On a design of several boards every board op takes a board argument (name or id); without it the op works on the board of the parts it names, else on the board of the nets it names if they are on one board, and is refused (`BOARD_AMBIGUOUS`) when it says neither.
 - `set_outline`: a free-form board outline.
 - `add_cutout`: a rectangular, round or slot cutout.
 - `remove_cutout`: remove a cutout.
@@ -141,7 +146,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 
 ### Verify
 
-- `add_waiver`: waive a check result for given entities, with a reason.
+- `add_waiver`: waive a check result for given entities, with a reason; on a design of several boards, a board check's result on one board with its board argument.
 - `remove_waiver`: remove a waiver.
 
 ### Enclosure

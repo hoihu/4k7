@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Layout
+
+- **A design can have several boards.** A product of two boards, such as a main board and a display board joined by a header, used to be two projects, with the connection between them checked by nobody. Now ask the agent to add a board and put a sheet on it ("put the LED sheet on its own board"): one schematic and netlist, and each board has its own outline, layers, placement, routing, panel and production files. The Layout view shows a picker with the board names once there is a second board; the production files and the Gerber viewer are those of the board shown, named after it. The fab house is shared, so choosing one sets it for every board. The agent joins the boards through a connector on each (a stacking header, a cable, a card edge or wires), and the checks then catch the commonest mistake of two boards: a header whose footprint is mirrored or one pin off, so two nets meet (`ERC.MATE_MISMATCH`), connectors that do not plug into each other (`ERC.MATE_FIT`), and a net on both boards that no connector pin carries across (`ERC.BOARD_CROSSING`). Not yet: the boards together in 3D and in the enclosure, and a cost estimate for both boards together (until then the estimate counts the parts only). A project of several boards needs this version of 4k7 to open; one board is saved as before.
+
 ### Fixes
 
 - **The agent can read every DRC finding of a board with many of them.** With dozens of findings, for example after a temporary 0.6 mm clearance to check the spacing round a high-voltage net, the board report the agent reads was cut off before its DRC list, so the agent saw only some of the findings or none of them. This happened in 0.7.0 and earlier. Now the report puts the findings first and lists 20 of them, errors first. It counts all of them by check, with the nets and parts each check names most, and says how many are not listed. The agent can ask for the next ones, or only those of one check, net or part.
