@@ -72,7 +72,8 @@
   /** The pieces shown and hidden on their own: inlays come and go with their host. */
   const hosts = $derived(pieces.filter((p) => !inlays[p.name] || !pieces.some((h) => h.name === inlays[p.name]!.host)));
   const openings = $derived(brief?.openings ?? []);
-  const scene = $derived(b && last ? { board: b, facts: last.facts, pieces, findings: last.report.findings, openings, inlays } : null);
+  // (the board the render was made round: the first, with several boards all of them where they stand)
+  const scene = $derived(b && last ? { board: last.board, ...(last.boards ? { boards: last.boards } : {}), facts: last.facts, pieces, findings: last.report.findings, openings, inlays } : null);
   const options = $derived({ open: open ? spread : 0, show: hosts.filter((p) => !hidden[p.name]).map((p) => p.name), marks: true, board: pcb });
 
   /*

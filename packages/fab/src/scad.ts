@@ -7,7 +7,7 @@
  * corner, z up, the board's underside at z = 0 (its top at pcb_thickness).
  */
 import { boardBodies, type Body3D } from '@4k7/parts';
-import { boardFacing, boardPolygon, cutoutPolygon, FACE_FRAMES, MATING_PATH_LENGTH as PATH_LENGTH, matingOf, type BoardFacing, type BoardPart, type BoardView, type EnclosureBrief, type EnclosureGraphic, type Mating } from '@4k7/schema';
+import { boardFacing, boardPolygon, cutoutPolygon, FACE_FRAMES, MATING_PATH_LENGTH as PATH_LENGTH, matingOf, type BoardFacing, type BoardPart, type BoardPlace, type BoardView, type EnclosureBrief, type EnclosureGraphic, type Mating } from '@4k7/schema';
 import type { FabFile } from './gerber.ts';
 
 /** Board thickness and copper (as the 3D view and the STEP export: parts sit on the copper). */
@@ -29,6 +29,8 @@ export interface ScadPart {
   approx: boolean;
   /** Where it is plugged from, and the way the plug needs. */
   mating?: MatingPath;
+  /** A design of several boards: the board it is on (its name). */
+  board?: string;
 }
 
 /**
@@ -44,7 +46,33 @@ export interface MatingPath {
   size: [number, number];
 }
 
+/**
+ * A board of a design of several, as the enclosure sees it (docs/design/multi-board.md §6): its own
+ * outline, cutouts and holes in its own frame (as the first board's are in the script's), and
+ * `matrix`, the rows (3 × 4) that take a point of its frame into the script's (the first board's).
+ */
+export interface EnclosureBoard {
+  id: string;
+  name: string;
+  thickness: number;
+  size: [number, number];
+  outline: [number, number][];
+  cutouts: [number, number][][];
+  holes: { id: string; x: number; y: number; d: number; plated: boolean }[];
+  matrix: number[][];
+  /** Where its frame's origin (bottom-left of its underside) is in the script's, and how it is turned (degrees, as seen from above) and whether turned over. */
+  at: V3;
+  rot: number;
+  flipped: boolean;
+  /** What puts it there (a stack mate, or beside the others). */
+  by: string;
+}
+
 export interface EnclosureFacts {
+  /** A design of several boards: every board, the first (the script's frame) first. Absent: one board. */
+  boards?: EnclosureBoard[];
+  /** How the boards are joined. */
+  mates?: { a: string; b: string; kind: string; height_mm?: number }[];
   thickness: number;
   /** The outline's bounding box (x, y). */
   size: [number, number];
@@ -244,6 +272,77 @@ export function enclosureFacts(b: BoardView): EnclosureFacts & { solids: PartSol
     parts,
     solids,
   };
+}
+
+/** A 3 × 4 transform's rows applied to a point, and to a direction. */
+const apply = (m: number[][], p: readonly number[]): V3 => [0, 1, 2].map((i) => m[i]![0]! * p[0]! + m[i]![1]! * p[1]! + m[i]![2]! * p[2]! + m[i]![3]!) as V3;
+const turn = (m: number[][], d: readonly number[]): V3 => [0, 1, 2].map((i) => Math.round((m[i]![0]! * d[0]! + m[i]![1]! * d[1]! + m[i]![2]! * d[2]!) * 1e9) / 1e9 || 0) as V3;
+/** a after b (both 3 × 4 rows). */
+const after = (a: number[][], b: number[][]): number[][] =>
+  [0, 1, 2].map((i) => [0, 1, 2, 3].map((j) => a[i]![0]! * b[0]![j]! + a[i]![1]! * b[1]![j]! + a[i]![2]! * b[2]![j]! + (j === 3 ? a[i]![3]! : 0)));
+
+/** Which face a way out faces, from its direction (in the script's frame). */
+function facingOf(d: V3): BoardFacing {
+  const [x, y, z] = d.map(Math.abs) as V3;
+  if (z >= x && z >= y) return d[2] > 0 ? 'above' : 'below';
+  return x >= y ? (d[0] > 0 ? 'right' : 'left') : d[1] > 0 ? 'top' : 'bottom';
+}
+
+/**
+ * A board's frame (board.scad's: x right, y up from its bottom-left corner, z up from its underside)
+ * into the first board's, where the assembly puts it (BoardPlace: in the first board's board view,
+ * y down, z up from its top surface).
+ */
+export function placeRows(at: BoardPlace, h: number, firstH: number): number[][] {
+  const a = (at.rot * Math.PI) / 180;
+  const [c, n, s] = [Math.cos(a), Math.sin(a), at.flipped ? -1 : 1];
+  const f = (p: V3): V3 => {
+    const [u, v, w] = [s * p[0], h - p[1], p[2] - PCB_THICKNESS];
+    return [c * u - n * v + at.x, firstH - (n * u + c * v + at.y), s * w + at.z + PCB_THICKNESS];
+  };
+  const o = f([0, 0, 0]);
+  const cols = [f([1, 0, 0]), f([0, 1, 0]), f([0, 0, 1])].map((q) => [q[0] - o[0], q[1] - o[1], q[2] - o[2]]);
+  return [0, 1, 2].map((i) => [cols[0]![i]!, cols[1]![i]!, cols[2]![i]!, o[i]!].map((v) => Math.round(v * 1e9) / 1e9 || 0));
+}
+
+/**
+ * The enclosure's facts of a design of several boards (docs/design/multi-board.md §6): the first
+ * board's as enclosureFacts has them (the script's frame and its single-board globals), every
+ * board's parts in that frame (each with its board), and the boards, each with its own outline and
+ * holes and where it stands.
+ */
+export function assemblyEnclosureFacts(boards: { b: BoardView; id: string; name: string; at: BoardPlace }[], mates: EnclosureFacts['mates'] = []): EnclosureFacts & { solids: PartSolids } {
+  const first = boards[0]!;
+  const out = enclosureFacts(first.b);
+  out.parts = out.parts.map((p) => ({ ...p, board: first.name }));
+  const H = first.b.outline.h;
+  out.boards = [];
+  for (const [i, x] of boards.entries()) {
+    const f = enclosureFacts(x.b);
+    const m = placeRows(x.at, x.b.outline.h, H);
+    out.boards.push({ id: x.id, name: x.name, thickness: f.thickness, size: f.size, outline: f.outline, cutouts: f.cutouts, holes: f.holes, matrix: m, at: apply(m, [0, 0, 0]).map(r3) as V3, rot: x.at.rot, flipped: x.at.flipped, by: x.at.by });
+    if (i === 0) continue;
+    for (const p of f.parts) {
+      const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((k) => apply(m, [k & 1 ? p.max[0] : p.min[0], k & 2 ? p.max[1] : p.min[1], k & 4 ? p.max[2] : p.min[2]]));
+      const min = [0, 1, 2].map((k) => r3(Math.min(...corners.map((c) => c[k]!)))) as V3;
+      const max = [0, 1, 2].map((k) => r3(Math.max(...corners.map((c) => c[k]!)))) as V3;
+      const mating = p.mating && { ...p.mating, origin: apply(m, p.mating.origin).map(r3) as V3, dir: turn(m, p.mating.dir), u: turn(m, p.mating.u), v: turn(m, p.mating.v) };
+      if (mating) mating.facing = facingOf(mating.dir);
+      out.parts.push({ ...p, min, max, ...(mating ? { mating } : {}), board: x.name });
+      out.tallestTop = Math.max(out.tallestTop, max[2]);
+      out.lowestBottom = Math.min(out.lowestBottom, min[2]);
+      const s = f.solids.get(p.ref)!;
+      out.solids.set(p.ref, { ...s, rows: after(m, s.rows) });
+    }
+    // the board itself counts for how high and low the assembly reaches
+    for (const k of [0, 1]) for (const [u, v] of [[0, 0], [f.size[0], 0], [0, f.size[1]], [f.size[0], f.size[1]]] as const) {
+      const z = apply(m, [u, v, k * f.thickness])[2];
+      out.tallestTop = r3(Math.max(out.tallestTop, z));
+      out.lowestBottom = r3(Math.min(out.lowestBottom, z));
+    }
+  }
+  if (mates.length) out.mates = mates;
+  return out;
 }
 
 /** One solid in OpenSCAD, body coordinates with y flipped (inside the part's multmatrix). */

@@ -21,7 +21,7 @@ import {
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
 import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, openQuestions, enclosureKey, enclosureGraphicsInfo, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
-import { copperCheckText, enclosureApiSummary, enclosureFacts, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
+import { assemblyEnclosureFacts, copperCheckText, enclosureApiSummary, enclosureFacts, type PartSolids, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
 import costGuide from '../../../../docs/design/cost.md?raw';
@@ -139,6 +139,17 @@ export function tokenCost(t: TokenCount, fallbackModel: string): number {
 /** An op of a transaction, as far as the route helper's worker needs to know it (see transactEdit). */
 type RouteAsk = { op?: string; nets?: string[]; from?: string; to?: string; fresh?: boolean };
 
+/**
+ * An enclosure render: its report, the facts it was measured against, and the board those are of
+ * (the first board, with several: `boards` has every board where it stands).
+ */
+export interface EnclosureRender {
+  report: EnclosureReport;
+  facts: EnclosureFacts & { solids: PartSolids };
+  board: BoardView;
+  boards: { board: BoardView; at: BoardPlace }[] | null;
+}
+
 class AppState {
   view = $state<View>('sch');
   tab = $state<InspectorTab>('issues');
@@ -217,7 +228,7 @@ class AppState {
   helperRun = $state.raw<{ what: string; progress: RouteProgress | null } | null>(null);
   private helperStop: (() => void) | null = null;
   /** The last enclosure render (the report, its pieces, the board facts it was measured against). */
-  enclosure = $state.raw<{ report: EnclosureReport; facts: EnclosureFacts } | null>(null);
+  enclosure = $state.raw<EnclosureRender | null>(null);
   enclosureBusy = $state(false);
   /** The last stock check and cost check of the chosen house (the Layout view shows them; the agent's land here too), and which one it shows. */
   private lastStock = $state.raw<StockReport | null>(null);
@@ -698,17 +709,17 @@ class AppState {
    * Run the working copy's enclosure script and measure what it makes, in a worker of its own
    * (docs/design/enclosure.md §5). Keeps the result for the Enclosure view and the pictures.
    */
-  async renderEnclosure(): Promise<{ report: EnclosureReport; facts: EnclosureFacts } | { error: string }> {
+  async renderEnclosure(): Promise<EnclosureRender | { error: string }> {
     const design = await this.kernel.draftDesign();
     const script = design.enclosure?.script;
     if (!script) return { error: 'There is no enclosure script yet: write one with design_edit set_enclosure_script.' };
-    const b = await this.routedBoard();
-    if (!b) return { error: 'The board could not be computed.' };
-    const facts = enclosureFacts(b);
+    const at = await this.enclosureBoards();
+    if (!at) return { error: 'The board could not be computed.' };
+    const { facts } = at;
     this.enclosureBusy = true;
     try {
       const report = await renderScript({ facts, script, ...(design.enclosure?.brief ? { brief: design.enclosure.brief } : {}), ...(design.enclosure?.graphics ? { graphics: design.enclosure.graphics } : {}) });
-      const out = { report, facts };
+      const out = { report, ...at };
       this.enclosure = out;
       return out;
     } catch (e) {
@@ -718,14 +729,27 @@ class AppState {
     }
   }
 
-  /** Pictures of the last render for the agent (render_enclosure). */
-  private async enclosurePictures(req: RenderEnclosureInput, r: { report: EnclosureReport; facts: EnclosureFacts }): Promise<{ data: string; mimeType: string; title: string }[]> {
+  /**
+   * What the enclosure is built round: the board, or with several boards every board where it
+   * stands, the first board the script's frame (docs/design/multi-board.md §6).
+   */
+  private async enclosureBoards(): Promise<Omit<EnclosureRender, 'report'> | null> {
+    const all = await this.assemblyBoards().catch(() => null);
+    if (all) {
+      const mates = (this.k?.summary.mates ?? []).map((m) => ({ a: m.a, b: m.b, kind: m.kind, ...(m.height_mm !== undefined ? { height_mm: m.height_mm } : {}) }));
+      const facts = assemblyEnclosureFacts(all.map((x) => ({ b: x.board, id: x.at.board, name: x.at.name, at: x.at })), mates);
+      return { facts, board: all[0]!.board, boards: all };
+    }
     const b = await this.routedBoard();
-    if (!b) return [];
+    return b ? { facts: enclosureFacts(b), board: b, boards: null } : null;
+  }
+
+  /** Pictures of the last render for the agent (render_enclosure). */
+  private async enclosurePictures(req: RenderEnclosureInput, r: EnclosureRender): Promise<{ data: string; mimeType: string; title: string }[]> {
     const design = await this.kernel.draftDesign();
     try {
       const { enclosurePictures } = await import('./enclosure3d.ts');
-      return await enclosurePictures({ board: b, facts: r.facts, pieces: r.report.pieces, findings: r.report.findings, openings: design.enclosure?.brief?.openings ?? [], inlays: scriptInlays(r.report.script) }, req);
+      return await enclosurePictures({ board: r.board, ...(r.boards ? { boards: r.boards } : {}), facts: r.facts, pieces: r.report.pieces, findings: r.report.findings, openings: design.enclosure?.brief?.openings ?? [], inlays: scriptInlays(r.report.script) }, req);
     } catch (e) {
       this.flash(`Enclosure pictures failed: ${(e as Error).message}`);
       return [];
@@ -743,14 +767,14 @@ class AppState {
   private async enclosureQuery(): Promise<unknown> {
     const design = await this.kernel.draftDesign();
     const enc = design.enclosure;
-    const b = await this.routedBoard();
+    const at = await this.enclosureBoards();
     const last = this.enclosure;
     return {
       brief: enc?.brief ?? null,
       open_questions: openQuestions(enc?.brief).map((i) => `${i.topic}: ${i.question}`),
       script: enc?.script ?? null,
       graphics: enclosureGraphicsInfo(enc?.graphics),
-      board_api: b ? enclosureApiSummary(enclosureFacts(b), enc?.brief, enc?.graphics) : 'the board could not be computed',
+      board_api: at ? enclosureApiSummary(at.facts, enc?.brief, enc?.graphics) : 'the board could not be computed',
       last_render: !enc?.script ? 'no script yet' : last && last.report.key === enclosureKey(enc) ? reportText(last.report, last.facts) : 'not rendered since the script or its graphics last changed: render_enclosure',
       how: 'Read design_query get_guide topic "mechanics" before the first brief. 1. The brief (set_enclosure_brief): decide what you can, ask what only the user knows, in one brief; the user answers in the app. 2. The script (set_enclosure_script), JavaScript against board_api: never copy a number the board has, const pieces = [\'base\', \'lid\'];, one function per piece. 3. render_enclosure after every change: fix the report first, then what the pictures show. 4. propose when the report is clean.',
     };

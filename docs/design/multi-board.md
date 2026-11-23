@@ -1,6 +1,6 @@
 # Several boards in one design
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3): the op and the checks built (2026-11-22); the assembly they place, the 3D view of every board and the STEP file of them all built (2026-11-23, §6). The cost and stock checks of every board built (2026-11-23, §5); the enclosure with every board and a combined BOM file are not built yet.
+> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3): the op and the checks built (2026-11-22); the assembly they place, the 3D view of every board and the STEP file of them all built (2026-11-23, §6). The cost and stock checks of every board built (2026-11-23, §5), the enclosure script with every board (2026-11-23, §6); a combined BOM file is not built yet.
 
 ## 1. Why
 
@@ -155,7 +155,12 @@ board no stack reaches leave the board beside the others, 10 mm apart, with the 
 `get_board` without a board gives each board's `assembly`. The Layout view's 3D view shows every
 board where it stands, and the STEP export writes them all (each board a sub-assembly of its PCB
 and parts, named after it, placed by the same transform). Not yet: `set_board placement3d` for
-a cable's board, the enclosure library's boards (below).
+a cable's board.
+
+The enclosure library (built, [enclosure](enclosure.md) §3): as sketched below, but `at` is the
+point of the script's frame where a board's own origin is, with `rot` and `flipped`; `parts_info`
+covers every board's parts where they stand; `pcbs()` is every board; `hole_posts(from, { board })`
+stands posts under another board's holes from z = from (the board below's top: standoffs).
 
 The enclosure library ([enclosure](enclosure.md) §3) keeps its single-board globals as the first
 board, so existing scripts run unchanged, and gains:
@@ -201,7 +206,8 @@ the hunk that added a board leaves its sheets and parts on the first board.
    every board and the STEP file of them all (built 2026-11-23). Still to come: an `edge` mate's
    board standing in its slot, a place for a cable's board.
 3. **System outputs.** Shared fab profile (built), the cost and stock checks of every board
-   (built 2026-11-23); still to come: a combined BOM file, the enclosure library with every board.
+   (built 2026-11-23), the enclosure library with every board (built 2026-11-23); still to come:
+   a combined BOM file.
 4. **Agent guide.** A section in the layout guide: when to split a design, which mate kind to
    choose, how to change from header to cable.
 
