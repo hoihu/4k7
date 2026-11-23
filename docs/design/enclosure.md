@@ -96,6 +96,14 @@ the datasheet: `set_mating`, `set_footprint mating`, or the datasheet import. `g
 each part is plugged from on the board (`plugged_from`), turned with the part and mirrored on the
 bottom (`boardFacing`).
 
+A design of several boards ([multi-board](multi-board.md) §6): the first board is the frame and
+keeps every global above, so a script for one board runs unchanged. `parts_info` has every board's
+parts where they stand (`board`: which), and `boards`, `mates`, `pcb(board)`, `pcbs()` and
+`hole_posts(from, { board })` reach the others. `assemblyEnclosureFacts` (`fab/scad.ts`) builds
+the facts from each board's placement and its place in the assembly. The Enclosure view and the
+agent's pictures draw every board. The checks cover every board's parts; the board-held check
+(`ENC.LOOSE`) is the first board's.
+
 `fab/scad.ts` still writes the same board as an OpenSCAD library, `board.scad`: the Enclosure view
 downloads it, for users who write their own box in OpenSCAD. A test holds the two together, in both
 engines where OpenSCAD is installed.

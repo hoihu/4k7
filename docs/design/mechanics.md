@@ -138,6 +138,28 @@ The board must not move when a plug goes in or a button is pressed.
 connector that is plugged from outside, under the board, so plugging does not bend it. The opening
 round the plug must not touch the receptacle's shell: keep 0.2–0.3 mm round it.
 
+### 4.1 Several boards
+
+A design of several boards (a main board and a display board on a header) gets one box for all of
+them. `board_api` then has `boards`: each board with where it stands (`at`, `rot`, `flipped`), its
+size and holes. The boards joined by a stacking mate stand where their connectors meet, at the
+mate's height. A board joined by a cable stands beside the others: where it goes in the box is
+yours to decide; say it in the brief. The frame and the `pcb_*` globals are the first board's.
+`parts_info` has every board's parts where they stand, each with its `board`, so `parts()`,
+`keepouts()`, `mating_path()` and the checks cover all of them. `pcb('Display')` is another board
+where it stands, `pcbs()` all of them, `assembly()` all boards and parts.
+
+- **The base holds the first board** as above. Under it, posts from the floor (`hole_posts`).
+- **A stacked board rests on standoffs from the board below**:
+  `hole_posts(pcb_thickness, { board: 'Display' })` stands a post on the first board's top under
+  each of the Display's holes. The header carries no load: the standoffs do. Check that the posts
+  miss the parts of the board below. If they don't, a post is in the way, and the fix is in the
+  layout: tell the user which holes to move (the boards' holes should line up with free spots).
+- **The lid sits over the highest board**: `tallest_top` is the highest point of every board and
+  part.
+- **A board on a cable** gets its own posts or slot where you put it. Leave the cable's length
+  (`mates`, its kind) room to bend.
+
 ## 5. Fits, walls and printing
 
 | | Typical |

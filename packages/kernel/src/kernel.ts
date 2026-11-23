@@ -862,7 +862,7 @@ export class Kernel {
         ? {
             mates: Object.values(d.mates).map((m) => {
               const { pairs, fit } = matePairs(d, m);
-              return { id: m.id, a: d.components[m.a]?.refdes ?? '?', b: d.components[m.b]?.refdes ?? '?', kind: m.kind + (m.cable === 'reversed' ? ' (reversed)' : ''), pins: pairsText(d, m, pairs), ...(fit ? { fit } : {}) };
+              return { id: m.id, a: d.components[m.a]?.refdes ?? '?', b: d.components[m.b]?.refdes ?? '?', kind: m.kind + (m.cable === 'reversed' ? ' (reversed)' : ''), pins: pairsText(d, m, pairs), ...(m.height_mm !== undefined ? { height_mm: m.height_mm } : {}), ...(fit ? { fit } : {}) };
             }),
           }
         : {}),
