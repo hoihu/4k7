@@ -1036,7 +1036,10 @@ that is there by accident is seen.
 
 **The footprint** (`mirrored`, `placer.ts`): pads, pin 1 and the body's chamfered corners are mirrored about the
 footprint's vertical axis, then the part is turned clockwise by `rot` as on the top (KiCad's convention: a
-bottom footprint is the mirror image, then turned). Pin numbers stay. SMD pads are on B.Cu; through-hole pads
+bottom footprint is the mirror image, then turned). `rot` is counted clockwise from the top on both sides, and turning a
+part over keeps it, so placing a part on the bottom at a rotation, turning it on the top and then over, and turning it
+over and then turning it all give the same pads (`bottom.test.ts`); the agent's `place` op and layout guide say so
+(2026-11-23: an agent found turning bottom parts inconsistent; every path agreed, only this was unsaid). Pin numbers stay. SMD pads are on B.Cu; through-hole pads
 on every layer. Courtyard and body are centred, so they do not change. A drop via's spot and a part's keep-out
 in the footprint's frame are mirrored the same way (`dropSpot`).
 

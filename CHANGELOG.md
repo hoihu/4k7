@@ -5,6 +5,10 @@ and every pull request of a release are on its [GitHub release](https://github.c
 
 ## Unreleased
 
+### Layout
+
+- **The agent is told how a part on the bottom side turns.** A part on the bottom is mirrored and then turned clockwise as seen from the top, the same way as on the top, and keeps its rotation when it is turned over. The agent was not told this: placing a power stage on the bottom, it found turning those parts inconsistent and checked every turned part's pads in the board image. Now the `place` op and the agent's layout guide say how the rotation applies on the bottom. Nothing changes in how parts are placed or in the production files.
+
 ## 0.7.0 — 2026-11-22
 
 This release checks the current and power on a board: a microcontroller pin asked to drive more than it is rated for is flagged, tracks, vias and thermal spokes are checked against the current they carry, and a heat map shows where the copper works hardest. The agent can copy a block you already built in another project into the open design, give an enclosure a clear window, and swap pins and gates, including an ATtiny85's GPIO pins, to untangle the board. Parts can be marked do-not-populate, test points go on the power rails, and the design document can be downloaded as a file.

@@ -523,7 +523,7 @@ export const PlaceOp = z.object({
   ref: componentRef,
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
-  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation; omit it to keep the current one'),
+  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation as seen from the top, on either side; omit it to keep the current one. On the bottom the footprint is mirrored first, then turned the same way as on the top (so at rot 0 the pads a top part has on its left are on its right)'),
   side: z.enum(['top', 'bottom']).optional().describe('The board side it is mounted on; omit it to keep the current one (top unless it was put on the bottom). On the bottom the footprint is mirrored (seen from the top), its SMD pads are on B.Cu and it shares the area with the SMD parts on the top side; through-hole parts occupy both. Putting a part on the bottom is a choice with a price: see the layout guide'),
   lock: z.boolean().optional().describe('true: lock the part exactly there (a hard pin, e.g. connectors at the edge). Default: a choice for this part, in board coordinates: it stays there when other parts move, nudged only if it must. Kept relative to (following) a parent part only if that was declared with attach'),
   quote: z.string().optional().describe("The user's words when they asked for this placement: it is then their choice, not yours"),
@@ -627,7 +627,7 @@ export const PartPlacement = z.object({
   ref: componentRef,
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
-  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation (default 0): turn the part so its pins face what they connect to'),
+  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation as seen from the top (default 0; on the bottom the mirrored footprint is turned the same way): turn the part so its pins face what they connect to'),
   side: z.enum(['top', 'bottom']).optional().describe('The board side (default: as it is now, top unless put on the bottom). A big part on the bottom is the exception: see the layout guide'),
 });
 export type PartPlacement = z.infer<typeof PartPlacement>;
