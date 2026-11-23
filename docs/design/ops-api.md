@@ -300,14 +300,16 @@ A project without blocks answers `blocks: []` with a note; an unknown or unreada
 
 `design_edit import_block { project, block, nets, prefix? }` copies one block in. `block` is its number or
 title, `nets` maps every boundary net to a net of this design (`{ "+5V": "VBUS", "GND": "GND" }`; a name that
-does not exist here is made, with the source net's attributes). It is refused, and nothing changes, when a
-boundary net is not mapped (`NET_UNMAPPED`, the missing ones as candidates), a mapped name is no boundary net
-(`NET_UNKNOWN`), the block or project is unknown, or a part cannot be resolved (`PART_UNKNOWN`).
+does not exist here is made, with the source net's attributes). `nets` may also map an internal net
+(`{ "NTC": "NTC" }`): it is not made anew, and its pins join that net the same way, for a block whose internal net
+this design already has (a sensor line both boards carry). It is refused, and nothing changes, when a
+boundary net is not mapped (`NET_UNMAPPED`, the missing ones as candidates), a mapped name is no net of the block
+(`NET_UNKNOWN`, its boundary and internal nets as candidates), the block or project is unknown, or a part cannot be resolved (`PART_UNKNOWN`).
 
 - Parts are resolved by id in this design and the library first; a part neither has comes with the card the
   source project stores (a project embeds the cards it uses). A card here that lacks a pin the block connects
   is refused. Params, no-connect marks and DNP are copied.
-- A refdes taken here gets the next free number of its letters (R1 → R2 when R1 is used here); internal nets are made anew,
+- A refdes taken here gets the next free number of its letters (R1 → R2 when R1 is used here); internal nets that `nets` does not map are made anew,
   `prefix` put before their names, `_2`, `_3` … where the name is taken. Net loads on the block's pins come along.
 - The block's `describe` entry (title, text; ` (2)` after a title that is taken) is appended, with the
   constraints between its parts that say how it is drawn (`left_of`, `right_of`, `above`, `below`,

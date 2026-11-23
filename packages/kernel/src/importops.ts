@@ -36,8 +36,9 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
   const boundary = lb.boundary_nets.map((n) => n.net);
   const unmapped = boundary.filter((n) => op.nets[n] === undefined);
   if (unmapped.length) reject({ code: 'NET_UNMAPPED', message: `Map every boundary net of "${lb.title}" to a net of this design: ${unmapped.join(', ')} not mapped. Nothing was imported.`, candidates: unmapped });
-  const stray = Object.keys(op.nets).filter((n) => !boundary.includes(n));
-  if (stray.length) reject({ code: 'NET_UNKNOWN', message: `${stray.join(', ')}: not a boundary net of "${lb.title}" (those are ${boundary.join(', ') || 'none'}); its internal nets are made anew.`, candidates: boundary });
+  const known = [...boundary, ...lb.internal_nets].sort(natCmp);
+  const stray = Object.keys(op.nets).filter((n) => !known.includes(n));
+  if (stray.length) reject({ code: 'NET_UNKNOWN', message: `${stray.join(', ')}: not a net of "${lb.title}" (its boundary nets are ${boundary.join(', ') || 'none'}, its internal nets ${lb.internal_nets.join(', ') || 'none'}).`, candidates: known });
 
   // the cards: this design's or the library's by id, else the one stored in the source project
   const cards: ImportReport['cards'] = { library: [], project: [] };
@@ -67,8 +68,8 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
     ids.set(c.id, nc.id);
   }
 
-  // the nets: boundary ones join the mapped net, internal ones are made anew
-  const internal = new Set(lb.internal_nets);
+  // the nets: boundary ones and mapped internal ones join the mapped net, the other internal ones are made anew
+  const internal = new Set(lb.internal_nets.filter((n) => op.nets[n] === undefined));
   const nets = new Map<string, string>();
   for (const srcNet of new Set(comps.flatMap((c) => Object.values(c.pins)))) {
     const n = src.nets[srcNet];
@@ -113,10 +114,12 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
   }
 
   const imported: ImportReport = { project: op.project, block: title, renamed, cards, recheck };
+  const mappedInternal = lb.internal_nets.filter((n) => op.nets[n] !== undefined);
   const list = (m: Record<string, string>) => Object.entries(m).map(([a, b]) => `${a} → ${b}`).join(', ');
   const effect =
     `imported "${title}" from ${op.project}: ${comps.length} part(s) (${comps.map((c) => refOf(c.id)).sort(natCmp).join(', ')}), ` +
     `boundary ${boundary.map((n) => `${n} → ${op.nets[n]}`).join(', ') || 'none'}` +
+    (mappedInternal.length ? `, internal ${mappedInternal.map((n) => `${n} → ${op.nets[n]}`).join(', ')}` : '') +
     (constraints ? `, ${constraints} constraint(s)` : '') +
     (Object.keys(renamed.refdes).length ? `; renamed ${list(renamed.refdes)}` : '') +
     (Object.keys(renamed.nets).length ? `; nets renamed ${list(renamed.nets)}` : '') +
