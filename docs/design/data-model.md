@@ -50,7 +50,7 @@ erDiagram
 ### Physical layer
 | Entity | Key fields |
 |---|---|
-| `Board` | outline (polygon with arcs), cutouts, mounting holes, keep-outs |
+| `Board` | outline (polygon with arcs), cutouts, mounting holes, keep-outs. A design may have several (`Design.boards`, `Sheet.board`, `Component.board`, format 3): [multi-board](multi-board.md) |
 | `Stackup` | layers (copper/dielectric/mask/silk), thickness, εr, copper weight, fab profile |
 | `FootprintInstance` | component, position, rotation, side, locked (authored/derived) |
 | `Track` / `Via` / `Arc` | net, layer(s), geometry, width |

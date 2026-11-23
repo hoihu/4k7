@@ -134,8 +134,8 @@ export function crossChecks(d: Design): Diagnostic[] {
   }
 
   /* ---- the board's own objects on nets the schematic no longer has ---- */
-  const b = d.board;
-  if (b) {
+  for (const b of [d.board, ...Object.values(d.boards ?? {}).map((e) => e.settings)]) {
+    if (!b) continue;
     const unknown = (what: string, items: { id?: string; netId?: string }[], fix: string, key = (x: { id?: string }) => x.id ?? '?') => {
       const bad = items.filter((x) => x.netId && !d.nets[x.netId]);
       if (bad.length) {

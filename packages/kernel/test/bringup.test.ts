@@ -84,4 +84,34 @@ describe('bring-up sheet', () => {
     expect(plan.rails).toEqual([]);
     expect(plan.note).toMatch(/No supply rails/);
   });
+
+  it('is of one board in a design of several, a rail from the other board coming in on its connector', () => {
+    const k = new Kernel();
+    expect(k.transact(buckTransaction()).status).toBe('ok');
+    const r = k.transact({
+      summary: 'LED board',
+      ops: [
+        { op: 'add_sheet', name: 'LED' },
+        { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J2' },
+        { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J3', sheet: 'LED' },
+        { op: 'add_part', part: 'generic:R', refdes: 'R4', params: { resistance: '1k' }, sheet: 'LED' },
+        { op: 'add_part', part: 'generic:LED', refdes: 'D2', sheet: 'LED' },
+        { op: 'connect', pins: ['J2.1', 'J3.1', 'R4.1'], net: '+3V3' },
+        { op: 'connect', pins: ['R4.2', 'D2.A'], net: 'LED_A' },
+        { op: 'connect', pins: ['J2.2', 'J3.2', 'D2.K'], net: 'GND' },
+        { op: 'add_board', name: 'LED board', sheets: ['LED'] },
+      ],
+    });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    // the main board as before: the buck's rails, +3V3 probed at the buck, not on the LED board
+    const main = k.bringUp();
+    expect(main.rails.map((x) => x.net)).toEqual(['+12V', '+3V3']);
+    expect(main.rails[1]!.source).toBe('U1 (switching regulator from +12V), through L1');
+    expect(main.rails[1]!.probeAt).not.toMatch(/^(J3|R4|D2)\./);
+    // the LED board: its own rail only, probed at the connector it comes in on (J3, not the buck's pin);
+    // +3V3 is not marked external, so the power tree does not know where it comes from
+    const led = k.bringUp(k.boardId('LED board'));
+    expect(led.rails).toHaveLength(1);
+    expect(led.rails[0]).toMatchObject({ net: '+3V3', input: false, source: 'unknown', testPoints: [], probeAt: 'J3.1' });
+  });
 });

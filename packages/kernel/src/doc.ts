@@ -32,9 +32,14 @@ export const boardCopy = (d: Design): BoardSettings => copyBoard(d.board ?? DEFA
 
 /** A copy of a design to work on (see copyBoard). */
 export function workCopy(d: Design): Design {
-  if (!d.board?.copper) return structuredClone(d);
-  const work = structuredClone({ ...d, board: null }) as unknown as Design;
-  work.board = copyBoard(d.board);
+  const shared = Object.values(d.boards ?? {}).some((e) => e.settings?.copper);
+  if (!d.board?.copper && !shared) return structuredClone(d);
+  const boards = d.boards && Object.fromEntries(Object.entries(d.boards).map(([k, e]) => [k, e.settings ? { ...e, settings: copyBoard(e.settings) } : structuredClone(e)]));
+  const work = structuredClone({ ...d, board: null, boards: null }) as unknown as Design;
+  if (d.board) work.board = copyBoard(d.board);
+  else delete work.board;
+  if (boards) work.boards = boards;
+  else delete work.boards;
   return work;
 }
 
@@ -192,7 +197,7 @@ export function mergeNet(d: Design, from: Net, to: Net): void {
   }
   to.attrs = { ...from.attrs, ...to.attrs };
   // (an impedance rule of the net goes with it)
-  for (const r of d.board?.impedance ?? []) r.nets = r.nets.map((id) => (id === from.id ? to.id : id));
+  for (const b of [d.board, ...Object.values(d.boards ?? {}).map((e) => e.settings)]) for (const r of b?.impedance ?? []) r.nets = r.nets.map((id) => (id === from.id ? to.id : id));
   delete d.nets[from.id];
 }
 

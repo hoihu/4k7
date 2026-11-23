@@ -95,7 +95,9 @@ from it (a series part or a linear regulator passes their current; a switching r
 Vout·Iout / (Vin·0.8)); a rail below without loads counts with its `max_current`; where neither
 is known the limit is "unknown — start low", never a guessed number. Then the steps at the bench
 in order: check each rail for a short to ground unpowered, power the inputs at that limit, check
-each rail at its probe point. A design without supply rails has no such section. It is not an op:
+each rail at its probe point. A design without supply rails has no such section. On a design of
+several boards it is of the board shown, as the rest of the document (docs/design/multi-board.md).
+It is not an op:
 the app asks the kernel for it when it builds the document (a `get_bring_up` query could follow).
 
 ## 5. Routing to completion
