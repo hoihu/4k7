@@ -71,7 +71,7 @@ import { tryPlacements } from './trial.ts';
 import { suggestMoves } from './suggest.ts';
 import { impedanceText, resolveRule } from './lines.ts';
 import { lineBoard } from './lineops.ts';
-import { boardList, boardOf, commitFocus, focusBoard, multiBoard, resolveBoard, settingsOf } from './boards.ts';
+import { boardList, boardOf, commitFocus, focusBoard, multiBoard, ownTrackWidth, resolveBoard, settingsOf } from './boards.ts';
 import { matePairs, pairsText } from './mates.ts';
 import { assemblyOf } from './assembly.ts';
 import { FIRST_BOARD } from '@4k7/schema';
@@ -625,10 +625,17 @@ export class Kernel {
         const nbid = on[0] ?? FIRST_BOARD;
         const nd = this.focus(d, nbid);
         const onBoards = multiBoard(d) ? { boards: on.map((id) => d.boards![id]!.name), board_facts_for: d.boards![nbid]!.name } : {};
-        // the track it gets on the board: its own width, else the rules' power or signal width
+        // the track it gets on a board: its own width there, else the rules' power or signal width
         const rules = (nd.board ?? DEFAULT_BOARD).rules;
         const kind = isGroundNet(n) ? 'ground' : isPowerNet(n) ? 'supply' : 'signal';
-        const width = n.attrs.trackWidth ?? (kind === 'signal' ? rules.track : rules.powerTrack);
+        const widthOn = (f: Design) => {
+          const own = ownTrackWidth(f, n);
+          const r = (f.board ?? DEFAULT_BOARD).rules;
+          return { width_mm: own?.mm ?? (kind === 'signal' ? r.track : r.powerTrack), why: own ? `set for this net${own.board ? ` on ${own.board}` : ''}` : kind === 'signal' ? 'signal width (rules)' : 'power width (rules)' };
+        };
+        const { width_mm: width, why } = widthOn(nd);
+        // on several boards: each board's
+        const byBoard = on.length > 1 ? on.map((id) => ({ board: d.boards![id]!.name, ...widthOn(this.focus(d, id)) })) : undefined;
         // the width its current needs, per layer: each layer's copper from the stack-up, at the board's allowed heating
         const settings = nd.board ?? DEFAULT_BOARD;
         const stack = boardStackup(settings);
@@ -637,7 +644,8 @@ export class Kernel {
         const amps = n.attrs.maxCurrent;
         const track = {
           width_mm: width,
-          why: n.attrs.trackWidth ? 'set for this net' : kind === 'signal' ? 'signal width (rules)' : 'power width (rules)',
+          why,
+          ...(byBoard ? { by_board: byBoard } : {}),
           ...(amps ? { suggested_mm: Object.fromEntries(Object.entries(copper).map(([l, um]) => [l, trackWidthFor(amps, rise, um)])), for_current_a: amps, copper_um: copper, rise_c: rise } : {}),
           rules: { signal_mm: rules.track, power_mm: rules.powerTrack },
           ...(n.attrs.routeFirst ? { routed_first: true } : {}),
