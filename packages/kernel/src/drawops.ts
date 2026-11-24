@@ -8,6 +8,7 @@ import type { Component, Design, EditOp, LabelView, OpResult, PinView, Rect, She
 import { GRID } from '@4k7/parts';
 import { RejectError, cardOf, clone, natCmp, pinLabel, reject, resolvePins, resolveUnitRef, type PinHandle } from './doc.ts';
 import { groups, isDrawn, joinedWires, onWire, ownSheet, pageAt, pinsOf, symbolOf, syncDrawing, syncSheet, viewOf } from './drawing.ts';
+import { sheetByName } from './sheets.ts';
 import { clashWords, clearTexts, placeTexts, textBox, textClashes, within, type TextArrange, type TextClash, type TextSide } from './parttext.ts';
 import { deco, type Dir, drawingArea, labelRect, leadEnd, supplyDir, textRect } from './scene.ts';
 import { routeWire } from './schroute.ts';
@@ -446,8 +447,7 @@ function storeText(d: Design, comp: Component, sym: SymbolView) {
 
 /** Text that runs into something goes to the nearest clear spot: of the given parts, a sheet, or every sheet the agent arranged. */
 function autoTexts(d: Design, op: Extract<EditOp, { op: 'place_text' }>, picks: { comp: Component; unit?: string }[]): OpResult {
-  const named = op.sheet !== undefined ? Object.values(d.sheets).find((s) => s.name.toLowerCase() === op.sheet!.toLowerCase()) : undefined;
-  if (op.sheet !== undefined && !named) reject({ code: 'REF_UNKNOWN', message: `No sheet "${op.sheet}".`, candidates: Object.values(d.sheets).map((s) => s.name) });
+  const named = op.sheet !== undefined ? d.sheets[sheetByName(d, op.sheet, '')] : undefined;
   const ids = picks.length ? [...new Set(picks.map((p) => p.comp.sheet))] : named ? [named.id] : Object.values(d.sheets).sort((a, b) => a.order - b.order).map((s) => s.id);
   const picked = (s: SymbolView) => !picks.length || picks.some((p) => p.comp.id === s.componentId && (p.unit === undefined || p.unit === s.unit));
   const view = clone(viewOf(d)); // (the texts are moved in it, then stored)
