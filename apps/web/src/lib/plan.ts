@@ -5,9 +5,8 @@
  */
 import type { ChatPlan } from '@4k7/schema';
 
-/** What propose_plan answers when the project has the plan step off. */
-export const PLAN_STEP_OFF =
-  'The plan step is off for this project (Settings → General → Plan step), so no plan is shown. Go ahead with the task and propose the changes when they are done.';
+/** What propose_plan answers when the project has the plan step off (shared with the eval server). */
+export { PLAN_STEP_OFF } from '@4k7/schema';
 
 /** The reply wait_for_review gives for a decided plan. */
 export function planResult(accepted: boolean, comment: string): string {

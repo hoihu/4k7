@@ -8,14 +8,12 @@
  */
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { AskUser, ProposeInput, TOOL_NAMES, mustFix, type Design, type ToolContent } from '@4k7/schema';
+import { AskUser, GuideTopic, PLAN_STEP_OFF, ProposeInput, TOOL_NAMES, mustFix, type Design, type ToolContent } from '@4k7/schema';
 import { mcpHttpHandler, secretsMatch } from '../../../tools/server/src/mcp.ts';
 import { LocalServer, type CallResult } from '../../../tools/server/src/server.ts';
 import { formatDesignContext } from '../src/prompt.ts';
 import { runKernelTool } from '../src/tools.ts';
 import { answerer, countingKernel, scoreRun, type EvalTask, type RunReport, type Score } from './run.ts';
-
-const GUIDES = ['schematic', 'mechanics', 'cost', 'high_speed'];
 
 export interface HeadlessServer {
   /** The /mcp endpoint, e.g. http://127.0.0.1:PORT/mcp. */
@@ -58,7 +56,7 @@ export function headlessCalls(design: Design | undefined, task: EvalTask) {
       case TOOL_NAMES.waitForReview:
         return text('Nothing is pending review.');
       case TOOL_NAMES.proposePlan:
-        return text('Refused: the plan step is off for this project (get_context says plan_step: off). Start on the design.', true);
+        return text(`Refused: ${PLAN_STEP_OFF}`, true);
       case TOOL_NAMES.ask: {
         const args = AskUser.safeParse(input);
         if (!args.success) return text(`Invalid input: ${args.error.message}`, true);
@@ -71,8 +69,9 @@ export function headlessCalls(design: Design | undefined, task: EvalTask) {
         // the app answers get_guide from the design docs; so does this
         const topic = (input as { op?: string; topic?: string })?.op === 'get_guide' ? (input as { topic?: string }).topic : undefined;
         if (topic !== undefined) {
-          if (!GUIDES.includes(topic)) return text('Guides: schematic, mechanics, cost, high_speed.', true);
-          const file = new URL(`../../../docs/design/${topic.replace('_', '-')}.md`, import.meta.url);
+          const guide = GuideTopic.safeParse(topic);
+          if (!guide.success) return text(`Guides: ${GuideTopic.options.join(', ')}.`, true);
+          const file = new URL(`../../../docs/design/${guide.data.replace('_', '-')}.md`, import.meta.url);
           return text(readFileSync(file, 'utf8').replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''));
         }
         break;

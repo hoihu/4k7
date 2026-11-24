@@ -107,6 +107,10 @@ export const ProposePlanInput = z.object({
   summary: z.string().optional().describe('One line: what the plan builds, shown above the steps'),
 });
 
+/** What propose_plan answers when the project has the plan step off (the app, and the eval server). */
+export const PLAN_STEP_OFF =
+  'The plan step is off for this project (Settings → General → Plan step), so no plan is shown. Go ahead with the task and propose the changes when they are done.';
+
 export const WaitForReviewInput = z.object({
   timeout_s: z.number().int().min(5).max(600).default(120).describe('How long to wait before returning "still pending"'),
 });

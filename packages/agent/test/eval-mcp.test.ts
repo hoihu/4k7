@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Design } from '@4k7/schema';
+import { GuideTopic, PLAN_STEP_OFF, type Design } from '@4k7/schema';
 import { runKernelTool } from '../src/tools.ts';
-import { claudeResult, startHeadless, type HeadlessServer } from '../eval/headless.ts';
+import { claudeResult, headlessCalls, startHeadless, type HeadlessServer } from '../eval/headless.ts';
 import { countingKernel, type EvalTask } from '../eval/run.ts';
 
 const dir = new URL('../eval/tasks/', import.meta.url);
@@ -72,6 +72,31 @@ describe('headless eval server (/mcp without a tab)', () => {
       tokens_in: 100,
       tokens_out: 20,
     });
+  });
+
+  it('serves every get_guide topic the schema has (boards too) from its design doc, without the header', async () => {
+    // the guides only read docs/design, not the design: one design is enough
+    const { call } = headlessCalls(led(), { name: 't', prompt: 'p' });
+    const out = (r: { content: { type: string; text?: string }[] }) => r.content.map((c) => c.text ?? '').join('');
+    for (const topic of GuideTopic.options) {
+      const r = await call('design_query', { op: 'get_guide', topic });
+      expect(r.isError, topic).toBe(false);
+      expect(out(r)).not.toMatch(/^#|^>/);
+    }
+    const boards = await call('design_query', { op: 'get_guide', topic: 'boards' });
+    const doc = readFileSync(new URL('../../../docs/design/boards.md', import.meta.url), 'utf8');
+    expect(out(boards)).toBe(doc.replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''));
+    const bad = await call('design_query', { op: 'get_guide', topic: 'nope' });
+    expect(bad.isError).toBe(true);
+    expect(out(bad)).toBe(`Guides: ${GuideTopic.options.join(', ')}.`);
+    expect(out(bad)).toContain('boards');
+  });
+
+  it('refuses propose_plan with the app\'s plan-off text', async () => {
+    const { call } = headlessCalls(led(), { name: 't', prompt: 'p' });
+    const r = await call('propose_plan', { steps: ['add the regulator'] });
+    expect(r.isError).toBe(true);
+    expect(r.content[0]).toEqual({ type: 'text', text: `Refused: ${PLAN_STEP_OFF}` });
   });
 
   it('answers ask_user from the task, and an unanswered ask fails the run', async () => {
