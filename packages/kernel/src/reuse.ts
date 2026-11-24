@@ -7,9 +7,9 @@
  * The app reads the file (only a project the projects folder lists) and hands it to Kernel.query
  * (its `sources`), which calls blocksOfProject; nothing here touches a file, so it runs anywhere.
  */
-import type { Design } from '@4k7/schema';
+import type { Design, QueryError } from '@4k7/schema';
 import { migrate } from './canonical.ts';
-import { cardOf, isPowerNet, natCmp } from './doc.ts';
+import { cardOf, closest, isPowerNet, natCmp, queryError } from './doc.ts';
 
 export interface ListedBlock {
   /** Its number in the project's describe order, from 1. */
@@ -96,7 +96,9 @@ export function readProject(id: string, text: string | undefined, known: string[
 }
 
 /** list_blocks for project `id` (readProject). */
-export function blocksOfProject(id: string, text: string | undefined, known: string[]): ListBlocksAnswer | { error: string; projects?: string[] } {
+export function blocksOfProject(id: string, text: string | undefined, known: string[]): ListBlocksAnswer | (QueryError & { projects?: string[] }) {
   const d = readProject(id, text, known);
-  return 'error' in d ? d : listBlocks(id, d);
+  if (!('error' in d)) return listBlocks(id, d);
+  // a query error (QueryError); projects is kept for this release
+  return d.projects ? queryError(d.error, 'PROJECT_UNKNOWN', closest(id, d.projects), { projects: d.projects }) : d;
 }

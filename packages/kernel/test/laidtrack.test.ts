@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { boardSummary, type BoardView, type Transaction } from '@4k7/schema';
+import { resolveBoard } from '../src/boards.ts';
 import { buck as buckFixture } from './fixtures.ts';
 
 /**
@@ -194,18 +195,18 @@ describe('draw_track with router copper', () => {
     ];
     expect(k.transact({ summary: 'LED board', ops }).status).toBe('ok');
     k.transact({ summary: 'route', ops: [{ op: 'route', board: 'LED board' }] });
-    const at = (ref: string, n: string) => k.board({}, k.boardId('LED board')).parts.find((p) => p.refdes === ref)!.pads.find((p) => p.number === n)!;
+    const at = (ref: string, n: string) => k.board({}, resolveBoard(k.draftDesign(), 'LED board').id).parts.find((p) => p.refdes === ref)!.pads.find((p) => p.number === n)!;
     const [k1, a2] = [at('D2', '1'), at('D2', '2')];
     // a via between D2's two pads, and the main board's laid tracks untouched
     const mid = [(k1.x + a2.x) / 2, (k1.y + a2.y) / 2] as const;
     const r = k.transact({ summary: 'led', ops: [{ op: 'draw_track', board: 'LED board', from: 'R4.2', to: `D2.${a2.number}`, layer: 'F.Cu', via: [[mid[0], mid[1], 'B.Cu'], [mid[0] + 1.2, mid[1] + 2.3, 'F.Cu']] }] });
     expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
     k.transact({ summary: 'route', ops: [{ op: 'route', board: 'LED board' }] });
-    const b = k.board({}, k.boardId('LED board'));
+    const b = k.board({}, resolveBoard(k.draftDesign(), 'LED board').id);
     expect(b.laid![0]!.laid).toBe(false);
     expect(b.laid![0]!.why).toMatch(/^no room for a via at \([\d.]+, [\d.]+\): .*D2's land pattern .*pad D2\.1 \(LED_K\) is [\d.]+ mm from it \(0\.2 mm needed\)/);
     expect(notLaid(b, 't1')).toContain("D2's land pattern");
-    expect(k.board({}, k.boardId('Main')).laid).toBeUndefined();
+    expect(k.board({}, resolveBoard(k.draftDesign(), 'Main').id).laid).toBeUndefined();
   });
 });
 
