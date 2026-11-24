@@ -20,7 +20,7 @@ import { applyOp } from './apply.ts';
 import { boardRouteInput, placeBoard } from './board.ts';
 import { CROSSING_MM } from './congestion.ts';
 import { checkCopper, followParts } from './copperops.ts';
-import { RejectError, cardOf, clone, resolveComponent } from './doc.ts';
+import { RejectError, cardOf, clone, closest, queryError, resolveComponent } from './doc.ts';
 import { r3 } from './geom.ts';
 import { padPointDist, padSegDist } from './keep.ts';
 import { screenMoves } from './refine.ts';
@@ -158,7 +158,7 @@ export function suggestMoves(d: Design, sch: SchematicView, cur: BoardView, q: S
       }
     };
     const unknown = q.parts.filter((r) => !byRef.has(ref(r) ?? ''));
-    if (unknown.length) return { error: `Not on the board: ${unknown.join(', ')}.` };
+    if (unknown.length) return queryError(`Not on the board: ${unknown.join(', ')}.`, 'REF_UNKNOWN', closest(unknown[0]!, [...byRef.keys()]));
     refs = q.parts.map((r) => ref(r)!);
   } else if (q.at) {
     const [x, y] = q.at;

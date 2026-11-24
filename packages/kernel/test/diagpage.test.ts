@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Diagnostic } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
+import { resolveBoard } from '../src/boards.ts';
 import { buckTransaction } from './fixtures.ts';
 
 // get_diagnostics on a big or badly broken design: through 0.7.x it answered with every finding at
@@ -123,7 +124,7 @@ describe('get_diagnostics on a design of several boards', () => {
     ok(k, [{ op: 'add_board', name: 'Spare' }, { op: 'assign_board', board: 'Spare', refs: ['C1'] }]);
     ok(k, [{ op: 'set_copper_mode', board: 'Spare', mode: 'drawn', keep: false }, { op: 'set_board', board: 'Spare', width_mm: 60, height_mm: 40, clearance_mm: 0.6 }]);
     ok(k, tracks(10, 'Spare'));
-    const on = (board: string) => k.board({}, k.boardId(board)).diagnostics.filter((x) => x.code === 'DRC.CLEARANCE').length;
+    const on = (board: string) => k.board({}, resolveBoard(k.draftDesign(), board).id).diagnostics.filter((x) => x.code === 'DRC.CLEARANCE').length;
     const main = on('Main');
     const spare = on('Spare');
     expect(main).toBeGreaterThan(0);

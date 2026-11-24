@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { boardSummary, cutoutDistance, type Track } from '@4k7/schema';
 import { draftToCard, registerUserParts, unregisterUserPart } from '@4k7/parts';
 import { Kernel } from '../src/index.ts';
+import { findBoard } from '../src/boards.ts';
 import { edgeCrossings, splitDrc } from '../src/drc.ts';
 import { buck } from './fixtures.ts';
 
@@ -385,7 +386,7 @@ describe('the user\'s placement choices', () => {
     expect(two.format).toBe(3);
     const again = new Kernel(two);
     expect(again.board().parts.find((p) => p.refdes === 'J1')!.locked).toBe(true);
-    expect(again.boardId('Spare')).toBeTruthy();
+    expect(findBoard(again.draftDesign(), 'Spare')).toBeTruthy();
   });
 });
 
