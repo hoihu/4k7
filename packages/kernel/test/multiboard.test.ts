@@ -381,8 +381,8 @@ describe('back to one board, and boards by name', () => {
     expect(findBoard(d, 'b_2')?.name).toBe('LED board');
     expect(findBoard(d, 'Lamp')).toBeUndefined();
     expect(() => resolveBoard(d, 'Lamp')).toThrow();
-    expect(k.query({ op: 'get_board', board: 'Lamp' })).toEqual({ error: 'No board "Lamp".', boards: ['Main', 'LED board'] });
-    expect(k.query({ op: 'get_copper', board: 'Lamp' })).toEqual({ error: 'No board "Lamp".', boards: ['Main', 'LED board'] });
+    expect(k.query({ op: 'get_board', board: 'Lamp' })).toEqual({ error: 'No board "Lamp".', code: 'BOARD_UNKNOWN', candidates: ['Main', 'LED board'], boards: ['Main', 'LED board'] });
+    expect(k.query({ op: 'get_copper', board: 'Lamp' })).toEqual({ error: 'No board "Lamp".', code: 'BOARD_UNKNOWN', candidates: ['Main', 'LED board'], boards: ['Main', 'LED board'] });
   });
 });
 
