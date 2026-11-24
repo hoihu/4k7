@@ -6,7 +6,8 @@
  */
 import type { Component, Design, EditOp, ImportReport, NetAttrs, OpResult } from '@4k7/schema';
 import { allocRefdes, cardOf, createNet, findNet, isAutoNet, natCmp, nextId, reject } from './doc.ts';
-import { addPart, sheetByName } from './netops.ts';
+import { addPart } from './netops.ts';
+import { sheetByName } from './sheets.ts';
 import { assignBoard, resolveBoard } from './boards.ts';
 import { listBlocks, readProject } from './reuse.ts';
 

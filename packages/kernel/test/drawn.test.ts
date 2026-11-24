@@ -479,7 +479,7 @@ describe('suggest_moves', () => {
     const p = pad(b0, 'R1', '1');
     const [x0, y0, x1, y1] = [p.x - p.w / 2 - 0.36, p.y - p.h / 2 - 0.36, p.x + p.w / 2 + 0.36, p.y + p.h / 2 + 0.36];
     ok(k, [{ op: 'draw_track', net: 'B', from: [x0, y0], to: [x0, y0], via: [[x1, y0], [x1, y1], [x0, y1]], width_mm: 0.25 }]);
-    expect(k.query({ op: 'suggest_moves', parts: ['R9'] })).toEqual({ error: 'Not on the board: R9.' });
+    expect(k.query({ op: 'suggest_moves', parts: ['R9'] })).toEqual({ error: 'Not on the board: R9.', code: 'REF_UNKNOWN', candidates: ['R1', 'R2'] });
     const s = k.query({ op: 'suggest_moves', parts: ['R1'] }) as { suggestions: { change: string; apply: unknown[]; closes: number; then?: unknown }[]; tried: number };
     expect(s.tried).toBeGreaterThan(0);
     const turn = s.suggestions.find((x) => x.change === 'R1 turned to 180°');
