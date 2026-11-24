@@ -67,5 +67,6 @@ function summariseQuery(input: unknown, out: unknown): string {
   if (Array.isArray(out)) return `${out.length} result(s)`;
   if (out && typeof out === 'object' && 'error' in out) return String((out as { error: unknown }).error);
   const op = (input as { op?: string })?.op;
+  if (op === 'get_diagnostics' && out && typeof out === 'object' && Array.isArray((out as { diagnostics?: unknown }).diagnostics)) return `${(out as { diagnostics: unknown[] }).diagnostics.length} result(s)`;
   return op === 'get_summary' ? 'design summary' : 'ok';
 }

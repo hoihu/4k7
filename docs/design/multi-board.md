@@ -114,6 +114,16 @@ ending at its connector pin. Nothing in them needs to know other boards exist.
 | panel | the enclosure and the 3D assembly |
 | Gerber, drill, pick-and-place, fab check: one zip per board (`<design>-<board>.zip`) | the BOM: per board and combined; the cost and the order |
 
+A net is the system's, its settings too, except its track width: `set_net track_mm` with `board`
+sets the net's width on that board only (built 2026-11-24, after the bike lamp's merge: LED_A and
+LED_K want 0.4 mm on the main board and 0.8 mm on the LED board, and the agent set 0.8 mm on each
+LED-board track by hand). Stored as `NetAttrs.boardTrackWidths` by board id, over the net's own
+`trackWidth` on that board; null with `board` clears it (the net's width again). On a board the
+order is: the impedance rule's width, the board's, the net's, the rules' signal or power width
+(`ownTrackWidth` in `kernel/src/boards.ts`, read by the router setup, drawn tracks and `get_net`,
+whose `track.by_board` gives each board's width and why). The route key of a board holds its own
+widths, so a change on one board re-routes that board only. `remove_board` drops its widths.
+
 ## 5. Same fab house
 
 One fab house for every board. `set_fab_profile` without `board` sets the profile on each (built:
