@@ -20,11 +20,27 @@ const pinRef = z
   .min(3)
   .describe('Pin reference "<refdes>.<pin name or number>", e.g. "U1.VIN" or "U1.2". A name shared by several pins (e.g. GND) addresses all of them.');
 const netName = z.string().min(1).describe('Net name, e.g. "+3V3", "GND", "SW"');
-const boardRef = z
+export const boardRef = z
   .string()
   .min(1)
   .optional()
   .describe('Which board, by name or id, when the design has several (add_board); absent: the only board, or the board of the part the op names. See docs/design/multi-board.md');
+/**
+ * The same shape as boardRef for the ops where no board means every board (add_waiver, set_fab_profile, set_net):
+ * each site says so in its own text. Kept apart from boardRef, whose text says absence means the only board.
+ */
+export const designWideBoardRef = z.string().min(1).optional();
+/** A sheet, by name or id. */
+export const sheetRef = z.string().min(1);
+
+/* -------------------------------- fragments -------------------------------- */
+
+/** A copper layer of the board. */
+export const copperLayer = z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']);
+/** A rectangle in mm: top-left corner and size. Not constrain's room rect, which has its own shape. */
+export const rectMm = z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() });
+/** A rotation in 90° steps, degrees clockwise. */
+export const rot90 = z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]);
 
 /* ------------------------------- edit ops --------------------------------- */
 
@@ -33,7 +49,7 @@ export const AddPartOp = z.object({
   part: z.string().describe('Part Card id from search_parts, e.g. "generic:C" or "ti:TPS54331DR"'),
   refdes: z.string().regex(/^[A-Z]+[0-9]+$/).optional().describe('Reference designator; auto-assigned if omitted. Give one when later ops in the same transaction refer to the part.'),
   params: z.record(z.string(), z.string()).optional().describe('Engineering parameters, e.g. {"capacitance":"100nF","voltage":"25V","package":"0402"}'),
-  sheet: z.string().optional().describe('Sheet name; defaults to the first sheet'),
+  sheet: sheetRef.optional().describe('Sheet name; defaults to the first sheet'),
 });
 
 export const RemoveOp = z.object({
@@ -96,9 +112,9 @@ export const SetNetOp = z.object({
     .optional()
     .describe('What the net\'s pins draw: the current check then splits the net\'s current over its copper from where it comes in to these pins (a stub to a pull-up carries its milliamps, not max_current) and checks each track for its share (DRC.TRACK_CURRENT). Replaces the list; null clears it. A pad with add_vias drop amps counts as stated already (a load here for the same pad wins). Loads under max_current leave the rest unplaced (it may flow anywhere)'),
   track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise). With board: its width on that board only (null: the net\'s again)'),
-  board: z.string().optional().describe('Several boards: track_mm is this net\'s width on this board only (name or id), over the net\'s own; without it track_mm is the net\'s width on every board without its own'),
+  board: designWideBoardRef.describe('Several boards: track_mm is this net\'s width on this board only (name or id), over the net\'s own; without it track_mm is the net\'s width on every board without its own'),
   route_first: z.boolean().nullable().optional().describe('Board: the router routes this net before the others, in every pass, so it gets the short, clean ways (a switching node, a clock, the high-current path); null = as any other'),
-  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).nullable().optional().describe('Board: the copper layer its tracks should keep to (a cost on the others, not a ban: it still changes layer where it must; not for connections laid with draw_track); null = any'),
+  layer: copperLayer.nullable().optional().describe('Board: the copper layer its tracks should keep to (a cost on the others, not a ban: it still changes layer where it must; not for connections laid with draw_track); null = any'),
   needs: z
     .array(z.string().trim().min(1))
     .min(1)
@@ -116,12 +132,12 @@ export const AddSheetOp = z.object({
 export const MoveToSheetOp = z.object({
   op: z.literal('move_to_sheet'),
   refs: z.array(componentRef).min(1),
-  sheet: z.string(),
+  sheet: sheetRef,
 });
 
 export const RemoveSheetOp = z.object({
   op: z.literal('remove_sheet'),
-  sheet: z.string().describe('The sheet to take away. It must be empty: first move its parts to another sheet (move_to_sheet) or take them off (clear_sheet), in the same transaction if you like. A design keeps at least one sheet'),
+  sheet: sheetRef.describe('The sheet to take away. It must be empty: first move its parts to another sheet (move_to_sheet) or take them off (clear_sheet), in the same transaction if you like. A design keeps at least one sheet'),
 });
 
 export const AddBoardOp = z.object({
@@ -166,7 +182,7 @@ export const AssignBoardOp = z.object({
 
 export const ClearSheetOp = z.object({
   op: z.literal('clear_sheet'),
-  sheet: z.string(),
+  sheet: sheetRef,
   keep: z.array(componentRef).optional().describe('Parts on the sheet that stay; without it every part goes'),
 }).describe('Take the parts off a sheet in one op, when the user wants them gone (starting over): as remove does for one part, with their connections and constraints, and also the waivers naming them, the description\'s blocks left without a part, and what stood on them on the board (drawn copper, via groups, planes, impedance rules and keep-outs on nets left without pins and on parts that are gone). The sheet stays; if nothing stays on it, the auto-layout draws it afresh.');
 
@@ -196,7 +212,7 @@ export const RemoveConstraintOp = z.object({
 
 export const AddWaiverOp = z.object({
   op: z.literal('add_waiver'),
-  board: z.string().min(1).optional().describe('A design of several boards: the board whose finding this is (a board check: DRC, placement, production files), by name or id. Without it the waiver holds on every board'),
+  board: designWideBoardRef.describe('A design of several boards: the board whose finding this is (a board check: DRC, placement, production files), by name or id. Without it the waiver holds on every board'),
   code: z.string().describe('Diagnostic code to waive, e.g. "SEM.EN_FLOATING"'),
   entities: z.array(z.string()).min(1).describe('Entities exactly as listed in the diagnostic'),
   reason: z.string().min(8),
@@ -374,7 +390,7 @@ const fabLimitsInput = z.object({
 
 export const SetFabProfileOp = z.object({
   op: z.literal('set_fab_profile'),
-  board: z.string().min(1).optional().describe('A design of several boards: set the profile of this board only (name or id), e.g. the 2-layer tier of the same house for a 2-layer board. Without it every board gets the profile. One house for the design: a board takes another tier of it, not another house'),
+  board: designWideBoardRef.describe('A design of several boards: set the profile of this board only (name or id), e.g. the 2-layer tier of the same house for a 2-layer board. Without it every board gets the profile. One house for the design: a board takes another tier of it, not another house'),
   preset: z.string().optional().describe('A built-in profile: "jlcpcb", "pcbway" or "eurocircuits" (the tier matching the board\'s layers; Eurocircuits 6C), or a tier: "jlcpcb/4l-2oz", "pcbway/2l-1oz", "eurocircuits/7D" (any pattern class 3–9 with drill class A–E). design_query get_fab_profiles lists them'),
   none: z.boolean().optional().describe('true: remove the fab profile (no manufacturer limits are checked)'),
   house: z.string().min(1).optional().describe('Import: the manufacturer\'s name ("Seeed Fusion"), with tier, source_url and limits, read from its capabilities page. Never guess a number: leave out what the page does not state'),
@@ -512,10 +528,8 @@ export const RemoveCutoutOp = z.object({
   id: z.string().describe('Cutout id ("CO1"), or "all"'),
 });
 
-const keepoutLayer = z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']);
 const keepoutShape = {
-  rect: z
-    .object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() })
+  rect: rectMm
     .optional()
     .describe('The area as a rectangle (top-left corner and size, mm). With part: in the part\'s own frame (origin at the part, x right, y down, the part at rotation 0 on the top side as its footprint is drawn), so the keep-out moves and turns with it; without: on the board (origin at the board\'s top-left corner)'),
   polygon: z
@@ -524,7 +538,7 @@ const keepoutShape = {
     .max(64)
     .optional()
     .describe('Or the area as a polygon (corners in order, at least 3; same frame as rect)'),
-  layers: z.union([z.literal('all'), z.array(keepoutLayer).min(1)]).optional().describe('Which copper layers it holds on: "all" (default) or a list such as ["F.Cu", "In1.Cu"]. A via or a through-hole part goes through every layer'),
+  layers: z.union([z.literal('all'), z.array(copperLayer).min(1)]).optional().describe('Which copper layers it holds on: "all" (default) or a list such as ["F.Cu", "In1.Cu"]. A via or a through-hole part goes through every layer'),
   forbid: z
     .array(z.enum(['tracks', 'vias', 'pours', 'parts']))
     .min(1)
@@ -586,7 +600,7 @@ export const PlaceOp = z.object({
   ref: componentRef,
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
-  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation as seen from the top, on either side; omit it to keep the current one. On the bottom the footprint is mirrored first, then turned the same way as on the top (so at rot 0 the pads a top part has on its left are on its right)'),
+  rot: rot90.optional().describe('Clockwise rotation as seen from the top, on either side; omit it to keep the current one. On the bottom the footprint is mirrored first, then turned the same way as on the top (so at rot 0 the pads a top part has on its left are on its right)'),
   side: z.enum(['top', 'bottom']).optional().describe('The board side it is mounted on; omit it to keep the current one (top unless it was put on the bottom). On the bottom the footprint is mirrored (seen from the top), its SMD pads are on B.Cu and it shares the area with the SMD parts on the top side; through-hole parts occupy both. Putting a part on the bottom is a choice with a price: see the layout guide'),
   lock: z.boolean().optional().describe('true: lock the part exactly there (a hard pin, e.g. connectors at the edge). Default: a choice for this part, in board coordinates: it stays there when other parts move, nudged only if it must. Kept relative to (following) a parent part only if that was declared with attach'),
   quote: z.string().optional().describe("The user's words when they asked for this placement: it is then their choice, not yours"),
@@ -613,7 +627,7 @@ export const PlaceSymbolOp = z.object({
   x: z.number().optional().describe('Centre of the symbol, mils from the left edge of the paper (get_schematic gives the paper size and where everything is now)'),
   y: z.number().optional().describe('Centre of the symbol, mils from the top edge of the paper'),
   orient: z.enum(['upright', 'lying']).optional().describe('Two-pin parts: standing or lying, e.g. a resistor in series in a signal path. Omit it to keep how it is drawn'),
-  rotate: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Every symbol but a two-pin part: degrees clockwise from how it is usually drawn, after any mirror, e.g. 90 stands a crystal up with its left terminal on top and its case on the left. Like mirror it says how the symbol ends up: 0 is as usual, and get_schematic shows it as rotated. Omit it to keep how it is drawn'),
+  rotate: rot90.optional().describe('Every symbol but a two-pin part: degrees clockwise from how it is usually drawn, after any mirror, e.g. 90 stands a crystal up with its left terminal on top and its case on the left. Like mirror it says how the symbol ends up: 0 is as usual, and get_schematic shows it as rotated. Omit it to keep how it is drawn'),
   mirror: z.boolean().optional().describe('Which way round the symbol ends up, not "swap it": true draws it mirrored (the pins of the left side on the right, e.g. a connector at the right edge facing the circuit; a two-pin part with pin 1 at the bottom or, lying, on the right), false not. get_schematic says which symbols are mirrored now: give the opposite to swap one. Omit it to keep how it is drawn (a two-pin part given a new orient then has pin 1 on top or on the left)'),
   auto: z.boolean().optional().describe('true: take the part out of your drawing; it is drawn afresh in free space'),
   rewire: z.boolean().optional().describe('true: the connections the symbol had by wire are wired again after the move (the path finder of wire; a connection with no clear path shows as a net label). The app\'s drag and turn of a symbol use it'),
@@ -664,7 +678,7 @@ export const PlaceTextOp = z.object({
   op: z.literal('place_text'),
   ref: componentRef.optional().describe('The part, or one unit of a split symbol ("U3B")'),
   refs: z.array(componentRef).optional().describe('Several parts at once, for at, arrange or auto'),
-  sheet: z.string().optional().describe('With auto and no ref or refs: only this sheet (omit it for every sheet you arranged)'),
+  sheet: sheetRef.optional().describe('With auto and no ref or refs: only this sheet (omit it for every sheet you arranged)'),
   at: z.enum(['above', 'below', 'left', 'right']).optional().describe('The side of the symbol the name and value go on. Omit it to keep the side they are on'),
   arrange: z.enum(['stacked', 'side_by_side']).optional().describe('stacked: the value under the name; side_by_side: name and value on one line, which needs a line\'s height only, so it fits between two wires 200 mils apart. Omit it to keep how they stand'),
   name: textSpot.optional().describe('The exact spot of the name (the reference designator), for one part'),
@@ -683,7 +697,7 @@ export const PlaceBlockOp = z.object({
 
 export const AutoDrawOp = z.object({
   op: z.literal('auto_draw'),
-  sheet: z.string().optional().describe('Sheet (name or id); omit it for every sheet (or the sheet of the parts in refs)'),
+  sheet: sheetRef.optional().describe('Sheet (name or id); omit it for every sheet (or the sheet of the parts in refs)'),
   refs: z.array(componentRef).optional().describe('Only these parts: taken out of your drawing and drawn afresh together, in free space'),
 }).describe('Let the auto-layout draw: without refs it redraws the whole sheet from the netlist and the left_of/right_of/above/below hints, and keeps redrawing it after every change until you arrange it again (place_symbol); with refs it redraws just those parts in free space and the rest of your drawing stays.');
 
@@ -692,7 +706,7 @@ export const PartPlacement = z.object({
   ref: componentRef,
   x_mm: z.number().describe('Centre x on the board, from the left edge'),
   y_mm: z.number().describe('Centre y on the board, from the top edge'),
-  rot: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional().describe('Clockwise rotation as seen from the top (default 0; on the bottom the mirrored footprint is turned the same way): turn the part so its pins face what they connect to'),
+  rot: rot90.optional().describe('Clockwise rotation as seen from the top (default 0; on the bottom the mirrored footprint is turned the same way): turn the part so its pins face what they connect to'),
   side: z.enum(['top', 'bottom']).optional().describe('The board side (default: as it is now, top unless put on the bottom). A big part on the bottom is the exception: see the layout guide'),
 });
 export type PartPlacement = z.infer<typeof PartPlacement>;
@@ -749,12 +763,12 @@ export const DrawTrackOp = z.object({
   from: trackEnd,
   to: trackEnd,
   via: z
-    .array(z.union([mmPoint, z.tuple([z.number(), z.number(), z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'])])]))
+    .array(z.union([mmPoint, z.tuple([z.number(), z.number(), copperLayer])]))
     .max(64)
     .optional()
     .describe('Corners between from and to, in order. Drawn copper: each piece runs straight from one point to the next (with bend, the kernel adds the 45° corners). Router copper: points the connection must pass through, the router finding the way between them; [x, y, layer] goes on on that layer from the point (a via there)'),
   bend,
-  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Default F.Cu, or the layer of an SMD pad it starts or ends on (router copper: the router\'s choice, with vias where it likes)'),
+  layer: copperLayer.optional().describe('Default F.Cu, or the layer of an SMD pad it starts or ends on (router copper: the router\'s choice, with vias where it likes)'),
   net: netName.optional().describe('Default: the net of the pad or via at either end (required when both ends are points)'),
   width_mm: z.number().positive().optional().describe('Default: the net\'s width, else power width for supplies, else the signal width'),
 }).describe('Drawn copper: draw one track (a polyline) of one net on one layer, as given: nothing else is moved or rerouted. A layer change needs a via (draw_via) where two tracks meet. The effect gives the track\'s id (t…) and checks it at once, when the whole transaction is applied: other copper too close (errors) and loose ends or pieces off 45° (warnings); get_board says which connections are still open. Router copper (the default mode): lay one connection yourself, pad to pad, where you know how it should go and the router does not (a switching loop tight, a high-current path short and wide, a sensitive trace round the side away from the noise): give only the points where the way matters. The route step lays it first, before anything else, through those points, and never rips it up; the rest is routed round it, and the points move with the end pad they are nearer. If it finds no way (a point too close to other copper, no room for a via) it is not laid: get_board laid_tracks and DRC.TRACK_NOT_LAID say why and where, naming what is in the way (a pad, a track or via of a net, a keep-out, the edge) and the clearance it needs, and the router routes that connection its own way. The same two pads again replace it; erase_copper takes it away.');
@@ -766,7 +780,7 @@ export const DrawPairOp = z.object({
   to: z.tuple([trackEnd, trackEnd]).describe('Where it ends: the two pads (vias, points), positive first, e.g. ["U1.DP", "U1.DM"]'),
   via: z.array(mmPoint).max(64).optional().describe('The pair\'s centre line between the two ends: its corners, in order. Leave room at each end for the tracks to come together from the pads (a few times the pads\' pitch)'),
   bend,
-  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Default F.Cu, or the layer of the SMD pads it starts on'),
+  layer: copperLayer.optional().describe('Default F.Cu, or the layer of the SMD pads it starts on'),
   width_mm: z.number().positive().optional().describe('Default: the width its impedance rule (set_impedance) gives on this layer'),
   gap_mm: z.number().positive().optional().describe('Gap between the two tracks, edge to edge. Default: the rule\'s on this layer'),
 }).describe('Drawn copper: a differential pair as two tracks side by side, the gap kept along a centre line you give. Each track leaves its pad, comes in to the pair at 45°, runs along the centre line at the gap and goes out to its pad at the far end; the two stay on their sides (the positive track on the side of the positive pad at both ends). The effect gives both tracks\' ids (t…) and their lengths, and checks them like draw_track. A layer change: draw_pair to two points, a draw_via at each (with ground vias beside them), draw_pair on from those vias.');
@@ -788,7 +802,7 @@ export const EditCopperOp = z.object({
   via: z.array(mmPoint).max(64).optional().describe('One track: its new corners between its two ends, which stay'),
   bend,
   width_mm: z.number().positive().optional().describe('Tracks: the new width'),
-  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Tracks: move them to this layer (vias at their ends join the layers)'),
+  layer: copperLayer.optional().describe('Tracks: move them to this layer (vias at their ends join the layers)'),
   drill_mm: z.number().positive().optional().describe('Vias: the new drill'),
   size_mm: z.number().positive().optional().describe('Vias: the new pad diameter'),
 }).describe('Drawn copper: change tracks and vias in place (shift, new corners, width, layer, via size), keeping their ids, instead of erasing and drawing again. Checked at once like draw_track.');
@@ -813,8 +827,7 @@ export const EraseCopperOp = z.object({
   ids: z.array(z.string()).optional().describe('Tracks and vias by id (t3, v1)'),
   nets: z.array(netName).optional().describe('All drawn copper of these nets'),
   parts: z.array(componentRef).optional().describe('Tracks that end on these parts\' pads'),
-  rect: z
-    .object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() })
+  rect: rectMm
     .optional()
     .describe('Tracks with a point and vias inside this rectangle (top-left corner and size, mm)'),
   all: z.boolean().optional().describe('All drawn copper'),
@@ -835,12 +848,11 @@ export const UnlockCopperOp = z.object({
 export const SetPlaneOp = z.object({
   op: z.literal('set_plane'),
   board: boardRef,
-  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).optional().describe('Copper layer; inner layers (4-layer boards) become dedicated planes, outer layers get a pour around the tracks'),
+  layer: copperLayer.optional().describe('Copper layer; inner layers (4-layer boards) become dedicated planes, outer layers get a pour around the tracks'),
   net: netName.nullable().optional().describe('Net to pour on that layer (e.g. "GND", "+3V3"); null removes every plane from the layer'),
   under: z.array(componentRef).min(1).optional().describe('The plane covers only the area under these parts (their box plus margin_mm; it follows them when they move), e.g. +3V3 under the MCU while +5V fills the rest of an inner layer, or GND on F.Cu only round a regulator. Pads inside the area join it (drop onto an inner one with vias); the net\'s other pads are joined with tracks'),
   margin_mm: z.number().min(0).max(20).optional().describe('With under: how far the area reaches past the parts (default 1.5 mm)'),
-  rect: z
-    .object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() })
+  rect: rectMm
     .optional()
     .describe('The plane covers only this rectangle (top-left corner and size, mm) instead of the whole layer'),
   auto: z.boolean().optional().describe('true: back to the automatic planes (GND on B.Cu; on 4 layers GND on In1.Cu and the main supply on In2.Cu)'),
@@ -850,7 +862,7 @@ const planeMm = (what: string) => z.number().min(0).max(10).nullable().optional(
 export const SetPlaneStyleOp = z.object({
   op: z.literal('set_plane_style'),
   board: boardRef,
-  layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']),
+  layer: copperLayer,
   net: netName.describe('The net of the plane on that layer (a full plane or an area plane)'),
   gap_mm: planeMm('An area plane: the gap between it and the plane round it, e.g. 0.5 to separate +3V3 from +5V clearly (default: the board\'s clearance)'),
   clearance_mm: planeMm('How far the plane keeps from other nets\' pads, tracks and vias (default: the board\'s clearance); only the plane, tracks keep theirs'),
@@ -880,8 +892,7 @@ export const RemoveHoleOp = z.object({
 const viaArea = {
   under: z.array(componentRef).min(1).optional().describe('grid, fence: the area round these parts (their box plus margin_mm; it follows them)'),
   margin_mm: z.number().min(0).max(20).optional().describe('With under: how far the area reaches past the parts (default 1.5 mm)'),
-  rect: z
-    .object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() })
+  rect: rectMm
     .optional()
     .describe('grid, fence: the area as a rectangle (top-left corner and size, mm)'),
 };
@@ -931,7 +942,7 @@ export const ImportBlockOp = z.object({
   block: z.union([z.number().int().positive(), z.string().min(1)]).describe('The block: its number or its title, as list_blocks gives them'),
   nets: z.record(z.string(), netName).describe('Every boundary net of the block (list_blocks boundary_nets) → the net of this design it joins, e.g. { "+5V": "VBUS", "GND": "GND" }; a net that does not exist yet is made. An internal net (list_blocks internal_nets) may be mapped too, to join a net already here instead of being made anew, e.g. { "NTC": "NTC" }'),
   prefix: z.string().min(1).optional().describe('Put before the names of the block\'s internal nets, e.g. "CH2_" for a second copy'),
-  sheet: z.string().min(1).optional().describe('The sheet its parts are drawn on (name or id, as for move_to_sheet); defaults to the first sheet'),
+  sheet: sheetRef.optional().describe('The sheet its parts are drawn on (name or id, as for move_to_sheet); defaults to the first sheet'),
   board: z.string().min(1).optional().describe('The board its parts go on (name or id, as for assign_board); defaults to the board of their sheet'),
 }).describe('Copy a functional block from another project into this design: its parts with their params, its internal nets (made anew, renamed where the name is taken, unless nets maps them), its describe block, its arrangement constraints and notes. With sheet and board, the parts go straight onto that sheet and board (a design of several boards: no move_to_sheet or assign_board afterwards). Its boundary pins join the nets you map them to; refused unless every boundary net is mapped. A refdes that is taken gets the next free number. The effect lists the renames and the values to recheck: they were chosen for the other design');
 
@@ -1060,7 +1071,7 @@ export const QueryOp = z.discriminatedUnion('op', [
     op: z.literal('get_copper'),
     board: boardRef,
     nets: z.array(netName).optional().describe('Only these nets'),
-    rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('Only copper with a point inside this rectangle (mm)'),
+    rect: rectMm.optional().describe('Only copper with a point inside this rectangle (mm)'),
   }).describe('Drawn copper: every track (id, net, layer, width, points in mm, the pads its ends lie on) and via (id, net, at, drill, size), to edit or erase by id'),
   z.object({
     op: z.literal('get_board'),
@@ -1079,7 +1090,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('get_current_map'), board: boardRef,
     nets: z.array(netName).optional().describe('Only these nets'),
-    rect: z.object({ x_mm: z.number(), y_mm: z.number(), width_mm: z.number().positive(), height_mm: z.number().positive() }).optional().describe('Only hotspots inside this rectangle (mm)'),
+    rect: rectMm.optional().describe('Only hotspots inside this rectangle (mm)'),
     worst: z.number().int().min(0).max(200).optional().describe('Hotspots to list, worst first (default 20); the nets are always all listed'),
     include_ok: z.boolean().optional().describe('Also list the copper that carries its current (ratio up to 1)'),
   }).describe('The routed copper against its net\'s current: per net its max_current, status (ok: every track and the vias at its layer changes carry it, at the board\'s allowed heating; unverified: some copper does not carry all of max_current, and whether that much flows there is not known; unknown: a power net without max_current, never ok) and worst ratio; with loads stated, the drop to the load furthest down against 3 % of the net\'s voltage (ir_drop_mv, ir_budget_mv; DRC.IR_DROP); hotspots worst first (tracks too narrow for the current on their layer\'s copper, the vias that are the only way between two layers\' copper), each with what fixes it. Call it after routing'),
