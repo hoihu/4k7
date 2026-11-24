@@ -5,7 +5,7 @@
  * (Kernel.transact's `sources`), so the op itself touches no file and dry runs, review and undo work
  * as for any edit op. See docs/design/ops-api.md §7.
  */
-import { DEFAULT_BOARD, type BoardImportReport, type BoardSettings, type Component, type Design, type EditOp, type ImportReport, type NetAttrs, type OpResult } from '@4k7/schema';
+import { DEFAULT_BOARD, type BoardImportReport, type BoardSettings, type Component, type Constraint, type Design, type EditOp, type ImportReport, type NetAttrs, type OpResult } from '@4k7/schema';
 import { allocRefdes, cardOf, closest, createNet, findNet, isAutoNet, natCmp, nextId, reject } from './doc.ts';
 import { addPart, addSheet } from './netops.ts';
 import { sheetByName } from './sheets.ts';
@@ -20,6 +20,8 @@ export interface ImportSources {
 
 /** The constraints that travel with a block: how it is drawn, and its notes. Positions belong to the old sheet and board. */
 const TRAVELS = new Set(['left_of', 'right_of', 'above', 'below', 'arrangement', 'note']);
+/** With a whole board its placement travels too: pins (position, `rel` too), side, and what belongs where. */
+const BOARD_TRAVELS = new Set([...TRAVELS, 'position', 'layer', 'near', 'belongs', 'room']);
 /** Pins whose part values set how an IC works (a feedback divider, a current limit, a timing resistor). */
 const SETS = /^(FB|VFB|ADJ|ILIM|ISET|IPROG|PROG|RT|RT\/CLK|SS|TR|TRIM|COMP|SENSE|CS|RSET|ISNS|EN|UVLO)\b/i;
 /** Params that say which part to buy, not what it does. */
@@ -52,7 +54,7 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
 
   // its describe block, and the constraints on its parts that say how it is drawn
   const title = appendBlock(d, block.title, [...ids.values()], block.text);
-  const constraints = copyConstraints(d, src, ids);
+  const constraints = copyConstraints(d, src, ids).length;
 
   // the values to look at again: every part with params, and what it sets where an IC pin says so
   const refOf = (srcId: string) => d.components[ids.get(srcId)!]!.refdes;
@@ -92,16 +94,27 @@ function appendBlock(d: Design, want: string, components: string[], text: string
   return title;
 }
 
-/** The constraints between copied parts that travel (TRAVELS), with their parts' new ids; returns how many. */
-function copyConstraints(d: Design, src: Design, ids: ReadonlyMap<string, string>): number {
-  let n = 0;
+/**
+ * The constraints between copied parts of the kinds that travel, with their parts' new ids (a, b, rel);
+ * a room follows its block's new title in `titles`. Returns them as copied.
+ */
+function copyConstraints(d: Design, src: Design, ids: ReadonlyMap<string, string>, kinds = TRAVELS, titles?: ReadonlyMap<string, string>): Constraint[] {
+  const made: Constraint[] = [];
   for (const k of Object.values(src.ledger)) {
-    if (!TRAVELS.has(k.kind) || !k.a || !ids.has(k.a) || (k.b && !ids.has(k.b))) continue;
+    if (!kinds.has(k.kind)) continue;
+    const room = k.kind === 'room' ? titles?.get(k.key ?? '') : undefined;
+    if (k.kind === 'room' ? room === undefined : !k.a || !ids.has(k.a)) continue;
+    if ((k.b && !ids.has(k.b)) || (k.rel && !ids.has(k.rel))) continue;
     const id = nextId(d, 'k');
-    d.ledger[id] = { ...structuredClone(k), id, a: ids.get(k.a)!, ...(k.b ? { b: ids.get(k.b)! } : {}) };
-    n++;
+    const c: Constraint = { ...structuredClone(k), id };
+    if (k.a) c.a = ids.get(k.a)!;
+    if (k.b) c.b = ids.get(k.b)!;
+    if (k.rel) c.rel = ids.get(k.rel)!;
+    if (room !== undefined) c.key = room;
+    d.ledger[id] = c;
+    made.push(c);
   }
-  return n;
+  return made;
 }
 
 /** The net attributes a joined net is rechecked for when the source's differ. */
@@ -110,8 +123,9 @@ const RECHECK_ATTRS = ['voltage', 'maxCurrent', 'external', 'power', 'trackWidth
 /**
  * import_board (D29): copy a whole board of another stored project in as a board of this design: every
  * part (copyParts), nets joined by name unless `nets` says otherwise, its describe blocks and travelling
- * constraints, and the board's outline, build, fab tier and holes. Parts arrive unplaced; placement and
- * copper are later steps. See docs/design/ops-api.md §7 and docs/design/multi-board.md.
+ * constraints, the board's outline, build, fab tier and holes, and its layout: the stored placement,
+ * the pins and sides (ledger), keep-outs, graphics and panel. Copper stays behind (route the board).
+ * See docs/design/ops-api.md §7 and docs/design/multi-board.md.
  */
 export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' }>, sources?: ImportSources): OpResult {
   if (!sources) reject({ code: 'PROJECT_UNKNOWN', message: 'import_board needs the projects folder, which the app reads from the 4k7 server: it is not connected.' });
@@ -173,12 +187,17 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
   report.merged = [...onto].filter(([, from]) => from.length > 1).map(([id, from]) => ({ net: d.nets[id]!.name, from: from.sort(natCmp) }));
 
   // its describe blocks (the parts of each on this board) and the constraints that say how they are drawn
+  // and the placement intent (pins, sides, near, belongs, rooms under the block's title here)
   const blocks: string[] = [];
+  const titles = new Map<string, string>();
   for (const b of src.description?.blocks ?? []) {
     const mine = b.components.filter((c) => ids.has(c)).map((c) => ids.get(c)!);
-    if (mine.length) blocks.push(appendBlock(d, b.title, mine, b.text));
+    if (!mine.length) continue;
+    titles.set(b.title, appendBlock(d, b.title, mine, b.text));
+    blocks.push(titles.get(b.title)!);
   }
-  const constraints = copyConstraints(d, f, ids);
+  const copied = copyConstraints(d, f, ids, BOARD_TRAVELS, titles);
+  const constraints = copied.length;
 
   // the board: outline, build and holes as the source has them; the fab tier where it is of this design's house
   const from: BoardSettings = settingsOf(src, entry.id) ?? DEFAULT_BOARD;
@@ -207,9 +226,31 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
     s.fab = structuredClone(from.fab);
     took.push(`fab ${from.fab.house} ${from.fab.tier}`);
   } else if (from.fab) fab = `; ${op.project} is made by ${from.fab.house}, this design by ${house}: the board keeps ${house}${s.fab ? ` ${s.fab.tier}` : ''} (one house per design), check its limits`;
+  // the layout: the stored placement (on the source's frame, which is this board's), its keep-outs and graphics
+  const at = Object.entries(from.placement?.parts ?? {}).filter(([id]) => ids.has(id));
+  if (from.placement && at.length) {
+    s.placement = { outline: { ...from.placement.outline }, parts: Object.fromEntries(at.map(([id, p]) => [ids.get(id)!, { ...p }])) };
+    const locked = copied.filter((k) => k.kind === 'position' && k.strength === 'hard').length;
+    took.push(`placement of ${at.length} part(s)${locked ? ` (${locked} locked)` : ''}`);
+  } else delete s.placement;
+  const keepouts = (from.keepouts ?? []).flatMap((k) => (!k.part ? [structuredClone(k)] : ids.has(k.part) ? [{ ...structuredClone(k), part: ids.get(k.part)! }] : []));
+  if (keepouts.length) {
+    s.keepouts = keepouts;
+    took.push(`${keepouts.length} keep-out(s)`);
+  } else delete s.keepouts;
+  if (from.graphics?.length) {
+    s.graphics = structuredClone(from.graphics);
+    took.push(`${from.graphics.length} graphic(s)`);
+  } else delete s.graphics;
+  if (from.panel) {
+    s.panel = structuredClone(from.panel);
+    took.push('panel');
+  } else delete s.panel;
+  delete s.routed;
+  delete s.copper;
   putSettings(d, boardId, s);
 
-  const left = ['placement (parts arrive unplaced)', 'copper', ...(from.keepouts?.length ? ['keep-outs'] : []), ...(from.graphics?.length ? ['graphics'] : []), ...(from.panel ? ['panel'] : [])];
+  const left = ['copper'];
   const parts = comps.map((c) => d.components[ids.get(c.id)!]!.refdes);
   const importedBoard: BoardImportReport = {
     project: op.project, from: entry.name, board: boardName, made: !here, sheet: d.sheets[sheet]!.name, parts, renamed, cards,
@@ -228,7 +269,7 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
     (blocks.length ? `; blocks ${blocks.join(', ')}` : '') +
     (constraints ? `, ${constraints} constraint(s)` : '') +
     `; board: ${took.join(', ')}${fab}` +
-    `; not brought over: ${left.join(', ')}` +
+    `; not brought over: ${left.join(', ')} (route the board)` +
     (Object.keys(report.joined).length ? `. Nets joined across boards need a mated connector pair (ERC.BOARD_CROSSING until then): add mate` : '');
   return { op: 'import_board', effect, ids: [boardId, ...ids.values(), ...new Set(nets.values())], importedBoard };
 }
