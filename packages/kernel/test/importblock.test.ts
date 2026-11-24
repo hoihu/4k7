@@ -212,7 +212,7 @@ describe('import_block', () => {
     const after = where(k.draftSnapshot().design);
     expect(after).toEqual({ ...before, J2: ['LED', 'LED board'], TH1: ['LED', 'LED board'] });
     k.accept();
-    expect(k.boardPlacement(k.boardId('LED board')).parts.map((p) => p.refdes).sort()).toEqual(['J2', 'R9', 'TH1']);
+    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'LED board').id).parts.map((p) => p.refdes).sort()).toEqual(['J2', 'R9', 'TH1']);
     // a sheet of the first board, the parts on the LED board all the same
     const k2 = ntcTarget(true);
     const r2 = importing(k2, { project: 'led', block: 'NTC', nets: { GND: 'GND', NTC: 'NTC' }, sheet: 'Main', board: 'LED board' }, ntcSources());

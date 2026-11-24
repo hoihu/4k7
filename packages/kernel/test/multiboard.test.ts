@@ -541,10 +541,10 @@ describe('a net\'s track width per board', () => {
   const route = (k: Kernel, board: string) => {
     const r = k.transact({ summary: 'route', ops: [{ op: 'route', board }] });
     expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
-    return k.board({}, k.boardId(board));
+    return k.board({}, resolveBoard(k.draftDesign(), board).id);
   };
   const widths = (k: Kernel, board: string, net: string) => {
-    const b = k.board({}, k.boardId(board));
+    const b = k.board({}, resolveBoard(k.draftDesign(), board).id);
     const id = Object.entries(b.netNames).find(([, n]) => n === net)![0];
     return [...new Set(b.tracks.filter((t) => t.netId === id).map((t) => t.width))];
   };
@@ -574,20 +574,20 @@ describe('a net\'s track width per board', () => {
     const laid = k.transact({ summary: 'lay', ops: [{ op: 'draw_track', board: 'LED board', from: 'J3.1', to: 'R4.1', layer: 'F.Cu' }] });
     expect(laid.status, JSON.stringify(laid.rejection)).toBe('ok');
     route(k, 'LED board');
-    expect(Math.max(...k.board({}, k.boardId('LED board')).tracks.filter((t) => t.laid).map((t) => t.width))).toBe(0.8);
+    expect(Math.max(...k.board({}, resolveBoard(k.draftDesign(), 'LED board').id).tracks.filter((t) => t.laid).map((t) => t.width))).toBe(0.8);
     // and a track drawn by hand (drawn copper) takes it too, on each board
     for (const [board, from, to, mm] of [['LED board', 'J3.1', 'R4.1', 0.8], ['Main', 'C2.1', 'R1.1', 0.4]] as const) {
       const r = k.transact({ summary: 'draw', ops: [{ op: 'set_copper_mode', board, mode: 'drawn', keep: false }] });
       expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
       const d = k.transact({ summary: 'draw', ops: [{ op: 'draw_track', board, from, to, layer: 'F.Cu' }] });
       expect(d.status, JSON.stringify(d.rejection)).toBe('ok');
-      expect(k.board({}, k.boardId(board)).tracks.map((t) => t.width)).toEqual([mm]);
+      expect(k.board({}, resolveBoard(k.draftDesign(), board).id).tracks.map((t) => t.width)).toEqual([mm]);
     }
   });
 
   it('changes the route key of that board only', () => {
     const k = twoBoards();
-    const keys = () => ['Main', 'LED board'].map((b) => copperKey(focusBoard(k.draftDesign(), k.boardId(b))));
+    const keys = () => ['Main', 'LED board'].map((b) => copperKey(focusBoard(k.draftDesign(), resolveBoard(k.draftDesign(), b).id)));
     const [main, led] = keys();
     expect(k.transact({ summary: 'w', ops: [{ op: 'set_net', net: '+3V3', board: 'LED board', track_mm: 0.8 }] }).status).toBe('ok');
     const [main2, led2] = keys();
