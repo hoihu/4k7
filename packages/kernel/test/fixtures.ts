@@ -1,4 +1,5 @@
 import type { Transaction } from '@4k7/schema';
+import { Kernel } from '../src/index.ts';
 
 /**
  * 12 V → 3.3 V / 2 A buck with TPS54331. `withBootCap: false` reproduces the classic
@@ -40,4 +41,36 @@ export function buckTransaction(opts: { withBootCap?: boolean } = {}): Transacti
         : []),
     ],
   };
+}
+
+/** A kernel holding the buck of `buckTransaction`, accepted unless `accept: false`. */
+export function buck(opts: { accept?: boolean } = {}): Kernel {
+  const k = new Kernel();
+  const r = k.transact(buckTransaction());
+  if (r.status !== 'ok') throw new Error(JSON.stringify(r));
+  if (opts.accept ?? true) k.accept();
+  return k;
+}
+
+/**
+ * The buck on the main board, an LED board joined by a 2-pin header pair: J2 on the main board
+ * (its +3V3 and GND), J3 on the LED board feeding D2 through R4. See docs/design/multi-board.md.
+ */
+export function twoBoards(): Kernel {
+  const k = buck({ accept: false });
+  const ops: Transaction['ops'] = [
+    { op: 'add_sheet', name: 'LED' },
+    { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J2' },
+    { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J3', sheet: 'LED' },
+    { op: 'add_part', part: 'generic:R', refdes: 'R4', params: { resistance: '1k' }, sheet: 'LED' },
+    { op: 'add_part', part: 'generic:LED', refdes: 'D2', sheet: 'LED' },
+    { op: 'connect', pins: ['J2.1', 'J3.1', 'R4.1'], net: '+3V3' },
+    { op: 'connect', pins: ['R4.2', 'D2.A'], net: 'LED_A' },
+    { op: 'connect', pins: ['J2.2', 'J3.2', 'D2.K'], net: 'GND' },
+    { op: 'add_board', name: 'LED board', sheets: ['LED'] },
+  ];
+  const r = k.transact({ summary: 'LED board', ops });
+  if (r.status !== 'ok') throw new Error(JSON.stringify(r.rejection));
+  k.accept();
+  return k;
 }
