@@ -1068,9 +1068,10 @@ class AppState {
         if ((input as { op?: string })?.op !== 'get_board') break;
         const q = QueryOp.safeParse(input);
         if (!q.success || q.data.op !== 'get_board') return fail('query · get_board', q.error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') ?? 'not get_board');
-        // several boards and none named: the kernel lists them all (placement, and what is routed)
+        // several boards and none named: the kernel lists them all (placement, and what is routed);
+        // another project's board: the kernel reads it as stored, the view stays as it is
         const asked = q.data.board;
-        if (asked === undefined && (this.k?.boards.length ?? 1) > 1) break;
+        if ((asked === undefined && (this.k?.boards.length ?? 1) > 1) || q.data.project !== undefined) break;
         const notThere = await this.showBoard(asked);
         if (notThere) return fail('query · get_board', notThere);
         // routed in the board worker, so the kernel stays responsive
@@ -1339,7 +1340,7 @@ class AppState {
   }
   private helperQueue: Promise<unknown> = Promise.resolve();
 
-  /** What the kernel needs beyond the design to answer query `q`: the guides for get_guide, the projects list_blocks reads. */
+  /** What the kernel needs beyond the design to answer query `q`: the guides for get_guide, the projects list_blocks and get_board { project } read. */
   private async queryContext(q: unknown): Promise<QueryContext | undefined> {
     if ((q as { op?: string })?.op === 'get_guide') return { guides: GUIDES };
     const sources = await this.readSources(q);
@@ -1347,13 +1348,13 @@ class AppState {
   }
 
   /**
-   * The stored projects an input names, for the kernel: a list_blocks query's project, a transaction's
+   * The stored projects an input names, for the kernel: a list_blocks or get_board query's project, a transaction's
    * import_block projects. Only ids the projects folder lists are read (docs/design/ops-api.md §7);
    * undefined without a projects folder (the kernel then says so).
    */
   private async readSources(input: unknown): Promise<ImportSources | undefined> {
     const i = input as { op?: string; project?: unknown; ops?: { op?: string; project?: unknown }[] };
-    const named = i?.op === 'list_blocks' ? [i.project] : Array.isArray(i?.ops) ? i.ops.filter((o) => o?.op === 'import_block').map((o) => o.project) : [];
+    const named = i?.op === 'list_blocks' || (i?.op === 'get_board' && i.project !== undefined) ? [i.project] : Array.isArray(i?.ops) ? i.ops.filter((o) => o?.op === 'import_block').map((o) => o.project) : [];
     const ids = [...new Set(named.map((x) => String(x ?? '')))];
     if (!ids.length || disk.status !== 'ok') return undefined;
     const projects = (await disk.listProjects()).map((p) => p.id);
