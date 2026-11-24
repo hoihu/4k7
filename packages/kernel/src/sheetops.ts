@@ -8,7 +8,7 @@ import { wirePlaced } from './autowire.ts';
 import { cardOf, closest, natCmp, nextId, reject, resolveComponent, resolveUnitRef } from './doc.ts';
 import { isDrawn, moveSymbol, ownSheet, redrawBlock, redrawParts, releaseSheet, syncDrawing, viewOf } from './drawing.ts';
 import { rewire, wiredPins } from './drawops.ts';
-import { sheetByName } from './netops.ts';
+import { sheetByName } from './sheets.ts';
 import { overlap } from './geom.ts';
 import { blockAssignment } from './layout.ts';
 
