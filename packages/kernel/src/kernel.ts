@@ -76,7 +76,7 @@ import { lineBoard } from './lineops.ts';
 import { boardList, boardOf, commitFocus, focusBoard, multiBoard, ownTrackWidth, resolveBoard, settingsOf } from './boards.ts';
 import { matePairs, pairsText } from './mates.ts';
 import { assemblyOf } from './assembly.ts';
-import { blocksOfProject } from './reuse.ts';
+import { blocksOfProject, boardOfProject } from './reuse.ts';
 import { FIRST_BOARD } from '@4k7/schema';
 import { opBoard } from './apply.ts';
 
@@ -560,7 +560,7 @@ export class Kernel {
 
   /**
    * `ctx`: what the app read for the queries that need more than the design: `guides` for get_guide,
-   * `sources` (the stored projects, as for transact) for list_blocks. See docs/design/ops-api.md §7.
+   * `sources` (the stored projects, as for transact) for list_blocks and get_board { project }. See docs/design/ops-api.md §7.
    */
   query(input: unknown, ctx: QueryContext = {}): unknown {
     // a topic there is no guide for: every guide there is, not the schema's complaint
@@ -569,6 +569,11 @@ export class Kernel {
     if (!parsed.success) return { error: formatZod(parsed.error.issues) };
     const q = parsed.data;
     const all = this.draft;
+    // another project's board, as stored (reuse.ts): its board names one of that project's boards
+    if (q.op === 'get_board' && q.project !== undefined) {
+      if (!ctx.sources) return { error: 'No projects folder: the app is not connected to the 4k7 server.' };
+      return boardOfProject(q.project, ctx.sources.files[q.project], ctx.sources.projects, q.board, q.drc);
+    }
     // a board query reads one board: the design as if it were the only one
     let bid = FIRST_BOARD;
     const onBoard = q.op === 'get_board' || q.op === 'get_copper' || q.op === 'get_current_map' || q.op === 'try_placements' || q.op === 'suggest_moves';

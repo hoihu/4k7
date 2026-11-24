@@ -32,7 +32,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `get_fab_profiles`: the built-in manufacturer profiles and the one this board uses.
 - `get_schematic`: the schematic drawing: pages, blocks, where each symbol and net label stands.
 - `get_copper`: drawn tracks and vias with their ids, optionally by net or area.
-- `get_board`: board outline, part positions, routing stats and DRC results; on a design of several boards, every board's, or the one named with its board argument (as `get_copper`, `get_current_map`, `try_placements` and `suggest_moves` take it). The open DRC findings come first in the answer, errors first, at most 20 of them; when there are more, *drc_found* counts them all by code (with the nets, or net pairs, and the parts each code names most) and says how many are not listed. The *drc* parameter pages them (*offset*, *limit* up to 200) and narrows them to one *code*, *net* or *ref* (a part, track or via), so every finding can be read however many there are; with several boards and none named, it applies to each board's list.
+- `get_board`: board outline, part positions, routing stats and DRC results; on a design of several boards, every board's, or the one named with its board argument (as `get_copper`, `get_current_map`, `try_placements` and `suggest_moves` take it). With *project* it reads another stored project's board as stored instead (§7). The open DRC findings come first in the answer, errors first, at most 20 of them; when there are more, *drc_found* counts them all by code (with the nets, or net pairs, and the parts each code names most) and says how many are not listed. The *drc* parameter pages them (*offset*, *limit* up to 200) and narrows them to one *code*, *net* or *ref* (a part, track or via), so every finding can be read however many there are; with several boards and none named, it applies to each board's list.
 - `get_current_map`: the routed copper against each net's current: per net ok, unverified or unknown (and, with loads stated, the drop to the furthest load against 3 % of the rail), and the tracks and vias that do not carry it, worst first, with their fixes (see [layout](layout.md) §14).
 - `get_power_tree`: what feeds what: per power rail its source, the series parts it is fed through, the rails it feeds, its loads, current budget and a linear regulator's dissipation (shape in §6).
 - `try_placements`: compare arrangements of the main parts without changing the design.
@@ -258,6 +258,14 @@ A boundary net leaves the block: a part outside the block is on it, it is marked
 or it is a supply or ground, which the importing design has its own of even where only this block uses it.
 A project without blocks answers `blocks: []` with a note; an unknown or unreadable project answers
 `{ "error", "projects" }` (the ids the folder has).
+
+`design_query get_board { project, board? }` reads a board of another stored project the same way, to see a
+laid-out board before bringing it over: `board` names one of that project's boards (name or id; default its
+first), placed from its stored placement, nothing routed (`boardOfProject`, `reuse.ts`). The answer is
+get_board's, with `project`, `board` and, for a project of several boards, `boards`. Copper is reported only
+where the stored copper is current for that placement (drawn, or kept for it); otherwise `routing` says "not
+routed as stored". A board the project does not have answers `BOARD_UNKNOWN` with its board names; without
+a projects folder the kernel refuses it, never answering about the open design. The open design is unchanged.
 
 `design_edit import_block { project, block, nets, prefix?, sheet?, board? }` copies one block in. `block` is its number or
 title, `nets` maps every boundary net to a net of this design (`{ "+5V": "VBUS", "GND": "GND" }`; a name that

@@ -1065,6 +1065,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('get_board'),
     board: boardRef,
+    project: z.string().min(1).optional().describe('Another project in the projects folder, by its id (as for list_blocks): its board as stored, read-only; board then names one of its boards (default its first). Copper only where its stored copper is current'),
     drc: z
       .object({
         code: z.string().min(1).optional().describe('Only findings with this code, e.g. "DRC.CLEARANCE"'),
