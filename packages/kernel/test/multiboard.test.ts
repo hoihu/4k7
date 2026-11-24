@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { canonicalJson } from '../src/canonical.ts';
-import { focusBoard } from '../src/boards.ts';
+import { boardNameOf, findBoard, FIRST_BOARD_NAME, focusBoard, resolveBoard, tidyBoards } from '../src/boards.ts';
 import { copperKey } from '../src/board.ts';
 import { buckTransaction, twoBoards } from './fixtures.ts';
 
-const refs = (k: Kernel, board: string) => k.boardPlacement(k.boardId(board)).parts.map((p) => p.refdes).sort();
+const refs = (k: Kernel, board: string) => k.boardPlacement(resolveBoard(k.draftDesign(), board).id).parts.map((p) => p.refdes).sort();
 
 describe('several boards in one design', () => {
   it('puts each sheet\'s parts on its board', () => {
@@ -24,12 +24,12 @@ describe('several boards in one design', () => {
       const r = k.transact({ summary: 'route', ops: [{ op: 'route', board: name }] });
       expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
     }
-    const led = k.board({}, k.boardId('LED board'));
+    const led = k.board({}, resolveBoard(k.draftDesign(), 'LED board').id);
     expect(led.routing).toBe('done');
     expect(led.parts).toHaveLength(3);
     // the +3V3 on the LED board runs from J3 to R4 only: nothing of the buck
     expect(led.tracks.length).toBeGreaterThan(0);
-    const main = k.board({}, k.boardId('Main'));
+    const main = k.board({}, resolveBoard(k.draftDesign(), 'Main').id);
     expect(main.parts.map((p) => p.refdes)).not.toContain('D2');
   });
 
@@ -42,8 +42,8 @@ describe('several boards in one design', () => {
     const wrong = k.transact({ summary: 'place', ops: [{ op: 'place', board: 'Main', ref: 'R4', x_mm: 5, y_mm: 5 }] });
     expect(wrong.rejection?.code).toBe('BOARD_INVALID');
     expect(k.transact({ summary: 'size', ops: [{ op: 'set_board', board: 'LED board', width_mm: 30, height_mm: 20 }] }).status).toBe('ok');
-    expect(k.boardPlacement(k.boardId('LED board')).outline.w).toBe(30);
-    expect(k.boardPlacement(k.boardId('Main')).outline.w).not.toBe(30);
+    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'LED board').id).outline.w).toBe(30);
+    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'Main').id).outline.w).not.toBe(30);
   });
 
   it('shares the fab house between the boards', () => {
@@ -55,7 +55,7 @@ describe('several boards in one design', () => {
   });
 
   describe('a fab tier per board', () => {
-    const layersOn = (k: Kernel, board: string) => k.board({}, k.boardId(board)).diagnostics.filter((x) => x.code === 'DRC.FAB_LAYERS');
+    const layersOn = (k: Kernel, board: string) => k.board({}, resolveBoard(k.draftDesign(), board).id).diagnostics.filter((x) => x.code === 'DRC.FAB_LAYERS');
     const ok = (k: Kernel, ops: Transaction['ops']) => {
       const r = k.transact({ summary: 'x', ops });
       expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
@@ -148,7 +148,7 @@ describe('several boards in one design', () => {
     const k = twoBoards();
     expect(k.transact({ summary: 'route', ops: [{ op: 'route', board: 'LED board' }] }).status).toBe('ok');
     k.accept();
-    const led = k.boardId('LED board');
+    const led = resolveBoard(k.draftDesign(), 'LED board').id;
     const b = k.board({}, led);
     expect(b.routing).toBe('done');
     expect(k.keepCopper(b.newCopper!)).toBe(true);
@@ -161,7 +161,7 @@ describe('several boards in one design', () => {
     expect(text.split('\n').some((l) => l.includes('"copper": {') && l.includes('"key"'))).toBe(true);
     expect(canonicalJson(JSON.parse(text))).toBe(text);
     const again = new Kernel(d);
-    const b2 = again.board({}, again.boardId('LED board'));
+    const b2 = again.board({}, resolveBoard(again.draftDesign(), 'LED board').id);
     expect(b2.newCopper).toBeUndefined();
     expect(b2.tracks).toEqual(b.tracks);
   });
@@ -176,9 +176,9 @@ describe('several boards in one design', () => {
     ok([{ op: 'set_copper_mode', board: 'LED board', mode: 'drawn', keep: false }]);
     const r = ok([{ op: 'draw_track', from: 'R4.2', to: 'D2.A' }]);
     expect(r.results[0]!.effect).toMatch(/check/);
-    const led = k.boardId('LED board');
+    const led = resolveBoard(k.draftDesign(), 'LED board').id;
     expect(k.board({}, led).drawn!.tracks).toHaveLength(1);
-    expect(k.board({}, k.boardId('Main')).drawn).toBeUndefined();
+    expect(k.board({}, resolveBoard(k.draftDesign(), 'Main').id).drawn).toBeUndefined();
     const t = k.board({}, led).drawn!.tracks[0]!;
     const r4 = k.board({}, led).parts.find((p) => p.refdes === 'R4')!;
     ok([{ op: 'place', ref: 'R4', x_mm: r4.x + 2, y_mm: r4.y }]);
@@ -226,7 +226,7 @@ describe('several boards in one design', () => {
     // the placement kept is the LED board's, of its own parts
     expect(Object.keys(d.boards!.b_2!.settings!.placement?.parts ?? {}).map((id) => d.components[id]!.refdes).sort()).toEqual(['D2', 'J3', 'R4']);
     expect(d.board?.placement).toBeUndefined();
-    expect(k.boardPlacement(k.boardId('LED board')).parts.find((p) => p.refdes === 'R4')!.side).toBe('bottom');
+    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'LED board').id).parts.find((p) => p.refdes === 'R4')!.side).toBe('bottom');
   });
 
   it('lists the boards in the summary, with the nets that cross between them', () => {
@@ -305,6 +305,84 @@ describe('several boards in one design', () => {
     expect(w.board).toBe('b_2');
         expect(Object.keys(focusBoard(k.draftDesign(), 'b_1').waivers)).toHaveLength(0);
     expect(Object.keys(focusBoard(k.draftDesign(), 'b_2').waivers)).toHaveLength(1);
+  });
+});
+
+describe('back to one board, and boards by name', () => {
+  const ok = (k: Kernel, ops: Transaction['ops']) => {
+    const r = k.transact({ summary: 'x', ops });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    k.accept();
+  };
+
+  it('keeps the first board\'s own name when the others go, and forgets it when it is Main again', () => {
+    const k = twoBoards();
+    ok(k, [{ op: 'set_board', board: 'Main', name: 'Power' }]);
+    expect(k.boardList().map((b) => b.name)).toEqual(['Power', 'LED board']);
+    ok(k, [{ op: 'remove_board', board: 'LED board' }]);
+    expect(k.committedDesign().boards).toEqual({ b_1: { id: 'b_1', name: 'Power', order: 0 } });
+    expect(k.committedDesign().format).toBe(2);
+    ok(k, [{ op: 'set_board', board: 'Power', name: FIRST_BOARD_NAME }]);
+    expect(k.committedDesign().boards).toBeUndefined();
+    expect(k.boardList()).toEqual([{ id: 'b_1', name: 'Main' }]);
+  });
+
+  it('keeps every entry when the first of several boards is named Main again', () => {
+    const k = twoBoards();
+    ok(k, [{ op: 'set_board', board: 'Main', name: 'Power' }]);
+    ok(k, [{ op: 'set_board', board: 'Power', name: 'Main' }]);
+    expect(Object.keys(k.committedDesign().boards!).sort()).toEqual(['b_1', 'b_2']);
+    expect(k.boardList().map((b) => b.name)).toEqual(['Main', 'LED board']);
+  });
+
+  it('accepts a renamed first board without the board added beside it', () => {
+    const k = new Kernel();
+    ok(k, buckTransaction().ops);
+    const r = k.transact({
+      summary: 'LED board',
+      ops: [
+        { op: 'add_sheet', name: 'LED' },
+        { op: 'add_part', part: 'generic:R', refdes: 'R4', params: { resistance: '1k' }, sheet: 'LED' },
+        { op: 'add_board', name: 'LED board', sheets: ['LED'] },
+        { op: 'set_board', board: 'Main', name: 'Power' },
+      ],
+    });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const hunks = k.state().proposal!.hunks;
+    expect(hunks.map((h) => h.id)).toEqual(expect.arrayContaining(['board:b_1', 'board:b_2']));
+    k.accept(hunks.filter((h) => h.id !== 'board:b_2').map((h) => h.id));
+    expect(k.committedDesign().boards).toEqual({ b_1: { id: 'b_1', name: 'Power', order: 0 } });
+    expect(k.boardList()).toEqual([{ id: 'b_1', name: 'Power' }]);
+  });
+
+  it('tidies one board only: several are left as they are', () => {
+    const k = twoBoards();
+    const d = k.draftDesign();
+    const before = JSON.stringify(d.boards);
+    tidyBoards(d);
+    expect(JSON.stringify(d.boards)).toBe(before);
+    const one = { ...d, boards: { b_1: { id: 'b_1', name: 'Main', order: 0 } } };
+    tidyBoards(one);
+    expect(one.boards).toBeUndefined();
+  });
+
+  it('names a board by id, the first one when none is given', () => {
+    const k = twoBoards();
+    const d = k.draftDesign();
+    expect([boardNameOf(d), boardNameOf(d, 'b_1'), boardNameOf(d, 'b_2'), boardNameOf(d, 'b_9')]).toEqual(['Main', 'Main', 'LED board', 'b_9']);
+    const single = new Kernel().draftDesign();
+    expect(boardNameOf(single)).toBe(FIRST_BOARD_NAME);
+  });
+
+  it('finds a board by id or name, and answers a query for a board that is not there', () => {
+    const k = twoBoards();
+    const d = k.draftDesign();
+    expect(findBoard(d, 'led BOARD')?.id).toBe('b_2');
+    expect(findBoard(d, 'b_2')?.name).toBe('LED board');
+    expect(findBoard(d, 'Lamp')).toBeUndefined();
+    expect(() => resolveBoard(d, 'Lamp')).toThrow();
+    expect(k.query({ op: 'get_board', board: 'Lamp' })).toEqual({ error: 'No board "Lamp".', boards: ['Main', 'LED board'] });
+    expect(k.query({ op: 'get_copper', board: 'Lamp' })).toEqual({ error: 'No board "Lamp".', boards: ['Main', 'LED board'] });
   });
 });
 
@@ -463,10 +541,10 @@ describe('a net\'s track width per board', () => {
   const route = (k: Kernel, board: string) => {
     const r = k.transact({ summary: 'route', ops: [{ op: 'route', board }] });
     expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
-    return k.board({}, k.boardId(board));
+    return k.board({}, resolveBoard(k.draftDesign(), board).id);
   };
   const widths = (k: Kernel, board: string, net: string) => {
-    const b = k.board({}, k.boardId(board));
+    const b = k.board({}, resolveBoard(k.draftDesign(), board).id);
     const id = Object.entries(b.netNames).find(([, n]) => n === net)![0];
     return [...new Set(b.tracks.filter((t) => t.netId === id).map((t) => t.width))];
   };
@@ -496,20 +574,20 @@ describe('a net\'s track width per board', () => {
     const laid = k.transact({ summary: 'lay', ops: [{ op: 'draw_track', board: 'LED board', from: 'J3.1', to: 'R4.1', layer: 'F.Cu' }] });
     expect(laid.status, JSON.stringify(laid.rejection)).toBe('ok');
     route(k, 'LED board');
-    expect(Math.max(...k.board({}, k.boardId('LED board')).tracks.filter((t) => t.laid).map((t) => t.width))).toBe(0.8);
+    expect(Math.max(...k.board({}, resolveBoard(k.draftDesign(), 'LED board').id).tracks.filter((t) => t.laid).map((t) => t.width))).toBe(0.8);
     // and a track drawn by hand (drawn copper) takes it too, on each board
     for (const [board, from, to, mm] of [['LED board', 'J3.1', 'R4.1', 0.8], ['Main', 'C2.1', 'R1.1', 0.4]] as const) {
       const r = k.transact({ summary: 'draw', ops: [{ op: 'set_copper_mode', board, mode: 'drawn', keep: false }] });
       expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
       const d = k.transact({ summary: 'draw', ops: [{ op: 'draw_track', board, from, to, layer: 'F.Cu' }] });
       expect(d.status, JSON.stringify(d.rejection)).toBe('ok');
-      expect(k.board({}, k.boardId(board)).tracks.map((t) => t.width)).toEqual([mm]);
+      expect(k.board({}, resolveBoard(k.draftDesign(), board).id).tracks.map((t) => t.width)).toEqual([mm]);
     }
   });
 
   it('changes the route key of that board only', () => {
     const k = twoBoards();
-    const keys = () => ['Main', 'LED board'].map((b) => copperKey(focusBoard(k.draftDesign(), k.boardId(b))));
+    const keys = () => ['Main', 'LED board'].map((b) => copperKey(focusBoard(k.draftDesign(), resolveBoard(k.draftDesign(), b).id)));
     const [main, led] = keys();
     expect(k.transact({ summary: 'w', ops: [{ op: 'set_net', net: '+3V3', board: 'LED board', track_mm: 0.8 }] }).status).toBe('ok');
     const [main2, led2] = keys();

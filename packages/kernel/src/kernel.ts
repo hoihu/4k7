@@ -73,7 +73,7 @@ import { tryPlacements } from './trial.ts';
 import { suggestMoves } from './suggest.ts';
 import { impedanceText, resolveRule } from './lines.ts';
 import { lineBoard } from './lineops.ts';
-import { boardList, boardOf, commitFocus, focusBoard, multiBoard, ownTrackWidth, resolveBoard, settingsOf } from './boards.ts';
+import { boardList, boardOf, commitFocus, findBoard, focusBoard, multiBoard, ownTrackWidth, settingsOf } from './boards.ts';
 import { matePairs, pairsText } from './mates.ts';
 import { assemblyOf } from './assembly.ts';
 import { blocksOfProject } from './reuse.ts';
@@ -194,11 +194,6 @@ export class Kernel {
     let m = this.boardViews.get(d);
     if (!m) this.boardViews.set(d, (m = new Map()));
     m.set(id, b);
-  }
-
-  /** The board a query or a view is for: the one named, else the only one (several and none named: the first). */
-  boardId(ref?: string): string {
-    return ref === undefined ? FIRST_BOARD : (resolveBoardSafe(this.draft, ref) ?? FIRST_BOARD);
   }
 
   /** The design's boards (id, name), first board first. */
@@ -575,12 +570,12 @@ export class Kernel {
     if (onBoard) {
       const ref = (q as { board?: string }).board;
       if (ref !== undefined) {
-        const b = resolveBoardSafe(all, ref);
+        const b = findBoard(all, ref);
         if (!b) {
           const boards = boardList(all).map((x) => x.name);
           return queryError(`No board "${ref}".`, 'BOARD_UNKNOWN', closest(ref, boards), { boards });
         }
-        bid = b;
+        bid = b.id;
       } else if (multiBoard(all) && q.op !== 'get_board') {
         const boards = boardList(all).map((x) => x.name);
         return queryError(`The design has ${boards.length} boards: say which with board.`, 'BOARD_AMBIGUOUS', boards, { boards });
@@ -1007,15 +1002,6 @@ export class Kernel {
 }
 
 /* --------------------------------- helpers -------------------------------- */
-
-/** A board's id by name or id, or undefined. */
-function resolveBoardSafe(d: Design, ref: string): string | undefined {
-  try {
-    return resolveBoard(d, ref).id;
-  } catch {
-    return undefined;
-  }
-}
 
 type Issue = { path: PropertyKey[]; message: string };
 
