@@ -7,7 +7,7 @@
  * the land (another can size, a land made for another kind of part), and the house will not place
  * it: spiral2's electrolytics, October 2026 (docs/design/assembly.md).
  */
-import { padPins, type BoardPart, type HouseFootprint, type PolarityKind } from '@4k7/schema';
+import { padPins, r3, type BoardPart, type HouseFootprint, type PolarityKind } from '@4k7/schema';
 
 /** A part's land as it lies on the board, for comparing with the house's. */
 export interface PlacedLand {
@@ -41,7 +41,6 @@ export interface LandFit {
 
 /** A part's land as it lies on the board (the pins' names by number from its card), for fitLand. Holes without copper are left out. */
 export function placedLand(p: BoardPart, pinName: (pin: string) => string | undefined): PlacedLand {
-  const r3 = (v: number) => Math.round(v * 1000) / 1000;
   return {
     name: p.pkg,
     pads: p.pads
@@ -211,6 +210,5 @@ export function fitLand(ours: PlacedLand, house: HouseFootprint): LandFit {
       problems.push(`its pads are ${size(q)}, ${apart(a[1], b[1])} mm apart; the pads of ${ours.name} ${size(p)}, ${apart(a[0], b[0])} mm apart`);
     } else problems.push(`its pad ${q.number} (${size(q)}) and pad ${p.numbers[0]} of ${ours.name} (${size(p)}) share only ${Math.round(overlap(p, q) * 100)} % of their area`);
   }
-  const r3 = (v: number) => Math.round(v * 1000) / 1000 || 0;
-  return { rotation: best.rotation, by: best.by, offset: r2(best.offset), overlap: Math.round(best.overlap * 100) / 100, at: [r3(best.dx), r3(best.dy)], problems };
+  return { rotation: best.rotation, by: best.by, offset: r2(best.offset), overlap: Math.round(best.overlap * 100) / 100, at: [r3(best.dx) || 0, r3(best.dy) || 0], problems };
 }

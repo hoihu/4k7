@@ -10,6 +10,7 @@ import { isSwitcher, linearRegulators } from './checks.ts';
 import { cardOf, isGroundNet, isPowerNet, natCmp } from './doc.ts';
 import { powerWalk, seriesEdges, type SeriesEdge } from './power.ts';
 import { statedLoads } from './current.ts';
+import { r3 } from './geom.ts';
 
 type Unknown = 'unknown';
 interface Source {
@@ -26,7 +27,6 @@ interface Hop {
 
 /** A part that is a battery or a cell: no category of its own, so its card or refdes says so. */
 const BATTERY = /\b(batter(y|ies)|coin cell|li-?ion|lipo|cr\d{4})\b/i;
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 export function powerTreeAnswer(d: Design): unknown {
   const nets = Object.values(d.nets);

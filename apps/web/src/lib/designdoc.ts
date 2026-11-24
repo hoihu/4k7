@@ -9,7 +9,7 @@
  */
 import { bomLines, copperText, FINISH_TEXT, impedanceLines, notesStackup, stackupLines, stackupSource, thicknessText } from '@4k7/fab';
 import type { Body3D } from '@4k7/parts';
-import { PAPERS, planeNames, type BoardView, type BringUpPlan, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@4k7/schema';
+import { isHole, PAPERS, planeNames, type BoardView, type BringUpPlan, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@4k7/schema';
 import BoardCanvas from './components/BoardCanvas.svelte';
 import { boardDimensions } from './dimensions.ts';
 import { markdown } from './markdown.ts';
@@ -203,7 +203,6 @@ const LAYER: Record<CopperLayer, { name: string; color: string }> = {
 
 const natural = (a: string, b: string) => a.localeCompare(b, 'en', { numeric: true });
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const isHole = (p: { componentId: string }) => p.componentId.startsWith('hole:');
 const attr = (v: string) => v.replace(/["\\]/g, '\\$&');
 
 /** The largest of the usual drawing scales at which w × h (mm) fits maxW × maxH; a smaller board than that fills the space. */

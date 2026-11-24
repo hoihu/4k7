@@ -118,6 +118,9 @@ function trimNum(v: number): string {
   return String(r);
 }
 
+/** Rounded to a thousandth (a micrometre on the board): how coordinates are stored. */
+export const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
 /** Relative comparison for engineering values. */
 export function approxEqual(a: number, b: number, rel = 1e-6): boolean {
   return Math.abs(a - b) <= rel * Math.max(Math.abs(a), Math.abs(b));

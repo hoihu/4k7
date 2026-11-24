@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { CHECKED_SCH_RULES, LAYOUT_SCH_RULES, changedChecks, countDiagnostics, drawingFinding, emptyDesign, migrateRulesText, mustFix, resolveChecks, type Design, type Diagnostic, type LabelView, type RuleLevel, type SchematicView, type SheetView, type SymbolView, type Transaction } from '@4k7/schema';
+import { CHECKED_SCH_RULES, LAYOUT_SCH_RULES, changedChecks, countDiagnostics, drawingFinding, emptyDesign, mustFix, resolveChecks, type Design, type Diagnostic, type LabelView, type RuleLevel, type SchematicView, type SheetView, type SymbolView, type Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { diagKey, sortDiagnostics } from '../src/checks.ts';
 import { schematicChecks } from '../src/schcheck.ts';
@@ -52,48 +52,6 @@ describe('the checks', () => {
     for (const code of ['ERC.PIN_UNCONNECTED', 'SEM.CAP_VOLTAGE', 'XCHK.PIN_NO_PAD', 'LEDGER.PARAM', 'LIB.PART_MISSING']) expect(drawingFinding(f(code)), code).toBe(false);
     expect(countDiagnostics([f('ERC.PIN_UNCONNECTED', 'error'), f('SEM.CAP_DERATING'), f('ERC.IO_UNUSED', 'info'), f('SCH.DETOUR'), f('SCH.CROSSING', 'info'), f('SCH.GND_DOWN', 'error'), f('SCH.JOG', 'warning', 'w1'), f('SCH.JOG', 'error')]))
       .toEqual({ errors: 2, warnings: 1, infos: 1, waived: 1, drawing: 3 });
-  });
-});
-
-describe('the ruleset text of earlier versions', () => {
-  const old = `# Schematic rules
-
-How this ruleset works: an editor's note.
-
-## Wires
-
-Few bends.
-
-### SCH.JOG: parts facing each other are in line
-level: error
-
-Two pins that face each other sit on one line.
-
-### SCH.CROSSING: few crossings
-level: info
-param: max 2
-
-### SCH.ORTHOGONAL: wires run horizontally and vertically
-level: error
-
-*(layout)* On the grid, no diagonals.
-
-### SCH.LABEL_ALONE: a net label has a partner
-level: off
-`;
-
-  it('turns the levels into check settings and keeps the prose as notes, without ids and level lines', () => {
-    const { notes, checks } = migrateRulesText(old);
-    expect(checks).toEqual({ 'SCH.JOG': { level: 'error' }, 'SCH.CROSSING': { max: 2 } });
-    expect(notes).toBe('## Wires\n\nFew bends.\n\n### Parts facing each other are in line\n\nTwo pins that face each other sit on one line.\n\n### Few crossings\n\n### Wires run horizontally and vertically\n\nOn the grid, no diagonals.\n\n### A net label has a partner\n');
-    expect(migrateRulesText(old.replace(/\n/g, '\r\n'))).toEqual({ notes, checks });
-  });
-
-  it('leaves no notes from a copy of the old default with only its levels changed', () => {
-    const shipped = readFileSync(new URL('./old-schematic-rules.md', import.meta.url), 'utf8');
-    expect(migrateRulesText(shipped)).toEqual({ notes: '', checks: {} });
-    expect(migrateRulesText(shipped.replace('param: max 0', 'param: max 3'))).toEqual({ notes: '', checks: { 'SCH.CROSSING': { max: 3 } } });
-    expect(migrateRulesText(shipped + '\nLabels are horizontal.\n').notes).toContain('Labels are horizontal.');
   });
 });
 

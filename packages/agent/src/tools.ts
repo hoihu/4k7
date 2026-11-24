@@ -70,5 +70,6 @@ function summariseQuery(input: unknown, out: unknown): string {
   const op = (input as { op?: string })?.op;
   if (op === 'get_guide') return String((input as { topic?: unknown }).topic);
   if (op === 'list_blocks' && out && typeof out === 'object' && 'blocks' in out) return `${(input as { project?: unknown }).project}: ${(out as { blocks: unknown[] }).blocks.length} block(s)`;
+  if (op === 'get_diagnostics' && out && typeof out === 'object' && Array.isArray((out as { diagnostics?: unknown }).diagnostics)) return `${(out as { diagnostics: unknown[] }).diagnostics.length} result(s)`;
   return op === 'get_summary' ? 'design summary' : 'ok';
 }

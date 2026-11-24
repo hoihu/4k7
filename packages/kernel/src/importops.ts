@@ -6,7 +6,8 @@
  */
 import type { Design, EditOp, ImportReport, NetAttrs, OpResult } from '@4k7/schema';
 import { allocRefdes, cardOf, createNet, findNet, isAutoNet, natCmp, nextId, reject } from './doc.ts';
-import { addPart } from './netops.ts';
+import { addPart, sheetByName } from './netops.ts';
+import { assignBoard, resolveBoard } from './boards.ts';
 import { listBlocks, readProject } from './reuse.ts';
 
 /** The stored projects the app read for a transaction's import_block ops: the ids the folder lists, and the files by id. */
@@ -40,6 +41,10 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
   const stray = Object.keys(op.nets).filter((n) => !known.includes(n));
   if (stray.length) reject({ code: 'NET_UNKNOWN', message: `${stray.join(', ')}: not a net of "${lb.title}" (its boundary nets are ${boundary.join(', ') || 'none'}, its internal nets ${lb.internal_nets.join(', ') || 'none'}).`, candidates: known });
 
+  // where the parts go: a sheet and a board as move_to_sheet and assign_board name them (refused before anything is copied)
+  const sheet = op.sheet !== undefined ? sheetByName(d, op.sheet) : undefined;
+  const board = op.board !== undefined ? resolveBoard(d, op.board) : undefined;
+
   // the cards: this design's or the library's by id, else the one stored in the source project
   const cards: ImportReport['cards'] = { library: [], project: [] };
   for (const id of new Set(comps.map((c) => c.part))) {
@@ -61,12 +66,14 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
     const taken = Object.values(d.components).some((x) => x.refdes === c.refdes);
     const refdes = taken ? allocRefdes(d, c.refdes.match(/^[A-Za-z_]+/)?.[0] ?? cardOf(d, c.part)!.refPrefix) : c.refdes;
     if (taken) renamed.refdes[c.refdes] = refdes;
-    const r = addPart(d, { op: 'add_part', part: c.part, refdes, params: { ...c.params } });
+    const r = addPart(d, { op: 'add_part', part: c.part, refdes, params: { ...c.params }, ...(sheet ? { sheet } : {}) });
     const nc = d.components[r.ids![0]!]!;
     nc.noConnect = [...c.noConnect];
     if (c.dnp) nc.dnp = true;
     ids.set(c.id, nc.id);
   }
+
+  if (board && ids.size) assignBoard(d, { board: board.id, refs: [...ids.values()] });
 
   // the nets: boundary ones and mapped internal ones join the mapped net, the other internal ones are made anew
   const internal = new Set(lb.internal_nets.filter((n) => op.nets[n] === undefined));
@@ -117,7 +124,9 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
   const mappedInternal = lb.internal_nets.filter((n) => op.nets[n] !== undefined);
   const list = (m: Record<string, string>) => Object.entries(m).map(([a, b]) => `${a} → ${b}`).join(', ');
   const effect =
-    `imported "${title}" from ${op.project}: ${comps.length} part(s) (${comps.map((c) => refOf(c.id)).sort(natCmp).join(', ')}), ` +
+    `imported "${title}" from ${op.project}: ${comps.length} part(s) (${comps.map((c) => refOf(c.id)).sort(natCmp).join(', ')})` +
+    (sheet || board ? ` on ${[sheet ? `sheet ${d.sheets[sheet]!.name}` : '', board ? `board "${board.name}"` : ''].filter(Boolean).join(', ')}` : '') +
+    `, ` +
     `boundary ${boundary.map((n) => `${n} → ${op.nets[n]}`).join(', ') || 'none'}` +
     (mappedInternal.length ? `, internal ${mappedInternal.map((n) => `${n} → ${op.nets[n]}`).join(', ')}` : '') +
     (constraints ? `, ${constraints} constraint(s)` : '') +

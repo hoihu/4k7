@@ -1,7 +1,7 @@
 /**
  * The design kernel: committed design + agent working copy (draft), transactions,
  * proposals (changesets), history. Synchronous and deterministic; the web app runs it
- * in a Web Worker. M0 is TypeScript; the Rust/WASM kernel will implement this same API.
+ * in a Web Worker.
  */
 import {
   GuideTopic,
@@ -30,6 +30,7 @@ import {
   type SchematicRule,
   PAGE,
   boardSummary,
+  diagnosticsAnswer,
   type DrcFilter,
   resolveChecks,
   type CheckSettings,
@@ -72,7 +73,7 @@ import { tryPlacements } from './trial.ts';
 import { suggestMoves } from './suggest.ts';
 import { impedanceText, resolveRule } from './lines.ts';
 import { lineBoard } from './lineops.ts';
-import { boardList, boardOf, commitFocus, focusBoard, multiBoard, resolveBoard, settingsOf } from './boards.ts';
+import { boardList, boardOf, commitFocus, focusBoard, multiBoard, ownTrackWidth, resolveBoard, settingsOf } from './boards.ts';
 import { matePairs, pairsText } from './mates.ts';
 import { assemblyOf } from './assembly.ts';
 import { blocksOfProject } from './reuse.ts';
@@ -648,10 +649,17 @@ export class Kernel {
         const nbid = on[0] ?? FIRST_BOARD;
         const nd = this.focus(d, nbid);
         const onBoards = multiBoard(d) ? { boards: on.map((id) => d.boards![id]!.name), board_facts_for: d.boards![nbid]!.name } : {};
-        // the track it gets on the board: its own width, else the rules' power or signal width
+        // the track it gets on a board: its own width there, else the rules' power or signal width
         const rules = (nd.board ?? DEFAULT_BOARD).rules;
         const kind = isGroundNet(n) ? 'ground' : isPowerNet(n) ? 'supply' : 'signal';
-        const width = n.attrs.trackWidth ?? (kind === 'signal' ? rules.track : rules.powerTrack);
+        const widthOn = (f: Design) => {
+          const own = ownTrackWidth(f, n);
+          const r = (f.board ?? DEFAULT_BOARD).rules;
+          return { width_mm: own?.mm ?? (kind === 'signal' ? r.track : r.powerTrack), why: own ? `set for this net${own.board ? ` on ${own.board}` : ''}` : kind === 'signal' ? 'signal width (rules)' : 'power width (rules)' };
+        };
+        const { width_mm: width, why } = widthOn(nd);
+        // on several boards: each board's
+        const byBoard = on.length > 1 ? on.map((id) => ({ board: d.boards![id]!.name, ...widthOn(this.focus(d, id)) })) : undefined;
         // the width its current needs, per layer: each layer's copper from the stack-up, at the board's allowed heating
         const settings = nd.board ?? DEFAULT_BOARD;
         const stack = boardStackup(settings);
@@ -660,7 +668,8 @@ export class Kernel {
         const amps = n.attrs.maxCurrent;
         const track = {
           width_mm: width,
-          why: n.attrs.trackWidth ? 'set for this net' : kind === 'signal' ? 'signal width (rules)' : 'power width (rules)',
+          why,
+          ...(byBoard ? { by_board: byBoard } : {}),
           ...(amps ? { suggested_mm: Object.fromEntries(Object.entries(copper).map(([l, um]) => [l, trackWidthFor(amps, rise, um)])), for_current_a: amps, copper_um: copper, rise_c: rise } : {}),
           rules: { signal_mm: rules.track, power_mm: rules.powerTrack },
           ...(n.attrs.routeFirst ? { routed_first: true } : {}),
@@ -705,7 +714,7 @@ export class Kernel {
         return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, ...onBoards, track, current, ...impedance, ...vias };
       }
       case 'get_diagnostics':
-        return [...this.analyse(d).diagnostics, ...this.copperShorts(d)];
+        return diagnosticsAnswer(this.diagnostics(), q);
       case 'get_current_map': {
         const b = this.routedNow(all, bid);
         if (!b) return { routed: false, note: 'The board is not routed (or its routing is out of date): route it first, then ask again.' };
@@ -919,6 +928,16 @@ export class Kernel {
       stackup: (({ name, copper, dielectric, mask }) => ({ name, copper, dielectric, ...(mask ? { mask } : {}) }))(boardStackup(d.board ?? DEFAULT_BOARD)),
       ...(d.board?.rules.currentRise ? { currentRise: d.board.rules.currentRise } : {}),
     };
+  }
+
+  /**
+   * Every diagnostic of the working copy, as get_diagnostics pages them: the schematic's and the
+   * board's copper shorts, on every board. For callers that need the whole list (the app adds the
+   * production files' findings, the eval scores the run).
+   */
+  diagnostics(): Diagnostic[] {
+    const d = this.draft;
+    return [...this.analyse(d).diagnostics, ...this.copperShorts(d)];
   }
 
   /** Everything the UI needs in one call. */
