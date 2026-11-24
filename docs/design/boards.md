@@ -40,7 +40,8 @@ user before you split a design they did not ask to split.
 5. **Lay out each board.** Board ops take `board` (a name or id). Without it they work on the board
    of the parts they name (`place R4`), else on the board of the nets they name when those are on
    one board. An op that says neither is refused (`BOARD_AMBIGUOUS`). `get_board` without `board`
-   answers for every board; `get_copper` and the other board queries need one. The production files
+   answers for every board; `get_copper` and the other board queries take the board of the parts
+   or nets they name, as the ops do, and are refused when they say neither. The production files
    are per board: `view_gerbers` and `get_board_image` take `board`.
 
 ## 3. Which kind of mate

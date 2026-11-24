@@ -1,9 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { EditOp, QueryOp, SetBoardOp, type Transaction } from '@4k7/schema';
-import { Kernel } from '../src/index.ts';
+import { EditOp, QueryOp, SetBoardOp } from '@4k7/schema';
 import { BOARD_OPS } from '../src/apply.ts';
-import { buckTransaction } from './fixtures.ts';
+import { twoBoards } from './fixtures.ts';
 
 /**
  * Which ops work on one board is kept in three places by hand: the schema (the ops with a `board`
@@ -39,34 +38,33 @@ const DESIGN_WIDE_EDITS_NAMING_A_BOARD = [
 /** The query ops Kernel.query reads on one board (its `onBoard` test). */
 const BOARD_QUERIES = ['get_board', 'get_copper', 'get_current_map', 'suggest_moves', 'try_placements'];
 
-/** The least each board query needs to parse, so the kernel gets as far as resolving its board. */
+/**
+ * The board queries that, without board, answer for every board rather than inferring one. The
+ * others infer their board as edits do (boardFor): from the parts they name, else from nets on one
+ * board only; else BOARD_AMBIGUOUS.
+ */
+const EVERY_BOARD_WHEN_UNNAMED = ['get_board'];
+
+/**
+ * The least each board query needs to parse, so the kernel gets as far as resolving its board. They
+ * name nothing that settles the board (X9 is no part), so without board they must be refused.
+ */
 const QUERY_ARGS: Record<string, Record<string, unknown>> = {
   get_board: {},
   get_copper: {},
   get_current_map: {},
   suggest_moves: {},
-  try_placements: { candidates: [{ parts: [{ ref: 'U1', x_mm: 10, y_mm: 10 }] }] },
+  try_placements: { candidates: [{ parts: [{ ref: 'X9', x_mm: 10, y_mm: 10 }] }], explore: false },
 };
 
-/** The buck on the main board and a second board with an LED (as multiboard.test.ts). */
-function twoBoards(): Kernel {
-  const k = new Kernel();
-  expect(k.transact(buckTransaction()).status).toBe('ok');
-  const ops: Transaction['ops'] = [
-    { op: 'add_sheet', name: 'LED' },
-    { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J3', sheet: 'LED' },
-    { op: 'add_part', part: 'generic:R', refdes: 'R4', params: { resistance: '1k' }, sheet: 'LED' },
-    { op: 'add_part', part: 'generic:LED', refdes: 'D2', sheet: 'LED' },
-    { op: 'connect', pins: ['J3.1', 'R4.1'], net: 'LED_V' },
-    { op: 'connect', pins: ['R4.2', 'D2.A'], net: 'LED_A' },
-    { op: 'connect', pins: ['J3.2', 'D2.K'], net: 'LED_GND' },
-    { op: 'add_board', name: 'LED board', sheets: ['LED'] },
-  ];
-  const r = k.transact({ summary: 'LED board', ops });
-  expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
-  k.accept();
-  return k;
-}
+/** Arguments that name something only on the second board (LED board), from which the board is inferred. */
+const ON_SECOND_BOARD: Record<string, Record<string, unknown>> = {
+  get_board: { drc: { ref: 'R4' } },
+  get_copper: { nets: ['LED_A'] },
+  get_current_map: { nets: ['LED_A'] },
+  suggest_moves: { parts: ['R4'] },
+  try_placements: { candidates: [{ parts: [{ ref: 'J3', x_mm: 5, y_mm: 5 }] }], explore: false },
+};
 
 describe('the per-board op lists agree', () => {
   it('BOARD_OPS is exactly the edit ops whose board field is boardRef', () => {
@@ -101,10 +99,32 @@ describe('the per-board op lists agree', () => {
       const bad = k.query({ op, ...args, board: 'No such board' }) as { error?: string; boards?: string[] };
       expect(bad.error, op).toBe('No board "No such board".');
       expect(bad.boards, op).toEqual(['Main', 'LED board']);
-      if (op === 'get_board') continue;
-      // and asks which board when none is named, rather than reading the first
-      const none = k.query({ op, ...args }) as { error?: string };
+      const none = k.query({ op, ...args }) as { error?: string; boards?: unknown[] };
+      if (EVERY_BOARD_WHEN_UNNAMED.includes(op)) {
+        expect(none.error, op).toBeUndefined();
+        expect(none.boards, op).toHaveLength(2);
+        continue;
+      }
+      // and asks which board when nothing settles it, rather than reading the first
       expect(none.error, op).toMatch(/has 2 boards: say which with board/);
+    }
+  });
+
+  it('on a design of two boards, a board query without board infers it from what it names, not the first board', () => {
+    const k = twoBoards();
+    // copper on the second board only, so its answers differ from the first board's
+    expect(k.transact({ summary: 'route', ops: [{ op: 'route', board: 'LED board' }] }).status).toBe('ok');
+    for (const op of withBoardRef(QueryOp)) {
+      const args = ON_SECOND_BOARD[op];
+      expect(args, `add arguments of ${op} naming something on the LED board to ON_SECOND_BOARD`).toBeDefined();
+      const inferred = k.query({ op, ...args }) as { error?: string; boards?: unknown[] };
+      expect(inferred.error, op).toBeUndefined();
+      if (EVERY_BOARD_WHEN_UNNAMED.includes(op)) {
+        expect(inferred.boards, op).toHaveLength(2);
+        continue;
+      }
+      expect(inferred, op).toEqual(k.query({ op, ...args, board: 'LED board' }));
+      expect(inferred, op).not.toEqual(k.query({ op, ...args, board: 'Main' }));
     }
   });
 

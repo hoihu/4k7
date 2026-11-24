@@ -73,7 +73,7 @@ import { tryPlacements } from './trial.ts';
 import { suggestMoves } from './suggest.ts';
 import { impedanceText, resolveRule } from './lines.ts';
 import { lineBoard } from './lineops.ts';
-import { boardList, boardOf, commitFocus, focusBoard, multiBoard, ownTrackWidth, resolveBoard, settingsOf } from './boards.ts';
+import { boardFor, boardList, boardOf, commitFocus, focusBoard, multiBoard, ownTrackWidth, resolveBoard, settingsOf } from './boards.ts';
 import { matePairs, pairsText } from './mates.ts';
 import { assemblyOf } from './assembly.ts';
 import { blocksOfProject } from './reuse.ts';
@@ -582,8 +582,18 @@ export class Kernel {
         }
         bid = b;
       } else if (multiBoard(all) && q.op !== 'get_board') {
-        const boards = boardList(all).map((x) => x.name);
-        return queryError(`The design has ${boards.length} boards: say which with board.`, 'BOARD_AMBIGUOUS', boards, { boards });
+        // as an edit does: the board of the parts it names, else of the nets it names when they are
+        // on one board (boardFor). get_board without board answers for every board, below.
+        try {
+          bid = boardFor(all, q as { op: string; board?: string });
+        } catch (e) {
+          if (!(e instanceof RejectError)) throw e;
+          const boards = boardList(all).map((x) => x.name);
+          // parts or nets on several boards: boardFor says which; naming nothing: the query's own words
+          const several = / names (parts|nets) on several boards/.test(e.rejection.message);
+          const error = several ? e.rejection.message : `The design has ${boards.length} boards: say which with board.`;
+          return queryError(error, 'BOARD_AMBIGUOUS', boards, { boards });
+        }
       }
     }
     if (q.op === 'get_board' && (q as { board?: string }).board === undefined && multiBoard(all)) {
