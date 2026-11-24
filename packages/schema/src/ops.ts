@@ -683,7 +683,7 @@ export const PlaceBlockOp = z.object({
 
 export const AutoDrawOp = z.object({
   op: z.literal('auto_draw'),
-  sheet: z.string().optional().describe('Sheet name; omit it for every sheet (or the sheet of the parts in refs)'),
+  sheet: z.string().optional().describe('Sheet (name or id); omit it for every sheet (or the sheet of the parts in refs)'),
   refs: z.array(componentRef).optional().describe('Only these parts: taken out of your drawing and drawn afresh together, in free space'),
 }).describe('Let the auto-layout draw: without refs it redraws the whole sheet from the netlist and the left_of/right_of/above/below hints, and keeps redrawing it after every change until you arrange it again (place_symbol); with refs it redraws just those parts in free space and the rest of your drawing stays.');
 

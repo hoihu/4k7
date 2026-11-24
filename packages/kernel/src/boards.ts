@@ -8,6 +8,7 @@
  */
 import { DEFAULT_BOARD, FIRST_BOARD, MULTI_BOARD_FORMAT, DESIGN_FORMAT_VERSION, type BoardEntry, type BoardSettings, type Component, type Constraint, type Design, type Net } from '@4k7/schema';
 import { closest, reject } from './doc.ts';
+import { sheetByName } from './netops.ts';
 
 /** The first board's name until it is renamed, with one board or several. */
 export const FIRST_BOARD_NAME = 'Main';
@@ -294,11 +295,10 @@ export function assignBoard(d: Design, op: { board: string; sheets?: string[] | 
   const was = boardsNow(d);
   const said: string[] = [];
   for (const ref of op.sheets ?? []) {
-    const s = d.sheets[ref] ?? Object.values(d.sheets).find((x) => x.name.toLowerCase() === ref.trim().toLowerCase());
-    if (!s) reject({ code: 'SHEET_UNKNOWN', message: `No sheet "${ref}".`, candidates: closest(ref, Object.values(d.sheets).map((x) => x.name)) });
-    if (b.id === FIRST_BOARD) delete s!.board;
-    else s!.board = b.id;
-    said.push(`sheet ${s!.name}`);
+    const s = d.sheets[sheetByName(d, ref, '')]!;
+    if (b.id === FIRST_BOARD) delete s.board;
+    else s.board = b.id;
+    said.push(`sheet ${s.name}`);
   }
   for (const ref of op.refs ?? []) {
     const c = d.components[ref] ?? Object.values(d.components).find((x) => x.refdes.toUpperCase() === ref.toUpperCase());
