@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { EditOp } from '@4k7/schema';
 import type { ImportSources, Kernel } from '../src/index.ts';
 import { buck, twoBoards } from './fixtures.ts';
+import { resolveBoard } from '../src/boards.ts';
 
 /**
  * get_board { project, board? }: another stored project's board as stored, read-only, answered by the
@@ -42,7 +43,7 @@ describe('get_board of another project', () => {
     expect(out.parts!.find((p) => p.refdes === 'R4')).toMatchObject({ x: 6, rot: 90, placed: 'agent' });
     expect(out.parts!.find((p) => p.refdes === 'J3')?.side).toBe('bottom');
     // by id too
-    expect(placement(ask(target, { leds: src.exportDesign() }, { project: 'leds', board: src.boardId('LED board') }))).toEqual(placement(out));
+    expect(placement(ask(target, { leds: src.exportDesign() }, { project: 'leds', board: resolveBoard(src.draftDesign(), 'LED board').id }))).toEqual(placement(out));
   });
 
   it('reads the only board of a one-board project when no board is named', () => {
@@ -87,7 +88,7 @@ describe('get_board of another project', () => {
     expect(routing()).toMatch(/not routed as stored/);
     // routed and its copper kept: the stored copper
     ok(src, [{ op: 'route', board: 'LED board' }]);
-    const led = src.boardId('LED board');
+    const led = resolveBoard(src.draftDesign(), 'LED board').id;
     expect(src.keepCopper(src.board({}, led).newCopper!)).toBe(true);
     expect(routing()).toMatchObject({ nets: expect.any(Number), routed: expect.any(Number) });
     // a part moved since: the copper is stale, not shown
