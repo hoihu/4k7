@@ -37,7 +37,9 @@ on the board of the parts it names (`place R4`), else of the nets it names when 
 board only (`add_test_points LED_A`); one that says neither is refused (`BOARD_AMBIGUOUS`) with
 the boards as candidates, and one that names a part of another board is refused too
 (`BOARD_INVALID`). A board query (`get_copper`, `get_current_map`, `try_placements`, `suggest_moves`)
-without `board` answers with the same code and candidates (a query error, [ops-api](ops-api.md) §3). Parts are read only from the fields that name parts and pins (`ref`, `refs`,
+without `board` infers it by the same rules (`boardFor`): the board of the parts it names, else of its
+nets on one board only; one that says neither answers with the same code and candidates (a query
+error, [ops-api](ops-api.md) §3). `get_board` without `board` infers nothing: it answers for every board. Parts are read only from the fields that name parts and pins (`ref`, `refs`,
 `parts`, `near`, `under`, `part`, a track's `from`/`to`), so a net, a copper or graphic id or a
 silkscreen text that looks like a refdes is none. The first board is called Main until renamed,
 with one board or several. A part that moves to another board (`assign_board`, `remove_board`,

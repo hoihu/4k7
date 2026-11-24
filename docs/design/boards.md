@@ -41,7 +41,8 @@ user before you split a design they did not ask to split.
    of the parts they name (`place R4`), else on the board of the nets they name when those are on
    one board. An op that says neither is refused (`BOARD_AMBIGUOUS`). `get_board` without `board`
    answers for every board, as does `get_fab_profiles` (each board's layers and profile);
-   `get_copper` and the other board queries need one. `calc` `impedance` and `track_current` work
+   `get_copper` and the other board queries take the board of the parts or nets they name, as the
+   ops do, and are refused when they say neither. `calc` `impedance` and `track_current` work
    on one board's stack-up and `current_rise_c`: give `board` when the boards differ. The production files
    are per board: `view_gerbers` and `get_board_image` take `board`.
 
