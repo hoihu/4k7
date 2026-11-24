@@ -4,7 +4,7 @@
  * (Kernel.transact's `sources`), so the op itself touches no file and dry runs, review and undo work
  * as for any edit op. See docs/design/ops-api.md §7.
  */
-import type { Design, EditOp, ImportReport, NetAttrs, OpResult } from '@4k7/schema';
+import type { Component, Design, EditOp, ImportReport, NetAttrs, OpResult } from '@4k7/schema';
 import { allocRefdes, cardOf, createNet, findNet, isAutoNet, natCmp, nextId, reject } from './doc.ts';
 import { addPart, sheetByName } from './netops.ts';
 import { assignBoard, resolveBoard } from './boards.ts';
@@ -45,55 +45,8 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
   const sheet = op.sheet !== undefined ? sheetByName(d, op.sheet) : undefined;
   const board = op.board !== undefined ? resolveBoard(d, op.board) : undefined;
 
-  // the cards: this design's or the library's by id, else the one stored in the source project
-  const cards: ImportReport['cards'] = { library: [], project: [] };
-  for (const id of new Set(comps.map((c) => c.part))) {
-    const here = cardOf(d, id);
-    const card = here ?? src.parts[id];
-    if (!card) reject({ code: 'PART_UNKNOWN', message: `${op.project} uses ${id}, which is neither in the library nor stored in its file. Nothing was imported.` });
-    for (const c of comps.filter((x) => x.part === id)) {
-      const gone = [...Object.keys(c.pins), ...c.noConnect].filter((n) => !card.pins.some((p) => p.number === n));
-      if (gone.length) reject({ code: 'PART_UNKNOWN', message: `${c.refdes}: the card of ${id} here has no pin ${gone.join(', ')}; it differs from ${op.project}'s. Nothing was imported.` });
-    }
-    if (!here) d.parts[id] = structuredClone(card);
-    (here ? cards.library : cards.project).push(id);
-  }
-
-  // the parts, keeping their refdes where it is free here, else the next free number of its letters
-  const renamed: ImportReport['renamed'] = { refdes: {}, nets: {} };
-  const ids = new Map<string, string>();
-  for (const c of comps) {
-    const taken = Object.values(d.components).some((x) => x.refdes === c.refdes);
-    const refdes = taken ? allocRefdes(d, c.refdes.match(/^[A-Za-z_]+/)?.[0] ?? cardOf(d, c.part)!.refPrefix) : c.refdes;
-    if (taken) renamed.refdes[c.refdes] = refdes;
-    const r = addPart(d, { op: 'add_part', part: c.part, refdes, params: { ...c.params }, ...(sheet ? { sheet } : {}) });
-    const nc = d.components[r.ids![0]!]!;
-    nc.noConnect = [...c.noConnect];
-    if (c.dnp) nc.dnp = true;
-    ids.set(c.id, nc.id);
-  }
-
-  if (board && ids.size) assignBoard(d, { board: board.id, refs: [...ids.values()] });
-
-  // the nets: boundary ones and mapped internal ones join the mapped net, the other internal ones are made anew
-  const internal = new Set(lb.internal_nets.filter((n) => op.nets[n] === undefined));
-  const nets = new Map<string, string>();
-  for (const srcNet of new Set(comps.flatMap((c) => Object.values(c.pins)))) {
-    const n = src.nets[srcNet];
-    if (!n) continue;
-    const loads = (n.attrs.loads ?? []).flatMap((l) => (ids.has(l.componentId) ? [{ ...l, componentId: ids.get(l.componentId)! }] : []));
-    let net = internal.has(n.name) ? undefined : findNet(d, op.nets[n.name]!);
-    if (!net) {
-      const name = internal.has(n.name) ? freeNet(d, isAutoNet(n) && !op.prefix ? undefined : (op.prefix ?? '') + n.name) : op.nets[n.name]!;
-      net = createNet(d, name);
-      const { loads: _l, ...attrs } = n.attrs;
-      net.attrs = structuredClone(attrs) as NetAttrs;
-      if (internal.has(n.name) && !isAutoNet(n) && net.name !== n.name) renamed.nets[n.name] = net.name;
-    }
-    if (loads.length) net.attrs.loads = [...(net.attrs.loads ?? []), ...loads];
-    nets.set(srcNet, net.id);
-  }
-  for (const c of comps) for (const [pin, net] of Object.entries(c.pins)) if (nets.has(net)) d.components[ids.get(c.id)!]!.pins[pin] = nets.get(net)!;
+  // boundary and mapped internal nets join the mapped net, the other internal ones are made anew
+  const { ids, nets, renamed, cards } = copyParts(d, src, comps, { project: op.project, sheet, board: board?.id, join: (name) => op.nets[name], prefix: op.prefix });
 
   // its describe block, and the constraints on its parts that say how it is drawn
   let title = block.title;
@@ -135,6 +88,86 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
     (cards.project.length ? `; not in the library, card taken from ${op.project}: ${cards.project.join(', ')}` : '') +
     (recheck.length ? `; values to recheck (chosen for ${op.project}): ${recheck.map((x) => `${x.ref} ${Object.values(x.params).join(' ')}${x.why.startsWith('sets') ? ` (${x.why})` : ''}`).join(', ')}` : '');
   return { op: 'import_block', effect, ids: [...ids.values(), ...new Set(nets.values())], imported };
+}
+
+/** Where copyParts puts the parts and how it treats their nets. */
+export interface CopyTarget {
+  /** The source project's id, for messages. */
+  project: string;
+  /** The sheet id the parts go on (else add_part's default). */
+  sheet?: string;
+  /** The board id the parts are assigned to (else the one their sheet gives). */
+  board?: string;
+  /** The net of this design a source net (by name) joins, made if there is none; undefined: made anew under a free name. */
+  join: (srcNet: string) => string | undefined;
+  /** Put before the name of a net made anew (an automatic N$ name stays automatic without it). */
+  prefix?: string;
+}
+
+/** What copyParts did: the new component and net id of each source id, what it renamed, where the cards came from. */
+export interface Copied {
+  ids: Map<string, string>;
+  nets: Map<string, string>;
+  renamed: ImportReport['renamed'];
+  cards: ImportReport['cards'];
+}
+
+/**
+ * Copy parts of `src` into `d` with their cards, params, no-connects and nets: what import_block does for
+ * one block and import_board for a whole board (D29). Refuses (PART_UNKNOWN) before copying a part when a
+ * card is missing or differs. Describe blocks and constraints are left to the caller.
+ */
+export function copyParts(d: Design, src: Design, comps: Component[], to: CopyTarget): Copied {
+  // the cards: this design's or the library's by id, else the one stored in the source project
+  const cards: ImportReport['cards'] = { library: [], project: [] };
+  for (const id of new Set(comps.map((c) => c.part))) {
+    const here = cardOf(d, id);
+    const card = here ?? src.parts[id];
+    if (!card) reject({ code: 'PART_UNKNOWN', message: `${to.project} uses ${id}, which is neither in the library nor stored in its file. Nothing was imported.` });
+    for (const c of comps.filter((x) => x.part === id)) {
+      const gone = [...Object.keys(c.pins), ...c.noConnect].filter((n) => !card.pins.some((p) => p.number === n));
+      if (gone.length) reject({ code: 'PART_UNKNOWN', message: `${c.refdes}: the card of ${id} here has no pin ${gone.join(', ')}; it differs from ${to.project}'s. Nothing was imported.` });
+    }
+    if (!here) d.parts[id] = structuredClone(card);
+    (here ? cards.library : cards.project).push(id);
+  }
+
+  // the parts, keeping their refdes where it is free here, else the next free number of its letters
+  const renamed: ImportReport['renamed'] = { refdes: {}, nets: {} };
+  const ids = new Map<string, string>();
+  for (const c of comps) {
+    const taken = Object.values(d.components).some((x) => x.refdes === c.refdes);
+    const refdes = taken ? allocRefdes(d, c.refdes.match(/^[A-Za-z_]+/)?.[0] ?? cardOf(d, c.part)!.refPrefix) : c.refdes;
+    if (taken) renamed.refdes[c.refdes] = refdes;
+    const r = addPart(d, { op: 'add_part', part: c.part, refdes, params: { ...c.params }, ...(to.sheet ? { sheet: to.sheet } : {}) });
+    const nc = d.components[r.ids![0]!]!;
+    nc.noConnect = [...c.noConnect];
+    if (c.dnp) nc.dnp = true;
+    ids.set(c.id, nc.id);
+  }
+
+  if (to.board && ids.size) assignBoard(d, { board: to.board, refs: [...ids.values()] });
+
+  // the nets: one `join` names joins the net of that name here (made if missing), the others are made anew
+  const nets = new Map<string, string>();
+  for (const srcNet of new Set(comps.flatMap((c) => Object.values(c.pins)))) {
+    const n = src.nets[srcNet];
+    if (!n) continue;
+    const loads = (n.attrs.loads ?? []).flatMap((l) => (ids.has(l.componentId) ? [{ ...l, componentId: ids.get(l.componentId)! }] : []));
+    const joined = to.join(n.name);
+    let net = joined === undefined ? undefined : findNet(d, joined);
+    if (!net) {
+      const name = joined === undefined ? freeNet(d, isAutoNet(n) && !to.prefix ? undefined : (to.prefix ?? '') + n.name) : joined;
+      net = createNet(d, name);
+      const { loads: _l, ...attrs } = n.attrs;
+      net.attrs = structuredClone(attrs) as NetAttrs;
+      if (joined === undefined && !isAutoNet(n) && net.name !== n.name) renamed.nets[n.name] = net.name;
+    }
+    if (loads.length) net.attrs.loads = [...(net.attrs.loads ?? []), ...loads];
+    nets.set(srcNet, net.id);
+  }
+  for (const c of comps) for (const [pin, net] of Object.entries(c.pins)) if (nets.has(net)) d.components[ids.get(c.id)!]!.pins[pin] = nets.get(net)!;
+  return { ids, nets, renamed, cards };
 }
 
 /** `name`, or name_2, name_3 … where it is taken here (undefined: an automatic name). */
