@@ -2,17 +2,12 @@
  * Persistence in this browser's IndexedDB: settings and the API keys. Projects, imported parts,
  * artwork and datasheets are files on this computer (files.ts, disk.svelte.ts). The
  * API key is encrypted with a non-extractable AES-GCM key that never leaves this browser profile.
- *
- * Versions before the files kept everything in IndexedDB; `browserData` reads it once to move it
- * to the server (the browser's copy is left as it was).
  */
 import type { ApiServiceId } from '@4k7/agent';
 import type { SchematicThemeId } from './schematicThemes.ts';
-import { migrateRulesText, type AgentEffort, type Artwork, type CheckSettings, type HarnessId, type PartCard } from '@4k7/schema';
+import type { AgentEffort, Artwork, CheckSettings, HarnessId, PartCard } from '@4k7/schema';
 
 const DB = '4k7';
-/** The app's name before 4k7. A browser that ran it keeps its data under this name; it is copied over once. */
-const OLD_DB = 'tracewise';
 /** v2: 'library' store for imported parts; v3: 'datasheets' (PDFs by SHA-256); v4: 'artwork' (silkscreen graphics). */
 const VERSION = 4;
 const STORES = ['projects', 'settings', 'keys', 'library', 'datasheets', 'artwork'];
@@ -33,23 +28,18 @@ function open(): Promise<IDBDatabase> {
       reject(new Error(storageHealth));
     }, 3000);
     const req = indexedDB.open(DB, VERSION);
-    let created = false;
     req.onblocked = () => {
       clearTimeout(timer);
       storageHealth = 'IndexedDB blocked by another tab';
       reject(new Error(storageHealth));
     };
-    req.onupgradeneeded = (e) => {
+    req.onupgradeneeded = () => {
       const db = req.result;
-      created = e.oldVersion === 0;
       for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
     };
     req.onsuccess = () => {
       clearTimeout(timer);
-      // the first open of a new database: bring over what the old name held, before anyone reads
-      if (created) migration = copyDatabase(OLD_DB, req.result).catch(() => undefined);
-      if (migration) migration.then(() => resolve(req.result));
-      else resolve(req.result);
+      resolve(req.result);
     };
     req.onerror = () => {
       clearTimeout(timer);
@@ -57,50 +47,6 @@ function open(): Promise<IDBDatabase> {
       reject(req.error);
     };
   });
-}
-
-/** The copy from the old database name, so every open waits for it. */
-let migration: Promise<void> | null = null;
-
-const request = <T>(r: IDBRequest<T>) =>
-  new Promise<T>((resolve, reject) => {
-    r.onsuccess = () => resolve(r.result);
-    r.onerror = () => reject(r.error);
-  });
-
-/** An existing database by name, or null; never creates one. */
-function openExisting(name: string): Promise<IDBDatabase | null> {
-  return new Promise((resolve) => {
-    const req = indexedDB.open(name);
-    req.onupgradeneeded = () => req.transaction?.abort(); // version 0: there was none
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => resolve(null);
-    req.onblocked = () => resolve(null);
-  });
-}
-
-/** Copy every record of the stores both databases have. The old database is left as it was. */
-async function copyDatabase(fromName: string, to: IDBDatabase): Promise<void> {
-  const from = await openExisting(fromName);
-  if (!from) return;
-  try {
-    for (const store of Array.from(from.objectStoreNames)) {
-      if (!to.objectStoreNames.contains(store)) continue;
-      const src = from.transaction(store, 'readonly').objectStore(store);
-      const [keys, values] = await Promise.all([request(src.getAllKeys()), request(src.getAll())]);
-      if (keys.length === 0) continue;
-      const t = to.transaction(store, 'readwrite');
-      const dst = t.objectStore(store);
-      keys.forEach((k, i) => dst.put(values[i], k));
-      await new Promise<void>((resolve, reject) => {
-        t.oncomplete = () => resolve();
-        t.onerror = () => reject(t.error);
-        t.onabort = () => reject(t.error);
-      });
-    }
-  } finally {
-    from.close();
-  }
 }
 
 /** Whether the browser keeps this site's storage (false in private windows or under some policies). */
@@ -124,68 +70,6 @@ async function tx<T>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectS
 
 const get = <T>(store: string, key: string) => tx<T | undefined>(store, 'readonly', (s) => s.get(key) as IDBRequest<T | undefined>);
 const put = (store: string, key: string, value: unknown) => tx(store, 'readwrite', (s) => s.put(value, key));
-
-/* ------------------------- what the browser kept before ------------------------- */
-
-/** A saved project this version could not read, set aside by versions before the files. */
-export interface KeptProject {
-  key: string;
-  json: string;
-  reason: string;
-  /** When it was set aside, ms since epoch. */
-  at: number;
-}
-
-/** Everything versions before the files kept in this browser, to move to the server. */
-export interface BrowserData {
-  /** The project (JSON text). */
-  project?: string;
-  kept: KeptProject[];
-  /** Records as stored, format stamp included. */
-  library: unknown[];
-  artwork: unknown[];
-  datasheets: { hash: string; sheet: StoredDatasheet }[];
-}
-
-/** The project the browser kept (JSON text). */
-export async function loadBrowserProject(): Promise<string | undefined> {
-  try {
-    return (await get<string>('projects', 'current')) || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function all<T>(store: string): Promise<{ key: string; value: T }[]> {
-  const db = await open();
-  const s = db.transaction(store, 'readonly').objectStore(store);
-  const [keys, values] = await Promise.all([request(s.getAllKeys()), request(s.getAll() as IDBRequest<T[]>)]);
-  return keys.map((k, i) => ({ key: String(k), value: values[i]! }));
-}
-
-export async function browserData(): Promise<BrowserData> {
-  const projects = await all<unknown>('projects');
-  return {
-    project: await loadBrowserProject(),
-    kept: projects.map((p) => p.value).filter((v): v is KeptProject => typeof v === 'object' && v !== null && 'json' in v).sort((a, b) => a.at - b.at),
-    library: (await all<unknown>('library')).map((r) => r.value),
-    artwork: (await all<unknown>('artwork')).map((r) => r.value),
-    datasheets: (await all<StoredDatasheet>('datasheets')).map((r) => ({ hash: r.key, sheet: r.value })),
-  };
-}
-
-/** Whether this browser's data was moved to the server already. */
-export async function movedToDisk(): Promise<boolean> {
-  try {
-    return (await get<boolean>('settings', 'movedToDisk')) === true;
-  } catch {
-    return true; // nothing readable to move
-  }
-}
-
-export async function markMovedToDisk(): Promise<void> {
-  await put('settings', 'movedToDisk', true);
-}
 
 /* ----------------------------- stored records ----------------------------- */
 
@@ -333,8 +217,6 @@ interface OldSettings {
   claudeWeb?: boolean;
   bridgeCode?: string;
   bridgePort?: number | null;
-  /** The ruleset text before notes and checks were split (2026-10-13): prose with "### SCH.ID" headings and level lines. */
-  schematicRules?: string;
   version?: number;
 }
 
@@ -343,13 +225,8 @@ export async function loadSettings(): Promise<Settings> {
     const saved = (await get<Partial<Settings> & OldSettings>('settings', 'settings')) ?? {};
     // older versions: the 6-digit pairing code and the port of the "bridge" (now the local server);
     // one provider each ("anthropic", "claude-code") before APIs and agents became choices
-    const { bridgeCode: _code, bridgePort: _port, model, claudeModel, claudeWeb, provider, schematicRules, ...rest } = saved;
+    const { bridgeCode: _code, bridgePort: _port, model, claudeModel, claudeWeb, provider, ...rest } = saved;
     const merged: Settings = { ...DEFAULT_SETTINGS, ...rest };
-    // the ruleset text: its levels become check settings, its prose the notes ('' was the shipped default, which is gone)
-    if (schematicRules && rest.schematicNotes === undefined) {
-      const { notes, checks } = migrateRulesText(schematicRules);
-      Object.assign(merged, { schematicNotes: notes, schematicChecks: checks });
-    }
     // v1 stored theme "system" without the user ever choosing it
     if ((saved.version ?? 1) < 2 && saved.theme === 'system') merged.theme = DEFAULT_SETTINGS.theme;
     if (provider === 'api' || provider === 'agent') merged.provider = provider;

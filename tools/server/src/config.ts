@@ -57,9 +57,6 @@ export interface ServerConfig {
   projectsDir: string;
 }
 
-/** The folder's name before 4k7; moved to the new name on the first start (key, profile, logs, workspaces). */
-const OLD_DIR = '.tracewise';
-
 export function configDir(): string {
   if (process.env.FOURK7_HOME) return process.env.FOURK7_HOME;
   return inCheckout() ? devDir() : installedDir();
@@ -101,16 +98,7 @@ function seedDevDir(from: string, dev: string) {
 
 /** ~/.4k7, where the installed app keeps its things. */
 export function installedDir(): string {
-  const dir = join(homedir(), '.4k7');
-  const old = join(homedir(), OLD_DIR);
-  if (!existsSync(dir) && existsSync(old)) {
-    try {
-      renameSync(old, dir);
-    } catch {
-      // a fresh folder then; the old one stays where it was
-    }
-  }
-  return dir;
+  return join(homedir(), '.4k7');
 }
 
 export function configPath(): string {
@@ -121,8 +109,7 @@ export function loadConfig(): ServerConfig {
   const path = configPath();
   let cfg: Partial<Omit<ServerConfig, 'claude'>> & { claude?: Partial<ClaudeProfile> } = {};
   try {
-    // bridge.json: the name before the bridge became the server (its claude profile and appUrl carry over)
-    cfg = JSON.parse(readFileSync(existsSync(path) ? path : join(dirname(path), 'bridge.json'), 'utf8')) as Partial<ServerConfig>;
+    cfg = JSON.parse(readFileSync(path, 'utf8')) as Partial<ServerConfig>;
   } catch {
     // first run
   }

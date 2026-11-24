@@ -48,11 +48,8 @@ import { checkDesignCost, checkDesignStock, checkDesignValues, sourcingTool, typ
 import { fabRefreshPrompt } from './fabRefresh.ts';
 import {
   DEFAULT_SETTINGS,
-  browserData,
   loadApiKey,
   loadSettings,
-  markMovedToDisk,
-  movedToDisk,
   saveApiKey,
   saveSettings,
   storageHealth,
@@ -351,7 +348,6 @@ class AppState {
 
   private async loadDisk() {
     try {
-      await this.moveBrowserData();
       this.projects = await disk.listProjects();
       // changes made before the server answered get a project of their own: no file is replaced
       if (!this.unsaved) {
@@ -374,27 +370,6 @@ class AppState {
       return;
     }
     if (this.unsaved) await this.persist();
-  }
-
-  /**
-   * Versions before the files kept the project and the libraries in this browser: write them to
-   * files once (a library item already on disk is left as it is). The browser's copy stays.
-   */
-  private async moveBrowserData() {
-    if (await movedToDisk()) return;
-    const data = await browserData().catch(() => null);
-    if (!data) return;
-    let project: string | null = null;
-    if (data.project) project = await disk.createProject(data.project);
-    for (const k of data.kept) await disk.createProject(k.json, `unreadable ${new Date(k.at).toISOString().slice(0, 10)}`);
-    for (const r of data.library) if ((r as { id?: string }).id) await disk.putRecord('library', (r as { id: string }).id, r, true);
-    for (const r of data.artwork) if ((r as { id?: string }).id) await disk.putRecord('artwork', (r as { id: string }).id, r, true);
-    for (const d of data.datasheets) if (d.sheet?.data) await disk.putDatasheet(d.hash, d.sheet, true);
-    await markMovedToDisk();
-    if (project) {
-      await this.updateSettings({ project });
-      this.flash(`Your project is now a file: ${disk.projectFile(project)}`);
-    }
   }
 
   /** Open a project file. False (and the open project stays) when it cannot be read. */

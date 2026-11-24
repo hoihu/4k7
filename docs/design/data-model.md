@@ -99,7 +99,7 @@ when the user keeps it (`apps/web/src/lib/conversation.ts`). The undo history is
 
 `Design.format` is 2 for a design of one board and 3 (`MULTI_BOARD_FORMAT`) for a design of several,
 so an app that knows only one board refuses it instead of putting every part on one board. Older
-formats are migrated forward on load (`migrate` in `canonical.ts`).
+formats are refused on load (`migrate` in `canonical.ts`).
 
 Not in the file: imported parts and artwork (one JSON file per record in `~/.4k7/library` and
 `~/.4k7/artwork`), datasheets (`~/.4k7/datasheets/<sha256>.pdf`), and the settings and API keys (this
