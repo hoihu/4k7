@@ -378,14 +378,21 @@ describe('the user\'s placement choices', () => {
     expect(b.diagnostics.filter((x) => x.severity === 'error')).toEqual([]);
   });
 
-  it('older designs: their pinned parts become the user\'s choices (soft)', () => {
+  it('opens format 2 and several-board files as saved, and refuses format 1 (before 0.1.0)', () => {
     const k = buck();
     k.transact({ summary: 'pin', ops: [{ op: 'place', ref: 'J1', x_mm: 4, y_mm: 8, lock: true }] });
     k.accept();
-    const old = { ...JSON.parse(k.exportDesign()), format: 1 };
-    const k2 = new Kernel(old);
-    expect(k2.board().parts.find((p) => p.refdes === 'J1')!.locked).toBe(false);
-    expect(k2.board().parts.find((p) => p.refdes === 'J1')!.intent).toEqual({});
+    const saved = JSON.parse(k.exportDesign());
+    expect(saved.format).toBe(2);
+    expect(new Kernel(saved).board().parts.find((p) => p.refdes === 'J1')!.locked).toBe(true);
+    expect(() => new Kernel({ ...saved, format: 1 })).toThrow('Unsupported design format 1');
+    expect(k.transact({ summary: 'second board', ops: [{ op: 'add_board', name: 'Spare' }] }).status).toBe('ok');
+    k.accept();
+    const two = JSON.parse(k.exportDesign());
+    expect(two.format).toBe(3);
+    const again = new Kernel(two);
+    expect(again.board().parts.find((p) => p.refdes === 'J1')!.locked).toBe(true);
+    expect(again.boardId('Spare')).toBeTruthy();
   });
 });
 
