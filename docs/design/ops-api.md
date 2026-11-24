@@ -29,7 +29,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `get_diagnostics`: the design's current diagnostics (check results: the schematic's, `XCHK.*`, and the copper shorts of every board), errors first, then warnings and infos, the waived ones (marked with *waivedBy*) last. The answer is `{ diagnostics, found? }`. It lists at most 20 (*limit*, up to 200, from *offset*), narrowed to one *code* (exact, no prefix) or *severity* if those are given. When not all are listed, *found* counts them the way get_board's *drc_found* does (total, open, waived, matching, by code with the nets and parts each names most). It also says the call for the next page, e.g. `get_diagnostics { offset: 20, code: "ERC.PIN_UNCONNECTED" }`. Diagnostics carry no board, so there is no board filter. Code that needs the whole list (the app, which adds the production files' `FAB.*` findings before paging, and the eval) takes it from the kernel's `diagnostics()`. get_board and get_diagnostics share one paging helper (`packages/schema/src/board.ts`).
 - `get_ledger`: the constraint ledger: every constraint with its strength and the user's words.
 - `get_description`: the design description: overview, functional blocks with their parts, parts no block covers yet.
-- `get_fab_profiles`: the built-in manufacturer profiles and the one this board uses.
+- `get_fab_profiles`: the built-in manufacturer profiles and the one this board uses. On several boards it takes *board*: the named board's profile and layers, or, with none named, every board's (*boards*), the presets once.
 - `get_schematic`: the schematic drawing: pages, blocks, where each symbol and net label stands.
 - `get_copper`: drawn tracks and vias with their ids, optionally by net or area.
 - `get_board`: board outline, part positions, routing stats and DRC results; on a design of several boards, every board's, or the one named with its board argument (as `get_copper`, `get_current_map`, `try_placements` and `suggest_moves` take it). The open DRC findings come first in the answer, errors first, at most 20 of them; when there are more, *drc_found* counts them all by code (with the nets, or net pairs, and the parts each code names most) and says how many are not listed. The *drc* parameter pages them (*offset*, *limit* up to 200) and narrows them to one *code*, *net* or *ref* (a part, track or via), so every finding can be read however many there are; with several boards and none named, it applies to each board's list.
@@ -191,6 +191,14 @@ a `code` (`RejectionCode`: `REF_UNKNOWN`, `PIN_UNKNOWN`, `SWAP_INVALID`, `CONSTR
 `BOARD_AMBIGUOUS`, …), the `message`, the closest `candidates` for an unknown name, and `fixHints`
 (ops) where the kernel can tell. On a design of several boards, a board op names its `board` or a
 part on one; one that says neither is refused with `BOARD_AMBIGUOUS` ([multi-board](multi-board.md)).
+
+A query that cannot answer returns a `QueryError` (`packages/schema/src/results.ts`): `{ error, code?,
+candidates? }`, with the codes of a rejection where one applies: `BOARD_UNKNOWN` (a `board` the design does
+not have), `BOARD_AMBIGUOUS` (a board query that names no board on a design of several; the boards as
+candidates), `NET_UNKNOWN`, `REF_UNKNOWN` (also `suggest_moves` on parts not on the board), `PART_UNKNOWN`,
+`PROJECT_UNKNOWN` (`list_blocks`). The keys these errors had before (`boards`, `nets`, `projects`) are kept
+beside `candidates` for one release and then dropped. A successful answer's `boards` or `nets` (`get_board`
+of every board, `get_net` of a net that crosses boards) is no error and stays.
 
 The in-app agent and external agents (MCP, through the server's relay to the open tab) reach the
 catalogue through the same tools: `design_edit` (a transaction) and `design_query` (one query op),
