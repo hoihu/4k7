@@ -15,7 +15,7 @@ const methods = {
    * `by`: the user for the app's own edits (drags, buttons); the agent's tool calls leave it out.
    * `routed`: what the route helper found for the transaction's route ops on drawn copper, in the
    * helper worker (by op index): laid as found, without routing here. `sources`: the stored projects
-   * the app read for the transaction's import_block ops.
+   * the app read for the transaction's import_block and import_board ops.
    */
   transact: (tx: unknown, by?: 'user' | 'agent', routed?: Record<number, RouteHelperResult>, rev?: number, sources?: ImportSources) =>
     kernel.transact(tx, by, routed ? { results: routed, ...(rev !== undefined ? { rev } : {}) } : undefined, sources),

@@ -1,17 +1,18 @@
 /**
- * import_block: copy one functional block of another stored project into the open design. The app
+ * import_block: copy one functional block of another stored project into the open design; import_board
+ * (D29): a whole board of one, as a board of its own. The app
  * reads that project's file (only an id the projects folder lists) and hands it to the transaction
  * (Kernel.transact's `sources`), so the op itself touches no file and dry runs, review and undo work
  * as for any edit op. See docs/design/ops-api.md §7.
  */
-import type { Component, Design, EditOp, ImportReport, NetAttrs, OpResult } from '@4k7/schema';
-import { allocRefdes, cardOf, createNet, findNet, isAutoNet, natCmp, nextId, reject } from './doc.ts';
-import { addPart } from './netops.ts';
+import { DEFAULT_BOARD, type BoardImportReport, type BoardSettings, type Component, type Design, type EditOp, type ImportReport, type NetAttrs, type OpResult } from '@4k7/schema';
+import { allocRefdes, cardOf, closest, createNet, findNet, isAutoNet, natCmp, nextId, reject } from './doc.ts';
+import { addPart, addSheet } from './netops.ts';
 import { sheetByName } from './sheets.ts';
-import { assignBoard, resolveBoard } from './boards.ts';
+import { addBoard, assignBoard, boardList, boardOf, findBoard, focusBoard, putSettings, resolveBoard, settingsOf } from './boards.ts';
 import { listBlocks, readProject } from './reuse.ts';
 
-/** The stored projects the app read for a transaction's import_block ops: the ids the folder lists, and the files by id. */
+/** The stored projects the app read for a transaction's import_block and import_board ops: the ids the folder lists, and the files by id. */
 export interface ImportSources {
   projects: string[];
   files: Record<string, string>;
@@ -50,16 +51,8 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
   const { ids, nets, renamed, cards } = copyParts(d, src, comps, { project: op.project, sheet, board: board?.id, join: (name) => op.nets[name], prefix: op.prefix });
 
   // its describe block, and the constraints on its parts that say how it is drawn
-  let title = block.title;
-  for (let i = 2; d.description?.blocks.some((b) => b.title === title); i++) title = `${block.title} (${i})`;
-  d.description = { overview: d.description?.overview ?? '', blocks: [...(d.description?.blocks ?? []), { title, components: [...ids.values()], text: block.text }] };
-  let constraints = 0;
-  for (const k of Object.values(src.ledger)) {
-    if (!TRAVELS.has(k.kind) || !k.a || !ids.has(k.a) || (k.b && !ids.has(k.b))) continue;
-    const id = nextId(d, 'k');
-    d.ledger[id] = { ...structuredClone(k), id, a: ids.get(k.a)!, ...(k.b ? { b: ids.get(k.b)! } : {}) };
-    constraints++;
-  }
+  const title = appendBlock(d, block.title, [...ids.values()], block.text);
+  const constraints = copyConstraints(d, src, ids);
 
   // the values to look at again: every part with params, and what it sets where an IC pin says so
   const refOf = (srcId: string) => d.components[ids.get(srcId)!]!.refdes;
@@ -89,6 +82,155 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
     (cards.project.length ? `; not in the library, card taken from ${op.project}: ${cards.project.join(', ')}` : '') +
     (recheck.length ? `; values to recheck (chosen for ${op.project}): ${recheck.map((x) => `${x.ref} ${Object.values(x.params).join(' ')}${x.why.startsWith('sets') ? ` (${x.why})` : ''}`).join(', ')}` : '');
   return { op: 'import_block', effect, ids: [...ids.values(), ...new Set(nets.values())], imported };
+}
+
+/** Append a describe block, ` (2)` after a title that is taken; returns its title here. */
+function appendBlock(d: Design, want: string, components: string[], text: string): string {
+  let title = want;
+  for (let i = 2; d.description?.blocks.some((b) => b.title === title); i++) title = `${want} (${i})`;
+  d.description = { overview: d.description?.overview ?? '', blocks: [...(d.description?.blocks ?? []), { title, components, text }] };
+  return title;
+}
+
+/** The constraints between copied parts that travel (TRAVELS), with their parts' new ids; returns how many. */
+function copyConstraints(d: Design, src: Design, ids: ReadonlyMap<string, string>): number {
+  let n = 0;
+  for (const k of Object.values(src.ledger)) {
+    if (!TRAVELS.has(k.kind) || !k.a || !ids.has(k.a) || (k.b && !ids.has(k.b))) continue;
+    const id = nextId(d, 'k');
+    d.ledger[id] = { ...structuredClone(k), id, a: ids.get(k.a)!, ...(k.b ? { b: ids.get(k.b)! } : {}) };
+    n++;
+  }
+  return n;
+}
+
+/** The net attributes a joined net is rechecked for when the source's differ. */
+const RECHECK_ATTRS = ['voltage', 'maxCurrent', 'external', 'power', 'trackWidth'] as const;
+
+/**
+ * import_board (D29): copy a whole board of another stored project in as a board of this design: every
+ * part (copyParts), nets joined by name unless `nets` says otherwise, its describe blocks and travelling
+ * constraints, and the board's outline, build, fab tier and holes. Parts arrive unplaced; placement and
+ * copper are later steps. See docs/design/ops-api.md §7 and docs/design/multi-board.md.
+ */
+export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' }>, sources?: ImportSources): OpResult {
+  if (!sources) reject({ code: 'PROJECT_UNKNOWN', message: 'import_board needs the projects folder, which the app reads from the 4k7 server: it is not connected.' });
+  const src = readProject(op.project, sources.files[op.project], sources.projects);
+  if ('error' in src) reject({ code: 'PROJECT_UNKNOWN', message: src.error, ...(src.projects ? { candidates: src.projects } : {}) });
+  const srcBoards = boardList(src).map((b) => b.name);
+  const entry = op.board === undefined ? boardList(src)[0]! : findBoard(src, op.board);
+  if (!entry) reject({ code: 'BOARD_UNKNOWN', message: `No board "${op.board}" in ${op.project}. Its boards: ${srcBoards.join(', ')}.`, candidates: closest(op.board!, srcBoards) });
+  const f = focusBoard(src, entry.id);
+  const comps = Object.values(f.components).sort((a, b) => natCmp(a.refdes, b.refdes));
+  const srcNets = Object.values(f.nets);
+  const stray = Object.keys(op.nets ?? {}).filter((n) => !srcNets.some((x) => x.name === n));
+  if (stray.length) reject({ code: 'NET_UNKNOWN', message: `${stray.join(', ')}: not a net of ${op.project}'s board "${entry.name}". Nothing was imported.`, candidates: srcNets.map((n) => n.name).sort(natCmp) });
+
+  // the target board: new, or one with no parts yet (import_board never replaces parts)
+  const here = findBoard(d, op.as);
+  if (here) {
+    const on = Object.values(d.components).filter((c) => boardOf(d, c) === here.id);
+    if (on.length) reject({ code: 'BOARD_INVALID', message: `Board "${here.name}" has parts (${on.map((c) => c.refdes).sort(natCmp).slice(0, 6).join(', ')}${on.length > 6 ? ', …' : ''}): import_board copies onto a new or empty board only. Name a new board with as, or remove its parts first.` });
+  }
+  const boardId = here?.id ?? addBoard(d, { name: op.as }).ids[0]!;
+  const boardName = d.boards?.[boardId]?.name ?? here!.name;
+
+  // the sheet: the one of that name, else a new one; a sheet with no parts yet is put on the board
+  const sheetName = op.sheet ?? boardName;
+  const existing = Object.values(d.sheets).find((x) => x.name.toLowerCase() === sheetName.toLowerCase() || x.id === sheetName);
+  const sheet = existing?.id ?? addSheet(d, sheetName).ids![0]!;
+  if (!Object.values(d.components).some((c) => c.sheet === sheet)) assignBoard(d, { board: boardId, sheets: [sheet] });
+
+  // the nets: by name (joined where this design has one), an override's name, or made anew ("fresh", automatic N$)
+  const before = new Set(Object.keys(d.nets));
+  const auto = new Set(srcNets.filter(isAutoNet).map((n) => n.name));
+  const join = (name: string) => {
+    const o = op.nets?.[name];
+    if (o === 'fresh' || (o === undefined && auto.has(name))) return undefined;
+    if (o !== undefined) return o;
+    return findNet(d, name) ? name : undefined;
+  };
+  const { ids, nets, renamed, cards } = copyParts(d, f, comps, { project: op.project, sheet, board: boardId, join, prefix: op.prefix });
+
+  const report: BoardImportReport['nets'] = { joined: {}, made: [], merged: [], recheck: [] };
+  const onto = new Map<string, string[]>();
+  for (const [srcId, id] of nets) {
+    const s = f.nets[srcId]!;
+    const n = d.nets[id]!;
+    onto.set(id, [...(onto.get(id) ?? []), s.name]);
+    if (!before.has(id)) {
+      // a width the source set for its own board is this board's width here; other boards' ids mean nothing here
+      const w = s.attrs.boardTrackWidths?.[entry.id];
+      delete n.attrs.boardTrackWidths;
+      if (w !== undefined) n.attrs.boardTrackWidths = { [boardId]: w };
+      continue;
+    }
+    report.joined[s.name] = n.name;
+    const differ = Object.fromEntries(RECHECK_ATTRS.filter((a) => s.attrs[a] !== undefined && s.attrs[a] !== n.attrs[a]).map((a) => [a, { here: n.attrs[a], source: s.attrs[a] }]));
+    if (Object.keys(differ).length) report.recheck.push({ net: n.name, attrs: differ });
+  }
+  report.made = [...onto.keys()].filter((id) => !before.has(id)).map((id) => d.nets[id]!.name).sort(natCmp);
+  report.merged = [...onto].filter(([, from]) => from.length > 1).map(([id, from]) => ({ net: d.nets[id]!.name, from: from.sort(natCmp) }));
+
+  // its describe blocks (the parts of each on this board) and the constraints that say how they are drawn
+  const blocks: string[] = [];
+  for (const b of src.description?.blocks ?? []) {
+    const mine = b.components.filter((c) => ids.has(c)).map((c) => ids.get(c)!);
+    if (mine.length) blocks.push(appendBlock(d, b.title, mine, b.text));
+  }
+  const constraints = copyConstraints(d, f, ids);
+
+  // the board: outline, build and holes as the source has them; the fab tier where it is of this design's house
+  const from: BoardSettings = settingsOf(src, entry.id) ?? DEFAULT_BOARD;
+  const s: BoardSettings = { ...structuredClone(settingsOf(d, boardId) ?? DEFAULT_BOARD), layers: from.layers, rules: structuredClone(from.rules) };
+  const took = ['layers', 'rules'];
+  for (const k of ['width', 'height', 'cornerRadius', 'shape', 'cutouts', 'stackup'] as const) {
+    if (from[k] === undefined) delete s[k];
+    else {
+      (s as unknown as Record<string, unknown>)[k] = structuredClone(from[k]);
+      took.push(k === 'cornerRadius' ? 'corner radius' : k);
+    }
+  }
+  const lost: string[] = [];
+  const holes = (from.holes ?? []).map((h) => {
+    const { netId, ...rest } = structuredClone(h);
+    if (netId && !nets.has(netId)) lost.push(h.id);
+    return netId && nets.has(netId) ? { ...rest, netId: nets.get(netId)! } : rest;
+  });
+  if (holes.length) {
+    s.holes = holes;
+    took.push(`${holes.length} hole(s)${lost.length ? ` (${lost.join(', ')} on a net no part of the board is on: left on none)` : ''}`);
+  } else delete s.holes;
+  const house = boardList(d).map((b) => (b.id === boardId ? undefined : settingsOf(d, b.id)?.fab?.house)).find(Boolean);
+  let fab = '';
+  if (from.fab && (!house || house.toLowerCase() === from.fab.house.toLowerCase())) {
+    s.fab = structuredClone(from.fab);
+    took.push(`fab ${from.fab.house} ${from.fab.tier}`);
+  } else if (from.fab) fab = `; ${op.project} is made by ${from.fab.house}, this design by ${house}: the board keeps ${house}${s.fab ? ` ${s.fab.tier}` : ''} (one house per design), check its limits`;
+  putSettings(d, boardId, s);
+
+  const left = ['placement (parts arrive unplaced)', 'copper', ...(from.keepouts?.length ? ['keep-outs'] : []), ...(from.graphics?.length ? ['graphics'] : []), ...(from.panel ? ['panel'] : [])];
+  const parts = comps.map((c) => d.components[ids.get(c.id)!]!.refdes);
+  const importedBoard: BoardImportReport = {
+    project: op.project, from: entry.name, board: boardName, made: !here, sheet: d.sheets[sheet]!.name, parts, renamed, cards,
+    nets: report, blocks, constraints, board_settings: took, left_behind: left,
+  };
+  const list = (m: Record<string, string>) => Object.entries(m).map(([a, b]) => `${a} → ${b}`).join(', ');
+  const joinedText = Object.entries(report.joined).map(([a, b]) => (a === b ? a : `${a} → ${b}`)).join(', ');
+  const effect =
+    `imported board "${entry.name}" of ${op.project} as ${here ? 'the empty' : 'new'} board "${boardName}" (sheet ${d.sheets[sheet]!.name}): ${parts.length} part(s) (${parts.join(', ')})` +
+    `; nets joined ${joinedText || 'none'}; made ${report.made.join(', ') || 'none'}` +
+    (report.merged.length ? `; MERGED (several source nets on one net here): ${report.merged.map((m) => `${m.from.join(' + ')} → ${m.net}`).join(', ')}` : '') +
+    (report.recheck.length ? `; joined nets to recheck (attributes differ): ${report.recheck.map((r) => `${r.net} (${Object.entries(r.attrs).map(([a, v]) => `${a} ${String(v.here ?? 'unset')} here, ${String(v.source)} in ${op.project}`).join(', ')})`).join('; ')}` : '') +
+    (Object.keys(renamed.refdes).length ? `; renamed ${list(renamed.refdes)} (silkscreen changes: export that board's files again)` : '') +
+    (Object.keys(renamed.nets).length ? `; nets renamed ${list(renamed.nets)}` : '') +
+    (cards.project.length ? `; not in the library, card taken from ${op.project}: ${cards.project.join(', ')}` : '') +
+    (blocks.length ? `; blocks ${blocks.join(', ')}` : '') +
+    (constraints ? `, ${constraints} constraint(s)` : '') +
+    `; board: ${took.join(', ')}${fab}` +
+    `; not brought over: ${left.join(', ')}` +
+    (Object.keys(report.joined).length ? `. Nets joined across boards need a mated connector pair (ERC.BOARD_CROSSING until then): add mate` : '');
+  return { op: 'import_board', effect, ids: [boardId, ...ids.values(), ...new Set(nets.values())], importedBoard };
 }
 
 /** Where copyParts puts the parts and how it treats their nets. */

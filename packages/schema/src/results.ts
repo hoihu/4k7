@@ -98,7 +98,7 @@ export type RejectionCode =
   | 'IMPEDANCE_IMPOSSIBLE'
   /** The route helper's results were computed for an earlier working copy (it changed meanwhile). */
   | 'STALE'
-  /** import_block: a project the projects folder does not list, or one that cannot be read. */
+  /** import_block, import_board: a project the projects folder does not list, or one that cannot be read. */
   | 'PROJECT_UNKNOWN'
   | 'BLOCK_UNKNOWN'
   /** import_block: a boundary net of the block that is not mapped to a net of this design. */
@@ -134,6 +134,38 @@ export interface OpResult {
   ids?: string[];
   /** import_block: what came in and what to look at again (also in `effect`). */
   imported?: ImportReport;
+  /** import_board: what came in, how the nets were joined, and what stayed behind (also in `effect`). */
+  importedBoard?: BoardImportReport;
+}
+
+/** import_board: a board of another project copied in as a board of this design. See docs/design/ops-api.md §7. */
+export interface BoardImportReport {
+  project: string;
+  /** The source's board, and the board of this design it became (`made`: a new one). */
+  from: string;
+  board: string;
+  made: boolean;
+  sheet: string;
+  /** The new refdes of every part copied. */
+  parts: string[];
+  renamed: ImportReport['renamed'];
+  cards: ImportReport['cards'];
+  nets: {
+    /** Source nets that joined a net this design had: source name → net here. */
+    joined: Record<string, string>;
+    /** Nets made anew, by their name here. */
+    made: string[];
+    /** A net here that two or more source nets went onto: a merge. */
+    merged: { net: string; from: string[] }[];
+    /** Joined nets whose attributes differ here from the source's (voltage, max current …): to check. */
+    recheck: { net: string; attrs: Record<string, { here: unknown; source: unknown }> }[];
+  };
+  /** The describe blocks appended, by their title here. */
+  blocks: string[];
+  constraints: number;
+  /** What the board took over, and what stayed behind (placement, copper, keep-outs). */
+  board_settings: string[];
+  left_behind: string[];
 }
 
 export interface ImportReport {

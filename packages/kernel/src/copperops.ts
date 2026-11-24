@@ -779,7 +779,7 @@ export interface OpContext {
   helper?: HelperHooks;
   /** When the transaction's route ops must be done by (Date.now() ms). */
   deadline?: number;
-  /** The stored projects the app read for the transaction's import_block ops. */
+  /** The stored projects the app read for the transaction's import_block and import_board ops. */
   sources?: ImportSources;
 }
 
@@ -900,6 +900,8 @@ const COPPER_AFTER: Record<EditOp['op'], 'follow' | 'check' | null> = {
   disconnect: 'follow',
   swap_pins: 'follow',
   import_block: 'follow',
+  // its copper (a later step of D29) is checked once the transaction is applied
+  import_board: 'check',
   no_connect: 'follow',
   set_net: null,
   add_sheet: 'follow',
