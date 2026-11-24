@@ -189,7 +189,8 @@ removed, changed), the diagnostic `counts`, and the diagnostics the transaction 
 `resolved`. A refused transaction changes nothing and carries one `rejection`: the index of the op,
 a `code` (`RejectionCode`: `REF_UNKNOWN`, `PIN_UNKNOWN`, `SWAP_INVALID`, `CONSTRAINT_CONFLICT`,
 `BOARD_AMBIGUOUS`, …), the `message`, the closest `candidates` for an unknown name, and `fixHints`
-(ops) where the kernel can tell. On a design of several boards, a board op names its `board` or a
+(ops) where the kernel can tell. Every op that names a sheet finds it by name (any case) or id, and
+refuses one that is neither with `SHEET_UNKNOWN`, every sheet name as candidates. On a design of several boards, a board op names its `board` or a
 part on one; one that says neither is refused with `BOARD_AMBIGUOUS` ([multi-board](multi-board.md)).
 
 A query that cannot answer returns a `QueryError` (`packages/schema/src/results.ts`): `{ error, code?,
