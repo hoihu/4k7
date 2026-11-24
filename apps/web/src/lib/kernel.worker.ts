@@ -22,6 +22,8 @@ const methods = {
   /** The working copy with its revision (the route helper's worker routes it; transact refuses its results if it changed). */
   draftSnapshot: () => kernel.draftSnapshot(),
   query: (q: unknown) => kernel.query(q),
+  /** Every diagnostic, unpaged (get_diagnostics pages them): the app adds the production files' findings. */
+  diagnostics: () => kernel.diagnostics(),
   state: () => kernel.state(),
   setScope: (s: OptimizeScope | null) => kernel.setScope(s),
   /** The schematic ruleset as markdown (null = the shipped default). */
