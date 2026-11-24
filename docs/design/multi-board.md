@@ -36,7 +36,10 @@ sheets and hardly ever single parts.
 on the board of the parts it names (`place R4`), else of the nets it names when they are on one
 board only (`add_test_points LED_A`); one that says neither is refused (`BOARD_AMBIGUOUS`) with
 the boards as candidates, and one that names a part of another board is refused too
-(`BOARD_INVALID`). Parts are read only from the fields that name parts and pins (`ref`, `refs`,
+(`BOARD_INVALID`). A board query (`get_copper`, `get_current_map`, `try_placements`, `suggest_moves`)
+without `board` infers it by the same rules (`boardFor`): the board of the parts it names, else of its
+nets on one board only; one that says neither answers with the same code and candidates (a query
+error, [ops-api](ops-api.md) §3). `get_board` without `board` infers nothing: it answers for every board. Parts are read only from the fields that name parts and pins (`ref`, `refs`,
 `parts`, `near`, `under`, `part`, a track's `from`/`to`), so a net, a copper or graphic id or a
 silkscreen text that looks like a refdes is none. The first board is called Main until renamed,
 with one board or several. A part that moves to another board (`assign_board`, `remove_board`,
@@ -44,10 +47,17 @@ with one board or several. A part that moves to another board (`assign_board`, `
 and its fixed position behind. Test points are numbered across the boards and go on the sheet of
 the part they are at. A waiver can name its board (`add_waiver board`): a board check finds the
 same on each board, the same net or the same copper id, and a waiver without it holds on every
-board. The app's own edits (a drag, the panel's tabs) are for the board
-shown. Queries: `get_board` without `board` answers for every board; `get_copper`,
-`get_current_map`, `try_placements` and `suggest_moves` need it. `get_summary` lists the boards
-(name, sheets, parts), each part's board, and the boards a net spans. `get_board_image` and
+board. A `board` that is not one of the design's is refused (`BOARD_UNKNOWN`), with one
+board as with several. `constrain near` between parts of two boards is refused (`BOARD_INVALID`):
+each board's focus keeps only the constraints between its own parts. The app's own edits (a drag, the panel's tabs) are for the board
+shown. Queries: `get_board` and `get_fab_profiles` without `board` answer for every board (`boards`:
+one entry each; `get_fab_profiles` gives each board's layers and profile, and the presets once);
+`get_copper`, `get_current_map`, `try_placements` and `suggest_moves` need it. `get_summary` lists
+the boards (name, sheets, parts, and each board's stack-up and `currentRise`, which on several
+boards replace the design-wide `stackup`), each part's board, and the boards a net spans. `calc`
+`impedance` and `track_current` take `board` for that board's stack-up and heating; without it on
+boards that differ they ask which, unless the arguments give the stack-up (`h` and `er`;
+`copper_um` and `rise_c`). `get_board_image` and
 `view_gerbers` take `board` and show that board in the app.
 
 **How it is built** (`kernel/src/boards.ts`): a *focus* is the design as if one board were its
@@ -123,6 +133,8 @@ order is: the impedance rule's width, the board's, the net's, the rules' signal 
 (`ownTrackWidth` in `kernel/src/boards.ts`, read by the router setup, drawn tracks and `get_net`,
 whose `track.by_board` gives each board's width and why). The route key of a board holds its own
 widths, so a change on one board re-routes that board only. `remove_board` drops its widths.
+The fab limit is checked against the board it is for: with `board` that board's, without it every
+board the net has pins on (a width any of them cannot make is refused, `FAB_LIMIT`).
 
 ## 5. Same fab house
 

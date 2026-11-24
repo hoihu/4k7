@@ -9,6 +9,7 @@ import {
   Transaction,
   emptyDesign,
   type Design,
+  type BoardSettings,
   type DesignSummary,
   type LabelView,
   type Diagnostic,
@@ -54,7 +55,7 @@ import { descriptionView } from './sheetops.ts';
 import { diagKey, runChecks, sortDiagnostics } from './checks.ts';
 import { crossChecks } from './xcheck.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
-import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, valueOf, workCopy } from './doc.ts';
+import { RejectError, applyWaivers, cardOf, clone, closest, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, queryError, valueOf, workCopy } from './doc.ts';
 import { Memo, drawingInputs } from './derive.ts';
 import { syncDrawing, viewOf } from './drawing.ts';
 import { keepForcedNets } from './netdraw.ts';
@@ -73,7 +74,7 @@ import { tryPlacements } from './trial.ts';
 import { suggestMoves } from './suggest.ts';
 import { impedanceText, resolveRule } from './lines.ts';
 import { lineBoard } from './lineops.ts';
-import { boardList, boardOf, commitFocus, focusBoard, multiBoard, ownTrackWidth, resolveBoard, settingsOf } from './boards.ts';
+import { boardFor, boardList, boardOf, commitFocus, findBoard, focusBoard, multiBoard, ownTrackWidth, settingsOf } from './boards.ts';
 import { matePairs, pairsText } from './mates.ts';
 import { assemblyOf } from './assembly.ts';
 import { blocksOfProject, boardOfProject } from './reuse.ts';
@@ -194,11 +195,6 @@ export class Kernel {
     let m = this.boardViews.get(d);
     if (!m) this.boardViews.set(d, (m = new Map()));
     m.set(id, b);
-  }
-
-  /** The board a query or a view is for: the one named, else the only one (several and none named: the first). */
-  boardId(ref?: string): string {
-    return ref === undefined ? FIRST_BOARD : (resolveBoardSafe(this.draft, ref) ?? FIRST_BOARD);
   }
 
   /** The design's boards (id, name), first board first. */
@@ -576,15 +572,31 @@ export class Kernel {
     }
     // a board query reads one board: the design as if it were the only one
     let bid = FIRST_BOARD;
-    const onBoard = q.op === 'get_board' || q.op === 'get_copper' || q.op === 'get_current_map' || q.op === 'try_placements' || q.op === 'suggest_moves';
+    const onBoard = q.op === 'get_board' || q.op === 'get_copper' || q.op === 'get_current_map' || q.op === 'try_placements' || q.op === 'suggest_moves' || q.op === 'get_fab_profiles';
+    // these answer for every board when none is named; the others ask which
+    const everyBoard = q.op === 'get_board' || q.op === 'get_fab_profiles';
     if (onBoard) {
       const ref = (q as { board?: string }).board;
       if (ref !== undefined) {
-        const b = resolveBoardSafe(all, ref);
-        if (!b) return { error: `No board "${ref}".`, boards: boardList(all).map((x) => x.name) };
-        bid = b;
-      } else if (multiBoard(all) && q.op !== 'get_board') {
-        return { error: `The design has ${boardList(all).length} boards: say which with board.`, boards: boardList(all).map((x) => x.name) };
+        const b = findBoard(all, ref);
+        if (!b) {
+          const boards = boardList(all).map((x) => x.name);
+          return queryError(`No board "${ref}".`, 'BOARD_UNKNOWN', closest(ref, boards), { boards });
+        }
+        bid = b.id;
+      } else if (multiBoard(all) && !everyBoard) {
+        // as an edit does: the board of the parts it names, else of the nets it names when they are
+        // on one board (boardFor). get_board and get_fab_profiles without board answer for every board, below.
+        try {
+          bid = boardFor(all, q as { op: string; board?: string });
+        } catch (e) {
+          if (!(e instanceof RejectError)) throw e;
+          const boards = boardList(all).map((x) => x.name);
+          // parts or nets on several boards: boardFor says which; naming nothing: the query's own words
+          const several = / names (parts|nets) on several boards/.test(e.rejection.message);
+          const error = several ? e.rejection.message : `The design has ${boards.length} boards: say which with board.`;
+          return queryError(error, 'BOARD_AMBIGUOUS', boards, { boards });
+        }
       }
     }
     if (q.op === 'get_board' && (q as { board?: string }).board === undefined && multiBoard(all)) {
@@ -620,7 +632,7 @@ export class Kernel {
       }
       case 'get_component': {
         const c = findComponent(d, q.ref);
-        if (!c) return { error: `No component ${q.ref}` };
+        if (!c) return queryError(`No component ${q.ref}`, 'REF_UNKNOWN', closest(q.ref, Object.values(d.components).map((x) => x.refdes)));
         const card = cardOf(d, c.part);
         return {
           refdes: c.refdes,
@@ -646,7 +658,10 @@ export class Kernel {
       }
       case 'get_net': {
         const n = findNet(d, q.net);
-        if (!n) return { error: `No net ${q.net}`, nets: Object.values(d.nets).map((x) => x.name).sort(natCmp) };
+        if (!n) {
+          const nets = Object.values(d.nets).map((x) => x.name).sort(natCmp);
+          return queryError(`No net ${q.net}`, 'NET_UNKNOWN', closest(q.net, nets), { nets });
+        }
         const members = netMembers(d).get(n.id) ?? [];
         const pins = members.map((m) => `${m.comp.refdes}.${m.pin.name} (${m.pin.type})`);
         // several boards: the board facts below are those of the board of its first pin
@@ -728,13 +743,24 @@ export class Kernel {
       case 'get_power_tree':
         return powerTreeAnswer(d);
       case 'get_fab_profiles': {
-        const layers = d.board?.layers ?? 2;
-        const cur = d.board?.fab;
-        return {
-          current: cur ? { id: cur.id, summary: fabSummary(cur), origin: cur.origin, source: cur.source, limits: cur.limits, ...(cur.notes?.length ? { notes: cur.notes } : {}) } : 'none',
-          presets: fabPresets().map((p) => ({ id: p.id, house: p.house, tier: p.tier, layers: p.layers, summary: fabSummary(p), source: p.source.url, checked: p.source.checked })),
-          how: `set_fab_profile preset: "jlcpcb" (or a tier id above); a bare house takes the tier for this board's ${layers} layers (Eurocircuits: 6C; any pattern class 3–9 with drill class A–E works, e.g. "eurocircuits/5C"). For another manufacturer, or newer numbers, read its capabilities page and import: house, tier, source_url, checked and limits in mm; never guess a number.`,
+        // one board (or the one named): its layers and profile; several and none named: each board's
+        const current = (s: BoardSettings | undefined) => {
+          const cur = s?.fab;
+          return cur ? { id: cur.id, summary: fabSummary(cur), origin: cur.origin, source: cur.source, limits: cur.limits, ...(cur.notes?.length ? { notes: cur.notes } : {}) } : ('none' as const);
         };
+        const how = (layers: string) =>
+          `set_fab_profile preset: "jlcpcb" (or a tier id above); a bare house takes the tier for ${layers} (Eurocircuits: 6C; any pattern class 3–9 with drill class A–E works, e.g. "eurocircuits/5C"). For another manufacturer, or newer numbers, read its capabilities page and import: house, tier, source_url, checked and limits in mm; never guess a number.`;
+        const presets = fabPresets().map((p) => ({ id: p.id, house: p.house, tier: p.tier, layers: p.layers, summary: fabSummary(p), source: p.source.url, checked: p.source.checked }));
+        if (!multiBoard(all)) return { current: current(d.board), presets, how: how(`this board's ${d.board?.layers ?? 2} layers`) };
+        if ((q as { board?: string }).board === undefined) {
+          return {
+            boards: boardList(all).map((b) => ({ board: b.name, id: b.id, layers: settingsOf(all, b.id)?.layers ?? 2, current: current(settingsOf(all, b.id)) })),
+            presets,
+            how: `${how('each board\'s layers')} The boards of a design go to one house, a tier of it per board: set_fab_profile without board sets every board, with board one board's tier.`,
+          };
+        }
+        const layers = d.board?.layers ?? 2;
+        return { board: all.boards![bid]!.name, layers, current: current(d.board), presets, how: how(`this board's ${layers} layers`) };
       }
       case 'get_schematic': {
         // what the agent needs to place parts: each page's paper and where every symbol stands on it
@@ -823,7 +849,7 @@ export class Kernel {
         }));
       case 'get_part': {
         const p = cardOf(d, q.id);
-        return p ?? { error: `No part ${q.id}`, candidates: searchParts(q.id).slice(0, 5).map((x) => x.id) };
+        return p ?? queryError(`No part ${q.id}`, 'PART_UNKNOWN', searchParts(q.id).slice(0, 5).map((x) => x.id));
       }
       // the app answers these with the board's facts and the guide; the kernel alone knows the design's part
       case 'get_enclosure':
@@ -901,6 +927,7 @@ export class Kernel {
               id: b.id,
               sheets: Object.values(d.sheets).filter((s) => (s.board && d.boards![s.board] ? s.board : FIRST_BOARD) === b.id).sort((x, y) => x.order - y.order).map((s) => s.name),
               parts: Object.values(d.components).filter((c) => boardOf(d, c) === b.id).length,
+              ...stackOf(settingsOf(d, b.id)),
             })),
           }
         : {}),
@@ -930,8 +957,8 @@ export class Kernel {
       waivers: Object.keys(d.waivers).length,
       ...(d.description ? { description: { blocks: d.description.blocks.length, undescribed: descriptionView(d)!.undescribed } } : {}),
       ...(d.valueSeries ? { valueSeries: { ...d.valueSeries } } : {}),
-      stackup: (({ name, copper, dielectric, mask }) => ({ name, copper, dielectric, ...(mask ? { mask } : {}) }))(boardStackup(d.board ?? DEFAULT_BOARD)),
-      ...(d.board?.rules.currentRise ? { currentRise: d.board.rules.currentRise } : {}),
+      // several boards: each board's stack-up and heating stand in its entry of boards, not here
+      ...(multi ? {} : stackOf(d.board)),
     };
   }
 
@@ -1006,15 +1033,6 @@ export class Kernel {
 
 /* --------------------------------- helpers -------------------------------- */
 
-/** A board's id by name or id, or undefined. */
-function resolveBoardSafe(d: Design, ref: string): string | undefined {
-  try {
-    return resolveBoard(d, ref).id;
-  } catch {
-    return undefined;
-  }
-}
-
 type Issue = { path: PropertyKey[]; message: string };
 
 function formatZod(issues: Issue[]): string {
@@ -1029,3 +1047,8 @@ function indexOfIssue(issues: Issue[]): number {
   return p && p[0] === 'ops' && typeof p[1] === 'number' ? p[1] : -1;
 }
 
+/** A board's stack-up in effect and its allowed heating when not the default: what calc works on (summary). */
+function stackOf(s: BoardSettings | undefined): Pick<DesignSummary, 'stackup' | 'currentRise'> {
+  const { name, copper, dielectric, mask } = boardStackup(s ?? DEFAULT_BOARD);
+  return { stackup: { name, copper, dielectric, ...(mask ? { mask } : {}) }, ...(s?.rules.currentRise ? { currentRise: s.rules.currentRise } : {}) };
+}

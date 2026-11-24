@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
+import { resolveBoard } from '../src/boards.ts';
 import { buckTransaction } from './fixtures.ts';
 
 /**
@@ -110,7 +111,7 @@ describe('bring-up sheet', () => {
     expect(main.rails[1]!.probeAt).not.toMatch(/^(J3|R4|D2)\./);
     // the LED board: its own rail only, probed at the connector it comes in on (J3, not the buck's pin);
     // +3V3 is not marked external, so the power tree does not know where it comes from
-    const led = k.bringUp(k.boardId('LED board'));
+    const led = k.bringUp(resolveBoard(k.draftDesign(), 'LED board').id);
     expect(led.rails).toHaveLength(1);
     expect(led.rails[0]).toMatchObject({ net: '+3V3', input: false, source: 'unknown', testPoints: [], probeAt: 'J3.1' });
   });

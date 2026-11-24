@@ -8,6 +8,7 @@ import { wirePlaced } from './autowire.ts';
 import { cardOf, closest, natCmp, nextId, reject, resolveComponent, resolveUnitRef } from './doc.ts';
 import { isDrawn, moveSymbol, ownSheet, redrawBlock, redrawParts, releaseSheet, syncDrawing, viewOf } from './drawing.ts';
 import { rewire, wiredPins } from './drawops.ts';
+import { sheetByName } from './sheets.ts';
 import { overlap } from './geom.ts';
 import { blockAssignment } from './layout.ts';
 
@@ -81,8 +82,7 @@ export function placeSymbol(d: Design, op: Extract<EditOp, { op: 'place_symbol' 
 /** Let the auto-layout draw a sheet again, or some parts afresh in free space (drawing.ts). */
 export function autoDraw(d: Design, op: Extract<EditOp, { op: 'auto_draw' }>): OpResult {
   const comps = (op.refs ?? []).map((r) => resolveComponent(d, r));
-  const byName = op.sheet !== undefined ? Object.values(d.sheets).find((s) => s.name.toLowerCase() === op.sheet!.toLowerCase()) : undefined;
-  if (op.sheet !== undefined && !byName) reject({ code: 'REF_UNKNOWN', message: `No sheet "${op.sheet}".`, candidates: Object.values(d.sheets).map((s) => s.name) });
+  const byName = op.sheet !== undefined ? d.sheets[sheetByName(d, op.sheet, '')] : undefined;
   if (comps.length) {
     const sheets = new Set(comps.map((c) => c.sheet));
     const done: string[] = [];

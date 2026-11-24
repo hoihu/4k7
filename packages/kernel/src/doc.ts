@@ -1,7 +1,7 @@
 /**
  * Low-level design document helpers: ids, lookups, reference resolution.
  */
-import { DEFAULT_BOARD, paramSpecs, type BoardSettings, type Component, type Constraint, type Design, type Net, type ParamSpec, type PartCard, type PartPin, type Rejection } from '@4k7/schema';
+import { DEFAULT_BOARD, paramSpecs, type BoardSettings, type Component, type Constraint, type Design, type Net, type ParamSpec, type PartCard, type PartPin, type QueryError, type Rejection, type RejectionCode } from '@4k7/schema';
 import { SYMBOL_PARAMS, getBuiltinPart, readsParams, seriesPaths } from '@4k7/parts';
 import { sharedData } from './derive.ts';
 
@@ -253,6 +253,11 @@ export function isPowerNet(n: Net): boolean {
 }
 
 /* ------------------------------- suggestions ------------------------------ */
+
+/** A query's error (QueryError), with the keys it had before (`old`, e.g. boards) kept for this release. */
+export function queryError<X extends object = object>(error: string, code: RejectionCode, candidates: string[], old?: X): QueryError & X {
+  return { error, code, candidates, ...old } as QueryError & X;
+}
 
 export function closest(needle: string, hay: string[], max = 5): string[] {
   const n = needle.toUpperCase();
