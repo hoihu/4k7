@@ -69,6 +69,8 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `describe`: the functional blocks (which group and order the schematic) and the design document text.
 - `import_block`: copy one functional block of another stored project into this design, with every boundary net mapped to a net here (§7). Optional sheet and board fields put its parts straight onto that sheet and board. Refused (`NET_UNMAPPED`, `BLOCK_UNKNOWN`, `PROJECT_UNKNOWN`, `PART_UNKNOWN`, `SHEET_UNKNOWN`, `BOARD_UNKNOWN`) with nothing changed; the effect lists the renames and the values to recheck.
 
+- `import_board`: copy a whole board of another stored project in as a board of this design (as: a new board, or an existing one with no parts), nets joined by name (§7). Refused (`PROJECT_UNKNOWN`, `BOARD_UNKNOWN`, `BOARD_INVALID`, `NET_UNKNOWN`, `PART_UNKNOWN`) with nothing changed; the effect lists joined, new and merged nets, renames, and joined nets whose attributes differ.
+
 ### Sheets and drawing
 
 - `add_sheet`: add a schematic sheet.
@@ -301,6 +303,39 @@ of this design (`SHEET_UNKNOWN`, `BOARD_UNKNOWN`, as for `move_to_sheet` and `as
 - The result's `imported` (and the effect) gives the refdes and net renames, which cards came from the
   source file, and the values to recheck: each part with params, marked `sets U1.FB` where it is on a net
   with an IC pin such as FB, ILIM, RT, SS or EN, else chosen for the other project.
+
+`design_edit import_board { project, board?, as, sheet?, nets?, prefix? }` copies a whole board of another
+project in as a board of this design (D29; `importBoard`, `importops.ts`). It shares the part, card and net copy
+with `import_block` (`copyParts`).
+
+- `board` is the source's board (name or id; default its first). On a source of several boards only that board's
+  parts, the nets on them and the constraints between them are read (its focus, `multi-board.md`).
+- `as` is the board here: made when the design has none of that name, else an existing board that has no parts
+  yet (one made with `add_board`). A board with parts is refused (`BOARD_INVALID`): `import_board` never
+  replaces parts; remove them first. `sheet` (name or id) is where the parts are drawn, made when there is none
+  of that name; default a sheet named as the board. A sheet with no parts yet is put on the board.
+- Every part is copied with its params, no-connects, DNP and card, as for `import_block`. A refdes taken here
+  gets the next free number (R1 → R4); the effect says to export that board's files again. (Per-board refdes
+  blocks, R101…, are D30.2.)
+- Nets by name: a named source net joins the net of the same name here, or is made with the source's
+  attributes where there is none; an automatic `N$` net is always made anew. `nets` overrides one net: another
+  name (`{ "VLED": "+5V_LED" }`, made if missing) or `"fresh"` (kept apart, `LED_2` where `LED` is taken: an
+  accidental clash). `prefix` goes before the names of nets made anew (`RING_LED`, `RING_N$3`). A `nets` key the
+  source board does not have is refused (`NET_UNKNOWN`). Two source nets onto one net here is done but reported
+  as a merge. Joined nets whose voltage, max current, external, power or track width differ are listed to
+  recheck. A width the source set for its own board (`boardTrackWidths`) becomes this board's on a net made anew.
+- The source's describe blocks (their parts on this board, titles ` (2)` where taken), the drawing constraints
+  and notes between copied parts (as `import_block`), and the board's outline (`width`, `height`, corner radius,
+  `shape`, cutouts), layers, rules, stack-up and mounting holes (net remapped) come along. The fab profile
+  comes along when it is of this design's house (or the design has none); otherwise the board keeps this
+  design's house and the effect says so (one house per design, `multi-board.md` §5).
+- Not yet (later D29 steps): the stored placement, positions, sides, keep-outs, graphics, panel and copper.
+  The parts arrive unplaced, and the effect and `importedBoard.left_behind` say so.
+- Joined nets now have pins on two boards: `ERC.BOARD_CROSSING` flags each until a mated connector pair carries
+  it. Add the `mate` in the same transaction (the effect gives the new refdes; a `dry_run` shows them first).
+- The result's `importedBoard` gives the source and target board (`made`), the sheet, the new refdes, renames,
+  cards, `nets` (`joined`, `made`, `merged`, `recheck`), blocks, constraints, what the board took over and what
+  stayed behind.
 
 The app reads the source file the same way as for `list_blocks` (only an id the server lists) before the
 transaction and hands it to `Kernel.transact` beside the ops (`sources`, `packages/kernel/src/importops.ts`),

@@ -26,6 +26,7 @@ one board looks and behaves exactly as it does now: no new steps, no new argumen
 | Put a sheet's parts on it | `assign_board { board, sheets }` (a sheet belongs to one board) |
 | Move one part to another board | `assign_board { board, refs }` (overrides its sheet) |
 | Join two connectors | `mate { a: "J1", b: "J2", kind, map?, … }` |
+| Bring in a board laid out in another project | `import_board { project, board?, as, sheet?, nets?, prefix? }` ([ops-api](ops-api.md) §7) |
 | Everything else | the board ops and queries as now, with an optional `board` |
 
 A component's board is its own `board`, else its sheet's, else the first board. Sheets are how
@@ -59,6 +60,12 @@ boards replace the design-wide `stackup`), each part's board, and the boards a n
 boards that differ they ask which, unless the arguments give the stack-up (`h` and `er`;
 `copper_um` and `rise_c`). `get_board_image` and
 `view_gerbers` take `board` and show that board in the app.
+
+**A board of another project** (`import_board`, D29): every part of that project's board comes in onto a
+new board (or one with no parts yet) and a sheet of its own, nets joined by name (`nets` overrides; automatic
+nets made anew), with its blocks, outline, layers, rules, stack-up, fab tier and holes. The joined nets cross
+between the boards, so `ERC.BOARD_CROSSING` stands until the `mate` that goes in the same transaction. The
+placement and copper are later steps; the parts arrive unplaced for now.
 
 **How it is built** (`kernel/src/boards.ts`): a *focus* is the design as if one board were its
 only one: that board's settings as `board`, only its parts, the nets with pins on them, and the

@@ -946,6 +946,19 @@ export const ImportBlockOp = z.object({
   board: z.string().min(1).optional().describe('The board its parts go on (name or id, as for assign_board); defaults to the board of their sheet'),
 }).describe('Copy a functional block from another project into this design: its parts with their params, its internal nets (made anew, renamed where the name is taken, unless nets maps them), its describe block, its arrangement constraints and notes. With sheet and board, the parts go straight onto that sheet and board (a design of several boards: no move_to_sheet or assign_board afterwards). Its boundary pins join the nets you map them to; refused unless every boundary net is mapped. A refdes that is taken gets the next free number. The effect lists the renames and the values to recheck: they were chosen for the other design');
 
+export const ImportBoardOp = z.object({
+  op: z.literal('import_board'),
+  project: z.string().min(1).describe('Another project in the projects folder, by its id (as for design_query list_blocks and get_board project)'),
+  board: z.string().min(1).optional().describe("The source project's board (name or id); defaults to its first"),
+  as: z.string().min(1).describe('The board of this design it becomes: made when the design has no board of that name, else an existing board with no parts yet (one made with add_board)'),
+  sheet: sheetRef.optional().describe('The sheet its parts are drawn on (name or id); made when there is none of that name. Defaults to a sheet named as the board'),
+  nets: z
+    .record(z.string(), netName)
+    .optional()
+    .describe('Overrides only: a source net → the net of this design it joins instead of the one of its own name, or "fresh" to keep it apart (made anew, renamed where the name is taken), e.g. { "VLED": "+5V_LED", "LED": "fresh" }. Without an entry a named net joins the net of the same name here, made with the source\'s attributes where there is none; automatic N$ nets are always made anew'),
+  prefix: z.string().min(1).optional().describe('Put before the names of the nets made anew, e.g. "LED_"'),
+}).describe('Copy a whole board of another project into this design as a board of its own: every part with its params, its nets joined by name (nets overrides), its describe blocks with their arrangement constraints and notes, and the board\'s outline, cutouts, layers, rules, stack-up, fab tier and mounting holes. Refused when the target board already has parts. Parts arrive unplaced: the source\'s placement and copper stay behind. A refdes that is taken gets the next free number. Nets joined across boards need a mate (ERC.BOARD_CROSSING until then): add it in the same transaction. The effect lists joined, new and merged nets, renames, and joined nets whose attributes differ');
+
 export const EditOp = z.discriminatedUnion('op', [
   AddPartOp,
   RemoveOp,
@@ -1022,6 +1035,7 @@ export const EditOp = z.discriminatedUnion('op', [
   SetPanelOp,
   DescribeOp,
   ImportBlockOp,
+  ImportBoardOp,
   SetMatingOp,
   SetPolarityOp,
   SetPinDescriptionsOp,

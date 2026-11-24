@@ -46,6 +46,14 @@ user before you split a design they did not ask to split.
    on one board's stack-up and `current_rise_c`: give `board` when the boards differ. The production files
    are per board: `view_gerbers` and `get_board_image` take `board`.
 
+**A board laid out in another project** (the user's LED ring in a project of its own): look at it
+first with `design_query get_board { project }`, then `design_edit import_board { project, as: "LED" }`
+with `dry_run` to see which nets join by name. Keep a net that only shares a name apart with
+`nets: { "LED": "fresh" }`; map one onto another name with `nets: { "VLED": "+5V" }`. Recheck the
+joined nets the effect lists as differing (a voltage). Then apply it with the `mate` of the two
+connectors in the same transaction (the effect gives their new refdes). The parts arrive unplaced:
+lay the board out (step 5 above).
+
 ## 3. Which kind of mate
 
 | `kind` | Use it for | How the pins pair |

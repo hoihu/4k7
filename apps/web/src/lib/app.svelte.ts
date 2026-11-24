@@ -1349,12 +1349,12 @@ class AppState {
 
   /**
    * The stored projects an input names, for the kernel: a list_blocks or get_board query's project, a transaction's
-   * import_block projects. Only ids the projects folder lists are read (docs/design/ops-api.md §7);
+   * import_block and import_board projects. Only ids the projects folder lists are read (docs/design/ops-api.md §7);
    * undefined without a projects folder (the kernel then says so).
    */
   private async readSources(input: unknown): Promise<ImportSources | undefined> {
     const i = input as { op?: string; project?: unknown; ops?: { op?: string; project?: unknown }[] };
-    const named = i?.op === 'list_blocks' || (i?.op === 'get_board' && i.project !== undefined) ? [i.project] : Array.isArray(i?.ops) ? i.ops.filter((o) => o?.op === 'import_block').map((o) => o.project) : [];
+    const named = i?.op === 'list_blocks' || (i?.op === 'get_board' && i.project !== undefined) ? [i.project] : Array.isArray(i?.ops) ? i.ops.filter((o) => o?.op === 'import_block' || o?.op === 'import_board').map((o) => o.project) : [];
     const ids = [...new Set(named.map((x) => String(x ?? '')))];
     if (!ids.length || disk.status !== 'ok') return undefined;
     const projects = (await disk.listProjects()).map((p) => p.id);

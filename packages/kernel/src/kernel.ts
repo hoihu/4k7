@@ -327,7 +327,7 @@ export class Kernel {
    * Validate and apply a transaction to the working copy (or dry-run it). `by`: who asked for it,
    * the agent unless the app says the user. `helper`: the route helper's results computed elsewhere
    * (a worker), or hooks to follow it while it routes here (drawn copper, see copperops.ts).
-   * `sources`: the stored projects the app read for its import_block ops (importops.ts).
+   * `sources`: the stored projects the app read for its import_block and import_board ops (importops.ts).
    */
   transact(input: unknown, by: 'user' | 'agent' = 'agent', helper?: HelperHooks, sources?: ImportSources): TransactionResult {
     const parsed = Transaction.safeParse(input);

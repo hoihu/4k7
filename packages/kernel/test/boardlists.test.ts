@@ -29,6 +29,8 @@ const DESIGN_WIDE_EDITS_NAMING_A_BOARD = [
   'assign_board',
   // optional board the copied parts go on (default: the sheet's board); the copy itself is design-wide
   'import_block',
+  // optional board of the source project to copy; the board it becomes here is `as`, made or filled design-wide
+  'import_board',
   'remove_board',
   'set_fab_profile',
   // optional board for track_mm, this net's width on that one board; the net itself is design-wide
