@@ -13,6 +13,7 @@ and every pull request of a release are on its [GitHub release](https://github.c
 ### Schematic
 
 - **A block copied from another project can join a net the design already has.** When the agent copied a block in with `import_block`, a net used only inside that block was always made anew, and renamed where the name was taken: merging a dynamo bike lamp's LED board into the main board's file, the thermistor line came in as `NTC_2` beside the main board's `NTC`, and the agent had to move the header and thermistor pins over by hand. Now the agent can join such a net to one of the open design, the same way as the nets that leave the block, so the copied parts land on `NTC` straight away. Nets it does not join are made anew as before.
+- **A block copied from another project can go straight onto a chosen sheet and board.** When the agent copied a block in with `import_block`, its parts always landed on the first sheet and the first board. Merging a second board's circuit into a design of several boards, the agent then had to move every copied part to the right sheet and put it on the right board, one part at a time. Now the agent names the sheet and the board when it copies the block, and the parts land there; its reply says where they went. Without them, a block lands where it did before.
 
 ### Fixes
 
