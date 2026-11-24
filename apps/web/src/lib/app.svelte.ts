@@ -63,6 +63,7 @@ import { disk, type ProjectEntry } from './disk.svelte.ts';
 import { fitConversation, projectJson, readProject, restoredSessions } from './conversation.ts';
 import { PLAN_STEP_OFF, PlanReview } from './plan.ts';
 import { addRecent, renameRecent } from './recentProjects.ts';
+import { onShownBoard } from './shownBoard.ts';
 
 /** A tool's answer before the chat's label is put on it. */
 type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
@@ -828,8 +829,8 @@ class AppState {
       this.flash('Review the pending changes first.');
       return false;
     }
-    // several boards: the user's board edits (a drag, the panel's tabs) are for the board shown (an op without a board field drops it)
-    const onShown = (this.k?.boards.length ?? 1) > 1 ? ops.map((o) => (o && typeof o === 'object' && !('board' in o) ? { ...o, board: this.shownBoard } : o)) : ops;
+    // several boards: the user's board edits (a drag, the panel's tabs) are for the board shown; the manufacturer picker is for every board
+    const onShown = onShownBoard(ops, this.k?.boards.length ?? 1, this.shownBoard);
     const r = await this.transactEdit({ summary, ops: onShown }, 'user');
     if (r.status !== 'ok') {
       this.flash(r.rejection?.message ?? 'Rejected');
