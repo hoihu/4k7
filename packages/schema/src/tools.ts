@@ -21,6 +21,11 @@ export const CalcCall = z.object({
         'series: E3, E6, E12, E24, E48, E96 or E192; default: the design\'s series for that kind (set_value_series), else E96 for resistors, E12 caps, E6 inductors.',
     ),
   args: z.record(z.string(), z.union([z.number(), z.string()])),
+  board: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('impedance and track_current on a design of several boards: the board (name or id) whose stack-up and current_rise_c they work on. Absent: the only board; on several boards it must be named unless h and er (impedance) or copper_um and rise_c (track_current) are given, or the boards share the same stack-up and heating'),
 });
 export type CalcCall = z.infer<typeof CalcCall>;
 

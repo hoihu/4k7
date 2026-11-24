@@ -45,9 +45,14 @@ and its fixed position behind. Test points are numbered across the boards and go
 the part they are at. A waiver can name its board (`add_waiver board`): a board check finds the
 same on each board, the same net or the same copper id, and a waiver without it holds on every
 board. The app's own edits (a drag, the panel's tabs) are for the board
-shown. Queries: `get_board` without `board` answers for every board; `get_copper`,
-`get_current_map`, `try_placements` and `suggest_moves` need it. `get_summary` lists the boards
-(name, sheets, parts), each part's board, and the boards a net spans. `get_board_image` and
+shown. Queries: `get_board` and `get_fab_profiles` without `board` answer for every board (`boards`:
+one entry each; `get_fab_profiles` gives each board's layers and profile, and the presets once);
+`get_copper`, `get_current_map`, `try_placements` and `suggest_moves` need it. `get_summary` lists
+the boards (name, sheets, parts, and each board's stack-up and `currentRise`, which on several
+boards replace the design-wide `stackup`), each part's board, and the boards a net spans. `calc`
+`impedance` and `track_current` take `board` for that board's stack-up and heating; without it on
+boards that differ they ask which, unless the arguments give the stack-up (`h` and `er`;
+`copper_um` and `rise_c`). `get_board_image` and
 `view_gerbers` take `board` and show that board in the app.
 
 **How it is built** (`kernel/src/boards.ts`): a *focus* is the design as if one board were its

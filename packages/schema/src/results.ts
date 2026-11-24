@@ -377,7 +377,8 @@ export interface DesignSummary {
   components: { refdes: string; part: string; value: string; sheet: string; board?: string }[];
   nets: { name: string; pins: number; voltage?: number; external?: boolean; boards?: string[] }[];
   /** Present when the design has several boards (add_board): each with its sheets and how many parts. */
-  boards?: { name: string; id: string; sheets: string[]; parts: number }[];
+  /** Several boards: each board with its stack-up and heating (what calc works on with board). */
+  boards?: { name: string; id: string; sheets: string[]; parts: number; stackup?: DesignSummary['stackup']; currentRise?: DesignSummary['currentRise'] }[];
   /** How the boards are joined (mate): the connectors, the kind and which pin meets which ("1↔1"). */
   mates?: { id: string; a: string; b: string; kind: string; pins: string; height_mm?: number; fit?: string }[];
   counts: DiagnosticCounts;
@@ -387,9 +388,9 @@ export interface DesignSummary {
   description?: { blocks: number; undescribed: string[] };
   /** Present when generic passives are held to standard-value series (set_value_series). */
   valueSeries?: ValueSeries;
-  /** The board's stack-up in effect (what calc impedance works on by default). */
+  /** The board's stack-up in effect (what calc impedance works on by default). One board only: several give theirs in boards. */
   stackup?: Pick<Stackup, 'name' | 'copper' | 'dielectric' | 'mask'>;
-  /** The board's allowed heating (set_board current_rise_c, °C) when not the default 10 (what calc track_current works at). */
+  /** The board's allowed heating (set_board current_rise_c, °C) when not the default 10 (what calc track_current works at). One board only, as stackup. */
   currentRise?: 10 | 20 | 30;
 }
 

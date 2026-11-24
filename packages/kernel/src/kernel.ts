@@ -9,6 +9,7 @@ import {
   Transaction,
   emptyDesign,
   type Design,
+  type BoardSettings,
   type DesignSummary,
   type LabelView,
   type Diagnostic,
@@ -571,14 +572,16 @@ export class Kernel {
     const all = this.draft;
     // a board query reads one board: the design as if it were the only one
     let bid = FIRST_BOARD;
-    const onBoard = q.op === 'get_board' || q.op === 'get_copper' || q.op === 'get_current_map' || q.op === 'try_placements' || q.op === 'suggest_moves';
+    const onBoard = q.op === 'get_board' || q.op === 'get_copper' || q.op === 'get_current_map' || q.op === 'try_placements' || q.op === 'suggest_moves' || q.op === 'get_fab_profiles';
+    // these answer for every board when none is named; the others ask which
+    const everyBoard = q.op === 'get_board' || q.op === 'get_fab_profiles';
     if (onBoard) {
       const ref = (q as { board?: string }).board;
       if (ref !== undefined) {
         const b = resolveBoardSafe(all, ref);
         if (!b) return { error: `No board "${ref}".`, boards: boardList(all).map((x) => x.name) };
         bid = b;
-      } else if (multiBoard(all) && q.op !== 'get_board') {
+      } else if (multiBoard(all) && !everyBoard) {
         return { error: `The design has ${boardList(all).length} boards: say which with board.`, boards: boardList(all).map((x) => x.name) };
       }
     }
@@ -723,13 +726,24 @@ export class Kernel {
       case 'get_power_tree':
         return powerTreeAnswer(d);
       case 'get_fab_profiles': {
-        const layers = d.board?.layers ?? 2;
-        const cur = d.board?.fab;
-        return {
-          current: cur ? { id: cur.id, summary: fabSummary(cur), origin: cur.origin, source: cur.source, limits: cur.limits, ...(cur.notes?.length ? { notes: cur.notes } : {}) } : 'none',
-          presets: fabPresets().map((p) => ({ id: p.id, house: p.house, tier: p.tier, layers: p.layers, summary: fabSummary(p), source: p.source.url, checked: p.source.checked })),
-          how: `set_fab_profile preset: "jlcpcb" (or a tier id above); a bare house takes the tier for this board's ${layers} layers (Eurocircuits: 6C; any pattern class 3–9 with drill class A–E works, e.g. "eurocircuits/5C"). For another manufacturer, or newer numbers, read its capabilities page and import: house, tier, source_url, checked and limits in mm; never guess a number.`,
+        // one board (or the one named): its layers and profile; several and none named: each board's
+        const current = (s: BoardSettings | undefined) => {
+          const cur = s?.fab;
+          return cur ? { id: cur.id, summary: fabSummary(cur), origin: cur.origin, source: cur.source, limits: cur.limits, ...(cur.notes?.length ? { notes: cur.notes } : {}) } : ('none' as const);
         };
+        const how = (layers: string) =>
+          `set_fab_profile preset: "jlcpcb" (or a tier id above); a bare house takes the tier for ${layers} (Eurocircuits: 6C; any pattern class 3–9 with drill class A–E works, e.g. "eurocircuits/5C"). For another manufacturer, or newer numbers, read its capabilities page and import: house, tier, source_url, checked and limits in mm; never guess a number.`;
+        const presets = fabPresets().map((p) => ({ id: p.id, house: p.house, tier: p.tier, layers: p.layers, summary: fabSummary(p), source: p.source.url, checked: p.source.checked }));
+        if (!multiBoard(all)) return { current: current(d.board), presets, how: how(`this board's ${d.board?.layers ?? 2} layers`) };
+        if ((q as { board?: string }).board === undefined) {
+          return {
+            boards: boardList(all).map((b) => ({ board: b.name, id: b.id, layers: settingsOf(all, b.id)?.layers ?? 2, current: current(settingsOf(all, b.id)) })),
+            presets,
+            how: `${how('each board\'s layers')} The boards of a design go to one house, a tier of it per board: set_fab_profile without board sets every board, with board one board's tier.`,
+          };
+        }
+        const layers = d.board?.layers ?? 2;
+        return { board: all.boards![bid]!.name, layers, current: current(d.board), presets, how: how(`this board's ${layers} layers`) };
       }
       case 'get_schematic': {
         // what the agent needs to place parts: each page's paper and where every symbol stands on it
@@ -896,6 +910,7 @@ export class Kernel {
               id: b.id,
               sheets: Object.values(d.sheets).filter((s) => (s.board && d.boards![s.board] ? s.board : FIRST_BOARD) === b.id).sort((x, y) => x.order - y.order).map((s) => s.name),
               parts: Object.values(d.components).filter((c) => boardOf(d, c) === b.id).length,
+              ...stackOf(settingsOf(d, b.id)),
             })),
           }
         : {}),
@@ -925,8 +940,8 @@ export class Kernel {
       waivers: Object.keys(d.waivers).length,
       ...(d.description ? { description: { blocks: d.description.blocks.length, undescribed: descriptionView(d)!.undescribed } } : {}),
       ...(d.valueSeries ? { valueSeries: { ...d.valueSeries } } : {}),
-      stackup: (({ name, copper, dielectric, mask }) => ({ name, copper, dielectric, ...(mask ? { mask } : {}) }))(boardStackup(d.board ?? DEFAULT_BOARD)),
-      ...(d.board?.rules.currentRise ? { currentRise: d.board.rules.currentRise } : {}),
+      // several boards: each board's stack-up and heating stand in its entry of boards, not here
+      ...(multi ? {} : stackOf(d.board)),
     };
   }
 
@@ -1024,3 +1039,8 @@ function indexOfIssue(issues: Issue[]): number {
   return p && p[0] === 'ops' && typeof p[1] === 'number' ? p[1] : -1;
 }
 
+/** A board's stack-up in effect and its allowed heating when not the default: what calc works on (summary). */
+function stackOf(s: BoardSettings | undefined): Pick<DesignSummary, 'stackup' | 'currentRise'> {
+  const { name, copper, dielectric, mask } = boardStackup(s ?? DEFAULT_BOARD);
+  return { stackup: { name, copper, dielectric, ...(mask ? { mask } : {}) }, ...(s?.rules.currentRise ? { currentRise: s.rules.currentRise } : {}) };
+}

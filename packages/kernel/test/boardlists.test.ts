@@ -37,13 +37,17 @@ const DESIGN_WIDE_EDITS_NAMING_A_BOARD = [
 ];
 
 /** The query ops Kernel.query reads on one board (its `onBoard` test). */
-const BOARD_QUERIES = ['get_board', 'get_copper', 'get_current_map', 'suggest_moves', 'try_placements'];
+const BOARD_QUERIES = ['get_board', 'get_copper', 'get_current_map', 'get_fab_profiles', 'suggest_moves', 'try_placements'];
+
+/** The board queries that answer for every board (boards: one entry each) when none is named; the others ask which. */
+const EVERY_BOARD_WHEN_UNNAMED = ['get_board', 'get_fab_profiles'];
 
 /** The least each board query needs to parse, so the kernel gets as far as resolving its board. */
 const QUERY_ARGS: Record<string, Record<string, unknown>> = {
   get_board: {},
   get_copper: {},
   get_current_map: {},
+  get_fab_profiles: {},
   suggest_moves: {},
   try_placements: { candidates: [{ parts: [{ ref: 'U1', x_mm: 10, y_mm: 10 }] }] },
 };
@@ -101,9 +105,14 @@ describe('the per-board op lists agree', () => {
       const bad = k.query({ op, ...args, board: 'No such board' }) as { error?: string; boards?: string[] };
       expect(bad.error, op).toBe('No board "No such board".');
       expect(bad.boards, op).toEqual(['Main', 'LED board']);
-      if (op === 'get_board') continue;
+      const none = k.query({ op, ...args }) as { error?: string; boards?: { board: string }[] };
+      if (EVERY_BOARD_WHEN_UNNAMED.includes(op)) {
+        // answers for each board when none is named, rather than reading the first
+        expect(none.error, op).toBeUndefined();
+        expect(none.boards?.map((b) => b.board), op).toEqual(['Main', 'LED board']);
+        continue;
+      }
       // and asks which board when none is named, rather than reading the first
-      const none = k.query({ op, ...args }) as { error?: string };
       expect(none.error, op).toMatch(/has 2 boards: say which with board/);
     }
   });
