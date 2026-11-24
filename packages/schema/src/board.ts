@@ -5,6 +5,7 @@ import type { PanelSettings, PanelView } from './panel.ts';
 import type { Diagnostic, Severity } from './results.ts';
 import { boardFacing, matingOf, type BoardFacing } from './enclosure.ts';
 import { stackupPresets, stackupText, type ImpedanceRule, type ImpedanceView, type Stackup } from './stackup.ts';
+import { r3 } from './units.ts';
 
 /**
  * The board: settings stored in the design, and the derived board view (placement, routing,
@@ -519,7 +520,6 @@ export function placeGraphic(g: SilkGraphic, w: number, h: number): BoardGraphic
   const cy = (a.startsWith('top') ? 0 : a.startsWith('bottom') ? h : h / 2) + g.y;
   const t = ((g.angle ?? 0) * Math.PI) / 180;
   const [c, s] = [Math.cos(t), Math.sin(t)];
-  const r3 = (v: number) => Math.round(v * 1000) / 1000;
   const polys = g.polys.map((p) => p.map((v, i) => (i % 2 === 0 ? r3(cx + v * c - p[i + 1]! * s) : r3(cy + p[i - 1]! * s + v * c))));
   return {
     id: g.id,
@@ -1384,8 +1384,11 @@ function belongsLabel(p: BoardPart): { belongs_to?: string } {
   return p.belongsDeclared ? { belongs_to: 'none' } : {};
 }
 
+/** Whether a board part is a mounting hole rather than a component. */
+export const isHole = (p: { componentId: string }) => p.componentId.startsWith('hole:');
+
 /** The parts the user put or locked somewhere themselves (their drag, the lock button, their words). */
-export const userPlaced = (b: Pick<BoardView, 'parts'>) => b.parts.filter((p) => !p.componentId.startsWith('hole:') && p.by === 'user' && (p.locked || p.intent)).map((p) => p.refdes);
+export const userPlaced = (b: Pick<BoardView, 'parts'>) => b.parts.filter((p) => !isHole(p) && p.by === 'user' && (p.locked || p.intent)).map((p) => p.refdes);
 
 const USER_PLACED_NOTE =
   'The user put these parts where they are: their decisions. Arrange, plan the planes and route round them; propose_placement and try_placements refuse them. Move one only where routing cannot do without it (place, a small step), and tell the user which and why.';

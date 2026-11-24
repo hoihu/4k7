@@ -4,7 +4,7 @@
  * IPC-7351 nominal-density rules of thumb: toe/heel extensions on gull-wing leads, pads
  * reaching out past the body edge on no-lead packages, balls at ~80 % diameter.
  */
-import { padPins } from '@4k7/schema';
+import { padPins, r3 } from '@4k7/schema';
 import type { BodyCorner, PackageInfo } from '@4k7/schema';
 
 export interface Pad {
@@ -34,7 +34,6 @@ export interface Footprint {
 
 export type FootprintResult = { ok: true; footprint: Footprint } | { ok: false; reason: string };
 
-const r2 = (v: number) => Math.round(v * 1000) / 1000;
 const TOE = 0.35;
 const HEEL = 0.35;
 const COURTYARD = 0.5;
@@ -160,17 +159,17 @@ export function footprintFor(pkg: PackageInfo, pinNumbers: string[] = []): Footp
  */
 function explicit(pkg: PackageInfo, pinNumbers: string[]): FootprintResult {
   const pads: Pad[] = pkg.pads!.map((p) => {
-    const slot = p.slot && { w: r2(p.slot[0]), h: r2(p.slot[1]) };
-    const drill = slot ? Math.min(slot.w, slot.h) : p.drill && r2(p.drill);
+    const slot = p.slot && { w: r3(p.slot[0]), h: r3(p.slot[1]) };
+    const drill = slot ? Math.min(slot.w, slot.h) : p.drill && r3(p.drill);
     const also = [...new Set(p.also ?? [])].filter((n) => n.toUpperCase() !== p.number.toUpperCase());
     // an exposed (thermal) pad lands on the part's pin for it, if it has one
     const number = p.number.toUpperCase() === 'EP' && pkg.exposed_pad_mm ? epNumber(pkg, pinNumbers)! : p.number;
     return {
       number,
-      x: r2(p.x),
-      y: r2(p.y),
-      w: r2(p.w),
-      h: r2(p.h ?? p.w),
+      x: r3(p.x),
+      y: r3(p.y),
+      w: r3(p.w),
+      h: r3(p.h ?? p.w),
       shape: p.shape ?? (drill ? 'round' : 'rect'),
       ...(drill ? { drill } : {}),
       ...(slot && slot.w !== slot.h ? { slot } : {}),
@@ -203,7 +202,7 @@ function explicit(pkg: PackageInfo, pinNumbers: string[]): FootprintResult {
   const ex = Math.max(...pads.map((p) => Math.abs(p.x) + p.w / 2));
   const ey = Math.max(...pads.map((p) => Math.abs(p.y) + p.h / 2));
   const round = pkg.body_shape === 'round';
-  const [bw, bh] = pkg.body_mm ? (round ? [pkg.body_mm[0], pkg.body_mm[0]] : pkg.body_mm) : [r2(2 * ex + 0.5), r2(2 * ey + 0.5)];
+  const [bw, bh] = pkg.body_mm ? (round ? [pkg.body_mm[0], pkg.body_mm[0]] : pkg.body_mm) : [r3(2 * ex + 0.5), r3(2 * ey + 0.5)];
   const first = pads.find((p) => p.number === '1') ?? pads[0]!;
   const notes = pkg.body_mm ? [] : ['Body size not given; drawn around the pads.'];
   return {
@@ -211,8 +210,8 @@ function explicit(pkg: PackageInfo, pinNumbers: string[]): FootprintResult {
     footprint: {
       pads,
       body: { w: bw, h: bh, ...(round ? { round: true } : !round && pkg.body_chamfer ? { chamfer: { size: pkg.body_chamfer.mm, corners: [...pkg.body_chamfer.corners] } } : {}) },
-      courtyard: { w: r2(Math.max(bw, 2 * ex) + 2 * COURTYARD), h: r2(Math.max(bh, 2 * ey) + 2 * COURTYARD) },
-      pin1: { x: r2(first.x - first.w / 2 - 0.4), y: first.y },
+      courtyard: { w: r3(Math.max(bw, 2 * ex) + 2 * COURTYARD), h: r3(Math.max(bh, 2 * ey) + 2 * COURTYARD) },
+      pin1: { x: r3(first.x - first.w / 2 - 0.4), y: first.y },
       notes,
     },
   };
@@ -225,21 +224,21 @@ function explicit(pkg: PackageInfo, pinNumbers: string[]): FootprintResult {
 function twoLead(pkg: PackageInfo): Footprint {
   const p = pkg.pitch_mm!;
   const lead = pkg.lead_width_mm ?? 0.6;
-  const drill = r2(Math.max(0.7, Math.ceil((lead + 0.3) * 10) / 10));
-  const pad = r2(Math.max(1.6, drill + 0.7));
+  const drill = r3(Math.max(0.7, Math.ceil((lead + 0.3) * 10) / 10));
+  const pad = r3(Math.max(1.6, drill + 0.7));
   const round = pkg.family === 'RADIAL';
   const [bw, bh] = round ? [pkg.body_mm![0], pkg.body_mm![0]] : pkg.body_mm!;
   const pads: Pad[] = [
-    { number: '1', x: r2(-p / 2), y: 0, w: pad, h: pad, shape: 'rect', drill },
-    { number: '2', x: r2(p / 2), y: 0, w: pad, h: pad, shape: 'round', drill },
+    { number: '1', x: r3(-p / 2), y: 0, w: pad, h: pad, shape: 'rect', drill },
+    { number: '2', x: r3(p / 2), y: 0, w: pad, h: pad, shape: 'round', drill },
   ];
   const cw = Math.max(bw, p + pad);
   const ch = Math.max(bh, pad);
   return {
     pads,
     body: { w: bw, h: bh, ...(round ? { round: true } : {}) },
-    courtyard: { w: r2(cw + 2 * COURTYARD), h: r2(ch + 2 * COURTYARD) },
-    pin1: { x: r2(-p / 2 - pad / 2 - 0.4), y: 0 },
+    courtyard: { w: r3(cw + 2 * COURTYARD), h: r3(ch + 2 * COURTYARD) },
+    pin1: { x: r3(-p / 2 - pad / 2 - 0.4), y: 0 },
     notes: [],
   };
 }
@@ -256,17 +255,17 @@ function quad(pkg: PackageInfo, gullWing: boolean, ep: string | null = null): Fo
   const [bw, bl] = pkg.body_mm!;
   const [sw, sl] = pkg.span_mm ?? (gullWing ? [bw + 2, bl + 2] : [bw, bl]);
   const foot = pkg.lead_length_mm ?? (gullWing ? 0.6 : 0.4);
-  const padW = r2(Math.min(pkg.lead_width_mm ? pkg.lead_width_mm + 0.1 : pitch * 0.55, pitch * 0.6));
+  const padW = r3(Math.min(pkg.lead_width_mm ? pkg.lead_width_mm + 0.1 : pitch * 0.55, pitch * 0.6));
   // pad extent measured from the centre outwards
   const extent = (span: number, body: number) =>
     gullWing ? { outer: span / 2 + TOE, inner: span / 2 - foot - HEEL } : { outer: body / 2 + 0.3, inner: body / 2 - foot - 0.05 };
   const ex = extent(sw, bw);
   const ey = extent(sl, bl);
-  const lenX = r2(ex.outer - ex.inner);
-  const lenY = r2(ey.outer - ey.inner);
-  const cx = r2((ex.outer + ex.inner) / 2);
-  const cy = r2((ey.outer + ey.inner) / 2);
-  const off = (i: number) => r2((i - (n - 1) / 2) * pitch);
+  const lenX = r3(ex.outer - ex.inner);
+  const lenY = r3(ey.outer - ey.inner);
+  const cx = r3((ex.outer + ex.inner) / 2);
+  const cy = r3((ey.outer + ey.inner) / 2);
+  const off = (i: number) => r3((i - (n - 1) / 2) * pitch);
 
   const pads: Pad[] = [];
   let num = 1;
@@ -283,8 +282,8 @@ function quad(pkg: PackageInfo, gullWing: boolean, ep: string | null = null): Fo
   return {
     pads,
     body: { w: bw, h: bl },
-    courtyard: { w: r2(2 * ex.outer + 2 * COURTYARD), h: r2(2 * ey.outer + 2 * COURTYARD) },
-    pin1: { x: r2(-ex.outer - 0.4), y: off(0) },
+    courtyard: { w: r3(2 * ex.outer + 2 * COURTYARD), h: r3(2 * ey.outer + 2 * COURTYARD) },
+    pin1: { x: r3(-ex.outer - 0.4), y: off(0) },
     notes,
   };
 }
@@ -298,10 +297,10 @@ function dual(pkg: PackageInfo, gullWing: boolean, ep: string | null): Footprint
   const foot = pkg.lead_length_mm ?? (gullWing ? 0.6 : 0.4);
   const outer = gullWing ? span / 2 + TOE : bw / 2 + 0.3;
   const inner = gullWing ? span / 2 - foot - HEEL : bw / 2 - foot - 0.05;
-  const len = r2(outer - inner);
-  const cx = r2((outer + inner) / 2);
-  const padW = r2(Math.min(pkg.lead_width_mm ? pkg.lead_width_mm + 0.1 : pitch * 0.55, pitch * 0.6));
-  const off = (i: number) => r2((i - (n - 1) / 2) * pitch);
+  const len = r3(outer - inner);
+  const cx = r3((outer + inner) / 2);
+  const padW = r3(Math.min(pkg.lead_width_mm ? pkg.lead_width_mm + 0.1 : pitch * 0.55, pitch * 0.6));
+  const off = (i: number) => r3((i - (n - 1) / 2) * pitch);
   const pads: Pad[] = [];
   let num = 1;
   for (let i = 0; i < n; i++) pads.push({ number: String(num++), x: -cx, y: off(i), w: len, h: padW, shape: 'rect' });
@@ -314,8 +313,8 @@ function dual(pkg: PackageInfo, gullWing: boolean, ep: string | null): Footprint
   return {
     pads,
     body: { w: bw, h: bl },
-    courtyard: { w: r2(2 * outer + 2 * COURTYARD), h: r2(bl + 2 * COURTYARD) },
-    pin1: { x: r2(-outer - 0.4), y: off(0) },
+    courtyard: { w: r3(2 * outer + 2 * COURTYARD), h: r3(bl + 2 * COURTYARD) },
+    pin1: { x: r3(-outer - 0.4), y: off(0) },
     notes,
   };
 }
@@ -324,22 +323,22 @@ function dual(pkg: PackageInfo, gullWing: boolean, ep: string | null): Footprint
 function grid(pkg: PackageInfo, pinNumbers: string[]): Footprint {
   const { rows, cols } = pkg.grid!;
   const pitch = pkg.pitch_mm!;
-  const d = r2((pkg.ball_mm ?? pitch * 0.5) * 0.8);
+  const d = r3((pkg.ball_mm ?? pitch * 0.5) * 0.8);
   const present = new Set(pinNumbers.map((n) => n.toUpperCase()));
   const pads: Pad[] = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const name = `${bgaRowName(r)}${c + 1}`;
       if (present.size && !present.has(name)) continue;
-      pads.push({ number: name, x: r2((c - (cols - 1) / 2) * pitch), y: r2((r - (rows - 1) / 2) * pitch), w: d, h: d, shape: 'round' });
+      pads.push({ number: name, x: r3((c - (cols - 1) / 2) * pitch), y: r3((r - (rows - 1) / 2) * pitch), w: d, h: d, shape: 'round' });
     }
   }
   const [bw, bl] = pkg.body_mm ?? [cols * pitch, rows * pitch];
   return {
     pads,
     body: { w: bw, h: bl },
-    courtyard: { w: r2(bw + 2 * COURTYARD), h: r2(bl + 2 * COURTYARD) },
-    pin1: { x: r2(-bw / 2 - 0.3), y: r2(-bl / 2 - 0.3) },
+    courtyard: { w: r3(bw + 2 * COURTYARD), h: r3(bl + 2 * COURTYARD) },
+    pin1: { x: r3(-bw / 2 - 0.3), y: r3(-bl / 2 - 0.3) },
     notes: [],
   };
 }
@@ -349,14 +348,14 @@ function dip(pkg: PackageInfo): Footprint {
   const n = pkg.pins / 2;
   const pitch = pkg.pitch_mm ?? 2.54;
   const rowSpan = pkg.span_mm?.[0] ?? 7.62;
-  const off = (i: number) => r2((i - (n - 1) / 2) * pitch);
+  const off = (i: number) => r3((i - (n - 1) / 2) * pitch);
   const pads: Pad[] = [];
   let num = 1;
   for (let i = 0; i < n; i++) pads.push({ number: String(num++), x: -rowSpan / 2, y: off(i), w: 1.6, h: 1.6, shape: i === 0 ? 'rect' : 'round', drill: 0.8 });
   for (let i = 0; i < n; i++) pads.push({ number: String(num++), x: rowSpan / 2, y: -off(i), w: 1.6, h: 1.6, shape: 'round', drill: 0.8 });
   const bw = pkg.body_mm?.[0] ?? 6.35;
   const bl = pkg.body_mm?.[1] ?? n * pitch + 0.5;
-  return { pads, body: { w: bw, h: bl }, courtyard: { w: r2(rowSpan + 1.6 + 2 * COURTYARD), h: r2(bl + 2 * COURTYARD) }, pin1: { x: r2(-rowSpan / 2 - 1.2), y: off(0) }, notes: [] };
+  return { pads, body: { w: bw, h: bl }, courtyard: { w: r3(rowSpan + 1.6 + 2 * COURTYARD), h: r3(bl + 2 * COURTYARD) }, pin1: { x: r3(-rowSpan / 2 - 1.2), y: off(0) }, notes: [] };
 }
 
 /** A module: two rows of through-hole pads under the board's long edges, numbered like a DIP. */
@@ -366,16 +365,16 @@ function moduleFp(pkg: PackageInfo): Footprint {
   const span = moduleSpan(pkg);
   const bw = pkg.body_mm?.[0] ?? span + 3.22;
   const bl = pkg.body_mm?.[1] ?? n * pitch + 1;
-  const off = (i: number) => r2((i - (n - 1) / 2) * pitch);
+  const off = (i: number) => r3((i - (n - 1) / 2) * pitch);
   const pads: Pad[] = [];
   let num = 1;
-  for (let i = 0; i < n && num <= pkg.pins; i++) pads.push({ number: String(num++), x: r2(-span / 2), y: off(i), w: 1.7, h: 1.7, shape: i === 0 ? 'rect' : 'round', drill: 1 });
-  for (let i = 0; i < n && num <= pkg.pins; i++) pads.push({ number: String(num++), x: r2(span / 2), y: -off(i), w: 1.7, h: 1.7, shape: 'round', drill: 1 });
+  for (let i = 0; i < n && num <= pkg.pins; i++) pads.push({ number: String(num++), x: r3(-span / 2), y: off(i), w: 1.7, h: 1.7, shape: i === 0 ? 'rect' : 'round', drill: 1 });
+  for (let i = 0; i < n && num <= pkg.pins; i++) pads.push({ number: String(num++), x: r3(span / 2), y: -off(i), w: 1.7, h: 1.7, shape: 'round', drill: 1 });
   return {
     pads,
     body: { w: bw, h: bl },
-    courtyard: { w: r2(Math.max(bw, span + 1.7) + 2 * COURTYARD), h: r2(Math.max(bl, n * pitch) + 2 * COURTYARD) },
-    pin1: { x: r2(-span / 2 + 1.6), y: off(0) },
+    courtyard: { w: r3(Math.max(bw, span + 1.7) + 2 * COURTYARD), h: r3(Math.max(bl, n * pitch) + 2 * COURTYARD) },
+    pin1: { x: r3(-span / 2 + 1.6), y: off(0) },
     notes: [],
   };
 }
@@ -387,17 +386,17 @@ function chip(pkg: PackageInfo): Footprint {
   const toe = Math.min(0.35, 0.1 + l * 0.08);
   const outer = l / 2 + toe;
   const inner = Math.max(l / 2 - t - 0.05, Math.min(0.2, l * 0.15));
-  const len = r2(outer - inner);
-  const cx = r2((outer + inner) / 2);
-  const h = r2(w + (w < 1 ? 0.15 : 0.2));
+  const len = r3(outer - inner);
+  const cx = r3((outer + inner) / 2);
+  const h = r3(w + (w < 1 ? 0.15 : 0.2));
   return {
     pads: [
       { number: '1', x: -cx, y: 0, w: len, h, shape: 'rect' },
       { number: '2', x: cx, y: 0, w: len, h, shape: 'rect' },
     ],
     body: { w: l, h: w },
-    courtyard: { w: r2(2 * outer + 2 * COURTYARD * 0.5), h: r2(Math.max(h, w) + 2 * COURTYARD * 0.5) },
-    pin1: { x: r2(-outer - 0.25), y: 0 },
+    courtyard: { w: r3(2 * outer + 2 * COURTYARD * 0.5), h: r3(Math.max(h, w) + 2 * COURTYARD * 0.5) },
+    pin1: { x: r3(-outer - 0.25), y: 0 },
     notes: [],
   };
 }
@@ -408,9 +407,9 @@ function sod(pkg: PackageInfo): Footprint {
   const span = pkg.span_mm![0];
   const lead = pkg.lead_length_mm ?? 0.5;
   const lw = pkg.lead_width_mm ?? bw * 0.4;
-  const len = r2(lead + 0.45);
-  const cx = r2(span / 2 - lead / 2 + 0.05);
-  const h = r2(lw + 0.35);
+  const len = r3(lead + 0.45);
+  const cx = r3(span / 2 - lead / 2 + 0.05);
+  const h = r3(lw + 0.35);
   const outer = cx + len / 2;
   return {
     pads: [
@@ -418,8 +417,8 @@ function sod(pkg: PackageInfo): Footprint {
       { number: '2', x: cx, y: 0, w: len, h, shape: 'rect' },
     ],
     body: { w: bl, h: bw },
-    courtyard: { w: r2(2 * outer + 0.5), h: r2(Math.max(h, bw) + 0.5) },
-    pin1: { x: r2(-outer - 0.25), y: 0 },
+    courtyard: { w: r3(2 * outer + 0.5), h: r3(Math.max(h, bw) + 0.5) },
+    pin1: { x: r3(-outer - 0.25), y: 0 },
     notes: [],
   };
 }
@@ -435,14 +434,14 @@ function sot(pkg: PackageInfo, pinNumbers: string[]): Footprint | null {
   const lead = pkg.lead_length_mm ?? 0.45;
   const lw = pkg.lead_width_mm ?? 0.4;
   const p = pkg.pitch_mm!;
-  const padH = r2(lead + 0.5);
-  const padW = r2(lw + 0.2);
-  const cy = r2(spanY / 2 - lead / 2 + 0.05);
-  const pad = (number: string, x: number, y: number, w = padW, h = padH): Pad => ({ number, x: r2(x), y: r2(y), w, h, shape: 'rect' });
+  const padH = r3(lead + 0.5);
+  const padW = r3(lw + 0.2);
+  const cy = r3(spanY / 2 - lead / 2 + 0.05);
+  const pad = (number: string, x: number, y: number, w = padW, h = padH): Pad => ({ number, x: r3(x), y: r3(y), w, h, shape: 'rect' });
   let pads: Pad[];
   if (pkg.name === 'SOT-223') {
     const tab = pinNumbers.includes('4') ? '4' : '2';
-    pads = [pad('1', -p, cy), pad('2', 0, cy), pad('3', p, cy), pad(tab, 0, -cy, 3.3, r2(lead + 1.1))];
+    pads = [pad('1', -p, cy), pad('2', 0, cy), pad('3', p, cy), pad(tab, 0, -cy, 3.3, r3(lead + 1.1))];
   } else if (pkg.pins === 3) {
     pads = [pad('1', -p, cy), pad('2', p, cy), pad('3', 0, -cy)];
   } else if (pkg.pins === 5 || pkg.pins === 6) {
@@ -455,8 +454,8 @@ function sot(pkg: PackageInfo, pinNumbers: string[]): Footprint | null {
   return {
     pads,
     body: { w: bl, h: bw },
-    courtyard: { w: r2(2 * maxX + 0.5), h: r2(2 * maxY + 0.5) },
-    pin1: { x: r2(-p - padW), y: r2(cy + padH / 2 + 0.2) },
+    courtyard: { w: r3(2 * maxX + 0.5), h: r3(2 * maxY + 0.5) },
+    pin1: { x: r3(-p - padW), y: r3(cy + padH / 2 + 0.2) },
     notes: [],
   };
 }
@@ -468,19 +467,19 @@ function header(pkg: PackageInfo): Footprint {
   const pads: Pad[] = Array.from({ length: n }, (_, i) => ({
     number: String(i + 1),
     x: 0,
-    y: r2((i - (n - 1) / 2) * pitch),
+    y: r3((i - (n - 1) / 2) * pitch),
     w: 1.7,
     h: 1.7,
     shape: i === 0 ? 'rect' : 'round',
     drill: 1.0,
   }));
   // a housing (JST XH) is the body where it is given, else the pin strip
-  const [bw, bh] = pkg.body_mm ?? [2.54, r2(n * pitch)];
+  const [bw, bh] = pkg.body_mm ?? [2.54, r3(n * pitch)];
   return {
     pads,
     body: { w: bw, h: bh },
-    courtyard: pkg.body_mm ? { w: r2(bw + 0.5), h: r2(bh + 0.5) } : { w: 3.0, h: r2(n * pitch + 0.5) },
-    pin1: { x: pkg.body_mm ? r2(-bw / 2 - 0.4) : -1.6, y: r2(-((n - 1) / 2) * pitch) },
+    courtyard: pkg.body_mm ? { w: r3(bw + 0.5), h: r3(bh + 0.5) } : { w: 3.0, h: r3(n * pitch + 0.5) },
+    pin1: { x: pkg.body_mm ? r3(-bw / 2 - 0.4) : -1.6, y: r3(-((n - 1) / 2) * pitch) },
     notes: [],
   };
 }

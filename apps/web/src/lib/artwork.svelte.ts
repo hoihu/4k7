@@ -4,7 +4,7 @@
  * exported as SVG. The kernel worker gets every artwork so add_graphic can place it by name.
  */
 import { pathFigures, traceBitmap } from '@4k7/kernel';
-import type { Artwork, SilkGraphic } from '@4k7/schema';
+import { r3, type Artwork, type SilkGraphic } from '@4k7/schema';
 import { deleteArtwork, loadArtwork, saveArtwork } from './files.ts';
 
 interface KernelArtwork {
@@ -14,7 +14,6 @@ interface KernelArtwork {
 
 /** Imported SVGs are scaled to this width (mm) unless they say their size in mm. */
 const IMPORT_WIDTH = 20;
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'artwork';
 
 export class ArtworkLibrary {
