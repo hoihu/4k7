@@ -34,7 +34,8 @@ export async function runKernelTool(kernel: KernelPort, name: string, input: unk
         const out = await kernel.query(input);
         const op = (input as { op?: string })?.op ?? '?';
         const isError = !!(out && typeof out === 'object' && 'error' in out);
-        return { content: JSON.stringify(out), isError, label: `query · ${op}`, detail: summariseQuery(input, out) };
+        // a text answer (a guide) goes as it is
+        return { content: typeof out === 'string' ? out : JSON.stringify(out), isError, label: `query · ${op}`, detail: summariseQuery(input, out) };
       }
       case TOOL_NAMES.edit: {
         const r = await kernel.transact(input);
@@ -67,5 +68,8 @@ function summariseQuery(input: unknown, out: unknown): string {
   if (Array.isArray(out)) return `${out.length} result(s)`;
   if (out && typeof out === 'object' && 'error' in out) return String((out as { error: unknown }).error);
   const op = (input as { op?: string })?.op;
+  if (op === 'get_guide') return String((input as { topic?: unknown }).topic);
+  if (op === 'list_blocks' && out && typeof out === 'object' && 'blocks' in out) return `${(input as { project?: unknown }).project}: ${(out as { blocks: unknown[] }).blocks.length} block(s)`;
+  if (op === 'get_diagnostics' && out && typeof out === 'object' && Array.isArray((out as { diagnostics?: unknown }).diagnostics)) return `${(out as { diagnostics: unknown[] }).diagnostics.length} result(s)`;
   return op === 'get_summary' ? 'design summary' : 'ok';
 }

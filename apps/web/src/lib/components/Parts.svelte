@@ -57,7 +57,7 @@
   let open = $state<Record<string, boolean>>(loadOpen());
   function loadOpen(): Record<string, boolean> {
     try {
-      return { design: true, mine: true, basics: true, ref: false, art: true, ...JSON.parse(localStorage.getItem('tw.parts.open') ?? '{}') };
+      return { design: true, mine: true, basics: true, ref: false, art: true, ...JSON.parse(localStorage.getItem('4k7.parts.open') ?? '{}') };
     } catch {
       return { design: true, mine: true, basics: true, ref: false, art: true };
     }
@@ -65,7 +65,7 @@
   function toggle(k: string) {
     open = { ...open, [k]: !open[k] };
     try {
-      localStorage.setItem('tw.parts.open', JSON.stringify(open));
+      localStorage.setItem('4k7.parts.open', JSON.stringify(open));
     } catch {
       /* a convenience only */
     }

@@ -4,8 +4,8 @@
  * at the edge of each. Read-only; import_block (importops.ts) copies one into the open design.
  * See docs/design/ops-api.md §7 and docs/design/ai-loop.md §5.
  *
- * The app reads the file (only a project the projects folder lists) and calls blocksOfProject;
- * nothing here touches a file, so it runs anywhere.
+ * The app reads the file (only a project the projects folder lists) and hands it to Kernel.query
+ * (its `sources`), which calls blocksOfProject; nothing here touches a file, so it runs anywhere.
  */
 import type { Design } from '@4k7/schema';
 import { migrate } from './canonical.ts';

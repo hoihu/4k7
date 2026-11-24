@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardView, Design } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
-import { buckTransaction } from './fixtures.ts';
-
-function buck() {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
-  return k;
-}
+import { buck } from './fixtures.ts';
 
 const ok = (k: Kernel, ops: unknown[]) => {
   const r = k.transact({ summary: 'test', ops });

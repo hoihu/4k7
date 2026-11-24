@@ -378,19 +378,6 @@ describe('config folder', () => {
     }
   }
 
-  it('moves ~/.tracewise (the old name) to ~/.4k7 and keeps its access key', () => {
-    withHome((home) => {
-      mkdirSync(join(home, '.tracewise'));
-      const accessKey = '8b1f4d2e-5c3a-4e6f-9a7b-0c1d2e3f4a5b';
-      writeFileSync(join(home, '.tracewise', 'server.json'), JSON.stringify({ accessKey, claude: { unsetEnv: ['X'], env: {} } }));
-      expect(installedDir()).toBe(join(home, '.4k7'));
-      expect(existsSync(join(home, '.tracewise'))).toBe(false);
-      process.env.FOURK7_HOME = installedDir();
-      expect(loadConfig()).toMatchObject({ accessKey, claude: { unsetEnv: ['X'] } });
-      expect(JSON.parse(readFileSync(join(home, '.4k7', 'server.json'), 'utf8')).accessKey).toBe(accessKey);
-    });
-  });
-
   it('run from source it keeps to itself: its own key and folders, with the agents and a copy of the libraries', () => {
     withHome((home) => {
       const real = join(home, '.4k7');

@@ -5,15 +5,13 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardPart, BoardView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
-import { buckTransaction } from './fixtures.ts';
+import { buck as buckFixture, buckTransaction } from './fixtures.ts';
 
 const ROOM = { x: 2, y: 2, w: 12, h: 8 };
 
 /** The buck on a 40 × 30 mm board, its feedback divider and compensation as one block. */
 function buck() {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
+  const k = buckFixture();
   const r = k.transact({
     summary: 'blocks',
     ops: [

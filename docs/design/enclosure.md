@@ -283,10 +283,10 @@ Each step is useful alone.
    import, `plugged_from` in `get_board`. *Built 2026-10-15.*
 2. **`board.scad`** (`fab/scad.ts`). *Built 2026-10-15*, tested against the real OpenSCAD where it
    is installed.
-3. **The renderer**: `tools/server/src/scad.ts` (FOURK7_OPENSCAD_BIN, the path set in the app, the
-   PATH, the usual places), `/api/scad`, the job and the report (`fab/enclosure.ts`),
-   `render_enclosure`, the propose rule. *Built 2026-10-15*, tested with a stand-in OpenSCAD and
-   the real one.
+3. **The renderer**, the job and the report (`fab/enclosure.ts`), `render_enclosure`, the propose
+   rule. *Built 2026-10-15*, first on OpenSCAD run by the server; since step 9 the script runs in a
+   worker of the app (`apps/web/src/lib/enclosureClient.ts`, `enclosure.worker.ts`) on the Manifold
+   engine in `packages/fab/src/csg/`.
 4. **The brief**: `set_enclosure_brief`, its questions answered in the Enclosure view,
    `get_guide mechanics`, the guide's workflow. *Built 2026-10-15.*
 5. **The pictures and the Enclosure view** (§5.3, §6), the script stored and editable, the

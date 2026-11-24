@@ -3,11 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import WebSocket from 'ws';
-import { SERVER_PROTOCOL, type ServerToTab, type ChatEvent } from '@4k7/schema';
-import { LocalServer, ChatRunner, detectClaude, mcpHttpHandler, pdfPages, prepareDatasheet, type ClaudeProfile } from '../src/index.ts';
+import type { ChatEvent } from '@4k7/schema';
+import { ChatRunner, detectClaude, mcpHttpHandler, pdfPages, prepareDatasheet, type ClaudeProfile } from '../src/index.ts';
+import { connectTab, runChat, startServer } from './helpers.ts';
 
-const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 // on Windows behind an npm shim, like a real agent installed with npm
 const FAKE = fileURLToPath(new URL(process.platform === 'win32' ? './fake-claude.cmd' : './fake-claude.mjs', import.meta.url));
 const cleanups: (() => unknown)[] = [];
@@ -16,9 +15,7 @@ afterEach(async () => {
 });
 
 async function setup(bin = FAKE, profile?: ClaudeProfile) {
-  const server = new LocalServer({ accessKey: KEY, ports: [0], devPorts: [5173] });
-  const port = await server.start();
-  cleanups.push(() => server.stop());
+  const { server, port } = await startServer(cleanups);
   const capability = detectClaude(bin, profile);
   const ingestDir = mkdtempSync(join(tmpdir(), 'tw-ingest-'));
   const chat = new ChatRunner({ server, claudeBin: bin, workDir: mkdtempSync(join(tmpdir(), 'tw-chat-')), ingestDir, ...(profile ? { profile } : {}) });
@@ -26,43 +23,12 @@ async function setup(bin = FAKE, profile?: ClaudeProfile) {
   server.setHttpHandler(mcpHttpHandler(server, (t) => chat.modeFor(t)));
 
   // a tab that answers tool calls
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: 'http://localhost:5173' } });
-  cleanups.push(() => ws.close());
-  const calls: string[] = [];
-  const events = new Map<string, ChatEvent[]>();
-  const welcome = await new Promise<ServerToTab>((resolve) => {
-    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', protocol: SERVER_PROTOCOL, accessKey: KEY, client: 'test' })));
-    ws.on('message', (raw) => {
-      const m = JSON.parse(String(raw)) as ServerToTab;
-      if (m.type === 'welcome') resolve(m);
-      if (m.type === 'call') {
-        calls.push(m.tool);
-        const answer = m.tool === 'submit_part' ? `checked ${(m.input as { mpn: string }).mpn}` : '<design_state>empty</design_state>';
-        ws.send(JSON.stringify({ type: 'result', id: m.id, isError: false, content: [{ type: 'text', text: answer }] }));
-      }
-      if (m.type === 'chat_event') events.set(m.id, [...(events.get(m.id) ?? []), m.event]);
-    });
+  const { ws, welcome, calls, events } = await connectTab(port, cleanups, {
+    answer: (m) => (m.tool === 'submit_part' ? `checked ${(m.input as { mpn: string }).mpn}` : '<design_state>empty</design_state>'),
   });
   const send = (id: string, text: string, session: string | null = null, model?: string, web = false, effort?: string) =>
-    new Promise<ChatEvent[]>((resolve) => {
-      ws.send(JSON.stringify({ type: 'chat', id, text, session, autonomy: 'review', web, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }));
-      const t = setInterval(() => {
-        if (events.get(id)?.some((e) => e.kind === 'done')) {
-          clearInterval(t);
-          resolve(events.get(id)!);
-        }
-      }, 20);
-    });
-  const run = (msg: Record<string, unknown>) =>
-    new Promise<ChatEvent[]>((resolve) => {
-      ws.send(JSON.stringify(msg));
-      const t = setInterval(() => {
-        if (events.get(msg.id as string)?.some((e) => e.kind === 'done')) {
-          clearInterval(t);
-          resolve(events.get(msg.id as string)!);
-        }
-      }, 20);
-    });
+    runChat(ws, events, { type: 'chat', id, text, session, autonomy: 'review', web, ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
+  const run = (msg: Record<string, unknown>) => runChat(ws, events, msg as { id: string });
   return { server, port, welcome, calls, send, run, ingestDir, ws, events };
 }
 

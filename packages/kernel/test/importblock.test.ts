@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Design, EditOp } from '@4k7/schema';
 import { getBuiltinPart } from '@4k7/parts';
-import { Kernel } from '../src/index.ts';
+import { Kernel, boardOf } from '../src/index.ts';
 import { resolveBoard } from '../src/boards.ts';
 import type { ImportSources } from '../src/importops.ts';
 
@@ -196,6 +196,68 @@ describe('import_block', () => {
     expect(by('TH1').pins['1']).toBe(by('R9').pins['1']); // one NTC across both boards
     expect(by('J2').pins['1']).toBe(by('R9').pins['1']);
     expect(Object.values(d.nets).filter((n) => n.name.startsWith('NTC'))).toHaveLength(1);
+  });
+
+  it('puts the parts on the sheet and the board it is given, and moves nothing else', () => {
+    const k = ntcTarget(true);
+    const r0 = k.transact({ summary: 'a third sheet', ops: [{ op: 'add_sheet', name: 'Spare' }] });
+    expect(r0.status, JSON.stringify(r0.rejection)).toBe('ok');
+    k.accept();
+    const where = (d: Design) => Object.fromEntries(Object.values(d.components).map((c) => [c.refdes, [d.sheets[c.sheet]!.name, d.boards?.[boardOf(d, c)]?.name ?? 'Main']]));
+    const before = where(k.committedDesign());
+    // the sheet of the LED board, and the LED board
+    const r = importing(k, { project: 'led', block: 'NTC', nets: { GND: 'GND', NTC: 'NTC' }, sheet: 'LED', board: 'LED board' }, ntcSources());
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    expect(r.results[0]!.effect).toMatch(/on sheet LED, board "LED board"/);
+    const after = where(k.draftSnapshot().design);
+    expect(after).toEqual({ ...before, J2: ['LED', 'LED board'], TH1: ['LED', 'LED board'] });
+    k.accept();
+    expect(k.boardPlacement(k.boardId('LED board')).parts.map((p) => p.refdes).sort()).toEqual(['J2', 'R9', 'TH1']);
+    // a sheet of the first board, the parts on the LED board all the same
+    const k2 = ntcTarget(true);
+    const r2 = importing(k2, { project: 'led', block: 'NTC', nets: { GND: 'GND', NTC: 'NTC' }, sheet: 'Main', board: 'LED board' }, ntcSources());
+    expect(r2.status, JSON.stringify(r2.rejection)).toBe('ok');
+    const d2 = k2.draftSnapshot().design;
+    expect(where(d2)).toMatchObject({ J1: ['Main', 'Main'], R9: ['LED', 'LED board'], J2: ['Main', 'LED board'], TH1: ['Main', 'LED board'] });
+  });
+
+  it('without sheet and board, imports exactly as before', () => {
+    const a = ntcTarget(true);
+    const b = ntcTarget(true);
+    const ra = importing(a, { project: 'led', block: 'NTC', nets: { GND: 'GND' } }, ntcSources());
+    const rb = importing(b, { project: 'led', block: 'NTC', nets: { GND: 'GND' }, sheet: 'main', board: 'Main' }, ntcSources());
+    expect(ra.status, JSON.stringify(ra.rejection)).toBe('ok');
+    expect(rb.status, JSON.stringify(rb.rejection)).toBe('ok');
+    const da = a.draftSnapshot().design;
+    expect(JSON.stringify(da)).toBe(JSON.stringify(b.draftSnapshot().design));
+    for (const c of Object.values(da.components).filter((x) => ['J2', 'TH1'].includes(x.refdes))) {
+      expect(c.sheet).toBe('s_1');
+      expect(c.board).toBeUndefined();
+    }
+    expect(ra.results[0]!.effect).not.toMatch(/on sheet|board "/);
+  });
+
+  it('refuses an unknown sheet or board and imports nothing', () => {
+    const k = ntcTarget(true);
+    const before = JSON.stringify(k.draftSnapshot().design);
+    const s = importing(k, { project: 'led', block: 'NTC', nets: { GND: 'GND' }, sheet: 'Lamp' }, ntcSources());
+    expect(s.rejection).toMatchObject({ code: 'SHEET_UNKNOWN' });
+    expect(s.rejection!.candidates).toContain('LED');
+    const b = importing(k, { project: 'led', block: 'NTC', nets: { GND: 'GND' }, board: 'Lamp board' }, ntcSources());
+    expect(b.rejection).toMatchObject({ code: 'BOARD_UNKNOWN' });
+    expect(JSON.stringify(k.draftSnapshot().design)).toBe(before);
+  });
+
+  it('takes the board by name or id on a design of one board', () => {
+    for (const board of ['Main', 'b_1']) {
+      const k = ntcTarget();
+      const r = importing(k, { project: 'led', block: 'NTC', nets: { GND: 'GND' }, board }, ntcSources());
+      expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+      expect(r.results[0]!.effect).toMatch(/board "Main"/);
+      const d = k.draftSnapshot().design;
+      expect(d.boards).toBeUndefined();
+      expect(Object.values(d.components).every((c) => c.board === undefined)).toBe(true);
+    }
   });
 
   it('refuses an unknown block or project, and without the projects folder', () => {

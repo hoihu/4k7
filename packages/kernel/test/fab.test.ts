@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { eurocircuitsClass, fabPresets, findFabPreset, raiseRules, DEFAULT_RULES } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
-import { buckTransaction } from './fixtures.ts';
-
-function buck() {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
-  return k;
-}
+import { buck } from './fixtures.ts';
 
 const ops = (k: Kernel, ...o: unknown[]) => k.transact({ summary: 'fab', ops: o as never });
 const codes = (k: Kernel) => k.board().diagnostics.map((d) => d.code);

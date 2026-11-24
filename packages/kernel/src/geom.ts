@@ -1,11 +1,10 @@
 /** Plain geometry the kernel's modules share: boxes, polylines as flat x, y lists, distances to segments. */
 import type { Rect } from '@4k7/schema';
 
+export { r3 } from '@4k7/schema';
+
 /** A segment: x0, y0, x1, y1. */
 export type Seg = [number, number, number, number];
-
-/** Rounded to a thousandth (a micrometre on the board): how coordinates are stored. */
-export const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /** Whether two boxes share more than an edge. */
 export const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;

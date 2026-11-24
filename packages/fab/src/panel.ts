@@ -4,12 +4,11 @@
  * fiducials. Designators get the copy's number ("R1_2"), so the BOM counts the whole panel and
  * the pick-and-place lists every placement on it.
  */
-import type { BoardPart, BoardView, HousePlacement, PanelView, Zone, ZoneCut } from '@4k7/schema';
+import { r3, type BoardPart, type BoardView, type HousePlacement, type PanelView, type Zone, type ZoneCut } from '@4k7/schema';
 import { bom, gerbers, pickAndPlace, type FabFile, type FabStamp } from './gerber.ts';
 import { fabNotes } from './fabnotes.ts';
 import { ipc356 } from './ipc356.ts';
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const shift = (pts: number[], dx: number, dy: number) => pts.map((v, i) => r3(v + (i % 2 === 0 ? dx : dy)));
 
 function moveCut(c: ZoneCut, dx: number, dy: number): ZoneCut {

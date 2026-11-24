@@ -8,14 +8,12 @@
  */
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { AskUser, ProposeInput, TOOL_NAMES, mustFix, type Design, type ToolContent } from '@4k7/schema';
+import { AskUser, GuideTopic, PLAN_STEP_OFF, ProposeInput, TOOL_NAMES, mustFix, type Design, type ToolContent } from '@4k7/schema';
 import { mcpHttpHandler, secretsMatch } from '../../../tools/server/src/mcp.ts';
 import { LocalServer, type CallResult } from '../../../tools/server/src/server.ts';
 import { formatDesignContext } from '../src/prompt.ts';
 import { runKernelTool } from '../src/tools.ts';
 import { answerer, countingKernel, scoreRun, type EvalTask, type RunReport, type Score } from './run.ts';
-
-const GUIDES = ['schematic', 'mechanics', 'cost', 'high_speed'];
 
 export interface HeadlessServer {
   /** The /mcp endpoint, e.g. http://127.0.0.1:PORT/mcp. */
@@ -29,9 +27,14 @@ export interface HeadlessServer {
   stop(): Promise<void>;
 }
 
+/** The agent's guides as the app hands them to the kernel: each topic's design doc as it is. */
+const GUIDES = Object.fromEntries(GuideTopic.options.map((t) => [t, readFileSync(new URL(`../../../docs/design/${t.replace('_', '-')}.md`, import.meta.url), 'utf8')]));
+
 /** The tab's side of the tool calls, against an in-process kernel. */
 export function headlessCalls(design: Design | undefined, task: EvalTask) {
   const k = countingKernel(design);
+  // the kernel answers get_guide from the design docs, as in the app; no projects folder here
+  const port = { ...k.port, query: async (q: unknown) => k.kernel.query(q, { guides: GUIDES }) };
   const answer = answerer(task.answers);
   const unanswered: string[] = [];
   const text = (t: string, isError = false): CallResult => ({ isError, content: [{ type: 'text', text: t }] });
@@ -58,7 +61,7 @@ export function headlessCalls(design: Design | undefined, task: EvalTask) {
       case TOOL_NAMES.waitForReview:
         return text('Nothing is pending review.');
       case TOOL_NAMES.proposePlan:
-        return text('Refused: the plan step is off for this project (get_context says plan_step: off). Start on the design.', true);
+        return text(`Refused: ${PLAN_STEP_OFF}`, true);
       case TOOL_NAMES.ask: {
         const args = AskUser.safeParse(input);
         if (!args.success) return text(`Invalid input: ${args.error.message}`, true);
@@ -67,18 +70,8 @@ export function headlessCalls(design: Design | undefined, task: EvalTask) {
         unanswered.push(args.data.question);
         return text('The user is not available to answer. End your turn here.', true);
       }
-      case TOOL_NAMES.query: {
-        // the app answers get_guide from the design docs; so does this
-        const topic = (input as { op?: string; topic?: string })?.op === 'get_guide' ? (input as { topic?: string }).topic : undefined;
-        if (topic !== undefined) {
-          if (!GUIDES.includes(topic)) return text('Guides: schematic, mechanics, cost, high_speed.', true);
-          const file = new URL(`../../../docs/design/${topic.replace('_', '-')}.md`, import.meta.url);
-          return text(readFileSync(file, 'utf8').replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''));
-        }
-        break;
-      }
     }
-    const out = await runKernelTool(k.port, tool, input);
+    const out = await runKernelTool(port, tool, input);
     if (!out) return text(`${tool} is not available in the headless eval server (no app).`, true);
     // as the tab sends it (handleServerCall in apps/web/src/lib/app.svelte.ts)
     const content: ToolContent[] = [...(out.images ?? []).map((i) => ({ type: 'image' as const, ...i })), ...(out.content ? [{ type: 'text' as const, text: out.content }] : [])];

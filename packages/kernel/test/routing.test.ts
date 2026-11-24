@@ -4,7 +4,7 @@ import { Kernel } from '../src/index.ts';
 import { acidDrc, neckDrc } from '../src/drc.ts';
 import { segDist, segmentsOf } from '../src/geom.ts';
 import { route } from '../src/router.ts';
-import { buckTransaction } from './fixtures.ts';
+import { buck } from './fixtures.ts';
 
 const RULES: BoardRules = { clearance: 0.2, track: 0.25, powerTrack: 0.5, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 };
 
@@ -14,13 +14,6 @@ function part(refdes: string, pads: [number, number, string][], h = 1): BoardPar
   const xs = ps.map((p) => p.x);
   const ys = ps.map((p) => p.y);
   return { componentId: refdes, refdes, x: 0, y: 0, rot: 0, pads: ps, courtyard: { x: Math.min(...xs) - 1, y: Math.min(...ys) - 1, w: Math.max(...xs) - Math.min(...xs) + 2, h: Math.max(...ys) - Math.min(...ys) + 2 } } as unknown as BoardPart;
-}
-
-function buck() {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
-  return k;
 }
 
 describe('routing to completion', () => {
