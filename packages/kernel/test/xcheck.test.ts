@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_BOARD, type Design, type Diagnostic, type PartCard } from '@4k7/schema';
+import { DEFAULT_BOARD, type Design, type PartCard } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { buckTransaction } from './fixtures.ts';
 import { corrected, wrong } from '../../parts/test/fixtures/esp32c3.ts';
 
-const diags = (k: Kernel, code?: string) => (k.query({ op: 'get_diagnostics' }) as Diagnostic[]).filter((x) => x.code.startsWith('XCHK.') && (!code || x.code === code));
+const diags = (k: Kernel, code?: string) => k.diagnostics().filter((x) => x.code.startsWith('XCHK.') && (!code || x.code === code));
 
 /** A part from a made-up maker: `pins` as the symbol numbers them, the package as given. */
 const card = (id: string, pins: string[], extra: Partial<PartCard> = {}): PartCard => ({
