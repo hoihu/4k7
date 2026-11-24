@@ -3,6 +3,7 @@ import { Kernel } from '@4k7/kernel';
 import { MCP_INSTRUCTIONS, DESIGN_GUIDE, agentTools, findStackupPreset, trackCurrentFor, trackRiseFor, trackWidthFor, viaCurrentFor } from '@4k7/schema';
 import { Agent, SYSTEM_PROMPT, ScriptedProvider, runCalc, runKernelTool, nearestE, type AgentEvent, type KernelPort, type Script } from '../src/index.ts';
 import { DEMO_FALLBACK, DEMO_SCRIPTS } from './scripts.ts';
+import { twoBoards } from '../../kernel/test/fixtures.ts';
 
 function port(k: Kernel): KernelPort {
   return {
@@ -252,5 +253,69 @@ describe('calc', () => {
     const out = await runKernelTool(port(k), 'calc', { fn: 'impedance', args: { ohms: 50 } });
     expect(out?.isError).toBe(false);
     expect(JSON.parse(out!.content).over).toMatch(/^JLC04161H-3313: F\.Cu, 0\.0994 mm to the plane/);
+  });
+});
+
+describe('calc on a design of several boards', () => {
+  /** Main: 4 layers on JLC04161H-3313; LED board: 2 layers with 2 oz copper and 20 °C heating. */
+  function boards(): Kernel {
+    const k = twoBoards();
+    const r = k.transact({
+      summary: 'stack-ups',
+      ops: [
+        { op: 'set_board', board: 'Main', layers: 4 },
+        { op: 'set_stackup', board: 'Main', preset: 'JLC04161H-3313' },
+        { op: 'set_fab_profile', board: 'Main', preset: 'jlcpcb/4l-1oz' },
+        { op: 'set_fab_profile', board: 'LED board', preset: 'jlcpcb/2l-2oz' },
+        { op: 'set_board', board: 'LED board', current_rise_c: 20 },
+      ],
+    });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    return k;
+  }
+  const calc = async (k: Kernel, call: unknown) => {
+    const out = await runKernelTool(port(k), 'calc', call);
+    return { isError: out!.isError, body: out!.isError ? out!.content : JSON.parse(out!.content) };
+  };
+
+  it('impedance works on the named board\'s stack-up', async () => {
+    const k = boards();
+    const main = await calc(k, { fn: 'impedance', board: 'Main', args: { ohms: 50 } });
+    expect(main.body.over).toMatch(/^JLC04161H-3313: F\.Cu, 0\.0994 mm to the plane/);
+    const led = await calc(k, { fn: 'impedance', board: 'LED board', args: { ohms: 50 } });
+    expect(led.isError).toBe(false);
+    const ledStack = (k.state().summary.boards!.find((b) => b.name === 'LED board')!.stackup)!;
+    expect(ledStack.copper).toHaveLength(2);
+    expect(led.body.over).toMatch(new RegExp(`^${ledStack.name.replace(/[.]/g, '\\.')}: F\\.Cu, ${ledStack.dielectric[0]!.mm} mm`));
+    expect(led.body.width_mm).toBeGreaterThan(main.body.width_mm);
+  });
+
+  it('track_current works on the named board\'s copper and heating', async () => {
+    const k = boards();
+    const led = await calc(k, { fn: 'track_current', board: 'LED board', args: { amps: 2 } });
+    const copper = k.state().summary.boards!.find((b) => b.name === 'LED board')!.stackup!.copper[0]! * 1000;
+    expect(led.body).toMatchObject({ rise_c: 20, copper_um: copper, width_mm: trackWidthFor(2, 20, copper) });
+    const main = await calc(k, { fn: 'track_current', board: 'Main', args: { amps: 2 } });
+    expect(main.body.rise_c).toBe(10);
+  });
+
+  it('asks which board when the boards differ and none is named, unless the arguments need none', async () => {
+    const k = boards();
+    const none = await calc(k, { fn: 'impedance', args: { ohms: 50 } });
+    expect(none.isError).toBe(true);
+    expect(none.body).toMatch(/2 boards with different stack-ups or heating \(Main, LED board\): say which with board, or give h/);
+    expect((await calc(k, { fn: 'track_current', args: { amps: 2 } })).body).toMatch(/say which with board, or give copper_um/);
+    expect((await calc(k, { fn: 'track_current', args: { amps: 2, copper_um: 35 } })).body).toMatch(/say which with board, or give rise_c/);
+    expect((await calc(k, { fn: 'track_current', args: { amps: 2, copper_um: 35, rise_c: 10 } })).isError).toBe(false);
+    expect((await calc(k, { fn: 'impedance', args: { ohms: 50, h: 0.2, er: 4.5 } })).isError).toBe(false);
+    expect((await calc(k, { fn: 'divider', args: { vout: 3.3, vref: 0.8 } })).isError).toBe(false);
+  });
+
+  it('boards with the same stack-up need not be named; an unknown board is refused', async () => {
+    const k = twoBoards();
+    expect((await calc(k, { fn: 'track_current', args: { amps: 1 } })).isError).toBe(false);
+    const bad = await calc(k, { fn: 'impedance', board: 'Nope', args: { ohms: 50 } });
+    expect(bad.isError).toBe(true);
+    expect(bad.body).toMatch(/No board "Nope": the design's boards are Main, LED board/);
   });
 });

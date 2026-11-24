@@ -3,7 +3,7 @@
  * the same executor; it answers with a ToolOutcome that each engine passes on in its own format.
  */
 import { CalcCall, TOOL_NAMES } from '@4k7/schema';
-import { CalcError, runCalc } from './calc.ts';
+import { CalcError, calcBoard, runCalc } from './calc.ts';
 import { compactTx, describeTx } from './format.ts';
 import type { KernelPort } from './types.ts';
 
@@ -47,7 +47,8 @@ export async function runKernelTool(kernel: KernelPort, name: string, input: unk
         const parsed = CalcCall.safeParse(input);
         if (!parsed.success) return { content: `Invalid calc input: ${parsed.error.message}`, isError: true, label: 'calc', detail: 'invalid input' };
         const { summary } = await kernel.snapshot();
-        const out = runCalc(parsed.data, summary.valueSeries, summary.stackup, summary.currentRise);
+        const on = calcBoard(summary, parsed.data.board);
+        const out = runCalc(parsed.data, summary.valueSeries, on.stackup, on.currentRise, on.ask);
         return { content: JSON.stringify(out), isError: false, label: `calc · ${parsed.data.fn}`, detail: Object.entries(out).filter(([k]) => k !== 'note').map(([k, v]) => `${k}=${v}`).join(', ') };
       }
       default:

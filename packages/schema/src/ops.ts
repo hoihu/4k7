@@ -683,7 +683,7 @@ export const PlaceBlockOp = z.object({
 
 export const AutoDrawOp = z.object({
   op: z.literal('auto_draw'),
-  sheet: z.string().optional().describe('Sheet name; omit it for every sheet (or the sheet of the parts in refs)'),
+  sheet: z.string().optional().describe('Sheet (name or id); omit it for every sheet (or the sheet of the parts in refs)'),
   refs: z.array(componentRef).optional().describe('Only these parts: taken out of your drawing and drawn afresh together, in free space'),
 }).describe('Let the auto-layout draw: without refs it redraws the whole sheet from the netlist and the left_of/right_of/above/below hints, and keeps redrawing it after every change until you arrange it again (place_symbol); with refs it redraws just those parts in free space and the rest of your drawing stays.');
 
@@ -1051,7 +1051,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   }).describe('The design\'s check results (ERC, the schematic\'s and datasheet checks, XCHK.*, the board\'s copper shorts, on every board), errors first, the waived ones (waivedBy) last: diagnostics lists 20; when there are more, found counts all of them by code (with the nets and parts they name most) and says how many are not listed and the call that lists the next page. Page on with offset or narrow by code or severity'),
   z.object({ op: z.literal('get_ledger') }),
   z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
-  z.object({ op: z.literal('get_fab_profiles') }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses'),
+  z.object({ op: z.literal('get_fab_profiles'), board: boardRef }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses. Several boards: board answers for that board (its layers and profile); without board, boards lists every board\'s'),
   z.object({
     op: z.literal('get_schematic'),
     texts: z.boolean().optional().describe('true: also where each part\'s name and value stand, for exact spots with place_text'),
