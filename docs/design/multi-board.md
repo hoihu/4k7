@@ -45,7 +45,9 @@ with one board or several. A part that moves to another board (`assign_board`, `
 and its fixed position behind. Test points are numbered across the boards and go on the sheet of
 the part they are at. A waiver can name its board (`add_waiver board`): a board check finds the
 same on each board, the same net or the same copper id, and a waiver without it holds on every
-board. The app's own edits (a drag, the panel's tabs) are for the board
+board. A `board` that is not one of the design's is refused (`BOARD_UNKNOWN`), with one
+board as with several. `constrain near` between parts of two boards is refused (`BOARD_INVALID`):
+each board's focus keeps only the constraints between its own parts. The app's own edits (a drag, the panel's tabs) are for the board
 shown. Queries: `get_board` and `get_fab_profiles` without `board` answer for every board (`boards`:
 one entry each; `get_fab_profiles` gives each board's layers and profile, and the presets once);
 `get_copper`, `get_current_map`, `try_placements` and `suggest_moves` need it. `get_summary` lists
@@ -129,6 +131,8 @@ order is: the impedance rule's width, the board's, the net's, the rules' signal 
 (`ownTrackWidth` in `kernel/src/boards.ts`, read by the router setup, drawn tracks and `get_net`,
 whose `track.by_board` gives each board's width and why). The route key of a board holds its own
 widths, so a change on one board re-routes that board only. `remove_board` drops its widths.
+The fab limit is checked against the board it is for: with `board` that board's, without it every
+board the net has pins on (a width any of them cannot make is refused, `FAB_LIMIT`).
 
 ## 5. Same fab house
 

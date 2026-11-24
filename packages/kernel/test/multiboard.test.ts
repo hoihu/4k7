@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Transaction } from '@4k7/schema';
+import { FIRST_BOARD, type Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { canonicalJson } from '../src/canonical.ts';
 import { boardNameOf, findBoard, FIRST_BOARD_NAME, focusBoard, resolveBoard, tidyBoards } from '../src/boards.ts';
@@ -646,5 +646,76 @@ describe('a net\'s track width per board', () => {
     expect(t.width_mm).toBe(0.6);
     expect(t.why).toBe('set for this net on Main');
     expect(t.by_board).toBeUndefined();
+  });
+});
+
+describe('the board an op names is checked, with one board or several', () => {
+  const run = (k: Kernel, ops: Transaction['ops']) => k.transact({ summary: 'x', ops });
+  const one = () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    k.accept();
+    return k;
+  };
+
+  it('refuses a waiver for a board the design does not have, on one board too', () => {
+    for (const k of [one(), twoBoards()]) {
+      const before = canonicalJson(k.draftDesign());
+      const r = run(k, [{ op: 'add_waiver', board: 'Mian', code: 'DRC.X', entities: ['net:+3V3'], reason: 'checked by hand' }]);
+      expect(r.rejection?.code).toBe('BOARD_UNKNOWN');
+      expect(r.rejection?.candidates).toContain('Main');
+      expect(canonicalJson(k.draftDesign())).toBe(before);
+    }
+    // the only board by name: kept on it
+    const k = one();
+    const r = run(k, [{ op: 'add_waiver', board: 'main', code: 'DRC.X', entities: ['net:+3V3'], reason: 'checked by hand' }]);
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    expect(Object.values(k.draftDesign().waivers)[0]!.board).toBe(FIRST_BOARD);
+  });
+
+  it('refuses near between parts of two boards, naming both', () => {
+    const k = twoBoards();
+    const before = canonicalJson(k.draftDesign());
+    const r = run(k, [{ op: 'constrain', kind: 'near', strength: 'soft', a: 'J2', b: 'J3' }]);
+    expect(r.rejection?.code).toBe('BOARD_INVALID');
+    expect(r.rejection?.message).toContain('"Main"');
+    expect(r.rejection?.message).toContain('"LED board"');
+    expect(canonicalJson(k.draftDesign())).toBe(before);
+    // on one board it holds, and the board's focus keeps it
+    const ok = run(k, [{ op: 'constrain', kind: 'near', strength: 'soft', a: 'J3', b: 'R4', max_mm: 5 }]);
+    expect(ok.status, JSON.stringify(ok.rejection)).toBe('ok');
+    expect(Object.values(focusBoard(k.draftDesign(), resolveBoard(k.draftDesign(), 'LED board').id).ledger).filter((c) => c.kind === 'near')).toHaveLength(1);
+    expect(run(one(), [{ op: 'constrain', kind: 'near', strength: 'soft', a: 'U1', b: 'C4' }]).status).toBe('ok');
+  });
+
+  it('checks a net\'s track width against every board the net is on', () => {
+    const k = twoBoards();
+    // Main may make 0.09 mm, the LED board 0.25 mm
+    for (const ops of [
+      [{ op: 'set_fab_profile', preset: 'eurocircuits/9D' }],
+      [{ op: 'set_fab_profile', board: 'LED board', preset: 'eurocircuits/3D' }],
+    ] as Transaction['ops'][]) {
+      const r = run(k, ops);
+      expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    }
+    const before = canonicalJson(k.draftDesign());
+    // +3V3 is on both boards: 0.15 mm is too narrow for the LED board
+    const r = run(k, [{ op: 'set_net', net: '+3V3', track_mm: 0.15 }]);
+    expect(r.rejection?.code).toBe('FAB_LIMIT');
+    expect(r.rejection?.message).toContain('LED board');
+    expect(canonicalJson(k.draftDesign())).toBe(before);
+    // FB is on Main only: its limit holds
+    expect(run(k, [{ op: 'set_net', net: 'FB', track_mm: 0.15 }]).status).toBe('ok');
+    // with board: that board's limit only
+    expect(run(k, [{ op: 'set_net', net: '+3V3', board: 'Main', track_mm: 0.15 }]).status).toBe('ok');
+    expect(run(k, [{ op: 'set_net', net: '+3V3', board: 'LED board', track_mm: 0.15 }]).rejection?.code).toBe('FAB_LIMIT');
+    expect(run(k, [{ op: 'set_net', net: '+3V3', track_mm: 0.25 }]).status).toBe('ok');
+  });
+
+  it('checks a track width against the one board\'s limit on a design of one board', () => {
+    const k = one();
+    expect(run(k, [{ op: 'set_fab_profile', preset: 'eurocircuits/3D' }]).status).toBe('ok');
+    expect(run(k, [{ op: 'set_net', net: '+3V3', track_mm: 0.2 }]).rejection?.code).toBe('FAB_LIMIT');
+    expect(run(k, [{ op: 'set_net', net: '+3V3', track_mm: 0.3 }]).status).toBe('ok');
   });
 });
