@@ -54,7 +54,7 @@ describe('headless eval server (/mcp without a tab)', () => {
     const q = { op: 'get_diagnostics' };
     const erc = await client.callTool({ name: 'design_query', arguments: q });
     expect(text(erc)).toBe((await runKernelTool(tab.port, 'design_query', q))!.content);
-    expect(JSON.parse(text(erc)).some((d: { code: string; severity: string }) => d.severity === 'error')).toBe(true); // C1.2 open
+    expect(JSON.parse(text(erc)).diagnostics.some((d: { code: string; severity: string }) => d.severity === 'error')).toBe(true); // C1.2 open
 
     expect(text(await client.callTool({ name: 'get_context', arguments: {} }))).toMatch(/C1=100nF[\s\S]*plan_step: off/);
     const refused = await client.callTool({ name: 'propose', arguments: { summary: 'Decouple J1' } });

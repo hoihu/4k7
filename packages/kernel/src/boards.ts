@@ -6,7 +6,7 @@
  * files read a focus and need not know other boards exist; a board op is applied to a focus and
  * the focus is written back. A design of one board is its own focus, unchanged.
  */
-import { DEFAULT_BOARD, FIRST_BOARD, MULTI_BOARD_FORMAT, DESIGN_FORMAT_VERSION, type BoardEntry, type BoardSettings, type Component, type Constraint, type Design } from '@4k7/schema';
+import { DEFAULT_BOARD, FIRST_BOARD, MULTI_BOARD_FORMAT, DESIGN_FORMAT_VERSION, type BoardEntry, type BoardSettings, type Component, type Constraint, type Design, type Net } from '@4k7/schema';
 import { closest, reject } from './doc.ts';
 
 /** The first board's name until it is renamed, with one board or several. */
@@ -53,6 +53,18 @@ export const boardName = (d: Design): string => d.focus?.name ?? firstEntry(d).n
 /** A board's settings as stored (absent: the defaults). */
 export function settingsOf(d: Design, id: string): BoardSettings | undefined {
   return id === FIRST_BOARD ? d.board : d.boards?.[id]?.settings;
+}
+
+/**
+ * A net's own track width on the board `d` is about (a focus, else the first board): set for it on
+ * that board, else set for the net; absent, the rules' width. `board` says it was the board's. An
+ * impedance rule goes over both (its callers check it first).
+ */
+export function ownTrackWidth(d: Design, net: Net | undefined): { mm: number; board?: string } | undefined {
+  const id = d.focus?.id ?? FIRST_BOARD;
+  const on = net?.attrs.boardTrackWidths?.[id];
+  if (on !== undefined) return { mm: on, board: boardName(d) };
+  return net?.attrs.trackWidth !== undefined ? { mm: net.attrs.trackWidth } : undefined;
 }
 
 /** Put a board's settings in place. */
@@ -257,6 +269,13 @@ export function removeBoard(d: Design, op: { board: string }) {
   for (const c of Object.values(d.components)) if (c.board === b.id) delete c.board;
   // its waivers hold where its parts went
   for (const w of Object.values(d.waivers)) if (w.board === b.id) delete w.board;
+  // its nets' widths on it go with it
+  for (const n of Object.values(d.nets)) {
+    const w = n.attrs.boardTrackWidths;
+    if (!w || !(b.id in w)) continue;
+    delete w[b.id];
+    if (!Object.keys(w).length) delete n.attrs.boardTrackWidths;
+  }
   delete d.boards![b.id];
   if (!multiBoard(d)) {
     // one board again: stored as before boards were added

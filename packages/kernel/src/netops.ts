@@ -4,7 +4,7 @@
 import { closestPackages, isBoxSymbol, isTwoPin, packageChoice, packageOf, packageOptions, searchParts, standardPackage } from '@4k7/parts';
 import { approxEqual, ASSEMBLY_HOUSES, type BoardSettings, type Component, type Constraint, DEFAULT_BOARD, FIRST_BOARD, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea, type SwapGroup } from '@4k7/schema';
 import { keepPlacement } from './board.ts';
-import { boardList, boardOf, onBoard, settingsOf } from './boards.ts';
+import { boardList, boardOf, onBoard, resolveBoard, settingsOf } from './boards.ts';
 import { allocRefdes, cardOf, closest, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
 import { isDrawn } from './drawing.ts';
 import { drawNet } from './netdraw.ts';
@@ -412,15 +412,31 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
     }
     changes.push(op.loads === null ? 'no loads' : `loads ${op.loads.map((l) => `${l.pin} ${l.amps} A`).join(', ')}`);
   }
+  // board: track_mm on that board only (docs/design/multi-board.md)
+  if (op.board !== undefined && op.track_mm === undefined) reject({ code: 'INVALID_OP', message: 'set_net board names the board a track_mm is for: give track_mm too (the other settings are the net\'s on every board).' });
+  const widthOn = op.board !== undefined ? resolveBoard(d, op.board) : undefined;
   if (op.track_mm !== undefined) {
-    if (op.track_mm === null) delete a.trackWidth;
-    else {
+    let mm: number | undefined;
+    if (op.track_mm !== null) {
       if (op.track_mm < 0.1 || op.track_mm > 10) reject({ code: 'PARAM_INVALID', message: `A track of ${op.track_mm} mm cannot be made; give 0.1–10 mm.` });
-      const fab = d.board?.fab;
+      const fab = widthOn ? settingsOf(d, widthOn.id)?.fab : d.board?.fab;
       if (fab && op.track_mm < fab.limits.track - 1e-9) reject({ code: 'FAB_LIMIT', message: `A ${op.track_mm} mm track is below ${fab.house}'s limit (${fab.limits.track} mm, ${fab.tier}).` });
-      a.trackWidth = Math.round(op.track_mm * 1000) / 1000;
+      mm = Math.round(op.track_mm * 1000) / 1000;
     }
-    changes.push(`track ${op.track_mm === null ? 'default' : `${a.trackWidth} mm`}`);
+    if (widthOn) {
+      const on = { ...a.boardTrackWidths };
+      if (mm === undefined) delete on[widthOn.id];
+      else on[widthOn.id] = mm;
+      if (Object.keys(on).length) a.boardTrackWidths = on;
+      else delete a.boardTrackWidths;
+      changes.push(`track on ${widthOn.name} ${mm === undefined ? `as the net's (${a.trackWidth ? `${a.trackWidth} mm` : 'default'})` : `${mm} mm`}`);
+    } else {
+      if (mm === undefined) delete a.trackWidth;
+      else a.trackWidth = mm;
+      // the boards with their own width keep it
+      const own = Object.entries(a.boardTrackWidths ?? {}).map(([id, w]) => `${boardList(d).find((b) => b.id === id)?.name ?? id} ${w} mm`);
+      changes.push(`track ${mm === undefined ? 'default' : `${mm} mm`}${own.length ? ` (own width kept on ${own.join(', ')})` : ''}`);
+    }
   }
   if (op.route_first !== undefined) {
     if (op.route_first) a.routeFirst = true;
@@ -458,7 +474,7 @@ function firstSheet(d: Design): string {
   return Object.values(d.sheets).sort((a, b) => a.order - b.order)[0]!.id;
 }
 
-function sheetByName(d: Design, name: string, hint = ' Add it with add_sheet first.'): string {
+export function sheetByName(d: Design, name: string, hint = ' Add it with add_sheet first.'): string {
   const s = Object.values(d.sheets).find((x) => x.name.toLowerCase() === name.toLowerCase() || x.id === name);
   if (!s) reject({ code: 'SHEET_UNKNOWN', message: `No sheet "${name}".${hint}`, candidates: Object.values(d.sheets).map((x) => x.name) });
   return s.id;

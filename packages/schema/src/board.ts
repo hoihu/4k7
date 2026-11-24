@@ -2,7 +2,7 @@ import type { PackageInfo } from './ingest.ts';
 import type { PartCategory } from './part.ts';
 import { fabSummary, type FabProfile } from './fab.ts';
 import type { PanelSettings, PanelView } from './panel.ts';
-import type { Diagnostic } from './results.ts';
+import type { Diagnostic, Severity } from './results.ts';
 import { boardFacing, matingOf, type BoardFacing } from './enclosure.ts';
 import { stackupPresets, stackupText, type ImpedanceRule, type ImpedanceView, type Stackup } from './stackup.ts';
 import { r3 } from './units.ts';
@@ -1441,10 +1441,51 @@ const DRC_LIMIT = 20;
 const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 } as const;
 
 /**
+ * One page of findings, shared by get_board's DRC list and get_diagnostics: at most `limit` from
+ * `offset` of `matching` (sorted already), and when that is not all of `all`, the matching ones
+ * counted by code, with the nets (pairs where a finding names two) and parts each code names most,
+ * and how to list the rest: `next` writes the call for the given extra arguments, `narrow` says which
+ * filters there are and `unfiltered` the call without them. See docs/design/ops-api.md.
+ */
+function findingsPage(
+  all: Diagnostic[],
+  matching: Diagnostic[],
+  filters: Record<string, string | undefined>,
+  paging: { offset?: number; limit?: number },
+  o: { netsOf: (x: Diagnostic) => string[]; refsOf: (x: Diagnostic) => string[]; next: (args: string) => string; narrow: string; unfiltered: string; limit: number },
+) {
+  const offset = paging.offset ?? 0;
+  const limit = paging.limit ?? o.limit;
+  const page = matching.slice(offset, offset + limit);
+  if (page.length === all.length) return { page };
+  const set = Object.entries(filters).filter((e): e is [string, string] => e[1] !== undefined);
+  const filtered = set.length > 0;
+  const top = (counts: Map<string, number>) => Object.fromEntries([...counts].sort((x, y) => y[1] - x[1]).slice(0, 6));
+  const byCode = new Map<string, { severity: string; count: number; nets: Map<string, number>; parts: Map<string, number> }>();
+  for (const x of matching) {
+    const c = byCode.get(x.code) ?? { severity: x.severity, count: 0, nets: new Map(), parts: new Map() };
+    byCode.set(x.code, c);
+    c.count++;
+    const nets = o.netsOf(x).sort();
+    for (const n of nets.length === 2 ? [nets.join(' / ')] : nets) c.nets.set(n, (c.nets.get(n) ?? 0) + 1);
+    for (const r of o.refsOf(x)) c.parts.set(r, (c.parts.get(r) ?? 0) + 1);
+  }
+  const after = matching.length - offset - page.length;
+  const args = [`offset: ${offset + page.length}`, ...set.map(([k, v]) => `${k}: "${v}"`)].join(', ');
+  return {
+    page,
+    found: {
+      ...(filtered ? { matching: matching.length } : {}),
+      listed: page.length ? `${offset + 1}–${offset + page.length} of ${matching.length}` : `none (offset ${offset} of ${matching.length})`,
+      by_code: Object.fromEntries([...byCode].map(([code, c]) => [code, { severity: c.severity, count: c.count, ...(c.nets.size ? { nets: top(c.nets) } : {}), ...(c.parts.size ? { at: top(c.parts) } : {}) }])),
+      more: `${matching.length - page.length} ${filtered ? 'matching ' : ''}finding(s) not listed${after > 0 ? `; ${o.next(args)} lists the next ${Math.min(after, limit)}` : ''}. ${o.narrow} (by_code counts them; nets and at name the six it finds most)${filtered ? `; ${o.unfiltered} without them lists all` : ''}.`,
+    },
+  };
+}
+
+/**
  * The board's DRC findings as get_board lists them: the open (not waived) ones, errors first, at most
- * `limit` from `offset` of those `filter` matches. When not all are listed, drc_found counts them by
- * code, with the nets (pairs where a finding names two) and parts each code names most, and says
- * how to list the rest: every finding stays reachable. See docs/design/ops-api.md.
+ * `limit` from `offset` of those `filter` matches; findingsPage counts and pages them.
  */
 function drcList(b: BoardView, filter: DrcFilter = {}) {
   const open = b.diagnostics.filter((x) => !x.waivedBy).sort((x, y) => SEVERITY_ORDER[x.severity] - SEVERITY_ORDER[y.severity]);
@@ -1457,34 +1498,50 @@ function drcList(b: BoardView, filter: DrcFilter = {}) {
   };
   const refsOf = (x: Diagnostic) => x.entities.filter((e) => !e.startsWith('net:'));
   const matching = open.filter((x) => (!filter.code || x.code === filter.code) && (!filter.ref || refsOf(x).includes(filter.ref)) && (!filter.net || netsOf(x).includes(filter.net)));
-  const offset = filter.offset ?? 0;
-  const limit = filter.limit ?? DRC_LIMIT;
-  const page = matching.slice(offset, offset + limit);
+  const { page, found } = findingsPage(open, matching, { code: filter.code, net: filter.net, ref: filter.ref }, filter, {
+    netsOf,
+    refsOf,
+    next: (args) => `get_board drc: { ${args} }`,
+    narrow: 'drc: { code, net, ref } lists only the findings of one code, net or part',
+    unfiltered: 'drc',
+    limit: DRC_LIMIT,
+  });
   // (drawn copper: with code and entities, which add_waiver takes for a soft rule kept on purpose)
   const drc = page.map((x) => (b.drawn ? `${x.severity} ${x.code}${x.entities.length ? ` [${x.entities.join(', ')}]` : ''}: ${x.message}` : `${x.severity}: ${x.message}`));
-  const filtered = filter.code !== undefined || filter.net !== undefined || filter.ref !== undefined;
-  if (page.length === open.length) return { drc };
-  const top = (counts: Map<string, number>) => Object.fromEntries([...counts].sort((x, y) => y[1] - x[1]).slice(0, 6));
-  const byCode = new Map<string, { severity: string; count: number; nets: Map<string, number>; parts: Map<string, number> }>();
-  for (const x of matching) {
-    const c = byCode.get(x.code) ?? { severity: x.severity, count: 0, nets: new Map(), parts: new Map() };
-    byCode.set(x.code, c);
-    c.count++;
-    const nets = netsOf(x).sort();
-    for (const n of nets.length === 2 ? [nets.join(' / ')] : nets) c.nets.set(n, (c.nets.get(n) ?? 0) + 1);
-    for (const r of refsOf(x)) c.parts.set(r, (c.parts.get(r) ?? 0) + 1);
-  }
-  const after = matching.length - offset - page.length;
-  return {
-    drc,
-    drc_found: {
-      open: open.length,
-      ...(filtered ? { matching: matching.length } : {}),
-      listed: page.length ? `${offset + 1}–${offset + page.length} of ${matching.length}` : `none (offset ${offset} of ${matching.length})`,
-      by_code: Object.fromEntries([...byCode].map(([code, c]) => [code, { severity: c.severity, count: c.count, ...(c.nets.size ? { nets: top(c.nets) } : {}), ...(c.parts.size ? { at: top(c.parts) } : {}) }])),
-      more: `${matching.length - page.length} ${filtered ? 'matching ' : ''}finding(s) not listed${after > 0 ? `; get_board drc: { offset: ${offset + page.length}${filter.code ? `, code: "${filter.code}"` : ''}${filter.net ? `, net: "${filter.net}"` : ''}${filter.ref ? `, ref: "${filter.ref}"` : ''} } lists the next ${Math.min(after, limit)}` : ''}. drc: { code, net, ref } lists only the findings of one code, net or part (by_code counts them; nets and at name the six it finds most)${filtered ? '; drc without them lists all' : ''}.`,
-    },
-  };
+  return found ? { drc, drc_found: { open: open.length, ...found } } : { drc };
+}
+
+/** Which diagnostics get_diagnostics lists (its arguments). */
+export interface DiagnosticsFilter {
+  code?: string;
+  severity?: Severity;
+  offset?: number;
+  limit?: number;
+}
+
+/** get_diagnostics' default page: 20 findings with their fix hints stay well under 8000 characters. */
+const DIAGNOSTICS_LIMIT = 20;
+
+/**
+ * The design's diagnostics as get_diagnostics answers: errors first, then warnings and infos, the
+ * waived ones (marked with waivedBy) after the open ones; at most `limit` from `offset` of those the
+ * filter matches (code exact). When not all are listed, found counts them as get_board's drc_found
+ * does and says the call that lists the next page. See docs/design/ops-api.md.
+ */
+export function diagnosticsAnswer(list: Diagnostic[], filter: DiagnosticsFilter = {}) {
+  const rank = (x: Diagnostic) => (x.waivedBy ? 3 : 0) + SEVERITY_ORDER[x.severity];
+  const all = [...list].sort((x, y) => rank(x) - rank(y));
+  const matching = all.filter((x) => (!filter.code || x.code === filter.code) && (!filter.severity || x.severity === filter.severity));
+  const { page, found } = findingsPage(all, matching, { code: filter.code, severity: filter.severity }, filter, {
+    netsOf: (x) => x.entities.filter((e) => e.startsWith('net:')).map((e) => e.slice(4)),
+    refsOf: (x) => x.entities.filter((e) => !e.startsWith('net:')),
+    next: (args) => `get_diagnostics { ${args} }`,
+    narrow: 'code or severity lists only the findings of one code or severity',
+    unfiltered: 'get_diagnostics',
+    limit: DIAGNOSTICS_LIMIT,
+  });
+  const waived = all.filter((x) => x.waivedBy).length;
+  return found ? { diagnostics: page, found: { total: all.length, open: all.length - waived, waived, ...found } } : { diagnostics: page };
 }
 
 /** Compact board description for agents (design_query get_board). `drc`: which DRC findings to list (drcList). */

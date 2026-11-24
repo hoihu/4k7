@@ -202,6 +202,11 @@ export interface NetAttrs {
   /** Track width on the board (mm), the user's choice; absent: the signal or power width of the rules. */
   trackWidth?: number;
   /**
+   * Its track width on a board (set_net track_mm with board), by board id: over trackWidth on that
+   * board (docs/design/multi-board.md). Absent: trackWidth on every board.
+   */
+  boardTrackWidths?: Record<string, number>;
+  /**
    * How the schematic draws the net, forced (set_net draw_as): a label at every pin and no wire
    * between them, or wires and no label where a wire can go. Absent: whatever draws best.
    */
