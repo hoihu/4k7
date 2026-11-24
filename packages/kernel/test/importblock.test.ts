@@ -280,7 +280,7 @@ describe('import_block', () => {
         'values to recheck (chosen for lamp): C6 10uF, R5 100k (sets U2.FB)',
     );
     k.accept();
-    expect(k.boardPlacement(k.boardId('LED board')).parts.map((p) => p.refdes).sort()).toEqual(['C6', 'D2', 'J3', 'J4', 'R4', 'R5', 'U2']);
+    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'LED board').id).parts.map((p) => p.refdes).sort()).toEqual(['C6', 'D2', 'J3', 'J4', 'R4', 'R5', 'U2']);
   });
 
   it('refuses an unknown sheet or board and imports nothing', () => {
