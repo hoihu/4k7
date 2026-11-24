@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BoardPad, BoardPart, BoardView } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { exploreMain, refinable, refinePlacement } from '../src/refine.ts';
-import { buckTransaction } from './fixtures.ts';
+import { buck } from './fixtures.ts';
 
 /** A part at (x, y) with 1 × 1 mm pads at the given offsets on the given nets (rotation 0). */
 function part(refdes: string, x: number, y: number, pads: [number, number, string][], more: Partial<BoardPart> = {}): BoardPart {
@@ -13,13 +13,6 @@ function part(refdes: string, x: number, y: number, pads: [number, number, strin
 }
 
 const board = (parts: BoardPart[]): BoardView => ({ outline: { w: 40, h: 20 }, parts, rules: { clearance: 0.2, track: 0.25, powerTrack: 0.5, viaDrill: 0.3, viaPad: 0.6, edgeClearance: 0.5 }, cornerRadius: 0, shape: null, cutouts: [], planes: [] }) as unknown as BoardView;
-
-function buck() {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
-  return k;
-}
 
 describe('refining the small parts', () => {
   it('turns a resistor whose pads face the wrong way: its ratsnest no longer crosses', () => {

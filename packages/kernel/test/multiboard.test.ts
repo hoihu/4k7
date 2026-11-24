@@ -4,31 +4,7 @@ import { Kernel } from '../src/index.ts';
 import { canonicalJson } from '../src/canonical.ts';
 import { focusBoard } from '../src/boards.ts';
 import { copperKey } from '../src/board.ts';
-import { buckTransaction } from './fixtures.ts';
-
-/**
- * The buck on the main board, an LED board joined by a 2-pin header pair: J2 on the main board
- * (its +3V3 and GND), J3 on the LED board feeding D2 through R4. See docs/design/multi-board.md.
- */
-function twoBoards(): Kernel {
-  const k = new Kernel();
-  expect(k.transact(buckTransaction()).status).toBe('ok');
-  const ops: Transaction['ops'] = [
-    { op: 'add_sheet', name: 'LED' },
-    { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J2' },
-    { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J3', sheet: 'LED' },
-    { op: 'add_part', part: 'generic:R', refdes: 'R4', params: { resistance: '1k' }, sheet: 'LED' },
-    { op: 'add_part', part: 'generic:LED', refdes: 'D2', sheet: 'LED' },
-    { op: 'connect', pins: ['J2.1', 'J3.1', 'R4.1'], net: '+3V3' },
-    { op: 'connect', pins: ['R4.2', 'D2.A'], net: 'LED_A' },
-    { op: 'connect', pins: ['J2.2', 'J3.2', 'D2.K'], net: 'GND' },
-    { op: 'add_board', name: 'LED board', sheets: ['LED'] },
-  ];
-  const r = k.transact({ summary: 'LED board', ops });
-  expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
-  k.accept();
-  return k;
-}
+import { buckTransaction, twoBoards } from './fixtures.ts';
 
 const refs = (k: Kernel, board: string) => k.boardPlacement(k.boardId(board)).parts.map((p) => p.refdes).sort();
 

@@ -1,18 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { bom, bomLines, gerbers, pickAndPlace } from '@4k7/fab';
 import { Kernel } from '../src/index.ts';
-import { buckTransaction } from './fixtures.ts';
+import { buck } from './fixtures.ts';
 
 /**
  * add_test_points: one test point per net, on that net, at the part that drives it, named TP<n>
  * with TP_<net> on the silkscreen (docs/design/layout.md §4).
  */
-function buck() {
-  const k = new Kernel();
-  expect(k.transact(buckTransaction()).status).toBe('ok');
-  k.accept();
-  return k;
-}
 
 const tps = (k: Kernel) => Object.values(k.draftDesign().components).filter((c) => c.refdes.startsWith('TP'));
 const netOf = (k: Kernel, c: { pins: Record<string, string> }) => k.draftDesign().nets[c.pins['1']!]?.name;

@@ -3,14 +3,7 @@ import { boardSummary, cutoutDistance, type Track } from '@4k7/schema';
 import { draftToCard, registerUserParts, unregisterUserPart } from '@4k7/parts';
 import { Kernel } from '../src/index.ts';
 import { edgeCrossings, splitDrc } from '../src/drc.ts';
-import { buckTransaction } from './fixtures.ts';
-
-function buck() {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
-  return k;
-}
+import { buck } from './fixtures.ts';
 
 /**
  * The current check's findings: the router joins a pad to its plane with one via and runs supplies

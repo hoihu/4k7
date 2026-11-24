@@ -3,7 +3,7 @@ import { Kernel } from '@4k7/kernel';
 import type { BoardView, EditOp, ZoneCut } from '@4k7/schema';
 import { boardNetDesign, checkBoardFiles, checkCopper, checkFabSet, fabDiagnostics, copperCheckText, gerbers, panelBoard, readExcellon, readFabFiles, readGerber, type NetDesign, type NetPad } from '../src/index.ts';
 import { capsuleCuts } from '../../kernel/src/routepours.ts';
-import { buckTransaction } from '../../kernel/test/fixtures.ts';
+import { buck as buckFixture } from '../../kernel/test/fixtures.ts';
 
 /* the check on files written by hand: it holds for any writer */
 
@@ -106,9 +106,7 @@ describe('the netlist check of production files', () => {
 
 /** The buck converter (4 layers, +3V3 under U2 on In2.Cu and +12V round it), routed; with `ops` after the parts. */
 function buck(ops: EditOp[] = []): BoardView {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
+  const k = buckFixture();
   const r = k.transact({
     summary: 'planes',
     ops: [

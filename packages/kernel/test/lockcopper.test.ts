@@ -1,19 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { boardSummary, type Track } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
-import { buckTransaction } from './fixtures.ts';
+import { buck } from './fixtures.ts';
 
 /**
  * lock_copper / unlock_copper: a net's routed copper kept exactly as it lies, laid first on every
  * route and never ripped up (docs/design/layout.md §5.9).
  */
-function buck() {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
-  return k;
-}
-
 /** The buck routed, its copper kept with the design (as the app does when routing finishes). */
 function routed() {
   const k = buck();

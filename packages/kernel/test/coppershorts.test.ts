@@ -1,15 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { Kernel } from '../src/index.ts';
-import { buckTransaction } from './fixtures.ts';
+import { buck as buckFixture } from './fixtures.ts';
 
 // Copper of two nets that touches is in get_diagnostics, as the board DRC finds it: in 0.6.x a
 // board read back from its Gerbers had two shorts (two parts' pads touching; a GND track over a
 // module's unconnected pad that a land pattern edit moved under it) while get_diagnostics was clean.
 
 function buck(drawn: boolean) {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
+  const k = buckFixture();
   if (drawn) ok(k, [{ op: 'set_copper_mode', mode: 'drawn', keep: false }]);
   return k;
 }

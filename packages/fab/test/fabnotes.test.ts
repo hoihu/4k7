@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Kernel } from '@4k7/kernel';
 import { fabFiles, fabNotes, panelFabFiles, unzip, zip } from '../src/index.ts';
-import { buckTransaction } from '../../kernel/test/fixtures.ts';
+import { buck as buckFixture, buckTransaction } from '../../kernel/test/fixtures.ts';
 
 /** Two 4-pin headers joined by a USB pair at 90 Ω, on JLCPCB's 4 layers (its standard stack-up). */
 function usb() {
@@ -26,10 +26,7 @@ function usb() {
 }
 
 function buck() {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
-  return k.board();
+  return buckFixture().board();
 }
 
 const notes = (files: { name: string; content: string }[], name: string) => files.find((f) => f.name === name)?.content;
