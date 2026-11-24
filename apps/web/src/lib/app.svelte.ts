@@ -31,8 +31,7 @@ import schematicGuide from '../../../../docs/design/schematic.md?raw';
 import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
-import { blocksOfProject } from '@4k7/kernel/reuse';
-import type { ImportSources } from '@4k7/kernel';
+import type { ImportSources, QueryContext } from '@4k7/kernel';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
 import { PartImports } from './importPart.ts';
@@ -63,6 +62,9 @@ import { disk, type ProjectEntry } from './disk.svelte.ts';
 import { fitConversation, projectJson, readProject, restoredSessions } from './conversation.ts';
 import { PLAN_STEP_OFF, PlanReview } from './plan.ts';
 import { addRecent, renameRecent } from './recentProjects.ts';
+
+/** The agent's guides (get_guide), each its design doc as it is: the kernel answers from them. */
+const GUIDES: QueryContext['guides'] = { mechanics: mechanicsGuide, cost: costGuide, high_speed: highSpeedGuide, schematic: schematicGuide, boards: boardsGuide };
 
 /** A tool's answer before the chat's label is put on it. */
 type ToolResult = Omit<ToolOutcome, 'label' | 'detail'>;
@@ -1264,26 +1266,6 @@ class AppState {
           const part = q.data.part;
           return { content: JSON.stringify(out), isError: false, label: 'query · get_enclosure', detail: (out.open_questions as string[] | undefined)?.length ? 'questions open' : part ? `${part}${out.lines ? ` lines ${(out.lines as number[]).join('–')} of ${out.total_lines}` : ''}` : out.read ? 'overview' : 'ok' };
         }
-        // another project's blocks, read from the projects folder: only a project it lists (docs/design/ops-api.md §7)
-        if ((input as { op?: string })?.op === 'list_blocks') {
-          const id = String((input as { project?: unknown }).project ?? '');
-          if (disk.status !== 'ok') return fail('query · list_blocks', 'No projects folder: the app is not connected to the 4k7 server.');
-          try {
-            const known = (await disk.listProjects()).map((p) => p.id);
-            const out = blocksOfProject(id, known.includes(id) ? await disk.loadProject(id) : undefined, known);
-            if ('error' in out) return fail('query · list_blocks', JSON.stringify(out));
-            return { content: JSON.stringify(out), isError: false, label: 'query · list_blocks', detail: `${id}: ${out.blocks.length} block(s)` };
-          } catch (e) {
-            return fail('query · list_blocks', (e as Error).message);
-          }
-        }
-        if ((input as { op?: string })?.op === 'get_guide') {
-          const topic = (input as { topic?: string }).topic;
-          const guide = topic === 'mechanics' ? mechanicsGuide : topic === 'cost' ? costGuide : topic === 'high_speed' ? highSpeedGuide : topic === 'schematic' ? schematicGuide : topic === 'boards' ? boardsGuide : null;
-          if (!guide) return fail('query · get_guide', 'Guides: schematic, mechanics, cost, high_speed, boards.');
-          // the guide is its docs/design file as it is, without its header for people
-          return { content: guide.replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''), isError: false, label: 'query · get_guide', detail: topic! };
-        }
         if ((input as { op?: string })?.op !== 'get_board') break;
         const q = QueryOp.safeParse(input);
         if (!q.success || q.data.op !== 'get_board') return fail('query · get_board', q.error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') ?? 'not get_board');
@@ -1532,7 +1514,7 @@ class AppState {
     transact: (tx) => this.transactEdit(tx),
     // the production files' findings of the board as it is now, beside the kernel's
     query: async (q) => {
-      const out = await this.kernel.port.query(q);
+      const out = await this.kernel.query(q, await this.queryContext(q));
       return (q as { op?: string })?.op === 'get_diagnostics' && Array.isArray(out) && this.boardCurrent ? [...out, ...(await this.fab.settled())] : out;
     },
   };
@@ -1545,7 +1527,7 @@ class AppState {
    */
   private async transactEdit(tx: unknown, by?: 'user'): Promise<TransactionResult> {
     const ops = (tx as { ops?: RouteAsk[] })?.ops;
-    const sources = await this.importSources(ops);
+    const sources = await this.readSources(tx);
     if (!Array.isArray(ops) || !ops.some((o) => o?.op === 'route')) return this.kernel.transact(tx, by, undefined, undefined, sources);
     // one at a time (the agent may send two at once): each starts from the design the one before left
     const run = this.helperQueue.then(() => this.transactHelped(tx, by, ops, sources));
@@ -1554,9 +1536,22 @@ class AppState {
   }
   private helperQueue: Promise<unknown> = Promise.resolve();
 
-  /** The stored projects a transaction's import_block ops copy from: only ids the projects folder lists are read (docs/design/ops-api.md §7). */
-  private async importSources(ops: unknown): Promise<ImportSources | undefined> {
-    const ids = Array.isArray(ops) ? [...new Set(ops.filter((o) => o?.op === 'import_block').map((o) => String(o.project ?? '')))] : [];
+  /** What the kernel needs beyond the design to answer query `q`: the guides for get_guide, the projects list_blocks reads. */
+  private async queryContext(q: unknown): Promise<QueryContext | undefined> {
+    if ((q as { op?: string })?.op === 'get_guide') return { guides: GUIDES };
+    const sources = await this.readSources(q);
+    return sources ? { sources } : undefined;
+  }
+
+  /**
+   * The stored projects an input names, for the kernel: a list_blocks query's project, a transaction's
+   * import_block projects. Only ids the projects folder lists are read (docs/design/ops-api.md §7);
+   * undefined without a projects folder (the kernel then says so).
+   */
+  private async readSources(input: unknown): Promise<ImportSources | undefined> {
+    const i = input as { op?: string; project?: unknown; ops?: { op?: string; project?: unknown }[] };
+    const named = i?.op === 'list_blocks' ? [i.project] : Array.isArray(i?.ops) ? i.ops.filter((o) => o?.op === 'import_block').map((o) => o.project) : [];
+    const ids = [...new Set(named.map((x) => String(x ?? '')))];
     if (!ids.length || disk.status !== 'ok') return undefined;
     const projects = (await disk.listProjects()).map((p) => p.id);
     const files: Record<string, string> = {};

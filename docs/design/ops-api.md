@@ -276,9 +276,11 @@ depends on its efficiency).
 
 `design_query list_blocks { project }` reads another project in the projects folder, by its id (the file
 name without `.twd.json`), and lists its functional blocks (its `describe` blocks), so the agent can reuse a
-proven one. The app answers it: it reads the file through the server only when the server lists that id
-(the server refuses ids with path characters), and `blocksOfProject` (`packages/kernel/src/reuse.ts`)
-turns it into the answer. Neither project changes.
+proven one. The app reads the file through the server only when the server lists that id (the server
+refuses ids with path characters) and hands it to the kernel with the query (`Kernel.query`'s `sources`,
+as for `transact`); the kernel answers with `blocksOfProject` (`packages/kernel/src/reuse.ts`), and says
+there is no projects folder when it got none. Neither project changes. `get_guide` works the same way:
+the app hands the guides (the design docs) to the kernel with the query, and the kernel answers.
 
 ```jsonc
 { "project": "usb-lamp",

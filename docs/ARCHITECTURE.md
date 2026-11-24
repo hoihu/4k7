@@ -168,7 +168,8 @@ npm run eval:mcp -- packages/agent/eval/tasks/led-current.json --model sonnet --
 
 `CLAUDE_BIN` picks the program. Tools that need the app (pictures, sourcing, datasheets, imports, artwork)
 answer with an error there, and the queries the app answers off the kernel worker (`get_board` routed,
-`try_placements`, `suggest_moves`, `list_blocks`) get the kernel's own answer, without routing or projects. Planned: running the golden tasks against
+`try_placements`, `suggest_moves`) get the kernel's own answer, without routing; `get_guide` is answered by
+the kernel from the design docs as in the app, and `list_blocks` says there is no projects folder. Planned: running the golden tasks against
 golden designs with several models, for example "add a USB-C PD sink for 20 V", "fan out this BGA on 6 layers", "import this
 datasheet", scored on ERC/DRC cleanliness, constraint satisfaction, part-extraction accuracy, op count
 and token cost, with a model compatibility table so users know which BYO models work well.

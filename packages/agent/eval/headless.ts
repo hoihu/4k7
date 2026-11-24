@@ -27,9 +27,14 @@ export interface HeadlessServer {
   stop(): Promise<void>;
 }
 
+/** The agent's guides as the app hands them to the kernel: each topic's design doc as it is. */
+const GUIDES = Object.fromEntries(GuideTopic.options.map((t) => [t, readFileSync(new URL(`../../../docs/design/${t.replace('_', '-')}.md`, import.meta.url), 'utf8')]));
+
 /** The tab's side of the tool calls, against an in-process kernel. */
 export function headlessCalls(design: Design | undefined, task: EvalTask) {
   const k = countingKernel(design);
+  // the kernel answers get_guide from the design docs, as in the app; no projects folder here
+  const port = { ...k.port, query: async (q: unknown) => k.kernel.query(q, { guides: GUIDES }) };
   const answer = answerer(task.answers);
   const unanswered: string[] = [];
   const text = (t: string, isError = false): CallResult => ({ isError, content: [{ type: 'text', text: t }] });
@@ -65,19 +70,8 @@ export function headlessCalls(design: Design | undefined, task: EvalTask) {
         unanswered.push(args.data.question);
         return text('The user is not available to answer. End your turn here.', true);
       }
-      case TOOL_NAMES.query: {
-        // the app answers get_guide from the design docs; so does this
-        const topic = (input as { op?: string; topic?: string })?.op === 'get_guide' ? (input as { topic?: string }).topic : undefined;
-        if (topic !== undefined) {
-          const guide = GuideTopic.safeParse(topic);
-          if (!guide.success) return text(`Guides: ${GuideTopic.options.join(', ')}.`, true);
-          const file = new URL(`../../../docs/design/${guide.data.replace('_', '-')}.md`, import.meta.url);
-          return text(readFileSync(file, 'utf8').replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''));
-        }
-        break;
-      }
     }
-    const out = await runKernelTool(k.port, tool, input);
+    const out = await runKernelTool(port, tool, input);
     if (!out) return text(`${tool} is not available in the headless eval server (no app).`, true);
     // as the tab sends it (handleServerCall in apps/web/src/lib/app.svelte.ts)
     const content: ToolContent[] = [...(out.images ?? []).map((i) => ({ type: 'image' as const, ...i })), ...(out.content ? [{ type: 'text' as const, text: out.content }] : [])];
