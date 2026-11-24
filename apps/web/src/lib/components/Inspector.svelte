@@ -25,7 +25,7 @@
 
   const sel = $derived(app.selection[0]);
   /** The assembly house chosen in Layout → Sourcing: whose part number and catalogue this section shows. */
-  const house = $derived(app.house);
+  const house = $derived(app.sourcing.house);
   const catalogue = $derived(catalogueOf(house));
   let info = $state<ComponentInfo | null>(null);
   /** Why the selected part could not be read (shown instead of a blank pane). */
