@@ -1,7 +1,7 @@
 export * from './types.ts';
 export { Agent, type AgentOptions } from './loop.ts';
 export { runKernelTool, unknownTool, type ToolExecutor, type ToolImage, type ToolOutcome } from './tools.ts';
-export { runCalc, nearestE, CalcError } from './calc.ts';
+export { runCalc, calcBoard, nearestE, CalcError } from './calc.ts';
 export { SYSTEM_PROMPT, formatDesignContext } from './prompt.ts';
 export { AnthropicProvider, ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL, costUsd, type Effort, type AnthropicOptions } from './providers/anthropic.ts';
 export { OpenAICompatProvider, listOpenAIModels, type OpenAICompatOptions } from './providers/openai.ts';
