@@ -8,12 +8,11 @@ agents (through MCP), scripts, tests and the UI all use it.
 ## 1. Design rules for the catalogue
 
 1. **Semantic, not geometric.** `connect(pins, net)`, not `add_wire(x1,y1,x2,y2)`.
-2. **Reference by name or ID.** `"U1.VIN"`, `"U1.4"`, `"net:+3V3"`, `"class:PWR"`, `"sheet:Power"`. The kernel resolves names and returns the IDs it used.
+2. **Reference by name or ID.** `"U1.VIN"`, `"U1.4"`, a net by its name (`"+3V3"`), a sheet or board by name or id. The kernel resolves names and returns the IDs it used.
 3. **Batchable.** A `transaction` holds many ops and applies all or nothing.
 4. **Dry-run first.** `dry_run: true` returns diff + diagnostics without committing.
 5. **Explain refusals.** Every rejection has a `code`, a human `message`, the `entities` involved, and machine-readable `fix_hints` (ops that would resolve it).
 6. **Small, queryable context.** Query ops let the agent ask for exactly what it needs, instead of receiving the whole design in the prompt.
-7. **Versioned.** Ops carry a catalogue version. Old ops are migrated or refused.
 
 ## 2. Op groups
 
@@ -167,76 +166,36 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
   (*begin_changeset*, *commit_changeset*, *revert*, *branch*, *compare*) are not ops. Images, part import and
   production files are agent tools or app features (see [ai-loop](ai-loop.md)); undo and redo are the app's.
 
-## 3. Envelope
+## 3. Transactions and results
+
+A `Transaction` (`packages/schema/src/ops.ts`) is a one-line `summary`, a list of edit `ops`, and
+`dry_run`; it applies all or nothing:
 
 ```jsonc
-// request
 {
-  "catalogue": "0.1",
-  "transaction": {
-    "summary": "Add 3V3 buck converter",
-    "dry_run": true,
-    "ops": [
-      { "op": "add_part", "part": "ti:TPS54331DR", "refdes": "U1", "sheet": "Power" },
-      { "op": "add_part", "part": "generic:C_0805", "refdes": "C1",
-        "params": { "capacitance": "22uF", "voltage": "25V", "dielectric": "X5R" } },
-      { "op": "connect", "pins": ["U1.VIN", "C1.1"], "net": "+12V" },
-      { "op": "connect", "pins": ["C1.2", "U1.GND"], "net": "GND" },
-      { "op": "constrain", "kind": "left_of", "a": "C1", "b": "U1", "domain": "placement",
-        "source": { "type": "chat", "message": "msg_42" } }
-    ]
-  }
+  "summary": "Add input capacitor to the buck",
+  "ops": [
+    { "op": "add_part", "part": "generic:C", "refdes": "C1", "params": { "value": "22uF", "voltage": "25V", "package": "0805" } },
+    { "op": "connect", "pins": ["U1.VIN", "C1.1"], "net": "+12V" },
+    { "op": "connect", "pins": ["C1.2", "U1.GND"], "net": "GND" },
+    { "op": "constrain", "kind": "left_of", "a": "C1", "b": "U1" }
+  ]
 }
 ```
 
-```jsonc
-// response
-{
-  "status": "ok",                       // ok | rejected | partial (never partial in a transaction)
-  "resolved": { "U1": "cmp_01J9A…", "+12V": "net_01J9B…" },
-  "diff": { "added": 4, "changed": 1, "removed": 0, "entities": ["cmp_…", "net_…"] },
-  "diagnostics": {
-    "delta": { "errors": 1, "warnings": 0 },
-    "items": [{
-      "code": "ERC.PIN_UNCONNECTED",
-      "severity": "error",
-      "entities": ["U1.BOOT"],
-      "message": "U1.BOOT (pin 1) is unconnected. The datasheet (p.13) requires 0.1 µF from BOOT to PH.",
-      "fix_hints": [
-        { "op": "add_part", "part": "generic:C_0402", "params": { "capacitance": "100nF" } },
-        { "op": "connect", "pins": ["$new.1", "U1.BOOT"] }
-      ],
-      "provenance": { "part_card": "sha256:…", "page": 13 }
-    }]
-  },
-  "changeset": "cs_01J9C…"
-}
-```
+The kernel answers with a `TransactionResult` (`packages/schema/src/results.ts`): `status` (`ok` or
+`rejected`), `dryRun`, per op an `effect` in words and the ids it touched, the `diff` (ids added,
+removed, changed), the diagnostic `counts`, and the diagnostics the transaction `introduced` and
+`resolved`. A refused transaction changes nothing and carries one `rejection`: the index of the op,
+a `code` (`RejectionCode`: `REF_UNKNOWN`, `PIN_UNKNOWN`, `SWAP_INVALID`, `CONSTRAINT_CONFLICT`,
+`BOARD_AMBIGUOUS`, …), the `message`, the closest `candidates` for an unknown name, and `fixHints`
+(ops) where the kernel can tell. On a design of several boards, a board op names its `board` or a
+part on one; one that says neither is refused with `BOARD_AMBIGUOUS` ([multi-board](multi-board.md)).
 
-## 4. Rejection codes (examples)
-
-| Code | When |
-|---|---|
-| `REF_UNKNOWN` | name doesn't resolve; response lists the closest matches |
-| `PIN_TYPE_CONFLICT` | e.g. two `pwr_out` pins on one net |
-| `PARAM_OUT_OF_RANGE` | value outside the part card's allowed range |
-| `SWAP_INVALID` | `swap_pins` outside one swap group of the part card |
-| `CONSTRAINT_CONFLICT` | new hard constraint contradicts an existing one; both are returned |
-| `CURRENT_CAPACITY` | net class width can't carry the net's declared current |
-| `FAB_LIMIT` | rule below the selected fab profile |
-| `LOCKED` | entity is locked by the user or an authored constraint |
-| `PERMISSION` | op not allowed in the current autonomy mode / tool trust level |
-
-## 5. Mapping to front-ends
-
-- **In-app agent**: ops become tools. Large groups are exposed through a two-level scheme
-  (`design.query`, `design.edit`, `design.solve`…, each with an `op` discriminator), so small
-  models get a short tool list and strong models get full schemas.
-- **MCP (through the relay)**: the same tools plus MCP *resources* (`twd://project/summary`,
-  `twd://diagnostics`, `twd://ledger`) and *prompts* (recipes).
-- **UI**: accept/reject, drag-hint, ledger edits and settings all emit ops, so user and AI
-  actions show up the same way in history.
-- **Scripts/tests**: generated TS and Rust clients. The evals drive the kernel natively without a browser.
+The in-app agent and external agents (MCP, through the server's relay to the open tab) reach the
+catalogue through the same tools: `design_edit` (a transaction) and `design_query` (one query op),
+next to `get_context`, `propose` and the rest ([ai-loop](ai-loop.md)). The UI's own edits are
+transactions of the same ops.
 
 ## 6. The power tree (`get_power_tree`)
 

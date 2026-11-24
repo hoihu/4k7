@@ -1,6 +1,6 @@
 # Board layout: the agent arranges and routes
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-13. Steps 1–4 of §7 built the same day, step 5 (incremental routing) 2026-10-17.
+> Part of the [architecture](../ARCHITECTURE.md). Status: draft, 2026-10-13; built since, section by section (dated in each).
 > The schematic counterpart is [schematic-drawing.md](schematic-drawing.md); the zoom-and-optimize button is [zoom-optimize.md](zoom-optimize.md).
 
 ## 1. Why
@@ -33,7 +33,7 @@ Three things from one session, 2026-10-13:
 Placement was already the agent's: a `position` constraint pins a part and the placer never moves
 it (`placer.ts`, header). What changes is how it is told to use it (§4), what it can see (§3), and
 that routing becomes a job the agent finishes, not a step it triggers (§5). Copper the agent draws
-itself (tracks, rip-up of a net) is the next step (§7, steps 5–6).
+itself came later (§5.8–§5.10, §9).
 
 ## 3. Seeing what the user sees
 
@@ -292,7 +292,7 @@ steps at the full width between two necks is laid narrow.
 
 When the width with necks finds no way, a power track is still necked to the signal width all
 along. A net with a set width goes as before: at the widest width both end pads take, widened
-again where it fits once laid. `DRC.NECK` (§7, the etching checks) names what is left narrow for
+again where it fits once laid. `DRC.NECK` (`neckDrc` in drc.ts) names what is left narrow for
 longer than a neck: a narrow track is let be only with an end on or within `neckReach` of a pad
 too small for the width, and no longer than twice that. For copper the router laid, the message
 tells the agent to make room there and route again rather than lower the width. `COPPER_FORMAT` 2:
@@ -435,246 +435,8 @@ connections a broken piece no longer makes, the net once unlocked).
 
 ## 6. What the agent cannot do yet
 
-- Route one net first (§7 step 6).
 - Optimize a zoomed area of the board with the scope guard the schematic has (`zoom-optimize.md`
   steps 3–4).
-- Be told the user's taste for layouts (the schematic has notes in Settings).
-
-## 7. Build order
-
-Each step is useful alone.
-
-1. **The view and the board picture** (§3). *Built 2026-10-13.*
-2. **Routing to completion** (§5.1): history costs, more passes, neck-down, blockers. *Built 2026-10-13.*
-   Necks only near pads too small for the width (§5.7). *Built 2026-11-20.*
-3. **Open connections for the agent, the loop and the propose rule** (§4, §5.2): `BoardView.unrouted`,
-   placement measures, guide text, `propose open_connections`. *Built 2026-10-13.*
-4. **Progress and kept copper** (§5.3, §5.4). *Built 2026-10-13.*
-5. **Incremental routing** (built 2026-10-17, §5.5). A placement change removes only the copper
-   that no longer holds; `route` routes what is open with the rest in place. The arrange–route loop
-   takes about a second on the 128-part bench, and it is the base for step 6.
-6. **Copper ops for the agent**, as `wire`/`label`/`erase` on the schematic:
-   - `route { nets?, region? }`: route only those (the rest stays as it is);
-   - `unroute { nets? | parts? | region? }`: rip up;
-   - one connection laid by the agent, the kernel finding the path through the given points:
-     *built 2026-11-20* as `draw_track` with router copper (§5.8), laid first and never ripped up;
-     where it finds no way the router routes the connection its own way and the DRC says why;
-   - **`lock_copper` and `unlock_copper`** (*built 2026-11-20*, §5.9): a net's routed copper kept
-     exactly as it lies, laid first and never ripped up (whole nets; locking a single connection is
-     left for later).
-   - softer than geometry: *built 2026-11-20* (§5.10) as `set_net route_first` (the clean ways go to
-     the critical nets) and `set_net layer` (a preferred layer per net, a cost, not a ban);
-     keep-outs (no signals under the inductor) are `add_keepout` (§13).
-   The DRC and the netlist check judge the result, as on the schematic.
-7. **Layout Optimize**: the ✦ Optimize button on the board ([zoom-optimize.md](zoom-optimize.md) §6
-   steps 3–4): the zoomed area as a scope, `place` (move, turn) only inside it, measures before and
-   after (ratsnest length and crossings, open connections, decoupling distance), then
-   `route { region }` with the crossing points at the area's edge fixed.
-8. **Layout notes** (built 2026-10-13): the user's words on how they want boards laid out
-   (Settings → Board layout, `Settings.layoutNotes`), sent as a `<layout_notes>` block after
-   `<schematic_notes>`; the guide says they win over the agent's judgement and the automatic
-   choices. Notes asking for what no op can do yet are met as closely as the ops allow, and the
-   agent says what is missing.
-9. **Split planes** (built 2026-10-13): `set_plane` with `under` (parts: their courtyards' box
-   plus `margin_mm`, default 1.5 mm, kept as component ids so it follows them) or `rect` gives a
-   net a plane on part of an inner layer (`PlaneArea` in `BoardSettings.planes`, resolved to a
-   rectangle in `BoardView.planes`). The layer's full plane goes round each area with the
-   clearance. In the router, two pads of the net inside the area are joined through it (like a
-   dedicated plane), groups with a pad inside drop onto it, and the net's other connections are
-   routed as tracks. On an outer layer (2026-10-17) the same gives a local pour: it replaces the
-   net's pour over that layer (F.Cu GND only round a switching regulator, as TI's layout guidelines
-   ask), joins what reaches it, and gets no drop sites reserved (those are for whole-layer pours).
-   `set_plane_style` (2026-10-15) shapes any plane or pour (`PlaneStyle` on its entry): `gap` round
-   an area plane, the plane's own `clearance` to other nets' copper, `edge` pull-back, `thermal`
-   reliefs or solid joints, `spoke` width; never below the board's own clearances. The router's
-   `planeLook` reads them for the raster area and the exact shape alike.
-
-    **Vias placed on purpose** (2026-10-17): `add_vias` / `remove_vias`, kept as `ViaGroup`s in
-    `BoardSettings.vias` and resolved per placement by `planVias` (board.ts). `pad`: thermal vias,
-    a grid filling one pad at the pitch (default 1 mm), on the pad's net, marked `inPad` (the
-    `DRC.VIA_IN_PAD` rule passes them, whatever `via_in_pad` says) and moving with the part;
-    `points`: vias at given spots. Both are copper from the start (in the board view before routing,
-    in the router before anything is routed, part of the pad they lie in, so a thermal pad reaches
-    every layer through them). `grid` (stitching, default 3 mm) and `fence` (round an area's edge,
-    default 2 mm) are spots the router fills after the routing, where a via fits (clear of other
-    nets and pads, the via spacing kept) and lies inside its net's planes or pours on two layers
-    or more (any piece of that copper: a piece cut off by a track is what the via connects, as
-    long as one layer's piece is connected). Grid spots stay inside the area by half a via and the
-    clearance; fence spots lie on its edge. Two areas on one layer overlap like this: the smaller
-    lies on top and the bigger goes round it (the later one when they are as big), so a +5V patch
-    inside a local GND pour is a hole in the GND, not the other way round. Vias of a group join their planes solid (no reliefs), and so does a pad with thermal
-    vias. They are vias, not footprint pads, on purpose: a drilled pad would make the part
-    through-hole for the placer, the 3D view, pick-and-place and the fab hole rules. `get_board`
-    `via_groups` lists each group with how many vias it got.
-
-    **Drops sized for the current** (2026-10-17). A drop used to be one signal-width stub to one
-    via per copper group, so a bulk capacitor's ground pad hung off its plane by 0.25 mm and a
-    0.3 mm via. Now `padViasFor` (schema) says how many vias a pad wants: enough for the net's
-    `max_current` (`viaCurrentFor`: the plated barrel as an IPC-2221 inner conductor, about 0.9 A
-    for a 0.3 mm drill; the whole net's current, an upper bound for one pad), and on a supply 2
-    from 2 mm² of pad, 3 from 5 mm²; never more than fit in a row along the pad's long side. The
-    stubs of a supply's drops are power width where the pads take it (signal width when that finds
-    no site, as a power track is necked down). After a plane's first drops, `moreDrops` gives each
-    pad the rest: a straight stub out of a side of the pad (shortest, long side first, from its
-    middle out, so the vias line up beside the pad), else the shortest way within 2 mm; a via of
-    the net that no pad counts yet (one placed with `add_vias points` beside the pad) is joined
-    rather than a new one added. `DRC.PLANE_VIAS` (drc.ts `planeViaDrc`) counts each pad's own
-    vias on the copper as it lies (in the pad, or at the end of a track of its net that starts in
-    it, 3 mm at most) and warns where they fall short; a pad in its net's pour on its own layer is
-    left alone. The current goes into the copper key only where a net has one.
-
-    **Asked for, not guessed** (2026-10-18). The size rule above put two vias on a bar beside
-    every big supply pad: a tactile switch's GND pads and an IC's exposed pad got them, the
-    latter squeezed between the pad and the pins (the user: *only stitch several vias where it is
-    necessary, for higher currents*). And a net's `max_current` sized every pad of the net as if
-    the whole current flowed through it, a button's GND pad included. Which pads a current flows
-    through is the circuit's, not the netlist's: the agent knows it (the schematic, the datasheet),
-    the kernel does not. So every pad now drops with one via, and `add_vias kind: "drop"` (`ref`,
-    `pad`, `count` or `amps`, else the net's `max_current`) asks for more on one pad: the router
-    lays them on a bar beside it (below; since 2026-10-23 the agent places each one, on its own
-    stub), tags them with the request's group (counted in
-    `via_groups`, joined to the planes solid, kept by incremental routing), and `DRC.PLANE_VIAS`
-    names a pad that got fewer than asked. `get_net` lists the pads' vias and the count for the
-    net's current; the guide has the agent trace the high-current paths (supply in, regulator,
-    switch node and inductor, bulk and output caps, out to the loads, each ground return) and ask
-    on those pads only. A bar never reaches under its part's body. Net currents no longer go into
-    the router or the copper key; the drop requests do. Whether the copper as laid carries a net's current is checked
-    afterwards, without changing it (§14).
-
-    **Placed by the agent, each on its own stub** (2026-10-23). The bar was the wrong reading of
-    *the vias could go on a wider track*: the user (a bulk capacitor's pad with six vias on a bar
-    the width of the pad, out past the courtyard): *the vias are placed on a separate thick track
-    which is not necessary … the agent should place every via explicitly*. The bar was that
-    thick because a via had to stay out of a small part's whole courtyard (router keep-out and
-    `DRC.VIA_IN_PAD`), so the vias stood beyond its margin and the bar reached back to the pad.
-    Now `add_vias kind: "drop"` takes `at`, each via's centre as the part stands, and `count`
-    goes: the agent places every one. `apply` checks them against the board placed now (at
-    least half a via plus the clearance off the pad's edge, so the mask stays between them; within
-    2 mm of it; clear of other pads; not under a small part's body, the box round its pads; a via
-    plus the clearance apart) and stores them as `offsets` from the pad's centre in the
-    footprint's frame (`dropOffset`), so they move and turn with the part (`dropSpot`; mirrored
-    on the bottom). `amps` (else the net's `max_current`) only checks them: the effect and
-    `via_groups` say when the current wants more. `planVias` puts them in `fixed` (copper from
-    the start) with one stub each (`ViaPlan.stubs`): a straight track from inside the pad (its
-    round end in it) to the via, power width or narrower where the via or the pad is. The router
-    stamps the stubs with the fixed vias and counts them as the pad's copper (it reaches every
-    layer through them, so it gets no via of the router's); `barDrop` and `moreDrops` are gone,
-    and so is joining a `points` via beside the pad. `keep.ts` takes no stub over (it is laid
-    afresh). `DRC.VIA_IN_PAD` applies the courtyard rule to vias placed on purpose as the box
-    round the pads, so a drop may stand in the courtyard's margin. `via_groups` lists a drop's
-    vias (`at_mm`), and the guide has the agent look at each pad it gave vias with
-    `get_board_image region` after routing. A drop group of an older design (a count, no spots)
-    lays nothing and says to place them. What follows describes the bar it replaced.
-
-    **On a bar, and ties** (2026-10-17). The user: *the vias could go on a smaller copper rectangle
-    or a wider track rather than stitching a very large rectangle, which adds nothing; the current
-    counts.* A pad that wants two or more vias (since 2026-10-18: asked for with `add_vias drop`) gets them on one bar (`barDrop`, router.ts),
-    before the single drops: the vias in a row along a side of the pad (long sides first; more rows
-    outwards if they do not fit along it), as close as a via may stand (out of the pad and the
-    part's land pattern), and a short wide track over them that overlaps the pad's edge, along the
-    whole side where that fits. A neck from the pad's centre onto the bar joins them as tracks join
-    pads. Where no bar fits, the stubs of before. A via placed with `add_vias points` beside the
-    pad counts towards the pad's vias and is joined as before. `DRC.PLANE_VIAS` and `keep.ts` count
-    a via on a short track over the pad's edge as the pad's own.
-    `add_vias kind: "tie"` carries a current across layers at one spot: `at` (one point) and
-    `amps` (else the net's `max_current`; at least 2 vias, at most 16), resolved by `planVias` into
-    a tight block round the spot at the closest pitch (0.8 mm for 0.6 mm vias), squarest first,
-    with a ring of spare spots round it. The router lays them like grid vias but at most the
-    block's count (`RouteInput.vias.limits`), and a tie also counts a layer where the via lies
-    wholly on a track or pad of its net (vias on a wide track over the plane), joining that copper's
-    group to the plane. A grid over a supply's copper gets a note in `via_groups` when its spots
-    carry more than twice what the net draws: a tie where the current crosses does the same. The
-    guide no longer suggests a grid over a regulator's output pour: the output caps' drops sized by
-    `max_current` carry the current to the plane, a tie where it leaves the pour elsewhere.
-
-10. **Who placed what, and the handoff** (built 2026-10-15). The workflow the user wants, like the
-    schematic's: the agent places everything, the user moves the parts that matter to them roughly,
-    the agent takes over again (planes first, then routing). For that the board has to know whose
-    a placement is. `transact(tx, by)`: the app's own edits (drags, Lock, the buttons) are the
-    user's, the agent's tool calls its own; `place` with `quote` (the user asked for it in chat)
-    is the user's too. `BoardPart.by`, `get_board` `placed` (auto / agent / user / locked by …) and
-    `user_placed` say it. The user's placements are decisions: `propose_placement` and
-    `try_placements` refuse them in `parts`, `keep_choices: false` forgets only the agent's, and an
-    agent `place` over one says so in its effect. In the Layout view the agent's choices are drawn
-    dashed with a ring, the user's solid; **Continue layout ✦** (shown once the user placed
-    something) hands the board back: keep my parts, arrange the rest, decide the planes (split or
-    not, and why), route. The guide's step 3 now starts with the planes; GND stays one plane unless
-    there is a reason (isolation). Placements made before this are all the user's (they cannot be
-    told apart).
-11. **Planning the planes** (built 2026-10-15). `get_board` `plane_plan` (`planePlan`, board.ts):
-    which plane each outer layer's tracks run over (4 layers: F.Cu over In1.Cu, B.Cu over In2.Cu;
-    2 layers: F.Cu over the B.Cu pour), and per supply and ground net its pins, the ICs it feeds
-    (supply pins each), what carries it now (a whole layer, an area under parts, a pour, tracks),
-    its box and its groups (parts within 6 mm of each other, single linkage): a rail whose parts
-    form a group of their own is a candidate for an area plane under it. The guide's step 3 reads
-    it before routing; GND stays whole unless there is a reason.
-    A split's edge in the router: on the outer layer over an inner layer with an area plane, the
-    cells along the area's edge (the gap plus 0.3 mm either side) cost signal nets 8 grid steps
-    each, about two vias to cross, so a signal leaving the area changes to the other outer layer
-    (over an unbroken plane) where it can. Supplies and ground do not pay. The check
-    `PLANE.SPLIT_CROSSING` (warning, one per net and area, `splitDrc` in drc.ts) names the signals
-    that still cross on the layer over the split; a slow one (an LED, a button) is waived.
-    **Etching and pour checks** (2026-10-29, all in drc.ts, run with the routed or drawn copper and on each
-    drawn op). `DRC.ACID_TRAP` (`acidDrc`, warning): two tracks of one net meeting at less than 90° (a bend, a
-    junction, or a track ending on the side of another) with nothing of the net in the wedge between them: a pad,
-    via, pour or other track of the net filling it, or a junction inside a pad or via, clears it. The router
-    lays none of its own: a path that ends on the side of a track of its net at 45° turns before it and meets it
-    square, with a stub at 90° onto its centre line, or on the bend where that piece ends (`squareJoin` in
-    routetracks.ts, 2026-11-22; only with exact clearance, else the join stays as it was). Nor a hairpin inside
-    one track: where the straightening leaves a corner under 90° (the maze path turning back, or one piece's
-    order, diagonal or straight first, arriving against the next), its two pieces become one shape between their
-    outer ends that is clear and turns 90° or wider at both, else the corner stays (`straighten`, 2026-11-22). The
-    hooks left are into a pad that another net's pad crowds on one side, where the pad fills the wedge. `DRC.NECK`
-    (`neckDrc`, warning): a track narrower than its net's width (`set_net`, its impedance rule, else the power or
-    signal width), unless it is a neck (§5.7): an end on or within `neckReach` of a pad too small for that width,
-    and no longer than twice that.
-    `DRC.THERMAL_SPOKES` (`thermalDrc`): a pad joined to its pour through a thermal relief has fewer than two spokes
-    (warning), or none and no track of its net on the layer (an error for a surface pad: it is cut off). Pads of a
-    plane with `thermal: false`, with thermal vias, or with a track on the layer are not counted. Thermal reliefs
-    themselves are real: the router cuts a ring round each pad and via of the pour's net, draws the spokes back
-    where no other net is in the way, and the Gerber writer clears the cuts and draws the spokes
-    (`ZoneShape.cuts`, `adds`); style, gap and spoke width are `set_plane_style`'s. Clear polarity
-    erases whatever the file drew before, so with several planes on a layer the writer draws the one
-    that goes round another first (`planeGoesRound`, as the router cuts them) and keeps a later
-    plane's fill and cuts to its own outline, a cut reaching out of it written as the part inside.
-    Until 2026-11-06 the later plane's clearances cut the earlier one's spokes and joints in the
-    files, though the board view showed them; `packages/fab/test/planes.test.ts` compares each such
-    layer, read back, with its planes written one by one.
-    **Dead copper**: a pour island that touches no copper of its net is never filled (the `alive` set in
-    `planeShape`). `Zone.removed` counts the islands of 1 mm² and more and `DRC.DEAD_COPPER` (info) tells
-    the agent where the biggest was: a track or pad of another net split the pour there. When nothing of
-    the net touches any island (an area under parts with none of its pins, a local pour away from its
-    pads), the biggest is kept, so the plane shows where it was set: that is copper joined to nothing in
-    the files, `Zone.floating`, and `DRC.FLOATING_PLANE` (warning) says so (since 2026-11-06; before, it
-    went to the fab without a word). A pad of another net in a plane is cut as its shape: a rectangle, a
-    circle, an oval pad (round a slotted hole) as its capsule; until 2026-11-06 an oval pad was cut as a
-    circle of its narrow side and both ends of its slot stayed in the plane, see [fab-check](fab-check.md).
-12. **Which part belongs with which** (built 2026-10-15). The placer guessed each part's parent
-    (a decoupling cap: the IC whose supply pin it takes; else the biggest part sharing a signal
-    net) and the agent could not say otherwise: a connector followed the regulator it feeds, a
-    bulk cap went to an IC pin. Now `attach { ref, to, pin? }` (a `belongs` ledger entry) declares
-    it: at that pin (it must share a net with it; a name shared by several pins needs the number),
-    or `to: null` for a part that stands on its own. The placer takes the declarations first
-    (a spring to the pin, so the part is hugged there; that pin counts as taken for the guessed
-    caps) and guesses the rest, never closing a circle; parents are placed before their parts
-    (by depth, then size). `get_board` `belongs_to` shows `U1.12`, `U1.12 (guessed)` or `none`.
-    Since 2026-11-21 a part at a part that is itself at an IC (a test point at the buck's inductor)
-    is hugged after its parent, where the parent ends up, and a two-pin parent's pads under its
-    body (a power inductor's) count as its ends, not as balls under an IC, so the part goes beside it.
-    A part the agent or the placer put somewhere goes to its new parent; one the user placed stays,
-    kept relative to the new parent. `remove_constraint` goes back to the guess. The relation stays
-    a mechanism (a dragged IC takes its parts along), but the agent decides it. Benches unchanged
-    (2 and 4 layers: same board, tracks and vias).
-    Since 2026-11-21 a `place` (the agent's or a drag of the user's) is in board coordinates: it is
-    kept relative only to a parent declared with `attach`, no longer to the guessed one. Before, a
-    placed connector or part followed the IC the placer guessed it belonged with, so moving that IC
-    moved every part placed round it (on one board the agent locked ~50 parts to stop it). A place
-    of a part also turns the choices still kept relative to it without such a declaration (saved
-    earlier) into board coordinates where they stand. Parts the placer put down still follow.
-13. **Next.** (a) The placer's guesses softened one by one, judged on the benches: the board
-    density, the margin to the edge, satellites always at the courtyard (the alignment snapping
-    and the re-run of every guess on each move are done, §11). (b) Planes in try_placements
-    (compare split or not by trial routing).
 
 ## 8. Open questions
 
@@ -702,7 +464,7 @@ Each step is useful alone.
 
 ## 9. Drawn copper (spike, 2026-10-23; follow-up the same day)
 
-The user, after the via work of §7 step 9: *the rules are too strict and the agent cannot shape
+The user, after the work on vias placed on purpose (`add_vias`): *the rules are too strict and the agent cannot shape
 the copper as it means to; what if the agent takes control of everything, with only the rules and
 the layout notes it is given?* Time is not the constraint (30 s for a better board is fine), tokens
 neither. This spike lets the two ways run side by side on one design, so they can be compared.
@@ -1192,7 +954,7 @@ current, each with a pad and either a pour, two pads, or a pad where current com
 pin, a connector's or an inductor's pin). That is where the whole current must cross; a group with
 a second way round is not checked (the bound would say nothing about how the current splits), nor
 is one that only drops a single pull-up or decoupling pad to its plane (*every pad drops with one
-via*, §7 item 9: the user did not want those flagged).
+via* unless `add_vias drop` asks for more: the user did not want those flagged).
 
 **Findings**
 
@@ -1202,7 +964,7 @@ via*, §7 item 9: the user did not want those flagged).
 | `DRC.VIA_CURRENT` | A via group that is a cut (above) and carries less than `max_current` | error over twice, else warning | `add_vias kind: "tie"` at the group's centre with the net's amps |
 | `DRC.CURRENT_UNKNOWN` | A power net with copper and no `max_current`, once per net | info | none: the kernel cannot guess the number; the agent sets it |
 
-The router sizes nothing for a current (§7 item 9): it runs supplies at their width and drops a pad
+The router sizes nothing for a current: it runs supplies at their width and drops a pad
 with one via. So a routed board with a 2 A rail usually shows these findings, and they are the
 agent's to work through: widen (`set_net track_mm`, `edit_copper`), add a tie or drops where the
 current crosses layers, or raise the allowed heating where the board can take it.
@@ -1315,12 +1077,12 @@ one node and carries no drop (a necked pour looks lossless), and copper is taken
 track drops about 4 % more per 10 °C).
 
 **Relief joints** (2026-11-21, `DRC.SPOKE_CURRENT`). A pad or via of a net with a current that
-joins its pour through thermal-relief spokes (§7: a ring with four spokes, drawn back where no other
+joins its pour through thermal-relief spokes (a ring with four spokes, drawn back where no other
 net is in the way) is often the narrowest copper on the current's way. Its capacity is the spokes
 that connect (the zone's added copper starting at its centre, on every pour it joins) times one
 spoke's, on the same curve as a track: the spoke's width, the layer's copper from the stack-up, the
 allowed rise (four 0.25 mm spokes on 35 µm carry about 3.5 A at 10 °C). Never checked: a pad or via
-joined solid (a plane with `thermal: false`, a pad with vias in it, a grouped via: §7 item 9, so
+joined solid (a plane with `thermal: false`, a pad with vias in it, a grouped via, so
 `add_vias drop` on a pad clears it), one with no spoke at all (`DRC.THERMAL_SPOKES`), and one whose
 pour other copper of the net reaches too (a drop's stub to its grouped vias, a track into the
 pour), because the spokes are not its only way. The current is the numbers above, no second solve:
