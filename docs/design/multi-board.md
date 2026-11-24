@@ -19,12 +19,12 @@ one board looks and behaves exactly as it does now: no new steps, no new argumen
 
 ## 2. What the user and the agent say
 
-| Intent | Op (sketch) |
+| Intent | Op |
 |---|---|
 | Add a board | `add_board { name, sheets? }` → `b_2` |
 | Rename one, take one away | `set_board { board, name }`, `remove_board { board }` (its parts go back to the first board) |
-| Put a sheet's parts on it | `assign_board { sheet, board }` (a sheet belongs to one board) |
-| Move one part to another board | `assign_board { components, board }` (overrides its sheet) |
+| Put a sheet's parts on it | `assign_board { board, sheets }` (a sheet belongs to one board) |
+| Move one part to another board | `assign_board { board, refs }` (overrides its sheet) |
 | Join two connectors | `mate { a: "J1", b: "J2", kind, map?, … }` |
 | Everything else | the board ops and queries as now, with an optional `board` |
 
@@ -84,7 +84,7 @@ that, else the first turn that fits. So two identical 2×N headers face to face 
 (pin 1 meets pin 2: `ERC.MATE_MISMATCH` on every pin, with the hint that a footprint is
 mirrored), a socket whose footprint is drawn mirrored meets pin for pin, and another pitch or
 count does not fit (`ERC.MATE_FIT`). The placement does not enter: where the boards stand is the
-assembly's (§6), not built yet.
+assembly's (§6, built 2026-11-23).
 
 ### 3.1 Nets across boards
 
@@ -114,6 +114,16 @@ ending at its connector pin. Nothing in them needs to know other boards exist.
 | panel | the enclosure and the 3D assembly |
 | Gerber, drill, pick-and-place, fab check: one zip per board (`<design>-<board>.zip`) | the BOM: per board and combined; the cost and the order |
 
+A net is the system's, its settings too, except its track width: `set_net track_mm` with `board`
+sets the net's width on that board only (built 2026-11-24, after the bike lamp's merge: LED_A and
+LED_K want 0.4 mm on the main board and 0.8 mm on the LED board, and the agent set 0.8 mm on each
+LED-board track by hand). Stored as `NetAttrs.boardTrackWidths` by board id, over the net's own
+`trackWidth` on that board; null with `board` clears it (the net's width again). On a board the
+order is: the impedance rule's width, the board's, the net's, the rules' signal or power width
+(`ownTrackWidth` in `kernel/src/boards.ts`, read by the router setup, drawn tracks and `get_net`,
+whose `track.by_board` gives each board's width and why). The route key of a board holds its own
+widths, so a change on one board re-routes that board only. `remove_board` drops its widths.
+
 ## 5. Same fab house
 
 One fab house for every board. `set_fab_profile` without `board` sets the profile on each (built:
@@ -124,6 +134,8 @@ count (built 2026-11-23, after the bike lamp's boards were merged into one desig
 tier on both left the 2-layer board with a `DRC.FAB_LAYERS` that could not be fixed or waived). A
 board's profile must be of the house the other boards have (`FAB_INVALID` otherwise): the cost
 check prices every board at one house. A board for a different house is not supported.
+The Layout view's Manufacturer list sends `set_fab_profile` without `board`, so it sets every
+board whichever board is shown; the view's other edits are for the board shown.
 
 `DRC.FAB_LAYERS` names its board: the entity is the board's name, and the message says
 `set_fab_profile board: "<name>"`. Choosing the right tier is the fix; a board the user means to

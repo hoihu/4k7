@@ -35,7 +35,7 @@ By hand: `cd site && npx wrangler deploy` (after `npx wrangler login`).
 ## Colours
 
 The bands are the 4k7 colour code: yellow `#f2c230` (4), violet `#7a3fb0` (7), red `#d6382f` (×100),
-gold `#d7a63a` (±5 %). Body `#e8d9bd`, leads `#b8b0a4`. Page palette matches the app (`docs/ui/prototype.html`).
+gold `#d7a63a` (±5 %). Body `#e8d9bd`, leads `#b8b0a4`. The page's colours are the variables at the top of `site.css`.
 
 ## Re-rendering the PNGs
 

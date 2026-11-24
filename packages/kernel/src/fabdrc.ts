@@ -120,7 +120,7 @@ function maskWebs(b: BoardView): Diagnostic[] {
  * Layers, board size, rules, component holes and rings, mask webs, silkscreen lines and text: everything known at placement.
  * `board`: the board's name, the entity of the findings about the whole board; `several`: the design has other boards (the message names it).
  */
-export function fabPlacementDrc(b: BoardView, board = 'Main', several = false): Diagnostic[] {
+export function fabPlacementDrc(b: BoardView, board: string, several = false): Diagnostic[] {
   const fab = b.fab;
   if (!fab) return [];
   const l = fab.limits;

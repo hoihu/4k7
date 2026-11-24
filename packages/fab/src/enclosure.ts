@@ -3,7 +3,7 @@
  * print files read it, and how a script is wrapped to run. Rendering and measuring are in csg/ (its
  * own entry, @4k7/fab/csg: only the worker that renders loads the geometry engine).
  */
-import { matingOf, scriptInlays, scriptPrintRotations, type BoardView, type EnclosureBrief } from '@4k7/schema';
+import { scriptInlays, scriptPrintRotations, type EnclosureBrief } from '@4k7/schema';
 import type { EnclosureFacts } from './scad.ts';
 import { orient, orientTogether, plate, threeMf, writeStl, type PlateObject, type Tris } from './print.ts';
 
@@ -99,11 +99,6 @@ export function reportText(r: EnclosureReport, facts?: EnclosureFacts): string {
   for (const f of r.findings) lines.push(`- ${f.severity === 'error' ? '' : 'warning: '}${f.code} ${f.message}`);
   if (r.log?.length) lines.push('The script said (echo):', ...r.log.map((l) => `  ${l}`));
   return lines.join('\n');
-}
-
-/** Whether a part is used from outside, by what the board says (connectors that are plugged from an edge). */
-export function edgeConnectors(b: BoardView): string[] {
-  return b.parts.filter((p) => p.category === 'connector' && matingOf(p.pkgInfo) && matingOf(p.pkgInfo)!.face !== 'up').map((p) => p.refdes);
 }
 
 /** The pieces turned for printing as the script says (each on the bed), as STL files and one 3MF plate. */

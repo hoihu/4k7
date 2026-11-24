@@ -172,5 +172,3 @@ export function passDrops(grid: PassGrid, finder: PassSearch, lay: PassTracks, p
 
   return { reachMain, reserveDrops, dropOnto };
 }
-
-export type PassDrops = ReturnType<typeof passDrops>;

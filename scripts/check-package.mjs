@@ -1,6 +1,6 @@
 // Checks the package as the npm registry would serve it: builds it, packs the tarball, installs the
 // tarball into an empty folder (no workspace, no dev dependencies) and runs `4k7pcb` from there.
-// Run by CI and by `prepublishOnly`; `npm run check:package` by hand. Leaves the tarball in the
+// Run by CI; `npm run check:package` by hand. Leaves the tarball in the
 // repository root (ignored by git) for trying it out: npx -y ./4k7pcb-<version>.tgz
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

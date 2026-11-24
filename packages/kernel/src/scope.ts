@@ -3,7 +3,7 @@
  * the guard that keeps its edits inside it, and the numbers that say whether a change helped.
  */
 import type { Component, Design, EditOp, OptimizeScope, Rect, SchematicView, ScopeInfo, ScopeMeasures, SheetView, SymbolView } from '@4k7/schema';
-import { componentsSorted, natCmp, netMembers, reject, RejectError, resolveUnitRef } from './doc.ts';
+import { componentsSorted, natCmp, netMembers, reject, resolveUnitRef } from './doc.ts';
 import { overlap, segmentsOf } from './geom.ts';
 import { viewOf } from './drawing.ts';
 import { blockAssignment } from './layout.ts';
@@ -204,9 +204,6 @@ export function guardOp(d: Design, op: EditOp, sc: ResolvedScope): void {
       out(`${op.op} changes more than how this area is drawn. Optimize may only use constrain (left_of, right_of, above, below, arrangement), remove_constraint, place_symbol, place_text, place_block, wire, label, erase at pins, move_supply, auto_draw with refs and set_symbol on parts inside the area.`);
   }
 }
-
-/** True if `e` is the guard's own refusal (so the caller reports it like any rejected op). */
-export const isScopeRefusal = (e: unknown) => e instanceof RejectError && e.rejection.code === 'OUT_OF_SCOPE';
 
 /* ------------------------------ circuit identity --------------------------- */
 
