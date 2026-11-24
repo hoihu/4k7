@@ -150,8 +150,8 @@ function applyOne(d: Design, op: EditOp, by: 'user' | 'agent', ctx?: OpContext):
     }
     case 'add_waiver': {
       const id = nextId(d, 'w');
-      // several boards: a board check's finding is waived on its board (the same check finds the same on another)
-      const on = op.board !== undefined && multiBoard(d) ? resolveBoard(d, op.board) : undefined;
+      // a board check's finding is waived on its board (the same check finds the same on another); a board the design does not have is refused
+      const on = op.board !== undefined ? resolveBoard(d, op.board) : undefined;
       d.waivers[id] = { id, code: op.code, entities: [...op.entities], reason: op.reason, by, ...(on ? { board: on.id } : {}) };
       return { op: op.op, effect: `waived ${op.code} for ${op.entities.join(', ')}${on ? ` on board "${on.name}"` : ''}`, ids: [id] };
     }

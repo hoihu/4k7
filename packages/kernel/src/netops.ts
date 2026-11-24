@@ -4,10 +4,11 @@
 import { closestPackages, isBoxSymbol, isTwoPin, packageChoice, packageOf, packageOptions, searchParts, standardPackage } from '@4k7/parts';
 import { approxEqual, ASSEMBLY_HOUSES, type BoardSettings, type Component, type Constraint, DEFAULT_BOARD, FIRST_BOARD, type Design, type EditOp, type OpResult, parseQuantity, type PartCard, type PlaneArea, type SwapGroup } from '@4k7/schema';
 import { keepPlacement } from './board.ts';
-import { boardList, boardOf, onBoard, resolveBoard, settingsOf } from './boards.ts';
+import { boardList, boardOf, multiBoard, onBoard, resolveBoard, settingsOf } from './boards.ts';
 import { allocRefdes, cardOf, closest, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
 import { isDrawn } from './drawing.ts';
 import { drawNet } from './netdraw.ts';
+import { sheetByName } from './sheets.ts';
 
 function lookupCard(d: Design, id: string): PartCard {
   const card = cardOf(d, id);
@@ -419,8 +420,15 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
     let mm: number | undefined;
     if (op.track_mm !== null) {
       if (op.track_mm < 0.1 || op.track_mm > 10) reject({ code: 'PARAM_INVALID', message: `A track of ${op.track_mm} mm cannot be made; give 0.1–10 mm.` });
-      const fab = widthOn ? settingsOf(d, widthOn.id)?.fab : d.board?.fab;
-      if (fab && op.track_mm < fab.limits.track - 1e-9) reject({ code: 'FAB_LIMIT', message: `A ${op.track_mm} mm track is below ${fab.house}'s limit (${fab.limits.track} mm, ${fab.tier}).` });
+      // with board: that board's limit; without: the limit of every board the net is on (several boards: docs/design/multi-board.md)
+      const boards = widthOn ? [widthOn.id] : netOn(d, net.id);
+      for (const id of boards) {
+        const fab = settingsOf(d, id)?.fab;
+        if (fab && op.track_mm < fab.limits.track - 1e-9) {
+          const where = multiBoard(d) ? ` on board "${boardList(d).find((b) => b.id === id)?.name ?? id}"` : '';
+          reject({ code: 'FAB_LIMIT', message: `A ${op.track_mm} mm track is below ${fab.house}'s limit${where} (${fab.limits.track} mm, ${fab.tier}).` });
+        }
+      }
       mm = Math.round(op.track_mm * 1000) / 1000;
     }
     if (widthOn) {
@@ -447,8 +455,7 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
     if (op.layer === null) delete a.layer;
     else {
       // (several boards: the fewest layers of the boards its pins are on)
-      const on = new Set(Object.values(d.components).filter((c) => Object.values(c.pins).includes(net.id)).map((c) => boardOf(d, c)));
-      const n = Math.min(...[...(on.size ? on : [FIRST_BOARD])].map((id) => settingsOf(d, id)?.layers ?? DEFAULT_BOARD.layers));
+      const n = Math.min(...netOn(d, net.id).map((id) => settingsOf(d, id)?.layers ?? DEFAULT_BOARD.layers));
       const has = n === 4 ? ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'] : ['F.Cu', 'B.Cu'];
       if (!has.includes(op.layer)) reject({ code: 'BOARD_INVALID', message: `${op.layer} does not exist on a ${n}-layer board.`, candidates: has });
       a.layer = op.layer;
@@ -472,12 +479,6 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
 /* --------------------------------- sheets --------------------------------- */
 function firstSheet(d: Design): string {
   return Object.values(d.sheets).sort((a, b) => a.order - b.order)[0]!.id;
-}
-
-export function sheetByName(d: Design, name: string, hint = ' Add it with add_sheet first.'): string {
-  const s = Object.values(d.sheets).find((x) => x.name.toLowerCase() === name.toLowerCase() || x.id === name);
-  if (!s) reject({ code: 'SHEET_UNKNOWN', message: `No sheet "${name}".${hint}`, candidates: Object.values(d.sheets).map((x) => x.name) });
-  return s.id;
 }
 
 export function addSheet(d: Design, name: string): OpResult {
@@ -627,6 +628,12 @@ function clearSettings(d: Design, b: BoardSettings | undefined, wired: ReadonlyS
 /* ------------------------------- constraints ------------------------------ */
 const DIRECTIONAL = new Set(['left_of', 'right_of', 'above', 'below']);
 
+/** The boards a net has pins on; a net on no part's pin: the first board. */
+function netOn(d: Design, netId: string): string[] {
+  const on = new Set(Object.values(d.components).filter((c) => Object.values(c.pins).includes(netId)).map((c) => boardOf(d, c)));
+  return on.size ? [...on] : [FIRST_BOARD];
+}
+
 const OPPOSITE: Record<string, string> = { left_of: 'right_of', right_of: 'left_of', above: 'below', below: 'above' };
 
 const axis = (kind: string) => (kind === 'left_of' || kind === 'right_of' ? 'h' : 'v');
@@ -660,6 +667,13 @@ export function constrain(d: Design, op: Extract<EditOp, { op: 'constrain' }>): 
     if (a.unit) k.aUnit = a.unit;
     if (b.unit) k.bUnit = b.unit;
     if (op.kind === 'near') {
+      // a board's placer keeps parts of that board only: two parts on two boards cannot be near
+      const ba = boardOf(d, a.comp);
+      const bb = boardOf(d, b.comp);
+      if (ba !== bb) {
+        const name = (id: string) => boardList(d).find((x) => x.id === id)?.name ?? id;
+        reject({ code: 'BOARD_INVALID', message: `near: ${a.comp.refdes} is on board "${name(ba)}", ${b.comp.refdes} on board "${name(bb)}": parts near each other are on one board.` });
+      }
       k.maxMm = op.max_mm ?? 3;
     }
   } else if (op.kind === 'param') {

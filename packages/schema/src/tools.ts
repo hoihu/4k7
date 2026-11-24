@@ -21,8 +21,31 @@ export const CalcCall = z.object({
         'series: E3, E6, E12, E24, E48, E96 or E192; default: the design\'s series for that kind (set_value_series), else E96 for resistors, E12 caps, E6 inductors.',
     ),
   args: z.record(z.string(), z.union([z.number(), z.string()])),
+  board: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('impedance and track_current on a design of several boards: the board (name or id) whose stack-up and current_rise_c they work on. Absent: the only board; on several boards it must be named unless h and er (impedance) or copper_um and rise_c (track_current) are given, or the boards share the same stack-up and heating'),
 });
 export type CalcCall = z.infer<typeof CalcCall>;
+
+/** A short hint after some query ops in the design_query description; the ops themselves come from QueryOp. */
+const QUERY_HINTS: Partial<Record<QueryOp['op'], string>> = {
+  get_diagnostics: 'the check results, 20 at a time: offset, limit, code, severity',
+  get_power_tree: 'what feeds what: sources, regulators, loads, current budget, LDO heat',
+  try_placements: 'compare board arrangements',
+  list_blocks: 'the blocks of another project, to reuse one',
+};
+/** The design_query description: every query op of the schema, in its order, so none can go missing. */
+const QUERY_DESCRIPTION =
+  'Read the design or the part library. Ops: ' +
+  QueryOp.options
+    .map((o) => {
+      const op = o.shape.op.value;
+      return QUERY_HINTS[op] ? `${op} (${QUERY_HINTS[op]})` : op;
+    })
+    .join(', ') +
+  '. Read-only.';
 
 /** "Basic and Preferred at JLCPCB, Generic and eC-stock at Eurocircuits": each house's classes without a fee. */
 const FEE_FREE = ASSEMBLY_HOUSES.filter((h) => h.tiers.length).map((h) => `${feeFreeTiers(h)} at ${h.name}`).join(', ');
@@ -349,9 +372,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
       : []),
     {
       name: TOOL_NAMES.query,
-      description:
-        'Read the design or the part library. Ops: get_summary, find, get_component, get_net, get_diagnostics (the check results, 20 at a time: offset, limit, code, severity), ' +
-        'get_ledger, get_description, get_fab_profiles, get_board, get_power_tree (what feeds what: sources, regulators, loads, current budget, LDO heat), try_placements (compare board arrangements), list_blocks (the blocks of another project, to reuse one), search_parts, get_part. Read-only.',
+      description: QUERY_DESCRIPTION,
       input_schema: schemaOf(QueryOp),
     },
     {
