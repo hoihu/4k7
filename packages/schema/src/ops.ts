@@ -370,7 +370,6 @@ const fabLimitsInput = z.object({
   min_board_mm: z.tuple([z.number().positive(), z.number().positive()]).optional().describe('Smallest board [width, height]'),
   max_board_mm: z.tuple([z.number().positive(), z.number().positive()]).optional().describe('Largest board [width, height]'),
 });
-export type FabLimitsInput = z.infer<typeof fabLimitsInput>;
 
 export const SetFabProfileOp = z.object({
   op: z.literal('set_fab_profile'),
@@ -1017,7 +1016,6 @@ export const EditOp = z.discriminatedUnion('op', [
   SetEnclosureGraphicOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
-export type EditOpName = EditOp['op'];
 
 export const Transaction = z.object({
   summary: z.string().min(1).describe('One line describing the intent of this change'),
