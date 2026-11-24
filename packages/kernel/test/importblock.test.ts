@@ -4,6 +4,7 @@ import { getBuiltinPart } from '@4k7/parts';
 import { Kernel, boardOf } from '../src/index.ts';
 import { resolveBoard } from '../src/boards.ts';
 import type { ImportSources } from '../src/importops.ts';
+import { twoBoards } from './fixtures.ts';
 
 /** A regulator card the library does not have: only the project's file stores it (its VOUT pin named FB). */
 function regCard() {
@@ -235,6 +236,51 @@ describe('import_block', () => {
       expect(c.board).toBeUndefined();
     }
     expect(ra.results[0]!.effect).not.toMatch(/on sheet|board "/);
+  });
+
+  it('imports onto the LED board of twoBoards(): every part, net, card and rename as pinned here', () => {
+    const k = twoBoards();
+    const r = importing(k, { project: 'lamp', block: 'Supply', nets: { '+5V': '+3V3', GND: 'GND' }, sheet: 'LED', board: 'LED board' });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const d = k.draftSnapshot().design;
+    const parts = Object.fromEntries(Object.values(d.components).map((c) => [c.refdes, [c.part, d.sheets[c.sheet]!.name, d.boards?.[boardOf(d, c)]?.name ?? 'Main', Object.fromEntries(Object.entries(c.pins).map(([p, n]) => [p, d.nets[n]!.name]))]]));
+    const before = Object.fromEntries(Object.entries(parts).filter(([ref]) => !['J4', 'U2', 'C6', 'R5'].includes(ref)));
+    expect(Object.keys(before).sort()).toEqual(['C1', 'C2', 'C3', 'C4', 'C5', 'D1', 'D2', 'J1', 'J2', 'J3', 'L1', 'R1', 'R2', 'R3', 'R4', 'U1']);
+    expect(parts).toMatchObject({
+      J3: ['generic:CONN_1x2', 'LED', 'LED board', { 1: '+3V3', 2: 'GND' }],
+      R4: ['generic:R', 'LED', 'LED board', { 1: '+3V3', 2: 'LED_A' }],
+      R1: ['generic:R', 'Main', 'Main', { 1: '+3V3', 2: 'FB' }],
+      R2: ['generic:R', 'Main', 'Main', { 1: 'FB', 2: 'GND' }],
+    });
+    expect(Object.fromEntries(['J4', 'U2', 'C6', 'R5'].map((x) => [x, parts[x]]))).toEqual({
+      J4: ['generic:CONN_1x2', 'LED', 'LED board', { 1: '+3V3', 2: 'GND' }],
+      U2: ['acme:REG', 'LED', 'LED board', { 1: 'GND', 2: 'FB_2', 3: '+3V3' }],
+      C6: ['generic:C', 'LED', 'LED board', { 1: '+3V3', 2: 'GND' }],
+      R5: ['generic:R', 'LED', 'LED board', { 1: 'FB_2', 2: 'GND' }],
+    });
+    expect(Object.values(d.nets).map((n) => n.name)).toEqual(['+12V', 'GND', 'SW', '+3V3', 'FB', 'SS', 'COMP', 'N$1', 'BOOT', 'LED_A', 'FB_2']);
+    const by = (ref: string) => Object.values(d.components).find((c) => c.refdes === ref)!.id;
+    expect(d.description).toEqual({ overview: '', blocks: [{ title: 'Supply', components: ['J4', 'U2', 'C6', 'R5'].map(by), text: 'USB 5 V in.' }] });
+    expect(d.parts['acme:REG']).toEqual(regCard());
+    const res = r.results[0]!;
+    expect(res.ids).toEqual([...['J4', 'U2', 'C6', 'R5'].map(by), ...['+3V3', 'GND', 'FB_2'].map((n) => Object.values(d.nets).find((x) => x.name === n)!.id)]);
+    expect(res.imported).toEqual({
+      project: 'lamp',
+      block: 'Supply',
+      renamed: { refdes: { J1: 'J4', U1: 'U2', C1: 'C6', R2: 'R5' }, nets: { FB: 'FB_2' } },
+      cards: { library: ['generic:CONN_1x2', 'generic:C', 'generic:R'], project: ['acme:REG'] },
+      recheck: [
+        { ref: 'C6', params: { capacitance: '10uF' }, why: 'chosen for lamp' },
+        { ref: 'R5', params: { resistance: '100k' }, why: 'sets U2.FB' },
+      ],
+    });
+    expect(res.effect).toBe(
+      'imported "Supply" from lamp: 4 part(s) (C6, J4, R5, U2) on sheet LED, board "LED board", boundary +5V → +3V3, GND → GND; ' +
+        'renamed J1 → J4, U1 → U2, C1 → C6, R2 → R5; nets renamed FB → FB_2; not in the library, card taken from lamp: acme:REG; ' +
+        'values to recheck (chosen for lamp): C6 10uF, R5 100k (sets U2.FB)',
+    );
+    k.accept();
+    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'LED board').id).parts.map((p) => p.refdes).sort()).toEqual(['C6', 'D2', 'J3', 'J4', 'R4', 'R5', 'U2']);
   });
 
   it('refuses an unknown sheet or board and imports nothing', () => {
