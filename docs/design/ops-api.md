@@ -66,9 +66,9 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `disconnect`: take pins off their net.
 - `swap_pins`: swap two pins, or two gates, of one component (`a: "U1.INA+", b: "U1.INB+"`): their nets, no-connect marks and net loads change places. Only inside a swap group the part card declares (`swapGroups`, `data-model.md` §2); a gate swap moves every pin of the gate (an op-amp channel's IN+, IN− and OUT), and the two pins named must sit at the same place in their gates. Refused (`SWAP_INVALID`) for pins of two components, a pin in no group, pins in different groups, two pins of one gate, a name on several pins, and gates of different lengths. In a group of MCU GPIOs (with *functions*), also when a net would move to a pin lacking a function its `set_net needs` names ("SCL needs SCL, which U1.PB0 does not offer (MOSI, DI, SDA, …)"), or, for a net without *needs*, to a pin offering other functions than its own (the message asks for `set_net needs` first). It changes the netlist, so the schematic, the board and drawn copper follow as for `connect`; Optimize refuses it.
 - `no_connect`: mark pins as deliberately unconnected.
-- `set_net`: rename a net and set its voltage, external/power flags, max current, the loads its pins draw (`loads: [{ pin: "U3.VDD", amps: 0.35 }]`, null clears; each pin must be on the net and draw more than 0 A; the current check splits the net's current over its copper from them, `layout.md` §14), track width, how it is drawn, and on the board whether the router routes it first and the layer its tracks keep to (a cost, not a ban). *needs* (null clears): the MCU pin functions the net uses, named as in the card's swap group (`"GPIO"`, `"SCL"`, `"ADC*"` for any channel), which `swap_pins` checks.
+- `set_net`: rename a net and set its voltage, external/power flags, max current, the loads its pins draw (`loads: [{ pin: "U3.VDD", amps: 0.35 }]`, null clears; each pin must be on the net and draw more than 0 A; the current check splits the net's current over its copper from them, `layout.md` §14), track width (with *board*: its width on that board only, over the net's there; null with *board* clears it; an unknown board is refused with `BOARD_UNKNOWN`, *board* without *track_mm* with `INVALID_OP`; `multi-board.md` §4), how it is drawn, and on the board whether the router routes it first and the layer its tracks keep to (a cost, not a ban). *needs* (null clears): the MCU pin functions the net uses, named as in the card's swap group (`"GPIO"`, `"SCL"`, `"ADC*"` for any channel), which `swap_pins` checks.
 - `describe`: the functional blocks (which group and order the schematic) and the design document text.
-- `import_block`: copy one functional block of another stored project into this design, with every boundary net mapped to a net here (§7). Refused (`NET_UNMAPPED`, `BLOCK_UNKNOWN`, `PROJECT_UNKNOWN`, `PART_UNKNOWN`) with nothing changed; the effect lists the renames and the values to recheck.
+- `import_block`: copy one functional block of another stored project into this design, with every boundary net mapped to a net here (§7). Optional sheet and board fields put its parts straight onto that sheet and board. Refused (`NET_UNMAPPED`, `BLOCK_UNKNOWN`, `PROJECT_UNKNOWN`, `PART_UNKNOWN`, `SHEET_UNKNOWN`, `BOARD_UNKNOWN`) with nothing changed; the effect lists the renames and the values to recheck.
 
 ### Sheets and drawing
 
@@ -298,13 +298,19 @@ or it is a supply or ground, which the importing design has its own of even wher
 A project without blocks answers `blocks: []` with a note; an unknown or unreadable project answers
 `{ "error", "projects" }` (the ids the folder has).
 
-`design_edit import_block { project, block, nets, prefix? }` copies one block in. `block` is its number or
+`design_edit import_block { project, block, nets, prefix?, sheet?, board? }` copies one block in. `block` is its number or
 title, `nets` maps every boundary net to a net of this design (`{ "+5V": "VBUS", "GND": "GND" }`; a name that
 does not exist here is made, with the source net's attributes). `nets` may also map an internal net
 (`{ "NTC": "NTC" }`): it is not made anew, and its pins join that net the same way, for a block whose internal net
 this design already has (a sensor line both boards carry). It is refused, and nothing changes, when a
 boundary net is not mapped (`NET_UNMAPPED`, the missing ones as candidates), a mapped name is no net of the block
-(`NET_UNKNOWN`, its boundary and internal nets as candidates), the block or project is unknown, or a part cannot be resolved (`PART_UNKNOWN`).
+(`NET_UNKNOWN`, its boundary and internal nets as candidates), the block or project is unknown, a part cannot be resolved (`PART_UNKNOWN`), or `sheet` or `board` names none
+of this design (`SHEET_UNKNOWN`, `BOARD_UNKNOWN`, as for `move_to_sheet` and `assign_board`).
+
+- `sheet` (name or id) is the sheet the parts are drawn on, else the first sheet. `board` (name or id) is the
+  board they go on, as `assign_board { board, refs }` would put them, else their sheet's board. On a design of
+  several boards this brings another board's circuit in where it belongs, with no `move_to_sheet` or
+  `assign_board` per part afterwards. The effect says where they went (`on sheet LED, board "LED"`).
 
 - Parts are resolved by id in this design and the library first; a part neither has comes with the card the
   source project stores (a project embeds the cards it uses). A card here that lacks a pin the block connects
