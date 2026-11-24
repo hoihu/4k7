@@ -7,7 +7,7 @@
  * corner, z up, the board's underside at z = 0 (its top at pcb_thickness).
  */
 import { boardBodies, type Body3D } from '@4k7/parts';
-import { boardFacing, boardPolygon, cutoutPolygon, FACE_FRAMES, MATING_PATH_LENGTH as PATH_LENGTH, matingOf, type BoardFacing, type BoardPart, type BoardPlace, type BoardView, type EnclosureBrief, type EnclosureGraphic, type Mating } from '@4k7/schema';
+import { boardFacing, boardPolygon, cutoutPolygon, FACE_FRAMES, isHole, r3 as round3, MATING_PATH_LENGTH as PATH_LENGTH, matingOf, type BoardFacing, type BoardPart, type BoardPlace, type BoardView, type EnclosureBrief, type EnclosureGraphic, type Mating } from '@4k7/schema';
 import type { FabFile } from './gerber.ts';
 
 /** Board thickness and copper (as the 3D view and the STEP export: parts sit on the copper). */
@@ -86,7 +86,8 @@ export interface EnclosureFacts {
   parts: ScadPart[];
 }
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000 || 0;
+/** r3 with -0 written as 0. */
+const r3 = (v: number) => round3(v) || 0;
 const n = (v: number) => String(r3(v));
 const vec = (v: readonly number[]) => `[${v.map(n).join(', ')}]`;
 const str = (s: string) => `"${s.replace(/["\\]/g, '')}"`;
@@ -216,8 +217,6 @@ function matingPath(m: Mating, part: BoardPart, local: { min: V3; max: V3 }, f: 
     size: (m.plug_mm ?? size).map(r3) as [number, number],
   };
 }
-
-const isHole = (p: BoardPart) => p.componentId.startsWith('hole:');
 
 /** Each part's solids and where they go: rows (3 × 4) take body coordinates with y flipped to the board's. */
 export type PartSolids = Map<string, { matrix: string; rows: number[][]; solids: PartSolid[] }>;

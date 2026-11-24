@@ -1,16 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { Diagnostic } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
-import { buckTransaction } from './fixtures.ts';
+import { buck as buckFixture } from './fixtures.ts';
 
 // Copper of two nets that touches is in get_diagnostics, as the board DRC finds it: in 0.6.x a
 // board read back from its Gerbers had two shorts (two parts' pads touching; a GND track over a
 // module's unconnected pad that a land pattern edit moved under it) while get_diagnostics was clean.
 
 function buck(drawn: boolean) {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
+  const k = buckFixture();
   if (drawn) ok(k, [{ op: 'set_copper_mode', mode: 'drawn', keep: false }]);
   return k;
 }
@@ -18,7 +15,7 @@ const ok = (k: Kernel, ops: unknown[]) => {
   const r = k.transact({ summary: 'test', ops });
   if (r.status !== 'ok') throw new Error(JSON.stringify(r));
 };
-const copper = (k: Kernel) => (k.query({ op: 'get_diagnostics' }) as Diagnostic[]).filter((x) => x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE');
+const copper = (k: Kernel) => k.diagnostics().filter((x) => x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE');
 
 // The buck's U1 is an SO-8 at 13.85, 11.005; its pad 3 (not connected) at 11.2, 11.64.
 const so8 = [1, 2, 3, 4].map((n) => ({ number: String(n), x: -2.65, y: -1.905 + (n - 1) * 1.27, w: 1.4, h: 0.52 })).concat([5, 6, 7, 8].map((n) => ({ number: String(n), x: 2.65, y: 1.905 - (n - 5) * 1.27, w: 1.4, h: 0.52 })));

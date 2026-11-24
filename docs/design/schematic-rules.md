@@ -33,8 +33,3 @@ pins). `SCH.JOG` looks only at a wire's shape as well, and fires on two big ICs 
 level. That now reaches only the agent, so it was left as it is.
 
 Both are kept with the browser's settings, so they apply to every project opened there.
-
-**Earlier versions** stored one markdown text with `### SCH.ID: title` headings and `level:` /
-`param:` lines. `migrateRulesText` turns it into check settings plus notes (the prose without ids
-and level lines); a copy whose prose is the old default's leaves no notes (recognised by a hash,
-fixture `packages/kernel/test/old-schematic-rules.md`).

@@ -1,15 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { Kernel } from '../src/index.ts';
-import { buckTransaction } from './fixtures.ts';
+import { buck as buckFixture } from './fixtures.ts';
 
 const codes = (k: Kernel) => k.state().diagnostics.filter((d) => !d.waivedBy).map((d) => `${d.code} ${d.entities.join(',')}`);
 const comp = (k: Kernel, refdes: string) => Object.values(k.draftDesign().components).find((c) => c.refdes === refdes)!;
 
-function buck() {
-  const k = new Kernel();
-  expect(k.transact(buckTransaction()).status).toBe('ok');
-  return k;
-}
+const buck = () => buckFixture({ accept: false });
 
 describe('do not populate (set_dnp)', () => {
   it('sets and clears the flag, says so, and get_component shows it', () => {

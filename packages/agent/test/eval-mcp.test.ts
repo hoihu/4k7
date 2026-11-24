@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Design } from '@4k7/schema';
+import { GuideTopic, PLAN_STEP_OFF, type Design } from '@4k7/schema';
 import { runKernelTool } from '../src/tools.ts';
-import { claudeResult, startHeadless, type HeadlessServer } from '../eval/headless.ts';
+import { claudeResult, headlessCalls, startHeadless, type HeadlessServer } from '../eval/headless.ts';
 import { countingKernel, type EvalTask } from '../eval/run.ts';
 
 const dir = new URL('../eval/tasks/', import.meta.url);
@@ -54,7 +54,7 @@ describe('headless eval server (/mcp without a tab)', () => {
     const q = { op: 'get_diagnostics' };
     const erc = await client.callTool({ name: 'design_query', arguments: q });
     expect(text(erc)).toBe((await runKernelTool(tab.port, 'design_query', q))!.content);
-    expect(JSON.parse(text(erc)).some((d: { code: string; severity: string }) => d.severity === 'error')).toBe(true); // C1.2 open
+    expect(JSON.parse(text(erc)).diagnostics.some((d: { code: string; severity: string }) => d.severity === 'error')).toBe(true); // C1.2 open
 
     expect(text(await client.callTool({ name: 'get_context', arguments: {} }))).toMatch(/C1=100nF[\s\S]*plan_step: off/);
     const refused = await client.callTool({ name: 'propose', arguments: { summary: 'Decouple J1' } });
@@ -72,6 +72,39 @@ describe('headless eval server (/mcp without a tab)', () => {
       tokens_in: 100,
       tokens_out: 20,
     });
+  });
+
+  it('serves every get_guide topic the schema has (boards too) through the kernel, from its design doc without the header', async () => {
+    // the guides only read docs/design, not the design: one design is enough
+    const { call } = headlessCalls(led(), { name: 't', prompt: 'p' });
+    const out = (r: { content: { type: string; text?: string }[] }) => r.content.map((c) => c.text ?? '').join('');
+    for (const topic of GuideTopic.options) {
+      const r = await call('design_query', { op: 'get_guide', topic });
+      expect(r.isError, topic).toBe(false);
+      expect(out(r)).not.toMatch(/^#|^>/);
+    }
+    const boards = await call('design_query', { op: 'get_guide', topic: 'boards' });
+    const doc = readFileSync(new URL('../../../docs/design/boards.md', import.meta.url), 'utf8');
+    expect(out(boards)).toBe(doc.replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''));
+    const bad = await call('design_query', { op: 'get_guide', topic: 'nope' });
+    expect(bad.isError).toBe(true);
+    // the kernel's answer, as the app gives it: every guide there is
+    expect(JSON.parse(out(bad))).toEqual({ error: `No guide "nope". Guides: ${GuideTopic.options.join(', ')}.`, guides: GuideTopic.options });
+    expect(out(bad)).toContain('boards');
+  });
+
+  it('answers list_blocks through the kernel: there is no projects folder in the eval', async () => {
+    const { call } = headlessCalls(led(), { name: 't', prompt: 'p' });
+    const r = await call('design_query', { op: 'list_blocks', project: 'lamp' });
+    expect(r.isError).toBe(true);
+    expect(JSON.parse((r.content[0] as { text: string }).text)).toEqual({ error: 'No projects folder: the app is not connected to the 4k7 server.' });
+  });
+
+  it('refuses propose_plan with the app\'s plan-off text', async () => {
+    const { call } = headlessCalls(led(), { name: 't', prompt: 'p' });
+    const r = await call('propose_plan', { steps: ['add the regulator'] });
+    expect(r.isError).toBe(true);
+    expect(r.content[0]).toEqual({ type: 'text', text: `Refused: ${PLAN_STEP_OFF}` });
   });
 
   it('answers ask_user from the task, and an unanswered ask fails the run', async () => {

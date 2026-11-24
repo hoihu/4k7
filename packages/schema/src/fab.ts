@@ -8,6 +8,7 @@
  * agent can import a newer one (set_fab_profile with explicit limits).
  */
 import type { BoardRules } from './board.ts';
+import { r3 } from './units.ts';
 
 export interface FabLimits {
   /** Narrowest copper track. */
@@ -176,7 +177,6 @@ export function eurocircuitsClass(code: string): FabProfile | undefined {
   const d = EC_DRILL[dr]!;
   // Eurocircuits measures the ring from the drill tool (finished PTH + 0.1 mm); ours is from the finished hole
   const ring = Math.round((Math.max(p.oar, p.iar) + 0.05) * 1000) / 1000;
-  const r3 = (v: number) => Math.round(v * 1000) / 1000;
   const notes = [
     `Class ${m[1]}${dr} is pattern class ${m[1]} with drill class ${dr}. Pattern class ${m[1]} is offered in: ${p.service}. Drill class ${dr}: ${d.service}.`,
     'Eurocircuits measures the annular ring from the drill tool (finished plated hole + 0.10 mm); the ring here is that value + 0.05 mm, measured from the finished hole. The via pad is derived from it.',

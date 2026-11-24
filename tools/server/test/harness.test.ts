@@ -3,12 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import WebSocket from 'ws';
-import { SERVER_PROTOCOL, type ChatEvent, type HarnessCapability, type ServerToTab } from '@4k7/schema';
-import { ChatRunner, CodexHarness, CopilotHarness, LocalServer, OpenCodeHarness, mcpHttpHandler } from '../src/index.ts';
+import type { ChatEvent, HarnessCapability, ServerToTab } from '@4k7/schema';
+import { ChatRunner, CodexHarness, CopilotHarness, OpenCodeHarness, mcpHttpHandler } from '../src/index.ts';
 import { rulesFile } from '../src/harness/types.ts';
+import { connectTab, runChat, startServer } from './helpers.ts';
 
-const KEY = '0cd22f19-30de-4d39-9287-ab0123456789';
 /** A stand-in CLI: on Windows behind an npm shim, like a real agent installed with npm. */
 const fake = (name: string) => fileURLToPath(new URL(`./${process.platform === 'win32' ? name.replace('.mjs', '.cmd') : name}`, import.meta.url));
 const cleanups: (() => unknown)[] = [];
@@ -17,9 +16,7 @@ afterEach(async () => {
 });
 
 async function setup() {
-  const server = new LocalServer({ accessKey: KEY, ports: [0], devPorts: [5173] });
-  const port = await server.start();
-  cleanups.push(() => server.stop());
+  const { server, port } = await startServer(cleanups);
   const workDir = mkdtempSync(join(tmpdir(), 'tw-chat-'));
   const copilot = new CopilotHarness(fake('fake-copilot.mjs'));
   const codex = new CodexHarness(fake('fake-codex.mjs'), workDir);
@@ -29,34 +26,14 @@ async function setup() {
   server.setChatHandler(chat.handle, { available: true }, harnesses);
   server.setHttpHandler(mcpHttpHandler(server, (t) => chat.modeFor(t)));
 
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: 'http://localhost:5173' } });
-  cleanups.push(() => ws.close());
-  const calls: string[] = [];
-  const events = new Map<string, ChatEvent[]>();
   const pushed: ServerToTab[] = [];
-  const welcome = await new Promise<ServerToTab>((resolve) => {
-    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', protocol: SERVER_PROTOCOL, accessKey: KEY, client: 'test' })));
-    ws.on('message', (raw) => {
-      const m = JSON.parse(String(raw)) as ServerToTab;
-      if (m.type === 'welcome') resolve(m);
+  const { ws, welcome, calls, events } = await connectTab(port, cleanups, {
+    onMessage: (m) => {
       if (m.type === 'harnesses') pushed.push(m);
-      if (m.type === 'call') {
-        calls.push(m.tool);
-        ws.send(JSON.stringify({ type: 'result', id: m.id, isError: false, content: [{ type: 'text', text: '<design_state>empty</design_state>' }] }));
-      }
-      if (m.type === 'chat_event') events.set(m.id, [...(events.get(m.id) ?? []), m.event]);
-    });
+    },
   });
   const send = (msg: { id: string; text: string; harness: string; session?: string | null; model?: string; effort?: string; web?: boolean }) =>
-    new Promise<ChatEvent[]>((resolve) => {
-      ws.send(JSON.stringify({ type: 'chat', session: null, autonomy: 'review', ...msg }));
-      const t = setInterval(() => {
-        if (events.get(msg.id)?.some((e) => e.kind === 'done')) {
-          clearInterval(t);
-          resolve(events.get(msg.id)!);
-        }
-      }, 20);
-    });
+    runChat(ws, events, { type: 'chat', session: null, autonomy: 'review', ...msg });
   return { server, welcome, pushed, calls, send, opencode, codex };
 }
 

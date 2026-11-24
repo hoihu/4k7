@@ -15,7 +15,7 @@ deterministic kernel turns it into geometry and checks every change. Alpha (0.x)
 | `packages/agent` | Provider adapters, agent loop, tools, prompt |
 | `tools/server` | Local server: serves the app, reads/writes project files, MCP relay to the open tab, coding-agent harness |
 | `apps/web` | Svelte 5 app (Vite); kernel runs in a worker (`src/lib/kernel.worker.ts`) |
-| `docs/` | `ARCHITECTURE.md`, `distribution.md`, `design/*.md`, `ui/` (HTML prototypes) |
+| `docs/` | `ARCHITECTURE.md`, `distribution.md`, `design/*.md` |
 | `scripts/` | `dev.sh`, `package.mjs`, `bundle.mjs`, `changelog.mjs`, `check-package.mjs`, `check-codex.mjs`, `check-download.mjs` |
 | `site/` | 4k7.dev: plain HTML, no build step; deployed to Cloudflare Workers on push to `main` (`site/README.md`) |
 
@@ -91,7 +91,7 @@ Start with `docs/ARCHITECTURE.md` (overview, package table, roadmap).
 | `fab-rules.md`, `fab-check.md`, `assembly.md` | Manufacturer limits; production files read back and checked (`packages/fab`); polarity marks, pick-and-place |
 | `sourcing.md`, `cost.md` | Catalogue lookup, stock check, order cost (`packages/parts`); `cost.md` is the cost agent's guide |
 | `enclosure.md`, `mechanics.md` | Enclosure script (`packages/fab`); agent guide `get_guide mechanics` |
-| `ui.md` | UI concept (`apps/web`); prototypes in `docs/ui/` |
+| `ui.md` | UI concept (`apps/web`) |
 
 Several docs (`schematic.md`, `high-speed.md`, `cost.md`, `mechanics.md`, `boards.md`) are text the agent itself reads: write them to the agent.
 

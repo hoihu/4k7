@@ -107,6 +107,10 @@ export const ProposePlanInput = z.object({
   summary: z.string().optional().describe('One line: what the plan builds, shown above the steps'),
 });
 
+/** What propose_plan answers when the project has the plan step off (the app, and the eval server). */
+export const PLAN_STEP_OFF =
+  'The plan step is off for this project (Settings → General → Plan step), so no plan is shown. Go ahead with the task and propose the changes when they are done.';
+
 export const WaitForReviewInput = z.object({
   timeout_s: z.number().int().min(5).max(600).default(120).describe('How long to wait before returning "still pending"'),
 });
@@ -346,7 +350,7 @@ export function agentTools(engine: AgentEngine): ToolDefinition[] {
     {
       name: TOOL_NAMES.query,
       description:
-        'Read the design or the part library. Ops: get_summary, find, get_component, get_net, get_diagnostics, ' +
+        'Read the design or the part library. Ops: get_summary, find, get_component, get_net, get_diagnostics (the check results, 20 at a time: offset, limit, code, severity), ' +
         'get_ledger, get_description, get_fab_profiles, get_board, get_power_tree (what feeds what: sources, regulators, loads, current budget, LDO heat), try_placements (compare board arrangements), list_blocks (the blocks of another project, to reuse one), search_parts, get_part. Read-only.',
       input_schema: schemaOf(QueryOp),
     },

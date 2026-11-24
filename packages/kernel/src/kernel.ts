@@ -1,9 +1,10 @@
 /**
  * The design kernel: committed design + agent working copy (draft), transactions,
  * proposals (changesets), history. Synchronous and deterministic; the web app runs it
- * in a Web Worker. M0 is TypeScript; the Rust/WASM kernel will implement this same API.
+ * in a Web Worker.
  */
 import {
+  GuideTopic,
   QueryOp,
   Transaction,
   emptyDesign,
@@ -29,6 +30,7 @@ import {
   type SchematicRule,
   PAGE,
   boardSummary,
+  diagnosticsAnswer,
   type DrcFilter,
   resolveChecks,
   type CheckSettings,
@@ -74,6 +76,7 @@ import { lineBoard } from './lineops.ts';
 import { boardList, boardOf, commitFocus, focusBoard, multiBoard, ownTrackWidth, resolveBoard, settingsOf } from './boards.ts';
 import { matePairs, pairsText } from './mates.ts';
 import { assemblyOf } from './assembly.ts';
+import { blocksOfProject } from './reuse.ts';
 import { FIRST_BOARD } from '@4k7/schema';
 import { opBoard } from './apply.ts';
 
@@ -103,6 +106,21 @@ export interface KernelState {
 
 /** The SCH checks read the drawing and nothing of the board: a part moved there leaves them as they were. */
 const schematicFindings = new Memo<Diagnostic[]>('schematic checks', 4);
+
+/** What the app read for a query (Kernel.query): the agent's guides by topic (each design doc as it is), and the stored projects as for transact. */
+export interface QueryContext {
+  guides?: Partial<Record<GuideTopic, string>>;
+  sources?: ImportSources;
+}
+
+/** get_guide: the guide's design doc without its header for people (title and status lines). */
+function guideAnswer(topic: unknown, guides?: QueryContext['guides']): unknown {
+  const t = GuideTopic.safeParse(topic);
+  if (!t.success) return { error: `No guide ${JSON.stringify(topic ?? null)}. Guides: ${GuideTopic.options.join(', ')}.`, guides: GuideTopic.options };
+  const doc = guides?.[t.data];
+  if (doc === undefined) return { error: `The ${t.data} guide was not handed to the kernel: the app (or the eval) passes the guides with get_guide.` };
+  return doc.replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, '');
+}
 
 export class Kernel {
   private committed: Design;
@@ -540,7 +558,13 @@ export class Kernel {
 
   /* -------------------------------- queries ------------------------------- */
 
-  query(input: unknown): unknown {
+  /**
+   * `ctx`: what the app read for the queries that need more than the design: `guides` for get_guide,
+   * `sources` (the stored projects, as for transact) for list_blocks. See docs/design/ops-api.md §7.
+   */
+  query(input: unknown, ctx: QueryContext = {}): unknown {
+    // a topic there is no guide for: every guide there is, not the schema's complaint
+    if ((input as { op?: unknown })?.op === 'get_guide') return guideAnswer((input as { topic?: unknown }).topic, ctx.guides);
     const parsed = QueryOp.safeParse(input);
     if (!parsed.success) return { error: formatZod(parsed.error.issues) };
     const q = parsed.data;
@@ -690,7 +714,7 @@ export class Kernel {
         return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, ...onBoards, track, current, ...impedance, ...vias };
       }
       case 'get_diagnostics':
-        return [...this.analyse(d).diagnostics, ...this.copperShorts(d)];
+        return diagnosticsAnswer(this.diagnostics(), q);
       case 'get_current_map': {
         const b = this.routedNow(all, bid);
         if (!b) return { routed: false, note: 'The board is not routed (or its routing is out of date): route it first, then ask again.' };
@@ -799,10 +823,10 @@ export class Kernel {
       // the app answers these with the board's facts and the guide; the kernel alone knows the design's part
       case 'get_enclosure':
         return enclosureAnswer({ brief: d.enclosure?.brief ?? null, script: d.enclosure?.script ?? null, graphics: enclosureGraphicsInfo(d.enclosure?.graphics) }, q);
-      case 'get_guide':
-        return { error: 'The guides are served by the app.' };
+      // another project's blocks: only a project the folder lists was read (docs/design/ops-api.md §7)
       case 'list_blocks':
-        return { error: 'list_blocks is answered by the app, which reads the projects folder.' };
+        if (!ctx.sources) return { error: 'No projects folder: the app is not connected to the 4k7 server.' };
+        return blocksOfProject(q.project, ctx.sources.files[q.project], ctx.sources.projects);
     }
   }
 
@@ -904,6 +928,16 @@ export class Kernel {
       stackup: (({ name, copper, dielectric, mask }) => ({ name, copper, dielectric, ...(mask ? { mask } : {}) }))(boardStackup(d.board ?? DEFAULT_BOARD)),
       ...(d.board?.rules.currentRise ? { currentRise: d.board.rules.currentRise } : {}),
     };
+  }
+
+  /**
+   * Every diagnostic of the working copy, as get_diagnostics pages them: the schematic's and the
+   * board's copper shorts, on every board. For callers that need the whole list (the app adds the
+   * production files' findings, the eval scores the run).
+   */
+  diagnostics(): Diagnostic[] {
+    const d = this.draft;
+    return [...this.analyse(d).diagnostics, ...this.copperShorts(d)];
   }
 
   /** Everything the UI needs in one call. */

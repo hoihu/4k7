@@ -4,7 +4,7 @@
  * in-process Kernel through the same KernelPort the app's worker implements.
  * See docs/ARCHITECTURE.md §3.9.
  */
-import type { Design, Diagnostic, TransactionResult } from '@4k7/schema';
+import type { Design, TransactionResult } from '@4k7/schema';
 import { Kernel } from '@4k7/kernel';
 import { Agent } from '../src/loop.ts';
 import { ScriptedProvider } from '../src/providers/scripted.ts';
@@ -99,7 +99,7 @@ export interface RunReport {
 
 /** Scores the design a run left behind. */
 export function scoreRun(kernel: Kernel, task: EvalTask, run: RunReport): Score {
-  const open = (kernel.query({ op: 'get_diagnostics' }) as Diagnostic[]).filter((x) => x.severity === 'error' && !x.waivedBy);
+  const open = kernel.diagnostics().filter((x) => x.severity === 'error' && !x.waivedBy);
   const drc = open.filter((x) => x.code.startsWith('DRC.')).length;
   const erc = open.length - drc;
   const state = kernel.state();

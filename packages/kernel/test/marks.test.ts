@@ -3,14 +3,7 @@ import { roundPadDist, type BoardPad, type BoardPart, type BoardView, type PartC
 import { getBuiltinPart } from '@4k7/parts';
 import { Kernel } from '../src/index.ts';
 import { placeMarks, polarityOf } from '../src/marks.ts';
-import { buckTransaction } from './fixtures.ts';
-
-function buck() {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
-  return k;
-}
+import { buck } from './fixtures.ts';
 
 const card = (category: PartCard['category'], names: string[], polarity?: PartCard['polarity']): PartCard => ({
   id: `acme:${names.join('_')}`,

@@ -1,7 +1,6 @@
 # UI concept
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: decided direction, 2026-09-25.
-> Prototype: [`docs/ui/prototype.html`](../ui/prototype.html) · Earlier exploration: [`docs/ui/proposals.html`](../ui/proposals.html)
+> Part of the [architecture](../ARCHITECTURE.md). Status: decided direction, 2026-09-25. The app itself is in `apps/web`.
 
 ## 1. Decisions
 

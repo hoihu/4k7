@@ -4,14 +4,7 @@ import { Kernel } from '../src/index.ts';
 import { describeConstraint } from '../src/netops.ts';
 import { Grid } from '../src/congestion.ts';
 import { rotate } from '../src/placer.ts';
-import { buckTransaction } from './fixtures.ts';
-
-function buck() {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
-  return k;
-}
+import { buck } from './fixtures.ts';
 
 const ok = (k: Kernel, ops: unknown[]) => {
   const r = k.transact({ summary: 'test', ops });

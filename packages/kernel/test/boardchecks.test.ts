@@ -22,18 +22,18 @@ describe('solder-mask webs', () => {
   // JLCPCB holds 0.1 mm of web; the mask opens 0.05 mm past each pad, so pads need 0.2 mm between them
   it('warns between the pads of one part when the web is too thin, and errors between two parts', () => {
     const fine = view({ parts: [part('U1', [pad('1', 2, 2, 0.25, 0.6, 'A'), pad('2', 2.4, 2, 0.25, 0.6, 'B'), pad('3', 2.9, 2, 0.25, 0.6, 'GND')])] });
-    const same = fabPlacementDrc(fine).filter((d) => d.code === 'DRC.FAB_MASK_WEB');
+    const same = fabPlacementDrc(fine, 'Main').filter((d) => d.code === 'DRC.FAB_MASK_WEB');
     // 1–2: 0.15 mm of copper gap, 0.05 mm of web; 2–3: 0.25 gap, 0.15 web
     expect(same).toHaveLength(1);
     expect(same[0]).toMatchObject({ severity: 'warning', entities: ['U1'] });
     expect(same[0]!.message).toContain('U1.1 and U1.2');
     const apart = view({ parts: [part('R1', [pad('1', 2, 2, 1, 1, 'A')]), part('R2', [pad('1', 3.15, 2, 1, 1, 'B')])] });
-    expect(fabPlacementDrc(apart).filter((d) => d.code === 'DRC.FAB_MASK_WEB')).toMatchObject([{ severity: 'error', entities: ['R1', 'R2'] }]);
+    expect(fabPlacementDrc(apart, 'Main').filter((d) => d.code === 'DRC.FAB_MASK_WEB')).toMatchObject([{ severity: 'error', entities: ['R1', 'R2'] }]);
   });
 
   it('lets pads of one net, pads at the limit, pads on opposite sides and houses without the limit be', () => {
     const at = (gap: number, extra: Partial<BoardPad> = {}, net = 'B') => view({ parts: [part('R1', [pad('1', 2, 2, 1, 1, 'A')]), part('R2', [pad('1', 3 + gap, 2, 1, 1, net, extra)])] });
-    const web = (b: BoardView) => fabPlacementDrc(b).filter((d) => d.code === 'DRC.FAB_MASK_WEB');
+    const web = (b: BoardView) => fabPlacementDrc(b, 'Main').filter((d) => d.code === 'DRC.FAB_MASK_WEB');
     expect(web(at(0.2))).toEqual([]); // exactly the 0.1 mm web
     expect(web(at(0.15))).toHaveLength(1);
     expect(web(at(0.15, {}, 'A'))).toEqual([]); // joined anyway
@@ -48,7 +48,7 @@ describe('solder-mask webs', () => {
 describe('silkscreen text', () => {
   it('warns about text smaller than the fab prints', () => {
     const g = (h: number) => ({ id: 'G1', side: 'top', mode: 'outline', line: 0.15, text: 'REV A', polys: [], bounds: [1, 1, 5, 1 + h] });
-    const d = (h: number) => fabPlacementDrc(view({ graphics: [g(h)] as never })).filter((x) => x.code === 'DRC.FAB_SILK_TEXT');
+    const d = (h: number) => fabPlacementDrc(view({ graphics: [g(h)] as never }), 'Main').filter((x) => x.code === 'DRC.FAB_SILK_TEXT');
     expect(d(0.7)).toMatchObject([{ severity: 'warning', entities: ['G1'] }]);
     expect(d(1)).toEqual([]);
   });
@@ -169,6 +169,6 @@ describe('dead copper', () => {
 describe('the checks stay quiet on clean copper', () => {
   it('reports nothing for tidy copper on a board with a fab profile', () => {
     const b = view({ parts: [part('R1', [pad('1', 2, 2, 1, 1, 'A')]), part('R2', [pad('1', 6, 2, 1, 1, 'A')])], tracks: [track('A', [2, 2, 6, 2])] });
-    expect(codes([...fabPlacementDrc(b), ...fabCopperDrc(b), ...acidDrc(b), ...neckDrc(b, () => 0.25), ...thermalDrc(b), ...deadCopperDrc(b)])).toEqual([]);
+    expect(codes([...fabPlacementDrc(b, 'Main'), ...fabCopperDrc(b), ...acidDrc(b), ...neckDrc(b, () => 0.25), ...thermalDrc(b), ...deadCopperDrc(b)])).toEqual([]);
   });
 });

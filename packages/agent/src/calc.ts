@@ -36,8 +36,6 @@ function num(args: CalcCall['args'], key: string, unit?: string, fallback?: numb
 
 /** The board's stack-up as the design summary gives it (calc impedance works on it by default). */
 export type CalcStackup = NonNullable<DesignSummary['stackup']>;
-/** The board as the calculators read it: its stack-up and its allowed heating (set_board current_rise_c). */
-export type CalcBoard = { stackup?: CalcStackup; currentRise?: number };
 
 /**
  * `design` is the design's value series (set_value_series): it replaces each calculator's own

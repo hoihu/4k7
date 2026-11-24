@@ -1,16 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { boardSummary, type BoardView, type Transaction } from '@4k7/schema';
-import { Kernel } from '../src/index.ts';
-import { buckTransaction } from './fixtures.ts';
+import { buck as buckFixture } from './fixtures.ts';
 
 /**
  * draw_track while the router lays the copper: one connection laid as the agent asks, kept in the
  * design, laid first on every route (docs/design/layout.md §5.8).
  */
 function buck() {
-  const k = new Kernel();
-  k.transact(buckTransaction());
-  k.accept();
+  const k = buckFixture();
   k.transact({ summary: 'route', ops: [{ op: 'route' }] });
   return k;
 }

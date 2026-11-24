@@ -371,7 +371,6 @@ const fabLimitsInput = z.object({
   min_board_mm: z.tuple([z.number().positive(), z.number().positive()]).optional().describe('Smallest board [width, height]'),
   max_board_mm: z.tuple([z.number().positive(), z.number().positive()]).optional().describe('Largest board [width, height]'),
 });
-export type FabLimitsInput = z.infer<typeof fabLimitsInput>;
 
 export const SetFabProfileOp = z.object({
   op: z.literal('set_fab_profile'),
@@ -1020,7 +1019,6 @@ export const EditOp = z.discriminatedUnion('op', [
   SetEnclosureGraphicOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
-export type EditOpName = EditOp['op'];
 
 export const Transaction = z.object({
   summary: z.string().min(1).describe('One line describing the intent of this change'),
@@ -1031,6 +1029,10 @@ export type Transaction = z.infer<typeof Transaction>;
 
 /* ------------------------------- query ops -------------------------------- */
 
+/** The get_guide topics: each is the agent guide in docs/design/<topic, _ as ->.md. */
+export const GuideTopic = z.enum(['mechanics', 'cost', 'high_speed', 'schematic', 'boards']);
+export type GuideTopic = z.infer<typeof GuideTopic>;
+
 export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_summary') }),
   z.object({
@@ -1040,7 +1042,13 @@ export const QueryOp = z.discriminatedUnion('op', [
   }),
   z.object({ op: z.literal('get_component'), ref: componentRef }),
   z.object({ op: z.literal('get_net'), net: netName }),
-  z.object({ op: z.literal('get_diagnostics') }),
+  z.object({
+    op: z.literal('get_diagnostics'),
+    code: z.string().min(1).optional().describe('get_diagnostics: only findings with this code (exact, not a prefix), e.g. "ERC.PIN_UNCONNECTED" or "XCHK.PIN_NO_PAD"'),
+    severity: z.enum(['error', 'warning', 'info']).optional().describe('get_diagnostics: only findings of this severity'),
+    offset: z.number().int().min(0).optional().describe('get_diagnostics: skip this many of the matching findings (default 0): the next page'),
+    limit: z.number().int().min(1).max(200).optional().describe('get_diagnostics: list at most this many (default 20). Errors come first, waived ones last; when not all are listed, found counts them all by code and says the call for the next page'),
+  }).describe('The design\'s check results (ERC, the schematic\'s and datasheet checks, XCHK.*, the board\'s copper shorts, on every board), errors first, the waived ones (waivedBy) last: diagnostics lists 20; when there are more, found counts all of them by code (with the nets and parts they name most) and says how many are not listed and the call that lists the next page. Page on with offset or narrow by code or severity'),
   z.object({ op: z.literal('get_ledger') }),
   z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
   z.object({ op: z.literal('get_fab_profiles') }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses'),
@@ -1110,6 +1118,6 @@ export const QueryOp = z.discriminatedUnion('op', [
     part: z.enum(ENCLOSURE_PARTS).optional().describe('get_enclosure: only this part: brief (with the open questions, the graphics and how to work), script, board_api or last_render. Without: everything when it fits in one answer, else an overview with each part\'s size'),
     lines: z.tuple([z.number().int().min(1), z.number().int().min(1)]).optional().describe('get_enclosure, with part script, board_api or last_render: the lines [from, to], 1-based as render_enclosure\'s errors count them. A long part comes in ranges anyway: each answer has lines, total_lines and next'),
   }).describe("The enclosure: the brief, the script, board_api (the board as the script finds it: its variables and functions, the parts with where they are and which way they are plugged, and the geometry the script can call), the last render's report. A large one (several boards, many parts, a long script) answers with an overview: then read each part with part, and a long one in ranges with lines"),
-  z.object({ op: z.literal('get_guide'), topic: z.enum(['mechanics', 'cost', 'high_speed', 'schematic', 'boards']) }).describe('A guide: boards = a product of several boards in one design (a main board and a display board on a header or a cable): when to split, setting up the boards, which kind of mate, what the mate checks mean, changing from a header to a cable; read before you split a design or join boards; schematic = how to arrange a schematic that reads well (functional blocks, their order and place on the pages, what goes inside a block, wire or label), read before you arrange or tidy a sheet; cost = how to make a design cheaper to make (what costs money at the assembly house, how far each kind of part may move its value, series and parallel pairs, the board), read before optimising cost; mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script), read before the first brief; high_speed = how to lay out lines at a set impedance (fast interfaces such as USB, Ethernet, HDMI, LVDS, and RF lines to antennas and connectors): which lines need it, the stack-up, widths and gaps, planes and return paths, pairs, vias, antennas. Read it before routing such lines'),
+  z.object({ op: z.literal('get_guide'), topic: GuideTopic }).describe('A guide: boards = a product of several boards in one design (a main board and a display board on a header or a cable): when to split, setting up the boards, which kind of mate, what the mate checks mean, changing from a header to a cable; read before you split a design or join boards; schematic = how to arrange a schematic that reads well (functional blocks, their order and place on the pages, what goes inside a block, wire or label), read before you arrange or tidy a sheet; cost = how to make a design cheaper to make (what costs money at the assembly house, how far each kind of part may move its value, series and parallel pairs, the board), read before optimising cost; mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script), read before the first brief; high_speed = how to lay out lines at a set impedance (fast interfaces such as USB, Ethernet, HDMI, LVDS, and RF lines to antennas and connectors): which lines need it, the stack-up, widths and gaps, planes and return paths, pairs, vias, antennas. Read it before routing such lines'),
 ]);
 export type QueryOp = z.infer<typeof QueryOp>;
