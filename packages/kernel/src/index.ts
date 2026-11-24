@@ -1,4 +1,4 @@
-export { Kernel, type KernelState } from './kernel.ts';
+export { Kernel, type KernelState, type QueryContext } from './kernel.ts';
 export { layoutBoard } from './board.ts';
 export { boardList, boardOf, focusBoard, multiBoard, settingsOf } from './boards.ts';
 export { runChecks } from './checks.ts';

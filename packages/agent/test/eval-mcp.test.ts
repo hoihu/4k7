@@ -74,7 +74,7 @@ describe('headless eval server (/mcp without a tab)', () => {
     });
   });
 
-  it('serves every get_guide topic the schema has (boards too) from its design doc, without the header', async () => {
+  it('serves every get_guide topic the schema has (boards too) through the kernel, from its design doc without the header', async () => {
     // the guides only read docs/design, not the design: one design is enough
     const { call } = headlessCalls(led(), { name: 't', prompt: 'p' });
     const out = (r: { content: { type: string; text?: string }[] }) => r.content.map((c) => c.text ?? '').join('');
@@ -88,8 +88,16 @@ describe('headless eval server (/mcp without a tab)', () => {
     expect(out(boards)).toBe(doc.replace(/^#[^\n]*\n+(>[^\n]*\n)+\n*/, ''));
     const bad = await call('design_query', { op: 'get_guide', topic: 'nope' });
     expect(bad.isError).toBe(true);
-    expect(out(bad)).toBe(`Guides: ${GuideTopic.options.join(', ')}.`);
+    // the kernel's answer, as the app gives it: every guide there is
+    expect(JSON.parse(out(bad))).toEqual({ error: `No guide "nope". Guides: ${GuideTopic.options.join(', ')}.`, guides: GuideTopic.options });
     expect(out(bad)).toContain('boards');
+  });
+
+  it('answers list_blocks through the kernel: there is no projects folder in the eval', async () => {
+    const { call } = headlessCalls(led(), { name: 't', prompt: 'p' });
+    const r = await call('design_query', { op: 'list_blocks', project: 'lamp' });
+    expect(r.isError).toBe(true);
+    expect(JSON.parse((r.content[0] as { text: string }).text)).toEqual({ error: 'No projects folder: the app is not connected to the 4k7 server.' });
   });
 
   it('refuses propose_plan with the app\'s plan-off text', async () => {

@@ -4,7 +4,7 @@
  * structured-cloneable arguments.
  */
 import { Kernel, registerArtwork, unregisterArtwork } from '@4k7/kernel';
-import type { ImportSources } from '@4k7/kernel';
+import type { ImportSources, QueryContext } from '@4k7/kernel';
 import { registerUserParts, unregisterUserPart } from '@4k7/parts';
 import type { Artwork, CheckSettings, Design, OptimizeScope, PartCard, RouteHelperResult, StoredCopper } from '@4k7/schema';
 
@@ -21,7 +21,8 @@ const methods = {
     kernel.transact(tx, by, routed ? { results: routed, ...(rev !== undefined ? { rev } : {}) } : undefined, sources),
   /** The working copy with its revision (the route helper's worker routes it; transact refuses its results if it changed). */
   draftSnapshot: () => kernel.draftSnapshot(),
-  query: (q: unknown) => kernel.query(q),
+  /** `ctx`: what the app read for the query: the guides for get_guide, the stored projects for list_blocks. */
+  query: (q: unknown, ctx?: QueryContext) => kernel.query(q, ctx),
   /** Every diagnostic, unpaged (get_diagnostics pages them): the app adds the production files' findings. */
   diagnostics: () => kernel.diagnostics(),
   state: () => kernel.state(),
