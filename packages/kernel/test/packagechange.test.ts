@@ -3,7 +3,7 @@ import type { Diagnostic } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 
 /** Copper findings, as get_diagnostics gives them. */
-const copper = (k: Kernel) => (k.query({ op: 'get_diagnostics' }) as Diagnostic[]).filter((x) => x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE');
+const copper = (k: Kernel) => k.diagnostics().filter((x) => x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE');
 const plain = (ds: Diagnostic[]) => ds.map(({ code, severity, message, entities }) => ({ code, severity, message, entities }));
 
 /**
