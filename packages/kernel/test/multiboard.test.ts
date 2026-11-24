@@ -232,7 +232,8 @@ describe('several boards in one design', () => {
   it('lists the boards in the summary, with the nets that cross between them', () => {
     const k = twoBoards();
     const s = k.summary();
-    expect(s.boards).toEqual([
+    // each board also carries its stack-up (boardprofiles.test.ts)
+    expect(s.boards?.map(({ stackup: _s, ...b }) => b)).toEqual([
       { name: 'Main', id: 'b_1', sheets: ['Main'], parts: 13 },
       { name: 'LED board', id: 'b_2', sheets: ['LED'], parts: 3 },
     ]);

@@ -1051,7 +1051,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   }).describe('The design\'s check results (ERC, the schematic\'s and datasheet checks, XCHK.*, the board\'s copper shorts, on every board), errors first, the waived ones (waivedBy) last: diagnostics lists 20; when there are more, found counts all of them by code (with the nets and parts they name most) and says how many are not listed and the call that lists the next page. Page on with offset or narrow by code or severity'),
   z.object({ op: z.literal('get_ledger') }),
   z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
-  z.object({ op: z.literal('get_fab_profiles') }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses'),
+  z.object({ op: z.literal('get_fab_profiles'), board: boardRef }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses. Several boards: board answers for that board (its layers and profile); without board, boards lists every board\'s'),
   z.object({
     op: z.literal('get_schematic'),
     texts: z.boolean().optional().describe('true: also where each part\'s name and value stand, for exact spots with place_text'),
