@@ -8,7 +8,7 @@ import type { Component, Design, EditOp, LabelView, OpResult, PinView, Rect, She
 import { GRID } from '@4k7/parts';
 import { RejectError, cardOf, clone, natCmp, pinLabel, reject, resolvePins, resolveUnitRef, type PinHandle } from './doc.ts';
 import { groups, isDrawn, joinedWires, onWire, ownSheet, pageAt, pinsOf, symbolOf, syncDrawing, syncSheet, viewOf } from './drawing.ts';
-import { sheetByName } from './netops.ts';
+import { sheetByName } from './sheets.ts';
 import { clashWords, clearTexts, placeTexts, textBox, textClashes, within, type TextArrange, type TextClash, type TextSide } from './parttext.ts';
 import { deco, type Dir, drawingArea, labelRect, leadEnd, supplyDir, textRect } from './scene.ts';
 import { routeWire } from './schroute.ts';

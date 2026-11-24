@@ -8,6 +8,7 @@ import { boardList, boardOf, onBoard, resolveBoard, settingsOf } from './boards.
 import { allocRefdes, cardOf, closest, createNet, findComponent, findNet, isAutoNet, mergeNet, natCmp, nextId, paramsOf, type PinHandle, pinLabel, reject, requireCard, resolveComponent, resolvePins, resolveUnitRef } from './doc.ts';
 import { isDrawn } from './drawing.ts';
 import { drawNet } from './netdraw.ts';
+import { sheetByName } from './sheets.ts';
 
 function lookupCard(d: Design, id: string): PartCard {
   const card = cardOf(d, id);
@@ -472,12 +473,6 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
 /* --------------------------------- sheets --------------------------------- */
 function firstSheet(d: Design): string {
   return Object.values(d.sheets).sort((a, b) => a.order - b.order)[0]!.id;
-}
-
-export function sheetByName(d: Design, name: string, hint = ' Add it with add_sheet first.'): string {
-  const s = Object.values(d.sheets).find((x) => x.name.toLowerCase() === name.toLowerCase() || x.id === name);
-  if (!s) reject({ code: 'SHEET_UNKNOWN', message: `No sheet "${name}".${hint}`, candidates: Object.values(d.sheets).map((x) => x.name) });
-  return s.id;
 }
 
 export function addSheet(d: Design, name: string): OpResult {

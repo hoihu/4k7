@@ -8,7 +8,7 @@
  */
 import { DEFAULT_BOARD, FIRST_BOARD, MULTI_BOARD_FORMAT, DESIGN_FORMAT_VERSION, type BoardEntry, type BoardSettings, type Component, type Constraint, type Design, type Net } from '@4k7/schema';
 import { closest, reject } from './doc.ts';
-import { sheetByName } from './netops.ts';
+import { sheetByName } from './sheets.ts';
 
 /** The first board's name until it is renamed, with one board or several. */
 export const FIRST_BOARD_NAME = 'Main';
