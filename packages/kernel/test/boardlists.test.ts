@@ -68,6 +68,16 @@ const ON_SECOND_BOARD: Record<string, Record<string, unknown>> = {
   try_placements: { candidates: [{ parts: [{ ref: 'J3', x_mm: 5, y_mm: 5 }] }], explore: false },
 };
 
+/**
+ * An answer without the fields that depend on the clock: try_placements says how long it took
+ * (`seconds`), so two runs of the same query differ there. The rest of these answers (try_placements
+ * without route) is the same on every run.
+ */
+const timeless = (answer: unknown) => {
+  const { seconds: _, ...rest } = answer as Record<string, unknown>;
+  return rest;
+};
+
 describe('the per-board op lists agree', () => {
   it('BOARD_OPS is exactly the edit ops whose board field is boardRef', () => {
     expect([...BOARD_OPS].sort()).toEqual(withBoardRef(EditOp));
@@ -126,8 +136,8 @@ describe('the per-board op lists agree', () => {
         expect(inferred.boards, op).toHaveLength(2);
         continue;
       }
-      expect(inferred, op).toEqual(k.query({ op, ...args, board: 'LED board' }));
-      expect(inferred, op).not.toEqual(k.query({ op, ...args, board: 'Main' }));
+      expect(timeless(inferred), op).toEqual(timeless(k.query({ op, ...args, board: 'LED board' })));
+      expect(timeless(inferred), op).not.toEqual(timeless(k.query({ op, ...args, board: 'Main' })));
     }
   });
 

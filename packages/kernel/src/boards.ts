@@ -7,7 +7,7 @@
  * the focus is written back. A design of one board is its own focus, unchanged.
  */
 import { DEFAULT_BOARD, FIRST_BOARD, MULTI_BOARD_FORMAT, DESIGN_FORMAT_VERSION, type BoardEntry, type BoardSettings, type Component, type Constraint, type Design, type Net } from '@4k7/schema';
-import { closest, reject } from './doc.ts';
+import { closest, reject, RejectError } from './doc.ts';
 import { sheetByName } from './sheets.ts';
 
 /** The first board's name until it is renamed, with one board or several. */
@@ -218,8 +218,22 @@ function netBoards(d: Design, op: unknown): string[] {
 }
 
 /**
+ * boardFor's BOARD_AMBIGUOUS refusal, with what the op named that left the board open: parts on
+ * several boards, nets on several boards, or nothing that settles it. An edit reports it as any
+ * rejection; a query words the last case its own way (Kernel.query).
+ */
+export class BoardAmbiguousError extends RejectError {
+  constructor(
+    rejection: RejectError['rejection'],
+    public named: 'parts' | 'nets' | 'nothing',
+  ) {
+    super(rejection);
+  }
+}
+
+/**
  * The board a board op is for: the one it names, else the board of the parts it names, else the
- * only board. Several boards and neither said: refused, with the boards to choose from.
+ * only board. Several boards and neither said: refused (BoardAmbiguousError), with the boards to choose from.
  */
 export function boardFor(d: Design, op: { op: string; board?: string | undefined }): string {
   const named = op.board !== undefined ? resolveBoard(d, op.board).id : undefined;
@@ -239,15 +253,20 @@ export function boardFor(d: Design, op: { op: string; board?: string | undefined
   const nets = on.length ? [] : netBoards(d, op);
   if (nets.length === 1) return nets[0]!;
   const names = boardList(d).map((b) => b.name);
-  reject({
-    code: 'BOARD_AMBIGUOUS',
-    message: on.length
-      ? `${op.op} names parts on several boards (${parts.map((c) => `${c.refdes}: "${name(boardOf(d, c))}"`).join(', ')}): one board per op; say which with board.`
-      : nets.length
-        ? `${op.op} names nets on several boards (${nets.map(name).join(', ')}): say which with board.`
-        : `The design has ${names.length} boards (${names.join(', ')}): say which with board.`,
-    candidates: names,
-  });
+  const left = on.length ? 'parts' : nets.length ? 'nets' : 'nothing';
+  throw new BoardAmbiguousError(
+    {
+      code: 'BOARD_AMBIGUOUS',
+      message:
+        left === 'parts'
+          ? `${op.op} names parts on several boards (${parts.map((c) => `${c.refdes}: "${name(boardOf(d, c))}"`).join(', ')}): one board per op; say which with board.`
+          : left === 'nets'
+            ? `${op.op} names nets on several boards (${nets.map(name).join(', ')}): say which with board.`
+            : `The design has ${names.length} boards (${names.join(', ')}): say which with board.`,
+      candidates: names,
+    },
+    left,
+  );
 }
 
 /** The format a design is stored in: 3 with several boards, else 2. */

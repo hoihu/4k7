@@ -74,7 +74,7 @@ import { tryPlacements } from './trial.ts';
 import { suggestMoves } from './suggest.ts';
 import { impedanceText, resolveRule } from './lines.ts';
 import { lineBoard } from './lineops.ts';
-import { boardFor, boardList, boardOf, commitFocus, findBoard, focusBoard, multiBoard, ownTrackWidth, settingsOf } from './boards.ts';
+import { BoardAmbiguousError, boardFor, boardList, boardOf, commitFocus, findBoard, focusBoard, multiBoard, ownTrackWidth, settingsOf } from './boards.ts';
 import { matePairs, pairsText } from './mates.ts';
 import { assemblyOf } from './assembly.ts';
 import { blocksOfProject, boardOfProject } from './reuse.ts';
@@ -593,8 +593,8 @@ export class Kernel {
           if (!(e instanceof RejectError)) throw e;
           const boards = boardList(all).map((x) => x.name);
           // parts or nets on several boards: boardFor says which; naming nothing: the query's own words
-          const several = / names (parts|nets) on several boards/.test(e.rejection.message);
-          const error = several ? e.rejection.message : `The design has ${boards.length} boards: say which with board.`;
+          const nothing = !(e instanceof BoardAmbiguousError) || e.named === 'nothing';
+          const error = nothing ? `The design has ${boards.length} boards: say which with board.` : e.rejection.message;
           return queryError(error, 'BOARD_AMBIGUOUS', boards, { boards });
         }
       }
