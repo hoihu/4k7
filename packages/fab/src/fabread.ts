@@ -5,6 +5,7 @@
  * attributes, else from its content or its name; and the set says what a fab house looks at
  * first: the board's size, the copper layers, the holes per drill, the smallest drill and track.
  */
+import { r3 } from '@4k7/schema';
 
 /** x0, y0, x1, y1 (mm). */
 export type Box = [number, number, number, number];
@@ -1283,7 +1284,6 @@ function summarize(files: FabFileRead[], notes: string[]): FabSummary {
     if (all[0] <= all[2]) box = all;
     if (files.length) notes.push('no board outline (Edge.Cuts, profile): the size is that of everything drawn');
   }
-  const r3 = (v: number) => Math.round(v * 1000) / 1000;
   const board = box ? { x: r3(box[0]), y: r3(box[1]), w: r3(box[2] - box[0]), h: r3(box[3] - box[1]), fromOutline: !!outline } : null;
 
   const drills = new Map<string, { d: number; plated?: boolean; holes: number; slots: number }>();

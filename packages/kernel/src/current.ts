@@ -9,7 +9,7 @@ import { COPPER_ORDER, IR_BUDGET, padPins, trackCurrentFor, trackRiseFor, trackW
 import type { BoardPad, BoardPart, BoardRules, BoardView, CopperLayer, CurrentBasis, CurrentJoint, CurrentStatus, CurrentTrack, CurrentView, CurrentVias, Design, Diagnostic, DropPiece, IrDrop, EditOp, NetLoad, QueryOp, Track } from '@4k7/schema';
 import { cardOf, isGroundNet, isPowerNet } from './doc.ts';
 import { powerSources } from './power.ts';
-import { idOf, pointSegDist, segmentsOf, segSegDist } from './geom.ts';
+import { idOf, pointSegDist, r3, segmentsOf, segSegDist } from './geom.ts';
 import { padPointDist, padSegDist } from './keep.ts';
 
 /** Via plating assumed for a via's barrel (µm, IPC-6012 class 3). */
@@ -232,7 +232,6 @@ export function currentCheck(d: Design, b: BoardView): CurrentCheck {
   return out;
 }
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /** A split net's drop to its worst load against IR_BUDGET of the rail's voltage (the net's voltage attribute), with the pieces that drop the most on the way. */
 function irDropOf(cu: NetCopper, split: ReturnType<typeof solveSplit>, voltage: number | undefined): IrDrop {
