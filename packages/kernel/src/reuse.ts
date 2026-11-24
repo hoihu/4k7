@@ -7,7 +7,9 @@
  * The app reads the file (only a project the projects folder lists) and hands it to Kernel.query
  * (its `sources`), which calls blocksOfProject; nothing here touches a file, so it runs anywhere.
  */
-import type { Design, QueryError } from '@4k7/schema';
+import { boardSummary, type Design, type DrcFilter, type QueryError } from '@4k7/schema';
+import { copperKey, layoutBoard, placedOf, planePlan } from './board.ts';
+import { boardList, findBoard, focusBoard } from './boards.ts';
 import { migrate } from './canonical.ts';
 import { cardOf, closest, isPowerNet, natCmp, queryError } from './doc.ts';
 
@@ -101,4 +103,33 @@ export function blocksOfProject(id: string, text: string | undefined, known: str
   if (!('error' in d)) return listBlocks(id, d);
   // a query error (QueryError); projects is kept for this release
   return d.projects ? queryError(d.error, 'PROJECT_UNKNOWN', closest(id, d.projects), { projects: d.projects }) : d;
+}
+
+/**
+ * get_board { project, board? }: board `ref` (name or id; absent, the first) of project `id` as
+ * stored, placed from its stored placement, nothing routed. The copper is reported only where it is
+ * current for that placement (drawn, or kept under the key it would be routed under now); otherwise
+ * the routing says "not routed as stored". Read-only. See docs/design/ops-api.md §7.
+ */
+export function boardOfProject(id: string, text: string | undefined, known: string[], ref?: string, drc?: DrcFilter): object {
+  const d = readProject(id, text, known);
+  if ('error' in d) return d.projects ? queryError(d.error, 'PROJECT_UNKNOWN', closest(id, d.projects), { projects: d.projects }) : d;
+  const boards = boardList(d);
+  const names = boards.map((b) => b.name);
+  const entry = ref === undefined ? boards[0]! : findBoard(d, ref);
+  if (!entry) return { error: `No board "${ref}" in ${id}. Its boards: ${names.join(', ')}.`, code: 'BOARD_UNKNOWN', boards: names, candidates: closest(ref!, names) };
+  const f = focusBoard(d, entry.id);
+  const placed = placedOf(f);
+  const current = placed.routing === 'done' && !!f.board && (!!f.board.drawn || f.board.copper?.key === copperKey(f));
+  const b = current ? layoutBoard(f, placed) : placed;
+  const routed = current && b.routing === 'done';
+  return {
+    project: id,
+    board: entry.name,
+    ...(boards.length > 1 ? { boards: names } : {}),
+    ...boardSummary(b, routed, drc),
+    ...(routed ? {} : { routing: 'not routed as stored: the project keeps no copper for this placement' }),
+    plane_plan: planePlan(f, b),
+    note: `${id}'s board as stored, read-only; the open design is not changed.`,
+  };
 }

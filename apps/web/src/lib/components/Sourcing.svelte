@@ -9,10 +9,10 @@
    * boards, with replacements for the ones in trouble) and the cost check (what the order costs with
    * every fee, and what would make it cheaper).
    */
-  const house = $derived(app.house);
-  const r = $derived(app.stockReport);
-  const c = $derived(app.costReport);
-  const showCost = $derived(app.sourcingShown === 'cost' && !!c);
+  const house = $derived(app.sourcing.house);
+  const r = $derived(app.sourcing.stockReport);
+  const c = $derived(app.sourcing.costReport);
+  const showCost = $derived(app.sourcing.sourcingShown === 'cost' && !!c);
   let error = $state<string | null>(null);
   let fineOpen = $state(false);
 
@@ -78,21 +78,21 @@
 {/snippet}
 
 <h4>Sourcing</h4>
-<select class="text sel" aria-label="Assembly house" title="The assembly house the checks and the Inspector's part numbers are for" value={house.id} onchange={(e) => void app.chooseHouse((e.currentTarget as HTMLSelectElement).value)}>
+<select class="text sel" aria-label="Assembly house" title="The assembly house the checks and the Inspector's part numbers are for" value={house.id} onchange={(e) => void app.sourcing.chooseHouse((e.currentTarget as HTMLSelectElement).value)}>
   {#each ASSEMBLY_HOUSES as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
 </select>
 <div class="row">
   <label for="src-boards" class="small muted">Boards</label>
   <input id="src-boards" class="text num mono" type="number" min="1" step="1" value={app.settings.buildBoards} title="How many boards will be assembled: the checks count the parts and fees for them" onchange={setBoards} />
-  <button class="btn grow" disabled={app.stockBusy || !app.k?.summary.components.length} title={bomOnly ? `What goes on ${whose(house)} BOM, and the parts it could not buy (no manufacturer part number)` : `Look every part up at ${house.name} now, for this many boards`} onclick={() => void run(() => app.checkStock())}>{bomOnly ? 'Check BOM' : 'Check stock'}</button>
-  <button class="btn grow" disabled={app.stockBusy || !app.k?.summary.components.length} title={house.services.some((s) => s.quoted) ? `What ${whose(house)} online quote asks for the assembly, and what would make it cheaper` : `What the order costs at ${house.name} with every fee, and what would make it cheaper`} onclick={() => void run(() => app.checkCost())}>Check cost</button>
+  <button class="btn grow" disabled={app.sourcing.stockBusy || !app.k?.summary.components.length} title={bomOnly ? `What goes on ${whose(house)} BOM, and the parts it could not buy (no manufacturer part number)` : `Look every part up at ${house.name} now, for this many boards`} onclick={() => void run(() => app.sourcing.checkStock())}>{bomOnly ? 'Check BOM' : 'Check stock'}</button>
+  <button class="btn grow" disabled={app.sourcing.stockBusy || !app.k?.summary.components.length} title={house.services.some((s) => s.quoted) ? `What ${whose(house)} online quote asks for the assembly, and what would make it cheaper` : `What the order costs at ${house.name} with every fee, and what would make it cheaper`} onclick={() => void run(() => app.sourcing.checkCost())}>Check cost</button>
 </div>
-{#if app.stockBusy}<p class="small muted">Looking the parts up…</p>{/if}
+{#if app.sourcing.stockBusy}<p class="small muted">Looking the parts up…</p>{/if}
 {#if error}<p class="small bad">{error}</p>{/if}
 {#if r && c}
   <div class="seg" role="tablist">
-    <button role="tab" aria-selected={!showCost} onclick={() => (app.sourcingShown = 'stock')}>Stock</button>
-    <button role="tab" aria-selected={showCost} onclick={() => (app.sourcingShown = 'cost')}>Cost</button>
+    <button role="tab" aria-selected={!showCost} onclick={() => (app.sourcing.sourcingShown = 'stock')}>Stock</button>
+    <button role="tab" aria-selected={showCost} onclick={() => (app.sourcing.sourcingShown = 'cost')}>Cost</button>
   </div>
 {/if}
 
@@ -120,7 +120,7 @@
             <span class="tag ok">−{cash(s.saves)}</span>
             <span class="grow">{s.what}</span>
           </button>
-          {#if savingAction(s)}<button class="btn" disabled={app.running || !!app.k?.proposal} title={savingTitle(s)} onclick={() => void app.applySaving(s)}>{savingAction(s)}</button>{/if}
+          {#if savingAction(s)}<button class="btn" disabled={app.running || !!app.k?.proposal} title={savingTitle(s)} onclick={() => void app.sourcing.applySaving(s)}>{savingAction(s)}</button>{/if}
         </li>
       {/each}
     </ul>
@@ -133,7 +133,7 @@
       {#each c.board as h, i (i)}<li class="small">{h.what}{h.amount ? ` (≈ ${cash(h.amount)} for ${c.boards} boards)` : ''}.</li>{/each}
     </ul>
   {/if}
-  <button class="btn wide agent" disabled={app.running} title="The agent tries what this check cannot do alone: other values where a part may move, two parts in series or parallel for an odd value, one value for parts that do the same job, the board; it asks before a change you may care about, and you review the changes" onclick={() => app.optimizeCost()}>Optimize cost with the agent ✦</button>
+  <button class="btn wide agent" disabled={app.running} title="The agent tries what this check cannot do alone: other values where a part may move, two parts in series or parallel for an odd value, one value for parts that do the same job, the board; it asks before a change you may care about, and you review the changes" onclick={() => app.sourcing.optimizeCost()}>Optimize cost with the agent ✦</button>
   {#if c.unsourced.length || c.unmatched.length}
     <h5>{none}: not on the order <span class="muted">(+ what a part adds to it)</span></h5>
     <ul class="lines">
@@ -142,7 +142,7 @@
           <div class="r static"><span class="grow"><b class="mono">{g.refs.join(' ')}</b> {g.what}{g.candidates.length ? '' : ': nothing in stock found'}</span></div>
           {#if g.candidates.length}
             <ul class="alts">
-              {#each g.candidates as p (p.sku)}{@render alt(p, `Use ${p.sku} for ${g.refs.join(', ')}: it adds ${cash(g.adds[p.sku] ?? 0)} to the order (its pieces, when it has a price, and any loading or line fee)`, () => app.useCandidate(g, p), g.adds[p.sku])}{/each}
+              {#each g.candidates as p (p.sku)}{@render alt(p, `Use ${p.sku} for ${g.refs.join(', ')}: it adds ${cash(g.adds[p.sku] ?? 0)} to the order (its pieces, when it has a price, and any loading or line fee)`, () => app.sourcing.useCandidate(g, p), g.adds[p.sku])}{/each}
             </ul>
           {/if}
         </li>
@@ -155,7 +155,7 @@
   <p class="small muted mono">{r.lines.map((l) => `${l.refs.join(' ')}: ${l.sku}`).join(' · ')}</p>
   {#if r.unsourced.length}<p class="small bad">No manufacturer part number ({house.name} needs one to buy them; resistors and capacitors may go by value and package): {r.unsourced.join(', ')}</p>{/if}
   {#if r.estimates}
-    <p class="small">The assembly {estimateLine(r.estimates, r.boards, house)}; not the parts, the bare boards, shipping or taxes. <button class="link" disabled={app.stockBusy} onclick={() => void run(() => app.checkCost())}>What would make it cheaper</button></p>
+    <p class="small">The assembly {estimateLine(r.estimates, r.boards, house)}; not the parts, the bare boards, shipping or taxes. <button class="link" disabled={app.sourcing.stockBusy} onclick={() => void run(() => app.sourcing.checkCost())}>What would make it cheaper</button></p>
   {/if}
 {:else if r}
   <p class="small muted">
@@ -172,7 +172,7 @@
           </button>
           {#if l.replacements.length}
             <ul class="alts">
-              {#each l.replacements as p (p.sku)}{@render alt(p, `Use ${p.sku} for ${l.refs.join(', ')}`, () => app.useReplacement(l, p))}{/each}
+              {#each l.replacements as p (p.sku)}{@render alt(p, `Use ${p.sku} for ${l.refs.join(', ')}`, () => app.sourcing.useReplacement(l, p))}{/each}
             </ul>
             <p class="small muted basis">{l.replacementBasis}</p>
           {:else if lineBlocks(l) || l.state === 'low' || l.warnings?.length}
@@ -192,7 +192,7 @@
     <p class="small muted">{none} (not assembled by {house.name}): {r.unsourced.join(', ')}</p>
   {/if}
   {#if r.estimates}
-    <p class="small">The order {estimateLine(r.estimates, r.boards, house)}, fees included; not the bare boards, shipping or taxes. <button class="link" disabled={app.stockBusy} onclick={() => void run(() => app.checkCost())}>What it is made of, and what would make it cheaper</button></p>
+    <p class="small">The order {estimateLine(r.estimates, r.boards, house)}, fees included; not the bare boards, shipping or taxes. <button class="link" disabled={app.sourcing.stockBusy} onclick={() => void run(() => app.sourcing.checkCost())}>What it is made of, and what would make it cheaper</button></p>
   {:else if r.cost !== undefined}
     <p class="small muted">Parts ≈ {cash(r.cost)} for {r.boards} board{r.boards === 1 ? '' : 's'} at today's prices, without fees{r.unpriced.length ? ` (no price for ${r.unpriced.join(', ')})` : ''}.</p>
   {/if}
