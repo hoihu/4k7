@@ -1,6 +1,6 @@
 export { Kernel, type KernelState } from './kernel.ts';
 export { layoutBoard } from './board.ts';
-export { boardList, boardOf, focusBoard, multiBoard, settingsOf } from './boards.ts';
+export { boardList, boardOf, FIRST_BOARD_NAME, focusBoard, multiBoard, settingsOf } from './boards.ts';
 export { runChecks } from './checks.ts';
 export { countDiagnostics } from '@4k7/schema';
 export { crossChecks } from './xcheck.ts';

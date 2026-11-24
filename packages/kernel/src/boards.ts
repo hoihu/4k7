@@ -50,6 +50,21 @@ export function resolveBoard(d: Design, ref: string): BoardEntry {
 /** The name of the board a design (or a board's focus) is about: the focus's board, else the first. */
 export const boardName = (d: Design): string => d.focus?.name ?? firstEntry(d).name;
 
+/** A board's name by id (absent: the first board's); an id that is not a board is its own name. */
+export const boardNameOf = (d: Design, id?: string): string => d.boards?.[id ?? FIRST_BOARD]?.name ?? (id && id !== FIRST_BOARD ? id : FIRST_BOARD_NAME);
+
+/**
+ * One board again (a board removed, the first renamed, a changeset accepted in part): stored as
+ * before boards were added, an entry only for a first board with a name of its own. Several
+ * boards are left as they are.
+ */
+export function tidyBoards(d: Design) {
+  if (multiBoard(d)) return;
+  const name = d.boards?.[FIRST_BOARD]?.name;
+  delete d.boards;
+  if (name && name !== FIRST_BOARD_NAME) d.boards = { [FIRST_BOARD]: { id: FIRST_BOARD, name, order: 0 } };
+}
+
 /** A board's settings as stored (absent: the defaults). */
 export function settingsOf(d: Design, id: string): BoardSettings | undefined {
   return id === FIRST_BOARD ? d.board : d.boards?.[id]?.settings;
@@ -258,12 +273,7 @@ export function removeBoard(d: Design, op: { board: string }) {
   // its waivers hold where its parts went
   for (const w of Object.values(d.waivers)) if (w.board === b.id) delete w.board;
   delete d.boards![b.id];
-  if (!multiBoard(d)) {
-    // one board again: stored as before boards were added
-    const name = d.boards?.[FIRST_BOARD]?.name;
-    delete d.boards;
-    if (name && name !== FIRST_BOARD_NAME) d.boards = { [FIRST_BOARD]: { id: FIRST_BOARD, name, order: 0 } };
-  }
+  tidyBoards(d);
   d.format = formatFor(d);
   leftBoard(d, was);
   return { op: 'remove_board' as const, effect: `removed board "${b.name}"; its parts are on the first board now`, ids: [b.id] };
@@ -301,8 +311,7 @@ export function renameBoard(d: Design, id: string, name: string) {
   if (clash && clash.id !== id) reject({ code: 'INVALID_OP', message: `There is a board "${want}" already.` });
   d.boards ??= { [FIRST_BOARD]: firstEntry(d) };
   d.boards[id]!.name = want;
-  // one board named as it is unnamed: stored as if never named
-  if (!multiBoard(d) && want === FIRST_BOARD_NAME) delete d.boards;
+  tidyBoards(d);
 }
 
 /** Placement entries of parts that are not on that board (a changeset accepted in part) go. */

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Design, EditOp } from '@4k7/schema';
 import { getBuiltinPart } from '@4k7/parts';
 import { Kernel } from '../src/index.ts';
+import { resolveBoard } from '../src/boards.ts';
 import type { ImportSources } from '../src/importops.ts';
 
 /** A regulator card the library does not have: only the project's file stores it (its VOUT pin named FB). */
@@ -188,8 +189,8 @@ describe('import_block', () => {
     const a = k.transact({ summary: 'to the LED board', ops: [{ op: 'assign_board', board: 'LED board', refs: ['TH1'] }] });
     expect(a.status, JSON.stringify(a.rejection)).toBe('ok');
     k.accept();
-    expect(k.boardPlacement(k.boardId('LED board')).parts.map((p) => p.refdes).sort()).toEqual(['R9', 'TH1']);
-    expect(k.boardPlacement(k.boardId('Main')).parts.map((p) => p.refdes)).toContain('J2');
+    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'LED board').id).parts.map((p) => p.refdes).sort()).toEqual(['R9', 'TH1']);
+    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'Main').id).parts.map((p) => p.refdes)).toContain('J2');
     const d = k.committedDesign();
     const by = (ref: string) => Object.values(d.components).find((c) => c.refdes === ref)!;
     expect(by('TH1').pins['1']).toBe(by('R9').pins['1']); // one NTC across both boards

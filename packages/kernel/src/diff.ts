@@ -7,11 +7,10 @@ import { layoutText } from '@4k7/parts';
 import { describeConstraint } from './netops.ts';
 import { clone, gcNets, gcParts, natCmp, valueOf } from './doc.ts';
 import { FIRST_BOARD, type BoardEntry, type BoardSettings } from '@4k7/schema';
-import { boardsNow, formatFor, leftBoard, multiBoard, tidyPlacements } from './boards.ts';
+import { boardNameOf, boardsNow, FIRST_BOARD_NAME, formatFor, leftBoard, multiBoard, tidyBoards, tidyPlacements } from './boards.ts';
 import { tidyMates } from './mates.ts';
 
 const netName = (d: Design, id?: string) => (id ? d.nets[id]?.name ?? '?' : '∅');
-const boardName = (d: Design, id?: string) => d.boards?.[id ?? FIRST_BOARD]?.name ?? (id && id !== FIRST_BOARD ? id : 'Main');
 
 export function computeHunks(base: Design, draft: Design): Hunk[] {
   const hunks: Hunk[] = [];
@@ -161,7 +160,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     const a = base.boards?.[id];
     const e = draft.boards?.[id];
     if (JSON.stringify(bareEntry(a)) === JSON.stringify(bareEntry(e))) continue;
-    if (id === FIRST_BOARD && (a?.name ?? 'Main') === (e?.name ?? 'Main')) continue;
+    if (id === FIRST_BOARD && (a?.name ?? FIRST_BOARD_NAME) === (e?.name ?? FIRST_BOARD_NAME)) continue;
     const b = e?.settings;
     hunks.push({
       id: `board:${id}`,
@@ -171,7 +170,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
       title: !e
         ? `board "${a!.name}" removed`
         : id === FIRST_BOARD
-          ? `board "${a?.name ?? 'Main'}" renamed "${e.name}"`
+          ? `board "${a?.name ?? FIRST_BOARD_NAME}" renamed "${e.name}"`
           : `board "${e.name}"${a && a.name !== e.name ? ` (was "${a.name}")` : ''} ${b?.width && b?.height ? `${b.width} × ${b.height} mm` : 'sized to fit'}, ${b?.layers ?? 2} layers`,
       details: e && id !== FIRST_BOARD ? boardDetails(draft, a?.settings, b) : [],
     });
@@ -228,7 +227,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
   for (const [id, b] of Object.entries(draft.sheets)) {
     const a = base.sheets[id];
     if (a && (a.board ?? FIRST_BOARD) !== (b.board ?? FIRST_BOARD)) {
-      hunks.push({ id: `sheet:${id}`, kind: 'sheet', change: 'change', entityId: id, title: `sheet ${b.name} on board "${boardName(draft, b.board)}"`, details: [`was on "${boardName(base, a.board)}"`] });
+      hunks.push({ id: `sheet:${id}`, kind: 'sheet', change: 'change', entityId: id, title: `sheet ${b.name} on board "${boardNameOf(draft, b.board)}"`, details: [`was on "${boardNameOf(base, a.board)}"`] });
     }
   }
 
@@ -331,7 +330,7 @@ function componentChanges(base: Design, draft: Design, a: Component, b: Componen
   if (a.refdes !== b.refdes) out.push(`refdes ${a.refdes} → ${b.refdes}`);
   if (a.part !== b.part) out.push(`part ${a.part} → ${b.part}`);
   if (a.sheet !== b.sheet) out.push(`sheet ${base.sheets[a.sheet]?.name} → ${draft.sheets[b.sheet]?.name}`);
-  if ((a.board ?? '') !== (b.board ?? '')) out.push(`board ${boardName(base, a.board ?? base.sheets[a.sheet]?.board)} → ${boardName(draft, b.board ?? draft.sheets[b.sheet]?.board)}`);
+  if ((a.board ?? '') !== (b.board ?? '')) out.push(`board ${boardNameOf(base, a.board ?? base.sheets[a.sheet]?.board)} → ${boardNameOf(draft, b.board ?? draft.sheets[b.sheet]?.board)}`);
   for (const k of [...new Set([...Object.keys(a.params), ...Object.keys(b.params)])].sort()) {
     if (a.params[k] !== b.params[k]) out.push(`${k} ${a.params[k] ?? '∅'} → ${b.params[k] ?? '∅'}`);
   }
@@ -399,7 +398,7 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
           const e = draft.boards?.[entity];
           if (e) d.boards = { ...d.boards, [entity]: clone(e) };
           else if (d.boards) delete d.boards[entity];
-          if (d.boards && !d.boards[FIRST_BOARD] && Object.keys(d.boards).length) d.boards[FIRST_BOARD] = clone(draft.boards?.[FIRST_BOARD] ?? { id: FIRST_BOARD, name: 'Main', order: 0 });
+          if (d.boards && !d.boards[FIRST_BOARD] && Object.keys(d.boards).length) d.boards[FIRST_BOARD] = clone(draft.boards?.[FIRST_BOARD] ?? { id: FIRST_BOARD, name: FIRST_BOARD_NAME, order: 0 });
         } else if (draft.board) d.board = clone(draft.board);
         else delete d.board;
         break;
@@ -480,7 +479,7 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
   }
   // a part or sheet on a board whose adding was not accepted is on the first board
   for (const x of [...Object.values(d.sheets), ...Object.values(d.components)]) if (x.board && !d.boards?.[x.board]) delete x.board;
-  if (d.boards && Object.keys(d.boards).length <= 1 && (d.boards[FIRST_BOARD]?.name ?? 'Main') === 'Main') delete d.boards;
+  tidyBoards(d);
   d.format = formatFor(d);
   // a part on another board than the draft put it (its board not accepted): what it had there goes
   leftBoard(d, boardsNow(draft));

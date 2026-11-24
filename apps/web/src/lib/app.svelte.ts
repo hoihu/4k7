@@ -20,7 +20,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, enclosureAnswer, type EnclosurePart, enclosureKey, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { type BoardPlace, ASSEMBLY_HOUSE, FIRST_BOARD, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, enclosureAnswer, type EnclosurePart, enclosureKey, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
 import { assemblyEnclosureFacts, copperCheckText, enclosureReadout, enclosureFacts, type PartSolids, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
@@ -32,7 +32,7 @@ import { server } from './server.svelte.ts';
 import { currentChoice, effortLevels } from './models.ts';
 import { createKernel } from './kernelClient.ts';
 import { blocksOfProject } from '@4k7/kernel/reuse';
-import type { ImportSources } from '@4k7/kernel';
+import { FIRST_BOARD_NAME, type ImportSources } from '@4k7/kernel';
 import { BoardClient, type BoardStage, type RouteProgress } from './boardClient.ts';
 import { IngestState } from './ingest.svelte.ts';
 import { PartImports } from './importPart.ts';
@@ -202,7 +202,7 @@ class AppState {
    * by id: the first board unless the design has several and another is picked, by the user or by
    * the agent looking at one. See docs/design/multi-board.md.
    */
-  shownBoard = $state('b_1');
+  shownBoard = $state(FIRST_BOARD);
   boardBusy = $state(false);
   boardStage = $state<BoardStage>('placed');
   /** What the board's checks found, once it is laid for the design as it is now (the header counts them with the schematic's). */
@@ -556,7 +556,7 @@ class AppState {
   async refreshBoard() {
     const rev = this.rev;
     // a board that is gone (remove_board, undo) leaves its place to the first
-    if (this.k && !this.k.boards.some((b) => b.id === this.shownBoard)) this.shownBoard = this.k.boards[0]?.id ?? 'b_1';
+    if (this.k && !this.k.boards.some((b) => b.id === this.shownBoard)) this.shownBoard = this.k.boards[0]?.id ?? FIRST_BOARD;
     const shownBoard = this.shownBoard;
     const request = await this.kernel.boardRequest(shownBoard).catch((e: Error) => {
       this.boardBusy = false;
@@ -1698,9 +1698,9 @@ class AppState {
         const shownBefore = this.shownBoard;
         // the board shown before is shown again, also after a refusal
         try {
-          for (const { id: boardId, name: boardName } of this.k?.boards ?? [{ id: 'b_1', name: 'Main' }]) {
-            const draftBoard = boardId === 'b_1' ? draftDesign.board : draftDesign.boards?.[boardId]?.settings;
-            const boardHunk = p.hunks.some((h) => h.id === (boardId === 'b_1' ? 'board:board' : `board:${boardId}`));
+          for (const { id: boardId, name: boardName } of this.k?.boards ?? [{ id: FIRST_BOARD, name: FIRST_BOARD_NAME }]) {
+            const draftBoard = boardId === FIRST_BOARD ? draftDesign.board : draftDesign.boards?.[boardId]?.settings;
+            const boardHunk = p.hunks.some((h) => h.id === (boardId === FIRST_BOARD ? 'board:board' : `board:${boardId}`));
             if (!draftBoard?.routed && !draftBoard?.drawn) continue;
             // each board in turn, shown while it is checked (several boards: say which)
             await this.showBoard(boardId);
