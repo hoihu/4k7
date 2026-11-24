@@ -25,7 +25,16 @@ const withOtherBoard = (u: { options: readonly unknown[] }) => shapes(u).filter(
  * or parts to it, waive a finding on it, set its fab house/tier), not for work on one board's copper
  * or placement. They have their own `board` field, not boardRef, and are not in BOARD_OPS.
  */
-const DESIGN_WIDE_EDITS_NAMING_A_BOARD = ['add_waiver', 'assign_board', 'remove_board', 'set_fab_profile'];
+const DESIGN_WIDE_EDITS_NAMING_A_BOARD = [
+  'add_waiver',
+  'assign_board',
+  // optional board the copied parts go on (default: the sheet's board); the copy itself is design-wide
+  'import_block',
+  'remove_board',
+  'set_fab_profile',
+  // optional board for track_mm, this net's width on that one board; the net itself is design-wide
+  'set_net',
+];
 
 /** The query ops Kernel.query reads on one board (its `onBoard` test). */
 const BOARD_QUERIES = ['get_board', 'get_copper', 'get_current_map', 'suggest_moves', 'try_placements'];
