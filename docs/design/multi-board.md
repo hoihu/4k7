@@ -134,6 +134,8 @@ count (built 2026-11-23, after the bike lamp's boards were merged into one desig
 tier on both left the 2-layer board with a `DRC.FAB_LAYERS` that could not be fixed or waived). A
 board's profile must be of the house the other boards have (`FAB_INVALID` otherwise): the cost
 check prices every board at one house. A board for a different house is not supported.
+The Layout view's Manufacturer list sends `set_fab_profile` without `board`, so it sets every
+board whichever board is shown; the view's other edits are for the board shown.
 
 `DRC.FAB_LAYERS` names its board: the entity is the board's name, and the message says
 `set_fab_profile board: "<name>"`. Choosing the right tier is the fix; a board the user means to
