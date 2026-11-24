@@ -95,7 +95,8 @@ export const SetNetOp = z.object({
     .nullable()
     .optional()
     .describe('What the net\'s pins draw: the current check then splits the net\'s current over its copper from where it comes in to these pins (a stub to a pull-up carries its milliamps, not max_current) and checks each track for its share (DRC.TRACK_CURRENT). Replaces the list; null clears it. A pad with add_vias drop amps counts as stated already (a load here for the same pad wins). Loads under max_current leave the rest unplaced (it may flow anywhere)'),
-  track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise)'),
+  track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise). With board: its width on that board only (null: the net\'s again)'),
+  board: z.string().optional().describe('Several boards: track_mm is this net\'s width on this board only (name or id), over the net\'s own; without it track_mm is the net\'s width on every board without its own'),
   route_first: z.boolean().nullable().optional().describe('Board: the router routes this net before the others, in every pass, so it gets the short, clean ways (a switching node, a clock, the high-current path); null = as any other'),
   layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).nullable().optional().describe('Board: the copper layer its tracks should keep to (a cost on the others, not a ban: it still changes layer where it must; not for connections laid with draw_track); null = any'),
   needs: z
