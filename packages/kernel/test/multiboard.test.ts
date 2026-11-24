@@ -3,6 +3,7 @@ import type { Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { canonicalJson } from '../src/canonical.ts';
 import { focusBoard } from '../src/boards.ts';
+import { copperKey } from '../src/board.ts';
 import { buckTransaction, twoBoards } from './fixtures.ts';
 
 const refs = (k: Kernel, board: string) => k.boardPlacement(k.boardId(board)).parts.map((p) => p.refdes).sort();
@@ -455,5 +456,116 @@ describe('the assembly: where the boards stand', () => {
     const [main, led] = k.assembly();
     expect(led!.x).toBeGreaterThan(k.boardPlacement(main!.board).outline.w);
     expect(led!.z).toBe(0);
+  });
+});
+
+describe('a net\'s track width per board', () => {
+  const route = (k: Kernel, board: string) => {
+    const r = k.transact({ summary: 'route', ops: [{ op: 'route', board }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    return k.board({}, k.boardId(board));
+  };
+  const widths = (k: Kernel, board: string, net: string) => {
+    const b = k.board({}, k.boardId(board));
+    const id = Object.entries(b.netNames).find(([, n]) => n === net)![0];
+    return [...new Set(b.tracks.filter((t) => t.netId === id).map((t) => t.width))];
+  };
+  type NetInfo = { track: { width_mm: number; why: string; by_board?: { board: string; width_mm: number; why: string }[] } };
+  const info = (k: Kernel, net: string) => k.query({ op: 'get_net', net }) as NetInfo;
+
+  it('routes and lays a net at its own width on each board, and get_net says why', () => {
+    const k = twoBoards();
+    const r = k.transact({ summary: 'widths', ops: [{ op: 'set_net', net: '+3V3', track_mm: 0.4 }, { op: 'set_net', net: '+3V3', board: 'LED board', track_mm: 0.8 }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    k.accept();
+    const a = k.committedDesign().nets;
+    const net = Object.values(a).find((n) => n.name === '+3V3')!;
+    expect(net.attrs.trackWidth).toBe(0.4);
+    expect(net.attrs.boardTrackWidths).toEqual({ b_2: 0.8 });
+    route(k, 'LED board');
+    route(k, 'Main');
+    // (narrower only in necks into pads too small for the width)
+    expect(Math.max(...widths(k, 'LED board', '+3V3'))).toBe(0.8);
+    expect(Math.max(...widths(k, 'Main', '+3V3'))).toBe(0.4);
+    const t = info(k, '+3V3').track;
+    expect(t.by_board).toEqual([
+      { board: 'Main', width_mm: 0.4, why: 'set for this net' },
+      { board: 'LED board', width_mm: 0.8, why: 'set for this net on LED board' },
+    ]);
+    // a connection laid by hand on the LED board is routed at its width there
+    const laid = k.transact({ summary: 'lay', ops: [{ op: 'draw_track', board: 'LED board', from: 'J3.1', to: 'R4.1', layer: 'F.Cu' }] });
+    expect(laid.status, JSON.stringify(laid.rejection)).toBe('ok');
+    route(k, 'LED board');
+    expect(Math.max(...k.board({}, k.boardId('LED board')).tracks.filter((t) => t.laid).map((t) => t.width))).toBe(0.8);
+    // and a track drawn by hand (drawn copper) takes it too, on each board
+    for (const [board, from, to, mm] of [['LED board', 'J3.1', 'R4.1', 0.8], ['Main', 'C2.1', 'R1.1', 0.4]] as const) {
+      const r = k.transact({ summary: 'draw', ops: [{ op: 'set_copper_mode', board, mode: 'drawn', keep: false }] });
+      expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+      const d = k.transact({ summary: 'draw', ops: [{ op: 'draw_track', board, from, to, layer: 'F.Cu' }] });
+      expect(d.status, JSON.stringify(d.rejection)).toBe('ok');
+      expect(k.board({}, k.boardId(board)).tracks.map((t) => t.width)).toEqual([mm]);
+    }
+  });
+
+  it('changes the route key of that board only', () => {
+    const k = twoBoards();
+    const keys = () => ['Main', 'LED board'].map((b) => copperKey(focusBoard(k.draftDesign(), k.boardId(b))));
+    const [main, led] = keys();
+    expect(k.transact({ summary: 'w', ops: [{ op: 'set_net', net: '+3V3', board: 'LED board', track_mm: 0.8 }] }).status).toBe('ok');
+    const [main2, led2] = keys();
+    expect(main2).toBe(main);
+    expect(led2).not.toBe(led);
+    // the net's own width changes both
+    expect(k.transact({ summary: 'w', ops: [{ op: 'set_net', net: '+3V3', track_mm: 0.5 }] }).status).toBe('ok');
+    const [main3, led3] = keys();
+    expect(main3).not.toBe(main2);
+    // ... but not the LED board's, which has its own
+    expect(led3).toBe(led2);
+  });
+
+  it('falls back to the net\'s width when the board\'s is cleared', () => {
+    const k = twoBoards();
+    k.transact({ summary: 'w', ops: [{ op: 'set_net', net: '+3V3', track_mm: 0.4 }, { op: 'set_net', net: '+3V3', board: 'LED board', track_mm: 0.8 }] });
+    const r = k.transact({ summary: 'clear', ops: [{ op: 'set_net', net: '+3V3', board: 'LED board', track_mm: null }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const net = Object.values(k.draftDesign().nets).find((n) => n.name === '+3V3')!;
+    expect(net.attrs.boardTrackWidths).toBeUndefined();
+    expect(info(k, '+3V3').track.by_board?.map((b) => [b.board, b.width_mm, b.why])).toEqual([
+      ['Main', 0.4, 'set for this net'],
+      ['LED board', 0.4, 'set for this net'],
+    ]);
+    route(k, 'LED board');
+    expect(Math.max(...widths(k, 'LED board', '+3V3'))).toBe(0.4);
+  });
+
+  it('refuses a board the design does not have, changing nothing', () => {
+    const k = twoBoards();
+    const before = canonicalJson(k.draftDesign());
+    const r = k.transact({ summary: 'w', ops: [{ op: 'set_net', net: '+3V3', board: 'Nope', track_mm: 0.8 }] });
+    expect(r.status).toBe('rejected');
+    expect(r.rejection?.code).toBe('BOARD_UNKNOWN');
+    expect(canonicalJson(k.draftDesign())).toBe(before);
+    // board without track_mm: nothing to set on it
+    expect(k.transact({ summary: 'w', ops: [{ op: 'set_net', net: '+3V3', board: 'LED board', voltage: 3.3 }] }).rejection?.code).toBe('INVALID_OP');
+  });
+
+  it('forgets a board\'s widths with the board', () => {
+    const k = twoBoards();
+    k.transact({ summary: 'w', ops: [{ op: 'set_net', net: '+3V3', board: 'LED board', track_mm: 0.8 }] });
+    expect(k.transact({ summary: 'rm', ops: [{ op: 'remove_board', board: 'LED board' }] }).status).toBe('ok');
+    const net = Object.values(k.draftDesign().nets).find((n) => n.name === '+3V3')!;
+    expect(net.attrs.boardTrackWidths).toBeUndefined();
+  });
+
+  it('takes the only board by name on a design of one board', () => {
+    const k = new Kernel();
+    k.transact(buckTransaction());
+    k.accept();
+    const r = k.transact({ summary: 'w', ops: [{ op: 'set_net', net: '+3V3', board: 'Main', track_mm: 0.6 }] });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const t = info(k, '+3V3').track;
+    expect(t.width_mm).toBe(0.6);
+    expect(t.why).toBe('set for this net on Main');
+    expect(t.by_board).toBeUndefined();
   });
 });

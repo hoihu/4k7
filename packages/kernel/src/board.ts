@@ -4,7 +4,7 @@
  * copper checks.
  */
 import { type BoardCutout, type BoardPad, type BoardPart, type BoardRules, boardStackup, type BoardView, type CopperLayer, cutoutDistance, cutoutPolygon, type Design, type Diagnostic, type DrawnCopper, type DrawnTrack, type DrawnVia, figureDepths, insideBoard, type LaidTrack, type PadAnchor, padCapsule, padPins, placeCutout, placeGraphic, placeKeepout, PLANE_AREA_MARGIN, type PlaneArea, type RatsLine, type SchematicView, type StoredCopper, type StoredPlacement, type Track, type UnroutedConnection, type Via, VIA_PITCH, viaCurrentFor, type ViaGroup, viasForCurrent } from '@4k7/schema';
-import { boardName } from './boards.ts';
+import { boardName, ownTrackWidth } from './boards.ts';
 import { stableJson } from './canonical.ts';
 import { type Board as CongestionBoard, congestion } from './congestion.ts';
 import { boardInputs, Memo } from './derive.ts';
@@ -565,8 +565,8 @@ export function softened(x: Diagnostic): Diagnostic {
 function routeSetup(d: Design, b: BoardView) {
   const powerNets = new Set(Object.values(d.nets).filter((n) => isPowerNet(n)).map((n) => n.id));
   const planes = b.planes;
-  // a net's own width, or the one its impedance rule gives (on its first layer)
-  const netWidths: Record<string, number> = Object.fromEntries(Object.values(d.nets).filter((n) => n.attrs.trackWidth).map((n) => [n.id, n.attrs.trackWidth!]));
+  // a net's own width on this board, or the one its impedance rule gives (on its first layer)
+  const netWidths: Record<string, number> = Object.fromEntries(Object.values(d.nets).flatMap((n) => { const w = ownTrackWidth(d, n); return w ? [[n.id, w.mm]] : []; }));
   for (const v of b.impedance ?? []) if (v.layers[0]) for (const id of v.nets) netWidths[id] = v.layers[0].width;
   // how far the pours keep from a line at a set impedance
   const gaps = pourGaps(b.impedance);

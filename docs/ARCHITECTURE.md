@@ -39,7 +39,8 @@ The AI never sends `(x, y)` for a wire or trace segment. It sends semantic opera
 ```jsonc
 { "op": "connect",   "pins": ["U1.VIN", "C1.1", "J1.1"], "net": "+12V" }
 { "op": "constrain", "kind": "near", "a": "C3", "b": "U1.VDD", "max_mm": 2.0 }
-{ "op": "route",     "scope": { "net_class": "PWR" }, "strategy": "shortest", "layers": ["F.Cu", "In2.Cu"] }
+{ "op": "set_net",   "net": "+12V", "max_current": 2, "route_first": true }
+{ "op": "route" }
 ```
 
 Deterministic solvers in the kernel (schematic auto-layout, placement solver, router) produce the
@@ -168,7 +169,8 @@ npm run eval:mcp -- packages/agent/eval/tasks/led-current.json --model sonnet --
 
 `CLAUDE_BIN` picks the program. Tools that need the app (pictures, sourcing, datasheets, imports, artwork)
 answer with an error there, and the queries the app answers off the kernel worker (`get_board` routed,
-`try_placements`, `suggest_moves`, `list_blocks`) get the kernel's own answer, without routing or projects. Planned: running the golden tasks against
+`try_placements`, `suggest_moves`) get the kernel's own answer, without routing; `get_guide` is answered by
+the kernel from the design docs as in the app, and `list_blocks` says there is no projects folder. Planned: running the golden tasks against
 golden designs with several models, for example "add a USB-C PD sink for 20 V", "fan out this BGA on 6 layers", "import this
 datasheet", scored on ERC/DRC cleanliness, constraint satisfaction, part-extraction accuracy, op count
 and token cost, with a model compatibility table so users know which BYO models work well.
@@ -301,30 +303,6 @@ the decisions, the kernel owns geometry and truth, and the UI owns review.
 | **M3 Routing + fab** | Router, pours, diff-pairs, length/impedance, full DRC, Gerber/drill/PnP/BOM | Golden boards route DRC-clean; Gerbers verified in an external viewer and a real fab order |
 | **M4 Openness** | Relay, MCP server for external agents, recipes, eval report per model | Claude Code can drive a full design via MCP |
 | **M5 Collaboration** | Multi-user sessions over CRDT sync, comments, shared libraries | Two users + two agents editing one project |
-
-### M0 progress (2026-09-25)
-
-Done:
-- Op catalogue (zod → JSON Schema tools) with 14 edit ops and 8 query ops, atomic transactions, dry runs, structured rejections with candidates and fix hints
-- Checks: ERC (unconnected pins, output conflicts, power not driven, including through series parts), datasheet requirements (bootstrap cap, decoupling, pulls), ratings (capacitor voltage and derating, pin absolute max, polarity), an output pin's stated current limit against the loads of the signal net it drives (`SEM.PIN_CURRENT`), a linear regulator's dissipation against its package's typical limit (`SEM.LDO_DISSIPATION`: (Vin − Vout) × the output rail's max_current or stated loads; regulator = an IC with one power input, one power output and ground, no inductor on its output and not named a buck/boost/converter; limits from `packages/parts/src/thermal.ts`, 100 °C / θJA; error over twice the limit, warning over it, info when the current, a voltage or the package's limit is unknown), ledger violations, waivers
-- Deterministic schematic auto-layout: anchors in rows ordered by constraints and signal flow, satellites on pins with crossing-free column order, series chains, decoupling rows, labels for everything not wired
-- Pages are derived, not authored: the layout flows each sheet's blocks (a regulator with its parts, an IC with its satellites, a connector column…) onto landscape pages at 1:1 (A4 by default; `set_paper` picks A3 or A2, the design's `paper`, so a bigger sheet holds more per page), never splitting a block (a block larger than the paper gets an oversized page that prints scaled). Pages sit in a near-square grid on the canvas (left to right, top to bottom) with a frame and title block (what is on the page, sheet, page n of N), so the sheet still reads as one drawing; ⌘P prints them one per sheet of paper (or to PDF). Pages are named after their main parts; the agent can image one (`get_schematic_image page`). Sheets stay the user's explicit grouping above pages.
-- Regulators (power in, power out, ground) drawn in datasheet reference style: input rail left, switch node / inductor / output rail right, shunts (caps, catch diode, feedback divider) to one common ground line, pin-to-rail parts (bootstrap cap) and pin-to-ground networks (soft-start, compensation) ordered so that no wires cross; `arrangement compact` opts out
-- Conventional sub-circuit drawings: four-diode full bridges are recognised and drawn as the classic 45° diamond (rotated symbols, diagonal wires); `constrain arrangement inline` opts out; single-package bridge part with a diamond symbol
-- **Symbols by kind** (2026-10-27, [schematic](design/schematic.md) §6): a part an engineer knows by its symbol is drawn with it, chosen from the card's category, description and pin names (`packages/parts/src/symbolgen.ts`): polarised capacitors, inductors with their core, ferrite beads, common-mode chokes, Schottky, Zener and TVS diodes, crystals and resonators, transistors in power packages, shunt references, push buttons, relays, optocouplers, fuses, thermistors, varistors, gas discharge tubes; `set_param` `core` or `type` corrects an inductor or diode. The ERC follows a supply through fuses, beads, thermistors and choke windings
-- Changesets: entity-level hunks, partial accept by merge, undo, canonical JSON export/import
-- Agent loop with verification, `calc` tool, `ask_user`, Anthropic provider (browser BYO key)
-- Svelte 5 schematic workspace (A + C), parts browser, settings; projects and libraries as files through the local server, settings and an encrypted key in IndexedDB
-
-Deviations (deliberate, to revisit):
-- **Kernel in TypeScript** (no Rust toolchain on the dev machine yet). It sits behind the same RPC/API in a Web Worker, so the Rust/WASM kernel can replace it without touching the agent or UI.
-- **Plain JSON project files** (`.twd.json`, written by the local server) instead of a CRDT. The CRDT comes with branching/collaboration.
-- **Counter-based ids** (`c_1a`) instead of ULIDs, for deterministic tests and diffs.
-- **Autonomy modes**: Auto and Review. Step mode is not built; its first piece is the opt-in plan step for agents working from a terminal (`propose_plan`, [ai-loop §6](design/ai-loop.md)): they show a numbered plan, and the user accepts or rejects it with a comment.
-
-Pulled forward from M4: the **local server** (`tools/server`), an MCP server that relays to the open tab, so an external agent on the user's own plan can drive the design through the same op catalogue and review flow.
-
-Open for M0 exit: multi-sheet agent workflows, an eval harness with golden tasks run against real models (§3.9; the runner is built, the golden tasks are not), and layout quality on 30+ part designs. For layout quality, the drawing the agent owns is built: stored in the design and checked against the netlist, with the user's notes and drawing checks, functional blocks, and a drawing eval of twelve circuits up to 29 parts with a baseline (`kernel/bench/schematic-eval.ts`): [schematic-drawing](design/schematic-drawing.md) (decided 2026-10-13, built 2026-10-12 to 2026-10-31; its known weaknesses are listed in §8 there).
 
 ### M2/M3 first slice: board, routing, fab (2026-09-26)
 

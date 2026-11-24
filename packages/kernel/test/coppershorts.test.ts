@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { Diagnostic } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { buck as buckFixture } from './fixtures.ts';
 
@@ -16,7 +15,7 @@ const ok = (k: Kernel, ops: unknown[]) => {
   const r = k.transact({ summary: 'test', ops });
   if (r.status !== 'ok') throw new Error(JSON.stringify(r));
 };
-const copper = (k: Kernel) => (k.query({ op: 'get_diagnostics' }) as Diagnostic[]).filter((x) => x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE');
+const copper = (k: Kernel) => k.diagnostics().filter((x) => x.code === 'DRC.SHORT' || x.code === 'DRC.CLEARANCE');
 
 // The buck's U1 is an SO-8 at 13.85, 11.005; its pad 3 (not connected) at 11.2, 11.64.
 const so8 = [1, 2, 3, 4].map((n) => ({ number: String(n), x: -2.65, y: -1.905 + (n - 1) * 1.27, w: 1.4, h: 0.52 })).concat([5, 6, 7, 8].map((n) => ({ number: String(n), x: 2.65, y: 1.905 - (n - 5) * 1.27, w: 1.4, h: 0.52 })));

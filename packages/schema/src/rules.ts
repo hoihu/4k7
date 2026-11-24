@@ -101,51 +101,6 @@ M3 heat-set inserts (hole 4.0 mm, 5.7 mm long) for every screw.
 Lids snap on; no screws I can see from outside.
 Rounded corners, 3 mm radius, and my logo engraved on the lid.`;
 
-/**
- * The notes and check levels from the ruleset text of earlier versions ("### SCH.ID: title"
- * headings with "level:" and "param:" lines). The levels become check settings; the text keeps
- * its prose from the first "## " heading on (the editor's note above it was never sent), with
- * the ids, level lines and "(layout)" marks taken out; nothing when that prose is the old default's.
- */
-export function migrateRulesText(md: string): { notes: string; checks: CheckSettings } {
-  const checks: CheckSettings = {};
-  const all = md.replace(/\r\n?/g, '\n').split('\n');
-  let keep = !all.some((l) => /^## /.test(l));
-  let cur: string | null = null;
-  const lines: string[] = [];
-  for (const line of all) {
-    if (/^## /.test(line)) keep = true;
-    const h = /^###\s+(SCH\.[A-Z0-9_]+)\s*:\s*(.+?)\s*$/.exec(line);
-    if (h) {
-      cur = h[1]!;
-      if (keep) lines.push(`### ${h[2]![0]!.toUpperCase()}${h[2]!.slice(1)}`);
-      continue;
-    }
-    if (/^#/.test(line)) cur = null;
-    const lv = /^level:\s*(error|warning|info|off)\s*$/i.exec(line);
-    const pm = /^param:\s*(.+?)\s*$/i.exec(line);
-    if (cur && (lv || pm)) {
-      const n = pm && /(\d+)/.exec(pm[1]!);
-      if (CHECKED_SCH_RULES.includes(cur)) checks[cur] = { ...checks[cur], ...(lv ? { level: lv[1]!.toLowerCase() as RuleLevel } : {}), ...(n ? { max: Number(n[1]) } : {}) };
-      continue;
-    }
-    if (keep) lines.push(line.replace(/\*\(layout\)\*\s*/gi, ''));
-  }
-  const prose = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  const notes = prose ? `${prose}\n` : '';
-  // a copy whose prose is the old default's (only levels changed) leaves no notes: the agent knows all that
-  return { notes: fnv1a(notes) === OLD_DEFAULT_PROSE ? '' : notes, checks: changedChecks(checks) };
-}
-
-/** FNV-1a of the prose migrateRulesText makes of the ruleset shipped until 2026-10-13. */
-const OLD_DEFAULT_PROSE = 0x2e558644;
-
-function fnv1a(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
-  return h;
-}
-
 /** The checks the auto-layout follows by itself: a finding there is a layout bug, not something an edit of the design fixes. */
 export const LAYOUT_SCH_RULES: ReadonlySet<string> = new Set(SCHEMATIC_CHECKS.filter((c) => c.layout).map((c) => c.id));
 

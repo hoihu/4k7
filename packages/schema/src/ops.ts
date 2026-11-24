@@ -95,7 +95,8 @@ export const SetNetOp = z.object({
     .nullable()
     .optional()
     .describe('What the net\'s pins draw: the current check then splits the net\'s current over its copper from where it comes in to these pins (a stub to a pull-up carries its milliamps, not max_current) and checks each track for its share (DRC.TRACK_CURRENT). Replaces the list; null clears it. A pad with add_vias drop amps counts as stated already (a load here for the same pad wins). Loads under max_current leave the rest unplaced (it may flow anywhere)'),
-  track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise)'),
+  track_mm: z.number().positive().nullable().optional().describe('Track width for this net on the board (mm); null = the rules\' signal/power width. For current: about 0.3 mm per amp on 1 oz outer copper (10 °C rise). With board: its width on that board only (null: the net\'s again)'),
+  board: z.string().optional().describe('Several boards: track_mm is this net\'s width on this board only (name or id), over the net\'s own; without it track_mm is the net\'s width on every board without its own'),
   route_first: z.boolean().nullable().optional().describe('Board: the router routes this net before the others, in every pass, so it gets the short, clean ways (a switching node, a clock, the high-current path); null = as any other'),
   layer: z.enum(['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']).nullable().optional().describe('Board: the copper layer its tracks should keep to (a cost on the others, not a ban: it still changes layer where it must; not for connections laid with draw_track); null = any'),
   needs: z
@@ -370,7 +371,6 @@ const fabLimitsInput = z.object({
   min_board_mm: z.tuple([z.number().positive(), z.number().positive()]).optional().describe('Smallest board [width, height]'),
   max_board_mm: z.tuple([z.number().positive(), z.number().positive()]).optional().describe('Largest board [width, height]'),
 });
-export type FabLimitsInput = z.infer<typeof fabLimitsInput>;
 
 export const SetFabProfileOp = z.object({
   op: z.literal('set_fab_profile'),
@@ -931,7 +931,9 @@ export const ImportBlockOp = z.object({
   block: z.union([z.number().int().positive(), z.string().min(1)]).describe('The block: its number or its title, as list_blocks gives them'),
   nets: z.record(z.string(), netName).describe('Every boundary net of the block (list_blocks boundary_nets) → the net of this design it joins, e.g. { "+5V": "VBUS", "GND": "GND" }; a net that does not exist yet is made. An internal net (list_blocks internal_nets) may be mapped too, to join a net already here instead of being made anew, e.g. { "NTC": "NTC" }'),
   prefix: z.string().min(1).optional().describe('Put before the names of the block\'s internal nets, e.g. "CH2_" for a second copy'),
-}).describe('Copy a functional block from another project into this design: its parts with their params, its internal nets (made anew, renamed where the name is taken, unless nets maps them), its describe block, its arrangement constraints and notes. Its boundary pins join the nets you map them to; refused unless every boundary net is mapped. A refdes that is taken gets the next free number. The effect lists the renames and the values to recheck: they were chosen for the other design');
+  sheet: z.string().min(1).optional().describe('The sheet its parts are drawn on (name or id, as for move_to_sheet); defaults to the first sheet'),
+  board: z.string().min(1).optional().describe('The board its parts go on (name or id, as for assign_board); defaults to the board of their sheet'),
+}).describe('Copy a functional block from another project into this design: its parts with their params, its internal nets (made anew, renamed where the name is taken, unless nets maps them), its describe block, its arrangement constraints and notes. With sheet and board, the parts go straight onto that sheet and board (a design of several boards: no move_to_sheet or assign_board afterwards). Its boundary pins join the nets you map them to; refused unless every boundary net is mapped. A refdes that is taken gets the next free number. The effect lists the renames and the values to recheck: they were chosen for the other design');
 
 export const EditOp = z.discriminatedUnion('op', [
   AddPartOp,
@@ -1017,7 +1019,6 @@ export const EditOp = z.discriminatedUnion('op', [
   SetEnclosureGraphicOp,
 ]);
 export type EditOp = z.infer<typeof EditOp>;
-export type EditOpName = EditOp['op'];
 
 export const Transaction = z.object({
   summary: z.string().min(1).describe('One line describing the intent of this change'),
@@ -1028,6 +1029,10 @@ export type Transaction = z.infer<typeof Transaction>;
 
 /* ------------------------------- query ops -------------------------------- */
 
+/** The get_guide topics: each is the agent guide in docs/design/<topic, _ as ->.md. */
+export const GuideTopic = z.enum(['mechanics', 'cost', 'high_speed', 'schematic', 'boards']);
+export type GuideTopic = z.infer<typeof GuideTopic>;
+
 export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_summary') }),
   z.object({
@@ -1037,7 +1042,13 @@ export const QueryOp = z.discriminatedUnion('op', [
   }),
   z.object({ op: z.literal('get_component'), ref: componentRef }),
   z.object({ op: z.literal('get_net'), net: netName }),
-  z.object({ op: z.literal('get_diagnostics') }),
+  z.object({
+    op: z.literal('get_diagnostics'),
+    code: z.string().min(1).optional().describe('get_diagnostics: only findings with this code (exact, not a prefix), e.g. "ERC.PIN_UNCONNECTED" or "XCHK.PIN_NO_PAD"'),
+    severity: z.enum(['error', 'warning', 'info']).optional().describe('get_diagnostics: only findings of this severity'),
+    offset: z.number().int().min(0).optional().describe('get_diagnostics: skip this many of the matching findings (default 0): the next page'),
+    limit: z.number().int().min(1).max(200).optional().describe('get_diagnostics: list at most this many (default 20). Errors come first, waived ones last; when not all are listed, found counts them all by code and says the call for the next page'),
+  }).describe('The design\'s check results (ERC, the schematic\'s and datasheet checks, XCHK.*, the board\'s copper shorts, on every board), errors first, the waived ones (waivedBy) last: diagnostics lists 20; when there are more, found counts all of them by code (with the nets and parts they name most) and says how many are not listed and the call that lists the next page. Page on with offset or narrow by code or severity'),
   z.object({ op: z.literal('get_ledger') }),
   z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
   z.object({ op: z.literal('get_fab_profiles') }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses'),
@@ -1107,6 +1118,6 @@ export const QueryOp = z.discriminatedUnion('op', [
     part: z.enum(ENCLOSURE_PARTS).optional().describe('get_enclosure: only this part: brief (with the open questions, the graphics and how to work), script, board_api or last_render. Without: everything when it fits in one answer, else an overview with each part\'s size'),
     lines: z.tuple([z.number().int().min(1), z.number().int().min(1)]).optional().describe('get_enclosure, with part script, board_api or last_render: the lines [from, to], 1-based as render_enclosure\'s errors count them. A long part comes in ranges anyway: each answer has lines, total_lines and next'),
   }).describe("The enclosure: the brief, the script, board_api (the board as the script finds it: its variables and functions, the parts with where they are and which way they are plugged, and the geometry the script can call), the last render's report. A large one (several boards, many parts, a long script) answers with an overview: then read each part with part, and a long one in ranges with lines"),
-  z.object({ op: z.literal('get_guide'), topic: z.enum(['mechanics', 'cost', 'high_speed', 'schematic', 'boards']) }).describe('A guide: boards = a product of several boards in one design (a main board and a display board on a header or a cable): when to split, setting up the boards, which kind of mate, what the mate checks mean, changing from a header to a cable; read before you split a design or join boards; schematic = how to arrange a schematic that reads well (functional blocks, their order and place on the pages, what goes inside a block, wire or label), read before you arrange or tidy a sheet; cost = how to make a design cheaper to make (what costs money at the assembly house, how far each kind of part may move its value, series and parallel pairs, the board), read before optimising cost; mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script), read before the first brief; high_speed = how to lay out lines at a set impedance (fast interfaces such as USB, Ethernet, HDMI, LVDS, and RF lines to antennas and connectors): which lines need it, the stack-up, widths and gaps, planes and return paths, pairs, vias, antennas. Read it before routing such lines'),
+  z.object({ op: z.literal('get_guide'), topic: GuideTopic }).describe('A guide: boards = a product of several boards in one design (a main board and a display board on a header or a cable): when to split, setting up the boards, which kind of mate, what the mate checks mean, changing from a header to a cable; read before you split a design or join boards; schematic = how to arrange a schematic that reads well (functional blocks, their order and place on the pages, what goes inside a block, wire or label), read before you arrange or tidy a sheet; cost = how to make a design cheaper to make (what costs money at the assembly house, how far each kind of part may move its value, series and parallel pairs, the board), read before optimising cost; mechanics = how to design an enclosure (the brief\'s questions, connectors, holding the board, fits, printing, the script), read before the first brief; high_speed = how to lay out lines at a set impedance (fast interfaces such as USB, Ethernet, HDMI, LVDS, and RF lines to antennas and connectors): which lines need it, the stack-up, widths and gaps, planes and return paths, pairs, vias, antennas. Read it before routing such lines'),
 ]);
 export type QueryOp = z.infer<typeof QueryOp>;
