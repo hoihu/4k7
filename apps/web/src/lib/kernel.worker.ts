@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 /**
  * Hosts the design kernel off the main thread. Every call is a plain method name +
- * structured-cloneable arguments; the Rust/WASM kernel will slot in behind the same RPC.
+ * structured-cloneable arguments.
  */
 import { Kernel, registerArtwork, unregisterArtwork } from '@4k7/kernel';
 import type { ImportSources } from '@4k7/kernel';
@@ -22,9 +22,11 @@ const methods = {
   /** The working copy with its revision (the route helper's worker routes it; transact refuses its results if it changed). */
   draftSnapshot: () => kernel.draftSnapshot(),
   query: (q: unknown) => kernel.query(q),
+  /** Every diagnostic, unpaged (get_diagnostics pages them): the app adds the production files' findings. */
+  diagnostics: () => kernel.diagnostics(),
   state: () => kernel.state(),
   setScope: (s: OptimizeScope | null) => kernel.setScope(s),
-  /** The schematic ruleset as markdown (null = the shipped default). */
+  /** Which schematic checks run and how strictly (null = the shipped defaults). */
   setChecks: (checks: CheckSettings | null) => kernel.setChecks(checks),
   accept: (ids?: string[], by?: 'user' | 'agent', summary?: string) => kernel.accept(ids, by, summary),
   reject: () => kernel.reject(),
@@ -33,7 +35,6 @@ const methods = {
   load: (d: Design) => kernel.load(d),
   exportDesign: () => kernel.exportDesign(),
   rename: (name: string) => kernel.rename(name),
-  hasPending: () => kernel.hasPending(),
   /** The working copy, for the board worker. */
   draftDesign: () => kernel.draftDesign(),
   /** The working copy's board placed, not routed (fast): its parts, pads and sides, for what assembly costs. `board`: which (several boards). */

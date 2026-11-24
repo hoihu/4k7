@@ -12,6 +12,7 @@
 import type { ImportSources } from './importops.ts';
 import { DEFAULT_BOARD, padHasPin, type Diagnostic, type CopperLayer, type BoardPad, type BoardPart, type BoardSettings, type BoardView, type Design, type DrawnCopper, type DrawnTrack, type DrawnVia, type EditOp, type LaidTrack, type OpResult, type PadAnchor, type RouteHelperResult, type Track, type Via } from '@4k7/schema';
 import { boardRouteInput, copperKey, placedOf, softened, storedPlacement } from './board.ts';
+import { ownTrackWidth } from './boards.ts';
 import { rotate } from './placer.ts';
 import { boardCopy, findNet, isPowerNet, reject, resolveComponent, resolvePins } from './doc.ts';
 import { acidDrc, copperDrc, drawnDrc, edgeDrc, neckDrc } from './drc.ts';
@@ -89,12 +90,12 @@ const netName = (d: Design, id: string) => d.nets[id]?.name ?? id;
 
 /**
  * The width a net's track gets unless given: what its impedance rule gives on that layer, else its
- * own, power width for a supply, else the signal width.
+ * own on this board, power width for a supply, else the signal width.
  */
 function defaultWidth(d: Design, netId: string, board?: BoardView, layer?: string): number {
   const rules = (d.board ?? DEFAULT_BOARD).rules;
   const net = d.nets[netId];
-  return ruleWidth(board?.impedance, netId, layer as BoardView['layers'][number]) ?? net?.attrs.trackWidth ?? (net && isPowerNet(net) ? rules.powerTrack : rules.track);
+  return ruleWidth(board?.impedance, netId, layer as BoardView['layers'][number]) ?? ownTrackWidth(d, net)?.mm ?? (net && isPowerNet(net) ? rules.powerTrack : rules.track);
 }
 
 /** Inner layers with a plane take no tracks (the router closes them, the plane fills them). */

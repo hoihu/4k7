@@ -38,7 +38,6 @@
   ],
   "scripts": {
     "dev": "scripts/dev.sh",
-    "dev:here": "scripts/dev.sh",
     "dev:web": "npm run dev -w @4k7/web",
     "build": "npm run build -w @4k7/web",
     "package": "npm run build && node scripts/package.mjs",
@@ -49,7 +48,6 @@
     "eval": "node --experimental-transform-types --no-warnings packages/agent/eval/cli.ts",
     "eval:mcp": "node --experimental-transform-types --no-warnings packages/agent/eval/mcp-cli.ts",
     "changelog": "node scripts/changelog.mjs",
-    "prepublishOnly": "npm run typecheck && npm test && npm run check:package",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:derived": "CHECK_DERIVED=1 vitest run --testTimeout=60000",

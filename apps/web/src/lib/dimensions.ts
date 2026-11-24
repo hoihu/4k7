@@ -1,4 +1,4 @@
-import type { BoardView } from '@4k7/schema';
+import { isHole, type BoardView } from '@4k7/schema';
 
 /**
  * The board's dimensions, as on a mechanical drawing (mm, board coordinates): the overall width
@@ -44,7 +44,6 @@ export interface Dimensions {
   extent: number;
 }
 
-const isHole = (p: { componentId: string }) => p.componentId.startsWith('hole:');
 /** A length as written on the drawing: up to two decimals, no trailing zeros. */
 export const mm = (v: number) => String(Math.round(v * 100) / 100);
 

@@ -10,7 +10,7 @@
  *
  * Neither is an official API: an answer in an unexpected form is an error, never an empty catalogue.
  */
-import { JLCPCB_ASSEMBLY, normalizeLcsc, parseQuantity, type HouseFootprint, type PartQuery, type SupplierPart } from '@4k7/schema';
+import { JLCPCB_ASSEMBLY, normalizeLcsc, parseQuantity, r3, type HouseFootprint, type PartQuery, type SupplierPart } from '@4k7/schema';
 import { formatFarads, formatOhms, rankParts, type PartSource } from './sourcing.ts';
 
 const TIERS = JLCPCB_ASSEMBLY.tiers.map((t) => t.name);
@@ -151,7 +151,6 @@ export const easyedaComponentUrl = (lcsc: string) => `https://easyeda.com/api/pr
 
 /** EasyEDA's canvas unit, 10 mil, in mm. */
 const EASYEDA_UNIT = 0.254;
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /**
  * A part's footprint from EasyEDA's component API: every pad with its number, its size and where it

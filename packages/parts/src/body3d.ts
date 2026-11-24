@@ -3,7 +3,7 @@
  * viewed from the top with y down; z up, board surface at z = 0). Boxes, balls and cylinders: enough
  * for a 3D preview, collision/height checks and the STEP export (@4k7/fab).
  */
-import type { BoardView, PackageInfo } from '@4k7/schema';
+import { r3, type BoardView, type PackageInfo } from '@4k7/schema';
 import { bgaRowName, footprintFor, isModule, moduleSpan, type Pad } from './footprint.ts';
 
 export interface Box3 {
@@ -48,7 +48,6 @@ export interface Body3D {
 
 export type Body3DResult = { ok: true; body: Body3D } | { ok: false; reason: string };
 
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 function box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, mat: Box3['mat']): Box3 {
   return { min: [r3(Math.min(x0, x1)), r3(Math.min(y0, y1)), r3(Math.min(z0, z1))], max: [r3(Math.max(x0, x1)), r3(Math.max(y0, y1)), r3(Math.max(z0, z1))], mat };
