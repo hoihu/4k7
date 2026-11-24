@@ -192,6 +192,14 @@ a `code` (`RejectionCode`: `REF_UNKNOWN`, `PIN_UNKNOWN`, `SWAP_INVALID`, `CONSTR
 (ops) where the kernel can tell. On a design of several boards, a board op names its `board` or a
 part on one; one that says neither is refused with `BOARD_AMBIGUOUS` ([multi-board](multi-board.md)).
 
+A query that cannot answer returns a `QueryError` (`packages/schema/src/results.ts`): `{ error, code?,
+candidates? }`, with the codes of a rejection where one applies: `BOARD_UNKNOWN` (a `board` the design does
+not have), `BOARD_AMBIGUOUS` (a board query that names no board on a design of several; the boards as
+candidates), `NET_UNKNOWN`, `REF_UNKNOWN` (also `suggest_moves` on parts not on the board), `PART_UNKNOWN`,
+`PROJECT_UNKNOWN` (`list_blocks`). The keys these errors had before (`boards`, `nets`, `projects`) are kept
+beside `candidates` for one release and then dropped. A successful answer's `boards` or `nets` (`get_board`
+of every board, `get_net` of a net that crosses boards) is no error and stays.
+
 The in-app agent and external agents (MCP, through the server's relay to the open tab) reach the
 catalogue through the same tools: `design_edit` (a transaction) and `design_query` (one query op),
 next to `get_context`, `propose` and the rest ([ai-loop](ai-loop.md)). The UI's own edits are

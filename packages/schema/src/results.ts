@@ -104,6 +104,18 @@ export type RejectionCode =
   /** import_block: a boundary net of the block that is not mapped to a net of this design. */
   | 'NET_UNMAPPED';
 
+/**
+ * A query that cannot answer (design_query): the `error` in words, the `code` of an edit's rejection where
+ * one applies (BOARD_UNKNOWN, BOARD_AMBIGUOUS, NET_UNKNOWN, REF_UNKNOWN, ...) and the closest valid
+ * `candidates`. Some errors also carry the keys they had before (`boards`, `nets`, `projects`) for one
+ * more release; read `candidates`. See docs/design/ops-api.md.
+ */
+export interface QueryError {
+  error: string;
+  code?: RejectionCode;
+  candidates?: string[];
+}
+
 export interface Rejection {
   /** Index of the failing op within the transaction. */
   opIndex: number;

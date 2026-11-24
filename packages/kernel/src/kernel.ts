@@ -55,7 +55,7 @@ import { descriptionView } from './sheetops.ts';
 import { diagKey, runChecks, sortDiagnostics } from './checks.ts';
 import { crossChecks } from './xcheck.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
-import { RejectError, applyWaivers, cardOf, clone, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, valueOf, workCopy } from './doc.ts';
+import { RejectError, applyWaivers, cardOf, clone, closest, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, queryError, valueOf, workCopy } from './doc.ts';
 import { Memo, drawingInputs } from './derive.ts';
 import { syncDrawing, viewOf } from './drawing.ts';
 import { keepForcedNets } from './netdraw.ts';
@@ -74,7 +74,7 @@ import { tryPlacements } from './trial.ts';
 import { suggestMoves } from './suggest.ts';
 import { impedanceText, resolveRule } from './lines.ts';
 import { lineBoard } from './lineops.ts';
-import { boardList, boardOf, commitFocus, focusBoard, multiBoard, ownTrackWidth, resolveBoard, settingsOf } from './boards.ts';
+import { boardList, boardOf, commitFocus, findBoard, focusBoard, multiBoard, ownTrackWidth, settingsOf } from './boards.ts';
 import { matePairs, pairsText } from './mates.ts';
 import { assemblyOf } from './assembly.ts';
 import { blocksOfProject } from './reuse.ts';
@@ -195,11 +195,6 @@ export class Kernel {
     let m = this.boardViews.get(d);
     if (!m) this.boardViews.set(d, (m = new Map()));
     m.set(id, b);
-  }
-
-  /** The board a query or a view is for: the one named, else the only one (several and none named: the first). */
-  boardId(ref?: string): string {
-    return ref === undefined ? FIRST_BOARD : (resolveBoardSafe(this.draft, ref) ?? FIRST_BOARD);
   }
 
   /** The design's boards (id, name), first board first. */
@@ -578,11 +573,15 @@ export class Kernel {
     if (onBoard) {
       const ref = (q as { board?: string }).board;
       if (ref !== undefined) {
-        const b = resolveBoardSafe(all, ref);
-        if (!b) return { error: `No board "${ref}".`, boards: boardList(all).map((x) => x.name) };
-        bid = b;
+        const b = findBoard(all, ref);
+        if (!b) {
+          const boards = boardList(all).map((x) => x.name);
+          return queryError(`No board "${ref}".`, 'BOARD_UNKNOWN', closest(ref, boards), { boards });
+        }
+        bid = b.id;
       } else if (multiBoard(all) && !everyBoard) {
-        return { error: `The design has ${boardList(all).length} boards: say which with board.`, boards: boardList(all).map((x) => x.name) };
+        const boards = boardList(all).map((x) => x.name);
+        return queryError(`The design has ${boards.length} boards: say which with board.`, 'BOARD_AMBIGUOUS', boards, { boards });
       }
     }
     if (q.op === 'get_board' && (q as { board?: string }).board === undefined && multiBoard(all)) {
@@ -618,7 +617,7 @@ export class Kernel {
       }
       case 'get_component': {
         const c = findComponent(d, q.ref);
-        if (!c) return { error: `No component ${q.ref}` };
+        if (!c) return queryError(`No component ${q.ref}`, 'REF_UNKNOWN', closest(q.ref, Object.values(d.components).map((x) => x.refdes)));
         const card = cardOf(d, c.part);
         return {
           refdes: c.refdes,
@@ -644,7 +643,10 @@ export class Kernel {
       }
       case 'get_net': {
         const n = findNet(d, q.net);
-        if (!n) return { error: `No net ${q.net}`, nets: Object.values(d.nets).map((x) => x.name).sort(natCmp) };
+        if (!n) {
+          const nets = Object.values(d.nets).map((x) => x.name).sort(natCmp);
+          return queryError(`No net ${q.net}`, 'NET_UNKNOWN', closest(q.net, nets), { nets });
+        }
         const members = netMembers(d).get(n.id) ?? [];
         const pins = members.map((m) => `${m.comp.refdes}.${m.pin.name} (${m.pin.type})`);
         // several boards: the board facts below are those of the board of its first pin
@@ -832,7 +834,7 @@ export class Kernel {
         }));
       case 'get_part': {
         const p = cardOf(d, q.id);
-        return p ?? { error: `No part ${q.id}`, candidates: searchParts(q.id).slice(0, 5).map((x) => x.id) };
+        return p ?? queryError(`No part ${q.id}`, 'PART_UNKNOWN', searchParts(q.id).slice(0, 5).map((x) => x.id));
       }
       // the app answers these with the board's facts and the guide; the kernel alone knows the design's part
       case 'get_enclosure':
@@ -1015,15 +1017,6 @@ export class Kernel {
 }
 
 /* --------------------------------- helpers -------------------------------- */
-
-/** A board's id by name or id, or undefined. */
-function resolveBoardSafe(d: Design, ref: string): string | undefined {
-  try {
-    return resolveBoard(d, ref).id;
-  } catch {
-    return undefined;
-  }
-}
 
 type Issue = { path: PropertyKey[]; message: string };
 
