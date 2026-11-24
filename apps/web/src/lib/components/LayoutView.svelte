@@ -181,14 +181,14 @@
     if (!b) return;
     const board = b;
     // (a board part carries each house's number under its parameter's name)
-    const param = app.house.param as 'lcsc' | 'eurocircuits' | undefined;
+    const param = app.sourcing.house.param as 'lcsc' | 'eurocircuits' | undefined;
     const sourced = !!param && board.parts.some((p) => !!p[param]);
-    let checked = app.stockReport;
+    let checked = app.sourcing.stockReport;
     let failed = '';
-    if (sourced && !app.house.noCatalogue) {
-      app.flash(`Checking the parts at ${app.house.name} before the export…`);
+    if (sourced && !app.sourcing.house.noCatalogue) {
+      app.flash(`Checking the parts at ${app.sourcing.house.name} before the export…`);
       try {
-        checked = await app.checkStock();
+        checked = await app.sourcing.checkStock();
       } catch (e) {
         failed = (e as Error).message;
       }
@@ -200,7 +200,7 @@
     // the BOM in the form the house the parts are sourced for reads; each file says which version
     // wrote it, from which board and when
     const stamp: FabStamp = { version: __APP_VERSION__, board: boardFingerprint(board), date: localTime(new Date()) };
-    const files = panel ? panelFabFiles(board, name, app.house.id, placements, stamp) : fabFiles(board, name, app.house.id, placements, stamp);
+    const files = panel ? panelFabFiles(board, name, app.sourcing.house.id, placements, stamp) : fabFiles(board, name, app.sourcing.house.id, placements, stamp);
     // the files read back and held against the design before they go out: their copper, not the
     // board's, which is what the house builds
     app.flash('Checking the production files against the design…');
@@ -222,8 +222,8 @@
           ? ' · stock not checked yet (Sourcing)'
           : stop.length
             ? ` · ${stop.length > 6 ? `${stop.length} parts` : stop.join(', ')} stop${stop.length === 1 ? 's' : ''} the order (Sourcing says why)`
-            : ` · every part checked at ${app.house.name}`;
-    const frame = framed ? ` · ${framed} part${framed === 1 ? '' : 's'} placed in ${whose(app.house)} own frame` : '';
+            : ` · every part checked at ${app.sourcing.house.name}`;
+    const frame = framed ? ` · ${framed} part${framed === 1 ? '' : 's'} placed in ${whose(app.sourcing.house)} own frame` : '';
     const faults = copper?.findings ?? [];
     const net = unchecked
       ? ` · the files could not be checked (${unchecked})`
@@ -439,7 +439,7 @@
         <h4>Files</h4>
         {#if b.parts.length}
           <div class="row2">
-            <button class="btn" title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, the netlist for the house's electrical test (IPC-D-356A), BOM (in {whose(app.house)} form) and pick-and-place as a .zip; the files are read back and their copper held against the design first{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
+            <button class="btn" title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, the netlist for the house's electrical test (IPC-D-356A), BOM (in {whose(app.sourcing.house)} form) and pick-and-place as a .zip; the files are read back and their copper held against the design first{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
             <!-- (the panel view has its own Panel files button) -->
             {#if b.panel && mode !== 'panel'}<button class="btn" title="The {b.panel.settings.cols} × {b.panel.settings.rows} panel ({b.panel.w} × {b.panel.h} mm): Gerber, drill with the mouse bites and tooling holes, the netlist (IPC-D-356A), BOM and pick-and-place of every copy, as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}` : ''}" onclick={() => exportFab(true)}>Panel files ⤓</button>{/if}
             <button class="btn" title="The board and its parts in 3D as a STEP file (.step), for a mechanical CAD program: the outline with its holes and cutouts, and every part body, named by designator" onclick={exportStep}>STEP ⤓</button>
