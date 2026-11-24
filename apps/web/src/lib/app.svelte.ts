@@ -20,7 +20,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, enclosureAnswer, type EnclosurePart, enclosureKey, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, diagnosticsAnswer, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, enclosureAnswer, type EnclosurePart, enclosureKey, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, emptyDesign, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, diagnosticsAnswer, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
 import { assemblyEnclosureFacts, copperCheckText, enclosureReadout, enclosureFacts, type PartSolids, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
@@ -1877,16 +1877,6 @@ class AppState {
     void this.send(fabRefreshPrompt(fab, new Date().toISOString().slice(0, 10)));
   }
 
-  /** Ask the agent for the words of the design document (it writes them with the describe op). */
-  describeDesign() {
-    this.chatOpen = true;
-    void this.send(
-      this.k?.description
-        ? 'Update the design description for the design document so it matches the design as it is now: the overview and every functional block (design_edit describe).'
-        : 'Write the design description for the design document: an overview, then the functional blocks with their parts and how each works (design_edit describe).',
-    );
-  }
-
   /** The project file's text (with the conversation when the project keeps it), for a copy elsewhere. */
   async exportJson(): Promise<string> {
     return this.projectText(await this.kernel.exportDesign());
@@ -1919,17 +1909,7 @@ class AppState {
   }
 
   async newProject(name = 'untitled') {
-    await this.importDesign({
-      format: DESIGN_FORMAT_VERSION,
-      name,
-      seq: 2,
-      parts: {},
-      components: {},
-      nets: {},
-      sheets: { s_1: { id: 's_1', name: 'Main', order: 0 } },
-      ledger: {},
-      waivers: {},
-    });
+    await this.importDesign(emptyDesign(name));
   }
 
   /** Rename the design, and its file after it (on the next save that reaches the server). */

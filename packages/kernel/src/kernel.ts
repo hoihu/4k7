@@ -1,7 +1,7 @@
 /**
  * The design kernel: committed design + agent working copy (draft), transactions,
  * proposals (changesets), history. Synchronous and deterministic; the web app runs it
- * in a Web Worker. M0 is TypeScript; the Rust/WASM kernel will implement this same API.
+ * in a Web Worker.
  */
 import {
   QueryOp,
