@@ -29,6 +29,7 @@ import {
   type SchematicRule,
   PAGE,
   boardSummary,
+  diagnosticsAnswer,
   type DrcFilter,
   resolveChecks,
   type CheckSettings,
@@ -690,7 +691,7 @@ export class Kernel {
         return { id: n.id, name: n.name, kind, attrs: n.attrs, pins, ...onBoards, track, current, ...impedance, ...vias };
       }
       case 'get_diagnostics':
-        return [...this.analyse(d).diagnostics, ...this.copperShorts(d)];
+        return diagnosticsAnswer(this.diagnostics(), q);
       case 'get_current_map': {
         const b = this.routedNow(all, bid);
         if (!b) return { routed: false, note: 'The board is not routed (or its routing is out of date): route it first, then ask again.' };
@@ -904,6 +905,16 @@ export class Kernel {
       stackup: (({ name, copper, dielectric, mask }) => ({ name, copper, dielectric, ...(mask ? { mask } : {}) }))(boardStackup(d.board ?? DEFAULT_BOARD)),
       ...(d.board?.rules.currentRise ? { currentRise: d.board.rules.currentRise } : {}),
     };
+  }
+
+  /**
+   * Every diagnostic of the working copy, as get_diagnostics pages them: the schematic's and the
+   * board's copper shorts, on every board. For callers that need the whole list (the app adds the
+   * production files' findings, the eval scores the run).
+   */
+  diagnostics(): Diagnostic[] {
+    const d = this.draft;
+    return [...this.analyse(d).diagnostics, ...this.copperShorts(d)];
   }
 
   /** Everything the UI needs in one call. */

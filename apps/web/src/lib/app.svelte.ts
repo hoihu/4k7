@@ -20,7 +20,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, enclosureAnswer, type EnclosurePart, enclosureKey, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { type BoardPlace, ASSEMBLY_HOUSE, assemblyHouse, countDiagnostics, type DiagnosticCounts, money, type AssemblyHouse, RenderEnclosureInput, enclosureAnswer, type EnclosurePart, enclosureKey, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, DESIGN_FORMAT_VERSION, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, diagnosticsAnswer, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
 import { assemblyEnclosureFacts, copperCheckText, enclosureReadout, enclosureFacts, type PartSolids, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
@@ -1530,10 +1530,14 @@ class AppState {
   private editPort: KernelPort = {
     ...this.kernel.port,
     transact: (tx) => this.transactEdit(tx),
-    // the production files' findings of the board as it is now, beside the kernel's
+    // the production files' findings of the board as it is now, beside the kernel's, paged with them
     query: async (q) => {
       const out = await this.kernel.port.query(q);
-      return (q as { op?: string })?.op === 'get_diagnostics' && Array.isArray(out) && this.boardCurrent ? [...out, ...(await this.fab.settled())] : out;
+      if ((q as { op?: string })?.op !== 'get_diagnostics' || (out && typeof out === 'object' && 'error' in out) || !this.boardCurrent) return out;
+      const fab = await this.fab.settled();
+      if (!fab.length) return out;
+      const parsed = QueryOp.parse(q);
+      return diagnosticsAnswer([...(await this.kernel.diagnostics()), ...fab], parsed.op === 'get_diagnostics' ? parsed : {});
     },
   };
 
