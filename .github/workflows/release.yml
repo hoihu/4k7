@@ -65,6 +65,6 @@ jobs:
         run: |
           v="$(node -p 'require("./package.json").version')"
           [ "$GITHUB_REF_NAME" = "v$v" ] || { echo "tag $GITHUB_REF_NAME, package.json $v"; exit 1; }
-      # prepare builds dist/. Typecheck, tests and the package check are not run here: add them before turning this job on.
+      # prepublishOnly runs typecheck, tests and the package check; prepare builds dist/.
       # Pre-releases (0.2.0-beta.1) go to the `next` dist-tag, so `npx 4k7pcb` keeps the last release.
       - run: npm publish --provenance --access public --tag "$(case "$GITHUB_REF_NAME" in *-*) echo next;; *) echo latest;; esac)"
