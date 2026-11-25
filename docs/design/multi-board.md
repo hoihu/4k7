@@ -207,6 +207,14 @@ board where it stands, and the STEP export writes them all (each board a sub-ass
 and parts, named after it, placed by the same transform). Not yet: `set_board placement3d` for
 a cable's board.
 
+Whether the stack fits (`kernel/src/stackfit.ts`, in `get_diagnostics`): every part with a 3D
+body is a box (its body outline, as tall as its body) and every PCB a slab of the board's
+outline, in the assembly frame; a part of one stacked board that reaches into a part or the PCB
+of another is `ASM.COLLIDES`, an error, with how far it reaches in. The two connectors of the mate
+joining the boards are left out, and so are parts without a 3D body (not checked, not reported).
+Where the height is assumed (no `height_mm`) it is a warning that says so. Boxes over-report at
+the corners of a round body.
+
 The enclosure library (built, [enclosure](enclosure.md) §3): as sketched below, but `at` is the
 point of the script's frame where a board's own origin is, with `rot` and `flipped`; `parts_info`
 covers every board's parts where they stand; `pcbs()` is every board; `hole_posts(from, { board })`

@@ -54,6 +54,7 @@ import { describeConstraint } from './netops.ts';
 import { descriptionView } from './sheetops.ts';
 import { diagKey, runChecks, sortDiagnostics } from './checks.ts';
 import { crossChecks } from './xcheck.ts';
+import { stackCollisions } from './stackfit.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, applyWaivers, cardOf, clone, closest, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, queryError, valueOf, workCopy } from './doc.ts';
 import { Memo, drawingInputs } from './derive.ts';
@@ -964,12 +965,12 @@ export class Kernel {
 
   /**
    * Every diagnostic of the working copy, as get_diagnostics pages them: the schematic's and the
-   * board's copper shorts, on every board. For callers that need the whole list (the app adds the
+   * board's copper shorts, on every board, and the parts of a stack that run into each other. For callers that need the whole list (the app adds the
    * production files' findings, the eval scores the run).
    */
   diagnostics(): Diagnostic[] {
     const d = this.draft;
-    return [...this.analyse(d).diagnostics, ...this.copperShorts(d)];
+    return [...this.analyse(d).diagnostics, ...this.copperShorts(d), ...stackCollisions(d, new Map(boardList(d).map((b) => [b.id, placedOf(this.focus(d, b.id))])))];
   }
 
   /** Everything the UI needs in one call. */
