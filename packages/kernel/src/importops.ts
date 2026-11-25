@@ -11,6 +11,7 @@ import { addPart, addSheet } from './netops.ts';
 import { sheetByName } from './sheets.ts';
 import { addBoard, assignBoard, boardList, boardOf, findBoard, focusBoard, putSettings, resolveBoard, settingsOf } from './boards.ts';
 import { listBlocks, readProject } from './reuse.ts';
+import { carryCopper } from './boardimport.ts';
 
 /** The stored projects the app read for a transaction's import_block and import_board ops: the ids the folder lists, and the files by id. */
 export interface ImportSources {
@@ -124,7 +125,8 @@ const RECHECK_ATTRS = ['voltage', 'maxCurrent', 'external', 'power', 'trackWidth
  * import_board (D29): copy a whole board of another stored project in as a board of this design: every
  * part (copyParts), nets joined by name unless `nets` says otherwise, its describe blocks and travelling
  * constraints, the board's outline, build, fab tier and holes, and its layout: the stored placement,
- * the pins and sides (ledger), keep-outs, graphics and panel. Copper stays behind (route the board).
+ * the pins and sides (ledger), keep-outs, graphics and panel, and its copper (carryCopper: drawn as
+ * drawn, the router's as locked copper where it is current, else left behind: route the board).
  * See docs/design/ops-api.md §7 and docs/design/multi-board.md.
  */
 export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' }>, sources?: ImportSources): OpResult {
@@ -246,11 +248,14 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
     s.panel = structuredClone(from.panel);
     took.push('panel');
   } else delete s.panel;
+  // the copper, remapped; the router's cache never (its key hashes the source's ids)
+  const copper = carryCopper(f, from, s, ids, nets);
+  took.push(...copper.took);
   delete s.routed;
   delete s.copper;
   putSettings(d, boardId, s);
 
-  const left = ['copper'];
+  const left = copper.left;
   const parts = comps.map((c) => d.components[ids.get(c.id)!]!.refdes);
   const importedBoard: BoardImportReport = {
     project: op.project, from: entry.name, board: boardName, made: !here, sheet: d.sheets[sheet]!.name, parts, renamed, cards,
@@ -269,7 +274,7 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
     (blocks.length ? `; blocks ${blocks.join(', ')}` : '') +
     (constraints ? `, ${constraints} constraint(s)` : '') +
     `; board: ${took.join(', ')}${fab}` +
-    `; not brought over: ${left.join(', ')} (route the board)` +
+    copper.next +
     (Object.keys(report.joined).length ? `. Nets joined across boards need a mated connector pair (ERC.BOARD_CROSSING until then): add mate` : '');
   return { op: 'import_board', effect, ids: [boardId, ...ids.values(), ...new Set(nets.values())], importedBoard };
 }

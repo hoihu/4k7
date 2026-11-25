@@ -68,7 +68,10 @@ new board (or one with no parts yet) and a sheet of its own, nets joined by name
 nets made anew), with its blocks, outline, layers, rules, stack-up, fab tier and holes, and its layout: the
 stored placement, the pins (`position`, `rel` too), sides, `near`/`belongs`/`room`, keep-outs, graphics and
 panel, ids remapped. The joined nets cross between the boards, so `ERC.BOARD_CROSSING` stands until the `mate`
-that goes in the same transaction. Copper is a later step; the board is routed afresh for now.
+that goes in the same transaction. Its copper comes too, ids remapped: planes, via groups, impedance rules, laid and locked copper, and drawn
+copper as drawn (routed at once). The router's copper is a cache keyed on the source's ids, so it is never
+copied: where it is current it becomes locked copper, which the first route lays as it lies and keeps locked;
+stale or stopped copper stays behind and the board is routed afresh (ops-api §7).
 
 **How it is built** (`kernel/src/boards.ts`): a *focus* is the design as if one board were its
 only one: that board's settings as `board`, only its parts, the nets with pins on them, and the

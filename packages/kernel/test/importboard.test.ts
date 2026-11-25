@@ -4,7 +4,7 @@
  * GND) and its own LED net; the source is a small LED ring. See docs/design/ops-api.md §7.
  */
 import { describe, expect, it } from 'vitest';
-import { FIRST_BOARD, type Design, type EditOp, type Transaction } from '@4k7/schema';
+import { FIRST_BOARD, type Design, type EditOp, type Track, type Transaction } from '@4k7/schema';
 import { Kernel, boardOf } from '../src/index.ts';
 import { findBoard, focusBoard, settingsOf } from '../src/boards.ts';
 import { copperKey } from '../src/board.ts';
@@ -20,6 +20,10 @@ type ImportBoard = Omit<Extract<EditOp, { op: 'import_board' }>, 'op'>;
  * text and a 2 × 1 panel.
  */
 function ring(): Design {
+  return JSON.parse(ringKernel().exportDesign()) as Design;
+}
+
+function ringKernel(): Kernel {
   const k = new Kernel();
   const ops: EditOp[] = [
     { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J1' },
@@ -49,14 +53,14 @@ function ring(): Design {
       { op: 'place', ref: 'D2', x_mm: 22, y_mm: 22, rot: 180, side: 'bottom' },
       { op: 'constrain', kind: 'near', a: 'R1', b: 'D1', max_mm: 10 },
       { op: 'constrain', kind: 'room', block: 'LED ring', rect: { x: 1, y: 1, w: 28, h: 28 } },
-      { op: 'add_keepout', name: 'lens', part: 'D1', rect: { x_mm: -2, y_mm: -2, width_mm: 4, height_mm: 4 }, forbid: ['tracks'] },
+      { op: 'add_keepout', name: 'lens', part: 'D1', rect: { x_mm: -2, y_mm: -2, width_mm: 4, height_mm: 4 }, forbid: ['vias'] },
       { op: 'add_graphic', text: 'RING', x_mm: 15, y_mm: 26, height_mm: 2 },
       { op: 'set_panel', cols: 2, rows: 1 },
     ],
   });
   expect(layout.status, JSON.stringify(layout.rejection)).toBe('ok');
   k.accept();
-  return JSON.parse(k.exportDesign()) as Design;
+  return k;
 }
 
 /** A placed part as get_board shows it. */
@@ -101,6 +105,12 @@ const ok = (r: ReturnType<typeof importing>) => {
 const design = (k: Kernel) => k.draftSnapshot().design;
 const by = (d: Design, ref: string) => Object.values(d.components).find((c) => c.refdes === ref)!;
 const netOf = (d: Design, ref: string, pin: string) => d.nets[by(d, ref).pins[pin]!]!;
+/** A board of the open design as get_board shows it, its stored settings and its copper key. */
+const boardState = (k: Kernel, board: string) => {
+  const d = design(k);
+  const id = findBoard(d, board)!.id;
+  return { parts: placed(k.query({ op: 'get_board', board })), settings: JSON.stringify(settingsOf(d, id) ?? null), copper: copperKey(focusBoard(d, id)) };
+};
 const crossing = (k: Kernel) => k.state().diagnostics.filter((x) => x.code === 'ERC.BOARD_CROSSING').map((x) => x.entities[0]).sort();
 
 describe('import_board', () => {
@@ -139,7 +149,8 @@ describe('import_board', () => {
     expect(Object.values(d.ledger).some((c) => c.kind === 'left_of' && c.a === by(d, 'R4').id && c.b === by(d, 'D2').id)).toBe(true);
     const effect = k.transact({ summary: 'noop', ops: [{ op: 'import_board', project: 'ring', as: 'LED 2' }], dry_run: true }, 'agent', undefined, sources()).results[0]!.effect;
     expect(effect).toMatch(/placement of 4 part\(s\)/);
-    expect(effect).toMatch(/not brought over: copper/);
+    // the ring was never routed: no copper to bring, the board to route
+    expect(effect).toMatch(/no copper in the source: route the board/);
     expect(effect).toMatch(/ERC\.BOARD_CROSSING/);
     // the nets that now cross between the boards are flagged until a mate carries them
     expect(crossing(k)).toEqual(['net:GND', 'net:LED', 'net:VLED']);
@@ -251,12 +262,6 @@ describe('import_board', () => {
  * shows it, read from the open design before the import (no hand-typed positions).
  */
 describe('import_board: the placement', () => {
-  /** A board of the open design as get_board shows it, its stored settings and its copper key. */
-  const boardState = (k: Kernel, board: string) => {
-    const d = design(k);
-    const id = findBoard(d, board)!.id;
-    return { parts: placed(k.query({ op: 'get_board', board })), settings: JSON.stringify(settingsOf(d, id) ?? null), copper: copperKey(focusBoard(d, id)) };
-  };
   const ofProject = (k: Kernel, src: ImportSources, project: string, board?: string) =>
     k.query({ op: 'get_board', project, ...(board ? { board } : {}) }, { sources: src });
   const on = (d: Design, kind: string, ref: string) => Object.values(d.ledger).filter((c) => c.kind === kind && c.a === by(d, ref).id);
@@ -295,8 +300,8 @@ describe('import_board: the placement', () => {
     // and stands where the source's stands, round D2
     type Kos = { keepouts: { follows: string; bounds_mm: number[] }[] };
     expect((k.query({ op: 'get_board', board: 'LED' }) as Kos).keepouts).toEqual([{ ...(want as Kos).keepouts[0]!, follows: 'D2' }]);
-    // copper is all that stays behind
-    expect(rep.left_behind).toEqual(['copper']);
+    // the ring has no copper: nothing stays behind
+    expect(rep.left_behind).toEqual([]);
     expect(r.results[0]!.effect).toMatch(/placement of 4 part\(s\) \(1 locked\), 1 keep-out\(s\), 1 graphic\(s\), panel/);
     // the main board: placement, settings and copper key as before
     expect(boardState(k, 'Main')).toEqual(before);
@@ -336,5 +341,183 @@ describe('import_board: the placement', () => {
     expect(rep.blocks).toEqual(['LED ring (2)']);
     expect(Object.values(design(k).ledger).filter((c) => c.kind === 'room').map((c) => c.key)).toEqual(['LED ring', 'LED ring (2)']);
     expect(placed(k.query({ op: 'get_board', board: 'LED 2' }))).toEqual(placed(want, rep.renamed.refdes));
+  });
+});
+
+/**
+ * D29 step 5: the copper comes along, every id remapped. Drawn copper as it is (the board is routed at
+ * once); the router's copper, where it is current for the source, as locked copper the first route
+ * lays as it lies; stale copper not at all. The target is a design of two boards; the reference is the
+ * source's own board view.
+ */
+describe('import_board: the copper', () => {
+  /** The ring routed (and the copper kept with it, as the app does), then `then` on it. */
+  const routedRing = (then: EditOp[] = [], reroute = false): Design => {
+    const k = ringKernel();
+    const route = () => {
+      expect(k.transact({ summary: 'route', ops: [{ op: 'route' }] }).status).toBe('ok');
+      k.keepCopper(k.board().newCopper!);
+      k.accept();
+    };
+    route();
+    if (then.length) {
+      const r = k.transact({ summary: 'then', ops: then });
+      expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+      k.accept();
+    }
+    if (reroute) route();
+    return JSON.parse(k.exportDesign()) as Design;
+  };
+  /** The source's board view, as it routes (or draws) it. */
+  const viewOf = (src: Design) => {
+    const k = new Kernel();
+    k.load(structuredClone(src));
+    return k.board();
+  };
+  const geometry = (ts: Track[]) => ts.map(({ layer, width, pts }) => JSON.stringify({ layer, width, pts })).sort();
+  const errors = (b: { diagnostics: { code: string; severity: string; waivedBy?: string }[] }) => b.diagnostics.filter((x) => x.code.startsWith('DRC.') && x.severity === 'error' && !x.waivedBy).map((x) => x.code);
+  const boardId = (k: Kernel, name: string) => findBoard(design(k), name)!.id;
+
+  it('brings drawn copper over with the nets and parts of this design: the board is routed at once, the other boards unchanged', () => {
+    const srcDesign = routedRing([{ op: 'set_copper_mode', mode: 'drawn' }]);
+    const src = viewOf(srcDesign);
+    expect(src.routing).toBe('done');
+    expect(src.tracks.length).toBeGreaterThan(0);
+    const k = twoBoards();
+    const before = [boardState(k, 'Main'), boardState(k, 'LED board')];
+    const r = importing(k, { project: 'ring', as: 'Ring', nets: { VLED: '+3V3', LED: 'LED_A' } }, [], sources({ ring: srcDesign }));
+    const rep = ok(r);
+    k.accept();
+    const d = design(k);
+    const id = boardId(k, 'Ring');
+    const b = k.board({}, id);
+    expect(b.routing).toBe('done');
+    expect(errors(b)).toEqual(errors(src));
+    expect(geometry(b.tracks)).toEqual(geometry(src.tracks));
+    expect(b.vias.length).toBe(src.vias.length);
+    // every track on the net of this design its pads are on (+3V3 and LED_A joined under other names), its ends on the new parts
+    const drawn = settingsOf(d, id)!.drawn!;
+    expect(drawn.next).toBe(srcDesign.board!.drawn!.next);
+    expect(drawn.tracks.map((t) => t.id)).toEqual(srcDesign.board!.drawn!.tracks.map((t) => t.id));
+    const mine = new Set(rep.parts.map((x) => by(d, x).id));
+    for (const t of drawn.tracks) {
+      for (const end of [t.from, t.to]) {
+        if (!end) continue;
+        expect(mine.has(end.componentId)).toBe(true);
+        expect(d.components[end.componentId]!.pins[end.pad]).toBe(t.netId);
+      }
+    }
+    const names = new Set(drawn.tracks.map((t) => d.nets[t.netId]!.name));
+    expect(names).toContain('+3V3');
+    expect(names).toContain('LED_A');
+    expect(drawn.vias.every((v) => d.nets[v.netId] !== undefined)).toBe(true);
+    expect(rep.left_behind).toEqual([]);
+    expect(r.results[0]!.effect).toMatch(/drawn copper \(\d+ tracks?, \d+ vias?\): routed as drawn/);
+    expect(r.results[0]!.effect).not.toMatch(/route the board/);
+    expect([boardState(k, 'Main'), boardState(k, 'LED board')]).toEqual(before);
+  });
+
+  it('turns current router copper into locked copper, which the first route lays as it lies and keeps locked', () => {
+    // GND locked in the source too (its lock kept), then routed again so the copper is current
+    const srcDesign = routedRing([{ op: 'lock_copper', nets: ['GND'] }], true);
+    const src = viewOf(srcDesign);
+    expect(src.routing).toBe('done');
+    const k = twoBoards();
+    const before = [boardState(k, 'Main'), boardState(k, 'LED board')];
+    const r = importing(k, { project: 'ring', as: 'Ring' }, [], sources({ ring: srcDesign }));
+    const rep = ok(r);
+    k.accept();
+    const d = design(k);
+    const id = boardId(k, 'Ring');
+    const s = settingsOf(d, id)!;
+    // not the cache: locked copper, one entry per net, on this design's nets
+    expect(s.copper).toBeUndefined();
+    expect(s.routed).toBeUndefined();
+    const locked = s.locked!;
+    expect(new Set(locked.map((l) => l.netId)).size).toBe(locked.length);
+    expect(locked.map((l) => d.nets[l.netId]!.name).sort()).toEqual(['GND', 'LED', 'VLED', netOf(d, 'R5', '2').name].sort());
+    for (const l of locked) expect([...l.tracks, ...l.vias].every((x) => x.netId === l.netId)).toBe(true);
+    expect(geometry(locked.flatMap((l) => l.tracks))).toEqual(geometry(src.tracks.filter((t) => !t.laid)));
+    expect(rep.left_behind).toEqual([]);
+    expect(r.results[0]!.effect).toMatch(/locked copper of 4 net\(s\) \(\d+ tracks, \d+ vias; from its routing, 1 locked there already\)/);
+    expect(r.results[0]!.effect).toMatch(/route the board: it lays the locked copper first/);
+    // the first route lays every locked track and via as it lies
+    expect(k.transact({ summary: 'route', ops: [{ op: 'route', board: 'Ring' }] }).status).toBe('ok');
+    const b = k.board({}, id);
+    expect(b.routing).toBe('done');
+    expect(b.locked!.length).toBe(locked.length);
+    for (const l of b.locked!) expect([l.heldTracks, l.heldVias]).toEqual([l.tracks, l.vias]);
+    expect(geometry(b.tracks)).toEqual(geometry(src.tracks));
+    expect(errors(b)).toEqual([]);
+    // and keeps it locked (D29 decision 4)
+    k.keepCopper(b.newCopper!);
+    k.accept();
+    expect(settingsOf(design(k), id)!.locked).toEqual(locked);
+    expect([boardState(k, 'Main'), boardState(k, 'LED board')]).toEqual(before);
+  });
+
+  it('leaves stale or stopped router copper behind: route the board', () => {
+    const stale = routedRing([{ op: 'place', ref: 'D2', x_mm: 20, y_mm: 22, rot: 180, side: 'bottom' }]);
+    expect(viewOf(stale).routing).toBe('stale');
+    const stopped = routedRing();
+    stopped.board!.copper!.stopped = true;
+    for (const srcDesign of [stale, stopped]) {
+      const k = twoBoards();
+      const r = importing(k, { project: 'ring', as: 'Ring' }, [], sources({ ring: srcDesign }));
+      const rep = ok(r);
+      const s = settingsOf(design(k), boardId(k, 'Ring'))!;
+      expect([s.copper, s.routed, s.locked, s.drawn]).toEqual([undefined, undefined, undefined, undefined]);
+      expect(rep.left_behind).toEqual(['copper']);
+      expect(r.results[0]!.effect).toMatch(/not brought over: copper \((stale|stopped)[^)]*\): route the board/);
+    }
+  });
+
+  it('merges the locked copper of two source nets put on one net into one', () => {
+    const srcDesign = routedRing();
+    const k = twoBoards();
+    ok(importing(k, { project: 'ring', as: 'Ring', nets: { LED: 'GND' } }, [], sources({ ring: srcDesign })));
+    const d = design(k);
+    const locked = settingsOf(d, boardId(k, 'Ring'))!.locked!;
+    const gnd = locked.filter((l) => d.nets[l.netId]!.name === 'GND');
+    expect(gnd).toHaveLength(1);
+    const src = viewOf(srcDesign);
+    const named = (n: string) => src.tracks.filter((t) => src.netNames[t.netId] === n);
+    expect(gnd[0]!.tracks).toHaveLength(named('GND').length + named('LED').length);
+  });
+
+  it('remaps planes, via groups and impedance rules onto the new parts and nets', () => {
+    const k0 = ringKernel();
+    const r0 = k0.transact({
+      summary: 'copper rules',
+      ops: [
+        { op: 'set_plane', layer: 'F.Cu', net: 'GND', under: ['D2'] },
+        { op: 'add_vias', kind: 'grid', net: 'GND', under: ['D1'] },
+        { op: 'set_impedance', nets: ['LED'], ohms: 50 },
+      ],
+    });
+    expect(r0.status, JSON.stringify(r0.rejection)).toBe('ok');
+    k0.accept();
+    const srcDesign = JSON.parse(k0.exportDesign()) as Design;
+    const k = twoBoards();
+    ok(importing(k, { project: 'ring', as: 'Ring', nets: { LED: 'LED_A' } }, [], sources({ ring: srcDesign })));
+    const d = design(k);
+    const s = settingsOf(d, boardId(k, 'Ring'))!;
+    const gnd = netOf(d, 'J2', '2').id;
+    expect(s.planes!.find((p) => p.layer === 'F.Cu')).toMatchObject({ netId: gnd, area: { under: [by(d, 'D4').id] } });
+    expect(s.vias).toEqual([expect.objectContaining({ id: 'V1', netId: gnd, area: expect.objectContaining({ under: [by(d, 'D3').id] }) })]);
+    expect(s.impedance).toEqual([expect.objectContaining({ id: 'Z1', nets: [netOf(d, 'R4', '2').id], ohms: 50 })]);
+  });
+
+  it('changes nothing on a dry run, and is undone like any edit', () => {
+    const src = sources({ ring: routedRing([{ op: 'set_copper_mode', mode: 'drawn' }]) });
+    const k = twoBoards();
+    const before = k.exportDesign();
+    const was = JSON.stringify(design(k));
+    expect(importing(k, { project: 'ring', as: 'Ring' }, [], src, true).dryRun).toBe(true);
+    expect(JSON.stringify(design(k))).toBe(was);
+    ok(importing(k, { project: 'ring', as: 'Ring' }, [], sources({ ring: routedRing() })));
+    k.accept();
+    k.undo();
+    expect(k.exportDesign()).toBe(before);
   });
 });
