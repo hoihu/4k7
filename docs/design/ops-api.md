@@ -349,8 +349,21 @@ with `import_block` (`copyParts`).
   block's title here, ` (2)` where taken), keep-outs (`part` remapped, ids `KO1`… kept: they are per board),
   graphics and panel. Only the parts the source pinned are pinned; with the same parts, outline and rules the
   placer puts every part where the source has it (x, y, rot, side). The effect counts the placed and locked parts.
-- Not yet (D29 step 5): copper of any kind (drawn, laid, locked, router copper, via groups, planes, impedance).
-  `importedBoard.left_behind` is `["copper"]` and the effect says to route the board.
+- The copper comes along with every net and part id remapped (`carryCopper`, `boardimport.ts`): planes and pours
+  (`netId`, `area.under`; an empty list stays "no planes"), via groups (`netId`, `pad`, `area`, `along`),
+  impedance rules (`nets`), the connections laid with `draw_track` (`laid`, pad anchors remapped) and locked
+  copper (`locked`). Drawn copper (`drawn`) comes as it is, ids and numbering kept, anchors on the new parts:
+  the board is routed at once (`routing: done`) and checked when the transaction is applied.
+- The router's copper (`copper`, `routed`) is a cache whose key hashes the source's part and net ids, so it is
+  never copied, nor is its key rewritten. Where it is current for the source (its key is the source board's
+  `copperKey` and it was not stopped: the test `lock_copper` makes), its tracks and vias become locked copper,
+  per net here, as `lock_copper` takes them (not laid connections, nor via-group vias and stubs, which come
+  with their own settings). The first `route` lays it as it lies before anything else and reports what holds
+  (`LockedStatus`); it stays locked afterwards (`unlock_copper` lets it go). Stale or stopped copper is not
+  brought over: `importedBoard.left_behind` is `["copper"]` and the effect says why and to route the board.
+  A source with no copper leaves nothing behind; the effect says to route the board.
+- Two source nets put on one net here (a merge) give one net's copper: their locked copper is one entry.
+  Copper on a net no part of the board is on has no net here and is dropped.
 - Joined nets now have pins on two boards: `ERC.BOARD_CROSSING` flags each until a mated connector pair carries
   it. Add the `mate` in the same transaction (the effect gives the new refdes; a `dry_run` shows them first).
 - The result's `importedBoard` gives the source and target board (`made`), the sheet, the new refdes, renames,

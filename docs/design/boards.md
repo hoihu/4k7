@@ -52,8 +52,11 @@ with `dry_run` to see which nets join by name. Keep a net that only shares a nam
 `nets: { "LED": "fresh" }`; map one onto another name with `nets: { "VLED": "+5V" }`. Recheck the
 joined nets the effect lists as differing (a voltage). Then apply it with the `mate` of the two
 connectors in the same transaction (the effect gives their new refdes). The parts arrive where the
-source has them (its placement, pins, sides, keep-outs, graphics and panel); its copper does not:
-route the board (step 5 above).
+source has them (its placement, pins, sides, keep-outs, graphics and panel), with its planes, via
+groups and impedance rules. Drawn copper comes as drawn: the board is routed. The router's copper
+comes as locked copper when it was routed as it stands: route the board (step 5 above), which lays
+it as it lies and routes the rest; it stays locked (`unlock_copper` lets it go). When the effect says
+the copper was stale or stopped, it did not come: route the board.
 
 ## 3. Which kind of mate
 
