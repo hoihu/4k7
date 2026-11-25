@@ -96,7 +96,15 @@ Vout·Iout / (Vin·0.8)); a rail below without loads counts with its `max_curren
 is known the limit is "unknown — start low", never a guessed number. Then the steps at the bench
 in order: check each rail for a short to ground unpowered, power the inputs at that limit, check
 each rail at its probe point. A design without supply rails has no such section. On a design of
-several boards it is of the board shown, as the rest of the document (docs/design/multi-board.md).
+several boards (2026-11-25) it is one sheet for the whole design, not of the board shown: the rails in
+one power-up order across the boards (a rail fed over a mate after the rail that feeds it, as the
+tree orders them), each rail and step labelled with its boards ("Check +3V3 (Main + LED board)"), each
+test point or probe pin with its board, and each mate a rail crosses named with its connectors, the
+source's side first, and the pin to check it at on the far board ("It reaches LED board through
+J2↔J3 (1 pin): check it there too, at J3.1"). Labelling in one order was chosen over a section per
+board: the order across boards is what matters at the bench, and a rail on two boards belongs to both.
+The bench limit of an input rail covers every load of the rail and of the rails below it, on any
+board. The document has a Board column then; a design of one board gets the sheet as before.
 It is not an op:
 the app asks the kernel for it when it builds the document (a `get_bring_up` query could follow).
 

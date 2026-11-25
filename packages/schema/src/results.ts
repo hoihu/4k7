@@ -465,9 +465,14 @@ export interface BringUpRail {
   source: string;
   /** It comes in from outside (a connector or a battery): the bench supply feeds it. */
   input: boolean;
-  /** The test points on it (refdes and silkscreen label), or where to probe without one. */
-  testPoints: { ref: string; label: string }[];
+  /** On a design of several boards: the boards the rail is on, in board order (get_power_tree's `boards`). */
+  boards?: string[];
+  /** The mates it crosses: the board it reaches, the connectors ("J2↔J3", the source's side first), the pins that carry it, the pin to probe there. */
+  crosses?: { board: string; through: string; pins: number; probeAt?: string }[];
+  /** The test points on it (refdes, silkscreen label, board on several), or where to probe without one (and its board). */
+  testPoints: { ref: string; label: string; board?: string }[];
   probeAt?: string;
+  probeBoard?: string;
   /** Only on an input rail: what the board is expected to draw from it and the limit to set. */
   supply?: { draw_a: number | 'unknown'; basis: 'loads' | 'max_current' | 'unknown'; limit_a: number | 'unknown' };
 }

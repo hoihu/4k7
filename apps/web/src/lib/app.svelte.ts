@@ -1652,7 +1652,8 @@ class AppState {
     this.docBusy = true;
     try {
       const board = this.k.summary.components.length ? await this.routedBoard() : null;
-      const bringUp = await this.kernel.bringUp(this.shownBoard).catch(() => null);
+      // the bring-up sheet is of the whole design (all boards, one power-up order), not of the board shown
+      const bringUp = await this.kernel.bringUp().catch(() => null);
       const { downloadDesignDocument, printDesignDocument } = await import('./designdoc.ts');
       const k = this.k;
       await (download ? downloadDesignDocument : printDesignDocument)({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal, bringUp });

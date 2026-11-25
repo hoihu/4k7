@@ -32,4 +32,27 @@ describe('design document: bring-up section', () => {
     expect(bringUpHtml({ rails: [], steps: [], note: 'No supply rails' })).toBeNull();
     expect(bringUpHtml(null)).toBeNull();
   });
+
+  it('is unchanged on one board: no Board column', () => {
+    const html = bringUpHtml(plan)!;
+    expect(html).not.toContain('<th>Board</th>');
+    expect(html).not.toContain('One sheet for all the boards');
+  });
+
+  it('is one sheet for a design of several boards, naming each rail\'s boards, the mate it crosses and the probe point\'s board', () => {
+    const two: BringUpPlan = {
+      rails: [
+        { ...plan.rails[0]!, boards: ['Main', 'LED board'], crosses: [{ board: 'LED board', through: 'J2↔J3', pins: 1, probeAt: 'J3.1' }] },
+        { ...plan.rails[1]!, boards: ['LED board'], testPoints: [{ ref: 'TP2', label: 'TP_+3V3', board: 'LED board' }] },
+      ],
+      steps: plan.steps,
+    };
+    const html = bringUpHtml(two)!;
+    expect(html.match(/<h3>At the bench<\/h3>/g)).toHaveLength(1);
+    expect(html.match(/<table>/g)).toHaveLength(1);
+    expect(html).toContain('<th>Rail</th><th>Board</th>');
+    expect(html).toContain('<td>Main, LED board<br><span class="muted">reaches LED board through J2↔J3, 1 pin</span></td>');
+    expect(html).toContain('<b>TP2</b> <span class="mono">TP_+3V3</span> <span class="muted">on LED board</span>');
+    expect(html).toContain('One sheet for all the boards');
+  });
 });

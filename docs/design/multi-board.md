@@ -274,7 +274,9 @@ the hunk that added a board leaves its sheets and parts on the first board.
 1. **Boards in the model** (built 2026-11-22). `boards`, sheet and part assignment, `board` on the
    board ops and queries, per-board placement, routing, DRC, panel and production files, the
    board picker. The enclosure and the design document show the board shown (the 3D view and
-   the cost: steps 2 and 3).
+   the cost: steps 2 and 3), except the bring-up sheet, which is one of every board in one
+   power-up order, naming each rail's boards and the mates it crosses (built 2026-11-25,
+   [layout.md](layout.md) §4).
 2. **Mates.** The op, the kinds and their pin maps, the checks (built 2026-11-22; `get_summary`
    lists the mates with their pin pairs). The assembly position from `stack` mates, the 3D view of
    every board and the STEP file of them all (built 2026-11-23). Still to come: an `edge` mate's
