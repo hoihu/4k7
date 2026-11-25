@@ -19,11 +19,12 @@ type ImportBoard = Omit<Extract<EditOp, { op: 'import_board' }>, 'op'>;
  * relative to D1), D2 on the bottom, R1 near D1, a room for the block, a keep-out on D1, a silkscreen
  * text and a 2 × 1 panel.
  */
-function ring(): Design {
-  return JSON.parse(ringKernel().exportDesign()) as Design;
+function ring(extra: EditOp[] = []): Design {
+  return JSON.parse(ringKernel(extra).exportDesign()) as Design;
 }
 
-function ringKernel(): Kernel {
+/** The ring's kernel; `extra` ops after its circuit (in the same transaction). */
+function ringKernel(extra: EditOp[] = []): Kernel {
   const k = new Kernel();
   const ops: EditOp[] = [
     { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J1' },
@@ -39,6 +40,7 @@ function ringKernel(): Kernel {
     { op: 'describe', blocks: [{ title: 'LED ring', refs: ['J1', 'R1', 'D1', 'D2'], text: 'Two LEDs from VLED.' }] },
     { op: 'set_board', width_mm: 30, height_mm: 30 },
     { op: 'add_hole', diameter_mm: 3.2, x_mm: 5, y_mm: 5, plated: true, net: 'GND' },
+    ...extra,
   ];
   const r = k.transact({ summary: 'ring', ops });
   expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
@@ -517,6 +519,113 @@ describe('import_board: the copper', () => {
     expect(JSON.stringify(design(k))).toBe(was);
     ok(importing(k, { project: 'ring', as: 'Ring' }, [], sources({ ring: routedRing() })));
     k.accept();
+    k.undo();
+    expect(k.exportDesign()).toBe(before);
+  });
+});
+
+/**
+ * D29 step 6: a source net that joins a net of this design keeps the source's track width on the new
+ * board only (boardTrackWidths), never the net's own width or another board's. Martin's case: LED_A is
+ * 0.4 mm here (on Main and the LED board), 0.8 mm in the ring.
+ */
+describe('import_board: track widths on joined nets', () => {
+  /** twoBoards with R9 on Main on LED_A too, LED_A 0.4 mm. */
+  const target = () => {
+    const k = twoBoards();
+    const r = k.transact({
+      summary: 'LED_A 0.4 mm',
+      ops: [
+        { op: 'add_part', part: 'generic:R', refdes: 'R9', params: { resistance: '1k' } },
+        { op: 'connect', pins: ['R9.1'], net: 'LED_A' },
+        { op: 'set_net', net: 'LED_A', track_mm: 0.4 },
+      ],
+    });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    k.accept();
+    return k;
+  };
+  /** The ring with its LED net called LED_A, `width` ops on it. */
+  const ringLedA = (width: EditOp[]) => sources({ ring: ring([{ op: 'set_net', net: 'LED', rename: 'LED_A' }, ...width]) });
+  const ledA = (k: Kernel) => Object.values(design(k).nets).find((n) => n.name === 'LED_A')!;
+  const byBoard = (k: Kernel) =>
+    Object.fromEntries((k.query({ op: 'get_net', net: 'LED_A' }) as { track: { by_board: { board: string; width_mm: number }[] } }).track.by_board.map((b) => [b.board, b.width_mm]));
+
+  it('keeps 0.4 mm on the boards of this design and gives the new board the source\'s 0.8 mm', () => {
+    const k = target();
+    const r = importing(k, { project: 'ring', as: 'Ring' }, [], ringLedA([{ op: 'set_net', net: 'LED_A', track_mm: 0.8 }]));
+    const rep = ok(r);
+    k.accept();
+    const n = ledA(k);
+    expect(n.attrs.trackWidth).toBe(0.4);
+    expect(n.attrs.boardTrackWidths).toEqual({ [findBoard(design(k), 'Ring')!.id]: 0.8 });
+    expect(byBoard(k)).toEqual({ Main: 0.4, 'LED board': 0.4, Ring: 0.8 });
+    // kept per board, so not a width to recheck
+    expect(rep.nets.widths).toEqual([{ net: 'LED_A', mm: 0.8, here: 0.4, from: ['LED_A'] }]);
+    expect(rep.nets.recheck.filter((x) => x.net === 'LED_A')).toEqual([]);
+    expect(r.results[0]!.effect).toMatch(/track widths kept for board "Ring": LED_A 0\.8 mm \(0\.4 mm on the others\)/);
+  });
+
+  it('routes the new board at 0.8 mm and leaves the copper of the other boards as it was', () => {
+    const k = target();
+    const before = [boardState(k, 'Main').copper, boardState(k, 'LED board').copper];
+    ok(importing(k, { project: 'ring', as: 'Ring' }, [], ringLedA([{ op: 'set_net', net: 'LED_A', track_mm: 0.8 }])));
+    k.accept();
+    expect(k.transact({ summary: 'route', ops: [{ op: 'route', board: 'Ring' }] }).status).toBe('ok');
+    k.accept();
+    expect([boardState(k, 'Main').copper, boardState(k, 'LED board').copper]).toEqual(before);
+    const b = k.board({}, findBoard(design(k), 'Ring')!.id);
+    // the widest track on LED_A is the new board's 0.8 mm (narrower only where it necks down at a pad)
+    expect(Math.max(...b.tracks.filter((t) => b.netNames[t.netId] === 'LED_A').map((t) => t.width))).toBe(0.8);
+  });
+
+  it('writes nothing when the widths agree, or the source sets none', () => {
+    for (const width of [[{ op: 'set_net', net: 'LED_A', track_mm: 0.4 }], []] as EditOp[][]) {
+      const k = target();
+      const rep = ok(importing(k, { project: 'ring', as: 'Ring' }, [], ringLedA(width)));
+      expect(ledA(k).attrs.boardTrackWidths).toBeUndefined();
+      expect(ledA(k).attrs.trackWidth).toBe(0.4);
+      expect(rep.nets.widths).toEqual([]);
+    }
+  });
+
+  it('takes the width the source set for its own board over the net\'s', () => {
+    const k = target();
+    const rep = ok(importing(k, { project: 'ring', as: 'Ring' }, [], ringLedA([
+      { op: 'set_net', net: 'LED_A', track_mm: 0.3 },
+      { op: 'set_net', net: 'LED_A', track_mm: 0.8, board: 'Main' },
+    ])));
+    expect(ledA(k).attrs.boardTrackWidths).toEqual({ [findBoard(design(k), 'Ring')!.id]: 0.8 });
+    expect(byBoard(k)).toEqual({ Main: 0.4, 'LED board': 0.4, Ring: 0.8 });
+    expect(rep.nets.widths).toEqual([{ net: 'LED_A', mm: 0.8, here: 0.4, from: ['LED_A'] }]);
+  });
+
+  it('gives a merged net the wider of its source nets\' widths, whichever comes first', () => {
+    for (const [led, vled] of [[0.8, 0.6], [0.6, 0.8]]) {
+      const k = target();
+      const r = importing(k, { project: 'ring', as: 'Ring', nets: { VLED: 'LED_A' } }, [], ringLedA([
+        { op: 'set_net', net: 'LED_A', track_mm: led! },
+        { op: 'set_net', net: 'VLED', track_mm: vled! },
+      ]));
+      const rep = ok(r);
+      expect(rep.nets.merged).toEqual([{ net: 'LED_A', from: ['LED_A', 'VLED'] }]);
+      expect(ledA(k).attrs.boardTrackWidths).toEqual({ [findBoard(design(k), 'Ring')!.id]: 0.8 });
+      expect(ledA(k).attrs.trackWidth).toBe(0.4);
+      expect(rep.nets.widths).toEqual([{ net: 'LED_A', mm: 0.8, here: 0.4, from: ['LED_A', 'VLED'] }]);
+      expect(r.results[0]!.effect).toMatch(/LED_A 0\.8 mm \(the wider of LED_A [\d.]+ mm, VLED [\d.]+ mm; 0\.4 mm on the others\)/);
+    }
+  });
+
+  it('changes nothing on a dry run, and is undone like any edit', () => {
+    const src = ringLedA([{ op: 'set_net', net: 'LED_A', track_mm: 0.8 }]);
+    const k = target();
+    const before = k.exportDesign();
+    const was = JSON.stringify(design(k));
+    expect(importing(k, { project: 'ring', as: 'Ring' }, [], src, true).dryRun).toBe(true);
+    expect(JSON.stringify(design(k))).toBe(was);
+    ok(importing(k, { project: 'ring', as: 'Ring' }, [], src));
+    k.accept();
+    expect(ledA(k).attrs.boardTrackWidths).toBeDefined();
     k.undo();
     expect(k.exportDesign()).toBe(before);
   });

@@ -50,7 +50,9 @@ user before you split a design they did not ask to split.
 first with `design_query get_board { project }`, then `design_edit import_board { project, as: "LED" }`
 with `dry_run` to see which nets join by name. Keep a net that only shares a name apart with
 `nets: { "LED": "fresh" }`; map one onto another name with `nets: { "VLED": "+5V" }`. Recheck the
-joined nets the effect lists as differing (a voltage). Then apply it with the `mate` of the two
+joined nets the effect lists as differing (a voltage). A joined net whose width differs keeps its
+own width on the boards here and the source's on the new board (the effect lists it under "track widths
+kept"; two source nets on one net: the wider): nothing to set. Then apply it with the `mate` of the two
 connectors in the same transaction (the effect gives their new refdes). The parts arrive where the
 source has them (its placement, pins, sides, keep-outs, graphics and panel), with its planes, via
 groups and impedance rules. Drawn copper comes as drawn: the board is routed. The router's copper
