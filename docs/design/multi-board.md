@@ -117,8 +117,18 @@ Nets stay logical. The agent connects the MCU's `SDA` to the display's `SDA` as 
 - **`ERC.MATE_FIT`** (error): the two connectors do not plug into each other (a stack's pads do
   not land, or the pin counts differ without a map). **`ERC.MATE_SAME_BOARD`** (warning): both
   connectors ended up on one board.
-- Current: a power net's current through a mate is checked against the connector's per-pin
-  rating, when the card has one (the existing current check, [layout](layout.md) §14).
+- **`ERC.MATE_CURRENT`** (error): a net's current is more than the mated pin pairs that carry it
+  are rated for. The current is the net's `max_current`, else the sum of its stated loads (`set_net
+  loads`), as in the copper's current check ([layout](layout.md) §14): an upper bound, the whole
+  net's current through each mate that carries it, whichever side the source is on. Each pair is
+  rated the lower of its two pins' `maxCurrent` on the connector cards (the one side's where only
+  one card states it), and the pairs' ratings add up. The message gives the current, the rating in
+  all and per pin, and how many pin pairs the net needs. **`ERC.MATE_CURRENT_UNKNOWN`** (info,
+  like `DRC.CURRENT_UNKNOWN`): the net has a current, but some of its mated pins have no rating
+  and the rated ones do not carry it alone, so it is not checked, and not fine. A net with no
+  current known (no `max_current`, no loads) gets neither. Not yet: GND's return current (its own
+  `max_current` only, not the rails' sum) and which side of the mate the loads are on.
+  `mateCurrent` in `kernel/src/mates.ts`, built 2026-11-25.
 
 The router, the placer and the DRC each see one board: the part of each net on that board,
 ending at its connector pin. Nothing in them needs to know other boards exist.
