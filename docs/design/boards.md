@@ -51,8 +51,9 @@ first with `design_query get_board { project }`, then `design_edit import_board 
 with `dry_run` to see which nets join by name. Keep a net that only shares a name apart with
 `nets: { "LED": "fresh" }`; map one onto another name with `nets: { "VLED": "+5V" }`. Recheck the
 joined nets the effect lists as differing (a voltage). Then apply it with the `mate` of the two
-connectors in the same transaction (the effect gives their new refdes). The parts arrive unplaced:
-lay the board out (step 5 above).
+connectors in the same transaction (the effect gives their new refdes). The parts arrive where the
+source has them (its placement, pins, sides, keep-outs, graphics and panel); its copper does not:
+route the board (step 5 above).
 
 ## 3. Which kind of mate
 

@@ -63,9 +63,10 @@ boards that differ they ask which, unless the arguments give the stack-up (`h` a
 
 **A board of another project** (`import_board`, D29): every part of that project's board comes in onto a
 new board (or one with no parts yet) and a sheet of its own, nets joined by name (`nets` overrides; automatic
-nets made anew), with its blocks, outline, layers, rules, stack-up, fab tier and holes. The joined nets cross
-between the boards, so `ERC.BOARD_CROSSING` stands until the `mate` that goes in the same transaction. The
-placement and copper are later steps; the parts arrive unplaced for now.
+nets made anew), with its blocks, outline, layers, rules, stack-up, fab tier and holes, and its layout: the
+stored placement, the pins (`position`, `rel` too), sides, `near`/`belongs`/`room`, keep-outs, graphics and
+panel, ids remapped. The joined nets cross between the boards, so `ERC.BOARD_CROSSING` stands until the `mate`
+that goes in the same transaction. Copper is a later step; the board is routed afresh for now.
 
 **How it is built** (`kernel/src/boards.ts`): a *focus* is the design as if one board were its
 only one: that board's settings as `board`, only its parts, the nets with pins on them, and the
