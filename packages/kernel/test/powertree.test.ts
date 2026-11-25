@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
-import { buckTransaction } from './fixtures.ts';
+import { buck, buckTransaction, twoBoards } from './fixtures.ts';
 
 interface Rail {
   net: string;
   voltage: number | 'unknown';
-  source: { kind: string; ref?: string; regulator?: string; from?: string };
+  source: { kind: string; ref?: string; regulator?: string; from?: string; board?: string };
   through?: { ref: string; category: string; from: string }[];
   feeds?: string[];
   supplies?: string[];
-  loads?: { pin: string; a: number }[];
+  loads?: { pin: string; a: number; board?: string }[];
+  boards?: string[];
+  crosses?: { mate: string; a: string; a_board: string; b: string; b_board: string; pins: number }[];
   current: { max_a: number | 'unknown'; basis: string; loads_a?: number; feeds_a?: number | 'unknown'; budget: string };
   dissipation?: { ref: string; watts?: number; limit_w?: number; package?: string; status: string; missing?: string };
 }
@@ -107,5 +109,68 @@ describe('get_power_tree', () => {
     expect(rail(k, '+5V').current).toMatchObject({ max_a: 0.4, feeds_a: 0.5, budget: 'over' });
     // +3V3: 0.1 A of loads + 0.05 A through R1, within 0.5 A
     expect(rail(k, '+3V3').current).toMatchObject({ loads_a: 0.1, feeds_a: 0.05, budget: 'ok' });
+  });
+
+  it('answers a single board exactly as before: no board or mate fields', () => {
+    expect(tree(buck())).toEqual({
+      rails: [
+        {
+          net: '+3V3',
+          voltage: 3.3,
+          source: { kind: 'regulator', ref: 'U1', regulator: 'switching', from: '+12V' },
+          through: [{ ref: 'L1', category: 'inductor', from: 'SW' }],
+          current: { max_a: 2, basis: 'max_current', budget: 'unknown' },
+        },
+        {
+          net: '+12V',
+          voltage: 12,
+          source: { kind: 'connector', ref: 'J1' },
+          feeds: ['+3V3'],
+          supplies: ['U1'],
+          current: { max_a: 'unknown', basis: 'unknown', feeds_a: 'unknown', budget: 'unknown' },
+        },
+      ],
+    });
+  });
+});
+
+describe('get_power_tree on two boards', () => {
+  /** twoBoards: the buck on Main, +3V3 carried to the LED board by J2/J3, a stated load on the LED board's R4. */
+  const leds = (mate?: 'stack' | 'cable') => {
+    const k = twoBoards();
+    const r = k.transact({
+      summary: 'mate',
+      ops: [{ op: 'set_net', net: '+3V3', loads: [{ pin: 'R4.1', amps: 0.01 }] }, ...(mate ? [{ op: 'mate' as const, a: 'J2', b: 'J3', kind: mate }] : [])],
+    });
+    expect(r.status, JSON.stringify(r)).toBe('ok');
+    return k;
+  };
+
+  it('names the source board, the boards the rail is on, and the mate it crosses with its pin count', () => {
+    const k = leds('stack');
+    const mate = Object.values(k.draftDesign().mates!)[0]!;
+    expect(rail(k, '+3V3')).toMatchObject({
+      source: { kind: 'regulator', ref: 'U1', board: 'Main' },
+      boards: ['Main', 'LED board'],
+      loads: [{ pin: 'R4.1', a: 0.01, board: 'LED board' }],
+      crosses: [{ mate: mate.id, a: 'J2', a_board: 'Main', b: 'J3', b_board: 'LED board', pins: 1 }],
+    });
+  });
+
+  it('counts the pins of a cable mate that carry the rail', () => {
+    const k = leds('cable');
+    expect(rail(k, '+3V3').crosses).toEqual([expect.objectContaining({ a: 'J2', b: 'J3', pins: 1 })]);
+  });
+
+  it('gives a rail that stays on one board that board and no crosses', () => {
+    const r = rail(leds('stack'), '+12V');
+    expect(r).toMatchObject({ source: { kind: 'connector', ref: 'J1', board: 'Main' }, boards: ['Main'] });
+    expect(r.crosses).toBeUndefined();
+  });
+
+  it('says no crosses for a rail on two boards until the connectors are mated', () => {
+    const r = rail(leds(), '+3V3');
+    expect(r.boards).toEqual(['Main', 'LED board']);
+    expect(r.crosses).toBeUndefined();
   });
 });

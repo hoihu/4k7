@@ -3,11 +3,14 @@
  * (the regulator, connector or battery nearest upstream, or unknown), the series parts between that
  * source and the rail, the rails it feeds, its loads and current budget, and for a linear regulator's
  * output the dissipation SEM.LDO_DISSIPATION computes (linearRegulators). A current not stated is
- * "unknown", never 0 or fine. See docs/design/ops-api.md §6.
+ * "unknown", never 0 or fine. On a design of several boards each rail also names the boards it is on
+ * and the mates that carry it across. See docs/design/ops-api.md §6 and docs/design/multi-board.md §3.1.
  */
 import type { Design, Net } from '@4k7/schema';
 import { isSwitcher, linearRegulators } from './checks.ts';
-import { cardOf, isGroundNet, isPowerNet, natCmp } from './doc.ts';
+import { cardOf, isGroundNet, isPowerNet, natCmp, netMembers } from './doc.ts';
+import { boardList, boardNameOf, boardOf, multiBoard } from './boards.ts';
+import { matePairs } from './mates.ts';
 import { powerWalk, seriesEdges, type SeriesEdge } from './power.ts';
 import { statedLoads } from './current.ts';
 import { r3 } from './geom.ts';
@@ -18,6 +21,7 @@ interface Source {
   ref?: string;
   regulator?: 'linear' | 'switching';
   from?: string;
+  board?: string;
 }
 interface Hop {
   ref: string;
@@ -97,8 +101,37 @@ export function powerTreeAnswer(d: Design): unknown {
     if (u && u.rail.id !== n.id) (feeds.get(u.rail.id) ?? feeds.set(u.rail.id, []).get(u.rail.id)!).push({ net: n, same: u.same });
   }
 
+  // several boards: where a rail's parts are and which mated pin pairs carry it across
+  const multi = multiBoard(d);
+  const members = multi ? netMembers(d) : undefined;
+  const order = new Map(boardList(d).map((b, i) => [b.id, i]));
+  const boardAt = (refdes: string | undefined) => {
+    const c = refdes ? Object.values(d.components).find((x) => x.refdes === refdes) : undefined;
+    return c ? boardNameOf(d, boardOf(d, c)) : undefined;
+  };
+  const mated = multi
+    ? Object.values(d.mates ?? {}).flatMap((m) => {
+        const a = d.components[m.a];
+        const b = d.components[m.b];
+        return a && b ? [{ m, a, b, pairs: matePairs(d, m).pairs }] : [];
+      })
+    : [];
+  const crossing = (n: Net) =>
+    mated
+      .map(({ m, a, b, pairs }) => ({
+        mate: m.id,
+        a: a.refdes,
+        a_board: boardNameOf(d, boardOf(d, a)),
+        b: b.refdes,
+        b_board: boardNameOf(d, boardOf(d, b)),
+        pins: pairs.filter(([x, y]) => a.pins[x] === n.id && b.pins[y] === n.id).length,
+      }))
+      .filter((x) => x.pins > 0);
+
   const out = rails.map((n) => {
-    const { source, through } = info.get(n.id)!;
+    const { source: found, through } = info.get(n.id)!;
+    const srcBoard = multi ? boardAt(found.ref) : undefined;
+    const source = srcBoard ? { ...found, board: srcBoard } : found;
     const own = amps(n);
     const down = feeds.get(n.id) ?? [];
     let feedsA: number | Unknown | undefined;
@@ -117,7 +150,12 @@ export function powerTreeAnswer(d: Design): unknown {
       .filter((c) => !c.dnp && cardOf(d, c.part)?.pins.some((p) => p.type === 'pwr_in' && c.pins[p.number] === n.id))
       .map((c) => c.refdes)
       .sort(natCmp);
-    const loads = statedLoads(d, n.id).map((l) => ({ pin: `${d.components[l.componentId]?.refdes ?? '?'}.${l.pins.join('/')}`, a: l.amps }));
+    const loads = statedLoads(d, n.id).map((l) => {
+      const c = d.components[l.componentId];
+      return { pin: `${c?.refdes ?? '?'}.${l.pins.join('/')}`, a: l.amps, ...(multi && c ? { board: boardNameOf(d, boardOf(d, c)) } : {}) };
+    });
+    const on = multi ? [...new Set((members!.get(n.id) ?? []).map((m) => boardOf(d, m.comp)))].sort((x, y) => (order.get(x) ?? 0) - (order.get(y) ?? 0)).map((id) => boardNameOf(d, id)) : [];
+    const crosses = multi ? crossing(n) : [];
     const ldo = !through.length && source.regulator === 'linear' ? [...linear.values()].find((r) => r.outNet.id === n.id && r.component.refdes === source.ref) : undefined;
     return {
       net: n.name,
@@ -127,6 +165,8 @@ export function powerTreeAnswer(d: Design): unknown {
       ...(down.length ? { feeds: down.map((x) => x.net.name) } : {}),
       ...(supplies.length ? { supplies } : {}),
       ...(loads.length ? { loads } : {}),
+      ...(on.length ? { boards: on } : {}),
+      ...(crosses.length ? { crosses } : {}),
       current: {
         max_a: own.a,
         basis: own.basis,
