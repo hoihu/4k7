@@ -92,6 +92,11 @@ lay the board out (step 5 above).
   it, or `no_connect` both pins if the pin is spare.
 - **`ERC.MATE_FIT`**: the connectors do not plug into each other (another pitch, another count). Pick
   connectors that mate.
+- **`ERC.MATE_CURRENT`**: the net's current (its `max_current`, else its stated loads) is more
+  than its mated pins are rated for (the connector card's per-pin `maxCurrent`, added over the pins
+  that carry it). Put the net on more pin pairs (the message says how many), or pick a connector
+  rated for more. **`ERC.MATE_CURRENT_UNKNOWN`** (info): the connector's card has no pin rating, so
+  the check could not run; it is not fine. Read the contact rating from the datasheet.
 - **Power across the connector**: count the pins. A header pin carries about 1–3 A (its datasheet
   says). Put the supply and ground on enough pins for the current, and ground on several pins
   spread along the connector, so every signal has a return path near it.

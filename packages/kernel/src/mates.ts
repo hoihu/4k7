@@ -3,12 +3,13 @@
  * A mate says which pin of one connector meets which of the other, from its kind (a stack: from
  * the two footprints facing each other) or an explicit map, and the checks hold the nets to it:
  * two mated pins on different nets, a signal that ends at a mated pin, a net on two boards that no
- * mated pin carries across.
+ * mated pin carries across, a net's current against the pins that carry it.
  */
 import { footprintFor, packageOf } from '@4k7/parts';
 import type { Component, Design, Diagnostic, EditOp, Mate, OpResult, PartCard, PartPin } from '@4k7/schema';
 import { cardOf, isAutoNet, natCmp, netMembers, nextId, reject, resolveComponent } from './doc.ts';
 import { boardOf, multiBoard } from './boards.ts';
+import { statedLoads } from './current.ts';
 
 /** Pads closer than this land on each other (mm). */
 const LAND_MM = 0.2;
@@ -182,6 +183,8 @@ export function mateChecks(d: Design): Diagnostic[] {
       continue;
     }
     const wrong: string[] = [];
+    /** Per net, the mated pin pairs that carry it here. */
+    const through = new Map<string, [string, string][]>();
     for (const [pa, pb] of pairs) {
       const [na, nb] = [a.pins[pa], b.pins[pb]];
       const [la, lb] = [pinLabel(a, ca, pa), pinLabel(b, cb, pb)];
@@ -194,8 +197,10 @@ export function mateChecks(d: Design): Diagnostic[] {
         out.push({ code: 'ERC.MATE_OPEN', severity: 'warning', entities: [la], message: `${lb} is on ${netName(nb)}, but the pin it meets, ${la}, is on no net: ${netName(nb)} ends at the connector on board "${name(ba)}".` });
       } else if (na && na === nb) {
         carried.set(na, [...(carried.get(na) ?? []), [ba, bb]]);
+        through.set(na, [...(through.get(na) ?? []), [pa, pb]]);
       }
     }
+    out.push(...mateCurrent(d, m, through));
     // several pins wrong at once: the connector is mirrored or shifted, more likely than each net wrong
     if (wrong.length > 1) {
       const last = out.filter((x) => x.code === 'ERC.MATE_MISMATCH').at(-1)!;
@@ -224,6 +229,49 @@ export function mateChecks(d: Design): Diagnostic[] {
       entities: [`net:${n.name}`],
       message: `${label} has pins on ${where}, but no mated connector pin carries it from one board to the other: on the boards it is ${parts.size} nets. Put a pin of each mated connector on it${Object.keys(d.mates ?? {}).length ? '' : ' (join the boards with mate first)'}.`,
     });
+  }
+  return out;
+}
+
+const amps = (a: number) => `${Math.round(a * 1000) / 1000} A`;
+
+/**
+ * ERC.MATE_CURRENT: a net's current against the mated pin pairs that carry it, each pair rated the
+ * lower of its two pins' maxCurrent (one side's where only one card states it). The current is the
+ * net's max_current, else the sum of its stated loads: an upper bound, as in the copper's current
+ * check (layout.md §14). Unrated pins where the rated ones do not suffice: ERC.MATE_CURRENT_UNKNOWN
+ * (info, not fine); no current known: nothing. See docs/design/multi-board.md §3.1.
+ */
+function mateCurrent(d: Design, m: Mate, through: Map<string, [string, string][]>): Diagnostic[] {
+  const a = d.components[m.a]!;
+  const b = d.components[m.b]!;
+  const ca = cardOf(d, a.part);
+  const cb = cardOf(d, b.part);
+  const out: Diagnostic[] = [];
+  for (const [id, pairs] of through) {
+    const n = d.nets[id];
+    if (!n) continue;
+    const own = n.attrs.maxCurrent && n.attrs.maxCurrent > 0 ? n.attrs.maxCurrent : undefined;
+    const loads = statedLoads(d, id).reduce((s, l) => s + l.amps, 0);
+    const want = own ?? (loads > 0 ? loads : undefined);
+    if (!want) continue;
+    const basis = own ? 'max_current' : 'its stated loads';
+    const rates = pairs.map(([pa, pb]) => {
+      const r = [ca?.pins.find((p) => p.number === pa)?.maxCurrent, cb?.pins.find((p) => p.number === pb)?.maxCurrent].filter((x): x is number => x !== undefined);
+      return r.length ? Math.min(...r) : undefined;
+    });
+    const rated = rates.filter((x): x is number => x !== undefined);
+    const total = rated.reduce((s, x) => s + x, 0);
+    if (total >= want - 1e-9) continue;
+    const label = isAutoNet(n) ? `The net of ${pinLabel(a, ca, pairs[0]![0])}` : n.name;
+    const pins = `${pairs.length} mated pin pair${pairs.length > 1 ? 's' : ''} (${pairsText(d, m, pairs)})`;
+    const entities = [`net:${n.name}`, a.refdes, b.refdes];
+    if (rated.length < rates.length) {
+      out.push({ code: 'ERC.MATE_CURRENT_UNKNOWN', severity: 'info', entities, message: `${label} carries up to ${amps(want)} (${basis}) through ${a.refdes} ↔ ${b.refdes} on ${pins}, but ${rated.length ? 'some of these pins have' : 'the connector\'s card has'} no current rating, so whether the pins carry it is unknown (not checked, not fine). Look the contact rating up in the connector's datasheet, and put the net on enough pins for it.` });
+      continue;
+    }
+    const each = Math.min(...rated);
+    out.push({ code: 'ERC.MATE_CURRENT', severity: 'error', entities, message: `${label} carries up to ${amps(want)} (${basis}) through ${a.refdes} ↔ ${b.refdes} on ${pins}, rated ${amps(total)} in all (${amps(each)} per pin). Put the net on more pin pairs of the connector (at least ${Math.ceil(want / each - 1e-9)}), or use a connector rated for more.` });
   }
   return out;
 }
