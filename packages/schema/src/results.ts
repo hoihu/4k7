@@ -163,7 +163,7 @@ export interface BoardImportReport {
   /** The describe blocks appended, by their title here. */
   blocks: string[];
   constraints: number;
-  /** What the board took over, and what stayed behind (placement, copper, keep-outs). */
+  /** What the board took over (outline, build, holes, placement, keep-outs …), and what stayed behind (copper). */
   board_settings: string[];
   left_behind: string[];
 }
