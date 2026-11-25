@@ -55,7 +55,9 @@ shown. Queries: `get_board` and `get_fab_profiles` without `board` answer for ev
 one entry each; `get_fab_profiles` gives each board's layers and profile, and the presets once);
 `get_copper`, `get_current_map`, `try_placements` and `suggest_moves` need it. `get_summary` lists
 the boards (name, sheets, parts, and each board's stack-up and `currentRise`, which on several
-boards replace the design-wide `stackup`), each part's board, and the boards a net spans. `calc`
+boards replace the design-wide `stackup`), each part's board, and the boards a net spans. `get_power_tree`
+names, per rail, its source's board, the boards it is on, each stated load's board, and the mates that
+carry it across with how many mated pins (`crosses`; [ops-api](ops-api.md) §6). `calc`
 `impedance` and `track_current` take `board` for that board's stack-up and heating; without it on
 boards that differ they ask which, unless the arguments give the stack-up (`h` and `er`;
 `copper_um` and `rise_c`). `get_board_image` and

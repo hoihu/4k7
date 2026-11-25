@@ -234,6 +234,20 @@ transactions of the same ops.
                      "missing": "current" } } ] }  // with unknown: voltage | current | package
 ```
 
+On a design of several boards ([multi-board](multi-board.md)) each rail also says where it is; one board
+gives none of these fields:
+
+```jsonc
+{ "net": "+3V3",
+  "source": { "kind": "regulator", "ref": "U1", "board": "Main" },          // the source part's board
+  "loads": [{ "pin": "R4.1", "a": 0.01, "board": "LED board" }],          // each stated load's board
+  "boards": ["Main", "LED board"],                                        // the boards with a pin on the net, board order
+  "crosses": [{ "mate": "m_2k", "a": "J2", "a_board": "Main",            // the mates carrying it: both connectors,
+                "b": "J3", "b_board": "LED board", "pins": 1 }] }        // and how many mated pin pairs are on the net
+```
+
+A rail on two boards without `crosses` has no mated pin carrying it (`ERC.BOARD_CROSSING`).
+
 A source is a part's power output pin (a regulator; `from` is its power input's rail), a connector's pin
 on an external net, or a battery's pins (a part whose card says battery or cell, or refdes BT). Current
 then flows through series parts (inductors, ferrite beads, fuses, diodes, a choke's windings; a resistor
