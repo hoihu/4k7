@@ -1,9 +1,12 @@
 /**
  * The bring-up sheet of the design document: from the power tree (get_power_tree) and the test
  * points (add_test_points), the rails in the order to power them up, the voltage each should read,
- * where to probe it, and the current limit to set on the bench supply. See docs/design/layout.md §4.
+ * where to probe it, and the current limit to set on the bench supply. Of the whole design: on a design
+ * of several boards one sheet, the rails in one power-up order across the boards, each naming its boards,
+ * the mates it crosses and the board of each probe point. See docs/design/layout.md §4.
  */
 import type { BringUpPlan, BringUpRail, Design } from '@4k7/schema';
+import { boardNameOf, boardOf, multiBoard } from './boards.ts';
 import { cardOf, componentsSorted, natCmp } from './doc.ts';
 import { powerTreeAnswer } from './powertree.ts';
 import { isTestPoint, sourcePin, testPointLabel } from './testpoints.ts';
@@ -12,10 +15,12 @@ import { isTestPoint, sourcePin, testPointLabel } from './testpoints.ts';
 interface TreeRail {
   net: string;
   voltage: number | 'unknown';
-  source: { kind: 'regulator' | 'connector' | 'battery' | 'unknown'; ref?: string; regulator?: 'linear' | 'switching'; from?: string };
+  source: { kind: 'regulator' | 'connector' | 'battery' | 'unknown'; ref?: string; regulator?: 'linear' | 'switching'; from?: string; board?: string };
   through?: { ref: string; category: string; from: string }[];
   feeds?: string[];
   loads?: { pin: string; a: number }[];
+  boards?: string[];
+  crosses?: { a: string; a_board: string; b: string; b_board: string; pins: number }[];
   current: { max_a: number | 'unknown'; basis: string };
 }
 
@@ -75,22 +80,38 @@ export function bringUpPlan(d: Design): BringUpPlan {
     return sum > 0 ? { a: Math.round(sum * 1000) / 1000, basis } : max;
   };
 
+  // several boards: each part's board, named on the rails, the test points and the pins to probe
+  const multi = multiBoard(d);
+  const boardAt = (c: Design['components'][string]) => (multi ? { board: boardNameOf(d, boardOf(d, c)) } : {});
+  const byRef = new Map(Object.values(d.components).map((c) => [c.refdes, c]));
+
   // the test points on each net, and (without one) the pin the net comes from
-  const tps = new Map<string, { ref: string; label: string }[]>();
+  const tps = new Map<string, { ref: string; label: string; board?: string }[]>();
   for (const c of componentsSorted(d)) {
     const card = cardOf(d, c.part);
     if (c.dnp || !isTestPoint(card)) continue;
     const net = c.pins[card!.pins[0]!.number];
-    if (net) (tps.get(net) ?? tps.set(net, []).get(net)!).push({ ref: c.refdes, label: testPointLabel(d, c, card!) ?? c.refdes });
+    if (net) (tps.get(net) ?? tps.set(net, []).get(net)!).push({ ref: c.refdes, label: testPointLabel(d, c, card!) ?? c.refdes, ...boardAt(c) });
   }
   const netByName = new Map(Object.values(d.nets).map((n) => [n.name, n]));
-  const pinText = (net: string) => {
+  const pinName = (comp: Design['components'][string], pin: string) => {
+    const name = cardOf(d, comp.part)?.pins.find((p) => p.number === pin)?.name;
+    return `${comp.refdes}.${name && name !== pin ? name : pin}`;
+  };
+  const pinAt = (net: string) => {
     const n = netByName.get(net);
     const at = n && sourcePin(d, n);
-    if (!at) return undefined;
-    const name = cardOf(d, at.comp.part)?.pins.find((p) => p.number === at.pin)?.name;
-    return `${at.comp.refdes}.${name && name !== at.pin ? name : at.pin}`;
+    return at ? { probeAt: pinName(at.comp, at.pin), ...(multi ? { probeBoard: boardNameOf(d, boardOf(d, at.comp)) } : {}) } : {};
   };
+  // a rail crossing a mate: the board it reaches and the connector pin there, to probe it on the far side too
+  const crossings = (r: TreeRail, id: string): NonNullable<BringUpRail['crosses']> =>
+    (r.crosses ?? []).map((x) => {
+      const far = x.b_board === r.source.board ? 'a' : 'b';
+      const [near, farRef, farBoard] = far === 'b' ? [x.a, x.b, x.b_board] : [x.b, x.a, x.a_board];
+      const c = byRef.get(farRef);
+      const pin = c && Object.keys(c.pins).sort(natCmp).find((p) => c.pins[p] === id);
+      return { board: farBoard, through: `${near}↔${farRef}`, pins: x.pins, ...(c && pin ? { probeAt: pinName(c, pin) } : {}) };
+    });
 
   const sourceText = (r: TreeRail) => {
     const s = r.source;
@@ -102,20 +123,37 @@ export function bringUpPlan(d: Design): BringUpPlan {
   const rails: BringUpRail[] = order.map((r) => {
     const id = netByName.get(r.net)?.id ?? '';
     const testPoints = tps.get(id) ?? [];
-    const probeAt = testPoints.length ? undefined : pinText(r.net);
+    const probe = testPoints.length ? {} : pinAt(r.net);
+    const crosses = multi ? crossings(r, id) : [];
     let supply: BringUpRail['supply'];
     if (outside(r)) {
       const { a, basis } = draw(r);
       supply = { draw_a: a, basis, limit_a: a === 'unknown' ? 'unknown' : Math.ceil((a * MARGIN * 100) - 1e-9) / 100 };
     }
-    return { net: r.net, voltage: r.voltage, source: sourceText(r), input: outside(r), testPoints, ...(probeAt ? { probeAt } : {}), ...(supply ? { supply } : {}) };
+    return {
+      net: r.net,
+      voltage: r.voltage,
+      source: sourceText(r),
+      input: outside(r),
+      ...(multi ? { boards: r.boards ?? [] } : {}),
+      ...(crosses.length ? { crosses } : {}),
+      testPoints,
+      ...probe,
+      ...(supply ? { supply } : {}),
+    };
   });
 
   const volts = (v: number | 'unknown') => (v === 'unknown' ? 'the voltage (not stated)' : `${v} V`);
   const amps = (a: number) => (a < 1 ? `${Math.round(a * 1000)} mA` : `${+a.toFixed(2)} A`);
-  const where = (r: BringUpRail) => (r.testPoints.length ? `at ${r.testPoints.map((t) => `${t.ref} (${t.label})`).join(', ')}` : r.probeAt ? `at ${r.probeAt} (no test point)` : '(no test point, no pin found to probe)');
+  const on = (b?: string) => (b ? ` on ${b}` : '');
+  const where = (r: BringUpRail) =>
+    r.testPoints.length ? `at ${r.testPoints.map((t) => `${t.ref} (${t.label})${on(t.board)}`).join(', ')}` : r.probeAt ? `at ${r.probeAt}${on(r.probeBoard)} (no test point)` : '(no test point, no pin found to probe)';
+  // several boards: each step names the rail's boards, and where it crosses a mate, to check it on the far side too
+  const head = (r: BringUpRail) => (r.boards?.length ? ` (${r.boards.join(' + ')})` : '');
+  const across = (r: BringUpRail) =>
+    (r.crosses ?? []).map((x) => ` It reaches ${x.board} through ${x.through} (${x.pins} pin${x.pins === 1 ? '' : 's'}): check it there too${x.probeAt ? `, at ${x.probeAt}` : ''}.`).join('');
   const steps = [
-    `Before power: with the board unpowered, measure the resistance from each rail to ground (${rails.map((r) => r.net).join(', ')}); a reading near 0 Ω is a short to find first.`,
+    `Before power: with ${multi ? 'the boards mated and' : 'the board'} unpowered, measure the resistance from each rail to ground (${rails.map((r) => r.net).join(', ')}); a reading near 0 Ω is a short to find first.`,
     ...rails.map((r) => {
       if (r.supply) {
         const s = r.supply;
@@ -123,9 +161,9 @@ export function bringUpPlan(d: Design): BringUpPlan {
           s.limit_a === 'unknown'
             ? 'current limit unknown: start low (tens of mA) and raise it slowly while watching the current'
             : `current limit ${amps(s.limit_a)} (${MARGIN} × the ${amps(s.draw_a as number)} expected, from ${s.basis === 'loads' ? 'the loads stated' : 'the rails\' max_current'})`;
-        return `Power ${r.net}: set the bench supply to ${volts(r.voltage)}, ${limit}, and connect it ${r.source.startsWith('unknown') ? 'to the rail' : `at ${r.source.split(' ')[0]}`}. Check ${volts(r.voltage)} ${where(r)}.`;
+        return `Power ${r.net}${head(r)}: set the bench supply to ${volts(r.voltage)}, ${limit}, and connect it ${r.source.startsWith('unknown') ? 'to the rail' : `at ${r.source.split(' ')[0]}`}. Check ${volts(r.voltage)} ${where(r)}.${across(r)}`;
       }
-      return `Check ${r.net}: expect ${volts(r.voltage)} ${where(r)}, made by ${r.source}. If it is off, switch off before going on.`;
+      return `Check ${r.net}${head(r)}: expect ${volts(r.voltage)} ${where(r)}, made by ${r.source}.${across(r)} If it is off, switch off before going on.`;
     }),
   ];
   return { rails, steps };

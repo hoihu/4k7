@@ -218,9 +218,9 @@ export class Kernel {
     return { design: clone(this.draft), rev: this.rev };
   }
 
-  /** The working copy's bring-up sheet, for the design document (bringup.ts): of board `board` (several boards). */
-  bringUp(board: string = FIRST_BOARD): BringUpPlan {
-    return bringUpPlan(this.focus(this.draft, board));
+  /** The working copy's bring-up sheet, for the design document (bringup.ts): one of the whole design, all its boards. */
+  bringUp(): BringUpPlan {
+    return bringUpPlan(this.draft);
   }
 
   /** Placement only (fast): parts, outline, ratsnest and placement checks. */

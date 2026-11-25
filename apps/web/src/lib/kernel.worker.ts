@@ -41,7 +41,7 @@ const methods = {
   /** The working copy's board placed, not routed (fast): its parts, pads and sides, for what assembly costs. `board`: which (several boards). */
   boardPlacement: (board?: string) => kernel.boardPlacement(board),
   /** The working copy's bring-up sheet, for the design document. `board`: which (several boards). */
-  bringUp: (board?: string) => kernel.bringUp(board),
+  bringUp: () => kernel.bringUp(),
   /** Where every board stands (the assembly), first board first. */
   assembly: () => kernel.assembly(),
   /** Every board of the working copy placed, first board first. */
