@@ -1,6 +1,6 @@
 # Several boards in one design
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3): the op and the checks built (2026-11-22); the assembly they place, the 3D view of every board and the STEP file of them all built (2026-11-23, §6). The cost and stock checks of every board built (2026-11-23, §5), the enclosure script with every board (2026-11-23, §6); a combined BOM file is not built yet.
+> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3): the op and the checks built (2026-11-22); the assembly they place, the 3D view of every board and the STEP file of them all built (2026-11-23, §6). The cost and stock checks of every board built (2026-11-23, §5), the enclosure script with every board (2026-11-23, §6). The combined BOM file built (2026-11-25, §4).
 
 ## 1. Why
 
@@ -142,6 +142,16 @@ ending at its connector pin. Nothing in them needs to know other boards exist.
 | panel | the enclosure and the 3D assembly |
 | Gerber, drill, pick-and-place, fab check: one zip per board (`<design>-<board>.zip`) | the BOM: per board and combined; the cost and the order |
 
+The combined BOM (built 2026-11-25) is `<design>-combined-bom.csv`, from the Layout view's
+Combined BOM button beside Fab files, shown with two or more boards (`combinedBom` in
+`fab/src/gerber.ts`): the per-board BOM's lines (same grouping: part, value, package and numbers;
+not-fitted parts and bare pads left out) merged over the boards, a line on two boards holding all
+its designators and the total, in the house's BOM columns plus `Boards` (`Main×2, LED board×1`).
+It is for the user (buying, reading), not for upload: a house assembles each board from its own
+BOM in that board's zip, which does not change. A separate download rather than a file in each
+board's zip, so the zip a house takes stays the board's own. Cables and mating halves are not
+lines of it yet.
+
 A net is the system's, its settings too, except its track width: `set_net track_mm` with `board`
 sets the net's width on that board only (built 2026-11-24, after the bike lamp's merge: LED_A and
 LED_K want 0.4 mm on the main board and 0.8 mm on the LED board, and the agent set 0.8 mm on each
@@ -264,8 +274,8 @@ the hunk that added a board leaves its sheets and parts on the first board.
    every board and the STEP file of them all (built 2026-11-23). Still to come: an `edge` mate's
    board standing in its slot, a place for a cable's board.
 3. **System outputs.** Shared fab profile (built), the cost and stock checks of every board
-   (built 2026-11-23), the enclosure library with every board (built 2026-11-23); still to come:
-   a combined BOM file.
+   (built 2026-11-23), the enclosure library with every board (built 2026-11-23), a combined BOM
+   file (built 2026-11-25, §4).
 4. **Agent guide** (built 2026-11-23): [boards.md](boards.md), `get_guide boards`, and a line in
    the agent's instructions pointing to it: when to split a design, setting the boards up, which
    mate kind to choose, the checks, how to change from header to cable.
