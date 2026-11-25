@@ -1,6 +1,6 @@
 # Several boards in one design
 
-> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3): the op and the checks built (2026-11-22); the assembly they place, the 3D view of every board and the STEP file of them all built (2026-11-23, §6). The cost and stock checks of every board built (2026-11-23, §5), the enclosure script with every board (2026-11-23, §6); a combined BOM file is not built yet.
+> Part of the [architecture](../ARCHITECTURE.md). Status: step 1 built (2026-11-22): boards in the model, per-board layout and production files, the board picker (§9). Mates (§3): the op and the checks built (2026-11-22); the assembly they place, the 3D view of every board and the STEP file of them all built (2026-11-23, §6). The cost and stock checks of every board built (2026-11-23, §5), the enclosure script with every board (2026-11-23, §6). The combined BOM file built (2026-11-25, §4).
 
 ## 1. Why
 
@@ -65,9 +65,10 @@ boards that differ they ask which, unless the arguments give the stack-up (`h` a
 
 **A board of another project** (`import_board`, D29): every part of that project's board comes in onto a
 new board (or one with no parts yet) and a sheet of its own, nets joined by name (`nets` overrides; automatic
-nets made anew), with its blocks, outline, layers, rules, stack-up, fab tier and holes. The joined nets cross
-between the boards, so `ERC.BOARD_CROSSING` stands until the `mate` that goes in the same transaction. The
-placement and copper are later steps; the parts arrive unplaced for now.
+nets made anew), with its blocks, outline, layers, rules, stack-up, fab tier and holes, and its layout: the
+stored placement, the pins (`position`, `rel` too), sides, `near`/`belongs`/`room`, keep-outs, graphics and
+panel, ids remapped. The joined nets cross between the boards, so `ERC.BOARD_CROSSING` stands until the `mate`
+that goes in the same transaction. Copper is a later step; the board is routed afresh for now.
 
 **How it is built** (`kernel/src/boards.ts`): a *focus* is the design as if one board were its
 only one: that board's settings as `board`, only its parts, the nets with pins on them, and the
@@ -118,8 +119,18 @@ Nets stay logical. The agent connects the MCU's `SDA` to the display's `SDA` as 
 - **`ERC.MATE_FIT`** (error): the two connectors do not plug into each other (a stack's pads do
   not land, or the pin counts differ without a map). **`ERC.MATE_SAME_BOARD`** (warning): both
   connectors ended up on one board.
-- Current: a power net's current through a mate is checked against the connector's per-pin
-  rating, when the card has one (the existing current check, [layout](layout.md) §14).
+- **`ERC.MATE_CURRENT`** (error): a net's current is more than the mated pin pairs that carry it
+  are rated for. The current is the net's `max_current`, else the sum of its stated loads (`set_net
+  loads`), as in the copper's current check ([layout](layout.md) §14): an upper bound, the whole
+  net's current through each mate that carries it, whichever side the source is on. Each pair is
+  rated the lower of its two pins' `maxCurrent` on the connector cards (the one side's where only
+  one card states it), and the pairs' ratings add up. The message gives the current, the rating in
+  all and per pin, and how many pin pairs the net needs. **`ERC.MATE_CURRENT_UNKNOWN`** (info,
+  like `DRC.CURRENT_UNKNOWN`): the net has a current, but some of its mated pins have no rating
+  and the rated ones do not carry it alone, so it is not checked, and not fine. A net with no
+  current known (no `max_current`, no loads) gets neither. Not yet: GND's return current (its own
+  `max_current` only, not the rails' sum) and which side of the mate the loads are on.
+  `mateCurrent` in `kernel/src/mates.ts`, built 2026-11-25.
 
 The router, the placer and the DRC each see one board: the part of each net on that board,
 ending at its connector pin. Nothing in them needs to know other boards exist.
@@ -132,6 +143,16 @@ ending at its connector pin. Nothing in them needs to know other boards exist.
 | placement, routing, copper, DRC | the ERC and the mate checks |
 | panel | the enclosure and the 3D assembly |
 | Gerber, drill, pick-and-place, fab check: one zip per board (`<design>-<board>.zip`) | the BOM: per board and combined; the cost and the order |
+
+The combined BOM (built 2026-11-25) is `<design>-combined-bom.csv`, from the Layout view's
+Combined BOM button beside Fab files, shown with two or more boards (`combinedBom` in
+`fab/src/gerber.ts`): the per-board BOM's lines (same grouping: part, value, package and numbers;
+not-fitted parts and bare pads left out) merged over the boards, a line on two boards holding all
+its designators and the total, in the house's BOM columns plus `Boards` (`Main×2, LED board×1`).
+It is for the user (buying, reading), not for upload: a house assembles each board from its own
+BOM in that board's zip, which does not change. A separate download rather than a file in each
+board's zip, so the zip a house takes stays the board's own. Cables and mating halves are not
+lines of it yet.
 
 A net is the system's, its settings too, except its track width: `set_net track_mm` with `board`
 sets the net's width on that board only (built 2026-11-24, after the bike lamp's merge: LED_A and
@@ -198,6 +219,14 @@ board where it stands, and the STEP export writes them all (each board a sub-ass
 and parts, named after it, placed by the same transform). Not yet: `set_board placement3d` for
 a cable's board.
 
+Whether the stack fits (`kernel/src/stackfit.ts`, in `get_diagnostics`): every part with a 3D
+body is a box (its body outline, as tall as its body) and every PCB a slab of the board's
+outline, in the assembly frame; a part of one stacked board that reaches into a part or the PCB
+of another is `ASM.COLLIDES`, an error, with how far it reaches in. The two connectors of the mate
+joining the boards are left out, and so are parts without a 3D body (not checked, not reported).
+Where the height is assumed (no `height_mm`) it is a warning that says so. Boxes over-report at
+the corners of a round body.
+
 The enclosure library (built, [enclosure](enclosure.md) §3): as sketched below, but `at` is the
 point of the script's frame where a board's own origin is, with `rot` and `flipped`; `parts_info`
 covers every board's parts where they stand; `pcbs()` is every board; `hole_posts(from, { board })`
@@ -247,8 +276,8 @@ the hunk that added a board leaves its sheets and parts on the first board.
    every board and the STEP file of them all (built 2026-11-23). Still to come: an `edge` mate's
    board standing in its slot, a place for a cable's board.
 3. **System outputs.** Shared fab profile (built), the cost and stock checks of every board
-   (built 2026-11-23), the enclosure library with every board (built 2026-11-23); still to come:
-   a combined BOM file.
+   (built 2026-11-23), the enclosure library with every board (built 2026-11-23), a combined BOM
+   file (built 2026-11-25, §4).
 4. **Agent guide** (built 2026-11-23): [boards.md](boards.md), `get_guide boards`, and a line in
    the agent's instructions pointing to it: when to split a design, setting the boards up, which
    mate kind to choose, the checks, how to change from header to cable.

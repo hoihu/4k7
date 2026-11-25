@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { assemblyStep, boardFingerprint, boardNetDesign, boardStep, fabFiles, panelFabFiles, zip, type CopperCheck, type FabStamp } from '@4k7/fab';
+  import { assemblyStep, boardFingerprint, boardNetDesign, boardStep, combinedBom, fabFiles, panelFabFiles, zip, type CopperCheck, type FabStamp } from '@4k7/fab';
   import { checkFiles } from '../netcheckClient.ts';
   import { FIRST_BOARD, planeNames, userPlaced, whose, type Diagnostic, type CopperLayer, type HousePlacement } from '@4k7/schema';
   import { app } from '../app.svelte.ts';
@@ -255,6 +255,16 @@
     app.flash(`Exported ${all ? `the ${all.length} boards` : 'the board'} and ${step.parts} part${step.parts === 1 ? '' : 's'} as STEP${without}`);
   }
 
+  /** Several boards: the parts of all of them in one list, for the user (each board's own BOM is in its fab files). See docs/design/multi-board.md §4. */
+  async function exportCombinedBom() {
+    const all = await app.assemblyBoards().catch(() => null);
+    const design = app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : '4k7-board';
+    const file = all && combinedBom(all.map((x) => ({ name: x.at.name, b: x.board })), design, app.sourcing.house.id);
+    if (!file) return;
+    download(new Blob([file.content], { type: 'text/csv' }), file.name);
+    app.flash(`Exported the parts of the ${all!.length} boards in one BOM`);
+  }
+
   function focus(d: Diagnostic) {
     marker = d.at ?? null;
     app.selection = d.entities.filter((e) => b?.parts.some((p) => p.refdes === e));
@@ -440,6 +450,7 @@
         {#if b.parts.length}
           <div class="row2">
             <button class="btn" title="Gerber (copper, mask, paste, silkscreen, outline), Excellon drill, the netlist for the house's electrical test (IPC-D-356A), BOM (in {whose(app.sourcing.house)} form) and pick-and-place as a .zip; the files are read back and their copper held against the design first{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}: the files would not make a working board` : ''}" onclick={() => exportFab()}>Fab files ⤓</button>
+            {#if app.k && app.k.boards.length > 1}<button class="btn" title="The parts of every board in one list (.csv), in {whose(app.sourcing.house)} BOM columns with a Boards column giving each board's quantity: for buying and reading, not for upload (the house takes each board's own BOM, in its Fab files)" onclick={exportCombinedBom}>Combined BOM ⤓</button>{/if}
             <!-- (the panel view has its own Panel files button) -->
             {#if b.panel && mode !== 'panel'}<button class="btn" title="The {b.panel.settings.cols} × {b.panel.settings.rows} panel ({b.panel.w} × {b.panel.h} mm): Gerber, drill with the mouse bites and tooling holes, the netlist (IPC-D-356A), BOM and pick-and-place of every copy, as a .zip{errors ? `. The board has ${errors} error${errors > 1 ? 's' : ''}` : ''}" onclick={() => exportFab(true)}>Panel files ⤓</button>{/if}
             <button class="btn" title="The board and its parts in 3D as a STEP file (.step), for a mechanical CAD program: the outline with its holes and cutouts, and every part body, named by designator" onclick={exportStep}>STEP ⤓</button>

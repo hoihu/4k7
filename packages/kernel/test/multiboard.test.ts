@@ -465,6 +465,92 @@ describe('mates: the boards joined through a connector on each', () => {
     expect(k.transact({ summary: 'x', ops: [{ op: 'mate', a: 'J2', b: 'R4', kind: 'wire' }] }).rejection?.code).toBe('INVALID_OP');
   });
 
+  describe('the current of a power net through a mate', () => {
+    /** A 2×3 header J4 on the main board stacked on a socket J5 on the LED board, pins rated `amps` each (none: no rating on the card). */
+    const stacked = (amps?: number) => {
+      const k = twoBoards();
+      const d = k.committedDesign();
+      const card = (id: string) => ({
+        id,
+        mpn: id,
+        manufacturer: 'Acme',
+        description: '2×3 header',
+        category: 'connector' as const,
+        refPrefix: 'J',
+        package: id,
+        pins: [1, 2, 3, 4, 5, 6].map((n) => ({ number: String(n), name: String(n), type: 'passive' as const, ...(amps ? { maxCurrent: amps } : {}) })),
+        params: {},
+        provenance: { source: 'datasheet' as const },
+      });
+      d.parts['acme:HDR'] = card('acme:HDR');
+      d.parts['acme:SKT'] = card('acme:SKT');
+      k.load(d);
+      const pads = [1, 2, 3, 4, 5, 6].map((n) => ({ number: String(n), x: n % 2 ? -1.27 : 1.27, y: (Math.ceil(n / 2) - 2) * 2.54, w: 1.7, drill: 1 }));
+      ok(k, [
+        { op: 'add_part', part: 'acme:HDR', refdes: 'J4' },
+        { op: 'add_part', part: 'acme:SKT', refdes: 'J5', sheet: 'LED' },
+        { op: 'set_footprint', ref: 'J4', name: 'HDR_2x3', pads },
+        { op: 'set_footprint', ref: 'J5', name: 'SKT_2x3', pads: pads.map((p) => ({ ...p, x: -p.x })) },
+        { op: 'mate', a: 'J4', b: 'J5', kind: 'stack' },
+        // the old 1×2 pair leaves the design: the header carries the supply alone
+        { op: 'remove', ref: 'J2' },
+        { op: 'remove', ref: 'J3' },
+        { op: 'connect', pins: ['J4.2', 'J5.2', 'R4.1'], net: '+3V3' },
+        { op: 'connect', pins: ['J4.4', 'J5.4', 'D2.K'], net: 'GND' },
+        { op: 'connect', pins: ['J4.6', 'J5.6'], net: 'SIG' },
+      ]);
+      expect(codes(k, 'ERC.MATE_MISMATCH')).toEqual([]);
+      expect(codes(k, 'ERC.BOARD_CROSSING')).toEqual([]);
+      return k;
+    };
+
+    it('finds 2 A through one pin rated 1 A', () => {
+      const k = stacked(1);
+      const [x, ...more] = codes(k, 'ERC.MATE_CURRENT');
+      expect(more).toEqual([]);
+      expect(x).toMatchObject({ severity: 'error', entities: ['net:+3V3', 'J4', 'J5'] });
+      expect(x!.message).toMatch(/\+3V3/);
+      expect(x!.message).toMatch(/J4 ↔ J5/);
+      expect(x!.message).toMatch(/2 A/);
+      expect(x!.message).toMatch(/1 A/);
+      expect(x!.message).toMatch(/at least 2/);
+      expect(codes(k, 'ERC.MATE_CURRENT_UNKNOWN')).toEqual([]);
+    });
+
+    it('is fine with 2 A over three pins rated 1 A each', () => {
+      const k = stacked(1);
+      ok(k, [{ op: 'connect', pins: ['J4.1', 'J5.1', 'J4.3', 'J5.3', 'J4.2'], net: '+3V3' }]);
+      expect(codes(k, 'ERC.MATE_CURRENT')).toEqual([]);
+      expect(codes(k, 'ERC.MATE_CURRENT_UNKNOWN')).toEqual([]);
+    });
+
+    it('says unknown, not fine, where the connector\'s card has no pin rating', () => {
+      const k = stacked();
+      expect(codes(k, 'ERC.MATE_CURRENT')).toEqual([]);
+      const [x, ...more] = codes(k, 'ERC.MATE_CURRENT_UNKNOWN');
+      expect(more).toEqual([]);
+      expect(x).toMatchObject({ severity: 'info', entities: ['net:+3V3', 'J4', 'J5'] });
+      expect(x!.message).toMatch(/2 A/);
+      expect(x!.message).toMatch(/no current rating/);
+    });
+
+    it('says nothing of a net with no current', () => {
+      const k = stacked(1);
+      const all = [...codes(k, 'ERC.MATE_CURRENT'), ...codes(k, 'ERC.MATE_CURRENT_UNKNOWN')];
+      expect(all.map((x) => x.entities[0])).toEqual(['net:+3V3']);
+      // the rating unknown and the current unknown: quiet too
+      const u = stacked();
+      expect(codes(u, 'ERC.MATE_CURRENT_UNKNOWN').map((x) => x.entities[0])).toEqual(['net:+3V3']);
+    });
+
+    it('takes the stated loads where the net has no max_current', () => {
+      const k = stacked(1);
+      ok(k, [{ op: 'set_net', net: '+3V3', max_current: null }, { op: 'set_net', net: 'SIG', loads: [{ pin: 'J5.6', amps: 1.5 }] }]);
+      expect(codes(k, 'ERC.MATE_CURRENT').map((x) => x.entities[0])).toEqual(['net:SIG']);
+      expect(codes(k, 'ERC.MATE_CURRENT')[0]!.message).toMatch(/1\.5 A/);
+    });
+  });
+
   it('takes a mate away with its connector, or with the second board', () => {
     const k = twoBoards();
     ok(k, [{ op: 'mate', a: 'J2', b: 'J3', kind: 'stack' }]);

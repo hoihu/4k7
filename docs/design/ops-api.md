@@ -343,8 +343,14 @@ with `import_block` (`copyParts`).
   `shape`, cutouts), layers, rules, stack-up and mounting holes (net remapped) come along. The fab profile
   comes along when it is of this design's house (or the design has none); otherwise the board keeps this
   design's house and the effect says so (one house per design, `multi-board.md` §5).
-- Not yet (later D29 steps): the stored placement, positions, sides, keep-outs, graphics, panel and copper.
-  The parts arrive unplaced, and the effect and `importedBoard.left_behind` say so.
+- The layout comes along as the source stores it: the stored placement (`placement.parts`, rekeyed to the new
+  ids; the source's board frame is this board's), the placement constraints between copied parts (`position`
+  soft and hard with `a` and `rel` remapped, `layer` for the bottom side, `near`, `belongs`, and `room` under its
+  block's title here, ` (2)` where taken), keep-outs (`part` remapped, ids `KO1`… kept: they are per board),
+  graphics and panel. Only the parts the source pinned are pinned; with the same parts, outline and rules the
+  placer puts every part where the source has it (x, y, rot, side). The effect counts the placed and locked parts.
+- Not yet (D29 step 5): copper of any kind (drawn, laid, locked, router copper, via groups, planes, impedance).
+  `importedBoard.left_behind` is `["copper"]` and the effect says to route the board.
 - Joined nets now have pins on two boards: `ERC.BOARD_CROSSING` flags each until a mated connector pair carries
   it. Add the `mate` in the same transaction (the effect gives the new refdes; a `dry_run` shows them first).
 - The result's `importedBoard` gives the source and target board (`made`), the sheet, the new refdes, renames,

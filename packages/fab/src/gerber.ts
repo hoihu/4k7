@@ -465,6 +465,8 @@ function slotEnds(p: BoardPad): { x: number; y: number; to?: [number, number] } 
 const csv = (rows: (string | number)[][]) => rows.map((r) => r.map((c) => (/[",\n]/.test(String(c)) ? `"${String(c).replace(/"/g, '""')}"` : String(c))).join(',')).join('\n') + '\n';
 
 export interface BomLine {
+  /** The library part ("generic:R"), part of what groups the line. */
+  part: string;
   value: string;
   pkg: string;
   mpn: string;
@@ -487,6 +489,7 @@ export function bomLines(b: BoardView): BomLine[] {
     const key = `${p.part}|${p.value}|${p.pkg}|${p.mpn ?? ''}|${p.lcsc ?? ''}|${p.eurocircuits ?? ''}`;
     const plated = p.pads.filter((d) => !d.npth);
     const g = groups.get(key) ?? {
+      part: p.part,
       value: p.value,
       pkg: p.pkg,
       mpn: p.mpn ?? '',
@@ -510,18 +513,53 @@ const KINDS: Record<string, string> = { resistor: 'Resistor', capacitor: 'Capaci
 
 /** The BOM in the form an assembly house's upload reads ("jlcpcb", the default; "eurocircuits"; "pcbway"). */
 export function bom(b: BoardView, house = 'jlcpcb'): string {
-  const lines = bomLines(b);
+  return csv(bomTable(bomLines(b), house));
+}
+
+/** The BOM's header and one row per line, in the house's columns. */
+function bomTable(lines: BomLine[], house: string): (string | number)[][] {
   const what = (g: BomLine) => [KINDS[g.category] ?? '', g.value].filter(Boolean).join(' ');
   if (house === 'eurocircuits') {
     // Eurocircuits reads the MPN column (its generic numbers go there too), the designators and quantity, a description, value and package
-    return csv([['Reference Designators', 'Quantity', 'MPN', 'Manufacturer', 'Description', 'Value', 'Package'], ...lines.map((g) => [g.refs.join(','), g.refs.length, g.eurocircuits || g.mpn, g.eurocircuits && g.eurocircuits !== g.mpn ? '' : g.mfr, what(g), g.value, g.pkg])]);
+    return [['Reference Designators', 'Quantity', 'MPN', 'Manufacturer', 'Description', 'Value', 'Package'], ...lines.map((g) => [g.refs.join(','), g.refs.length, g.eurocircuits || g.mpn, g.eurocircuits && g.eurocircuits !== g.mpn ? '' : g.mfr, what(g), g.value, g.pkg])];
   }
   if (house === 'pcbway') {
     // PCBWay's BOM template; resistors and capacitors may go by value and package without a part number
-    return csv([['Item #', 'Designator', 'Qty', 'Manufacturer', 'Mfg Part #', 'Description / Value', 'Package/Footprint', 'Type'], ...lines.map((g, i) => [i + 1, g.refs.join(','), g.refs.length, g.mfr, g.mpn, what(g), g.pkg, g.tht ? 'Thru-hole' : 'SMD'])]);
+    return [['Item #', 'Designator', 'Qty', 'Manufacturer', 'Mfg Part #', 'Description / Value', 'Package/Footprint', 'Type'], ...lines.map((g, i) => [i + 1, g.refs.join(','), g.refs.length, g.mfr, g.mpn, what(g), g.pkg, g.tht ? 'Thru-hole' : 'SMD'])];
   }
   // "LCSC Part #" is the column JLCPCB's assembly upload reads
-  return csv([['Comment', 'Designator', 'Footprint', 'Quantity', 'MPN', 'Manufacturer', 'LCSC Part #'], ...lines.map((g) => [g.value, g.refs.join(','), g.pkg, g.refs.length, g.mpn, g.mfr, g.lcsc])]);
+  return [['Comment', 'Designator', 'Footprint', 'Quantity', 'MPN', 'Manufacturer', 'LCSC Part #'], ...lines.map((g) => [g.value, g.refs.join(','), g.pkg, g.refs.length, g.mpn, g.mfr, g.lcsc])];
+}
+
+/**
+ * The parts of every board of a design of several boards in one list, for the user (to buy for the
+ * whole product, or read): the house's BOM columns and a Boards column with each board's quantity
+ * ("Main×2, LED board×1"). Lines are grouped as each board's BOM groups them, a part on two boards
+ * is one line with the total; not-fitted parts are left out the same way. Not for upload: a house
+ * assembles one board at a time from that board's own BOM. Null with one board (nothing to combine).
+ * See docs/design/multi-board.md §4.
+ */
+export function combinedBom(boards: { name: string; b: BoardView }[], project: string, house = 'jlcpcb'): FabFile | null {
+  if (boards.length < 2) return null;
+  const natural = (a: string, c: string) => a.localeCompare(c, 'en', { numeric: true });
+  const groups = new Map<string, { line: BomLine; on: Map<string, number> }>();
+  for (const { name, b } of boards) {
+    for (const l of bomLines(b)) {
+      // (the per-board BOM's grouping: part, value, package and numbers)
+      const key = `${l.part}|${l.value}|${l.pkg}|${l.mpn}|${l.lcsc}|${l.eurocircuits}`;
+      const g = groups.get(key) ?? { line: { ...l, refs: [] }, on: new Map<string, number>() };
+      g.line.refs.push(...l.refs);
+      g.on.set(name, (g.on.get(name) ?? 0) + l.refs.length);
+      groups.set(key, g);
+    }
+  }
+  const all = [...groups.values()];
+  for (const g of all) g.line.refs.sort(natural);
+  all.sort((a, c) => natural(a.line.refs[0]!, c.line.refs[0]!));
+  const [head, ...rows] = bomTable(all.map((g) => g.line), house);
+  const boardsCol = (g: (typeof all)[number]) => [...g.on].map(([n, q]) => `${n}×${q}`).join(', ');
+  const base = project.replace(/[^\w.-]+/g, '_') || 'board';
+  return { name: `${base}-combined-bom.csv`, content: csv([[...head!, 'Boards'], ...rows.map((r, i) => [...r, boardsCol(all[i]!)])]) };
 }
 
 /**
