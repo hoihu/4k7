@@ -69,7 +69,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `describe`: the functional blocks (which group and order the schematic) and the design document text.
 - `import_block`: copy one functional block of another stored project into this design, with every boundary net mapped to a net here (§7). Optional sheet and board fields put its parts straight onto that sheet and board. Refused (`NET_UNMAPPED`, `BLOCK_UNKNOWN`, `PROJECT_UNKNOWN`, `PART_UNKNOWN`, `SHEET_UNKNOWN`, `BOARD_UNKNOWN`) with nothing changed; the effect lists the renames and the values to recheck.
 
-- `import_board`: copy a whole board of another stored project in as a board of this design (as: a new board, or an existing one with no parts), nets joined by name (§7). Refused (`PROJECT_UNKNOWN`, `BOARD_UNKNOWN`, `BOARD_INVALID`, `NET_UNKNOWN`, `PART_UNKNOWN`) with nothing changed; the effect lists joined, new and merged nets, renames, and joined nets whose attributes differ.
+- `import_board`: copy a whole board of another stored project in as a board of this design (as: a new board, or an existing one with no parts), nets joined by name (§7). Refused (`PROJECT_UNKNOWN`, `BOARD_UNKNOWN`, `BOARD_INVALID`, `NET_UNKNOWN`, `PART_UNKNOWN`) with nothing changed; the effect lists joined, new and merged nets, renames, joined nets whose attributes differ, and the track widths kept for the new board.
 
 ### Sheets and drawing
 
@@ -336,8 +336,15 @@ with `import_block` (`copyParts`).
   name (`{ "VLED": "+5V_LED" }`, made if missing) or `"fresh"` (kept apart, `LED_2` where `LED` is taken: an
   accidental clash). `prefix` goes before the names of nets made anew (`RING_LED`, `RING_N$3`). A `nets` key the
   source board does not have is refused (`NET_UNKNOWN`). Two source nets onto one net here is done but reported
-  as a merge. Joined nets whose voltage, max current, external, power or track width differ are listed to
+  as a merge. Joined nets whose voltage, max current, external or power differ are listed to
   recheck. A width the source set for its own board (`boardTrackWidths`) becomes this board's on a net made anew.
+- Track widths on a joined net: the source's width on its board (its `boardTrackWidths` for that board, else
+  its `trackWidth`; `ownTrackWidth`) applies to the new board only. Where it differs from the net's width on the
+  new board here, it is written to `boardTrackWidths[new board]`; the net's own `trackWidth` and the other
+  boards' entries are never touched (LED_A 0.4 mm on the main board stays, 0.8 mm on the LED board, so routing
+  the LED board leaves the main board's copper key alone). Equal or unset: nothing is written. Several source
+  nets merged onto one net: the widest. A width kept so is not a recheck; it is listed in `nets.widths`
+  (`net`, `mm`, `here`: the net's own, `from`: the source nets) and the effect ("track widths kept for board").
 - The source's describe blocks (their parts on this board, titles ` (2)` where taken), the drawing constraints
   and notes between copied parts (as `import_block`), and the board's outline (`width`, `height`, corner radius,
   `shape`, cutouts), layers, rules, stack-up and mounting holes (net remapped) come along. The fab profile

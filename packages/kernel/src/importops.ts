@@ -9,7 +9,7 @@ import { DEFAULT_BOARD, type BoardImportReport, type BoardSettings, type Compone
 import { allocRefdes, cardOf, closest, createNet, findNet, isAutoNet, natCmp, nextId, reject } from './doc.ts';
 import { addPart, addSheet } from './netops.ts';
 import { sheetByName } from './sheets.ts';
-import { addBoard, assignBoard, boardList, boardOf, findBoard, focusBoard, putSettings, resolveBoard, settingsOf } from './boards.ts';
+import { addBoard, assignBoard, boardList, boardOf, findBoard, focusBoard, ownTrackWidth, putSettings, resolveBoard, settingsOf } from './boards.ts';
 import { listBlocks, readProject } from './reuse.ts';
 import { carryCopper } from './boardimport.ts';
 
@@ -118,8 +118,8 @@ function copyConstraints(d: Design, src: Design, ids: ReadonlyMap<string, string
   return made;
 }
 
-/** The net attributes a joined net is rechecked for when the source's differ. */
-const RECHECK_ATTRS = ['voltage', 'maxCurrent', 'external', 'power', 'trackWidth'] as const;
+/** The net attributes a joined net is rechecked for when the source's differ (its track width is kept per board instead). */
+const RECHECK_ATTRS = ['voltage', 'maxCurrent', 'external', 'power'] as const;
 
 /**
  * import_board (D29): copy a whole board of another stored project in as a board of this design: every
@@ -168,8 +168,10 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
   };
   const { ids, nets, renamed, cards } = copyParts(d, f, comps, { project: op.project, sheet, board: boardId, join, prefix: op.prefix });
 
-  const report: BoardImportReport['nets'] = { joined: {}, made: [], merged: [], recheck: [] };
+  const report: BoardImportReport['nets'] = { joined: {}, made: [], merged: [], recheck: [], widths: [] };
   const onto = new Map<string, string[]>();
+  // a joined net's width as the source has it on its board, by source net: the new board's here
+  const widths = new Map<string, { name: string; mm: number }[]>();
   for (const [srcId, id] of nets) {
     const s = f.nets[srcId]!;
     const n = d.nets[id]!;
@@ -182,8 +184,23 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
       continue;
     }
     report.joined[s.name] = n.name;
+    const w = ownTrackWidth(f, s)?.mm;
+    if (w !== undefined) widths.set(id, [...(widths.get(id) ?? []), { name: s.name, mm: w }]);
     const differ = Object.fromEntries(RECHECK_ATTRS.filter((a) => s.attrs[a] !== undefined && s.attrs[a] !== n.attrs[a]).map((a) => [a, { here: n.attrs[a], source: s.attrs[a] }]));
     if (Object.keys(differ).length) report.recheck.push({ net: n.name, attrs: differ });
+  }
+  // the net's own width and the other boards' stay; the new board gets the source's where it differs (merged: the wider)
+  const widthText: string[] = [];
+  for (const [id, from] of [...widths].sort(([a], [b]) => natCmp(d.nets[a]!.name, d.nets[b]!.name))) {
+    const n = d.nets[id]!;
+    const mm = Math.max(...from.map((x) => x.mm));
+    if (mm === (n.attrs.boardTrackWidths?.[boardId] ?? n.attrs.trackWidth)) continue;
+    n.attrs.boardTrackWidths = { ...n.attrs.boardTrackWidths, [boardId]: mm };
+    const here = n.attrs.trackWidth;
+    from.sort((a, b) => natCmp(a.name, b.name));
+    report.widths.push({ net: n.name, mm, ...(here !== undefined ? { here } : {}), from: from.map((x) => x.name) });
+    const wider = from.length > 1 ? `the wider of ${from.map((x) => `${x.name} ${x.mm} mm`).join(', ')}; ` : '';
+    widthText.push(`${n.name} ${mm} mm (${wider}${here !== undefined ? `${here} mm` : "the rules' width"} on the others)`);
   }
   report.made = [...onto.keys()].filter((id) => !before.has(id)).map((id) => d.nets[id]!.name).sort(natCmp);
   report.merged = [...onto].filter(([, from]) => from.length > 1).map(([id, from]) => ({ net: d.nets[id]!.name, from: from.sort(natCmp) }));
@@ -268,6 +285,7 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
     `; nets joined ${joinedText || 'none'}; made ${report.made.join(', ') || 'none'}` +
     (report.merged.length ? `; MERGED (several source nets on one net here): ${report.merged.map((m) => `${m.from.join(' + ')} → ${m.net}`).join(', ')}` : '') +
     (report.recheck.length ? `; joined nets to recheck (attributes differ): ${report.recheck.map((r) => `${r.net} (${Object.entries(r.attrs).map(([a, v]) => `${a} ${String(v.here ?? 'unset')} here, ${String(v.source)} in ${op.project}`).join(', ')})`).join('; ')}` : '') +
+    (report.widths.length ? `; track widths kept for board "${boardName}": ${widthText.join(', ')}` : '') +
     (Object.keys(renamed.refdes).length ? `; renamed ${list(renamed.refdes)} (silkscreen changes: export that board's files again)` : '') +
     (Object.keys(renamed.nets).length ? `; nets renamed ${list(renamed.nets)}` : '') +
     (cards.project.length ? `; not in the library, card taken from ${op.project}: ${cards.project.join(', ')}` : '') +

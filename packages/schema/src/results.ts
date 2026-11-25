@@ -159,6 +159,11 @@ export interface BoardImportReport {
     merged: { net: string; from: string[] }[];
     /** Joined nets whose attributes differ here from the source's (voltage, max current …): to check. */
     recheck: { net: string; attrs: Record<string, { here: unknown; source: unknown }> }[];
+    /**
+     * Joined nets whose source width differs from theirs on the new board: `mm` is now set for that board
+     * only (the net's own width `here`, absent: the rules'), from these source nets (several: the wider).
+     */
+    widths: { net: string; mm: number; here?: number; from: string[] }[];
   };
   /** The describe blocks appended, by their title here. */
   blocks: string[];
