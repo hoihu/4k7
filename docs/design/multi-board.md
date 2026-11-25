@@ -63,9 +63,10 @@ boards that differ they ask which, unless the arguments give the stack-up (`h` a
 
 **A board of another project** (`import_board`, D29): every part of that project's board comes in onto a
 new board (or one with no parts yet) and a sheet of its own, nets joined by name (`nets` overrides; automatic
-nets made anew), with its blocks, outline, layers, rules, stack-up, fab tier and holes. The joined nets cross
-between the boards, so `ERC.BOARD_CROSSING` stands until the `mate` that goes in the same transaction. The
-placement and copper are later steps; the parts arrive unplaced for now.
+nets made anew), with its blocks, outline, layers, rules, stack-up, fab tier and holes, and its layout: the
+stored placement, the pins (`position`, `rel` too), sides, `near`/`belongs`/`room`, keep-outs, graphics and
+panel, ids remapped. The joined nets cross between the boards, so `ERC.BOARD_CROSSING` stands until the `mate`
+that goes in the same transaction. Copper is a later step; the board is routed afresh for now.
 
 **How it is built** (`kernel/src/boards.ts`): a *focus* is the design as if one board were its
 only one: that board's settings as `board`, only its parts, the nets with pins on them, and the
@@ -116,8 +117,18 @@ Nets stay logical. The agent connects the MCU's `SDA` to the display's `SDA` as 
 - **`ERC.MATE_FIT`** (error): the two connectors do not plug into each other (a stack's pads do
   not land, or the pin counts differ without a map). **`ERC.MATE_SAME_BOARD`** (warning): both
   connectors ended up on one board.
-- Current: a power net's current through a mate is checked against the connector's per-pin
-  rating, when the card has one (the existing current check, [layout](layout.md) §14).
+- **`ERC.MATE_CURRENT`** (error): a net's current is more than the mated pin pairs that carry it
+  are rated for. The current is the net's `max_current`, else the sum of its stated loads (`set_net
+  loads`), as in the copper's current check ([layout](layout.md) §14): an upper bound, the whole
+  net's current through each mate that carries it, whichever side the source is on. Each pair is
+  rated the lower of its two pins' `maxCurrent` on the connector cards (the one side's where only
+  one card states it), and the pairs' ratings add up. The message gives the current, the rating in
+  all and per pin, and how many pin pairs the net needs. **`ERC.MATE_CURRENT_UNKNOWN`** (info,
+  like `DRC.CURRENT_UNKNOWN`): the net has a current, but some of its mated pins have no rating
+  and the rated ones do not carry it alone, so it is not checked, and not fine. A net with no
+  current known (no `max_current`, no loads) gets neither. Not yet: GND's return current (its own
+  `max_current` only, not the rails' sum) and which side of the mate the loads are on.
+  `mateCurrent` in `kernel/src/mates.ts`, built 2026-11-25.
 
 The router, the placer and the DRC each see one board: the part of each net on that board,
 ending at its connector pin. Nothing in them needs to know other boards exist.
@@ -205,6 +216,14 @@ board no stack reaches leave the board beside the others, 10 mm apart, with the 
 board where it stands, and the STEP export writes them all (each board a sub-assembly of its PCB
 and parts, named after it, placed by the same transform). Not yet: `set_board placement3d` for
 a cable's board.
+
+Whether the stack fits (`kernel/src/stackfit.ts`, in `get_diagnostics`): every part with a 3D
+body is a box (its body outline, as tall as its body) and every PCB a slab of the board's
+outline, in the assembly frame; a part of one stacked board that reaches into a part or the PCB
+of another is `ASM.COLLIDES`, an error, with how far it reaches in. The two connectors of the mate
+joining the boards are left out, and so are parts without a 3D body (not checked, not reported).
+Where the height is assumed (no `height_mm`) it is a warning that says so. Boxes over-report at
+the corners of a round body.
 
 The enclosure library (built, [enclosure](enclosure.md) §3): as sketched below, but `at` is the
 point of the script's frame where a board's own origin is, with `rot` and `flipped`; `parts_info`
