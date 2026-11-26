@@ -249,6 +249,60 @@ describe('import_board', () => {
     expect(JSON.stringify(design(two))).toBe(was);
   });
 
+  it('keeps the footprint a generic part had in the source, on a card of its own; the parts here keep theirs (D30.6)', () => {
+    // the ring's J1 and J5 on land patterns of their own; the open design's J5 on a socket, J2 and J3 on the library's header
+    const header = [{ number: '1', x: -1.25, y: 0, w: 1.2, h: 1.8 }, { number: '2', x: 1.25, y: 0, w: 1.2, h: 1.8 }];
+    const three = (w: number, h: number, pitch: number) => ['1', '2', '3'].map((number, i) => ({ number, x: (i - 1) * pitch, y: 0, w, h }));
+    const srcK = ringKernel([
+      { op: 'set_footprint', ref: 'J1', name: 'HDR-OWN', pads: header },
+      { op: 'add_part', part: 'generic:CONN_1x2', refdes: 'J6' },
+      { op: 'add_part', part: 'generic:CONN_1x3', refdes: 'J5' },
+      { op: 'set_footprint', ref: 'J5', name: 'HDR3-OWN', pads: three(1.2, 1.8, 2.54) },
+    ]);
+    const src = JSON.parse(srcK.exportDesign()) as Design;
+    const k = twoBoards();
+    expect(k.transact({ summary: 'socket', ops: [{ op: 'add_part', part: 'generic:CONN_1x3', refdes: 'J5', sheet: 'LED' }, { op: 'set_footprint', ref: 'J5', name: 'SOCKET', pads: three(3, 1, 3.5) }] }).status).toBe('ok');
+    k.accept();
+    const parts = JSON.stringify(design(k).parts);
+    const pads = (k2: Kernel, board: string | undefined, ref: string) =>
+      k2.board({}, board ? findBoard(design(k2), board)!.id : undefined).parts.find((p) => p.refdes === ref)!.pads.map(({ number, x, y, w, h }) => ({ number, x, y, w, h }));
+    const own = ['J2', 'J3', 'J5'].map((ref) => [ref, pads(k, ref === 'J2' ? undefined : 'LED board', ref)] as const);
+    const r = importing(k, { project: 'ring', as: 'Ring' }, [], sources({ ring: src }));
+    const rep = ok(r);
+    const d = design(k);
+    const j1 = rep.renamed.refdes.J1 ?? 'J1';
+    const j5 = rep.renamed.refdes.J5 ?? 'J5';
+    const j6 = rep.renamed.refdes.J6 ?? 'J6';
+    // J1 and J6 shared one card there: they share the one new card here
+    expect([by(d, j1).part, by(d, j6).part, by(d, j5).part]).toEqual(['generic:CONN_1x2~2', 'generic:CONN_1x2~2', 'generic:CONN_1x3~2']);
+    expect(d.parts['generic:CONN_1x2~2']!.packageInfo).toEqual(src.parts['generic:CONN_1x2']!.packageInfo);
+    expect(d.parts['generic:CONN_1x3~2']!.packageInfo).toEqual(src.parts['generic:CONN_1x3']!.packageInfo);
+    // the cards and footprints of the parts already here are as they were
+    expect(JSON.stringify(Object.fromEntries(Object.entries(d.parts).filter(([id]) => !id.includes('~'))))).toBe(parts);
+    for (const [ref, was] of own) expect(pads(k, ref === 'J2' ? undefined : 'LED board', ref), ref).toEqual(was);
+    // the locked J1 lands on the source's pads, where the source has them
+    expect(pads(k, 'Ring', j1)).toEqual(pads(srcK, undefined, 'J1'));
+    expect(rep.footprints).toEqual([{ ref: j1, card: 'generic:CONN_1x2~2' }, { ref: j5, card: 'generic:CONN_1x3~2' }, { ref: j6, card: 'generic:CONN_1x2~2' }]);
+    expect(r.results[0]!.effect).toContain(`${j1} keeps its footprint from ring (card generic:CONN_1x2~2)`);
+    // saved and loaded, then undone: the same
+    k.accept();
+    const saved = k.exportDesign();
+    const again = new Kernel();
+    again.load(JSON.parse(saved) as Design);
+    expect(pads(again, 'Ring', j1)).toEqual(pads(srcK, undefined, 'J1'));
+    k.undo();
+    expect(JSON.stringify(design(k).parts)).toBe(parts);
+  });
+
+  it('brings no card and no footprint note where the footprint is the same here', () => {
+    const k = twoBoards();
+    const parts = JSON.stringify(design(k).parts);
+    const r = importing(k, { project: 'ring', as: 'Ring' });
+    expect(ok(r).footprints).toEqual([]);
+    expect(r.results[0]!.effect).not.toMatch(/keeps its footprint/);
+    expect(JSON.stringify(design(k).parts)).toBe(parts);
+  });
+
   it('is undone like any edit', () => {
     const k = main();
     const before = k.exportDesign();

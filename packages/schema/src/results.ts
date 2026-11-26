@@ -150,6 +150,7 @@ export interface BoardImportReport {
   parts: string[];
   renamed: ImportReport['renamed'];
   cards: ImportReport['cards'];
+  footprints: ImportReport['footprints'];
   nets: {
     /** Source nets that joined a net this design had: source name → net here. */
     joined: Record<string, string>;
@@ -180,6 +181,12 @@ export interface ImportReport {
   renamed: { refdes: Record<string, string>; nets: Record<string, string> };
   /** Part ids, by where their card came from: this design or the library, or the source project's file. */
   cards: { library: string[]; project: string[] };
+  /**
+   * Generic parts that would have had another footprint here (the source gave the card a land pattern of
+   * its own, or its package defaults differ): per part (new refdes), the `package` pinned on it, or the
+   * card of its own it is on now (a copy of the source's, e.g. generic:CONN_1x2~2).
+   */
+  footprints: { ref: string; package?: string; card?: string }[];
   /** Values chosen for the other design: per part (new refdes), its params and why to look. */
   recheck: { ref: string; params: Record<string, string>; why: string }[];
 }

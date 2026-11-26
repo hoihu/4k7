@@ -53,7 +53,9 @@ with `dry_run` to see which nets join by name. Keep a net that only shares a nam
 joined nets the effect lists as differing (a voltage). A joined net whose width differs keeps its
 own width on the boards here and the source's on the new board (the effect lists it under "track widths
 kept"; two source nets on one net: the wider): nothing to set. Then apply it with the `mate` of the two
-connectors in the same transaction (the effect gives their new refdes). The parts arrive where the
+connectors in the same transaction (the effect gives their new refdes). The parts arrive on their own footprints (a generic
+part the source gave its own land pattern on a card of its own, `generic:…~2`: the effect says "keeps its
+footprint"; the parts here keep theirs) and where the
 source has them (its placement, pins, sides, keep-outs, graphics and panel), with its planes, via
 groups and impedance rules. Drawn copper comes as drawn: the board is routed. The router's copper
 comes as locked copper when it was routed as it stands: route the board (step 5 above), which lays

@@ -5,8 +5,9 @@
  * (Kernel.transact's `sources`), so the op itself touches no file and dry runs, review and undo work
  * as for any edit op. See docs/design/ops-api.md §7.
  */
-import { DEFAULT_BOARD, type BoardImportReport, type BoardSettings, type Component, type Constraint, type Design, type EditOp, type ImportReport, type NetAttrs, type OpResult } from '@4k7/schema';
-import { allocRefdes, cardOf, closest, createNet, findNet, isAutoNet, natCmp, nextId, reject } from './doc.ts';
+import { DEFAULT_BOARD, type BoardImportReport, type BoardSettings, type Component, type Constraint, type Design, type EditOp, type ImportReport, type NetAttrs, type OpResult, type PartCard } from '@4k7/schema';
+import { getBuiltinPart, packageChoice, packageOf, standardPackage } from '@4k7/parts';
+import { allocRefdes, cardOf, closest, createNet, findNet, isAutoNet, natCmp, nextId, paramsOf, reject } from './doc.ts';
 import { addPart, addSheet } from './netops.ts';
 import { sheetByName } from './sheets.ts';
 import { addBoard, assignBoard, boardList, boardOf, findBoard, focusBoard, ownTrackWidth, putSettings, resolveBoard, settingsOf } from './boards.ts';
@@ -51,7 +52,7 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
   const board = op.board !== undefined ? resolveBoard(d, op.board) : undefined;
 
   // boundary and mapped internal nets join the mapped net, the other internal ones are made anew
-  const { ids, nets, renamed, cards } = copyParts(d, src, comps, { project: op.project, sheet, board: board?.id, join: (name) => op.nets[name], prefix: op.prefix });
+  const { ids, nets, renamed, cards, footprints } = copyParts(d, src, comps, { project: op.project, sheet, board: board?.id, join: (name) => op.nets[name], prefix: op.prefix });
 
   // its describe block, and the constraints on its parts that say how it is drawn
   const title = appendBlock(d, block.title, [...ids.values()], block.text);
@@ -70,7 +71,7 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
     recheck.push({ ref: refOf(c.id), params, why: sets.length ? `sets ${[...new Set(sets)].join(', ')}` : `chosen for ${op.project}` });
   }
 
-  const imported: ImportReport = { project: op.project, block: title, renamed, cards, recheck };
+  const imported: ImportReport = { project: op.project, block: title, renamed, cards, footprints, recheck };
   const mappedInternal = lb.internal_nets.filter((n) => op.nets[n] !== undefined);
   const list = (m: Record<string, string>) => Object.entries(m).map(([a, b]) => `${a} → ${b}`).join(', ');
   const effect =
@@ -83,6 +84,7 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
     (Object.keys(renamed.refdes).length ? `; renamed ${list(renamed.refdes)}` : '') +
     (Object.keys(renamed.nets).length ? `; nets renamed ${list(renamed.nets)}` : '') +
     (cards.project.length ? `; not in the library, card taken from ${op.project}: ${cards.project.join(', ')}` : '') +
+    keptText(op.project, footprints) +
     (recheck.length ? `; values to recheck (chosen for ${op.project}): ${recheck.map((x) => `${x.ref} ${Object.values(x.params).join(' ')}${x.why.startsWith('sets') ? ` (${x.why})` : ''}`).join(', ')}` : '');
   return { op: 'import_block', effect, ids: [...ids.values(), ...new Set(nets.values())], imported };
 }
@@ -166,7 +168,7 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
     if (o !== undefined) return o;
     return findNet(d, name) ? name : undefined;
   };
-  const { ids, nets, renamed, cards } = copyParts(d, f, comps, { project: op.project, sheet, board: boardId, join, prefix: op.prefix });
+  const { ids, nets, renamed, cards, footprints } = copyParts(d, f, comps, { project: op.project, sheet, board: boardId, join, prefix: op.prefix });
 
   const report: BoardImportReport['nets'] = { joined: {}, made: [], merged: [], recheck: [], widths: [] };
   const onto = new Map<string, string[]>();
@@ -275,7 +277,7 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
   const left = copper.left;
   const parts = comps.map((c) => d.components[ids.get(c.id)!]!.refdes);
   const importedBoard: BoardImportReport = {
-    project: op.project, from: entry.name, board: boardName, made: !here, sheet: d.sheets[sheet]!.name, parts, renamed, cards,
+    project: op.project, from: entry.name, board: boardName, made: !here, sheet: d.sheets[sheet]!.name, parts, renamed, cards, footprints,
     nets: report, blocks, constraints, board_settings: took, left_behind: left,
   };
   const list = (m: Record<string, string>) => Object.entries(m).map(([a, b]) => `${a} → ${b}`).join(', ');
@@ -289,6 +291,7 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
     (Object.keys(renamed.refdes).length ? `; renamed ${list(renamed.refdes)} (silkscreen changes: export that board's files again)` : '') +
     (Object.keys(renamed.nets).length ? `; nets renamed ${list(renamed.nets)}` : '') +
     (cards.project.length ? `; not in the library, card taken from ${op.project}: ${cards.project.join(', ')}` : '') +
+    keptText(op.project, footprints) +
     (blocks.length ? `; blocks ${blocks.join(', ')}` : '') +
     (constraints ? `, ${constraints} constraint(s)` : '') +
     `; board: ${took.join(', ')}${fab}` +
@@ -317,7 +320,12 @@ export interface Copied {
   nets: Map<string, string>;
   renamed: ImportReport['renamed'];
   cards: ImportReport['cards'];
+  footprints: ImportReport['footprints'];
 }
+
+/** The effect's note on the generic parts that kept their source footprint (D30.6). */
+const keptText = (project: string, kept: ImportReport['footprints']) =>
+  kept.map((k) => `; ${k.ref} keeps its footprint from ${project} (${k.card ? `card ${k.card}` : `package ${k.package}`})`).join('');
 
 /**
  * Copy parts of `src` into `d` with their cards, params, no-connects and nets: what import_block does for
@@ -339,6 +347,34 @@ export function copyParts(d: Design, src: Design, comps: Component[], to: CopyTa
     (here ? cards.library : cards.project).push(id);
   }
 
+  // a generic part keeps the footprint it had in the source (D30.6): its package pinned on it where only the
+  // package's name differs (defaults), else a copy of the source's card of its own, `<id>~<n>`, shared by the
+  // parts that shared the card there. The cards of the parts already here stay as they are.
+  const footprints: ImportReport['footprints'] = [];
+  const own = new Map<string, string>();
+  const keep = (c: Component, ref: string): { part: string; params: Record<string, string> } => {
+    const params = { ...c.params };
+    const was = src.parts[c.part] ?? getBuiltinPart(c.part);
+    const want = was && c.part.startsWith('generic:') ? packageOf(was, c.params, src.packageDefaults) : null;
+    const same = (card: PartCard, p: Record<string, string>) => JSON.stringify(packageOf(card, p, d.packageDefaults)) === JSON.stringify(want);
+    const here = cardOf(d, c.part)!;
+    if (!was || !want || same(here, params)) return { part: c.part, params };
+    const name = was.packageInfo ? undefined : packageChoice(was, c.params, src.packageDefaults)?.name;
+    const pinned = name && standardPackage(name, was.pins.length) && 'package' in paramsOf(was) ? { ...params, package: name } : params;
+    if (pinned !== params && same(here, pinned)) {
+      footprints.push({ ref, package: name });
+      return { part: c.part, params: pinned };
+    }
+    let id = own.get(c.part);
+    if (!id) {
+      for (let i = 2; cardOf(d, (id = `${c.part}~${i}`)); i++);
+      d.parts[id] = { ...structuredClone(was), id };
+      own.set(c.part, id);
+    }
+    footprints.push({ ref, card: id });
+    return { part: id, params: pinned };
+  };
+
   // the parts, keeping their refdes where it is free here, else the next free number of its letters
   const renamed: ImportReport['renamed'] = { refdes: {}, nets: {} };
   const ids = new Map<string, string>();
@@ -346,7 +382,8 @@ export function copyParts(d: Design, src: Design, comps: Component[], to: CopyTa
     const taken = Object.values(d.components).some((x) => x.refdes === c.refdes);
     const refdes = taken ? allocRefdes(d, c.refdes.match(/^[A-Za-z_]+/)?.[0] ?? cardOf(d, c.part)!.refPrefix) : c.refdes;
     if (taken) renamed.refdes[c.refdes] = refdes;
-    const r = addPart(d, { op: 'add_part', part: c.part, refdes, params: { ...c.params }, ...(to.sheet ? { sheet: to.sheet } : {}) });
+    const { part, params } = keep(c, refdes);
+    const r = addPart(d, { op: 'add_part', part, refdes, params, ...(to.sheet ? { sheet: to.sheet } : {}) });
     const nc = d.components[r.ids![0]!]!;
     nc.noConnect = [...c.noConnect];
     if (c.dnp) nc.dnp = true;
@@ -374,7 +411,8 @@ export function copyParts(d: Design, src: Design, comps: Component[], to: CopyTa
     nets.set(srcNet, net.id);
   }
   for (const c of comps) for (const [pin, net] of Object.entries(c.pins)) if (nets.has(net)) d.components[ids.get(c.id)!]!.pins[pin] = nets.get(net)!;
-  return { ids, nets, renamed, cards };
+  footprints.sort((a, b) => natCmp(a.ref, b.ref));
+  return { ids, nets, renamed, cards, footprints };
 }
 
 /** `name`, or name_2, name_3 … where it is taken here (undefined: an automatic name). */

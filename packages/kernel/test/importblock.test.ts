@@ -15,7 +15,7 @@ function regCard() {
 }
 
 /** "lamp": a supply block (J1, U1 on its own card, C1, R2 on FB) and a power LED block (R1, D1) with a note and an order. */
-function lamp(): Design {
+function lamp(extra: EditOp[] = []): Design {
   const k = new Kernel();
   const empty = JSON.parse(k.exportDesign()) as Design;
   k.load({ ...empty, parts: { 'acme:REG': regCard() } });
@@ -33,6 +33,7 @@ function lamp(): Design {
     { op: 'constrain', kind: 'note', a: 'R1', value: 'sets the LED to 3 mA', strength: 'soft' },
     { op: 'constrain', kind: 'left_of', a: 'R1', b: 'D1', strength: 'soft' },
     { op: 'describe', blocks: [{ title: 'Supply', refs: ['J1', 'U1', 'C1', 'R2'], text: 'USB 5 V in.' }, { title: 'Power LED', refs: ['R1', 'D1'] }] },
+    ...extra,
   ];
   const r = k.transact({ summary: 'lamp', ops });
   expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
@@ -269,6 +270,7 @@ describe('import_block', () => {
       block: 'Supply',
       renamed: { refdes: { J1: 'J4', U1: 'U2', C1: 'C6', R2: 'R5' }, nets: { FB: 'FB_2' } },
       cards: { library: ['generic:CONN_1x2', 'generic:C', 'generic:R'], project: ['acme:REG'] },
+      footprints: [],
       recheck: [
         { ref: 'C6', params: { capacitance: '10uF' }, why: 'chosen for lamp' },
         { ref: 'R5', params: { resistance: '100k' }, why: 'sets U2.FB' },
@@ -320,6 +322,51 @@ describe('import_block', () => {
     const k = target();
     const r = importing(k, { project: 'lamp', block: 'Supply', nets: { '+5V': 'VBUS', GND: 'GND' } }, sources(file));
     expect(r.rejection).toMatchObject({ code: 'PART_UNKNOWN', message: expect.stringMatching(/acme:REG/) });
+  });
+
+  it('keeps the footprint a generic part had in the source, onto a design of two boards (D30.6)', () => {
+    const header = [{ number: '1', x: -1.25, y: 0, w: 1.2, h: 1.8 }, { number: '2', x: 1.25, y: 0, w: 1.2, h: 1.8 }];
+    const file = lamp([{ op: 'set_footprint', ref: 'J1', name: 'HDR-OWN', pads: header }]);
+    const k = twoBoards();
+    const had = k.draftSnapshot().design.parts;
+    const r = importing(k, { project: 'lamp', block: 'Supply', nets: { '+5V': '+3V3', GND: 'GND' }, board: 'LED board' }, sources(file));
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const d = k.draftSnapshot().design;
+    const rep = r.results[0]!.imported!;
+    const j = rep.renamed.refdes.J1 ?? 'J1';
+    const part = (ref: string) => Object.values(d.components).find((c) => c.refdes === ref)!.part;
+    expect(part(j)).toBe('generic:CONN_1x2~2');
+    expect(d.parts['generic:CONN_1x2~2']!.packageInfo).toEqual(file.parts['generic:CONN_1x2']!.packageInfo);
+    expect(['J2', 'J3'].map(part)).toEqual(['generic:CONN_1x2', 'generic:CONN_1x2']);
+    for (const id of Object.keys(had)) expect(d.parts[id], id).toEqual(had[id]);
+    expect(rep.footprints).toEqual([{ ref: j, card: 'generic:CONN_1x2~2' }]);
+    expect(r.results[0]!.effect).toContain(`${j} keeps its footprint from lamp (card generic:CONN_1x2~2)`);
+    // a design that has no part on that card (the library's only): the source's footprint arrives all the same
+    const bare = target();
+    const r2 = importing(bare, { project: 'lamp', block: 'Supply', nets: { '+5V': '+3V3', GND: 'GND' } }, sources(file));
+    expect(r2.results[0]!.imported!.footprints).toEqual([{ ref: 'J1', card: 'generic:CONN_1x2~2' }]);
+    expect(bare.draftSnapshot().design.parts['generic:CONN_1x2~2']!.packageInfo).toEqual(file.parts['generic:CONN_1x2']!.packageInfo);
+  });
+
+  it("pins the source's package on a generic part whose package came from the source's defaults (D30.6)", () => {
+    const file = lamp([{ op: 'set_package_defaults', resistor: '0402' }]);
+    const k = twoBoards();
+    const before = k.exportDesign();
+    const op = { project: 'lamp', block: 'Power LED', nets: { '+5V': '+3V3', GND: 'GND' }, board: 'LED board' };
+    const dry = k.transact({ summary: 'import', ops: [{ op: 'import_block', ...op }], dry_run: true }, 'agent', undefined, sources(file));
+    expect(dry.status).toBe('ok');
+    expect(k.exportDesign()).toBe(before);
+    const r = importing(k, op, sources(file));
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    const d = k.draftSnapshot().design;
+    const rep = r.results[0]!.imported!;
+    const ref = rep.renamed.refdes.R1 ?? 'R1';
+    const comp = (x: string) => Object.values(d.components).find((c) => c.refdes === x)!;
+    expect(comp(ref)).toMatchObject({ part: 'generic:R', params: { resistance: '1k', package: '0402' } });
+    expect(comp('R4').params).toEqual({ resistance: '1k' });
+    expect(Object.keys(d.parts).some((id) => id.includes('~'))).toBe(false);
+    expect(rep.footprints).toEqual([{ ref, package: '0402' }]);
+    expect(r.results[0]!.effect).toContain(`${ref} keeps its footprint from lamp (package 0402)`);
   });
 
   it('is undone like any edit', () => {

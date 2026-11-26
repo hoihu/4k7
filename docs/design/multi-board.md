@@ -64,7 +64,8 @@ boards that differ they ask which, unless the arguments give the stack-up (`h` a
 `view_gerbers` take `board` and show that board in the app.
 
 **A board of another project** (`import_board`, D29): every part of that project's board comes in onto a
-new board (or one with no parts yet) and a sheet of its own, nets joined by name (`nets` overrides; automatic
+new board (or one with no parts yet) and a sheet of its own, each on the footprint it had there (a generic part
+on a card of its own, `<id>~2`, or with its package pinned; the parts here keep theirs), nets joined by name (`nets` overrides; automatic
 nets made anew), with its blocks, outline, layers, rules, stack-up, fab tier and holes, and its layout: the
 stored placement, the pins (`position`, `rel` too), sides, `near`/`belongs`/`room`, keep-outs, graphics and
 panel, ids remapped. The joined nets cross between the boards, so `ERC.BOARD_CROSSING` stands until the `mate`

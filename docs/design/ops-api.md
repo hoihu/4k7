@@ -309,13 +309,21 @@ of this design (`SHEET_UNKNOWN`, `BOARD_UNKNOWN`, as for `move_to_sheet` and `as
 - Parts are resolved by id in this design and the library first; a part neither has comes with the card the
   source project stores (a project embeds the cards it uses). A card here that lacks a pin the block connects
   is refused. Params, no-connect marks and DNP are copied.
+- A generic part (`generic:*`) keeps the footprint it had in the source (D30.6): its package there
+  (`packageOf` with the source's card, params and `packageDefaults`) is compared with what it would resolve
+  to here. The same: nothing changes. Different only through the package defaults: the source's package is
+  pinned on the part (`package` param). Different through a land pattern (`set_footprint`/`set_mating` on
+  either side's card): the part gets a card of its own, a copy of the source's under the first free id
+  `<id>~2`, `~3` … (still generic; the parts that shared the card there share the one new card). The cards
+  and footprints of the parts already here never change. Other cards: as above (a missing pin is refused).
 - A refdes taken here gets the next free number of its letters (R1 → R2 when R1 is used here); internal nets that `nets` does not map are made anew,
   `prefix` put before their names, `_2`, `_3` … where the name is taken. Net loads on the block's pins come along.
 - The block's `describe` entry (title, text; ` (2)` after a title that is taken) is appended, with the
   constraints between its parts that say how it is drawn (`left_of`, `right_of`, `above`, `below`,
   `arrangement`) and its notes. Positions, rooms and param constraints stay behind.
 - The result's `imported` (and the effect) gives the refdes and net renames, which cards came from the
-  source file, and the values to recheck: each part with params, marked `sets U1.FB` where it is on a net
+  source file, the generic parts that kept their footprint (`footprints`: `{ ref, package }` or `{ ref, card }`;
+  effect `J4 keeps its footprint from lamp (card generic:CONN_1x2~2)`), and the values to recheck: each part with params, marked `sets U1.FB` where it is on a net
   with an IC pin such as FB, ILIM, RT, SS or EN, else chosen for the other project.
 
 `design_edit import_board { project, board?, as, sheet?, nets?, prefix? }` copies a whole board of another
@@ -328,7 +336,9 @@ with `import_block` (`copyParts`).
   yet (one made with `add_board`). A board with parts is refused (`BOARD_INVALID`): `import_board` never
   replaces parts; remove them first. `sheet` (name or id) is where the parts are drawn, made when there is none
   of that name; default a sheet named as the board. A sheet with no parts yet is put on the board.
-- Every part is copied with its params, no-connects, DNP and card, as for `import_block`. A refdes taken here
+- Every part is copied with its params, no-connects, DNP and card, as for `import_block`, a generic part on the
+  footprint it had there (its package pinned, or a card of its own; `importedBoard.footprints`), so the placement
+  and copper land on the source's pads. A refdes taken here
   gets the next free number (R1 → R4); the effect says to export that board's files again. (Per-board refdes
   blocks, R101…, are D30.2.)
 - Nets by name: a named source net joins the net of the same name here, or is made with the source's
