@@ -64,6 +64,7 @@ import { blockAssignment } from './layout.ts';
 import { copperKey, layoutBoard, placedOf, planePlan } from './board.ts';
 import { currentCheck, currentMapAnswer, currentRise, layerCopper } from './current.ts';
 import { powerTreeAnswer } from './powertree.ts';
+import { pinMapAnswer } from './pinmap.ts';
 import { bringUpPlan } from './bringup.ts';
 import type { RouteProgress } from './router.ts';
 import type { ImportSources } from './importops.ts';
@@ -743,6 +744,8 @@ export class Kernel {
       }
       case 'get_power_tree':
         return powerTreeAnswer(d);
+      case 'get_pinmap':
+        return pinMapAnswer(d, q.ref);
       case 'get_fab_profiles': {
         // one board (or the one named): its layers and profile; several and none named: each board's
         const current = (s: BoardSettings | undefined) => {

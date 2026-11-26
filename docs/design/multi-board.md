@@ -57,7 +57,7 @@ one entry each; `get_fab_profiles` gives each board's layers and profile, and th
 the boards (name, sheets, parts, and each board's stack-up and `currentRise`, which on several
 boards replace the design-wide `stackup`), each part's board, and the boards a net spans. `get_power_tree`
 names, per rail, its source's board, the boards it is on, each stated load's board, and the mates that
-carry it across with how many mated pins (`crosses`; [ops-api](ops-api.md) §6). `calc`
+carry it across with how many mated pins (`crosses`; [ops-api](ops-api.md) §6). `get_pinmap` names, per MCU pin, the board of each part its net reaches and the mated pin pairs it crosses, with the pairs whose other side is on another net or none ([ops-api](ops-api.md) §6a). `calc`
 `impedance` and `track_current` take `board` for that board's stack-up and heating; without it on
 boards that differ they ask which, unless the arguments give the stack-up (`h` and `er`;
 `copper_um` and `rise_c`). `get_board_image` and

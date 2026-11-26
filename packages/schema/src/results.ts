@@ -483,3 +483,39 @@ export interface BringUpRail {
   /** Only on an input rail: what the board is expected to draw from it and the limit to set. */
   supply?: { draw_a: number | 'unknown'; basis: 'loads' | 'max_current' | 'unknown'; limit_a: number | 'unknown' };
 }
+
+/** design_query get_pinmap (packages/kernel/src/pinmap.ts, docs/design/ops-api.md §6a). */
+export interface PinMap {
+  mcus: PinMapMcu[];
+  /** Why there is nothing to map: no MCU, or the part named is none. */
+  note?: string;
+}
+
+export interface PinMapMcu {
+  ref: string;
+  part: string;
+  /** On a design of several boards: the MCU's board. */
+  board?: string;
+  pins: PinMapEntry[];
+  /** The GPIOs (swap group members) on no net: "PB3 (pin 2)". */
+  unused: string[];
+}
+
+export interface PinMapEntry {
+  /** Pin number and name. */
+  pin: string;
+  name: string;
+  net: string;
+  /** The net's needs (set_net needs), else unknown: never guessed. */
+  uses: string[] | 'unknown';
+  /** What the pin offers besides plain I/O, from the card's swap group (empty where the card lists none). */
+  offers: string[];
+  /** The other parts' pins on the net ("R5.1", "U3.SCK"), the mates' connector pins left out; on several boards with their board. */
+  reaches: { pin: string; board?: string }[];
+  /** On several boards: the mated pin pairs the net meets, with what is wrong where the other side is on another net or none. */
+  crosses?: { mate: string; pins: string; boards: [string, string]; problem?: string }[];
+  /** The problems of crosses, joined: the trace is broken there. */
+  flag?: string;
+  /** One line to paste: 'PB2 (pin 7) → SCK (uses SCK) → J4.1 ⇄ J5.1 → R5.1 on "LED board"'. */
+  text: string;
+}

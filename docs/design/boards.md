@@ -136,5 +136,11 @@ The nets do not change, only the parts and the mate:
   own setup and stencil), added up. A second board adds those fees: say so when the user weighs a
   split.
 - **The enclosure** is one box for all boards: `get_guide mechanics`, §4.1.
+- **The firmware hand-off**: `design_query get_pinmap` gives each MCU pin's net, function and
+  where it ends up, across the mates (`PB2 (pin 7) → SCK (uses SCK) → J4.1 ⇄ J5.1 → R5.1 on "LED
+  board"`). Give the firmware person its `text` lines rather than writing the map by hand. A pin
+  that says "function unknown" has no `needs` on its net: record what the net is for with `set_net
+  needs` first. A cross with a `problem` is a broken trace: fix the mate or the nets before handing
+  it over.
 - **Back to one board**: `remove_board` puts its sheets and parts on the first board and drops the
   mates.

@@ -33,6 +33,7 @@ export type CalcCall = z.infer<typeof CalcCall>;
 const QUERY_HINTS: Partial<Record<QueryOp['op'], string>> = {
   get_diagnostics: 'the check results, 20 at a time: offset, limit, code, severity',
   get_power_tree: 'what feeds what: sources, regulators, loads, current budget, LDO heat',
+  get_pinmap: 'which MCU pin does what, traced through mates: for firmware',
   try_placements: 'compare board arrangements',
   list_blocks: 'the blocks of another project, to reuse one',
 };
