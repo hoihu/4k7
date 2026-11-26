@@ -292,7 +292,7 @@ where the stored copper is current for that placement (drawn, or kept for it); o
 routed as stored". A board the project does not have answers `BOARD_UNKNOWN` with its board names; without
 a projects folder the kernel refuses it, never answering about the open design. The open design is unchanged.
 
-`design_edit import_block { project, block, nets, prefix?, sheet?, board? }` copies one block in. `block` is its number or
+`design_edit import_block { project, block, nets, prefix?, sheet?, board?, refdes? }` copies one block in. `block` is its number or
 title, `nets` maps every boundary net to a net of this design (`{ "+5V": "VBUS", "GND": "GND" }`; a name that
 does not exist here is made, with the source net's attributes). `nets` may also map an internal net
 (`{ "NTC": "NTC" }`): it is not made anew, and its pins join that net the same way, for a block whose internal net
@@ -316,7 +316,15 @@ of this design (`SHEET_UNKNOWN`, `BOARD_UNKNOWN`, as for `move_to_sheet` and `as
   either side's card): the part gets a card of its own, a copy of the source's under the first free id
   `<id>~2`, `~3` … (still generic; the parts that shared the card there share the one new card). The cards
   and footprints of the parts already here never change. Other cards: as above (a missing pin is refused).
-- A refdes taken here gets the next free number of its letters (R1 → R2 when R1 is used here); internal nets that `nets` does not map are made anew,
+- Refdes (D30.2, `boardRefdes`): board N (its position in the board list, the first is 1) owns the block N01…N99
+  of each letter. A refdes taken here goes into the block of the board the parts land on (`board`, else their
+  sheet's): `<letters><N·100 + n>` with n the source's number where that is free and n < 100 (R1 → R201 on
+  board 2), else the lowest free number of the block, else (block full) the next free number. On the first
+  board, and so on any design of one board, a taken refdes gets the next free number of its letters (R1 → R2
+  when R1 is used here). A free refdes stays as it is; `refdes: "board"` renumbers every part into the block
+  (on the first board the same as the default `"keep"`). Block numbers follow the board order: removing a
+  board shifts the later boards' blocks for the next import, not the parts already here.
+- Internal nets that `nets` does not map are made anew,
   `prefix` put before their names, `_2`, `_3` … where the name is taken. Net loads on the block's pins come along.
 - The block's `describe` entry (title, text; ` (2)` after a title that is taken) is appended, with the
   constraints between its parts that say how it is drawn (`left_of`, `right_of`, `above`, `below`,
@@ -326,7 +334,7 @@ of this design (`SHEET_UNKNOWN`, `BOARD_UNKNOWN`, as for `move_to_sheet` and `as
   effect `J4 keeps its footprint from lamp (card generic:CONN_1x2~2)`), and the values to recheck: each part with params, marked `sets U1.FB` where it is on a net
   with an IC pin such as FB, ILIM, RT, SS or EN, else chosen for the other project.
 
-`design_edit import_board { project, board?, as, sheet?, nets?, prefix? }` copies a whole board of another
+`design_edit import_board { project, board?, as, sheet?, nets?, prefix?, refdes? }` copies a whole board of another
 project in as a board of this design (D29; `importBoard`, `importops.ts`). It shares the part, card and net copy
 with `import_block` (`copyParts`).
 
@@ -339,8 +347,8 @@ with `import_block` (`copyParts`).
 - Every part is copied with its params, no-connects, DNP and card, as for `import_block`, a generic part on the
   footprint it had there (its package pinned, or a card of its own; `importedBoard.footprints`), so the placement
   and copper land on the source's pads. A refdes taken here
-  gets the next free number (R1 → R4); the effect says to export that board's files again. (Per-board refdes
-  blocks, R101…, are D30.2.)
+  goes into the new board's block as for `import_block` (R1 → R301 on board 3; `refdes: "board"`: every part,
+  R1, R2, C1 → R301, R302, C301); the effect lists the renames and says to export that board's files again.
 - Nets by name: a named source net joins the net of the same name here, or is made with the source's
   attributes where there is none; an automatic `N$` net is always made anew. `nets` overrides one net: another
   name (`{ "VLED": "+5V_LED" }`, made if missing) or `"fresh"` (kept apart, `LED_2` where `LED` is taken: an

@@ -212,15 +212,15 @@ describe('import_block', () => {
     expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
     expect(r.results[0]!.effect).toMatch(/on sheet LED, board "LED board"/);
     const after = where(k.draftSnapshot().design);
-    expect(after).toEqual({ ...before, J2: ['LED', 'LED board'], TH1: ['LED', 'LED board'] });
+    expect(after).toEqual({ ...before, J201: ['LED', 'LED board'], TH1: ['LED', 'LED board'] });
     k.accept();
-    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'LED board').id).parts.map((p) => p.refdes).sort()).toEqual(['J2', 'R9', 'TH1']);
+    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'LED board').id).parts.map((p) => p.refdes).sort()).toEqual(['J201', 'R9', 'TH1']);
     // a sheet of the first board, the parts on the LED board all the same
     const k2 = ntcTarget(true);
     const r2 = importing(k2, { project: 'led', block: 'NTC', nets: { GND: 'GND', NTC: 'NTC' }, sheet: 'Main', board: 'LED board' }, ntcSources());
     expect(r2.status, JSON.stringify(r2.rejection)).toBe('ok');
     const d2 = k2.draftSnapshot().design;
-    expect(where(d2)).toMatchObject({ J1: ['Main', 'Main'], R9: ['LED', 'LED board'], J2: ['Main', 'LED board'], TH1: ['Main', 'LED board'] });
+    expect(where(d2)).toMatchObject({ J1: ['Main', 'Main'], R9: ['LED', 'LED board'], J201: ['Main', 'LED board'], TH1: ['Main', 'LED board'] });
   });
 
   it('without sheet and board, imports exactly as before', () => {
@@ -245,7 +245,7 @@ describe('import_block', () => {
     expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
     const d = k.draftSnapshot().design;
     const parts = Object.fromEntries(Object.values(d.components).map((c) => [c.refdes, [c.part, d.sheets[c.sheet]!.name, d.boards?.[boardOf(d, c)]?.name ?? 'Main', Object.fromEntries(Object.entries(c.pins).map(([p, n]) => [p, d.nets[n]!.name]))]]));
-    const before = Object.fromEntries(Object.entries(parts).filter(([ref]) => !['J4', 'U2', 'C6', 'R5'].includes(ref)));
+    const before = Object.fromEntries(Object.entries(parts).filter(([ref]) => !['J201', 'U201', 'C201', 'R202'].includes(ref)));
     expect(Object.keys(before).sort()).toEqual(['C1', 'C2', 'C3', 'C4', 'C5', 'D1', 'D2', 'J1', 'J2', 'J3', 'L1', 'R1', 'R2', 'R3', 'R4', 'U1']);
     expect(parts).toMatchObject({
       J3: ['generic:CONN_1x2', 'LED', 'LED board', { 1: '+3V3', 2: 'GND' }],
@@ -253,36 +253,36 @@ describe('import_block', () => {
       R1: ['generic:R', 'Main', 'Main', { 1: '+3V3', 2: 'FB' }],
       R2: ['generic:R', 'Main', 'Main', { 1: 'FB', 2: 'GND' }],
     });
-    expect(Object.fromEntries(['J4', 'U2', 'C6', 'R5'].map((x) => [x, parts[x]]))).toEqual({
-      J4: ['generic:CONN_1x2', 'LED', 'LED board', { 1: '+3V3', 2: 'GND' }],
-      U2: ['acme:REG', 'LED', 'LED board', { 1: 'GND', 2: 'FB_2', 3: '+3V3' }],
-      C6: ['generic:C', 'LED', 'LED board', { 1: '+3V3', 2: 'GND' }],
-      R5: ['generic:R', 'LED', 'LED board', { 1: 'FB_2', 2: 'GND' }],
+    expect(Object.fromEntries(['J201', 'U201', 'C201', 'R202'].map((x) => [x, parts[x]]))).toEqual({
+      J201: ['generic:CONN_1x2', 'LED', 'LED board', { 1: '+3V3', 2: 'GND' }],
+      U201: ['acme:REG', 'LED', 'LED board', { 1: 'GND', 2: 'FB_2', 3: '+3V3' }],
+      C201: ['generic:C', 'LED', 'LED board', { 1: '+3V3', 2: 'GND' }],
+      R202: ['generic:R', 'LED', 'LED board', { 1: 'FB_2', 2: 'GND' }],
     });
     expect(Object.values(d.nets).map((n) => n.name)).toEqual(['+12V', 'GND', 'SW', '+3V3', 'FB', 'SS', 'COMP', 'N$1', 'BOOT', 'LED_A', 'FB_2']);
     const by = (ref: string) => Object.values(d.components).find((c) => c.refdes === ref)!.id;
-    expect(d.description).toEqual({ overview: '', blocks: [{ title: 'Supply', components: ['J4', 'U2', 'C6', 'R5'].map(by), text: 'USB 5 V in.' }] });
+    expect(d.description).toEqual({ overview: '', blocks: [{ title: 'Supply', components: ['J201', 'U201', 'C201', 'R202'].map(by), text: 'USB 5 V in.' }] });
     expect(d.parts['acme:REG']).toEqual(regCard());
     const res = r.results[0]!;
-    expect(res.ids).toEqual([...['J4', 'U2', 'C6', 'R5'].map(by), ...['+3V3', 'GND', 'FB_2'].map((n) => Object.values(d.nets).find((x) => x.name === n)!.id)]);
+    expect(res.ids).toEqual([...['J201', 'U201', 'C201', 'R202'].map(by), ...['+3V3', 'GND', 'FB_2'].map((n) => Object.values(d.nets).find((x) => x.name === n)!.id)]);
     expect(res.imported).toEqual({
       project: 'lamp',
       block: 'Supply',
-      renamed: { refdes: { J1: 'J4', U1: 'U2', C1: 'C6', R2: 'R5' }, nets: { FB: 'FB_2' } },
+      renamed: { refdes: { J1: 'J201', U1: 'U201', C1: 'C201', R2: 'R202' }, nets: { FB: 'FB_2' } },
       cards: { library: ['generic:CONN_1x2', 'generic:C', 'generic:R'], project: ['acme:REG'] },
       footprints: [],
       recheck: [
-        { ref: 'C6', params: { capacitance: '10uF' }, why: 'chosen for lamp' },
-        { ref: 'R5', params: { resistance: '100k' }, why: 'sets U2.FB' },
+        { ref: 'C201', params: { capacitance: '10uF' }, why: 'chosen for lamp' },
+        { ref: 'R202', params: { resistance: '100k' }, why: 'sets U201.FB' },
       ],
     });
     expect(res.effect).toBe(
-      'imported "Supply" from lamp: 4 part(s) (C6, J4, R5, U2) on sheet LED, board "LED board", boundary +5V → +3V3, GND → GND; ' +
-        'renamed J1 → J4, U1 → U2, C1 → C6, R2 → R5; nets renamed FB → FB_2; not in the library, card taken from lamp: acme:REG; ' +
-        'values to recheck (chosen for lamp): C6 10uF, R5 100k (sets U2.FB)',
+      'imported "Supply" from lamp: 4 part(s) (C201, J201, R202, U201) on sheet LED, board "LED board", boundary +5V → +3V3, GND → GND; ' +
+        'renamed J1 → J201, U1 → U201, C1 → C201, R2 → R202; nets renamed FB → FB_2; not in the library, card taken from lamp: acme:REG; ' +
+        'values to recheck (chosen for lamp): C201 10uF, R202 100k (sets U201.FB)',
     );
     k.accept();
-    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'LED board').id).parts.map((p) => p.refdes).sort()).toEqual(['C6', 'D2', 'J3', 'J4', 'R4', 'R5', 'U2']);
+    expect(k.boardPlacement(resolveBoard(k.draftDesign(), 'LED board').id).parts.map((p) => p.refdes).sort()).toEqual(['C201', 'D2', 'J201', 'J3', 'R202', 'R4', 'U201']);
   });
 
   it('refuses an unknown sheet or board and imports nothing', () => {
@@ -377,5 +377,38 @@ describe('import_block', () => {
     expect(k.exportDesign()).not.toBe(before);
     k.undo();
     expect(k.exportDesign()).toBe(before);
+  });
+});
+
+/** D30.2: a taken refdes goes into the block of the board the parts land on (board 2: R201…R299). */
+describe('import_block: refdes per board', () => {
+  const led = (k: Kernel, more: Partial<Extract<EditOp, { op: 'import_block' }>> = {}) => {
+    const r = importing(k, { project: 'lamp', block: 'Power LED', nets: { '+5V': '+3V3', GND: 'GND' }, ...more });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+    return r.results[0]!;
+  };
+
+  it('numbers R1 → R201 on board 2 (by board, or by the sheet of board 2), the next free number on board 1', () => {
+    const two = led(twoBoards(), { board: 'LED board' });
+    expect(two.imported!.renamed.refdes).toEqual({ R1: 'R201', D1: 'D201' });
+    expect(two.effect).toMatch(/renamed R1 → R201, D1 → D201/);
+    expect(led(twoBoards(), { sheet: 'LED' }).imported!.renamed.refdes).toEqual({ R1: 'R201', D1: 'D201' });
+    expect(led(twoBoards()).imported!.renamed.refdes).toEqual({ R1: 'R5', D1: 'D3' });
+    expect(led(twoBoards(), { board: 'Main', refdes: 'board' }).imported!.renamed.refdes).toEqual({ R1: 'R5', D1: 'D3' });
+    // on a third board: its block
+    const k = twoBoards();
+    const b3 = k.transact({ summary: 'third', ops: [{ op: 'add_board', name: 'Third' }] });
+    expect(b3.status, JSON.stringify(b3.rejection)).toBe('ok');
+    k.accept();
+    expect(led(k, { board: 'Third' }).imported!.renamed.refdes).toEqual({ R1: 'R301', D1: 'D301' });
+  });
+
+  it("with refdes: 'board', numbers the free ones too; a design of one board numbers as before", () => {
+    const keep = importing(ntcTarget(true), { project: 'led', block: 'NTC', nets: { GND: 'GND' }, board: 'LED board' }, ntcSources());
+    expect(keep.results[0]!.imported!.renamed.refdes).toEqual({ J1: 'J201' });
+    const all = importing(ntcTarget(true), { project: 'led', block: 'NTC', nets: { GND: 'GND' }, board: 'LED board', refdes: 'board' }, ntcSources());
+    expect(all.results[0]!.imported!.renamed.refdes).toEqual({ J1: 'J201', TH1: 'TH201' });
+    expect(led(target()).imported!.renamed.refdes).toEqual({ R1: 'R2', D1: 'D2' });
+    expect(led(target(), { refdes: 'board' }).imported!.renamed.refdes).toEqual({ R1: 'R2', D1: 'D2' });
   });
 });

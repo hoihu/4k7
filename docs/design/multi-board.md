@@ -26,7 +26,7 @@ one board looks and behaves exactly as it does now: no new steps, no new argumen
 | Put a sheet's parts on it | `assign_board { board, sheets }` (a sheet belongs to one board) |
 | Move one part to another board | `assign_board { board, refs }` (overrides its sheet) |
 | Join two connectors | `mate { a: "J1", b: "J2", kind, map?, … }` |
-| Bring in a board laid out in another project | `import_board { project, board?, as, sheet?, nets?, prefix? }` ([ops-api](ops-api.md) §7) |
+| Bring in a board laid out in another project | `import_board { project, board?, as, sheet?, nets?, prefix?, refdes? }` ([ops-api](ops-api.md) §7) |
 | Everything else | the board ops and queries as now, with an optional `board` |
 
 A component's board is its own `board`, else its sheet's, else the first board. Sheets are how
@@ -74,6 +74,9 @@ net's width on the new board only (`boardTrackWidths`; merged nets: the widest).
 copper as drawn (routed at once). The router's copper is a cache keyed on the source's ids, so it is never
 copied: where it is current it becomes locked copper, which the first route lays as it lies and keeps locked;
 stale or stopped copper stays behind and the board is routed afresh (ops-api §7).
+A taken refdes goes into the board's block (board N: N01…N99, R1 → R201 on board 2; `refdes: "board"`
+renumbers every part so; D30.2); `import_block` does the same for the board its parts land on. On the first
+board a taken refdes gets the next free number, as on a design of one board.
 
 **How it is built** (`kernel/src/boards.ts`): a *focus* is the design as if one board were its
 only one: that board's settings as `board`, only its parts, the nets with pins on them, and the

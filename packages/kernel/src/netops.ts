@@ -477,7 +477,7 @@ export function setNet(d: Design, op: Extract<EditOp, { op: 'set_net' }>): OpRes
 }
 
 /* --------------------------------- sheets --------------------------------- */
-function firstSheet(d: Design): string {
+export function firstSheet(d: Design): string {
   return Object.values(d.sheets).sort((a, b) => a.order - b.order)[0]!.id;
 }
 

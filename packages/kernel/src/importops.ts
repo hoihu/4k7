@@ -8,7 +8,7 @@
 import { DEFAULT_BOARD, type BoardImportReport, type BoardSettings, type Component, type Constraint, type Design, type EditOp, type ImportReport, type NetAttrs, type OpResult, type PartCard } from '@4k7/schema';
 import { getBuiltinPart, packageChoice, packageOf, standardPackage } from '@4k7/parts';
 import { allocRefdes, cardOf, closest, createNet, findNet, isAutoNet, natCmp, nextId, paramsOf, reject } from './doc.ts';
-import { addPart, addSheet } from './netops.ts';
+import { addPart, addSheet, firstSheet } from './netops.ts';
 import { sheetByName } from './sheets.ts';
 import { addBoard, assignBoard, boardList, boardOf, findBoard, focusBoard, ownTrackWidth, putSettings, resolveBoard, settingsOf } from './boards.ts';
 import { listBlocks, readProject } from './reuse.ts';
@@ -52,7 +52,8 @@ export function importBlock(d: Design, op: Extract<EditOp, { op: 'import_block' 
   const board = op.board !== undefined ? resolveBoard(d, op.board) : undefined;
 
   // boundary and mapped internal nets join the mapped net, the other internal ones are made anew
-  const { ids, nets, renamed, cards, footprints } = copyParts(d, src, comps, { project: op.project, sheet, board: board?.id, join: (name) => op.nets[name], prefix: op.prefix });
+  const onto = board?.id ?? boardOf(d, { sheet: sheet ?? firstSheet(d) } as Component);
+  const { ids, nets, renamed, cards, footprints } = copyParts(d, src, comps, { project: op.project, sheet, board: board?.id, join: (name) => op.nets[name], prefix: op.prefix, refdes: refdesRule(d, onto, op.refdes) });
 
   // its describe block, and the constraints on its parts that say how it is drawn
   const title = appendBlock(d, block.title, [...ids.values()], block.text);
@@ -168,7 +169,7 @@ export function importBoard(d: Design, op: Extract<EditOp, { op: 'import_board' 
     if (o !== undefined) return o;
     return findNet(d, name) ? name : undefined;
   };
-  const { ids, nets, renamed, cards, footprints } = copyParts(d, f, comps, { project: op.project, sheet, board: boardId, join, prefix: op.prefix });
+  const { ids, nets, renamed, cards, footprints } = copyParts(d, f, comps, { project: op.project, sheet, board: boardId, join, prefix: op.prefix, refdes: refdesRule(d, boardId, op.refdes) });
 
   const report: BoardImportReport['nets'] = { joined: {}, made: [], merged: [], recheck: [], widths: [] };
   const onto = new Map<string, string[]>();
@@ -312,6 +313,26 @@ export interface CopyTarget {
   join: (srcNet: string) => string | undefined;
   /** Put before the name of a net made anew (an automatic N$ name stays automatic without it). */
   prefix?: string;
+  /** The block of refdes numbers the parts take (D30.2): their board's position (1: no block), and whether every part is renumbered or only the taken ones. */
+  refdes?: { board: number; all: boolean };
+}
+
+/** The refdes rule for parts landing on `boardId`: its position in the board list, every part or the taken ones. */
+const refdesRule = (d: Design, boardId: string, mode: 'keep' | 'board' = 'keep') => ({ board: boardList(d).findIndex((b) => b.id === boardId) + 1, all: mode === 'board' });
+
+/**
+ * A refdes on board `board` (its 1-based position) for a part numbered `n` in the source (D30.2): board N ≥ 2
+ * owns N01..N99, so `<letters><N·100 + n>` where free and n < 100, else the lowest free number of the block;
+ * on board 1, or with the block full, the next free number of the design.
+ */
+export function boardRefdes(d: Design, board: number, letters: string, n: number): string {
+  if (board >= 2) {
+    const used = new Set(Object.values(d.components).map((c) => c.refdes));
+    const at = (i: number) => `${letters}${board * 100 + i}`;
+    if (n >= 1 && n < 100 && !used.has(at(n))) return at(n);
+    for (let i = 1; i < 100; i++) if (!used.has(at(i))) return at(i);
+  }
+  return allocRefdes(d, letters);
 }
 
 /** What copyParts did: the new component and net id of each source id, what it renamed, where the cards came from. */
@@ -375,13 +396,16 @@ export function copyParts(d: Design, src: Design, comps: Component[], to: CopyTa
     return { part: id, params: pinned };
   };
 
-  // the parts, keeping their refdes where it is free here, else the next free number of its letters
+  // the parts, keeping their refdes where it is free here (unless every part is renumbered), else a number of
+  // their board's block (board 1: the next free number of its letters)
   const renamed: ImportReport['renamed'] = { refdes: {}, nets: {} };
   const ids = new Map<string, string>();
+  const rule = to.refdes ?? { board: 1, all: false };
   for (const c of comps) {
     const taken = Object.values(d.components).some((x) => x.refdes === c.refdes);
-    const refdes = taken ? allocRefdes(d, c.refdes.match(/^[A-Za-z_]+/)?.[0] ?? cardOf(d, c.part)!.refPrefix) : c.refdes;
-    if (taken) renamed.refdes[c.refdes] = refdes;
+    const [, letters = cardOf(d, c.part)!.refPrefix, num = '0'] = c.refdes.match(/^([A-Za-z_]+)(\d*)/) ?? [];
+    const refdes = taken || (rule.all && rule.board >= 2) ? boardRefdes(d, rule.board, letters, Number(num)) : c.refdes;
+    if (refdes !== c.refdes) renamed.refdes[c.refdes] = refdes;
     const { part, params } = keep(c, refdes);
     const r = addPart(d, { op: 'add_part', part, refdes, params, ...(to.sheet ? { sheet: to.sheet } : {}) });
     const nc = d.components[r.ids![0]!]!;
