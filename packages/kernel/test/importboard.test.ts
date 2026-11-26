@@ -123,32 +123,32 @@ describe('import_board', () => {
     const led = findBoard(d, 'LED')!;
     expect(led).toBeDefined();
     expect(rep).toMatchObject({ project: 'ring', from: 'Main', board: 'LED', made: true, sheet: 'LED' });
-    // J1, R1, D1 and D2 are taken by the buck and the header: next free numbers, listed
-    expect(rep.renamed.refdes).toEqual({ J1: 'J3', R1: 'R4', D1: 'D2', D2: 'D3' });
-    expect(rep.parts).toEqual(['D2', 'D3', 'J3', 'R4']);
+    // J1, R1 and D1 are taken by the buck and the header: renumbered into the block of board 2, listed; D2 is free
+    expect(rep.renamed.refdes).toEqual({ J1: 'J201', R1: 'R201', D1: 'D201' });
+    expect(rep.parts).toEqual(['D201', 'D2', 'J201', 'R201']);
     for (const ref of rep.parts) {
       expect(boardOf(d, by(d, ref)), ref).toBe(led.id);
       expect(d.sheets[by(d, ref).sheet]!.name).toBe('LED');
     }
-    expect(by(d, 'R4').params).toEqual({ resistance: '100' });
+    expect(by(d, 'R201').params).toEqual({ resistance: '100' });
     // the board as the source has it; nothing placed
     const s = settingsOf(d, led.id)!;
     expect([s.width, s.height]).toEqual([30, 30]);
     expect(s.holes).toEqual([expect.objectContaining({ d: 3.2, plated: true, netId: netOf(d, 'J2', '2').id })]);
     // GND and VLED joined by name, the LED clash too (no override), the automatic net new
-    expect(netOf(d, 'J3', '1').id).toBe(netOf(d, 'J2', '1').id);
-    expect(netOf(d, 'J3', '2').id).toBe(netOf(d, 'J2', '2').id);
-    expect(netOf(d, 'D2', '1').id).toBe(netOf(d, 'R9', '2').id);
+    expect(netOf(d, 'J201', '1').id).toBe(netOf(d, 'J2', '1').id);
+    expect(netOf(d, 'J201', '2').id).toBe(netOf(d, 'J2', '2').id);
+    expect(netOf(d, 'D201', '1').id).toBe(netOf(d, 'R9', '2').id);
     expect(rep.nets.joined).toEqual({ GND: 'GND', LED: 'LED', VLED: 'VLED' });
-    expect(rep.nets.made).toEqual([netOf(d, 'R4', '2').name]);
-    expect(netOf(d, 'R4', '2').name).toMatch(/^N\$\d+$/);
+    expect(rep.nets.made).toEqual([netOf(d, 'R201', '2').name]);
+    expect(netOf(d, 'R201', '2').name).toMatch(/^N\$\d+$/);
     expect(Object.values(d.nets).filter((n) => n.name === 'GND')).toHaveLength(1);
     // VLED is 5 V here, 12 V on the ring: to recheck
     expect(rep.nets.recheck).toEqual([{ net: 'VLED', attrs: { voltage: { here: 5, source: 12 } } }]);
     // the describe block (in its reading order) and the left_of between R1 and D1 came along
     expect(rep.blocks).toEqual(['LED ring']);
-    expect(d.description!.blocks.at(-1)).toEqual({ title: 'LED ring', components: ['J3', 'R4', 'D2', 'D3'].map((x) => by(d, x).id), text: 'Two LEDs from VLED.' });
-    expect(Object.values(d.ledger).some((c) => c.kind === 'left_of' && c.a === by(d, 'R4').id && c.b === by(d, 'D2').id)).toBe(true);
+    expect(d.description!.blocks.at(-1)).toEqual({ title: 'LED ring', components: ['J201', 'R201', 'D201', 'D2'].map((x) => by(d, x).id), text: 'Two LEDs from VLED.' });
+    expect(Object.values(d.ledger).some((c) => c.kind === 'left_of' && c.a === by(d, 'R201').id && c.b === by(d, 'D201').id)).toBe(true);
     const effect = k.transact({ summary: 'noop', ops: [{ op: 'import_board', project: 'ring', as: 'LED 2' }], dry_run: true }, 'agent', undefined, sources()).results[0]!.effect;
     expect(effect).toMatch(/placement of 4 part\(s\)/);
     // the ring was never routed: no copper to bring, the board to route
@@ -162,10 +162,10 @@ describe('import_board', () => {
     const k = main();
     const rep = ok(importing(k, { project: 'ring', as: 'LED', nets: { LED: 'fresh', VLED: '+12V' }, prefix: 'RING_' }));
     const d = design(k);
-    expect(netOf(d, 'D2', '1').name).toBe('RING_LED');
-    expect(netOf(d, 'D2', '1').id).not.toBe(netOf(d, 'R9', '2').id);
-    expect(netOf(d, 'J3', '1').name).toBe('+12V');
-    expect(netOf(d, 'R4', '2').name).toMatch(/^RING_N\$\d+$/);
+    expect(netOf(d, 'D201', '1').name).toBe('RING_LED');
+    expect(netOf(d, 'D201', '1').id).not.toBe(netOf(d, 'R9', '2').id);
+    expect(netOf(d, 'J201', '1').name).toBe('+12V');
+    expect(netOf(d, 'R201', '2').name).toMatch(/^RING_N\$\d+$/);
     expect(rep.nets.joined).toEqual({ GND: 'GND', VLED: '+12V' });
     expect(rep.renamed.nets).toMatchObject({ LED: 'RING_LED' });
     // +12V is 12 V here too: nothing to recheck
@@ -175,7 +175,7 @@ describe('import_board', () => {
   it('makes a "fresh" net under a free name without a prefix', () => {
     const k = main();
     const rep = ok(importing(k, { project: 'ring', as: 'LED', nets: { LED: 'fresh' } }));
-    expect(netOf(design(k), 'D2', '1').name).toBe('LED_2');
+    expect(netOf(design(k), 'D201', '1').name).toBe('LED_2');
     expect(rep.renamed.nets).toEqual({ LED: 'LED_2' });
   });
 
@@ -189,7 +189,7 @@ describe('import_board', () => {
 
   it('is mated in the same transaction: no BOARD_CROSSING after the mate', () => {
     const k = main();
-    const r = importing(k, { project: 'ring', as: 'LED', nets: { LED: 'fresh' } }, [{ op: 'mate', a: 'J2', b: 'J3', kind: 'cable' }]);
+    const r = importing(k, { project: 'ring', as: 'LED', nets: { LED: 'fresh' } }, [{ op: 'mate', a: 'J2', b: 'J201', kind: 'cable' }]);
     ok(r);
     expect(crossing(k)).toEqual([]);
     const without = main();
@@ -213,7 +213,7 @@ describe('import_board', () => {
     const d = design(k);
     expect(rep).toMatchObject({ board: 'LED', made: false });
     expect(Object.keys(d.boards!)).toHaveLength(2);
-    expect(boardOf(d, by(d, 'R4'))).toBe(id);
+    expect(boardOf(d, by(d, 'R201'))).toBe(id);
     expect(settingsOf(d, id)!.width).toBe(30);
   });
 
@@ -222,7 +222,7 @@ describe('import_board', () => {
     const k = twoBoards();
     const rep = ok(importing(k, { project: 'pair', board: 'led BOARD', as: 'Ring' }, [], sources({ pair: src })));
     expect(rep.from).toBe('LED board');
-    expect(rep.renamed.refdes).toEqual({ J3: 'J4', R4: 'R5', D2: 'D3' });
+    expect(rep.renamed.refdes).toEqual({ J3: 'J303', R4: 'R304', D2: 'D302' });
     const d = design(k);
     expect(Object.keys(d.boards!)).toHaveLength(3);
     expect(rep.nets.joined).toEqual({ '+3V3': '+3V3', GND: 'GND', LED_A: 'LED_A' });
@@ -282,7 +282,8 @@ describe('import_board', () => {
     for (const [ref, was] of own) expect(pads(k, ref === 'J2' ? undefined : 'LED board', ref), ref).toEqual(was);
     // the locked J1 lands on the source's pads, where the source has them
     expect(pads(k, 'Ring', j1)).toEqual(pads(srcK, undefined, 'J1'));
-    expect(rep.footprints).toEqual([{ ref: j1, card: 'generic:CONN_1x2~2' }, { ref: j5, card: 'generic:CONN_1x3~2' }, { ref: j6, card: 'generic:CONN_1x2~2' }]);
+    expect([j1, j5, j6]).toEqual(['J301', 'J305', 'J6']);
+    expect(rep.footprints).toEqual([{ ref: j6, card: 'generic:CONN_1x2~2' }, { ref: j1, card: 'generic:CONN_1x2~2' }, { ref: j5, card: 'generic:CONN_1x3~2' }]);
     expect(r.results[0]!.effect).toContain(`${j1} keeps its footprint from ring (card generic:CONN_1x2~2)`);
     // saved and loaded, then undone: the same
     k.accept();
@@ -332,30 +333,30 @@ describe('import_board: the placement', () => {
     k.accept();
     const d = design(k);
     const led = findBoard(d, 'LED')!;
-    // no drift: x, y, rot and side as in the source (J1 → J3, R1 → R4, D1 → D2, D2 → D3)
+    // no drift: x, y, rot and side as in the source (J1 → J201, R1 → R201, D1 → D201, D2 free)
     expect(placed(k.query({ op: 'get_board', board: 'LED' }))).toEqual(placed(want, rep.renamed.refdes));
     expect(placed(want).find((p) => p.refdes === 'D2')!.side).toBe('bottom');
-    // the hard pin is still hard, on J3; R4's pin is relative to D2 (the source's D1)
-    expect(on(d, 'position', 'J3')).toEqual([expect.objectContaining({ strength: 'hard', xMm: 4, yMm: 15, rot: 90 })]);
-    expect(on(d, 'position', 'R4')).toEqual([expect.objectContaining({ strength: 'soft', rel: by(d, 'D2').id })]);
-    expect(on(d, 'layer', 'D3')).toEqual([expect.objectContaining({ value: 'bottom' })]);
-    expect(on(d, 'near', 'R4')).toEqual([expect.objectContaining({ b: by(d, 'D2').id, maxMm: 10 })]);
-    expect(on(d, 'belongs', 'R4')).toEqual([expect.objectContaining({ b: by(d, 'D2').id })]);
+    // the hard pin is still hard, on J201; R201's pin is relative to D201 (the source's D1)
+    expect(on(d, 'position', 'J201')).toEqual([expect.objectContaining({ strength: 'hard', xMm: 4, yMm: 15, rot: 90 })]);
+    expect(on(d, 'position', 'R201')).toEqual([expect.objectContaining({ strength: 'soft', rel: by(d, 'D201').id })]);
+    expect(on(d, 'layer', 'D2')).toEqual([expect.objectContaining({ value: 'bottom' })]);
+    expect(on(d, 'near', 'R201')).toEqual([expect.objectContaining({ b: by(d, 'D201').id, maxMm: 10 })]);
+    expect(on(d, 'belongs', 'R201')).toEqual([expect.objectContaining({ b: by(d, 'D201').id })]);
     expect(Object.values(d.ledger).filter((c) => c.kind === 'room')).toEqual([expect.objectContaining({ key: 'LED ring', wMm: 28 })]);
     // each constraint once: the kinds on the new board are the source's
     const ring0 = JSON.parse(src.files.ring!) as Design;
     const ids = new Set(rep.parts.map((x) => by(d, x).id));
     const kinds = (l: Design['ledger'], has: (id: string) => boolean) => Object.values(l).filter((c) => (c.a ? has(c.a) : c.kind === 'room')).map((c) => c.kind).sort();
     expect(kinds(d.ledger, (id) => ids.has(id))).toEqual(kinds(ring0.ledger, () => true));
-    // the keep-out follows D2 (the source's D1) under its own id; graphics and panel as they were
+    // the keep-out follows D201 (the source's D1) under its own id; graphics and panel as they were
     const s = settingsOf(d, led.id)!;
-    expect(s.keepouts).toEqual([{ ...ring0.board!.keepouts![0]!, part: by(d, 'D2').id }]);
+    expect(s.keepouts).toEqual([{ ...ring0.board!.keepouts![0]!, part: by(d, 'D201').id }]);
     expect(s.keepouts![0]!.id).toBe('KO1');
     expect(s.graphics).toEqual(ring0.board!.graphics);
     expect(s.panel).toEqual(ring0.board!.panel);
-    // and stands where the source's stands, round D2
+    // and stands where the source's stands, round D201
     type Kos = { keepouts: { follows: string; bounds_mm: number[] }[] };
-    expect((k.query({ op: 'get_board', board: 'LED' }) as Kos).keepouts).toEqual([{ ...(want as Kos).keepouts[0]!, follows: 'D2' }]);
+    expect((k.query({ op: 'get_board', board: 'LED' }) as Kos).keepouts).toEqual([{ ...(want as Kos).keepouts[0]!, follows: 'D201' }]);
     // the ring has no copper: nothing stays behind
     expect(rep.left_behind).toEqual([]);
     expect(r.results[0]!.effect).toMatch(/placement of 4 part\(s\) \(1 locked\), 1 keep-out\(s\), 1 graphic\(s\), panel/);
@@ -382,7 +383,7 @@ describe('import_board: the placement', () => {
     k.accept();
     expect(placed(k.query({ op: 'get_board', board: 'Ring' }))).toEqual(placed(want, rep.renamed.refdes));
     expect(placed(want).find((p) => p.refdes === 'J3')).toMatchObject({ x: 14, side: 'bottom' });
-    expect(on(design(k), 'position', 'J4')).toEqual([expect.objectContaining({ strength: 'hard' })]);
+    expect(on(design(k), 'position', 'J303')).toEqual([expect.objectContaining({ strength: 'hard' })]);
     expect([boardState(k, 'Main'), boardState(k, 'LED board')]).toEqual(before);
   });
 
@@ -491,7 +492,7 @@ describe('import_board: the copper', () => {
     expect(s.routed).toBeUndefined();
     const locked = s.locked!;
     expect(new Set(locked.map((l) => l.netId)).size).toBe(locked.length);
-    expect(locked.map((l) => d.nets[l.netId]!.name).sort()).toEqual(['GND', 'LED', 'VLED', netOf(d, 'R5', '2').name].sort());
+    expect(locked.map((l) => d.nets[l.netId]!.name).sort()).toEqual(['GND', 'LED', 'VLED', netOf(d, 'R301', '2').name].sort());
     for (const l of locked) expect([...l.tracks, ...l.vias].every((x) => x.netId === l.netId)).toBe(true);
     expect(geometry(locked.flatMap((l) => l.tracks))).toEqual(geometry(src.tracks.filter((t) => !t.laid)));
     expect(rep.left_behind).toEqual([]);
@@ -559,8 +560,8 @@ describe('import_board: the copper', () => {
     const d = design(k);
     const s = settingsOf(d, boardId(k, 'Ring'))!;
     const gnd = netOf(d, 'J2', '2').id;
-    expect(s.planes!.find((p) => p.layer === 'F.Cu')).toMatchObject({ netId: gnd, area: { under: [by(d, 'D4').id] } });
-    expect(s.vias).toEqual([expect.objectContaining({ id: 'V1', netId: gnd, area: expect.objectContaining({ under: [by(d, 'D3').id] }) })]);
+    expect(s.planes!.find((p) => p.layer === 'F.Cu')).toMatchObject({ netId: gnd, area: { under: [by(d, 'D302').id] } });
+    expect(s.vias).toEqual([expect.objectContaining({ id: 'V1', netId: gnd, area: expect.objectContaining({ under: [by(d, 'D301').id] }) })]);
     expect(s.impedance).toEqual([expect.objectContaining({ id: 'Z1', nets: [netOf(d, 'R4', '2').id], ohms: 50 })]);
   });
 
@@ -682,5 +683,63 @@ describe('import_board: track widths on joined nets', () => {
     expect(ledA(k).attrs.boardTrackWidths).toBeDefined();
     k.undo();
     expect(k.exportDesign()).toBe(before);
+  });
+});
+
+/**
+ * D30.2: an imported part whose refdes is taken goes into its board's block (board N: N01..N99), the
+ * source's number kept where it can be (R1 → R301 on board 3); refdes: 'board' numbers every part so.
+ */
+describe('import_board: refdes per board', () => {
+  const r7: EditOp[] = [{ op: 'add_part', part: 'generic:R', refdes: 'R7', params: { resistance: '10k' } }, { op: 'connect', pins: ['R7.1'], net: 'VLED' }, { op: 'connect', pins: ['R7.2'], net: 'GND' }];
+  const src = () => sources({ ring: ring(r7) });
+
+  it('renumbers the taken refdes into the block of board 3, keeps the free ones, and the layout follows', () => {
+    const k = twoBoards();
+    const s = src();
+    const want = k.query({ op: 'get_board', project: 'ring' }, { sources: s });
+    const before = k.exportDesign();
+    const r = importing(k, { project: 'ring', as: 'Ring' }, [], s);
+    const rep = ok(r);
+    const d = design(k);
+    expect(findBoard(d, 'Ring')).toMatchObject({ name: 'Ring' });
+    expect(rep.renamed.refdes).toEqual({ J1: 'J301', R1: 'R301', D1: 'D301', D2: 'D302' });
+    expect(rep.parts).toEqual(['D301', 'D302', 'J301', 'R301', 'R7']);
+    expect(r.results[0]!.effect).toMatch(/renamed D1 → D301, D2 → D302, J1 → J301, R1 → R301 \(silkscreen/);
+    // placement, the hard pin, the soft pin, a copied constraint and the describe block name the new refdes
+    expect(placed(k.query({ op: 'get_board', board: 'Ring' }))).toEqual(placed(want, rep.renamed.refdes));
+    const on = (kind: string, ref: string) => Object.values(d.ledger).filter((c) => c.kind === kind && c.a === by(d, ref).id);
+    expect(on('position', 'J301')).toEqual([expect.objectContaining({ strength: 'hard' })]);
+    expect(on('position', 'R301')).toEqual([expect.objectContaining({ rel: by(d, 'D301').id })]);
+    expect(on('left_of', 'R301')).toEqual([expect.objectContaining({ b: by(d, 'D301').id })]);
+    expect(d.description!.blocks.at(-1)!.components).toEqual(['J301', 'R301', 'D301', 'D302'].map((x) => by(d, x).id));
+    // a dry run says the same; save and load keep it; undo takes it back
+    const dry = importing(twoBoards(), { project: 'ring', as: 'Ring' }, [], s, true);
+    expect(dry.results[0]!.importedBoard!.renamed.refdes).toEqual(rep.renamed.refdes);
+    k.accept();
+    const again = new Kernel();
+    again.load(JSON.parse(k.exportDesign()) as Design);
+    expect(Object.values(again.committedDesign().components).map((c) => c.refdes)).toEqual(expect.arrayContaining(['J301', 'R301', 'D301', 'D302', 'R7']));
+    k.undo();
+    expect(k.exportDesign()).toBe(before);
+  });
+
+  it("with refdes: 'board', numbers every part into its board's block: boards 2 and 3 never meet", () => {
+    const k = main();
+    const a = ok(importing(k, { project: 'ring', as: 'A', refdes: 'board' }, [], src()));
+    expect(a.renamed.refdes).toEqual({ J1: 'J201', R1: 'R201', D1: 'D201', D2: 'D202', R7: 'R207' });
+    k.accept();
+    const b = ok(importing(k, { project: 'ring', as: 'B', refdes: 'board' }, [], src()));
+    expect(b.renamed.refdes).toEqual({ J1: 'J301', R1: 'R301', D1: 'D301', D2: 'D302', R7: 'R307' });
+    const d = design(k);
+    expect(boardOf(d, by(d, 'R307'))).toBe(findBoard(d, 'B')!.id);
+    // the default renumbers the taken ones only (D2 and R7 are free here)
+    expect(ok(importing(main(), { project: 'ring', as: 'A' }, [], src())).renamed.refdes).toEqual({ J1: 'J201', R1: 'R201', D1: 'D201' });
+  });
+
+  it('takes the lowest free number of the block where the slot is taken', () => {
+    const k = main([{ op: 'add_part', part: 'generic:R', refdes: 'R201', params: { resistance: '1k' } }]);
+    const rep = ok(importing(k, { project: 'ring', as: 'A', refdes: 'board' }, [], src()));
+    expect(rep.renamed.refdes).toMatchObject({ R1: 'R202', R7: 'R207' });
   });
 });

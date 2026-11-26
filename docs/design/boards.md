@@ -53,7 +53,11 @@ with `dry_run` to see which nets join by name. Keep a net that only shares a nam
 joined nets the effect lists as differing (a voltage). A joined net whose width differs keeps its
 own width on the boards here and the source's on the new board (the effect lists it under "track widths
 kept"; two source nets on one net: the wider): nothing to set. Then apply it with the `mate` of the two
-connectors in the same transaction (the effect gives their new refdes). The parts arrive on their own footprints (a generic
+connectors in the same transaction (the effect gives their new refdes). A refdes that is taken here
+is renumbered into the new board's block: board 3 owns R301–R399, so R1 → R301 and C12 → C312; free ones
+stay. Pass `refdes: "board"` to number every part of the board so (R1, R2, C1 → R301, R302, C301), which
+reads well on its silkscreen and BOM; the same option works on `import_block` for the board its parts land on.
+On the first board a taken refdes gets the next free number. The parts arrive on their own footprints (a generic
 part the source gave its own land pattern on a card of its own, `generic:…~2`: the effect says "keeps its
 footprint"; the parts here keep theirs) and where the
 source has them (its placement, pins, sides, keep-outs, graphics and panel), with its planes, via
