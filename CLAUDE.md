@@ -93,6 +93,10 @@ Start with `docs/ARCHITECTURE.md` (overview, package table, roadmap).
 | `enclosure.md`, `mechanics.md` | Enclosure script (`packages/fab`); agent guide `get_guide mechanics` |
 | `ui.md` | UI concept (`apps/web`) |
 
+`docs/ROADMAP.md` is the plan for what comes next: packages by id (Q, A, X, P, S, L) with what makes each done, their
+order, and how to work them (its §9). `docs/design/agent-workflows.md` is the proposal behind track A; neither describes
+built code.
+
 Several docs (`schematic.md`, `high-speed.md`, `cost.md`, `mechanics.md`, `boards.md`) are text the agent itself reads: write them to the agent.
 
 ## Conventions
