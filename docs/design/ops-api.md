@@ -23,6 +23,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 ### Query
 
 - `get_summary`: overview of the design.
+- `get_scorecard`: the design in a few numbers, the same text for the same design: open findings by family and severity, the waived, what could not be judged (by code), the ledger, parts, power rails, and per board its size, layers, sides and routing, with open connections, track length, vias and copper against current only where it is routed for its placement. It routes nothing. The eval scores runs by it and the design document prints it ([scorecard](scorecard.md)).
 - `find`: parts and nets by a substring of refdes, part id, value or net name, or by category.
 - `get_component`: one component: part, parameters, package, pins with their nets, constraints.
 - `get_net`: one net: its pins, track width (the width its current needs, per layer), how its copper carries its current, vias for its current, impedance rule.
@@ -92,6 +93,15 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 
 - `constrain`: add a placement, parameter, layer, arrangement, room (a functional block keeps its parts inside a rectangle of the board) or note constraint (soft or hard).
 - `remove_constraint`: remove a constraint (also takes back an `attach`).
+
+### Spec
+
+What the product must do, each item with how the kernel can tell ([spec](spec.md)). The items' status
+shows as findings (`SPEC.VIOLATED`, `SPEC.UNVERIFIED`, `SPEC.ASSUMED`) in the one list of diagnostics.
+
+- `specify`: add a spec item (its text, and the verifiers: a part that must be fitted, a measured value in a range, a check that finds nothing, the user's own tick), or change one by its *id*. The effect gives the item's status as it stands. An item of the user's (their op, or the agent's with their words in *quote*) is theirs: without *quote* the agent may only add verifiers to it, and only the user ticks a manual verifier (*done*). An item the agent writes without *quote* is an assumption until the user confirms it.
+- `remove_spec`: remove a spec item and the waivers that name it; from the agent, an item of the user's only with their words in *quote*.
+- `get_spec`: every item with who said it, whether it is assumed, its status (verified, violated, unverified, waived) and each verifier's result (holds, fails, unknown) with why, and the counts by status. `get_summary` carries the counts as *spec* when the design has one.
 
 ### Board
 

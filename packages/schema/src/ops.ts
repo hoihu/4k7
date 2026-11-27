@@ -8,6 +8,8 @@ import { LandPad, Mating, PadsView } from './ingest.ts';
 import { ENCLOSURE_PARTS, EnclosureBrief } from './enclosure.ts';
 import { PAPER_IDS, type PaperId } from './results.ts';
 import { E_SERIES } from './units.ts';
+import { SPEC_MEASURES } from './model.ts';
+import type { PartCategory } from './part.ts';
 
 /* ---------------------------------- refs ---------------------------------- */
 
@@ -222,6 +224,57 @@ export const RemoveWaiverOp = z.object({
   op: z.literal('remove_waiver'),
   id: z.string(),
 });
+
+/* the spec: what the product must do (docs/design/spec.md) */
+
+const PART_CATEGORIES = ['resistor', 'capacitor', 'inductor', 'diode', 'led', 'ic', 'connector', 'transistor', 'crystal', 'other'] as const satisfies readonly PartCategory[];
+const specBound = z.number().describe('Bound of the range, inclusive');
+
+/** A spec item's verifier as an op gives it: nets, boards and parts by name. See docs/design/spec.md §2. */
+export const SpecVerifierArg = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('part'),
+    category: z.enum(PART_CATEGORIES).optional().describe("The part card's category"),
+    pins: z.array(z.string().min(1)).min(1).optional().describe('Every one is the name of a pin of the card (any case): a USB-C receptacle is category connector with pins ["CC1", "CC2"], which no pin header matches'),
+    text: z.array(z.string().min(1)).min(1).optional().describe("One of these occurs in the card's id, MPN, title, description or package (any case)"),
+    min: z.number().int().min(0).optional().describe('Fitted parts that match, at least (default 1)'),
+    max: z.number().int().min(0).optional().describe('At most (default no limit); min 0 and max 0: none of these may be fitted'),
+    board: z.string().min(1).optional().describe('Only the parts on this board (name or id); without it every board'),
+  }).describe('A part that must be fitted (or must not): counts the fitted parts (not DNP, not pad-only) whose card matches everything given; at least one of category, pins and text'),
+  z.object({
+    kind: z.literal('measure'),
+    of: z.enum(SPEC_MEASURES).describe('board.width_mm, board.height_mm (the outline), board.layers, board.open_connections (unknown until the board is routed), parts.fitted (fitted parts), net.voltage and net.max_current (the declared attribute of net; unknown while it is not set)'),
+    net: netName.optional().describe('net.voltage, net.max_current: the net'),
+    board: z.string().min(1).optional().describe('board.* and parts.fitted: this board (name or id); without it every board, and all must hold'),
+    min: specBound.optional(),
+    max: specBound.optional(),
+  }).describe('A value the kernel knows inside a range: at least one of min and max'),
+  z.object({
+    kind: z.literal('check'),
+    code: z.string().min(1).describe('A check code, exactly as findings carry it ("SEM.ABS_MAX", "DRC.TRACK_CURRENT"). Not FAB.*, PANEL.*, ENC.* (worked out outside the kernel) or SPEC.*'),
+    entities: z.array(z.string().min(1)).min(1).optional().describe('Only findings naming one of these (refdes, "U1.EN", "net:+3V3"); without it anywhere'),
+  }).describe('A named check finds nothing: holds while no open finding with exactly this code names one of entities. Unknown while a board check\'s board is not routed, or while the check says it could not judge there'),
+  z.object({
+    kind: z.literal('manual'),
+    done: z.literal(true).optional().describe("The user's tick: only the user sets it (or you, with their words in quote)"),
+    note: z.string().optional().describe('What the user checks by hand'),
+  }).describe("The user's own tick, for what the kernel cannot tell (how a button feels)"),
+]);
+
+export const SpecifyOp = z.object({
+  op: z.literal('specify'),
+  id: z.string().optional().describe('An existing item to change (only the fields given); without it a new item'),
+  text: z.string().min(3).optional().describe('What the product must do: one statement that can be true or false. Required for a new item'),
+  quote: z.string().optional().describe("The user's words it comes from. Without it the item is yours: an assumption the user is asked to confirm"),
+  verify: z.array(SpecVerifierArg).optional().describe("How the kernel can tell; replaces the item's verifiers"),
+  done: z.boolean().optional().describe("The item's manual verifier: the user says it holds (true) or no longer does (false). From you only with the user's words in quote"),
+}).describe("Write down what the product must do (the spec), or change an item. An item of the user's (said by them, or with their words in quote) is theirs: without quote you may only add verifiers to it. One without quote is an assumption of yours until the user confirms it (specify its id again with their words in quote). See get_spec");
+
+export const RemoveSpecOp = z.object({
+  op: z.literal('remove_spec'),
+  id: z.string(),
+  quote: z.string().optional().describe("The user's words that drop it; required from you for an item of the user's"),
+}).describe('Remove a spec item, and the waivers that name it');
 
 const layoutEntry = z
   .union([z.string().min(1), z.array(z.string().min(1)).min(1), z.null()])
@@ -985,6 +1038,8 @@ export const EditOp = z.discriminatedUnion('op', [
   RemoveConstraintOp,
   AddWaiverOp,
   RemoveWaiverOp,
+  SpecifyOp,
+  RemoveSpecOp,
   SetSymbolOp,
   SetFootprintOp,
   RenamePartOp,
@@ -1062,6 +1117,7 @@ export type GuideTopic = z.infer<typeof GuideTopic>;
 
 export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_summary') }),
+  z.object({ op: z.literal('get_scorecard') }).describe('The design in a few numbers, to compare and report: open findings by family and severity, the waived, what could not be judged (by code), the ledger, parts, power rails (over budget, unknown, hot regulators), and per board its size, layers, sides and routing (open connections, track length, vias, copper against current, only where routed for this placement). Routes nothing; the same design gives the same answer'),
   z.object({
     op: z.literal('find'),
     text: z.string().optional().describe('Substring of refdes, part id, value or net name'),
@@ -1077,6 +1133,7 @@ export const QueryOp = z.discriminatedUnion('op', [
     limit: z.number().int().min(1).max(200).optional().describe('get_diagnostics: list at most this many (default 20). Errors come first, waived ones last; when not all are listed, found counts them all by code and says the call for the next page'),
   }).describe('The design\'s check results (ERC, the schematic\'s and datasheet checks, XCHK.*, the board\'s copper shorts, on every board), errors first, the waived ones (waivedBy) last: diagnostics lists 20; when there are more, found counts all of them by code (with the nets and parts they name most) and says how many are not listed and the call that lists the next page. Page on with offset or narrow by code or severity'),
   z.object({ op: z.literal('get_ledger') }),
+  z.object({ op: z.literal('get_spec') }).describe("The spec: what the product must do, each item with who said it (assumed: yours, not confirmed by the user), its status (verified, violated, unverified, waived) and each verifier's result (holds, fails, unknown) with why; counts by status"),
   z.object({ op: z.literal('get_description') }).describe('The design description (describe): overview, functional blocks with their parts, and the parts no block covers yet'),
   z.object({ op: z.literal('get_fab_profiles'), board: boardRef }).describe('The built-in manufacturer profiles (JLCPCB, PCBWay, Eurocircuits: ids, limits, source pages) and the one this board uses. Several boards: board answers for that board (its layers and profile); without board, boards lists every board\'s'),
   z.object({

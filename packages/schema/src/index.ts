@@ -14,6 +14,7 @@ export * from './sourcing.ts';
 export * from './scope.ts';
 export * from './panel.ts';
 export * from './rules.ts';
+export * from './checks.ts';
 export * from './enclosure.ts';
 export * from './conversation.ts';
 export * from './font.ts';

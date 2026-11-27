@@ -339,13 +339,7 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView, stamp?
       for (const v of b.vias) silk.circle(v.x, v.y, v.pad + 2 * SILK_TO_PAD);
       silk.polarity(false);
     }
-    const keepOff = [
-      ...here.map((p) => ({ x0: p.x - p.w / 2 - SILK_TO_PAD - SILK_WIDTH / 2, y0: p.y - p.h / 2 - SILK_TO_PAD - SILK_WIDTH / 2, x1: p.x + p.w / 2 + SILK_TO_PAD + SILK_WIDTH / 2, y1: p.y + p.h / 2 + SILK_TO_PAD + SILK_WIDTH / 2 })),
-      // and off vias (ink on a via's ring prints badly)
-      ...b.vias.map((v) => ({ x0: v.x - v.pad / 2 - SILK_WIDTH, y0: v.y - v.pad / 2 - SILK_WIDTH, x1: v.x + v.pad / 2 + SILK_WIDTH, y1: v.y + v.pad / 2 + SILK_WIDTH })),
-    ];
-    const clear = (x: number, y: number) =>
-      x > SILK_WIDTH && y > SILK_WIDTH && x < w - SILK_WIDTH && y < h - SILK_WIDTH && !keepOff.some((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1);
+    const clear = silkClear(b, side);
     const clipped = (pts: number[]) => {
       for (let i = 0; i + 3 < pts.length; i += 2) {
         const [ax, ay, bx, by] = [pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!];
@@ -365,21 +359,13 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView, stamp?
       }
     };
     // the polarity marks first (the kernel placed them clear of copper, holes and the edge), and
-    // the refdes texts keep off them
-    const texts: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    // the refdes texts keep off them (silkTexts)
     for (const part of parts) {
-      for (const s of part.mark?.strokes ?? []) {
-        silk.line(s.pts, s.w);
-        const xs = s.pts.filter((_, i) => i % 2 === 0);
-        const ys = s.pts.filter((_, i) => i % 2 === 1);
-        texts.push({ x0: Math.min(...xs) - s.w / 2, y0: Math.min(...ys) - s.w / 2, x1: Math.max(...xs) + s.w / 2, y1: Math.max(...ys) + s.w / 2 });
-      }
-      for (const d of part.mark?.dots ?? []) {
-        silk.circle(d.x, d.y, d.d);
-        texts.push({ x0: d.x - d.d / 2, y0: d.y - d.d / 2, x1: d.x + d.d / 2, y1: d.y + d.d / 2 });
-      }
+      for (const s of part.mark?.strokes ?? []) silk.line(s.pts, s.w);
+      for (const d of part.mark?.dots ?? []) silk.circle(d.x, d.y, d.d);
     }
-    for (const part of parts) {
+    const texts = silkTexts(b, side, parts);
+    parts.forEach((part, i) => {
       const r = part.body;
       if (r.round) {
         const n = 48;
@@ -389,28 +375,12 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView, stamp?
         const o = bodyOutline(r);
         clipped([...o, o[0]!, o[1]!]);
       }
-      // refdes (a test point's TP_<net>) above the part, else below, else on the body
-      const text = part.silk ?? part.refdes;
-      const th = refdesHeight(r);
-      const tw = textWidth(text, th);
-      const spots = [
-        { x: part.x, y: part.courtyard.y - th / 2 - 0.2 },
-        { x: part.x, y: part.courtyard.y + part.courtyard.h + th / 2 + 0.2 },
-        { x: part.x, y: part.y },
-      ];
-      const box = (sx: number, sy: number) => ({ x0: sx - tw / 2 - 0.15, y0: sy - th / 2 - 0.15, x1: sx + tw / 2 + 0.15, y1: sy + th / 2 + 0.15 });
-      const fits = (sx: number, sy: number) => {
-        const bx = box(sx, sy);
-        if (texts.some((t) => bx.x0 < t.x1 && t.x0 < bx.x1 && bx.y0 < t.y1 && t.y0 < bx.y1)) return false;
-        return [0, 0.25, 0.5, 0.75, 1].every((fx) => [0, 0.5, 1].every((fy) => clear(sx - tw / 2 + fx * tw, sy - th / 2 + fy * th)));
-      };
-      const at = spots.find((s) => fits(s.x, s.y));
+      const at = texts[i];
       if (at) {
-        texts.push(box(at.x, at.y));
         // bottom text is mirrored in the file (top view), so it reads right on the board's underside
-        for (const stroke of textStrokes(text, at.x, at.y, th)) silk.line(side === 'bottom' ? stroke.map((v, i) => (i % 2 === 0 ? 2 * at.x - v : v)) : stroke, SILK_WIDTH);
+        for (const stroke of textStrokes(at.text, at.x, at.y, at.h)) silk.line(side === 'bottom' ? stroke.map((v, i) => (i % 2 === 0 ? 2 * at.x - v : v)) : stroke, SILK_WIDTH);
       }
-    }
+    });
     files.push({ name: `${base}-${side === 'top' ? 'F' : 'B'}_Silkscreen.gbr`, content: silk.toString() });
   }
 
@@ -425,6 +395,66 @@ export function gerbers(b: BoardView, project: string, panel?: PanelView, stamp?
   files.push({ name: `${base}-PTH.drl`, content: drill(b, true, head) });
   if (b.parts.some((p) => p.pads.some((q) => q.npth))) files.push({ name: `${base}-NPTH.drl`, content: drill(b, false, head) });
   return files;
+}
+
+/** Whether ink may go at a point of a side's silkscreen: on the board, off the pads exposed on that side and off the vias (with their clearance). */
+function silkClear(b: BoardView, side: 'top' | 'bottom'): (x: number, y: number) => boolean {
+  const { w, h } = b.outline;
+  const layer = side === 'top' ? 'F.Cu' : 'B.Cu';
+  const here = b.parts.flatMap((p) => p.pads).filter((p) => p.npth || onLayer(p, layer));
+  const keepOff = [
+    ...here.map((p) => ({ x0: p.x - p.w / 2 - SILK_TO_PAD - SILK_WIDTH / 2, y0: p.y - p.h / 2 - SILK_TO_PAD - SILK_WIDTH / 2, x1: p.x + p.w / 2 + SILK_TO_PAD + SILK_WIDTH / 2, y1: p.y + p.h / 2 + SILK_TO_PAD + SILK_WIDTH / 2 })),
+    // and off vias (ink on a via's ring prints badly)
+    ...b.vias.map((v) => ({ x0: v.x - v.pad / 2 - SILK_WIDTH, y0: v.y - v.pad / 2 - SILK_WIDTH, x1: v.x + v.pad / 2 + SILK_WIDTH, y1: v.y + v.pad / 2 + SILK_WIDTH })),
+  ];
+  return (x, y) => x > SILK_WIDTH && y > SILK_WIDTH && x < w - SILK_WIDTH && y < h - SILK_WIDTH && !keepOff.some((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1);
+}
+
+/** A part's text on the silkscreen: what is printed (its refdes, or a test point's TP_<net>), its centre and height (mm, board coordinates). */
+export interface SilkText {
+  text: string;
+  x: number;
+  y: number;
+  h: number;
+}
+
+/**
+ * Where the refdes of each part on a side is printed (null: there was no room for it), in the order of
+ * `parts` (default: the side's parts, mounting holes left out): above the part, else below, else on
+ * the body, clear of pads, vias, the edge, the polarity marks and the texts placed before it. The
+ * Gerber silkscreen and the KiCad export (kicad/footprint.ts) print it there.
+ */
+export function silkTexts(b: BoardView, side: 'top' | 'bottom', parts = b.parts.filter((p) => p.side === side && !p.componentId.startsWith('hole:'))): (SilkText | null)[] {
+  const clear = silkClear(b, side);
+  const texts: { x0: number; y0: number; x1: number; y1: number }[] = [];
+  for (const part of parts) {
+    for (const s of part.mark?.strokes ?? []) {
+      const xs = s.pts.filter((_, i) => i % 2 === 0);
+      const ys = s.pts.filter((_, i) => i % 2 === 1);
+      texts.push({ x0: Math.min(...xs) - s.w / 2, y0: Math.min(...ys) - s.w / 2, x1: Math.max(...xs) + s.w / 2, y1: Math.max(...ys) + s.w / 2 });
+    }
+    for (const d of part.mark?.dots ?? []) texts.push({ x0: d.x - d.d / 2, y0: d.y - d.d / 2, x1: d.x + d.d / 2, y1: d.y + d.d / 2 });
+  }
+  return parts.map((part) => {
+    const text = part.silk ?? part.refdes;
+    const th = refdesHeight(part.body);
+    const tw = textWidth(text, th);
+    const spots = [
+      { x: part.x, y: part.courtyard.y - th / 2 - 0.2 },
+      { x: part.x, y: part.courtyard.y + part.courtyard.h + th / 2 + 0.2 },
+      { x: part.x, y: part.y },
+    ];
+    const box = (sx: number, sy: number) => ({ x0: sx - tw / 2 - 0.15, y0: sy - th / 2 - 0.15, x1: sx + tw / 2 + 0.15, y1: sy + th / 2 + 0.15 });
+    const fits = (sx: number, sy: number) => {
+      const bx = box(sx, sy);
+      if (texts.some((t) => bx.x0 < t.x1 && t.x0 < bx.x1 && bx.y0 < t.y1 && t.y0 < bx.y1)) return false;
+      return [0, 0.25, 0.5, 0.75, 1].every((fx) => [0, 0.5, 1].every((fy) => clear(sx - tw / 2 + fx * tw, sy - th / 2 + fy * th)));
+    };
+    const at = spots.find((s) => fits(s.x, s.y));
+    if (!at) return null;
+    texts.push(box(at.x, at.y));
+    return { text, x: at.x, y: at.y, h: th };
+  });
 }
 
 /**

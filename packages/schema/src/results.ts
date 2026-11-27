@@ -1,7 +1,7 @@
 import type { Stackup } from './stackup.ts';
 import type { EditOp } from './ops.ts';
 import type { ScopeOutcome } from './scope.ts';
-import type { QuarterTurn, ValueSeries } from './model.ts';
+import type { QuarterTurn, SpecItem, SpecVerifier, ValueSeries } from './model.ts';
 import { drawingFinding } from './rules.ts';
 
 /**
@@ -215,7 +215,7 @@ export interface TransactionResult {
 
 /* ------------------------------- changesets ------------------------------- */
 
-export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'mate' | 'sheet' | 'board' | 'description' | 'drawing' | 'enclosure';
+export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'mate' | 'sheet' | 'board' | 'description' | 'drawing' | 'enclosure' | 'spec';
 
 export interface Hunk {
   /** Stable id: "<kind>:<entity id>". */
@@ -425,6 +425,34 @@ export interface DescriptionView {
 
 /* ------------------------------ query results ----------------------------- */
 
+/** A spec item's status, worked out (docs/design/spec.md §2). */
+export type SpecStatus = 'verified' | 'violated' | 'unverified' | 'waived';
+
+/** The spec's items by status; assumed counts the items the agent wrote and the user has not confirmed, whatever their status. */
+export interface SpecCounts {
+  verified: number;
+  violated: number;
+  unverified: number;
+  waived: number;
+  assumed: number;
+}
+
+/** What a verifier came to: holds, fails or unknown, with one sentence why. Nets, boards and parts by name. */
+export type SpecVerifierResult = SpecVerifier & { result: 'holds' | 'fails' | 'unknown'; why: string };
+
+/** get_spec, and KernelState.spec: every item with its status and each verifier's result. */
+export interface SpecAnswer {
+  counts: SpecCounts;
+  items: {
+    id: string;
+    text: string;
+    source: SpecItem['source'];
+    assumed: boolean;
+    status: SpecStatus;
+    verify: SpecVerifierResult[];
+  }[];
+}
+
 export interface DesignSummary {
   name: string;
   sheets: string[];
@@ -440,6 +468,8 @@ export interface DesignSummary {
   counts: DiagnosticCounts;
   ledger: number;
   waivers: number;
+  /** Present when the design has a spec: its items by status (get_spec lists them). */
+  spec?: SpecCounts;
   /** Present when the design has a description: its blocks, and the parts none of them covers. */
   description?: { blocks: number; undescribed: string[] };
   /** Present when generic passives are held to standard-value series (set_value_series). */
@@ -448,6 +478,56 @@ export interface DesignSummary {
   stackup?: Pick<Stackup, 'name' | 'copper' | 'dielectric' | 'mask'>;
   /** The board's allowed heating (set_board current_rise_c, °C) when not the default 10 (what calc track_current works at). One board only, as stackup. */
   currentRise?: 10 | 20 | 30;
+}
+
+/**
+ * design_query get_scorecard: how good the design is right now, in a few numbers. The same design
+ * gives the same text (no time, no version; keys in this order, families and codes sorted), so two
+ * cards are compared as text. Nothing is routed for it. See docs/design/scorecard.md.
+ */
+export interface Scorecard {
+  /** Open findings (not waived) by family: the code's part before the dot. Families with none are left out. */
+  findings: Record<string, { errors: number; warnings: number; infos: number }>;
+  waived: number;
+  /** Open findings that say a check could not judge (UNKNOWN_CODES in checks.ts), by code. */
+  unknown: Record<string, number>;
+  // the spec's counts by status, once the design has one (docs/design/spec.md §4): not computed yet
+  spec?: { verified: number; violated: number; unverified: number; waived: number; assumed: number };
+  /** The ledger's constraints by strength, and how many of them are violated. */
+  ledger: { hard: number; soft: number; violated: number };
+  /** Parts fitted and not fitted (pad-only parts are neither), and the part cards they use. */
+  parts: { fitted: number; dnp: number; cards: number };
+  power: {
+    rails: number;
+    /** Rails whose loads and the rails they feed draw more than their max_current (the power tree's budget). */
+    over: number;
+    /** Rails with no voltage, no source or no budget that could be worked out. */
+    unknown: number;
+    /** Linear regulators above their package's limit, with the worst: "U2: 0.85 W of 0.29 W". */
+    hot: { count: number; worst?: string };
+  };
+  boards: BoardScore[];
+}
+
+/** One board on the scorecard. Lengths in mm and ratios rounded to 0.01. */
+export interface BoardScore {
+  id: string;
+  name: string;
+  width_mm: number;
+  height_mm: number;
+  /** Set by the user, or what the placer proposed. */
+  size_by: 'user' | 'proposal';
+  layers: number;
+  /** Parts on each side (mounting holes not counted). */
+  parts: { top: number; bottom: number };
+  /** none: never routed; stale: routed, but not for this placement (no copper to judge). The fields below are absent unless done. */
+  routing: 'none' | 'stale' | 'done';
+  /** Nets to route, nets routed in full, and connections left open. */
+  connections?: { nets: number; routed: number; open: number };
+  track_mm?: number;
+  vias?: number;
+  /** The copper against its nets' currents: nets by status, and the worst ratio of current to capacity. */
+  current?: { ok: number; over: number; unverified: number; unknown: number; worst?: { net: string; ratio: number } };
 }
 
 /* -------------------------------- bring-up -------------------------------- */

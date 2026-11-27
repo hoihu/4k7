@@ -4,7 +4,7 @@
  * in-process Kernel through the same KernelPort the app's worker implements.
  * See docs/ARCHITECTURE.md §3.9.
  */
-import type { Design, TransactionResult } from '@4k7/schema';
+import type { Design, Scorecard, TransactionResult } from '@4k7/schema';
 import { Kernel } from '@4k7/kernel';
 import { Agent } from '../src/loop.ts';
 import { ScriptedProvider } from '../src/providers/scripted.ts';
@@ -30,11 +30,11 @@ export interface EvalTask {
 export interface Score {
   task: string;
   ok: boolean;
-  /** Unwaived error diagnostics outside the board DRC (ERC, semantic, ledger, drawing rules). */
+  /** Open errors outside the board DRC (ERC, semantic, ledger, drawing rules, panel, stack): the scorecard's, every family but DRC. */
   erc_errors: number;
-  /** Unwaived DRC errors the kernel reports without routing: pads that short or are too close. */
+  /** Open DRC errors on the scorecard: the board as placed, or as routed for its placement (nothing is routed to score it). */
   drc_errors: number;
-  /** Ledger constraints the kernel reports as violated. */
+  /** Ledger constraints the kernel reports as violated (the scorecard's ledger). */
   constraint_failures: number;
   /** Ops in design_edit transactions the kernel applied (dry runs not counted). */
   ops_applied: number;
@@ -46,6 +46,8 @@ export interface Score {
   tokens_out: number;
   /** Why ok is false, in words. */
   failures: string[];
+  /** The design's scorecard after the run (get_scorecard; docs/design/scorecard.md), for the model table. */
+  card: Scorecard;
 }
 
 /** A provider that replays a task's script. */
@@ -99,11 +101,11 @@ export interface RunReport {
 
 /** Scores the design a run left behind. */
 export function scoreRun(kernel: Kernel, task: EvalTask, run: RunReport): Score {
-  const open = kernel.diagnostics().filter((x) => x.severity === 'error' && !x.waivedBy);
-  const drc = open.filter((x) => x.code.startsWith('DRC.')).length;
-  const erc = open.length - drc;
+  const card = kernel.scorecard();
+  const drc = card.findings.DRC?.errors ?? 0;
+  const erc = Object.entries(card.findings).reduce((n, [family, f]) => n + (family === 'DRC' ? 0 : f.errors), 0);
+  const violated = card.ledger.violated;
   const state = kernel.state();
-  const violated = state.ledger.filter((l) => l.status === 'violated').length;
 
   const { done } = run;
   const failures: string[] = [];
@@ -132,6 +134,7 @@ export function scoreRun(kernel: Kernel, task: EvalTask, run: RunReport): Score 
     tokens_in: run.tokensIn,
     tokens_out: run.tokensOut,
     failures,
+    card,
   };
 }
 
