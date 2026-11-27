@@ -1,0 +1,52 @@
+(footprint "MH-3.2"
+	(version 20260206)
+	(generator "4k7")
+	(generator_version "0.6.1")
+	(layer "F.Cu")
+	(descr "MH-3.2 (4k7)")
+	(property "Reference" "REF**"
+		(at 0 -3.9 0)
+		(layer "F.SilkS")
+		(hide yes)
+		(uuid "abf9e45c-01fd-5b64-b3ac-3374473cfa6c")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "MH-3.2"
+		(at 0 3.9 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "144ae4be-3a1d-5923-8347-11e374062161")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr exclude_from_pos_files exclude_from_bom)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_rect
+		(start -3.2 -3.2)
+		(end 3.2 3.2)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "372af542-beb4-575f-8fdf-6b5786cb4200")
+	)
+	(pad "1" np_thru_hole circle
+		(at 0 0)
+		(size 3.2 3.2)
+		(drill 3.2)
+		(layers "*.Cu" "*.Mask")
+		(uuid "c4ebcb9d-c2a2-5315-ae21-95a9930f163b")
+	)
+	(embedded_fonts no)
+)

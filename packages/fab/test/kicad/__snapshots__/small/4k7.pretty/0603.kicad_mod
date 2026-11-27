@@ -1,0 +1,79 @@
+(footprint "0603"
+	(version 20260206)
+	(generator "4k7")
+	(generator_version "0.6.1")
+	(layer "F.Cu")
+	(descr "0603 (4k7)")
+	(property "Reference" "REF**"
+		(at 0 -1.225 0)
+		(layer "F.SilkS")
+		(uuid "f1791db4-6e0a-5a3c-a623-974cc880ea78")
+		(effects
+			(font
+				(size 0.6 0.6)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "0603"
+		(at 0 1.225 0)
+		(layer "F.Fab")
+		(uuid "ddd4b881-d8b4-5de7-ae29-99418927d242")
+		(effects
+			(font
+				(size 0.6 0.6)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_poly
+		(pts
+			(xy -0.8 -0.4) (xy 0.8 -0.4) (xy 0.8 0.4) (xy -0.8 0.4)
+		)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "883ec73e-6186-51c9-9ca9-d4ccc0705e0b")
+	)
+	(fp_poly
+		(pts
+			(xy -0.8 -0.4) (xy 0.8 -0.4) (xy 0.8 0.4) (xy -0.8 0.4)
+		)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "26cb408c-def4-58dc-85bd-56795b0c472b")
+	)
+	(fp_rect
+		(start -1.278 -0.725)
+		(end 1.278 0.725)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "0ba85748-7332-57d4-8479-4641d26aec41")
+	)
+	(pad "1" smd rect
+		(at -0.714 0)
+		(size 0.628 0.95)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "c86acd9a-0dab-52a5-8e67-d8f2d25f34db")
+	)
+	(pad "2" smd rect
+		(at 0.714 0)
+		(size 0.628 0.95)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "cb59497c-8e14-524b-b594-a47853c05e77")
+	)
+	(embedded_fonts no)
+)

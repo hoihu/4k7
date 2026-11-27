@@ -1,0 +1,83 @@
+(footprint "HDR-1x2"
+	(version 20260206)
+	(generator "4k7")
+	(generator_version "0.6.1")
+	(layer "F.Cu")
+	(descr "HDR-1x2 (4k7)")
+	(property "Reference" "REF**"
+		(at 0 -3.49 0)
+		(layer "F.SilkS")
+		(uuid "fb225223-a649-58c5-a11e-a89db8c34978")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "HDR-1x2"
+		(at 0 3.49 0)
+		(layer "F.Fab")
+		(uuid "ab4fd581-88b1-5154-8708-db78e1e21541")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr through_hole)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_poly
+		(pts
+			(xy -0.635 -2.54) (xy 1.27 -2.54) (xy 1.27 2.54) (xy -1.27 2.54) (xy -1.27 -1.905)
+		)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "d2701900-b939-5a68-8940-9d70ceeb1198")
+	)
+	(fp_poly
+		(pts
+			(xy -0.635 -2.54) (xy 1.27 -2.54) (xy 1.27 2.54) (xy -1.27 2.54) (xy -1.27 -1.905)
+		)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "d40ab563-e521-5bd7-80c5-4fcea4ad127b")
+	)
+	(fp_rect
+		(start -1.5 -2.79)
+		(end 1.5 2.79)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "3a320736-b8e8-5f6c-bec5-c22d5f845e69")
+	)
+	(pad "1" thru_hole rect
+		(at 0 -1.27)
+		(size 1.7 1.7)
+		(drill 1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "636bb20b-c66e-5af1-97f1-546ce6e63844")
+	)
+	(pad "2" thru_hole circle
+		(at 0 1.27)
+		(size 1.7 1.7)
+		(drill 1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "a4a7e95c-fc53-5690-8b76-fe794592fa5e")
+	)
+	(embedded_fonts no)
+)

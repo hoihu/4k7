@@ -1,6 +1,7 @@
 # The scorecard
 
-> Package Q1 of the [roadmap](../ROADMAP.md). Status: design, 2026-11-27; nothing here is built.
+> Package Q1 of the [roadmap](../ROADMAP.md). Status: built 2026-11-27 (`packages/kernel/src/scorecard.ts`),
+> except the spec's counts (A1) and the second step, Q1b (§3).
 
 ## 1. What it is for
 
@@ -24,11 +25,12 @@ export interface Scorecard {
   /** Open findings (not waived) by family: the code's part before the dot. Families with none are left out. */
   findings: Record<string, { errors: number; warnings: number; infos: number }>;
   waived: number;
-  /** Open findings that say a check could not judge (the companions in CHECKS, spec.md §6), by code. */
+  /** Open findings that say a check could not judge (UNKNOWN_CODES: the companions in CHECKS, spec.md §6), by code. */
   unknown: Record<string, number>;
-  /** The spec's counts, when the design has one (spec.md §4). */
+  /** The spec's counts, when the design has one (spec.md §4). Declared, not filled in until A1 is built. */
   spec?: { verified: number; violated: number; unverified: number; waived: number; assumed: number };
   ledger: { hard: number; soft: number; violated: number };
+  /** Pad-only parts are neither fitted nor dnp; cards: the part cards the components use. */
   parts: { fitted: number; dnp: number; cards: number };
   power: {
     rails: number;
@@ -50,10 +52,15 @@ export interface BoardScore {
   /** Set by the user, or what the placer proposed. */
   size_by: 'user' | 'proposal';
   layers: number;
+  /** Mounting holes not counted. */
   parts: { top: number; bottom: number };
-  /** none: never routed; stale: routed for an earlier placement. The fields below are absent unless done. */
+  /**
+   * done: copper stored (or drawn) for this placement; stale: routed for an earlier placement; none: no
+   * copper, also while routing is asked for this placement and not worked out yet. The fields below are absent unless done.
+   */
   routing: 'none' | 'stale' | 'done';
-  connections?: { total: number; open: number };
+  /** Nets to route, nets routed in full, connections left open. */
+  connections?: { nets: number; routed: number; open: number };
   track_mm?: number;
   vias?: number;
   /** The copper against its nets' currents: nets by status, and the worst ratio of current to capacity. */
@@ -65,14 +72,15 @@ Where each field comes from, all of it existing:
 
 | Field | From |
 |---|---|
-| `findings`, `waived` | `Kernel.diagnostics()` plus each routed board's `BoardView.diagnostics`, the two findings they share (`DRC.SHORT`, `DRC.CLEARANCE`) counted once |
-| `unknown` | The same findings, those whose code is some check's `unknownWhen` in `CHECKS` |
-| `spec` | `get_spec` |
-| `ledger` | `Design.ledger` and `SchematicView.constraintStatus` |
-| `parts` | `Design.components` (`dnp`; `padOnly` cards are neither fitted nor dnp) and the cards in use |
-| `power` | `powerTreeAnswer` (`packages/kernel/src/powertree.ts`): `current.budget` and `dissipation.status` per rail |
-| `boards[].width_mm … size_by` | `BoardView.outline`, `sizeBy`, `BoardSettings.layers` |
-| `boards[].routing … vias` | `BoardView.routing`, `stats`, `unrouted` |
+| `findings`, `waived` | `Kernel.diagnostics()` plus each board's `BoardView.diagnostics` (routed for its placement, else as placed: placement, panel and silkscreen findings count on a board not routed too), the two findings they share (`DRC.SHORT`, `DRC.CLEARANCE`) counted once |
+| `unknown` | The same findings, those whose code is in `UNKNOWN_CODES` (some check's `unknownWhen` in `CHECKS`) |
+| `spec` | `get_spec`, once A1 is built |
+| `ledger` | `Design.ledger` (by `strength`) and `SchematicView.constraintStatus` |
+| `parts` | `Design.components` (`dnp`; `padOnly` cards are neither fitted nor dnp) and the cards they use |
+| `power.rails … unknown` | `powerTreeAnswer` (`packages/kernel/src/powertree.ts`): `voltage`, `source.kind` and `current.budget` per rail |
+| `power.hot` | `linearRegulators` (`packages/kernel/src/checks.ts`, what `SEM.LDO_DISSIPATION` judges): each linear regulator at `warning` or `error`, the worst by watts against its package's limit (the same numbers as the power tree's `dissipation`, read once per regulator rather than per rail) |
+| `boards[].width_mm … layers` | `BoardView.outline`, `sizeBy`, `layers` |
+| `boards[].routing … vias` | `BoardView.routing`, `stats` (`nets`, `routed`, `unrouted`, `trackLength`, `vias`) |
 | `boards[].current` | `BoardView.current.nets` (`CurrentNet.status`, `worst`) |
 
 A board that is not routed for its placement has no copper to judge. Its score says `routing` and stops;
@@ -81,8 +89,9 @@ copper stored for the placement (`routedNow` in `kernel.ts`) and otherwise the p
 
 **Rules for the answer.** Lengths in mm rounded to 0.01, ratios to 0.01. Keys in the order above, boards in
 board order, families and codes sorted. No time, no version, nothing that differs between two runs on the
-same design: two scorecards are compared as text. Remembered through `derive.ts`; `npm run test:derived`
-recomputes it.
+same design: two scorecards are compared as text. It is worked out afresh on each ask, from results that
+are remembered already (the analysis, `viewOf` and `placedOf` through `derive.ts`, the boards' views): the
+card itself only counts, and has no remembered result of its own for `npm run test:derived` to recompute.
 
 ## 3. What the kernel cannot know
 
@@ -102,10 +111,13 @@ what the kernel knows; it does not say the files are clean or the board is free.
 ## 4. Who reads it
 
 - **The eval.** `scoreRun` (`packages/agent/eval/run.ts`) takes its error counts and constraint failures
-  from the scorecard instead of counting, and `Score` carries the whole card, so the model table (Q3) can
-  show board size, open connections and unknowns per run without new code.
-- **The design document.** Its first page gets the card as a short table: findings, what could not be
-  judged, each board's size, layers and routing.
+  from the scorecard instead of counting (`drc_errors`: the `DRC` family's errors; `erc_errors`: every other
+  family's), and `Score` carries the whole card as `card`, so the model table (Q3) can show board size,
+  open connections and unknowns per run without new code. Since the card counts each board's findings as
+  placed, `drc_errors` now also counts placement errors such as `DRC.OFF_BOARD`, not only copper shorts.
+- **The design document** (`apps/web/src/lib/designdoc.ts`, the table in `scorecarddoc.ts`). Its cover gets
+  the card as a short table under the figures: findings, what could not be judged, each board's size,
+  layers and routing. The app asks for the card after the board is routed for the document.
 - **Later, without changes here:** `explore` returns one per variant (A6), a gate shows the difference to
   the last gate's (A7), `4k7pcb run` stores one with each proposal (A10), the diff lists what moved (X7).
 
@@ -119,7 +131,7 @@ One, of the usual size:
 - `Scorecard` and `BoardScore` in the schema, `get_scorecard` in `QueryOp` and in [ops-api](ops-api.md) §2
   (the `ops-doc` test), the answer in a new `packages/kernel/src/scorecard.ts`.
 - `CHECKS` (spec.md §6) if A1 has not landed it yet: the scorecard needs only its `unknownWhen`, so whichever
-  of the two packages comes first brings the list and its test.
+  of the two packages comes first brings the list and its test. (It came first, in a commit of its own.)
 - `scoreRun` reads it. The design document's table.
 - Tests: an empty design; a design with a spec, a waiver and a violated constraint; a board not routed,
   stale and routed; two boards; the same design twice gives the same text.

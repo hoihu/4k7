@@ -23,6 +23,7 @@ describe('agent eval runner', () => {
       tokens_in: 0,
       tokens_out: 0,
       failures: [],
+      card: expect.objectContaining({ findings: expect.any(Object), ledger: { hard: expect.any(Number), soft: expect.any(Number), violated: 0 } }),
     });
   });
 

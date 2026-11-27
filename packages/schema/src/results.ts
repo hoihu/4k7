@@ -480,6 +480,56 @@ export interface DesignSummary {
   currentRise?: 10 | 20 | 30;
 }
 
+/**
+ * design_query get_scorecard: how good the design is right now, in a few numbers. The same design
+ * gives the same text (no time, no version; keys in this order, families and codes sorted), so two
+ * cards are compared as text. Nothing is routed for it. See docs/design/scorecard.md.
+ */
+export interface Scorecard {
+  /** Open findings (not waived) by family: the code's part before the dot. Families with none are left out. */
+  findings: Record<string, { errors: number; warnings: number; infos: number }>;
+  waived: number;
+  /** Open findings that say a check could not judge (UNKNOWN_CODES in checks.ts), by code. */
+  unknown: Record<string, number>;
+  // the spec's counts by status, once the design has one (docs/design/spec.md §4): not computed yet
+  spec?: { verified: number; violated: number; unverified: number; waived: number; assumed: number };
+  /** The ledger's constraints by strength, and how many of them are violated. */
+  ledger: { hard: number; soft: number; violated: number };
+  /** Parts fitted and not fitted (pad-only parts are neither), and the part cards they use. */
+  parts: { fitted: number; dnp: number; cards: number };
+  power: {
+    rails: number;
+    /** Rails whose loads and the rails they feed draw more than their max_current (the power tree's budget). */
+    over: number;
+    /** Rails with no voltage, no source or no budget that could be worked out. */
+    unknown: number;
+    /** Linear regulators above their package's limit, with the worst: "U2: 0.85 W of 0.29 W". */
+    hot: { count: number; worst?: string };
+  };
+  boards: BoardScore[];
+}
+
+/** One board on the scorecard. Lengths in mm and ratios rounded to 0.01. */
+export interface BoardScore {
+  id: string;
+  name: string;
+  width_mm: number;
+  height_mm: number;
+  /** Set by the user, or what the placer proposed. */
+  size_by: 'user' | 'proposal';
+  layers: number;
+  /** Parts on each side (mounting holes not counted). */
+  parts: { top: number; bottom: number };
+  /** none: never routed; stale: routed, but not for this placement (no copper to judge). The fields below are absent unless done. */
+  routing: 'none' | 'stale' | 'done';
+  /** Nets to route, nets routed in full, and connections left open. */
+  connections?: { nets: number; routed: number; open: number };
+  track_mm?: number;
+  vias?: number;
+  /** The copper against its nets' currents: nets by status, and the worst ratio of current to capacity. */
+  current?: { ok: number; over: number; unverified: number; unknown: number; worst?: { net: string; ratio: number } };
+}
+
 /* -------------------------------- bring-up -------------------------------- */
 
 /**

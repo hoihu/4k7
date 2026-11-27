@@ -11,6 +11,7 @@ import {
   type Design,
   type BoardSettings,
   type DesignSummary,
+  type Scorecard,
   type LabelView,
   type Diagnostic,
   type DiagnosticCounts,
@@ -66,6 +67,7 @@ import { blockAssignment } from './layout.ts';
 import { copperKey, layoutBoard, placedOf, planePlan } from './board.ts';
 import { currentCheck, currentMapAnswer, currentRise, layerCopper } from './current.ts';
 import { powerTreeAnswer } from './powertree.ts';
+import { scorecard } from './scorecard.ts';
 import { bringUpPlan } from './bringup.ts';
 import type { RouteProgress } from './router.ts';
 import type { ImportSources } from './importops.ts';
@@ -661,6 +663,8 @@ export class Kernel {
     switch (q.op) {
       case 'get_summary':
         return this.summary(d);
+      case 'get_scorecard':
+        return this.scorecard();
       case 'find': {
         const t = (q.text ?? '').toLowerCase();
         const comps = componentsSorted(d)
@@ -1021,6 +1025,23 @@ export class Kernel {
   diagnostics(): Diagnostic[] {
     const d = this.draft;
     return [...this.findings(d), ...this.copperShorts(d), ...stackCollisions(d, new Map(boardList(d).map((b) => [b.id, placedOf(this.focus(d, b.id))])))];
+  }
+
+  /**
+   * The working copy's scorecard (get_scorecard): the findings of diagnostics() and each board's own,
+   * from the copper stored (or drawn) for its placement, else from the placement; it routes nothing.
+   * See docs/design/scorecard.md.
+   */
+  scorecard(): Scorecard {
+    const d = this.draft;
+    const boards = boardList(d).map(({ id, name }) => {
+      const routed = this.routedNow(d, id);
+      const design = this.focus(d, id);
+      return { id, name, design, view: routed ?? placedOf(design), routed: !!routed };
+    });
+    // (diagnostics() has each board's copper shorts already, from the same view)
+    const own = boards.flatMap((b) => b.view.diagnostics.filter((x) => x.code !== 'DRC.SHORT' && x.code !== 'DRC.CLEARANCE'));
+    return scorecard(d, { findings: [...this.diagnostics(), ...own], constraintStatus: this.analyse(d).view.constraintStatus, boards });
   }
 
   /** Everything the UI needs in one call. */

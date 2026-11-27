@@ -1117,6 +1117,7 @@ export type GuideTopic = z.infer<typeof GuideTopic>;
 
 export const QueryOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('get_summary') }),
+  z.object({ op: z.literal('get_scorecard') }).describe('The design in a few numbers, to compare and report: open findings by family and severity, the waived, what could not be judged (by code), the ledger, parts, power rails (over budget, unknown, hot regulators), and per board its size, layers, sides and routing (open connections, track length, vias, copper against current, only where routed for this placement). Routes nothing; the same design gives the same answer'),
   z.object({
     op: z.literal('find'),
     text: z.string().optional().describe('Substring of refdes, part id, value or net name'),
