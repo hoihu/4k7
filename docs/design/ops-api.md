@@ -304,6 +304,24 @@ The `text` line: the pin, the net with its function ("function unknown" without 
 the MCU's own board, then the mated pairs (a problem after ⚠) and the reaches on the other boards. A
 pair's state is the rule of `ERC.MATE_MISMATCH` and `ERC.MATE_OPEN` (`pairState` in `mates.ts`).
 
+**`format: "c"`** adds `header` to each MCU: a C header built from the same entries (`cHeader`). An
+include guard `PINMAP_<DESIGN>_<REF>_H`, a comment naming the MCU, its part, its board (several boards)
+and the design, then per pin `#define PIN_<NET> <n>`. `<NET>` is the net name upper-cased, every run of
+other characters one `_` (the `PIN_` prefix keeps a leading digit valid); a name taken already gets
+`_2`, `_3`. `<n>` comes from the pin name's base (up to the first `/`, `-`, `_`, `(`), never guessed:
+`GPIO<n>`, `GP<n>`, `IO<n>` (RP2040, ESP32) give `n`; `P<letter><n>` (AVR, STM32) gives bit `n` and a
+second define `PIN_<NET>_PORT <letter>`, for `PORTB`/`GPIOB` by token pasting. Any other name (`RUN`,
+`P0.05`, `D5`) gives the define commented out, with why. A pin with a `flag` has a `WARNING` comment
+above it; the unused GPIOs are one comment at the end.
+
+```c
+/* WARNING: J4.1 (SCK) meets J5.1 (SCK_LED): two nets joined */
+#define PIN_SCK 2  /* PB2, pin 7, uses SCK */
+#define PIN_SCK_PORT B
+/* #define PIN_NRESET  -- RUN, pin 3, function unknown: the pin name gives no GPIO number */
+/* Unused GPIOs: PB3 (pin 2), PB4 (pin 3), PB0 (pin 5), PB1 (pin 6) */
+```
+
 ## 7. Blocks of another project (`list_blocks`, `import_block`)
 
 `design_query list_blocks { project }` reads another project in the projects folder, by its id (the file

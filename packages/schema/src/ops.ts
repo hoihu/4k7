@@ -1172,6 +1172,7 @@ export const QueryOp = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('get_pinmap'),
     ref: z.string().min(1).optional().describe('One MCU by refdes ("U2"); absent: every MCU (a part whose card lists its GPIOs\' functions)'),
+    format: z.enum(['json', 'c']).optional().describe('"c": each MCU also carries header, a C header to paste into firmware: one #define PIN_<NET> <n> per signal pin, n the GPIO number its name gives (GPIO5, GP5, IO5 → 5; PB2 → 2, with PIN_<NET>_PORT B), commented out where the name gives none, a WARNING comment above a pin whose trace is broken, the unused GPIOs. Default json'),
   }).describe('The firmware pin map: per MCU signal pin on a net (power and ground pins left out) its number and name, the net, the function in use (the net\'s needs, else "unknown": record it with set_net needs), the functions the pin offers, the parts\' pins the net reaches, and a text line to paste for firmware; the MCU\'s GPIOs on no net as unused. Several boards: each reach\'s board and the mates the net crosses (J4.1 ⇄ J5.1, the boards), with a problem where the mated pin is on another net or none. Works on the schematic alone'),
   z.object({
     op: z.literal('try_placements'), board: boardRef,

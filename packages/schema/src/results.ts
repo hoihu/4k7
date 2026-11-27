@@ -579,6 +579,8 @@ export interface PinMapMcu {
   pins: PinMapEntry[];
   /** The GPIOs (swap group members) on no net: "PB3 (pin 2)". */
   unused: string[];
+  /** With format 'c': a C header of these pins (#define PIN_<NET> <n>), to paste into firmware. */
+  header?: string;
 }
 
 export interface PinMapEntry {

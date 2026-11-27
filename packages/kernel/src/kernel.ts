@@ -796,7 +796,7 @@ export class Kernel {
       case 'get_power_tree':
         return powerTreeAnswer(d);
       case 'get_pinmap':
-        return pinMapAnswer(d, q.ref);
+        return pinMapAnswer(d, q.ref, q.format);
       case 'get_fab_profiles': {
         // one board (or the one named): its layers and profile; several and none named: each board's
         const current = (s: BoardSettings | undefined) => {
