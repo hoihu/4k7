@@ -84,3 +84,79 @@ describe('parts of a stack running into the other board', () => {
     expect(asm(buck())).toEqual([]);
   });
 });
+
+/** ASM.CLEARANCE: a part of one stacked board clears the other board, but by less than 1 mm. See docs/design/multi-board.md §6. */
+describe('parts of a stack that fit only just', () => {
+  const ok = (k: Kernel, ops: Transaction['ops']) => {
+    const r = k.transact({ summary: 'x', ops });
+    expect(r.status, JSON.stringify(r.rejection)).toBe('ok');
+  };
+  const asm = (k: Kernel) => k.diagnostics().filter((x) => x.code.startsWith('ASM.'));
+  /** As above: the 12 mm C9 on the main board at (x, y), the LED board stacked by J2 ↔ J3. */
+  const stack = (at: [number, number], height?: number, pkg = 'RADIAL-D8-P3.5-H12') => {
+    const k = twoBoards();
+    ok(k, [
+      { op: 'add_part', part: 'generic:C', refdes: 'C9', params: { capacitance: '100uF', voltage: '25V', package: pkg } },
+      { op: 'connect', pins: ['C9.1', 'J2.1'] },
+      { op: 'connect', pins: ['C9.2', 'J2.2'] },
+      { op: 'place', ref: 'C9', x_mm: at[0], y_mm: at[1], lock: true },
+      { op: 'mate', a: 'J2', b: 'J3', kind: 'stack', ...(height !== undefined ? { height_mm: height } : {}) },
+    ]);
+    return k;
+  };
+  const UNDER: [number, number] = [19, 9];
+  const CLEAR: [number, number] = [5, 20];
+  /** Under the LED board with none of its parts over C9 (at UNDER, its R4 hangs over C9). */
+  const NEAR: [number, number] = [22, 9];
+
+  it('warns of a part 0.5 mm under the upper board, naming both boards, the part, the gap and the clearance', () => {
+    const found = asm(stack(NEAR, 12.5));
+    expect(found).toHaveLength(1);
+    const [w] = found;
+    expect(w!.code).toBe('ASM.CLEARANCE');
+    expect(w!.severity).toBe('warning');
+    expect(w!.entities).toEqual(['C9']);
+    expect(w!.message).toMatch(/C9 on Main/);
+    expect(w!.message).toMatch(/LED board/);
+    expect(w!.message).toMatch(/0\.5 mm/);
+    expect(w!.message).toMatch(/1\.0 mm/);
+    expect(w!.message).not.toMatch(/assumed/);
+  });
+
+  it('warns of a part close under a part of the other board, naming both parts', () => {
+    // R4 sits on the LED board's underside over C9
+    const w = asm(stack(UNDER, 12.5)).find((x) => x.entities.includes('R4'))!;
+    expect(w.code).toBe('ASM.CLEARANCE');
+    expect(w.entities).toEqual(['C9', 'R4']);
+    expect(w.message).toMatch(/C9 on Main clears R4 on LED board/);
+  });
+
+  it('reports nothing with a 2 mm gap', () => {
+    expect(asm(stack(NEAR, 14))).toEqual([]);
+  });
+
+  it('reports only ASM.COLLIDES where the part runs into the board', () => {
+    const found = asm(stack(UNDER, 11));
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.filter((x) => x.code === 'ASM.CLEARANCE')).toEqual([]);
+  });
+
+  it('reports nothing for a part beside the upper board\'s outline', () => {
+    expect(asm(stack(CLEAR, 12.5))).toEqual([]);
+  });
+
+  it('never reports the mated connectors themselves', () => {
+    // at 9 mm the 8.5 mm header pair sits 0.5 mm from the other board
+    const k = stack(CLEAR, 9);
+    expect(asm(k).flatMap((x) => x.entities).filter((e) => e === 'J2' || e === 'J3')).toEqual([]);
+  });
+
+  it('says so where the stack height is assumed', () => {
+    // C9 lowered to a part 8 mm tall under the assumed 8.5 mm stack
+    const k = stack(NEAR, undefined, 'RADIAL-D8-P3.5-H8');
+    const found = asm(k).filter((x) => x.code === 'ASM.CLEARANCE');
+    expect(found).toHaveLength(1);
+    expect(found[0]!.severity).toBe('warning');
+    expect(found[0]!.message).toMatch(/0\.5 mm.*assumed/);
+  });
+});

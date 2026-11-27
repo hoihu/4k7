@@ -4,6 +4,8 @@
  * assembly frame; a part of one stacked board that runs into a part or the PCB of another is reported.
  * The two connectors of the mate joining the pair are meant to meet and are left out; so are parts
  * with no 3D body (not checked, not cleared). Boxes: a round or odd body over-reports at its corners.
+ * A part that clears the other board's part or PCB directly over or under it by less than
+ * STACK_CLEARANCE is ASM.CLEARANCE, a warning: connector seating, solder and part height spread eat it.
  */
 import { boardBodies } from '@4k7/parts';
 import type { BoardPlace, BoardView, Design, Diagnostic } from '@4k7/schema';
@@ -15,6 +17,8 @@ interface Solid { ref: string; box: Box }
 
 /** Overlaps below this are touching (mm). */
 const EPS = 0.01;
+/** The vertical gap under which a stacked part is too close to the other board (mm); one value for every design. */
+export const STACK_CLEARANCE = 1.0;
 const mm = (v: number) => (Math.round(v * 10) / 10).toFixed(1);
 
 /** A box of board-view (u, v) and height w above the board's top into the assembly frame. */
@@ -52,7 +56,7 @@ const overlap = (a: Box, b: Box) => [
   Math.min(a.max[2] - b.min[2], b.max[2] - a.min[2]),
 ];
 
-/** ASM.COLLIDES between every two stacked boards. `views`: each board placed (as assemblyOf takes them). */
+/** ASM.COLLIDES and ASM.CLEARANCE between every two stacked boards. `views`: each board placed (as assemblyOf takes them). */
 export function stackCollisions(d: Design, views: ReadonlyMap<string, BoardView>): Diagnostic[] {
   if (views.size < 2) return [];
   const places = assemblyOf(d, views).filter((p) => !p.by.startsWith('beside'));
@@ -73,13 +77,30 @@ export function stackCollisions(d: Design, views: ReadonlyMap<string, BoardView>
       const [A, B] = [solids(va, pa, skip), solids(vb, pb, skip)];
       const report = (ref: string, name: string, box: Box, other: string | null, otherName: string, with_: Box) => {
         const o = overlap(box, with_);
-        if (o.some((x) => x <= EPS)) return;
+        if (o[0]! <= EPS || o[1]! <= EPS) return;
+        const entities = other ? [ref, other] : [ref];
+        const what = other ? `${other} on ${otherName}` : `the PCB of ${otherName}`;
+        if (o[2]! <= EPS) {
+          const gap = Math.max(0, -o[2]!);
+          if (gap >= STACK_CLEARANCE - EPS) return;
+          out.push({
+            code: 'ASM.CLEARANCE',
+            severity: 'warning',
+            entities,
+            message:
+              `${ref} on ${name} clears ${what} by only ${mm(gap)} mm (under the ${mm(STACK_CLEARANCE)} mm clearance), over ${mm(o[0]!)} × ${mm(o[1]!)} mm; connector seating, solder and part heights can close it. ` +
+              (assumed
+                ? `The height between the boards is assumed (the taller connector's body); set the mate's height_mm from the connectors' datasheets, then move the part or raise the stack if it is still this close.`
+                : `Move or turn the part, use a lower part, or raise the stack (the mate's height_mm, with taller connectors).`),
+          });
+          return;
+        }
         out.push({
           code: 'ASM.COLLIDES',
           severity: assumed ? 'warning' : 'error',
-          entities: other ? [ref, other] : [ref],
+          entities,
           message:
-            `${ref} on ${name} runs into ${other ? `${other} on ${otherName}` : `the PCB of ${otherName}`}: it reaches ${mm(o[2]!)} mm into it, over ${mm(o[0]!)} × ${mm(o[1]!)} mm. ` +
+            `${ref} on ${name} runs into ${what}: it reaches ${mm(o[2]!)} mm into it, over ${mm(o[0]!)} × ${mm(o[1]!)} mm. ` +
             (assumed
               ? `The height between the boards is assumed (the taller connector's body); set the mate's height_mm from the connectors' datasheets, then move the part or raise the stack.`
               : `Move or turn the part, put it on the other side, use a lower part, or raise the stack (the mate's height_mm, with taller connectors).`),
