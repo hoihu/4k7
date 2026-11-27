@@ -138,7 +138,7 @@ State: `open`, `in flight (#n)`, `done`. "Needs" names packages that must be mer
 
 | Id | What | Done when | Size | Needs | State |
 |---|---|---|---|---|---|
-| X1 | **KiCad board out.** Design: [kicad-export](design/kicad-export.md). `.kicad_pcb` in KiCad 10's format: outline, stack-up, footprints, tracks, vias, zones, nets, rules | The golden boards open in KiCad 10 and its own DRC reports no short and nothing unconnected (a test that runs where `kicad-cli` is installed) | M | | in flight |
+| X1 | **KiCad board out.** Design: [kicad-export](design/kicad-export.md). `.kicad_pcb` in KiCad 10's format: outline, stack-up, footprints, tracks, vias, zones, nets, rules | The golden boards open in KiCad 10 and its own DRC reports no short and nothing unconnected (a test that runs where `kicad-cli` is installed) | M | | in flight (#263) |
 | X2 | **KiCad schematic and project out.** Design: [kicad-export](design/kicad-export.md) §4. `.kicad_sch` as drawn (wires, labels, pages), a symbol library, `.kicad_pro` | The netlist KiCad exports from it equals 4k7's | L | X1 | open |
 | X3 | **KiCad libraries in.** `.kicad_sym` and `.kicad_mod` read into part cards from the user's KiCad installation or a file, cross-checked like a datasheet import | "Use KiCad's footprint for this part" works and a pad that disagrees with the datasheet is flagged | M | | open |
 | X4 | **A part by its LCSC number.** Pins and footprint from the EasyEDA component the stock check already reads, marked as the house's, checked against the datasheet where there is one | "Add C2040" gives a placed part without a PDF | M | | open |
