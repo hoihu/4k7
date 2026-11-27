@@ -255,11 +255,12 @@
     app.flash(`Exported ${all ? `the ${all.length} boards` : 'the board'} and ${step.parts} part${step.parts === 1 ? '' : 's'} as STEP${without}`);
   }
 
-  /** Several boards: the parts of all of them in one list, for the user (each board's own BOM is in its fab files). See docs/design/multi-board.md §4. */
+  /** Several boards: the parts of all of them and the cables between them in one list, for the user (each board's own BOM is in its fab files). See docs/design/multi-board.md §4. */
   async function exportCombinedBom() {
     const all = await app.assemblyBoards().catch(() => null);
+    const cables = await app.cableTable().catch(() => []);
     const design = app.k?.summary.name && app.k.summary.name !== 'untitled' ? app.k.summary.name : '4k7-board';
-    const file = all && combinedBom(all.map((x) => ({ name: x.at.name, b: x.board })), design, app.sourcing.house.id);
+    const file = all && combinedBom(all.map((x) => ({ name: x.at.name, b: x.board })), design, app.sourcing.house.id, cables);
     if (!file) return;
     download(new Blob([file.content], { type: 'text/csv' }), file.name);
     app.flash(`Exported the parts of the ${all!.length} boards in one BOM`);
