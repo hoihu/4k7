@@ -9,12 +9,13 @@
  */
 import { bomLines, copperText, FINISH_TEXT, impedanceLines, notesStackup, stackupLines, stackupSource, thicknessText } from '@4k7/fab';
 import type { Body3D } from '@4k7/parts';
-import { isHole, PAPERS, planeNames, type BoardView, type BringUpPlan, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView } from '@4k7/schema';
+import { isHole, PAPERS, planeNames, type BoardView, type BringUpPlan, type CopperLayer, type DescriptionView, type DesignSummary, type DiagnosticCounts, type Rect, type SchematicView, type Scorecard } from '@4k7/schema';
 import BoardCanvas from './components/BoardCanvas.svelte';
 import { boardDimensions } from './dimensions.ts';
 import { markdown } from './markdown.ts';
 import { designDocFileName, standaloneHtml } from './docfile.ts';
 import { bringUpHtml } from './bringupdoc.ts';
+import { scorecardHtml } from './scorecarddoc.ts';
 import { SCHEMATIC_STYLE, downloadFile, drawOffscreen, drawSheets, esc, printHtml, sheetSvg } from './print.ts';
 
 export interface DesignDocInput {
@@ -29,6 +30,8 @@ export interface DesignDocInput {
   pending: boolean;
   /** The rails in power-up order, where to probe them, the bench supply's limit; null when it could not be computed. */
   bringUp: BringUpPlan | null;
+  /** The design in a few numbers (get_scorecard), shown on the cover; null when it could not be computed. */
+  scorecard: Scorecard | null;
 }
 
 /** The widest (inside a figure's card) and the tallest figure (mm) on the portrait pages. */
@@ -142,6 +145,7 @@ section { break-before: page; }
 .facts div { border-top: 0.6mm solid ${ACCENT}; background: #fff; padding: 2.5mm 0 0; }
 .facts b { display: block; font-size: 15pt; font-weight: 750; letter-spacing: -0.01em; line-height: 1.2; }
 .facts span { font-size: 8pt; color: #64748b; }
+.cover table.scorecard { margin: 0 0 6mm; }
 .toc { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 8mm; font-size: 10pt; }
 .toc li { display: flex; gap: 3mm; padding: 1.2mm 0; border-bottom: 0.15mm solid #e2e8f0; break-inside: avoid; }
 .toc .no { color: ${ACCENT}; font-weight: 700; width: 4mm; }
@@ -609,6 +613,7 @@ async function buildDesignDocument(input: DesignDocInput): Promise<{ html: strin
     (input.pending ? `<div class="note" style="margin-top:5mm">Draft: this document includes changes that are still waiting for review.</div>` : '') +
     hero +
     `<div class="facts">${facts.map(([v, l]) => `<div><b>${esc(v!)}</b><span>${esc(l!)}</span></div>`).join('')}</div>` +
+    (input.scorecard ? scorecardHtml(input.scorecard) : '') +
     `<ol class="toc">${toc.join('')}</ol></div>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} · design document</title><style>${style(title, view.paper)}</style></head><body>${cover}${body.join('')}</body></html>`;
   return { html, pictures };

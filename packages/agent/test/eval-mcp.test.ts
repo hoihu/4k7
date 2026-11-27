@@ -161,6 +161,7 @@ describe('eval:mcp', () => {
       tokens_in: 1210,
       tokens_out: 50,
       failures: [],
+      card: expect.objectContaining({ ledger: expect.objectContaining({ violated: 0 }) }),
       cost_usd: 0.01,
     });
     expect(r.status).toBe(0);
