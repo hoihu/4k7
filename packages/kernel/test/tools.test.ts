@@ -35,6 +35,6 @@ describe('tool schemas', () => {
     };
     expect(q.properties.op?.enum).toEqual(['get_summary', 'get_scorecard', 'find', 'get_component', 'get_net', 'get_diagnostics', 'get_ledger', 'get_spec', 'get_description', 'get_fab_profiles', 'get_schematic', 'get_copper', 'get_board', 'get_current_map', 'get_power_tree', 'get_pinmap', 'try_placements', 'suggest_moves', 'search_parts', 'get_part', 'list_blocks', 'get_enclosure', 'get_guide']);
     expect(q.required).toEqual(['op']);
-    expect(Object.keys(q.properties).sort()).toEqual(['at', 'board', 'candidates', 'category', 'code', 'drc', 'explore', 'id', 'include_ok', 'limit', 'lines', 'max', 'net', 'nets', 'offset', 'op', 'part', 'parts', 'project', 'radius_mm', 'rect', 'ref', 'route', 'severity', 'text', 'texts', 'topic', 'worst']);
+    expect(Object.keys(q.properties).sort()).toEqual(['at', 'board', 'candidates', 'category', 'code', 'drc', 'explore', 'format', 'id', 'include_ok', 'limit', 'lines', 'max', 'net', 'nets', 'offset', 'op', 'part', 'parts', 'project', 'radius_mm', 'rect', 'ref', 'route', 'severity', 'text', 'texts', 'topic', 'worst']);
   });
 });
