@@ -135,6 +135,51 @@ describe('draft → part card', () => {
   });
 });
 
+describe('a connector\'s contact rating', () => {
+  /** A 2×3 pin header, rated `contact_a` per contact; pin 1 has its own `max_ma`. */
+  const header = (overrides: Partial<PartDraft> = {}): PartDraft => ({
+    mpn: 'HDR-2X3',
+    manufacturer: 'Acme',
+    description: '2×3 pin header, 2.54 mm',
+    category: 'connector',
+    package: { name: 'HDR_2x3', family: 'HEADER', pins: 6, pitch_mm: 2.54, body_mm: [5.08, 7.62], span_mm: [2.54, 7.62] },
+    pins: [1, 2, 3, 4, 5, 6].map((n) => ({ number: String(n), name: String(n), type: 'passive' as const, page: 1 })),
+    ...overrides,
+  });
+  const ratingWarnings = (d: PartDraft) => draftToCard(d).issues.filter((i) => /contact rating/.test(i.message));
+
+  it('gives every pin the rating per contact, a pin\'s own max_ma first', () => {
+    const d = header({ contact_a: 3 });
+    d.pins[0] = { ...d.pins[0]!, max_ma: 500 };
+    const { card, issues } = draftToCard(d);
+    expect(issues).toEqual([]);
+    expect(card!.pins.map((p) => p.maxCurrent)).toEqual([0.5, 3, 3, 3, 3, 3]);
+  });
+
+  it('warns, and still makes the card, where a connector has none', () => {
+    const { card } = draftToCard(header());
+    expect(card).not.toBeNull();
+    expect(card!.pins.every((p) => p.maxCurrent === undefined)).toBe(true);
+    const w = ratingWarnings(header());
+    expect(w).toHaveLength(1);
+    expect(w[0]!.severity).toBe('warning');
+    expect(w[0]!.message).toMatch(/mate current/);
+    expect(ratingWarnings(mcuDraft())).toEqual([]);
+  });
+
+  it('is compared between the two passes, and B\'s taken when chosen', async () => {
+    const { compareDrafts, mergeDrafts } = await import('../src/index.ts');
+    const a = header({ contact_a: 3 });
+    const b = header({ contact_a: 1 });
+    expect(compareDrafts(a, b)).toEqual([{ key: 'part:contact_a', label: 'Contact rating (A)', a: '3', b: '1' }]);
+    expect(compareDrafts(a, header()).map((d) => d.key)).toEqual(['part:contact_a']);
+    expect(compareDrafts(a, header({ contact_a: 3 }))).toEqual([]);
+    expect(mergeDrafts(a, b, new Set(['part:contact_a'])).contact_a).toBe(1);
+    expect(mergeDrafts(a, b, new Set()).contact_a).toBe(3);
+    expect(mergeDrafts(a, header(), new Set(['part:contact_a']))).not.toHaveProperty('contact_a');
+  });
+});
+
 describe('a pad drawing in bottom view (D19)', () => {
   /** A Cree XP-G3-like LED whose datasheet draws the pads from below: the anode on the left as drawn. */
   const xpg3 = (pads_view?: 'top' | 'bottom'): PartDraft => ({

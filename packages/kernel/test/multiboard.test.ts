@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { FIRST_BOARD, type Transaction } from '@4k7/schema';
+import { FIRST_BOARD, type PartCard, type Transaction } from '@4k7/schema';
 import { Kernel } from '../src/index.ts';
 import { canonicalJson } from '../src/canonical.ts';
 import { boardNameOf, findBoard, FIRST_BOARD_NAME, focusBoard, resolveBoard, tidyBoards } from '../src/boards.ts';
 import { copperKey } from '../src/board.ts';
+import { draftToCard } from '@4k7/parts';
 import { buckTransaction, twoBoards } from './fixtures.ts';
 
 const refs = (k: Kernel, board: string) => k.boardPlacement(resolveBoard(k.draftDesign(), board).id).parts.map((p) => p.refdes).sort();
@@ -467,10 +468,7 @@ describe('mates: the boards joined through a connector on each', () => {
 
   describe('the current of a power net through a mate', () => {
     /** A 2×3 header J4 on the main board stacked on a socket J5 on the LED board, pins rated `amps` each (none: no rating on the card). */
-    const stacked = (amps?: number) => {
-      const k = twoBoards();
-      const d = k.committedDesign();
-      const card = (id: string) => ({
+    const stacked = (amps?: number, card = (id: string): PartCard => ({
         id,
         mpn: id,
         manufacturer: 'Acme',
@@ -481,7 +479,9 @@ describe('mates: the boards joined through a connector on each', () => {
         pins: [1, 2, 3, 4, 5, 6].map((n) => ({ number: String(n), name: String(n), type: 'passive' as const, ...(amps ? { maxCurrent: amps } : {}) })),
         params: {},
         provenance: { source: 'datasheet' as const },
-      });
+      })) => {
+      const k = twoBoards();
+      const d = k.committedDesign();
       d.parts['acme:HDR'] = card('acme:HDR');
       d.parts['acme:SKT'] = card('acme:SKT');
       k.load(d);
@@ -541,6 +541,33 @@ describe('mates: the boards joined through a connector on each', () => {
       // the rating unknown and the current unknown: quiet too
       const u = stacked();
       expect(codes(u, 'ERC.MATE_CURRENT_UNKNOWN').map((x) => x.entities[0])).toEqual(['net:+3V3']);
+    });
+
+    it('checks connectors imported from a datasheet with their contact rating, and says unknown without one', () => {
+      /** The header and socket as the datasheet import makes them, rated `contact_a` per contact. */
+      const imported = (contact_a?: number) => (id: string) => {
+        const { card, issues } = draftToCard({
+          mpn: id.split(':')[1],
+          manufacturer: 'Acme',
+          description: '2×3 header, 2.54 mm',
+          category: 'connector',
+          package: { name: 'HDR_2x3', family: 'HEADER', pins: 6, pitch_mm: 2.54, body_mm: [5.08, 7.62], span_mm: [2.54, 7.62] },
+          pins: [1, 2, 3, 4, 5, 6].map((n) => ({ number: String(n), name: String(n), type: 'passive' as const, page: 1 })),
+          ...(contact_a ? { contact_a } : {}),
+        });
+        expect(card?.id).toBe(id);
+        expect(issues.filter((i) => /contact rating/.test(i.message))).toHaveLength(contact_a ? 0 : 1);
+        return card!;
+      };
+      const k = stacked(undefined, imported(1));
+      const [x, ...more] = codes(k, 'ERC.MATE_CURRENT');
+      expect(more).toEqual([]);
+      expect(x).toMatchObject({ severity: 'error', entities: ['net:+3V3', 'J4', 'J5'] });
+      expect(x!.message).toMatch(/2 A .* 1 A/);
+      expect(codes(k, 'ERC.MATE_CURRENT_UNKNOWN')).toEqual([]);
+      const u = stacked(undefined, imported());
+      expect(codes(u, 'ERC.MATE_CURRENT')).toEqual([]);
+      expect(codes(u, 'ERC.MATE_CURRENT_UNKNOWN').map((y) => y.entities)).toEqual([['net:+3V3', 'J4', 'J5']]);
     });
 
     it('takes the stated loads where the net has no max_current', () => {

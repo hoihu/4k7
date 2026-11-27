@@ -108,7 +108,10 @@ the copper was stale or stopped, it did not come: route the board.
   than its mated pins are rated for (the connector card's per-pin `maxCurrent`, added over the pins
   that carry it). Put the net on more pin pairs (the message says how many), or pick a connector
   rated for more. **`ERC.MATE_CURRENT_UNKNOWN`** (info): the connector's card has no pin rating, so
-  the check could not run; it is not fine. Read the contact rating from the datasheet.
+  the check could not run; it is not fine. Read the contact rating from the datasheet. The datasheet
+  import asks for it (`contact_a`, the current per contact) and gives it to every pin of the card. A
+  connector imported before it asked has no rating, and no op sets one: remove it from the library in
+  Parts and import it again. A design that already uses the part keeps its own copy of the card.
 - **Power across the connector**: count the pins. A header pin carries about 1–3 A (its datasheet
   says). Put the supply and ground on enough pins for the current, and ground on several pins
   spread along the connector, so every signal has a return path near it.

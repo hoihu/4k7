@@ -114,6 +114,11 @@ export const PartDraft = z.object({
   datasheet: z.string().optional().describe('Datasheet URL if known'),
   package: PackageInfo,
   pins: z.array(DraftPin).min(1).describe('EVERY pin of this package, including every supply, ground and NC pin'),
+  contact_a: z
+    .number()
+    .positive()
+    .optional()
+    .describe('Connectors only: the rated current per contact (A), from the electrical ratings ("Current rating: 3 A per contact"); per contact, not for the whole connector. Where it is derated by pin count or temperature, the value for this part\'s pin count at room temperature, else the lowest stated. Leave out where the datasheet gives none'),
   supply_max_v: z.number().positive().optional().describe('Absolute maximum supply voltage (given to the supply pins; a pin rated lower carries its own max_v)'),
   decoupling: z
     .array(z.object({ pin: z.string(), min: z.string().describe('e.g. "100nF", "4.7uF"'), note: z.string().optional() }))
