@@ -230,7 +230,9 @@ a cable's board.
 Whether the stack fits (`kernel/src/stackfit.ts`, in `get_diagnostics`): every part with a 3D
 body is a box (its body outline, as tall as its body) and every PCB a slab of the board's
 outline, in the assembly frame; a part of one stacked board that reaches into a part or the PCB
-of another is `ASM.COLLIDES`, an error, with how far it reaches in. The two connectors of the mate
+of another is `ASM.COLLIDES`, an error, with how far it reaches in; one directly under or over
+the other board's part or PCB that clears it by less than 1 mm (`STACK_CLEARANCE`, one value for
+every design) is `ASM.CLEARANCE`, a warning with the gap, never both. The two connectors of the mate
 joining the boards are left out, and so are parts without a 3D body (not checked, not reported).
 Where the height is assumed (no `height_mm`) it is a warning that says so. Boxes over-report at
 the corners of a round body.
