@@ -8,7 +8,7 @@
 import { footprintFor, packageOf } from '@4k7/parts';
 import type { Component, Design, Diagnostic, EditOp, Mate, OpResult, PartCard, PartPin } from '@4k7/schema';
 import { cardOf, isAutoNet, natCmp, netMembers, nextId, reject, resolveComponent } from './doc.ts';
-import { boardOf, multiBoard } from './boards.ts';
+import { boardNameOf, boardOf, multiBoard } from './boards.ts';
 import { statedLoads } from './current.ts';
 
 /** Pads closer than this land on each other (mm). */
@@ -286,6 +286,60 @@ function mateCurrent(d: Design, m: Mate, through: Map<string, [string, string][]
     }
     const each = Math.min(...rated);
     out.push({ code: 'ERC.MATE_CURRENT', severity: 'error', entities, message: `${label} carries up to ${amps(want)} (${basis}) through ${a.refdes} ↔ ${b.refdes} on ${pins}, rated ${amps(total)} in all (${amps(each)} per pin). Put the net on more pin pairs of the connector (at least ${Math.ceil(want / each - 1e-9)}), or use a connector rated for more.` });
+  }
+  return out;
+}
+
+/* ------------------------------- cable table ------------------------------ */
+
+/** One end of a cable: the connector, its part and its board. */
+export interface CableEnd {
+  refdes: string;
+  part: string;
+  board: string;
+}
+
+/**
+ * One wire of a cable: a pin of a, the pin of b it reaches, and a's net. mismatch: b's pin is on
+ * another net (or none, `net: null`), so the cable joins two nets or leaves one open.
+ */
+export interface CableRow {
+  a: { number: string; name: string };
+  b: { number: string; name: string };
+  net: string | null;
+  mismatch?: { net: string | null };
+}
+
+export interface CableEntry {
+  id: string;
+  kind: 'cable' | 'wire';
+  cable?: 'straight' | 'reversed';
+  length_mm?: number;
+  a: CableEnd;
+  b: CableEnd;
+  rows: CableRow[];
+}
+
+/**
+ * The cable table of the design document: each cable and wire mate (by id) with both ends and
+ * the pins pin to pin in a's order, with their nets and where they differ (pairState). Stack and
+ * edge mates plug in and are not in it. See docs/design/multi-board.md §4.
+ */
+export function cableTable(d: Design): CableEntry[] {
+  const out: CableEntry[] = [];
+  for (const m of Object.values(d.mates ?? {}).sort((x, y) => natCmp(x.id, y.id))) {
+    const [a, b] = [d.components[m.a], d.components[m.b]];
+    if ((m.kind !== 'cable' && m.kind !== 'wire') || !a || !b) continue;
+    const [ca, cb] = [cardOf(d, a.part), cardOf(d, b.part)];
+    const end = (c: Component): CableEnd => ({ refdes: c.refdes, part: c.part, board: boardNameOf(d, boardOf(d, c)) });
+    const pin = (c: Component, card: PartCard | undefined, n: string) => ({ number: n, name: pinLabel(c, card, n).slice(c.refdes.length + 1) });
+    const net = (id: string | undefined) => (id ? d.nets[id]?.name ?? id : null);
+    const rows = [...matePairs(d, m).pairs].sort((x, y) => natCmp(x[0], y[0])).map(([pa, pb]): CableRow => {
+      const state = pairState(a, b, pa, pb);
+      const row: CableRow = { a: pin(a, ca, pa), b: pin(b, cb, pb), net: net(a.pins[pa]) };
+      return state === 'same' || state === 'none' ? row : { ...row, mismatch: { net: net(b.pins[pb]) } };
+    });
+    out.push({ id: m.id, kind: m.kind, ...(m.kind === 'cable' ? { cable: m.cable ?? 'straight' } : {}), ...(m.length_mm ? { length_mm: m.length_mm } : {}), a: end(a), b: end(b), rows });
   }
   return out;
 }

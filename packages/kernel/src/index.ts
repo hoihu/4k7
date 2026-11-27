@@ -1,4 +1,5 @@
 export { Kernel, type KernelState, type QueryContext } from './kernel.ts';
+export type { CableEntry, CableEnd, CableRow } from './mates.ts';
 export { layoutBoard } from './board.ts';
 export { boardList, boardOf, FIRST_BOARD_NAME, focusBoard, multiBoard, settingsOf } from './boards.ts';
 export { runChecks } from './checks.ts';

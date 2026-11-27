@@ -81,7 +81,7 @@ import { suggestMoves } from './suggest.ts';
 import { impedanceText, resolveRule } from './lines.ts';
 import { lineBoard } from './lineops.ts';
 import { BoardAmbiguousError, boardFor, boardList, boardOf, commitFocus, findBoard, focusBoard, multiBoard, ownTrackWidth, settingsOf } from './boards.ts';
-import { matePairs, pairsText } from './mates.ts';
+import { cableTable, matePairs, pairsText, type CableEntry } from './mates.ts';
 import { assemblyOf } from './assembly.ts';
 import { blocksOfProject, boardOfProject } from './reuse.ts';
 import { FIRST_BOARD } from '@4k7/schema';
@@ -230,6 +230,11 @@ export class Kernel {
   /** The working copy's bring-up sheet, for the design document (bringup.ts): one of the whole design, all its boards. */
   bringUp(): BringUpPlan {
     return bringUpPlan(this.draft);
+  }
+
+  /** The working copy's cable table, for the design document: each cable and wire mate pin to pin (mates.ts). */
+  cableTable(): CableEntry[] {
+    return cableTable(this.draft);
   }
 
   /** Placement only (fast): parts, outline, ratsnest and placement checks. */
