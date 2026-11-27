@@ -917,6 +917,8 @@ const COPPER_AFTER: Record<EditOp['op'], 'follow' | 'check' | null> = {
   remove_constraint: 'follow',
   add_waiver: null,
   remove_waiver: null,
+  specify: null,
+  remove_spec: null,
   set_symbol: 'follow',
   set_footprint: 'follow',
   set_mating: null,

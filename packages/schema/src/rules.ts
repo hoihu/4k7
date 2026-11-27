@@ -104,8 +104,12 @@ Rounded corners, 3 mm radius, and my logo engraved on the lid.`;
 /** The checks the auto-layout follows by itself: a finding there is a layout bug, not something an edit of the design fixes. */
 export const LAYOUT_SCH_RULES: ReadonlySet<string> = new Set(SCHEMATIC_CHECKS.filter((c) => c.layout).map((c) => c.id));
 
-/** An open error the agent has to fix or waive before it finishes: not a layout bug, which it has no lever on. */
-export const mustFix = (d: Diagnostic) => d.severity === 'error' && !d.waivedBy && !LAYOUT_SCH_RULES.has(d.code);
+/**
+ * An open error the agent has to fix or waive before it finishes: not a layout bug, which it has no
+ * lever on, and not a violated spec item (SPEC.*): a design built in steps violates most of its spec
+ * until the last step; propose asks about those on its own (docs/design/spec.md §3, §5).
+ */
+export const mustFix = (d: Diagnostic) => d.severity === 'error' && !d.waivedBy && !LAYOUT_SCH_RULES.has(d.code) && !d.code.startsWith('SPEC.');
 
 /**
  * How the schematic is drawn, not what is wrong with the circuit: a wire can run any number of ways

@@ -73,19 +73,27 @@ export class Memo<T> {
 }
 
 /**
+ * What the spec's status is worked out from (spec.ts): its items, the waivers, and the facts its
+ * verifiers read, which specFacts takes from the design and the kernel's results.
+ */
+export function specInputs(d: Design, facts: unknown): string {
+  return JSON.stringify([d.spec ?? null, d.waivers, facts]);
+}
+
+/**
  * What a sheet is drawn from, other than its own stored drawing: the netlist, the part cards (the
  * design's copies, then the library's), the paper, the blocks, the ledger. Not the board, the
- * enclosure, the other boards, the waivers (they only mark findings) or the name and id counter, and not where parts
- * stand on the board (`position` entries: a drag there moves no symbol).
+ * enclosure, the other boards, the waivers (they only mark findings), the spec (it only reads the design) or the name
+ * and id counter, and not where parts stand on the board (`position` entries: a drag there moves no symbol).
  */
 export function drawingInputs(d: Design): string {
-  const { board: _b, boards: _bs, enclosure: _e, waivers: _w, seq: _s, name: _n, drawing: _dr, ledger, ...rest } = d;
+  const { board: _b, boards: _bs, enclosure: _e, waivers: _w, spec: _q, seq: _s, name: _n, drawing: _dr, ledger, ...rest } = d;
   return `${partsRevision()}|${JSON.stringify(rest)}|${JSON.stringify(Object.values(ledger).filter((k) => k.kind !== 'position'))}`;
 }
 
-/** What the placement is worked out from: the design, without the copper kept with the board (a cache of what the router made of it), the enclosure, the name and the id counter. */
+/** What the placement is worked out from: the design, without the copper kept with the board (a cache of what the router made of it), the enclosure, the spec (it only reads the design), the name and the id counter. */
 export function boardInputs(d: Design): string {
-  const { board, enclosure: _e, seq: _s, name: _n, ...rest } = d;
+  const { board, enclosure: _e, spec: _q, seq: _s, name: _n, ...rest } = d;
   const { copper: _c, ...settings } = board ?? {};
   return `${partsRevision()}|${JSON.stringify(rest)}|${board ? JSON.stringify(settings) : ''}`;
 }

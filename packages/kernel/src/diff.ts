@@ -9,6 +9,7 @@ import { clone, gcNets, gcParts, natCmp, valueOf } from './doc.ts';
 import { FIRST_BOARD, type BoardEntry, type BoardSettings } from '@4k7/schema';
 import { boardNameOf, boardsNow, FIRST_BOARD_NAME, formatFor, leftBoard, multiBoard, tidyBoards, tidyPlacements } from './boards.ts';
 import { tidyMates } from './mates.ts';
+import { describeVerifier } from './spec.ts';
 
 const netName = (d: Design, id?: string) => (id ? d.nets[id]?.name ?? '?' : '∅');
 
@@ -210,6 +211,25 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
       hunks.push({ id: `waiver:${id}`, kind: 'waiver', change: 'change', entityId: id, title: `waive ${b.code}`, details: [`${a.entities.join(', ')} → ${b.entities.join(', ')}`] });
     }
   }
+  /* the spec: what the product must do (docs/design/spec.md §4) */
+  for (const id of new Set([...Object.keys(base.spec ?? {}), ...Object.keys(draft.spec ?? {})])) {
+    const a = base.spec?.[id];
+    const b = draft.spec?.[id];
+    const who = (q: NonNullable<typeof b>) => (q.source.type === 'agent' ? ['assumed: not confirmed by the user'] : q.source.quote ? [`“${q.source.quote}”`] : []);
+    if (!a && b) hunks.push({ id: `spec:${id}`, kind: 'spec', change: 'add', entityId: id, title: `spec: ${b.text}`, details: [...(b.verify.length ? b.verify.map((v) => describeVerifier(draft, v)) : ['nothing verifies it yet']), ...who(b)] });
+    if (a && !b) hunks.push({ id: `spec:${id}`, kind: 'spec', change: 'remove', entityId: id, title: `spec: ${a.text}`, details: [] });
+    if (a && b && JSON.stringify(a) !== JSON.stringify(b)) {
+      const was = a.verify.map((v) => describeVerifier(base, v));
+      const now = b.verify.map((v) => describeVerifier(draft, v));
+      const details = [
+        ...(a.text !== b.text ? [`“${a.text}” → “${b.text}”`] : []),
+        ...now.filter((x) => !was.includes(x)).map((x) => `+ ${x}`),
+        ...was.filter((x) => !now.includes(x)).map((x) => `− ${x}`),
+        ...(a.source.type === 'agent' && b.source.type === 'user' ? [`confirmed by the user${b.source.quote ? `: “${b.source.quote}”` : ''}`] : []),
+      ];
+      hunks.push({ id: `spec:${id}`, kind: 'spec', change: 'change', entityId: id, title: `spec: ${b.text}`, details });
+    }
+  }
   for (const id of new Set([...Object.keys(base.mates ?? {}), ...Object.keys(draft.mates ?? {})])) {
     const a = base.mates?.[id];
     const b = draft.mates?.[id];
@@ -296,7 +316,7 @@ export function computeHunks(base: Design, draft: Design): Hunk[] {
     });
   }
 
-  const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6, mate: 7, description: 8, drawing: 9, enclosure: 10 };
+  const order = { component: 0, part: 1, board: 2, net: 3, sheet: 4, constraint: 5, waiver: 6, mate: 7, description: 8, drawing: 9, enclosure: 10, spec: 11 };
   const changeOrder = { add: 0, change: 1, remove: 2 };
   return hunks.sort((x, y) => order[x.kind] - order[y.kind] || changeOrder[x.change] - changeOrder[y.change] || natCmp(x.title, y.title));
 }
@@ -428,6 +448,15 @@ export function mergeHunks(base: Design, draft: Design, accepted: Set<string>): 
         if (draft.waivers[entity]) d.waivers[entity] = clone(draft.waivers[entity]!);
         else delete d.waivers[entity];
         break;
+      case 'spec': {
+        const it = draft.spec?.[entity];
+        if (it) d.spec = { ...d.spec, [entity]: clone(it) };
+        else if (d.spec) {
+          delete d.spec[entity];
+          if (!Object.keys(d.spec).length) delete d.spec;
+        }
+        break;
+      }
       case 'mate': {
         const m = draft.mates?.[entity];
         if (m) d.mates = { ...d.mates, [entity]: clone(m) };

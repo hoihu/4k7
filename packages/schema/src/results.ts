@@ -1,7 +1,7 @@
 import type { Stackup } from './stackup.ts';
 import type { EditOp } from './ops.ts';
 import type { ScopeOutcome } from './scope.ts';
-import type { QuarterTurn, ValueSeries } from './model.ts';
+import type { QuarterTurn, SpecItem, SpecVerifier, ValueSeries } from './model.ts';
 import { drawingFinding } from './rules.ts';
 
 /**
@@ -215,7 +215,7 @@ export interface TransactionResult {
 
 /* ------------------------------- changesets ------------------------------- */
 
-export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'mate' | 'sheet' | 'board' | 'description' | 'drawing' | 'enclosure';
+export type HunkKind = 'component' | 'part' | 'net' | 'constraint' | 'waiver' | 'mate' | 'sheet' | 'board' | 'description' | 'drawing' | 'enclosure' | 'spec';
 
 export interface Hunk {
   /** Stable id: "<kind>:<entity id>". */
@@ -425,6 +425,34 @@ export interface DescriptionView {
 
 /* ------------------------------ query results ----------------------------- */
 
+/** A spec item's status, worked out (docs/design/spec.md §2). */
+export type SpecStatus = 'verified' | 'violated' | 'unverified' | 'waived';
+
+/** The spec's items by status; assumed counts the items the agent wrote and the user has not confirmed, whatever their status. */
+export interface SpecCounts {
+  verified: number;
+  violated: number;
+  unverified: number;
+  waived: number;
+  assumed: number;
+}
+
+/** What a verifier came to: holds, fails or unknown, with one sentence why. Nets, boards and parts by name. */
+export type SpecVerifierResult = SpecVerifier & { result: 'holds' | 'fails' | 'unknown'; why: string };
+
+/** get_spec, and KernelState.spec: every item with its status and each verifier's result. */
+export interface SpecAnswer {
+  counts: SpecCounts;
+  items: {
+    id: string;
+    text: string;
+    source: SpecItem['source'];
+    assumed: boolean;
+    status: SpecStatus;
+    verify: SpecVerifierResult[];
+  }[];
+}
+
 export interface DesignSummary {
   name: string;
   sheets: string[];
@@ -440,6 +468,8 @@ export interface DesignSummary {
   counts: DiagnosticCounts;
   ledger: number;
   waivers: number;
+  /** Present when the design has a spec: its items by status (get_spec lists them). */
+  spec?: SpecCounts;
   /** Present when the design has a description: its blocks, and the parts none of them covers. */
   description?: { blocks: number; undescribed: string[] };
   /** Present when generic passives are held to standard-value series (set_value_series). */

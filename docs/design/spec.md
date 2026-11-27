@@ -1,6 +1,8 @@
 # The spec: what the board is for
 
-> Packages A1 and A2 of the [roadmap](../ROADMAP.md). Status: design, 2026-11-27; nothing here is built.
+> Packages A1 and A2 of the [roadmap](../ROADMAP.md). Status: design, 2026-11-27. Built: the kernel part
+> (§11 item 1: the data, the ops, the status, the findings, `get_spec`); the gate in `propose`, the agent's
+> part and the app follow.
 > The idea and where it leads are in [agent-workflows](agent-workflows.md) §2; this is what to build first.
 
 ## 1. Why
@@ -18,10 +20,11 @@ its entries are **spec items**, and the code, the ops and the findings say `spec
 
 ## 2. Data
 
-`Design.spec?: Record<string, SpecItem>`, by id, beside `ledger` and `waivers`. Absent: no spec. No change
-of format number: the field is optional and an older design simply has none. (To check when building: that
-a build without this field keeps it when it saves a newer file, `tools/server/src/storage.ts`; if it does
-not, the changelog says so.)
+`Design.spec?: Record<string, SpecItem>`, by id, beside `ledger` and `waivers`. Absent: no spec; removing
+the last item removes the field, so a design without a spec is the same as before. No change of format
+number: the field is optional and an older design simply has none. A build without this field keeps it
+when it saves: the kernel works on copies of the whole design and the server writes it as it gets it
+(`tools/server/src/storage.ts`), so an older build carries the items along unchanged.
 
 ```ts
 // packages/schema/src/model.ts
@@ -64,9 +67,10 @@ Each verifier evaluates to **holds**, **fails** or **unknown**, with one sentenc
 `padOnly`), on `board` if given, whose card matches everything stated:
 
 - `category`: the card's category;
-- `pins`: every name is the name of a pin of the card (any case). A USB-C receptacle is
-  `{ category: 'connector', pins: ['CC1', 'CC2'] }`, which no pin header matches;
-- `text`: one of the strings occurs in the card's id, MPN, title, description or package (any case).
+- `pins`: every name is the name of a pin of the card, or a word of one (any case: a pin `CC1_A5` counts as
+  `CC1`). A USB-C receptacle is `{ category: 'connector', pins: ['CC1', 'CC2'] }`, which no pin header matches;
+- `text`: one of the strings occurs in the card's id, MPN, title, description or package, or in the part's
+  own `mpn` parameter (a generic diode with `mpn: B340A`), any case.
 
 It holds when the count is between `min` (default 1) and `max` (default: no limit), and fails otherwise.
 `{ max: 0, min: 0 }` says "none of these" (no electrolytic capacitors). At least one of `category`, `pins`
@@ -78,7 +82,7 @@ and `text` is required.
 |---|---|---|
 | `board.width_mm`, `board.height_mm` | The outline of the placed board (`BoardView.outline`) | never |
 | `board.layers` | `BoardSettings.layers` | never |
-| `board.open_connections` | `BoardView.unrouted.length` | the board is not routed for this placement (`routing` is not `done`) |
+| `board.open_connections` | `BoardView.unrouted.length` | the board is not routed for this placement (see below) |
 | `parts.fitted` | Components that are not `dnp` and not `padOnly` | never |
 | `net.voltage` | `NetAttrs.voltage` of `net` | it is not set |
 | `net.max_current` | `NetAttrs.maxCurrent` of `net` | it is not set |
@@ -86,23 +90,34 @@ and `text` is required.
 On a design of several boards a board measure without `board` is taken on every board and all must hold.
 Nets and boards are named in the op and stored by id, as the ledger stores components, so a rename does not
 break a verifier; when the net or board is removed the verifier is unknown and says so.
+A `measure` of a net takes `net` and no `board`; the others take no `net`.
 The net measures read what was declared, not what flows; their use is to tie a rail's declared numbers to
 the user's words, so that the checks that work from them (`SEM.ABS_MAX`, the current checks, the power
 tree) work from the right ones.
 
 **`check`**: a named check finds nothing. It holds when no open (not waived) finding with exactly this
-code names one of `entities` (without `entities`: anywhere). Two things keep "no finding" from being read
-as "checked":
+code names one of `entities` (without `entities`: anywhere). A finding names an entity when it lists it,
+or a pin of it (`U1.EN` for `U1`). The entities are stored by id too (a part as its id, a net as
+`net:<id>`), so a renamed part or net keeps the verifier working; one that is gone makes it unknown. Two
+things keep "no finding" from being read as "checked":
 
 - The code must be known. `packages/schema` gets a list of every check code (§6); a verifier naming a code
   that is not in it is rejected.
-- A code of the board (`DRC.*`, `IMP.*`) is unknown while that board is not routed for its placement. And
+- A code of the board (`DRC.*`, `IMP.*`, `DRAW.*`, `PLANE.*`: the board DRC's) is unknown while that board is
+  not routed for its placement: the boards of the parts and nets in `entities`, or every board. And
   where the list names a check's companion that says "could not judge" (`DRC.CURRENT_UNKNOWN` and
   `DRC.CURRENT_UNVERIFIED` for `DRC.TRACK_CURRENT` and `DRC.VIA_CURRENT`), the verifier is unknown while the
   companion is open on the same entities.
 
 `FAB.*` and `PANEL.*` are not accepted: the app works them out from the production files, outside the
-kernel, and `propose` refuses their errors already. `SPEC.*` is not accepted.
+kernel, and `propose` refuses their errors already. `ENC.*` is not accepted either: the enclosure's
+findings come from its render (`packages/fab`, in the app), which the kernel never sees, so a verifier on
+them would hold whatever the enclosure does. `SPEC.*` is not accepted.
+
+"Routed for its placement" is what the copper findings of `get_diagnostics` use (`routedNow` in
+`kernel.ts`): the board as routed for this design in the session, or laid from the agent's drawn copper or
+the copper stored for this placement (which routes nothing). The app stores the board worker's copper
+with the design; after an edit that keeps the placement the stored copper still counts.
 
 **`manual`**: the user's own tick. It holds when `done`. The user sets it in the app's Spec tab; the agent
 can only pass on what the user said, with their words (§4).
@@ -114,7 +129,7 @@ Worked out, never stored:
 | Status | When |
 |---|---|
 | `violated` | a verifier fails |
-| `unverified` | no verifier fails, and there is none or one is unknown |
+| `unverified` | no verifier fails, and there is none or one is unknown (a manual verifier not ticked is unknown) |
 | `verified` | every verifier holds |
 | `waived` | violated, and a waiver for `SPEC.VIOLATED` names the item |
 
@@ -122,7 +137,12 @@ Assumed is shown beside the status, whatever it is.
 
 The status is a function of the design: the board's facts come from its placement and from the copper
 stored for it, as the copper findings of `get_diagnostics` do today (`copperShorts` in `kernel.ts`). It is
-remembered through `derive.ts` like every other result, and `npm run test:derived` covers it.
+remembered through `derive.ts` like every other result, and `npm run test:derived` covers it: `spec.ts`
+first takes from the design and the kernel's results only what the verifiers read (`specFacts`: the
+fitted parts, the outlines and open connections of the boards they measure, the findings with the codes
+they name), and the status is worked out from the items, the waivers and those facts alone, remembered by
+them. The spec is not an input of the drawing or the placement (`drawingInputs`, `boardInputs`): an item
+changes neither.
 
 ## 3. Findings
 
@@ -133,7 +153,10 @@ remembered through `derive.ts` like every other result, and `npm run test:derive
 | `SPEC.ASSUMED` | info | the item's id | the text, then `assumed, not confirmed by the user` |
 
 They are in the one list: `state().diagnostics`, `diagnostics()`, `get_diagnostics`, the Issues tab, the
-counts. `add_waiver` waives `SPEC.VIOLATED` with a reason like any other finding.
+counts, and a transaction's `introduced` and `resolved`. `add_waiver` waives `SPEC.VIOLATED` with a reason
+like any other finding; a waiver for a `SPEC.*` code covers the item when its entities include the item's
+id (the entities after the id are what the verifier found, and change with the design). A check verifier
+reads the other findings only, never the spec's own.
 
 `mustFix` (`packages/schema/src/rules.ts`) leaves `SPEC.*` out, as it leaves out the schematic's layout rules. A
 violated item does not make the design wrong in itself: a design built in steps violates most of its spec
@@ -162,22 +185,26 @@ export const RemoveSpecOp = z.object({
 });
 ```
 
-- `specify` without `id` adds an item and answers with its id and its status as it stands; with `id` it
-  changes the item. Rejections: an unknown id (`REF_UNKNOWN`, with the ids there are), an unknown net or
-  board in a verifier (`NET_UNKNOWN`, `REF_UNKNOWN`), an unknown or unaccepted code, a `measure` with no
-  bound, a `part` with nothing to match, `done` on an item without a manual verifier (all `INVALID_OP`,
-  the message saying what to do).
+- `specify` without `id` adds an item and answers with its id and its status as it stands (worked out
+  after the whole transaction, in the effect: `now violated: …`); with `id` it changes the item. Rejections: an unknown id (`REF_UNKNOWN`, with the ids there are), an unknown net or
+  board in a verifier (`NET_UNKNOWN`, `REF_UNKNOWN`), a part in a check's `entities` that is not there
+  (`REF_UNKNOWN`), an unknown or unaccepted code, a `measure` with no bound, or with `min` above `max`, a
+  `part` with nothing to match, `done` on an item without a manual verifier (all `INVALID_OP`, the message
+  saying what to do).
 - Confirming an assumed item is `specify` with its id: from the user (the Spec tab) it becomes theirs; from
   the agent only with `quote`, the user's words that confirm it. The same holds for `done`: the agent's
-  `specify … done` without `quote` is rejected.
+  `specify … done` without `quote` is rejected, and so is a manual verifier with `done` in its `verify`
+  that the item did not have. The agent may change its own assumptions freely; they stay assumed.
 - A user's item is the user's to change. Without `quote` the agent may only add verifiers to it (the new
   list holds every verifier it had, unchanged); a changed text, or a verifier changed or dropped, is
   rejected with the message to ask the user. The app sends the user's own edits through the same ops, as
   it does for every other edit.
 - `remove_spec` removes the item and the waivers that name it. From the agent, an item of the user's goes
   only with `quote`; its own assumptions it may drop.
-- A changeset shows spec items as hunks of a new kind `spec` (`HunkKind` in `results.ts`): "add spec:
-  USB-C connector", with the verifiers as details. The user accepts or rejects them one by one as any hunk.
+- A changeset shows spec items as hunks of a new kind `spec` (`HunkKind` in `results.ts`), titled "spec:
+  USB-C connector" with the change (add, change, remove) beside it as for every hunk, the verifiers in
+  words as details, then the user's quote or "assumed". The user accepts or rejects them one by one as
+  any hunk.
 
 ```ts
 // design_query get_spec
@@ -194,7 +221,8 @@ interface SpecAnswer {
 ```
 
 `get_summary` gets the same `counts` as `spec` when the design has one. `state()` carries the answer for
-the app.
+the app (`spec`, null without one). The verifiers in the answer name nets, boards and parts by their names
+now. `get_spec` on a design without a spec answers empty counts and items, with a hint to write one.
 
 ## 5. `propose`
 

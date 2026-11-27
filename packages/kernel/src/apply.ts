@@ -17,6 +17,7 @@ import { autoDraw, describe, placeBlock, placeSymbol, setPaper } from './sheetop
 import { addTestPoints } from './testpoints.ts';
 import { tuneLength } from './tune.ts';
 import { addMate, removeMate, tidyMates } from './mates.ts';
+import { removeSpec, specify } from './specops.ts';
 import { addBoard, assignBoard, boardFor, boardList, boardsNow, commitFocus, focusBoard, leftBoard, multiBoard, removeBoard, renameBoard, resolveBoard, settingsOf } from './boards.ts';
 
 /**
@@ -155,6 +156,10 @@ function applyOne(d: Design, op: EditOp, by: 'user' | 'agent', ctx?: OpContext):
       d.waivers[id] = { id, code: op.code, entities: [...op.entities], reason: op.reason, by, ...(on ? { board: on.id } : {}) };
       return { op: op.op, effect: `waived ${op.code} for ${op.entities.join(', ')}${on ? ` on board "${on.name}"` : ''}`, ids: [id] };
     }
+    case 'specify':
+      return specify(d, op, by);
+    case 'remove_spec':
+      return removeSpec(d, op, by);
     case 'set_symbol':
       return setSymbol(d, op);
     case 'set_footprint':
