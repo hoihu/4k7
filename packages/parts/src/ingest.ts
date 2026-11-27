@@ -72,6 +72,10 @@ export function draftToCard(input: unknown): IngestResult {
   const mistyped = grounds.filter((p) => p.type !== 'pwr_in' && p.type !== 'passive');
   if (mistyped.length) warn(`Ground pins should have type pwr_in: ${mistyped.slice(0, 8).map((p) => `${p.number} ${p.name}`).join(', ')}.`);
 
+  if (draft.category === 'connector' && !draft.contact_a) {
+    warn('No contact rating (contact_a) given, so the mate current check cannot run on this connector. Read the current per contact from the datasheet\'s electrical ratings table.');
+  }
+
   const noPage = draft.pins.filter((p) => !p.page).length;
   if (noPage) warn(`${noPage} pin(s) without a datasheet page; give the page of each pin's table row.`);
 
@@ -99,7 +103,8 @@ export function draftToCard(input: unknown): IngestResult {
     ...(p.functions?.length || p.description ? { description: [p.description, p.functions?.length ? `alt: ${p.functions.join(', ')}` : ''].filter(Boolean).join(' · ') } : {}),
     // a pin's own limit (EN, logic inputs) is what SEM.ABS_MAX checks it against; supplies take the supply's
     ...(p.max_v ? { maxVoltage: p.max_v } : draft.supply_max_v && p.type === 'pwr_in' && !/^(VSS|GND)/i.test(p.name) ? { maxVoltage: draft.supply_max_v } : {}),
-    ...(p.max_ma ? { maxCurrent: p.max_ma / 1000 } : {}),
+    // a pin's own limit first, else a connector's rating per contact (ERC.MATE_CURRENT)
+    ...(p.max_ma ? { maxCurrent: p.max_ma / 1000 } : draft.contact_a ? { maxCurrent: draft.contact_a } : {}),
     ...(p.page ? { page: p.page } : {}),
   }));
   const card: PartCard = {
@@ -157,7 +162,7 @@ function compress(nums: number[]): string {
 
 /** One fact the two extraction passes disagree on. */
 export interface Disagreement {
-  /** "pin:15" or "package:pitch_mm". */
+  /** "pin:15", "package:pitch_mm" or "part:contact_a". */
   key: string;
   label: string;
   a: string;
@@ -179,7 +184,7 @@ const sameValue = (x: unknown, y: unknown): boolean => {
 
 /**
  * Compare two independent extractions of the same part: pin by pin (name and type) and the
- * package dimensions that shape the footprint. Alternate-function lists are not compared.
+ * package dimensions that shape the footprint, and a connector's contact rating. Alternate-function lists are not compared.
  */
 export function compareDrafts(a: PartDraft, b: PartDraft): Disagreement[] {
   const out: Disagreement[] = [];
@@ -199,6 +204,9 @@ export function compareDrafts(a: PartDraft, b: PartDraft): Disagreement[] {
     const y = b.package[f];
     if (x === undefined && y === undefined) continue;
     if (!sameValue(x, y)) out.push({ key: `package:${f}`, label: `Package ${f.replace(/_mm$/, ' (mm)').replace(/_/g, ' ')}`, a: show(x), b: show(y) });
+  }
+  if ((a.contact_a !== undefined || b.contact_a !== undefined) && !sameValue(a.contact_a, b.contact_a)) {
+    out.push({ key: 'part:contact_a', label: 'Contact rating (A)', a: show(a.contact_a), b: show(b.contact_a) });
   }
   return out;
 }
@@ -226,6 +234,9 @@ export function mergeDrafts(a: PartDraft, b: PartDraft, takeB: Set<string>): Par
       const v = b.package[f];
       if (v === undefined) delete (out.package as Record<string, unknown>)[f];
       else (out.package as Record<string, unknown>)[f] = copy(v);
+    } else if (key === 'part:contact_a') {
+      if (b.contact_a === undefined) delete out.contact_a;
+      else out.contact_a = b.contact_a;
     }
   }
   // section pages only say where to read: what either pass found is kept
