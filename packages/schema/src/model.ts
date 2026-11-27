@@ -5,7 +5,7 @@
  */
 import type { BoardEntry, BoardSettings } from './board.ts';
 import type { EnclosureSettings } from './enclosure.ts';
-import type { PartCard } from './part.ts';
+import type { PartCard, PartCategory } from './part.ts';
 import type { LabelView, PaperId, Point, Rect, WireView } from './results.ts';
 import type { ESeries } from './units.ts';
 
@@ -28,6 +28,11 @@ export interface Design {
   sheets: Record<string, Sheet>;
   ledger: Record<string, Constraint>;
   waivers: Record<string, Waiver>;
+  /**
+   * The spec: what the product must do, by id (specify). Absent: no spec; never stored empty.
+   * See docs/design/spec.md.
+   */
+  spec?: Record<string, SpecItem>;
   /** Board settings (outline, layers, rules); absent = defaults, outline sized to fit. With several boards: the first board's. */
   board?: BoardSettings;
   /**
@@ -404,6 +409,40 @@ export interface Waiver {
   /** A design of several boards: the board whose findings it covers (absent: every board). */
   board?: string;
 }
+
+/**
+ * One thing the product must do, with how the kernel can tell (docs/design/spec.md §2). Its status
+ * (verified, violated, unverified, waived) is worked out, never stored.
+ */
+export interface SpecItem {
+  /** nextId(d, 'q'): "q_1a". */
+  id: string;
+  /** What the product must do, one testable statement, in the user's words where they said it. */
+  text: string;
+  /**
+   * Who said it, as a ledger entry's source: the user (with the words of their message, where the agent
+   * wrote it down for them), or the agent, which decided it because the user left it open. An agent's
+   * item is an assumption until the user confirms it.
+   */
+  source: { type: 'user' | 'agent'; quote?: string };
+  /** How it is verified. None: unverified. */
+  verify: SpecVerifier[];
+}
+
+/**
+ * How a spec item is verified. Nets, boards and parts are stored by id (the ops take names), so a
+ * rename does not break a verifier: `net` and `board` are ids, and `entities` name parts by id
+ * ("c_5", "c_5.EN") and nets as "net:<id>".
+ */
+export type SpecVerifier =
+  | { kind: 'part'; category?: PartCategory; pins?: string[]; text?: string[]; min?: number; max?: number; board?: string }
+  | { kind: 'measure'; of: SpecMeasure; net?: string; board?: string; min?: number; max?: number }
+  | { kind: 'check'; code: string; entities?: string[] }
+  | { kind: 'manual'; done?: true; note?: string };
+
+/** What a measure verifier reads (docs/design/spec.md §2). */
+export const SPEC_MEASURES = ['board.width_mm', 'board.height_mm', 'board.layers', 'board.open_connections', 'parts.fitted', 'net.voltage', 'net.max_current'] as const;
+export type SpecMeasure = (typeof SPEC_MEASURES)[number];
 
 export function emptyDesign(name = 'untitled'): Design {
   return {

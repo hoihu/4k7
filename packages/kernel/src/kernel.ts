@@ -47,6 +47,7 @@ import {
   boardStackup,
   COPPER_ORDER,
   type SymbolView,
+  type SpecAnswer,
 } from '@4k7/schema';
 import { packageChoice, packageOf, packageOptions, searchParts } from '@4k7/parts';
 import { applyOp } from './apply.ts';
@@ -57,7 +58,8 @@ import { crossChecks } from './xcheck.ts';
 import { stackCollisions } from './stackfit.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, applyWaivers, cardOf, clone, closest, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, queryError, valueOf, workCopy } from './doc.ts';
-import { Memo, drawingInputs } from './derive.ts';
+import { Memo, drawingInputs, specInputs } from './derive.ts';
+import { evaluateSpec, specFacts, statusLine, type SpecResult } from './spec.ts';
 import { syncDrawing, viewOf } from './drawing.ts';
 import { keepForcedNets } from './netdraw.ts';
 import { blockAssignment } from './layout.ts';
@@ -104,10 +106,14 @@ export interface KernelState {
   description: DescriptionView | null;
   /** The boards (id, name), first board first: one unless the design has several (add_board). */
   boards: { id: string; name: string }[];
+  /** The spec with each item's status (get_spec), or null while the design has none. See docs/design/spec.md. */
+  spec: SpecAnswer | null;
 }
 
 /** The SCH checks read the drawing and nothing of the board: a part moved there leaves them as they were. */
 const schematicFindings = new Memo<Diagnostic[]>('schematic checks', 4);
+/** The spec's status, by its items, the waivers and the facts its verifiers read (spec.ts). */
+const specResults = new Memo<SpecResult>('spec', 8);
 
 /** What the app read for a query (Kernel.query): the agent's guides by topic (each design doc as it is), and the stored projects as for transact. */
 export interface QueryContext {
@@ -263,6 +269,44 @@ export class Kernel {
   }
 
   /**
+   * A board of `d` routed for its placement, as routedNow has it for the working copy (the board as
+   * routed, or laid from its drawn copper or the copper stored for this placement, which routes
+   * nothing), for any design: what the spec reads (spec.ts). Else undefined.
+   */
+  private routedFor(d: Design, id: string): BoardView | undefined {
+    let b = this.viewOfBoard(d, id);
+    if (!b) {
+      const f = this.focus(d, id);
+      if (!(f.board?.drawn || (f.board?.copper && f.board.copper.key === copperKey(f)))) return undefined;
+      b = layoutBoard(f, placedOf(f));
+      this.keepView(d, id, b);
+    }
+    return b.routing === 'done' ? b : undefined;
+  }
+
+  /** The spec's status and findings, or null when the design has no spec. See docs/design/spec.md. */
+  private specOf(d: Design): SpecResult | null {
+    if (!d.spec) return null;
+    const stack = Object.values(d.spec).some((it) => it.verify.some((v) => v.kind === 'check' && v.code.startsWith('ASM.')));
+    const facts = specFacts(d, {
+      findings: () => [...this.analyse(d).diagnostics, ...(stack ? stackCollisions(d, new Map(boardList(d).map((b) => [b.id, placedOf(this.focus(d, b.id))]))) : [])],
+      placed: (id) => placedOf(this.focus(d, id)),
+      routed: (id) => this.routedFor(d, id),
+    });
+    return specResults.get(specInputs(d, facts), () => evaluateSpec(d.spec!, d.waivers, facts));
+  }
+
+  /**
+   * The design's findings as the schematic's analysis has them, with the spec's (SPEC.*): what the
+   * transactions, the proposal, the summary and state() count. A design without a spec: the analysis's.
+   */
+  private findings(d: Design): Diagnostic[] {
+    const a = this.analyse(d).diagnostics;
+    const spec = this.specOf(d);
+    return spec ? sortDiagnostics([...a, ...spec.findings.map((x) => ({ ...x, entities: [...x.entities] }))]) : a;
+  }
+
+  /**
    * The copper findings at the parts whose footprint an edit changed (a value that sizes a part up
    * picks a bigger package), on a board whose copper is current: the land against the tracks and
    * vias already there. The transaction's own checks are the schematic's; without this an edit that
@@ -339,7 +383,7 @@ export class Kernel {
     if (helper?.rev !== undefined && helper.rev !== this.rev) {
       return this.rejected({ opIndex: 0, code: 'STALE', message: 'The design changed while the route helper searched; search again on it as it is now.' }, !!tx.dry_run);
     }
-    const before = this.analyse(this.draft).diagnostics;
+    const before = this.findings(this.draft);
     const work = workCopy(this.draft);
     const results = [];
     // drawn copper, per board: what each op drew, edited or moved, checked once the transaction is applied
@@ -390,7 +434,10 @@ export class Kernel {
       return this.rejected({ opIndex: tx.ops.length - 1, code: 'OUT_OF_SCOPE', message: 'This would change the circuit (parts, values or connections). Optimize only changes how an area is drawn.' }, !!tx.dry_run);
     }
     const analysed = this.analyse(work);
-    const after = analysed.diagnostics;
+    const after = this.findings(work);
+    // a spec item's status as it stands after the transaction (docs/design/spec.md §4)
+    const spec = this.specOf(work);
+    if (spec) for (const r of results) if (r.op === 'specify' && r.ids?.[0]) r.effect += `; now ${statusLine(spec, r.ids[0]) ?? 'gone'}`;
     const land = this.landFindings(this.draft, work);
     if (!tx.dry_run) {
       this.draft = work;
@@ -458,7 +505,7 @@ export class Kernel {
       results: [],
       rejection: r,
       diff: this.diffSummary(this.draft),
-      counts: countDiagnostics(this.analyse(this.draft).diagnostics),
+      counts: countDiagnostics(this.findings(this.draft)),
       introduced: [],
       resolved: [],
     };
@@ -486,8 +533,8 @@ export class Kernel {
     if (!hunks.length) return null;
     return {
       hunks,
-      before: countDiagnostics(this.analyse(this.committed).diagnostics),
-      after: countDiagnostics(this.analyse(this.draft).diagnostics),
+      before: countDiagnostics(this.findings(this.committed)),
+      after: countDiagnostics(this.findings(this.draft)),
     };
   }
 
@@ -841,6 +888,8 @@ export class Kernel {
         return descriptionView(d) ?? { description: null, hint: 'No description yet: write one with design_edit describe (overview and blocks).', parts: componentsSorted(d).map((c) => c.refdes) };
       case 'get_ledger':
         return Object.values(d.ledger).map((k) => ({ id: k.id, text: describeConstraint(d, k), strength: k.strength, quote: k.source.quote }));
+      case 'get_spec':
+        return this.specOf(d)?.answer ?? { counts: { verified: 0, violated: 0, unverified: 0, waived: 0, assumed: 0 }, items: [], hint: 'No spec yet: write what the product must do with design_edit specify, one item per statement that can be true or false.' };
       case 'search_parts':
         return searchParts(q.text, Object.values(d.parts)).slice(0, 12).map((p) => ({
           id: p.id,
@@ -953,9 +1002,10 @@ export class Kernel {
             ...(on.length > 1 ? { boards: on } : {}),
           };
         }),
-      counts: countDiagnostics(this.analyse(d).diagnostics),
+      counts: countDiagnostics(this.findings(d)),
       ledger: Object.keys(d.ledger).length,
       waivers: Object.keys(d.waivers).length,
+      ...(d.spec ? { spec: { ...this.specOf(d)!.answer.counts } } : {}),
       ...(d.description ? { description: { blocks: d.description.blocks.length, undescribed: descriptionView(d)!.undescribed } } : {}),
       ...(d.valueSeries ? { valueSeries: { ...d.valueSeries } } : {}),
       // several boards: each board's stack-up and heating stand in its entry of boards, not here
@@ -970,17 +1020,18 @@ export class Kernel {
    */
   diagnostics(): Diagnostic[] {
     const d = this.draft;
-    return [...this.analyse(d).diagnostics, ...this.copperShorts(d), ...stackCollisions(d, new Map(boardList(d).map((b) => [b.id, placedOf(this.focus(d, b.id))])))];
+    return [...this.findings(d), ...this.copperShorts(d), ...stackCollisions(d, new Map(boardList(d).map((b) => [b.id, placedOf(this.focus(d, b.id))])))];
   }
 
   /** Everything the UI needs in one call. */
   state(): KernelState {
     const d = this.draft;
     const a = this.analyse(d);
+    const diagnostics = this.findings(d);
     return {
       view: a.view,
-      diagnostics: a.diagnostics,
-      counts: countDiagnostics(a.diagnostics),
+      diagnostics,
+      counts: countDiagnostics(diagnostics),
       proposal: this.proposal(),
       ledger: Object.values(d.ledger)
         .sort((x, y) => natCmp(x.id, y.id))
@@ -998,6 +1049,7 @@ export class Kernel {
       summary: this.summary(d),
       description: descriptionView(d),
       boards: this.boardList(),
+      spec: this.specOf(d)?.answer ?? null,
     };
   }
 

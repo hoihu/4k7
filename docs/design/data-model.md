@@ -28,6 +28,7 @@ erDiagram
   DESIGN ||--o{ PART_CARD : parts
   DESIGN ||--o{ CONSTRAINT : ledger
   DESIGN ||--o{ WAIVER : waivers
+  DESIGN ||--o{ SPEC_ITEM : spec
   DESIGN ||--|{ BOARD : "board / boards"
   DESIGN ||--o{ MATE : mates
   COMPONENT }o--|| PART_CARD : part
@@ -88,6 +89,25 @@ the components it names (`a`, `b`), the arguments of its kind (`key`, `value`, `
   message, entities and, where the kernel can tell, the ops that would fix it (`fixHints`). It is shown in the UI and sent to the agent.
 - `Waiver`: diagnostic code + entity set + reason + who approved it (`user` or `agent`), and with
   several boards the board whose findings it covers. Stored in `Design.waivers` and reviewed.
+
+### The spec
+`Design.spec`, by id (`specify`, `remove_spec`): what the product must do ([spec](spec.md)). Absent when
+the design has none (it is never stored empty), so an older design and one without a spec look alike, and
+the format number did not change. A `SpecItem` has an `id` (`q_…`), a `text` (one statement that can be true
+or false), a `source` (`user` or `agent`, with the user's `quote`; an agent's item is an assumption until the
+user confirms it) and its verifiers `verify` (`SpecVerifier`: `part`, `measure`, `check`, `manual`). The
+verifiers store nets, boards and parts by id, as the ledger stores components: `net` and `board` are ids, and a
+check's `entities` name a part by id (`c_5`, `c_5.EN`) and a net as `net:<id>`. The status of each item
+(verified, violated, unverified, waived) is worked out, never stored.
+
+```jsonc
+{
+  "id": "q_1a",
+  "text": "USB-C input",
+  "source": { "type": "user", "quote": "power it from USB-C" },
+  "verify": [{ "kind": "part", "category": "connector", "pins": ["CC1", "CC2"] }]
+}
+```
 
 ## 3. The file
 

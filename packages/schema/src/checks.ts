@@ -153,6 +153,10 @@ export const CHECKS: Readonly<Record<string, CheckInfo>> = {
   'SEM.VALUE_MISSING': {},
   'SEM.VALUE_SERIES': {},
   'SEM.VOLTAGE_UNKNOWN': {},
+  // SPEC
+  'SPEC.ASSUMED': {},
+  'SPEC.UNVERIFIED': {},
+  'SPEC.VIOLATED': {},
   // XCHK
   'XCHK.BOARD_NET_UNKNOWN': {},
   'XCHK.LAND_OFF_CENTRE': {},
