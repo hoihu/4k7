@@ -4,6 +4,8 @@
 > several boards). [ARCHITECTURE.md §7](ARCHITECTURE.md#7-roadmap) says what is built; this says what comes
 > next, in which order, and when each piece counts as done. The agent side is worked out in
 > [design/agent-workflows.md](design/agent-workflows.md). Section 8 lists what the owner still has to decide.
+> Designs written so far: [spec](design/spec.md) (A1, A2), [scorecard](design/scorecard.md) (Q1),
+> [kicad-export](design/kicad-export.md) (X1, X2).
 
 ## 1. The goal, made checkable
 
@@ -14,7 +16,7 @@ would spend the project on its weakest side. So the goal is set on an outcome an
 **Outcome.** A board designed in 4k7 works at first power-up, and before it is ordered 4k7 shows, for each
 thing the user asked for, how it was checked, or says that it was not.
 
-**Segment** (to confirm, D1). One engineer or a small team. Boards up to about 300 parts on 2 to 8 layers
+**Segment** (decided, D1). One engineer or a small team. Boards up to about 300 parts on 2 to 8 layers
 with through vias. Microcontroller and module designs with USB 2.0, 100 Mbit Ethernet, CAN, RS-485, SPI
 flash; power up to some tens of amps; RF as 50 Ω feeds to modules and antennas. Made and assembled at
 JLCPCB, PCBWay or Eurocircuits. Outside it: DDR memory buses, multi-gigabit serial links, HDI with blind and
@@ -25,7 +27,7 @@ sends them to another tool, and they can take their design elsewhere at any time
 
 Four numbers say how far it is, tracked per release (track Q):
 
-1. Golden briefs that end with every requirement verified (not merely with clean checks).
+1. Golden briefs that end with every item of their spec verified (not merely with clean checks).
 2. Fabricated boards that powered up without rework, out of the boards fabricated.
 3. User interventions, turns and tokens per golden brief.
 4. Connections routed on the benchmark boards.
@@ -77,7 +79,7 @@ What follows:
 **A SPICE simulator?** Yes, but as checks, not as a workbench. A waveform viewer the user drives would be
 a copied feature and a manual tool. What fits 4k7: the agent writes a test bench for a block (sources,
 loads, an analysis, and what must hold: "3.3 V ±2 % from 0 to 500 mA", "phase margin over 45°", "reset
-released after 10 ms"), the bench is stored with the design, bound to a requirement, and run again whenever
+released after 10 ms"), the bench is stored with the design, bound to an item of the spec, and run again whenever
 the block changes. A failed bench is a finding like any other (`SIM.*`); a block with a part that has no
 model says that it was not simulated, never that it is fine. ngspice compiled to WebAssembly runs in a
 worker, as the router does, so nothing leaves the computer. The work is in the models, not the engine:
@@ -90,7 +92,7 @@ segment: striplines on inner signal layers (the solver has them; the board stops
 branch or change layer, an estimate of crosstalk. A 3D field solver is not planned; an export for one is
 cheap once X1 exists.
 
-**Export to KiCad and other formats?** Yes, early. It reverses a non-goal of ARCHITECTURE.md §1 (D2), for
+**Export to KiCad and other formats?** Yes, early. It reverses a non-goal of ARCHITECTURE.md §1 (decided, D2), for
 three reasons. A user will not put a real design into an alpha tool they cannot leave. 4k7 has no manual
 tools, so KiCad becomes the place for the last change the agent cannot be talked into. And the other
 direction, reading KiCad libraries and projects, opens thousands of parts and lets 4k7 check a board
@@ -110,9 +112,9 @@ State: `open`, `in flight (#n)`, `done`. "Needs" names packages that must be mer
 
 | Id | What | Done when | Size | Needs | State |
 |---|---|---|---|---|---|
-| Q1 | **Scorecard.** `design_query get_scorecard`: one deterministic summary of a design: findings by family and severity, what is unknown or unverified, open connections, board area and layers, fitted parts and BOM lines, order cost where a house is chosen, the hottest copper; requirements by status once A1 is in | The eval score, the design document and A6 read it instead of counting themselves | S | | open |
-| Q2 | **Golden briefs.** Twelve briefs across the segment (LED on USB-C, 12 V buck, ESP32-C3 sensor with antenna, STM32 with USB and SWD, op-amp front end, 5 A H-bridge, Li-ion charger with boost, isolated RS-485, RP2040 with QSPI flash, a two-board stack, a 6-layer board for S1, a rev B from errata for L3), each with requirements and a scripted solution like today's golden tasks | `npm test` proves each can be met without a model | M | A1 for the requirements | open |
-| Q3 | **Model table.** The briefs run by hand through `eval:mcp` for each agent and model; requirements verified, errors, turns, tokens and cost in a table on the site | The table exists for the four coding agents and is rerun for a release | M | Q2 | open |
+| Q1 | **Scorecard.** Design: [scorecard](design/scorecard.md). `design_query get_scorecard`: one deterministic summary of a design: findings by family and severity, what is unknown or unverified, open connections, board area and layers, fitted parts, the power tree's budgets, the hottest copper (the production files' findings, BOM lines and order cost follow as Q1b, since the kernel does not have them); the spec by status once A1 is in | The eval score, the design document and A6 read it instead of counting themselves | S | | open |
+| Q2 | **Golden briefs.** Twelve briefs across the segment (LED on USB-C, 12 V buck, ESP32-C3 sensor with antenna, STM32 with USB and SWD, op-amp front end, 5 A H-bridge, Li-ion charger with boost, isolated RS-485, RP2040 with QSPI flash, a two-board stack, a 6-layer board for S1, a rev B from errata for L3), each with its spec and a scripted solution like today's golden tasks | `npm test` proves each can be met without a model | M | A1 for the specs | open |
+| Q3 | **Model table.** The briefs run by hand through `eval:mcp` for each agent and model; spec items verified, errors, turns, tokens and cost in a table on the site | The table exists for the four coding agents and is rerun for a release | M | Q2 | open |
 | Q4 | **Router benchmark.** Fixed, placed boards (the project's own and public ones); connections routed, vias, length, time. The same inputs through tscircuit's autorouter as a reference | A number per release in `packages/kernel/bench`, and the comparison S3 is decided on | M | | open |
 | Q5 | **Board log.** `docs/boards.md`: every fabricated board, the version it came from, what went wrong, and the check that catches it now. spiral2 is the first entry | The file exists and number 2 of §1 is read from it | S | | open |
 | Q6 | **Seeded faults.** Twenty designs with one planted fault each (a strapping pin loaded at boot, a pull-up missing, a capacitor under-rated, a mirrored connector, a regulator outside its input range) | A score per release: found by a check, found by a reviewer, missed; and how many findings on the clean originals were wrong | M | | open |
@@ -121,14 +123,14 @@ State: `open`, `in flight (#n)`, `done`. "Needs" names packages that must be mer
 
 | Id | What | Done when | Size | Needs | State |
 |---|---|---|---|---|---|
-| A1 | **Requirements.** What the product must do, in the user's words, each with how it is verified (a check, a measured value, a part that must exist, a calculation, later a simulation, or the user's own tick). `REQ.*` findings; `propose` refuses a violated requirement and lists the unverified ones | A brief that asks for USB-C and gets a pin header cannot be proposed as done | M | Q1 | open |
-| A2 | **The agent writes them down.** Requirements are drawn from the brief at the start of a turn and echoed for confirmation like hints; what the agent assumed is marked as assumed | The golden briefs score on requirements | S | A1 | open |
+| A1 | **The spec.** What the product must do, in the user's words, each item with how the kernel can tell: a part that must be there, a measured value, a check that finds nothing, or the user's own tick (calculations and simulations later). `SPEC.*` findings; `propose` is refused while an item is violated unless the agent names it and why. Design: [spec](design/spec.md) | A brief that asks for USB-C and gets a pin header cannot be proposed as if it were met | M | | open |
+| A2 | **The agent writes it.** Spec items are drawn from the brief in the first transaction and reviewed in the changeset; what the agent assumed is marked as assumed. The eval holds each brief's own spec against the result | The golden briefs score on their spec | S | A1 | open |
 | A3 | **Reviewer runs.** A second, read-only run with a narrow task reports findings (`REV.*`) with evidence the kernel can look up; findings are kept per block and go stale when the block changes. First reviewer: the brief against the design | Q6 shows faults found that no check finds, at a known cost in tokens | L | A1 | open |
 | A4 | **Datasheet reviewer.** Each IC's datasheet read again against the circuit as built; its layout advice becomes ledger constraints with the page they came from | "Input capacitor within 3 mm of VIN" from a datasheet is a checked constraint on the board | M | A3 | open |
 | A5 | **Risk and bench reviewers.** What kills the board (reverse supply, hot plug, pin states at reset, ESD at connectors) and whether it can be brought up (test points, programming access, a way to power rails one at a time) | Both run at the schematic gate on the golden briefs | M | A3 | open |
 | A6 | **Explorations.** Variants as lists of ops, each applied to a copy of the design in a worker, placed, routed within a budget and compared by scorecard; the chosen one becomes an ordinary changeset | "LDO or buck?" and "2 or 4 layers?" are answered with a table of numbers and two pictures | L | Q1 | open |
 | A7 | **Gates and a decision queue.** The plan step for the in-app agent too; steps tracked and each proposal linked to its step; a summary at five gates (architecture, schematic, placement, routing, files); questions that do not block wait with their default, marked as assumptions | A golden brief runs from request to files with stops only at the gates | M | A1 | open |
-| A8 | **Explain.** `design_query explain`: where a part, a value, a net's attribute or a constraint comes from (requirement, datasheet page, calculation, message) | Clicking a part shows why it is there | M | A1 | open |
+| A8 | **Explain.** `design_query explain`: where a part, a value, a net's attribute or a constraint comes from (spec item, datasheet page, calculation, message) | Clicking a part shows why it is there | M | A1 | open |
 | A9 | **Hints on the canvas.** A sketched stroke becomes the points of a laid track, a drawn rectangle a room or keep-out, a pinned note a task for the agent | Each gesture arrives as ops in a changeset | M | | open |
 | A10 | **Background runs.** `4k7pcb run <job> --project <id>`: stock and lifecycle watch over a project's BOM, all checks again after an upgrade of 4k7; the result waits as a proposal when the project is opened next | A part gone out of stock is waiting as a proposed replacement | M | Q1 | open |
 
@@ -136,13 +138,13 @@ State: `open`, `in flight (#n)`, `done`. "Needs" names packages that must be mer
 
 | Id | What | Done when | Size | Needs | State |
 |---|---|---|---|---|---|
-| X1 | **KiCad board out.** `.kicad_pcb` in KiCad 10's format: outline, stack-up, footprints, tracks, vias, zones, nets, rules | The golden boards open in KiCad 10 and its own DRC reports no short and nothing unconnected (a test that runs where `kicad-cli` is installed) | M | D2 | open |
-| X2 | **KiCad schematic and project out.** `.kicad_sch` as drawn (wires, labels, pages), a symbol library, `.kicad_pro` | The netlist KiCad exports from it equals 4k7's | L | X1 | open |
+| X1 | **KiCad board out.** Design: [kicad-export](design/kicad-export.md). `.kicad_pcb` in KiCad 10's format: outline, stack-up, footprints, tracks, vias, zones, nets, rules | The golden boards open in KiCad 10 and its own DRC reports no short and nothing unconnected (a test that runs where `kicad-cli` is installed) | M | | open |
+| X2 | **KiCad schematic and project out.** Design: [kicad-export](design/kicad-export.md) §4. `.kicad_sch` as drawn (wires, labels, pages), a symbol library, `.kicad_pro` | The netlist KiCad exports from it equals 4k7's | L | X1 | open |
 | X3 | **KiCad libraries in.** `.kicad_sym` and `.kicad_mod` read into part cards from the user's KiCad installation or a file, cross-checked like a datasheet import | "Use KiCad's footprint for this part" works and a pad that disagrees with the datasheet is flagged | M | | open |
 | X4 | **A part by its LCSC number.** Pins and footprint from the EasyEDA component the stock check already reads, marked as the house's, checked against the datasheet where there is one | "Add C2040" gives a placed part without a PDF | M | | open |
 | X5 | **KiCad project in.** First read-only: netlist, parts matched to cards, placement as fixed positions, copper as locked copper, every check run ("check my KiCad board"). Then editable | A KiCad 10 demo board loads and its findings are listed | L | X3 | open |
 | X6 | **Mechanics in.** A DXF outline through `set_outline`; a housing as STEP that the enclosure script and the collision checks see | A board is fitted to a bought housing | M | | open |
-| X7 | **Diff.** Two versions of a design compared in words (parts, values, nets, constraints, requirements) and as an overlay; `4k7pcb diff a b` for git | A git diff of a project reads as a list of changes | M | | open |
+| X7 | **Diff.** Two versions of a design compared in words (parts, values, nets, constraints, spec) and as an overlay; `4k7pcb diff a b` for git | A git diff of a project reads as a list of changes | M | | open |
 | X8 | **Assembly variants.** Named variants with fitted or not and a value per part; BOM, pick-and-place and cost per variant | A 3.3 V and a 5 V build from one design | M | | open |
 | X9 | **Hand-assembly page.** A BOM in the design document where a clicked line lights up its parts on the board | The page is in the downloaded document | S | | open |
 | X10 | **IPC-2581 out** | A user's manufacturer asks for it | M | | open |
@@ -151,10 +153,10 @@ State: `open`, `in flight (#n)`, `done`. "Needs" names packages that must be mer
 
 | Id | What | Done when | Size | Needs | State |
 |---|---|---|---|---|---|
-| P1 | **Tolerances.** Worst case and RSS for dividers, RC times, LED currents and regulator outputs from the parts' tolerances; a finding when a requirement's band is left | A feedback divider of 5 % resistors against a ±2 % requirement is flagged | M | A1 | open |
+| P1 | **Tolerances.** Worst case and RSS for dividers, RC times, LED currents and regulator outputs from the parts' tolerances; a finding when a spec item's band is left | A feedback divider of 5 % resistors against a ±2 % spec item is flagged | M | A1 | open |
 | P2 | **Netlist and models.** A SPICE netlist of a block; a model slot on the part card with where the model came from; generic parts modelled from their parameters (ESR, DCR, tolerance) | A block of generic parts exports a netlist ngspice accepts | M | | open |
 | P3 | **Simulator.** ngspice in a worker; a `simulate` tool (operating point, transient, AC, measurements) that returns numbers and a plot the agent and the user see | The agent answers "what is the ripple?" with a number | M | P2 | open |
-| P4 | **Benches as checks.** A stored bench bound to a requirement, run again when its block changes; `SIM.FAIL`, and `SIM.UNMODELLED` where a part has no model | A changed inductor value turns a requirement red without anyone asking | M | P3, A1 | open |
+| P4 | **Benches as checks.** A stored bench bound to a spec item, run again when its block changes; `SIM.FAIL`, and `SIM.UNMODELLED` where a part has no model | A changed inductor value turns a spec item red without anyone asking | M | P3, A1 | open |
 | P5 | **Model work.** Vendor models fetched and tried against one figure of the datasheet before they are trusted; behavioural models for regulators and op-amps made from datasheet numbers and labelled as such | The golden briefs' ICs have models with provenance | L | P3 | open |
 | P6 | **Copper areas solved.** Voltage drop and current density through pours and planes, which count as lossless today | A rail fed through a narrow neck of a pour is flagged | L | | open |
 | P7 | **Clearance by voltage and loop area.** `DRC.CREEPAGE` from the nets' voltages and a chosen table; a `loop_area` constraint and check for switching loops. An aid, never a statement of compliance | A 230 V net 0.5 mm from a logic net is an error | M | | open |
@@ -189,16 +191,16 @@ flight at once. Where one thing must be chosen, this is the order, each mileston
 
 | Milestone | Packages | It is reached when |
 |---|---|---|
-| **1. Says what it built** | Q1, A1, A2, Q2, Q3, Q5; L1 finishing | No golden brief ends as done with a requirement unmet and unreported |
+| **1. Says what it built** | Q1, A1, A2, Q2, Q3, Q5; L1 finishing | No golden brief ends as done with a spec item unmet and unreported |
 | **2. A second pair of eyes** | Q6, A3, A4, A7, A8 | Reviewers find seeded faults no check finds, and their wrong findings are counted |
 | **3. You can leave, and bring things** | X1, X2, X3, X4, X7 | A golden design opens in KiCad 10 with the same netlist, and a KiCad library part is used in 4k7 |
-| **4. Proved before built** | P1, P2, P3, P4, A5; P5 begins | A requirement on a voltage or a time is verified by a bench that reruns by itself |
+| **4. Proved before built** | P1, P2, P3, P4, A5; P5 begins | A spec item on a voltage or a time is verified by a bench that reruns by itself |
 | **5. Choices** | A6, X8, S4, S5, A9 | An architecture question is answered with compared variants |
 | **6. Bigger boards** | Q4, S1, S2, S3, S6 | The 6-layer brief with a BGA routes and exports |
 | **7. Past the Gerber** | L2, L3, L4, L5, A10, X5, X6, P6, P7, P8 | A rev B is made from the errata of a board that was on the bench |
 
 Milestones 1 and 2 come first because every later package is judged with what they build: a simulator
-without requirements has nothing to assert, and explorations without a scorecard have nothing to compare.
+without a spec has nothing to assert, and explorations without a scorecard have nothing to compare.
 
 ## 7. Not planned, and why
 
@@ -218,15 +220,15 @@ without requirements has nothing to assert, and explorations without a scorecard
 
 ## 8. Decisions for the owner
 
-| # | Decision | Proposed |
-|---|---|---|
-| D1 | The segment of §1 | As written |
-| D2 | KiCad export and import, against the non-goal in ARCHITECTURE.md §1 | Yes; the non-goal is rewritten in X1's pull request |
-| D3 | Simulation in the core (an ngspice build in the download) instead of only through a user's MCP server | In the core, loaded on first use. The licences of what the WebAssembly build bundles are checked in P3 |
-| D4 | A violated requirement blocks `propose` like an error | Yes, with a waiver as for errors |
-| D5 | When reviewers run, since they cost tokens | At gates and on request, not on every change; cost shown per run |
-| D6 | Pull request #260 cites a `MARKET_REVIEW.md` with items such as C5 that is not in the repository | Add it, and map its items to the ids here, so there is one plan |
-| D7 | The order of §6 | As written; milestone 3 can move first if leaving matters more to early users than reviewing |
+| # | Decision | Proposed | State |
+|---|---|---|---|
+| D1 | The segment of §1 | As written | decided 2026-11-27: as written |
+| D2 | KiCad export and import, against the non-goal in ARCHITECTURE.md §1 | Yes; the non-goal is rewritten in X1's last pull request | decided 2026-11-27: yes |
+| D3 | Simulation in the core (an ngspice build in the download) instead of only through a user's MCP server | In the core, loaded on first use. The licences of what the WebAssembly build bundles are checked in P3 | open |
+| D4 | What a violated spec item does to `propose` | It is refused unless the item is waived or the agent names it and the reason in `spec_open`, as for open connections ([spec](design/spec.md) §5) | open |
+| D5 | When reviewers run, since they cost tokens | At gates and on request, not on every change; cost shown per run | open |
+| D6 | Pull request #260 cites a `MARKET_REVIEW.md` with items such as C5 that is not in the repository | Add it, and map its items to the ids here, so there is one plan | open |
+| D7 | The order of §6 | As written; milestone 3 can move first if leaving matters more to early users than reviewing | open |
 
 ## 9. Working this plan
 

@@ -164,6 +164,7 @@ The server binds to `127.0.0.1` and requires the access key in `~/.4k7/server.js
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System overview, principles, components, roadmap, risks |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What comes next (a proposal): the goal, the market, the gaps, packages and their order |
 | [docs/design/agent-workflows.md](docs/design/agent-workflows.md) | Proposal for the agent's side of the roadmap: requirements, reviewers, explorations, gates, bench and revisions |
+| [docs/design/spec.md](docs/design/spec.md), [scorecard.md](docs/design/scorecard.md), [kicad-export.md](docs/design/kicad-export.md) | Designs for the roadmap's first packages, not built yet: the spec (what the board is for, and how the kernel tells), the scorecard, export to KiCad |
 | [docs/design/data-model.md](docs/design/data-model.md) | Design graph, constraints, native file format |
 | [docs/design/ops-api.md](docs/design/ops-api.md) | The operation catalogue that AI, MCP and UI all use |
 | [docs/design/ai-loop.md](docs/design/ai-loop.md) | Agent loop, verification loop, hints, BYO AI, MCP, relay |

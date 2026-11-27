@@ -95,7 +95,8 @@ Start with `docs/ARCHITECTURE.md` (overview, package table, roadmap).
 
 `docs/ROADMAP.md` is the plan for what comes next: packages by id (Q, A, X, P, S, L) with what makes each done, their
 order, and how to work them (its §9). `docs/design/agent-workflows.md` is the proposal behind track A; neither describes
-built code.
+built code. `docs/design/spec.md` (A1, A2), `scorecard.md` (Q1) and `kicad-export.md` (X1, X2) are the designs of the first
+packages: build from them, and correct them in the same PR where the code has to differ.
 
 Several docs (`schematic.md`, `high-speed.md`, `cost.md`, `mechanics.md`, `boards.md`) are text the agent itself reads: write them to the agent.
 

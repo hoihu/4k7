@@ -22,54 +22,58 @@ The sections below take these in turn. What does not change:
 
 - **The kernel is the truth.** Everything new is ops, queries and findings in the one catalogue
   ([ops-api](ops-api.md)); the app, the in-app agent and MCP get it together.
-- **Unknown is said, never fine.** A requirement nobody verified, a block nobody could simulate and a
+- **Unknown is said, never fine.** A spec item nobody verified, a block nobody could simulate and a
   review that did not run are shown as such.
 - **Everything the agent changes is a changeset** the user can review and undo.
 - **Any model, at the user's cost.** A feature must work with a middling model, say what it spends, and be
   switched off without breaking the rest.
 
-## 2. Requirements: what the board is for (A1, A2)
+## 2. The spec: what the board is for (A1, A2)
 
-A requirement is one thing the product must do, in the user's words, with how it is verified. Requirements
-live in the design (`Design.requirements`) beside the ledger. The ledger says how the design is to be made
-("C1 left of U1"); a requirement says what it must achieve.
+> Worked out in [spec](spec.md), which is what gets built first. Where the two differ, spec.md holds.
+
+A spec item is one thing the product must do, in the user's words, with how it is verified. The spec lives
+in the design (`Design.spec`) beside the ledger. The ledger says how the design is to be made ("C1 left of
+U1"); the spec says what it must achieve. (Not "requirements": a part card's `requirements` are what a part
+needs from its circuit.)
 
 ```jsonc
-{ "id": "rq_3",
-  "text": "3.3 V for the radio, 500 mA, less than 30 mV ripple",   // the user's words
-  "source": { "type": "user", "message": "m_12" },              // or "agent": assumed, see below
-  "scope": { "nets": ["+3V3"] },                                // nets, parts, a block, a board, or the design
+{ "id": "q_1a",
+  "text": "3.3 V for the radio, 500 mA, less than 30 mV ripple",
+  "source": { "type": "user", "quote": "the radio needs 3V3 at half an amp, clean" },
   "verify": [
     { "kind": "measure", "of": "net.max_current", "net": "+3V3", "min": 0.5 },
-    { "kind": "check",   "code": "DRC.IR_DROP", "nets": ["+3V3"] },   // holds while that check has no open finding there
-    { "kind": "sim",     "bench": "tb_3v3_ripple" }                   // P4
+    { "kind": "check",   "code": "DRC.IR_DROP", "entities": ["net:+3V3"] },  // holds while that check finds nothing there
+    { "kind": "sim",     "bench": "tb_3v3_ripple" }                          // P4
   ] }
 ```
 
-| Verifier | Holds when | Example |
-|---|---|---|
-| `part` | A fitted part of a category with given parameters exists | "USB-C": a connector whose card says USB-C receptacle |
-| `measure` | A value of the scorecard or of a query is inside a range | board at most 40 × 30 mm; order cost under 8 CHF at 100 pieces; 2 layers |
-| `check` | A named check has no open finding in the scope | no `SEM.ABS_MAX` on the input stage |
-| `calc` | A calculator's result on the design's values is inside a range | the divider gives 3.3 V ±2 % with its tolerances (P1) |
-| `sim` | A stored bench passes | ripple, start-up time, phase margin (P4) |
-| `manual` | The user ticked it | "the button feels right in the housing" |
+| Verifier | Holds when | Example | With |
+|---|---|---|---|
+| `part` | A fitted part with given pins, category or text exists | "USB-C": a connector with pins CC1 and CC2 | A1 |
+| `measure` | A value the kernel knows is inside a range | board at most 40 × 30 mm; 2 layers | A1 |
+| `check` | A named check has no open finding in the scope | no `SEM.ABS_MAX` on the input stage | A1 |
+| `manual` | The user ticked it | "the button feels right in the housing" | A1 |
+| `calc` | A calculator's result on the design's values is inside a range | the divider gives 3.3 V ±2 % with its tolerances | P1 |
+| `sim` | A stored bench passes | ripple, start-up time, phase margin | P4 |
+| cost, BOM lines | The order's cost at a house is under a limit | under 8 CHF at 100 pieces | Q1b |
 
 The status is worked out, not stored (through `derive.ts`, like every other result): `verified` when every
 verifier holds, `violated` when one fails, `unverified` when there is no verifier or one cannot be evaluated
-(no current set, no model). Stored are only a manual tick and whether an assumed requirement was confirmed.
+(no current set, the board not routed, no model).
 
-- **The agent writes them down first.** At the start of a turn it turns the brief into requirements with
-  `require`, as it turns hints into ledger entries, and the user sees them as chips to accept, edit or drop.
+- **The agent writes them down first.** At the start it turns the brief into spec items with `specify`, in
+  its first transaction, and the user sees them in the changeset to accept, edit or drop.
 - **Assumptions are marked.** Where the brief is silent and the agent decides (the input is 5 V from USB),
-  the requirement's source is `agent`. It is listed as assumed until the user confirms it.
-- **`propose` knows them.** A violated requirement refuses the proposal as an open error does, unless it is
-  waived with a reason. Unverified ones do not block; the changeset card lists them ("3 of 9 not verified").
-- **Findings.** `REQ.VIOLATED` (error) and `REQ.UNVERIFIED` (info) appear in the Issues list with the
-  requirement's text.
-- **The design document** gets a table: each requirement, how it was verified, by which check or bench.
+  the item's source is the agent, and it is listed as assumed until the user confirms it.
+- **`propose` knows them.** With a violated item `propose` is refused unless the agent names the item and
+  the reason (`spec_open`: a later step of the plan, or it cannot be met), as it must for open connections.
+  Unverified items do not block; the changeset card lists them ("3 of 9 not verified").
+- **Findings.** `SPEC.VIOLATED`, `SPEC.UNVERIFIED` and `SPEC.ASSUMED` appear in the Issues list with the
+  item's text.
+- **The design document** gets a table: each item, how it was verified, by which check or bench.
 
-This is where simulation, tolerance analysis, cost and size meet: each is a way to verify a requirement,
+This is where simulation, tolerance analysis, cost and size meet: each is a way to verify a spec item,
 and the table says how much of the product's purpose has been checked by something other than the model's
 own opinion.
 
@@ -102,7 +106,7 @@ report with. It does not edit. What it reports are findings in the same list as 
 
 | Reviewer | Reads | Asks | Package |
 |---|---|---|---|
-| Brief | The requirements, the conversation, the design by queries | Was what was asked for built? What was dropped or swapped on the way? | A3 |
+| Brief | The spec, the conversation, the design by queries | Was what was asked for built? What was dropped or swapped on the way? | A3 |
 | Datasheet | One IC's datasheet and its block | Is every pin used as the datasheet allows? Does the circuit follow the application circuit, and where it does not, why? What does the layout section ask for? | A4 |
 | Risk | Connectors, supplies, reset and boot | What happens with the supply reversed, a cable plugged in live, inputs floating at reset, a discharge into a connector? | A5 |
 | Bench | Power tree, test points, programming access | Can each rail be measured and powered on its own? Can the MCU be programmed and reset on the bare board? | A5 |
@@ -135,7 +139,7 @@ arrangements on a copy of the design in a worker. An exploration extends that fr
 ```
 
 Each variant is the open design plus a list of ops, applied to a copy in a worker, placed, and routed
-within the budget. The answer is a scorecard per variant (Q1) with the status of every requirement, and a
+within the budget. The answer is a scorecard per variant (Q1) with the status of every spec item, and a
 picture of each board. The agent writes a variant as ops, which is cheap in tokens; the work is done on the
 user's computer.
 
@@ -143,7 +147,7 @@ The user sees a card with a column per variant:
 
 | | LDO | Buck |
 |---|---|---|
-| Requirements verified | 7 of 9 (heat violated) | 9 of 9 |
+| Spec items verified | 7 of 9 (heat violated) | 9 of 9 |
 | Order cost, 10 boards | 41 $ | 47 $ |
 | Board | 30 × 20 mm, 2 layers | 34 × 22 mm, 2 layers |
 | Hottest part | U2: 0.85 W of 0.29 W | none |
@@ -166,12 +170,12 @@ plan, meet at milestones, decide what was left open.
   steps are tracked through the run, and each proposal is linked to the step it carries out.
 - **Five gates**: architecture (blocks, power tree, main parts), schematic, placement, routing, files. At a
   gate the agent stops and posts one card: the scorecard and what changed since the last gate, every
-  requirement's status, the reviewers' findings, the assumptions it made, the questions waiting.
+  spec item's status, the reviewers' findings, the assumptions it made, the questions waiting.
 - **A third mode, Gates**, beside Review and Auto: changesets commit as they pass the checks, and the run
   stops at each gate. Auto runs through all gates and never exports or orders by itself.
 - **Questions that do not block.** `ask_user` stops the run today. A question may instead carry a default:
-  the agent goes on with the default, records it as an assumed requirement (§2), and the question waits in
-  a queue. Answered differently later, the requirement changes, its status turns, and the ordinary loop
+  the agent goes on with the default, records it as an assumed spec item (§2), and the question waits in
+  a queue. Answered differently later, the item changes, its status turns, and the ordinary loop
   repairs the design. A question with no sensible default still blocks.
 - **A budget.** A run has a limit in time and tokens, shown as it is used; at the limit it stops at the
   next gate with what it has.
@@ -182,7 +186,7 @@ questions and a comparison waiting, instead of a finished board built on a wrong
 ## 6. Explain (A8)
 
 `design_query explain { ref }` answers "why is this here, and why this value?" for a part, a value, a net's
-attribute or a constraint, from what the design already records and what §2 and §3 add: the requirement it
+attribute or a constraint, from what the design already records and what §2 and §3 add: the spec item it
 serves, the datasheet page a value was taken from (part cards carry provenance), the calculator call that
 gave it (to be recorded with the op), the ledger entry and its message, the reviewer finding that led to it.
 In the Inspector it is a "Why" section. Where nothing is recorded it says so. It makes the review of a
@@ -237,21 +241,21 @@ Nothing a background run produces is committed without the user.
 ## 10. A design with all of it
 
 A dynamo bicycle lamp, as an example. The user describes it in a paragraph. The agent answers with nine
-requirements, two of them assumed (the dynamo's open-circuit voltage, the standlight time), and a plan. At
+spec items, two of them assumed (the dynamo's open-circuit voltage, the standlight time), and a plan. At
 the architecture gate it shows two explored variants for the LED driver with cost, size and heat, and a
 question about the standlight that it has answered provisionally. The user picks the buck, corrects the
-standlight to four minutes; the supercapacitor requirement turns red and the agent resizes it. At the
+standlight to four minutes; the supercapacitor item turns red and the agent resizes it. At the
 schematic gate the datasheet reviewer has turned the driver's layout section into four constraints and
 found the dimming input left floating, which the datasheet forbids; the risk reviewer asks what happens when the dynamo runs with the LED
 unplugged. Two benches verify the LED current over the dynamo's range. Placement and routing run through;
-the files gate shows nine of nine requirements, one by the user's tick. Three weeks later the board is on
+the files gate shows nine of nine spec items, one by the user's tick. Three weeks later the board is on
 the bench: the standlight lasts three minutes, the session finds the capacitor's tolerance, and the erratum
 starts rev B. The driver block is now marked as proven for the next lamp.
 
 ## 11. Open questions
 
-- Requirements against ledger: is a `param` constraint ("make C1 100 µF") a requirement or a hint? Proposed:
-  it stays in the ledger; a requirement is about behaviour.
+- Spec against ledger: is a `param` constraint ("make C1 100 µF") a spec item or a hint? Proposed: it
+  stays in the ledger; the spec is about behaviour.
 - How a `part` verifier names what it wants without a taxonomy of parts. Proposed: the card's category plus
   parameters the datasheet import already fills (connector type, interface).
 - Whether a reviewer in an external agent's own session is independent enough to be called a review.
