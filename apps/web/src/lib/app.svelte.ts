@@ -620,6 +620,11 @@ class AppState {
     return b && b.id !== this.shownBoard ? `There is no area on board "${b.name}": the user was looking at board "${this.shownBoardName ?? this.shownBoard}". Leave area out for the whole board, or pass region.` : null;
   }
 
+  /** The cable and wire mates with both ends, for the combined BOM's cable lines (cableTable in kernel/src/mates.ts). See docs/design/multi-board.md §4. */
+  cableTable() {
+    return this.kernel.cableTable();
+  }
+
   /**
    * Every board where the assembly puts it, for the 3D view and the STEP file of a design of
    * several boards (null with one): the board shown as it is laid now, the others placed.

@@ -159,13 +159,21 @@ not-fitted parts and bare pads left out) merged over the boards, a line on two b
 its designators and the total, in the house's BOM columns plus `Boards` (`Main×2, LED board×1`).
 It is for the user (buying, reading), not for upload: a house assembles each board from its own
 BOM in that board's zip, which does not change. A separate download rather than a file in each
-board's zip, so the zip a house takes stays the board's own. Cables and mating halves are not
-lines of it yet. The design document has a cable table (built 2026-11-27, its
+board's zip, so the zip a house takes stays the board's own. Each `cable` and `wire` mate is a
+line of its own after the parts (built 2026-11-27, from the kernel's `cableTable`): in the house's
+columns a description (`Cable, 2 wires, 150 mm`; `reversed` for a reversed cable, `length not set`
+without a length, `Wire` for a wire mate; the number of wires is the number of pin pairs), its two
+ends as designator (`J2–J3`, as the design document's Cables section names a cable; mate ids are
+not shown to the user), quantity 1, no part numbers, and in `Boards` both ends with their boards
+(`J2 (Main) ↔ J3 (LED board)`). Identical cables are not merged: each mate is a line, so each
+cable can be read against its table. Stack and edge mates have no cable and no line. The mating
+housings and crimps, wire colours and the bend check are still to come; the per-board BOMs in the
+fab zips do not list cables (a house assembles a board, not its cable). The design document has a cable table (built 2026-11-27, its
 Cables section): each `cable` and `wire` mate by id, both ends (refdes, part, board), the kind,
 straight or reversed, the length if set, and pin to pin in A's pin order with A's net, a pin of B on
 another net or none marked `mismatch` (`cableTable` in `kernel/src/mates.ts`, from `matePairs` and
-`pairState`; `apps/web/src/lib/cabledoc.ts`). Wire colours, the mating housings and crimps, and
-cables as BOM lines are still to come.
+`pairState`; `apps/web/src/lib/cabledoc.ts`). Wire colours and the mating housings and crimps
+are still to come.
 
 A net is the system's, its settings too, except its track width: `set_net track_mm` with `board`
 sets the net's width on that board only (built 2026-11-24, after the bike lamp's merge: LED_A and

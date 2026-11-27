@@ -567,9 +567,10 @@ function bomTable(lines: BomLine[], house: string): (string | number)[][] {
  * ("Main×2, LED board×1"). Lines are grouped as each board's BOM groups them, a part on two boards
  * is one line with the total; not-fitted parts are left out the same way. Not for upload: a house
  * assembles one board at a time from that board's own BOM. Null with one board (nothing to combine).
- * See docs/design/multi-board.md §4.
+ * Each cable or wire mate in `cables` (the kernel's cableTable) is a line of its own after the parts,
+ * designated by its two ends (J2–J3), identical cables not merged. See docs/design/multi-board.md §4.
  */
-export function combinedBom(boards: { name: string; b: BoardView }[], project: string, house = 'jlcpcb'): FabFile | null {
+export function combinedBom(boards: { name: string; b: BoardView }[], project: string, house = 'jlcpcb', cables: BomCable[] = []): FabFile | null {
   if (boards.length < 2) return null;
   const natural = (a: string, c: string) => a.localeCompare(c, 'en', { numeric: true });
   const groups = new Map<string, { line: BomLine; on: Map<string, number> }>();
@@ -589,7 +590,29 @@ export function combinedBom(boards: { name: string; b: BoardView }[], project: s
   const [head, ...rows] = bomTable(all.map((g) => g.line), house);
   const boardsCol = (g: (typeof all)[number]) => [...g.on].map(([n, q]) => `${n}×${q}`).join(', ');
   const base = project.replace(/[^\w.-]+/g, '_') || 'board';
-  return { name: `${base}-combined-bom.csv`, content: csv([[...head!, 'Boards'], ...rows.map((r, i) => [...r, boardsCol(all[i]!)])]) };
+  const parts = rows.map((r, i) => [...r, boardsCol(all[i]!)]);
+  const cableRows = cables.map((c, i) => [...cableLine(c, house, rows.length + i + 1), `${c.a.refdes} (${c.a.board}) ↔ ${c.b.refdes} (${c.b.board})`]);
+  return { name: `${base}-combined-bom.csv`, content: csv([[...head!, 'Boards'], ...parts, ...cableRows]) };
+}
+
+/** What the combined BOM reads of a cable or wire mate: the fields of the kernel's CableEntry it needs (cableTable in kernel/src/mates.ts). */
+export interface BomCable {
+  kind: 'cable' | 'wire';
+  cable?: 'straight' | 'reversed';
+  length_mm?: number;
+  a: { refdes: string; board: string };
+  b: { refdes: string; board: string };
+  rows: readonly unknown[];
+}
+
+/** A cable's line in the house's BOM columns (without Boards): "Cable, reversed, 2 wires, 150 mm", quantity 1, no part numbers. `item` is PCBWay's Item #. */
+function cableLine(c: BomCable, house: string, item: number): (string | number)[] {
+  const n = c.rows.length;
+  const what = [c.kind === 'wire' ? 'Wire' : 'Cable', ...(c.cable === 'reversed' ? ['reversed'] : []), `${n} wire${n === 1 ? '' : 's'}`, c.length_mm ? `${c.length_mm} mm` : 'length not set'].join(', ');
+  const ref = `${c.a.refdes}–${c.b.refdes}`;
+  if (house === 'eurocircuits') return [ref, 1, '', '', what, '', ''];
+  if (house === 'pcbway') return [item, ref, 1, '', '', what, '', ''];
+  return [what, ref, '', 1, '', '', ''];
 }
 
 /**
