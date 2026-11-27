@@ -42,6 +42,8 @@ const methods = {
   boardPlacement: (board?: string) => kernel.boardPlacement(board),
   /** The working copy's bring-up sheet, for the design document. `board`: which (several boards). */
   bringUp: () => kernel.bringUp(),
+  /** The working copy's cable and wire mates pin to pin, for the design document. */
+  cableTable: () => kernel.cableTable(),
   /** Where every board stands (the assembly), first board first. */
   assembly: () => kernel.assembly(),
   /** Every board of the working copy placed, first board first. */

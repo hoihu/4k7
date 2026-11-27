@@ -160,7 +160,12 @@ its designators and the total, in the house's BOM columns plus `Boards` (`Main×
 It is for the user (buying, reading), not for upload: a house assembles each board from its own
 BOM in that board's zip, which does not change. A separate download rather than a file in each
 board's zip, so the zip a house takes stays the board's own. Cables and mating halves are not
-lines of it yet.
+lines of it yet. The design document has a cable table (built 2026-11-27, its
+Cables section): each `cable` and `wire` mate by id, both ends (refdes, part, board), the kind,
+straight or reversed, the length if set, and pin to pin in A's pin order with A's net, a pin of B on
+another net or none marked `mismatch` (`cableTable` in `kernel/src/mates.ts`, from `matePairs` and
+`pairState`; `apps/web/src/lib/cabledoc.ts`). Wire colours, the mating housings and crimps, and
+cables as BOM lines are still to come.
 
 A net is the system's, its settings too, except its track width: `set_net track_mm` with `board`
 sets the net's width on that board only (built 2026-11-24, after the bike lamp's merge: LED_A and

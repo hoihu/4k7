@@ -1645,7 +1645,7 @@ class AppState {
 
   /**
    * The design document through the print dialog, or (`download`) as one HTML file: the description,
-   * each block with its schematic and its place on the board, layout, assembly drawing, BOM, bring-up sheet and schematic pages.
+   * each block with its schematic and its place on the board, layout, assembly drawing, BOM, bring-up sheet, cable table and schematic pages.
    */
   async designDocument(download = false) {
     if (!this.k || this.docBusy) return;
@@ -1654,11 +1654,12 @@ class AppState {
       const board = this.k.summary.components.length ? await this.routedBoard() : null;
       // the bring-up sheet is of the whole design (all boards, one power-up order), not of the board shown
       const bringUp = await this.kernel.bringUp().catch(() => null);
+      const cables = await this.kernel.cableTable().catch(() => null);
       // the card of the design as it is now, with the copper just routed for it (it routes nothing itself)
       const scorecard = (await this.kernel.query({ op: 'get_scorecard' }).catch(() => null)) as Scorecard | null;
       const { downloadDesignDocument, printDesignDocument } = await import('./designdoc.ts');
       const k = this.k;
-      await (download ? downloadDesignDocument : printDesignDocument)({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal, bringUp, scorecard });
+      await (download ? downloadDesignDocument : printDesignDocument)({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal, bringUp, cables, scorecard });
     } catch (e) {
       this.flash(`The design document failed: ${(e as Error).message}`);
     } finally {
