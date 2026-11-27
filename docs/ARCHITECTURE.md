@@ -295,6 +295,9 @@ the decisions, the kernel owns geometry and truth, and the UI owns review.
 
 ## 7. Roadmap
 
+What is built is below. What comes next, package by package, is in [ROADMAP.md](ROADMAP.md) (a proposal
+of 2026-11-26), with the agent's side in [agent-workflows](design/agent-workflows.md).
+
 | Milestone | Scope | Exit criteria |
 |---|---|---|
 | **M0 Kernel + schematic** | Data model, ops catalogue, transactions, CRDT persistence, schematic auto-layout, ERC, in-app agent with 1–2 providers, schematic workspace ([ui.md](design/ui.md)) | Agent builds a 30-part schematic from a prompt, ERC-clean, with ledger hints respected on re-layout |
