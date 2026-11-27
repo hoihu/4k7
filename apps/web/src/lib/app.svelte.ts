@@ -20,7 +20,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { type BoardPlace, FIRST_BOARD, countDiagnostics, type DiagnosticCounts, RenderEnclosureInput, enclosureAnswer, type EnclosurePart, enclosureKey, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, emptyDesign, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, diagnosticsAnswer, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { type BoardPlace, FIRST_BOARD, countDiagnostics, type DiagnosticCounts, RenderEnclosureInput, enclosureAnswer, type EnclosurePart, enclosureKey, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, emptyDesign, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, diagnosticsAnswer, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type Scorecard, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
 import { assemblyEnclosureFacts, copperCheckText, enclosureReadout, enclosureFacts, type PartSolids, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
@@ -1654,9 +1654,11 @@ class AppState {
       const board = this.k.summary.components.length ? await this.routedBoard() : null;
       // the bring-up sheet is of the whole design (all boards, one power-up order), not of the board shown
       const bringUp = await this.kernel.bringUp().catch(() => null);
+      // the card of the design as it is now, with the copper just routed for it (it routes nothing itself)
+      const scorecard = (await this.kernel.query({ op: 'get_scorecard' }).catch(() => null)) as Scorecard | null;
       const { downloadDesignDocument, printDesignDocument } = await import('./designdoc.ts');
       const k = this.k;
-      await (download ? downloadDesignDocument : printDesignDocument)({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal, bringUp });
+      await (download ? downloadDesignDocument : printDesignDocument)({ name: k.summary.name, view: k.view, summary: k.summary, counts: k.counts, description: k.description, board, pending: !!k.proposal, bringUp, scorecard });
     } catch (e) {
       this.flash(`The design document failed: ${(e as Error).message}`);
     } finally {

@@ -23,6 +23,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 ### Query
 
 - `get_summary`: overview of the design.
+- `get_scorecard`: the design in a few numbers, the same text for the same design: open findings by family and severity, the waived, what could not be judged (by code), the ledger, parts, power rails, and per board its size, layers, sides and routing, with open connections, track length, vias and copper against current only where it is routed for its placement. It routes nothing. The eval scores runs by it and the design document prints it ([scorecard](scorecard.md)).
 - `find`: parts and nets by a substring of refdes, part id, value or net name, or by category.
 - `get_component`: one component: part, parameters, package, pins with their nets, constraints.
 - `get_net`: one net: its pins, track width (the width its current needs, per layer), how its copper carries its current, vias for its current, impedance rule.
