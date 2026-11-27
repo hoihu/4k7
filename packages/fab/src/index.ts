@@ -13,3 +13,5 @@ export * from './netdesign.ts';
 export * from './ipc356.ts';
 export * from './fabdiag.ts';
 export * from './fabnotes.ts';
+export { kicadBoard, kicadBoardFiles, fpLibTable, KICAD_ORIGIN, type KicadBoard } from './kicad/board.ts';
+export { KICAD_FILE_VERSION } from './kicad/footprint.ts';
