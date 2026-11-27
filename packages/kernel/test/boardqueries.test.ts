@@ -8,6 +8,12 @@ type QErr = { error?: string; code?: string; candidates?: string[]; boards?: unk
 // the router's copper is counted (tracks, vias), not listed
 type Copper = { tracks: number; vias: number };
 
+// try_placements says how long it took (`seconds`), so two runs of the same query differ there
+const timeless = (answer: unknown) => {
+  const { seconds: _, ...rest } = answer as Record<string, unknown>;
+  return rest;
+};
+
 function routedLed() {
   const k = twoBoards();
   const r = k.transact({ summary: 'route', ops: [{ op: 'route', board: 'LED board' }] });
@@ -45,8 +51,8 @@ describe('board queries infer their board', () => {
     const q = { op: 'try_placements', candidates: [{ parts: [{ ref: 'J3', x_mm: 5, y_mm: 5 }] }], explore: false };
     const out = k.query(q) as QErr;
     expect(out.error).toBeUndefined();
-    expect(out).toEqual(k.query({ ...q, board: 'LED board' }));
-    expect(out).not.toEqual(k.query({ ...q, board: 'Main' }));
+    expect(timeless(out)).toEqual(timeless(k.query({ ...q, board: 'LED board' })));
+    expect(timeless(out)).not.toEqual(timeless(k.query({ ...q, board: 'Main' })));
   });
 
   it('nothing that settles the board: BOARD_AMBIGUOUS, candidates and boards kept', () => {
