@@ -36,6 +36,7 @@ transaction; query ops in the QueryOp union, read-only). The field-level docs li
 - `get_board`: board outline, part positions, routing stats and DRC results; on a design of several boards, every board's, or the one named with its board argument (as `get_copper`, `get_current_map`, `try_placements` and `suggest_moves` take it). With *project* it reads another stored project's board as stored instead (§7). The open DRC findings come first in the answer, errors first, at most 20 of them; when there are more, *drc_found* counts them all by code (with the nets, or net pairs, and the parts each code names most) and says how many are not listed. The *drc* parameter pages them (*offset*, *limit* up to 200) and narrows them to one *code*, *net* or *ref* (a part, track or via), so every finding can be read however many there are; with several boards and none named, it applies to each board's list.
 - `get_current_map`: the routed copper against each net's current: per net ok, unverified or unknown (and, with loads stated, the drop to the furthest load against 3 % of the rail), and the tracks and vias that do not carry it, worst first, with their fixes (see [layout](layout.md) §14).
 - `get_power_tree`: what feeds what: per power rail its source, the series parts it is fed through, the rails it feeds, its loads, current budget and a linear regulator's dissipation (shape in §6).
+- `get_pinmap`: the firmware pin map: per MCU signal pin its net, the function in use, what the pin offers and the parts' pins the net reaches, through mates on several boards (shape in §6a).
 - `try_placements`: compare arrangements of the main parts without changing the design.
 - `suggest_moves`: small-part moves (turn, swap, shift) that close open connections, without applying them; and, under *swaps*, the pin and gate swaps the part cards declare that make the ratsnest shorter or cross less, each with its `swap_pins` op, the crossings and ratsnest mm before and after, and `schematic_change: true` (`layout.md` §10).
 - `list_blocks`: the functional blocks of another stored project, to reuse one: parts, internal and boundary nets (shape in §7).
@@ -265,6 +266,43 @@ only between two power nets, as elsewhere it is a pull-up or a divider), away fr
 neither is `unknown`. `dissipation` is on the rail a linear regulator drives directly; a switcher's rail
 has none. The budget is `unknown` without max_current, and where a switcher is fed (its input current
 depends on its efficiency).
+
+## 6a. The firmware pin map (`get_pinmap`)
+
+`design_query get_pinmap` answers "which MCU pin does what" from the schematic alone
+(`packages/kernel/src/pinmap.ts`), for the firmware. Read-only.
+
+- **An MCU** is a part whose card has a swap group with `functions` (the GPIO table, `SwapGroup.functions`).
+  `ref` names one; absent, every MCU in refdes order. A `ref` that is no part is an error
+  (`REF_UNKNOWN`); a part that is no MCU, or a design without one, gives `mcus: []` and a `note`.
+- **Its pins**: every pin on a net, in card order, except those on a power or ground net (VCC, GND,
+  a net with a voltage). A reset pin on a signal net is listed, with `offers: []`. The GPIOs (swap
+  group members) on no net are in `unused`.
+- **The function in use** (`uses`) is the net's `needs` (`set_net needs`); without them `"unknown"`,
+  never guessed from the pin or net name.
+- **Reaches**: the other parts' pins on the net ("R5.1", by pin name where the card names it: "D2.A");
+  the mated connector pins are in `crosses` instead.
+
+```jsonc
+{ "mcus": [
+  { "ref": "U2", "part": "microchip:ATTINY85-20SU",
+    "board": "Main",                                     // several boards only
+    "pins": [
+      { "pin": "7", "name": "PB2", "net": "SCK",
+        "uses": ["SCK"],                                 // or "unknown"
+        "offers": ["SCK", "USCK", "SCL", "ADC1", "T0", "INT0", "PCINT2"],
+        "reaches": [{ "pin": "R5.1", "board": "LED board" }],   // board: several boards only
+        "crosses": [{ "mate": "m_4", "pins": "J4.1 ⇄ J5.1",     // several boards only: the mated pairs the net meets,
+                      "boards": ["Main", "LED board"],           // the MCU's board's side first
+                      "problem": "J4.1 (SCK) meets J5.1 (SCK_LED): two nets joined" }], // or "J5.1 is on no net: SCK ends at J4.1"
+        "flag": "…",                                     // the problems joined: the trace is broken there
+        "text": "PB2 (pin 7) → SCK (uses SCK) → J4.1 ⇄ J5.1 → R5.1 on \"LED board\"" } ],
+    "unused": ["PB3 (pin 2)", "PB4 (pin 3)"] } ] }
+```
+
+The `text` line: the pin, the net with its function ("function unknown" without needs), the reaches on
+the MCU's own board, then the mated pairs (a problem after ⚠) and the reaches on the other boards. A
+pair's state is the rule of `ERC.MATE_MISMATCH` and `ERC.MATE_OPEN` (`pairState` in `mates.ts`).
 
 ## 7. Blocks of another project (`list_blocks`, `import_block`)
 

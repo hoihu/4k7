@@ -97,6 +97,19 @@ export function pairsText(d: Design, m: Mate, pairs: [string, string][]): string
   return pairs.map(([x, y]) => `${name(a, x)}↔${name(b, y)}`).join(', ');
 }
 
+/**
+ * How a mated pin pair stands: one net carried across (same), two nets joined (mismatch), a net
+ * that ends at the pin it meets (open_a: a's side is on no net, open_b: b's), or nothing (neither on
+ * a net, or the open side marked no-connect). mateChecks and get_pinmap read this one rule.
+ */
+export function pairState(a: Component, b: Component, pa: string, pb: string): 'same' | 'mismatch' | 'open_a' | 'open_b' | 'none' {
+  const [na, nb] = [a.pins[pa], b.pins[pb]];
+  if (na && nb) return na === nb ? 'same' : 'mismatch';
+  if (na && !b.noConnect.includes(pb)) return 'open_b';
+  if (nb && !a.noConnect.includes(pa)) return 'open_a';
+  return 'none';
+}
+
 /* ---------------------------------- ops ----------------------------------- */
 
 export function addMate(d: Design, op: Extract<EditOp, { op: 'mate' }>): OpResult {
@@ -188,14 +201,15 @@ export function mateChecks(d: Design): Diagnostic[] {
     for (const [pa, pb] of pairs) {
       const [na, nb] = [a.pins[pa], b.pins[pb]];
       const [la, lb] = [pinLabel(a, ca, pa), pinLabel(b, cb, pb)];
-      if (na && nb && na !== nb) {
+      const state = pairState(a, b, pa, pb);
+      if (state === 'mismatch') {
         wrong.push(la);
         out.push({ code: 'ERC.MATE_MISMATCH', severity: 'error', entities: [la, lb], message: `${la} (${netName(na)}) meets ${lb} (${netName(nb)}) through the ${m.kind}: two nets joined.` });
-      } else if (na && !nb && !b.noConnect.includes(pb)) {
+      } else if (state === 'open_b') {
         out.push({ code: 'ERC.MATE_OPEN', severity: 'warning', entities: [lb], message: `${la} is on ${netName(na)}, but the pin it meets, ${lb}, is on no net: ${netName(na)} ends at the connector on board "${name(bb)}".` });
-      } else if (nb && !na && !a.noConnect.includes(pa)) {
+      } else if (state === 'open_a') {
         out.push({ code: 'ERC.MATE_OPEN', severity: 'warning', entities: [la], message: `${lb} is on ${netName(nb)}, but the pin it meets, ${la}, is on no net: ${netName(nb)} ends at the connector on board "${name(ba)}".` });
-      } else if (na && na === nb) {
+      } else if (state === 'same' && na) {
         carried.set(na, [...(carried.get(na) ?? []), [ba, bb]]);
         through.set(na, [...(through.get(na) ?? []), [pa, pb]]);
       }
