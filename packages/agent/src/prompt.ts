@@ -2,7 +2,7 @@
  * System prompt and per-turn design context. The system prompt is static (cacheable);
  * the design state travels with each user message.
  */
-import { DESIGN_GUIDE, drawingFinding, type DesignSummary, type Diagnostic, type ScopeInfo, type ViewInfo } from '@4k7/schema';
+import { DESIGN_GUIDE, drawingFinding, type DesignSummary, type Diagnostic, type ScopeInfo, type SpecAnswer, type ViewInfo } from '@4k7/schema';
 import { formatScope } from './optimize.ts';
 import { formatView } from './view.ts';
 
@@ -29,8 +29,10 @@ export function formatDesignContext(opts: {
   layoutRules?: string;
   /** The user's enclosure notes (Settings → Enclosure): their printer, material, fasteners and fits, in their words. */
   enclosureRules?: string;
+  /** The design's spec with each item's status (the kernel's state().spec), null or absent without one. */
+  spec?: SpecAnswer | null;
 }): string {
-  const { summary: s, diagnostics, ledger, selection, scope, view, rules, layoutRules, enclosureRules } = opts;
+  const { summary: s, diagnostics, ledger, selection, scope, view, rules, layoutRules, enclosureRules, spec } = opts;
   const lines: string[] = ['<design_state>'];
   const sheetNames = s.sheets.map((n) => (s.sheets.length > 1 && !s.components.some((c) => c.sheet === n) ? `${n} (empty)` : n));
   lines.push(`name: ${s.name}; sheets: ${sheetNames.join(', ')}; pages: ${s.pages}`);
@@ -47,11 +49,14 @@ export function formatDesignContext(opts: {
   }
   if (s.valueSeries) lines.push('value series: ' + Object.entries(s.valueSeries).map(([k, v]) => `${k}s ${v}`).join(', '));
   // (the issues first: a sheet with a lot drawn has findings enough to push them off the list)
-  const open = [...diagnostics.filter((d) => !d.waivedBy && !drawingFinding(d)), ...diagnostics.filter((d) => !d.waivedBy && drawingFinding(d))];
+  // (the spec's own findings, SPEC.*, are said by the spec lines below)
+  const listed = spec?.items.length ? diagnostics.filter((d) => !d.code.startsWith('SPEC.')) : diagnostics;
+  const open = [...listed.filter((d) => !d.waivedBy && !drawingFinding(d)), ...listed.filter((d) => !d.waivedBy && drawingFinding(d))];
   const c = s.counts;
   lines.push(`diagnostics: ${c.errors} errors, ${c.warnings} warnings, ${c.waived} waived, and ${c.drawing} drawing findings (how the sheet reads, not what is wrong with the circuit; not in the user's Issues)`);
   for (const d of open.slice(0, 15)) lines.push(`  ${d.severity.toUpperCase()} ${d.code} ${d.entities.join(',')}: ${d.message}`);
   if (open.length > 15) lines.push(`  … ${open.length - 15} more (design_query get_diagnostics)`);
+  if (spec?.items.length) lines.push(...formatSpec(spec));
   if (s.description) {
     const u = s.description.undescribed;
     lines.push(`description: ${s.description.blocks} blocks` + (u.length ? `; in no block: ${u.join(', ')}` : ''));
@@ -68,6 +73,24 @@ export function formatDesignContext(opts: {
   if (view && !scope) lines.push(formatView(view));
   if (scope) lines.push(formatScope(scope));
   return lines.join('\n');
+}
+
+/**
+ * The spec in the design state: its items by status, then each item that is not verified with its id, text and
+ * why (the failing verifier's reason, else the unknown one's). See docs/design/spec.md §7.
+ */
+function formatSpec(spec: SpecAnswer): string[] {
+  const c = spec.counts;
+  const n = spec.items.length;
+  const lines = [`spec: ${n} item${n === 1 ? '' : 's'}, ${c.verified} verified, ${c.violated} violated, ${c.unverified} unverified, ${c.waived ? `${c.waived} waived, ` : ''}${c.assumed} assumed`];
+  const open = spec.items.filter((it) => it.status !== 'verified');
+  for (const it of open.slice(0, 15)) {
+    const v = it.verify.find((x) => x.result === 'fails') ?? it.verify.find((x) => x.result === 'unknown');
+    const why = v ? v.why : it.verify.length ? '' : 'nothing verifies it';
+    lines.push(`  ${it.id} ${it.status}${it.assumed ? ', assumed' : ''} "${it.text}"${why ? `: ${why}` : ''}`);
+  }
+  if (open.length > 15) lines.push(`  … ${open.length - 15} more (design_query get_spec)`);
+  return lines;
 }
 
 export function formatVerification(errors: Diagnostic[]): string {
