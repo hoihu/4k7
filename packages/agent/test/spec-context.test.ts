@@ -78,10 +78,9 @@ describe('the spec in the design context', () => {
 });
 
 describe('the spec in the guide', () => {
-  it('tells the agent to write and check the spec, without the propose gate', () => {
+  it('tells the agent to write and check the spec, and to name a violated item in spec_open', () => {
     expect(DESIGN_GUIDE).toContain('The spec:');
     expect(DESIGN_GUIDE).toContain('design_edit specify');
-    expect(DESIGN_GUIDE).toContain('Before propose, design_query get_spec. A violated item is either fixed or named in your message with the reason.');
-    expect(DESIGN_GUIDE).not.toContain('spec_open');
+    expect(DESIGN_GUIDE).toContain('Before propose, design_query get_spec. A violated item is either fixed, or named in spec_open with the reason (a later step of the plan; cannot be met because …).');
   });
 });

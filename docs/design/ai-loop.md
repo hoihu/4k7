@@ -52,8 +52,9 @@ per item that is not verified (`  q_1a violated "A USB-C input": no fitted conne
 from the kernel's `state().spec`, which the kernel port's `snapshot()` passes on; the `SPEC.*` findings are then
 not listed among the diagnostics. A design without a spec gets the same text as before. The guide
 (`DESIGN_GUIDE`, "The spec:") tells the agent to write the items from the brief in its first transaction, mark
-what it assumed, and read `get_spec` before `propose`, naming any violated item in its message; the
-`spec_open` gate on `propose` waits for decision D4.
+what it assumed, and read `get_spec` before `propose`. `propose` (in the app and in the eval's headless server,
+through `specRefusal`) refuses while an item is violated and not waived, unless the agent names it and why in
+`spec_open` (spec.md §5); the app keeps that text with the proposal in the conversation.
 
 ## 2. Guardrails that make errors unlikely
 
@@ -151,7 +152,7 @@ claude mcp add --scope user 4k7 -- node <repo>/tools/server/src/main.ts
   in the tab (`App.runTool`): `design_query`, `design_edit`, `calc`, `sourcing`, `import_part`, `pending_import`,
   `artwork`, `read_datasheet`, `get_schematic_image`. Only how a turn starts and ends differs: Claude Code gets
   `get_context` (design state + canvas selection + pending changeset), `propose` (hands the working copy to the user;
-  **refused while errors are open**, commits directly in Auto mode) and, from a terminal, `wait_for_review` (blocks until
+  **refused while errors are open**, or while a spec item is violated without `spec_open`, commits directly in Auto mode) and, from a terminal, `wait_for_review` (blocks until
   the user accepts or rejects); the in-app agent gets the state with each message and asks with `ask_user`.
 - **Plan step** (opt-in per project, Settings → General → Plan step; `"planStep": true` in the project file beside the
   conversation, off when absent): from a terminal the agent also gets `propose_plan { steps: string[], summary? }`. The

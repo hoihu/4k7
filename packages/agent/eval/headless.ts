@@ -8,7 +8,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { AskUser, GuideTopic, PLAN_STEP_OFF, ProposeInput, TOOL_NAMES, mustFix, type Design, type ToolContent } from '@4k7/schema';
+import { AskUser, GuideTopic, PLAN_STEP_OFF, ProposeInput, TOOL_NAMES, mustFix, specRefusal, type Design, type ToolContent } from '@4k7/schema';
 import { mcpHttpHandler, secretsMatch } from '../../../tools/server/src/mcp.ts';
 import { LocalServer, type CallResult } from '../../../tools/server/src/server.ts';
 import { formatDesignContext } from '../src/prompt.ts';
@@ -48,7 +48,8 @@ export function headlessCalls(design: Design | undefined, task: EvalTask) {
       case TOOL_NAMES.propose: {
         const args = ProposeInput.safeParse(input);
         if (!args.success) return text(args.error.message, true);
-        const errors = (await k.port.snapshot()).diagnostics.filter(mustFix);
+        const snap = await k.port.snapshot();
+        const errors = snap.diagnostics.filter(mustFix);
         if (errors.length) {
           return text(
             `Refused: the design has ${errors.length} open error(s). Fix them (or waive intended ones with a reason) first:\n` +
@@ -56,6 +57,9 @@ export function headlessCalls(design: Design | undefined, task: EvalTask) {
             true,
           );
         }
+        // a violated spec item is fixed, waived, or named in spec_open (as the app does)
+        const spec = specRefusal(snap.spec, args.data.spec_open);
+        if (spec) return text(spec.text, true);
         return text('Committed (autonomy is Auto).');
       }
       case TOOL_NAMES.waitForReview:

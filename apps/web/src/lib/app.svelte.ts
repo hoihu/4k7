@@ -20,7 +20,7 @@ import {
 } from '@4k7/agent';
 import type { KernelState } from '@4k7/kernel';
 import { tick } from 'svelte';
-import { type BoardPlace, FIRST_BOARD, countDiagnostics, type DiagnosticCounts, RenderEnclosureInput, enclosureAnswer, type EnclosurePart, enclosureKey, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, ImportPartInput, PendingImportInput, emptyDesign, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, diagnosticsAnswer, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type Scorecard, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
+import { type BoardPlace, FIRST_BOARD, countDiagnostics, type DiagnosticCounts, RenderEnclosureInput, enclosureAnswer, type EnclosurePart, enclosureKey, scriptInlays, type EnclosureSettings, ArtworkInput, AttachmentInput, HARNESSES, SERVER_ACCESS_KEY, DatasheetInput, BoardImageInput, GerberViewInput, mustFix, specRefusal, ImportPartInput, PendingImportInput, emptyDesign, ImageInput, ProposeInput, ProposePlanInput, WaitForReviewInput, QueryOp, boardSummary, diagnosticsAnswer, CONVERSATION_FORMAT, type Diagnostic, type BoardView, type ToolContent, type Design, type ChatFile, type ChatItem, type Conversation, type ConversationSession, type ProjectFile, type PaperId, type PartCard, type Rect, type RouteHelperResult, type ScopeInfo, type Scorecard, type TokenCount, type TransactionResult, type EnclosureViewInfo, type ViewInfo } from '@4k7/schema';
 import { assemblyEnclosureFacts, copperCheckText, enclosureReadout, enclosureFacts, type PartSolids, fabSetText, reportText, boardScad, type EnclosureFacts, type EnclosureReport } from '@4k7/fab';
 import { renderScript } from './enclosureClient.ts';
 import mechanicsGuide from '../../../../docs/design/mechanics.md?raw';
@@ -1497,6 +1497,12 @@ class AppState {
             true,
           );
         }
+        // a violated spec item is fixed, waived, or named in spec_open (docs/design/spec.md §5)
+        const spec = specRefusal(this.k!.spec, args.data.spec_open);
+        if (spec) {
+          log('propose', false, `refused: ${spec.count} violated spec item(s)`);
+          return text(spec.text, true);
+        }
         // drawn copper: the hard rules (errors of the copper DRC) hold; warnings are the agent's call
         const draftDesign = await this.kernel.draftDesign();
         const shownBefore = this.shownBoard;
@@ -1560,7 +1566,7 @@ class AppState {
           }
         }
         const it = item();
-        it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') + (args.data.open_connections ? `\nOpen connections: ${args.data.open_connections}` : '') + (args.data.enclosure_findings ? `\nEnclosure: ${args.data.enclosure_findings}` : '') });
+        it.segments.push({ type: 'text', text: args.data.summary + (args.data.message ? `\n${args.data.message}` : '') + (args.data.open_connections ? `\nOpen connections: ${args.data.open_connections}` : '') + (args.data.enclosure_findings ? `\nEnclosure: ${args.data.enclosure_findings}` : '') + (args.data.spec_open ? `\nSpec open: ${args.data.spec_open}` : '') });
         if (this.agentRun?.item !== it) it.status = 'done';
         it.changeset = { state: 'pending' };
         this.conversationChanged();

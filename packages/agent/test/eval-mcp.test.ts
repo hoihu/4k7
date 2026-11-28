@@ -8,6 +8,7 @@ import { GuideTopic, PLAN_STEP_OFF, type Design } from '@4k7/schema';
 import { runKernelTool } from '../src/tools.ts';
 import { claudeResult, headlessCalls, startHeadless, type HeadlessServer } from '../eval/headless.ts';
 import { countingKernel, type EvalTask } from '../eval/run.ts';
+import { twoBoards } from '../../kernel/test/fixtures.ts';
 
 const dir = new URL('../eval/tasks/', import.meta.url);
 const load = <T>(name: string) => JSON.parse(readFileSync(new URL(name, dir), 'utf8')) as T;
@@ -98,6 +99,29 @@ describe('headless eval server (/mcp without a tab)', () => {
     const r = await call('design_query', { op: 'list_blocks', project: 'lamp' });
     expect(r.isError).toBe(true);
     expect(JSON.parse((r.content[0] as { text: string }).text)).toEqual({ error: 'No projects folder: the app is not connected to the 4k7 server.' });
+  });
+
+  it('refuses propose while a spec item is violated, on the second board too, unless spec_open names it or it is waived', async () => {
+    // two boards joined by a cable; the LED board is to have one layer, which it has not (docs/design/spec.md §5)
+    const { call } = headlessCalls(JSON.parse(twoBoards().exportDesign()) as Design, { name: 't', prompt: 'p' });
+    const out = (r: { content: { type: string; text?: string }[] }) => r.content.map((c) => c.text ?? '').join('');
+    const edit = await call('design_edit', { summary: 'spec', ops: [{ op: 'mate', a: 'J2', b: 'J3', kind: 'cable' }, { op: 'specify', text: 'a single-layer LED board', verify: [{ kind: 'measure', of: 'board.layers', board: 'LED board', max: 1 }] }] });
+    expect(edit.isError, out(edit)).toBe(false);
+    const id = (JSON.parse(out(await call('design_query', { op: 'get_spec' }))) as { items: { id: string; status: string }[] }).items[0]!;
+    expect(id.status).toBe('violated');
+
+    const refused = await call('propose', { summary: 'LED board' });
+    expect(refused.isError).toBe(true);
+    expect(out(refused), out(refused)).toMatch(/^Refused: 1 spec item\(s\) violated/);
+    expect(out(refused)).toContain(`- ${id.id} "a single-layer LED board"`);
+    expect((await call('propose', { summary: 'LED board', spec_open: ' ' })).isError).toBe(true);
+    // named with the reason: proposed
+    const named = await call('propose', { summary: 'LED board', spec_open: `${id.id}: the user decides on one layer once the LED board is placed` });
+    expect(named.isError, out(named)).toBe(false);
+    // waived: proposed without spec_open
+    await call('design_edit', { summary: 'waive', ops: [{ op: 'add_waiver', code: 'SPEC.VIOLATED', entities: [id.id], reason: 'two layers are fine for now' }] });
+    const waived = await call('propose', { summary: 'LED board' });
+    expect(waived.isError, out(waived)).toBe(false);
   });
 
   it('refuses propose_plan with the app\'s plan-off text', async () => {

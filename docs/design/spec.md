@@ -303,9 +303,9 @@ The spec:
   reason (a later step of the plan; cannot be met because …).
 ```
 
-D4 is decided (2026-11-28), so the `spec_open` gate of §5 is built as described. The gate and the guide's
-sentence on `spec_open` above come together in the gate's pull request (§11, pull request 2): until then the
-guide does not mention `spec_open`, since `propose` would not know it.
+D4 is decided (2026-11-28), and the `spec_open` gate of §5 is built as described (`specRefusal` in
+`packages/schema/src/tools.ts`, called by the app and the eval's headless server), with the guide's sentence
+on `spec_open` above. The changeset card's spec line comes with the app's pull request.
 
 ## 9. The eval
 
