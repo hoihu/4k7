@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import { DraftPin, PackageInfo } from './ingest.ts';
 import { QueryOp, Transaction } from './ops.ts';
+import type { SpecAnswer } from './results.ts';
 import { ASSEMBLY_HOUSES, feeFreeTiers } from './sourcing.ts';
 
 export const CalcCall = z.object({
@@ -123,7 +124,28 @@ export const ProposeInput = z.object({
     .string()
     .optional()
     .describe('Only if the enclosure script changed and its last render still has findings you could not fix: why, and what the user could decide. Without it propose refuses an enclosure that was not rendered or whose report has errors.'),
+  spec_open: z
+    .string()
+    .optional()
+    .describe('Only if spec items are still violated: which, and why (this changeset is one step of the plan and they come later, or you could not meet them and what the user could decide). Without it propose refuses while a spec item is violated.'),
 });
+
+/**
+ * The spec gate on propose, the same in the app and the eval's headless server: a violated spec item
+ * (waived ones are not) is fixed, or the agent names it in spec_open with the reason. Null when propose
+ * may go on. See docs/design/spec.md §5.
+ */
+export function specRefusal(spec: SpecAnswer | null | undefined, specOpen: string | undefined): { count: number; text: string } | null {
+  const violated = spec?.items.filter((it) => it.status === 'violated') ?? [];
+  if (!violated.length || specOpen?.trim()) return null;
+  return {
+    count: violated.length,
+    text:
+      `Refused: ${violated.length} spec item(s) violated, and a design that does not do what its spec says is not done. Fix them (design_query get_spec says why each fails):\n` +
+      violated.map((it) => `- ${it.id} "${it.text}"`).join('\n') +
+      '\nIf they come in a later step of the plan, or you cannot meet them, propose with spec_open naming them and why (and what the user could decide).',
+  };
+}
 
 /** A numbered plan shown to the user before the work starts (the plan step, opt-in per project; docs/design/ai-loop.md §6). */
 export const ProposePlanInput = z.object({

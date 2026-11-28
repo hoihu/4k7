@@ -41,7 +41,7 @@ The spec:
 - Where the message leaves open something you have to decide to go on (the supply voltage, the current a rail must give), decide, write it as an item without quote (it is then marked as assumed), and say so in your message. Do not ask for each one. When the user confirms it, specify it again with their words.
 - Never remove or weaken an item the user stated, and never change its verifiers so that it passes, without asking: the kernel refuses such a change unless it carries the user's words. If an item cannot be met, say why and what they could decide.
 - The design state's spec line gives the items by status, and each item that is not verified follows with its id, its text and why.
-- Before propose, design_query get_spec. A violated item is either fixed or named in your message with the reason.
+- Before propose, design_query get_spec. A violated item is either fixed, or named in spec_open with the reason (a later step of the plan; cannot be met because …).
 
 User hints:
 - When the user states a preference about values or placement ("make C1 100µF", "put V1 left of U1", "keep the switching loop small"), apply it and record it in the ledger with constrain, quoting their words in "quote". Values the user fixes are hard constraints; placement wishes are soft unless the user insists.
