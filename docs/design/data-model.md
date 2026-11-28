@@ -53,7 +53,7 @@ erDiagram
 | Entity | Key fields |
 |---|---|
 | `BoardSettings` | outline (width/height, `shape`, corner radius, cutouts), layers (2 or 4), rules, fab profile, stack-up, impedance rules, planes, mounting holes, vias, keep-outs, silkscreen graphics, panel; the placement and the routed copper as a cache; the copper the agent drew or locked |
-| Several boards | `Design.boards` (`BoardEntry`: id, name, order, settings), format 3. The first board keeps its settings in `Design.board`; a component is on its own `board`, else its sheet's, else the first. `Design.mates` (`Mate`: two connectors `a`, `b`, kind `stack`/`cable`/`edge`/`wire`, optional pin `map`, cable length, stack height) join them: [multi-board](multi-board.md) |
+| Several boards | `Design.boards` (`BoardEntry`: id, name, order, settings, `placement3d`: its place in the assembly set by hand), format 3. The first board keeps its settings in `Design.board`; a component is on its own `board`, else its sheet's, else the first. `Design.mates` (`Mate`: two connectors `a`, `b`, kind `stack`/`cable`/`edge`/`wire`, optional pin `map`, cable length, stack height) join them: [multi-board](multi-board.md) |
 | `EnclosureSettings` | `Design.enclosure`: the brief and the script, one for the whole design ([enclosure](enclosure.md)) |
 
 ### Constraint ledger

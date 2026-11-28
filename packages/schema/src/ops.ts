@@ -408,6 +408,13 @@ export const SetBoardOp = z.object({
   op: z.literal('set_board'),
   board: boardRef,
   name: z.string().min(1).optional().describe('A new name for the board (several boards: add_board)'),
+  placement3d: z.object({
+    x: z.number(),
+    y: z.number(),
+    z: z.number(),
+    rot: z.number().describe('Degrees about z, counter-clockwise as the board view shows it'),
+    flipped: z.boolean().describe('Turned over (about its own y axis)'),
+  }).nullable().optional().describe('Several boards: where this board stands in the assembly (3D view, STEP, enclosure, ASM checks), in the first board\'s frame (x right, y down from its top-left corner, z up from its top surface, mm), for a board no stack mate places (one on a cable or wires). null = beside the others again. Not for the first board (the frame) or a stacked board (the stack places it)'),
   width_mm: z.number().positive().nullable().optional().describe('Board width; null = size to fit the parts'),
   height_mm: z.number().positive().nullable().optional().describe('Board height; null = size to fit the parts'),
   layers: z.union([z.literal(2), z.literal(4)]).optional(),
@@ -420,7 +427,7 @@ export const SetBoardOp = z.object({
   via_in_pad: z.boolean().optional().describe('Let the router put its vias inside pads, anywhere on the board (default false; only when the user asks for it, e.g. for tight BGA fan-out). Thermal vias in one pad need no such switch: add_vias kind pad'),
   corner_radius_mm: z.number().min(0).optional().describe('Rounded board corners: the radius (0 = square corners)'),
   current_rise_c: z.union([z.literal(10), z.literal(20), z.literal(30)]).optional().describe('How much tracks and vias may heat with their net\'s current (°C): 10 (default), 20 or 30. A denser board may trade copper for heat; it changes what the current check (get_current_map) asks of the copper, not the copper'),
-}).describe('Board size, layers and design rules. With a fab profile chosen (set_fab_profile) a rule below the manufacturer\'s limit is refused.');
+}).describe('Board size, layers and design rules, and (several boards) a board\'s name and its place in the assembly (placement3d, for a board on a cable or wires). With a fab profile chosen (set_fab_profile) a rule below the manufacturer\'s limit is refused.');
 
 const fabLimitsInput = z.object({
   track_mm: z.number().positive().describe('Narrowest copper track the fab makes'),

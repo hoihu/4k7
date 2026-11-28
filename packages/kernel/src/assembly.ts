@@ -1,17 +1,18 @@
 /**
  * Where the boards of a design stand to one another (docs/design/multi-board.md §6): a `stack`
  * mate puts the second board where its connector meets the first's, at the mated height, turned
- * and, where both connectors are on the same side of their boards, turned over. A board no stack
- * reaches stands beside the others.
+ * and, where both connectors are on the same side of their boards, turned over. A board placed by
+ * hand (set_board placement3d: one on a cable) stands there, and what is stacked on it follows it.
+ * A board neither reaches stands beside the others.
  *
  * Frame: the first board's, as its board view has it (x right, y down from its top-left corner,
  * mm), z up from its top surface. A board's place maps its own board-view point (u, v) and height
  * w above its top surface to (x, y) = R(rot)·(flipped ? −u : u, v) + (x0, y0), z = (flipped ? −w : w) + z0.
  */
 import { packageOf } from '@4k7/parts';
-import { FIRST_BOARD, type BoardPlace, type BoardView, type Design, type Mate } from '@4k7/schema';
-import { boardList, boardOf } from './boards.ts';
-import { cardOf } from './doc.ts';
+import { FIRST_BOARD, type BoardPlace, type BoardPlacement3d, type BoardView, type Design, type Mate } from '@4k7/schema';
+import { boardList, boardOf, multiBoard, resolveBoard } from './boards.ts';
+import { cardOf, reject } from './doc.ts';
 import { matePairs } from './mates.ts';
 
 /** Board thickness (the 3D view's and the STEP file's). */
@@ -89,13 +90,57 @@ function stackPlace(d: Design, m: Mate, va: BoardView, vb: BoardView, aOn: boole
   return { tf: { rot, s, x, y, z }, height, assumed: m.height_mm === undefined };
 }
 
+const stackMates = (d: Design) => Object.values(d.mates ?? {}).filter((m) => m.kind === 'stack' && d.components[m.a] && d.components[m.b]);
+
+/**
+ * set_board placement3d: put a board where it stands in the assembly by hand, or (null) back
+ * beside the others. Refused for the first board (the frame) and for a board a stack places: one
+ * whose stack mates join it to the first board or to another board placed by hand.
+ */
+export function placeBoard(d: Design, ref: string, p: BoardPlacement3d | null): string {
+  const b = resolveBoard(d, ref);
+  if (!multiBoard(d) || b.id === FIRST_BOARD) reject({ code: 'INVALID_OP', message: `"${b.name}" is the first board: the assembly is in its frame, so it stays at 0, 0, 0. Place the other boards relative to it.` });
+  if (p !== null) {
+    const bad = (['x', 'y', 'z', 'rot'] as const).filter((k) => !Number.isFinite(p[k]));
+    if (bad.length) reject({ code: 'INVALID_OP', message: `placement3d ${bad.join(', ')} must be finite numbers (mm, rot in degrees).` });
+    // the boards its stacks reach, through the stacks of those
+    const stacks = stackMates(d);
+    const reach = new Set([b.id]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const m of stacks) {
+        const [x, y] = [boardOf(d, d.components[m.a]!), boardOf(d, d.components[m.b]!)];
+        if (reach.has(x) === reach.has(y)) continue;
+        reach.add(x).add(y);
+        grew = true;
+      }
+    }
+    const anchor = boardList(d).find((o) => o.id !== b.id && reach.has(o.id) && (o.id === FIRST_BOARD || d.boards?.[o.id]?.placement3d));
+    if (anchor) {
+      const own = stacks.filter((m) => [m.a, m.b].some((c) => boardOf(d, d.components[c]!) === b.id)).map((m) => `${d.components[m.a]!.refdes} ↔ ${d.components[m.b]!.refdes}`);
+      reject({ code: 'INVALID_OP', message: `"${b.name}" is placed by its stack mate (${own.join(', ')}) on "${anchor.name}": the stack decides where it stands. Change the stack (its connectors' places, height_mm), or remove_mate to place it by hand.` });
+    }
+  }
+  const e = d.boards![b.id]!;
+  if (p === null) delete e.placement3d;
+  else e.placement3d = { x: p.x, y: p.y, z: p.z, rot: p.rot, flipped: p.flipped };
+  return p === null ? 'beside the others in the assembly' : `placed in the assembly at ${p.x}, ${p.y}, ${p.z} mm, turned ${p.rot}°${p.flipped ? ', turned over' : ''}`;
+}
+
 /** Where every board stands (first board first). `views`: each board placed (its parts and pads). */
 export function assemblyOf(d: Design, views: ReadonlyMap<string, BoardView>): BoardPlace[] {
   const boards = boardList(d);
   const at = new Map<string, { tf: Tf; by: string; height?: number; assumed?: boolean }>([[FIRST_BOARD, { tf: ID, by: 'the first board' }]]);
   const notes = new Map<string, string>();
-  const stacks = Object.values(d.mates ?? {}).filter((m) => m.kind === 'stack' && d.components[m.a] && d.components[m.b]);
-  for (let grew = true; grew; ) {
+  const stacks = stackMates(d);
+  // boards placed by hand, in board order: each seeds the stacks on it (a stack that reaches it first decides)
+  const hand = boards.filter((b) => b.id !== FIRST_BOARD && b.placement3d);
+  for (let grew = true; grew || hand.length; ) {
+    if (!grew) {
+      const b = hand.shift()!;
+      const p = b.placement3d!;
+      if (!at.has(b.id)) at.set(b.id, { tf: { rot: (p.rot * Math.PI) / 180, s: p.flipped ? -1 : 1, x: p.x, y: p.y, z: p.z }, by: 'placed (placement3d)' });
+    }
     grew = false;
     for (const m of stacks) {
       const [ba, bb] = [boardOf(d, d.components[m.a]!), boardOf(d, d.components[m.b]!)];

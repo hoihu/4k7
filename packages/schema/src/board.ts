@@ -43,7 +43,12 @@ export interface BoardEntry {
   order: number;
   /** Its settings; absent for the first board (Design.board) and for a new board with the defaults. */
   settings?: BoardSettings;
+  /** Where it stands in the assembly, set by hand (set_board placement3d): a board no stack mate places, e.g. one on a cable. Never on the first board. */
+  placement3d?: BoardPlacement3d;
 }
+
+/** A board's place in the assembly as set by hand: BoardPlace's numbers (the first board's frame, mm, rot in degrees about z). */
+export type BoardPlacement3d = Pick<BoardPlace, 'x' | 'y' | 'z' | 'rot' | 'flipped'>;
 
 /**
  * Where a board stands in the assembly (docs/design/multi-board.md §6), in the first board's frame:

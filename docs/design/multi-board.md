@@ -237,8 +237,16 @@ land after the fit (over 0.3 mm), an `edge` mate (the card standing in its slot:
 board no stack reaches leave the board beside the others, 10 mm apart, with the reason in `by`.
 `get_board` without a board gives each board's `assembly`. The Layout view's 3D view shows every
 board where it stands, and the STEP export writes them all (each board a sub-assembly of its PCB
-and parts, named after it, placed by the same transform). Not yet: `set_board placement3d` for
-a cable's board.
+and parts, named after it, placed by the same transform).
+
+A board no stack places (a cable's or wires' board) can be placed by hand: `set_board
+placement3d: { x, y, z, rot, flipped }` stores it on its `BoardEntry`, `null` clears it, and the
+assembly shows it there with `by: "placed (placement3d)"`. A board stacked on it follows it as on
+any placed board. Refused for the first board (the frame) and for a board whose stacks join it to
+the first board or to another board placed by hand (the stack decides); a stack mate added later
+to such a board wins over its stored place. The stack-fit checks below cover a board placed by
+hand like a stacked one (a board beside the others is not checked), and their advice then says to
+move the board.
 
 Whether the stack fits (`kernel/src/stackfit.ts`, in `get_diagnostics`): every part with a 3D
 body is a box (its body outline, as tall as its body) and every PCB a slab of the board's
