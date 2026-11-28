@@ -273,8 +273,9 @@ does not have, or listed that nothing reports. The [scorecard](scorecard.md) use
 - **The design document**: a table after the description: item, status, how it was verified (the check or
   measure in words). Unverified and assumed items are printed as such.
 - **The agent's context** (`formatDesignContext` in `packages/agent/src/prompt.ts`): after the diagnostics, a
-  line `spec: 9 items, 7 verified, 1 violated, 1 unverified, 2 assumed` and one line per item that is not
-  verified: its id, text and why.
+  line `spec: 9 items, 7 verified, 1 violated, 1 unverified, 2 assumed` (with `1 waived` before `assumed`
+  when there are waived items) and one line per item that is not verified: its id, text and why. The
+  `SPEC.*` findings are then left out of the diagnostics listed above it, which say the same.
 
 ## 8. The agent (A2)
 
@@ -301,6 +302,10 @@ The spec:
 - Before propose, design_query get_spec. A violated item is either fixed, or named in spec_open with the
   reason (a later step of the plan; cannot be met because …).
 ```
+
+Built so far without the last bullet's `spec_open`: it waits for decision D4 (what a violated item does to
+`propose`), and until then the guide says "Before propose, design_query get_spec. A violated item is either
+fixed or named in your message with the reason."
 
 ## 9. The eval
 

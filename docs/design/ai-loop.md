@@ -46,6 +46,15 @@ The model never gets the whole design by default. It gets:
 
 Stable prefix content (system prompt, op schemas, recipe) is ordered so provider prompt caching works.
 
+The spec ([spec](spec.md) §7, §8): when the design has one, `formatDesignContext` (`packages/agent/src/prompt.ts`)
+adds after the diagnostics a line `spec: 9 items, 7 verified, 1 violated, 1 unverified, 2 assumed` and one line
+per item that is not verified (`  q_1a violated "A USB-C input": no fitted connector has pins CC1 and CC2`),
+from the kernel's `state().spec`, which the kernel port's `snapshot()` passes on; the `SPEC.*` findings are then
+not listed among the diagnostics. A design without a spec gets the same text as before. The guide
+(`DESIGN_GUIDE`, "The spec:") tells the agent to write the items from the brief in its first transaction, mark
+what it assumed, and read `get_spec` before `propose`, naming any violated item in its message; the
+`spec_open` gate on `propose` waits for decision D4.
+
 ## 2. Guardrails that make errors unlikely
 
 | Guardrail | Effect |
