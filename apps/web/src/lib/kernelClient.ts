@@ -37,7 +37,7 @@ export function createKernel(): Remote & { port: KernelPort } {
     query: (q) => remote.query(q),
     snapshot: async () => {
       const s = await remote.state();
-      return { summary: s.summary, diagnostics: s.diagnostics, counts: s.counts, ledger: s.ledger };
+      return { summary: s.summary, diagnostics: s.diagnostics, counts: s.counts, ledger: s.ledger, spec: s.spec };
     },
   };
   return Object.assign(remote, { port });

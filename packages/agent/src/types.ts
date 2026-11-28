@@ -1,4 +1,4 @@
-import type { DesignSummary, Diagnostic, DiagnosticCounts, ToolDefinition, TransactionResult } from '@4k7/schema';
+import type { DesignSummary, Diagnostic, DiagnosticCounts, SpecAnswer, ToolDefinition, TransactionResult } from '@4k7/schema';
 
 /** Provider-neutral conversation blocks. Assistant messages also keep the raw provider payload. */
 export type Block =
@@ -53,7 +53,8 @@ export interface Provider {
 export interface KernelPort {
   transact(tx: unknown): Promise<TransactionResult>;
   query(q: unknown): Promise<unknown>;
-  snapshot(): Promise<{ summary: DesignSummary; diagnostics: Diagnostic[]; counts: DiagnosticCounts; ledger: { id: string; text: string; strength: string }[] }>;
+  /** The design state each turn starts from; spec is the kernel's state().spec (absent or null without a spec). */
+  snapshot(): Promise<{ summary: DesignSummary; diagnostics: Diagnostic[]; counts: DiagnosticCounts; ledger: { id: string; text: string; strength: string }[]; spec?: SpecAnswer | null }>;
 }
 
 export type AgentEvent =

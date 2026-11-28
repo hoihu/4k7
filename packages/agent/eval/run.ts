@@ -83,7 +83,7 @@ export function countingKernel(design: Design | undefined) {
     query: async (q) => kernel.query(q as Parameters<Kernel['query']>[0]),
     snapshot: async () => {
       const s = kernel.state();
-      return { summary: s.summary, diagnostics: s.diagnostics, counts: s.counts, ledger: s.ledger };
+      return { summary: s.summary, diagnostics: s.diagnostics, counts: s.counts, ledger: s.ledger, spec: s.spec };
     },
   };
   return { kernel, port, counts };
