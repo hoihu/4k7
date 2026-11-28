@@ -125,8 +125,13 @@ The nets do not change, only the parts and the mate:
 2. `mate` again with the new kind (and `cable` or `height_mm`).
 3. Read the checks: a cable that reverses the pins shows here as `ERC.MATE_MISMATCH` on every pin.
    Then fix the nets on one connector, not the mate.
-4. The board positions change: a cable's board stands beside the others, so the enclosure needs a
-   place for it (`get_guide mechanics`, §4.1).
+4. The board positions change: a cable's board stands beside the others until you place it where
+   it really goes, e.g. a front-panel board 40 mm in front of the main board, turned 90°:
+   `set_board board: "LED board" placement3d: { x, y, z, rot, flipped }` in the first board's frame
+   (`get_board` without a board shows each board's `assembly`; `null` puts it beside again). The 3D
+   view, the STEP export, the enclosure script and the `ASM.*` checks then see it there. A stacked
+   board cannot be placed: its stack decides. The enclosure needs a place for it (`get_guide
+   mechanics`, §4.1).
 
 ## 6. The rest of the design
 

@@ -56,7 +56,7 @@ const overlap = (a: Box, b: Box) => [
   Math.min(a.max[2] - b.min[2], b.max[2] - a.min[2]),
 ];
 
-/** ASM.COLLIDES and ASM.CLEARANCE between every two stacked boards. `views`: each board placed (as assemblyOf takes them). */
+/** ASM.COLLIDES and ASM.CLEARANCE between every two boards stacked or placed by hand (not those beside the others). `views`: each board placed (as assemblyOf takes them). */
 export function stackCollisions(d: Design, views: ReadonlyMap<string, BoardView>): Diagnostic[] {
   if (views.size < 2) return [];
   const places = assemblyOf(d, views).filter((p) => !p.by.startsWith('beside'));
@@ -74,6 +74,9 @@ export function stackCollisions(d: Design, views: ReadonlyMap<string, BoardView>
       const skip = new Set(joins.flatMap((m) => [m.a, m.b]));
       // the height between them is assumed if their own mate's is, or (not mated directly) any in the stack
       const assumed = joins.length ? !!(pa.height_assumed || pb.height_assumed) : anyAssumed;
+      // not stacked on each other, one placed by hand: the place is what to change
+      const hand = !joins.length && [pa, pb].find((p) => p.by.startsWith('placed'));
+      const fix = hand ? `Move "${hand.name}" (set_board placement3d) or the part, or use a lower part.` : null;
       const [A, B] = [solids(va, pa, skip), solids(vb, pb, skip)];
       const report = (ref: string, name: string, box: Box, other: string | null, otherName: string, with_: Box) => {
         const o = overlap(box, with_);
@@ -89,9 +92,10 @@ export function stackCollisions(d: Design, views: ReadonlyMap<string, BoardView>
             entities,
             message:
               `${ref} on ${name} clears ${what} by only ${mm(gap)} mm (under the ${mm(STACK_CLEARANCE)} mm clearance), over ${mm(o[0]!)} × ${mm(o[1]!)} mm; connector seating, solder and part heights can close it. ` +
+              (fix ??
               (assumed
                 ? `The height between the boards is assumed (the taller connector's body); set the mate's height_mm from the connectors' datasheets, then move the part or raise the stack if it is still this close.`
-                : `Move or turn the part, use a lower part, or raise the stack (the mate's height_mm, with taller connectors).`),
+                : `Move or turn the part, use a lower part, or raise the stack (the mate's height_mm, with taller connectors).`)),
           });
           return;
         }
@@ -101,9 +105,10 @@ export function stackCollisions(d: Design, views: ReadonlyMap<string, BoardView>
           entities,
           message:
             `${ref} on ${name} runs into ${what}: it reaches ${mm(o[2]!)} mm into it, over ${mm(o[0]!)} × ${mm(o[1]!)} mm. ` +
+            (fix ??
             (assumed
               ? `The height between the boards is assumed (the taller connector's body); set the mate's height_mm from the connectors' datasheets, then move the part or raise the stack.`
-              : `Move or turn the part, put it on the other side, use a lower part, or raise the stack (the mate's height_mm, with taller connectors).`),
+              : `Move or turn the part, put it on the other side, use a lower part, or raise the stack (the mate's height_mm, with taller connectors).`)),
         });
       };
       for (const [own, ownName, oth, othName] of [[A, pa.name, B, pb.name], [B, pb.name, A, pa.name]] as const) {

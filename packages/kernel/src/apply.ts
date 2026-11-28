@@ -18,6 +18,7 @@ import { addTestPoints } from './testpoints.ts';
 import { tuneLength } from './tune.ts';
 import { addMate, removeMate, tidyMates } from './mates.ts';
 import { removeSpec, specify } from './specops.ts';
+import { placeBoard } from './assembly.ts';
 import { addBoard, assignBoard, boardFor, boardList, boardsNow, commitFocus, focusBoard, leftBoard, multiBoard, removeBoard, renameBoard, resolveBoard, settingsOf } from './boards.ts';
 
 /**
@@ -94,10 +95,17 @@ function applyDesignOp(d: Design, op: EditOp, by: 'user' | 'agent', ctx?: OpCont
     }
   }
   const id = opBoard(d, op);
-  if (op.op === 'set_board' && op.name !== undefined) {
-    renameBoard(d, id!, op.name);
-    const { op: _o, board: _b, name: _n, ...rest } = op;
-    if (!Object.values(rest).some((v) => v !== undefined)) return { op: 'set_board', effect: `board renamed "${op.name.trim()}"`, ids: [id!] };
+  if (op.op === 'set_board' && (op.name !== undefined || op.placement3d !== undefined)) {
+    // the board's name and its place in the assembly are the design's, not the board's settings
+    const said: string[] = [];
+    if (op.placement3d !== undefined) said.push(placeBoard(d, id!, op.placement3d));
+    if (op.name !== undefined) {
+      renameBoard(d, id!, op.name);
+      said.unshift(`board renamed "${op.name.trim()}"`);
+    }
+    const { op: _o, board: _b, name: _n, placement3d: _p, ...rest } = op;
+    if (!Object.values(rest).some((v) => v !== undefined)) return { op: 'set_board', effect: said.join('; '), ids: [id!] };
+    op = { op: 'set_board', board: op.board, ...rest };
   }
   if (id === null || !multiBoard(d)) return applyOne(d, op, by, ctx);
   const f = focusBoard(d, id);
