@@ -15,6 +15,7 @@ export interface CheckInfo {
 
 export const CHECKS: Readonly<Record<string, CheckInfo>> = {
   // ASM
+  'ASM.CABLE_SHORT': {},
   'ASM.CLEARANCE': {},
   'ASM.COLLIDES': {},
   // DRAW

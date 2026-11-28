@@ -119,3 +119,47 @@ export function stackCollisions(d: Design, views: ReadonlyMap<string, BoardView>
   }
   return out;
 }
+
+/**
+ * ASM.CABLE_SHORT (docs/design/multi-board.md §6): a cable or wire mate with length_mm whose two
+ * connectors stand further apart in the assembly than that, straight. Only where both boards have a
+ * real place (the first board, placed by hand, or stacked from those; not beside the others).
+ * A connector's mating point: the centre of its body outline, at the surface of the side it is on,
+ * raised by its 3D body's height where it has one (the plug goes in at the top of the body).
+ */
+export function cableLengths(d: Design, views: ReadonlyMap<string, BoardView>): Diagnostic[] {
+  const cables = Object.values(d.mates ?? {}).filter((m) => (m.kind === 'cable' || m.kind === 'wire') && m.length_mm && d.components[m.a] && d.components[m.b]);
+  if (views.size < 2 || !cables.length) return [];
+  const places = new Map(assemblyOf(d, views).filter((p) => !p.by.startsWith('beside')).map((p) => [p.board, p]));
+  const point = (id: string) => {
+    const at = places.get(boardOf(d, d.components[id]!));
+    const v = at && views.get(at.board);
+    const p = v?.parts.find((q) => q.componentId === id);
+    if (!at || !v || !p) return null;
+    const h = boardBodies(v, { fitted: true }).get(id)?.height ?? 0;
+    const w = p.side === 'bottom' ? -T - h : h;
+    const [u, t] = [p.body.x + p.body.w / 2, p.body.y + p.body.h / 2];
+    const b = place(at, u, t, u, t, w, w);
+    return { board: at.name, on: { x: u, y: t }, xyz: b.min };
+  };
+  const out: Diagnostic[] = [];
+  for (const m of cables) {
+    const [a, b] = [point(m.a), point(m.b)];
+    if (!a || !b) continue;
+    const dist = Math.hypot(...a.xyz.map((c, i) => c - b.xyz[i]!));
+    if (m.length_mm! >= dist) continue;
+    const [ra, rb] = [d.components[m.a]!.refdes, d.components[m.b]!.refdes];
+    const [n, len] = [Math.ceil(dist), Math.round(m.length_mm!)];
+    const what = m.kind === 'wire' ? `Wires ${ra}–${rb} are ${len} mm` : `Cable ${ra}–${rb} is ${len} mm`;
+    // the board to move: the one placed by hand (the other is the first board or stacked)
+    const move = [...places.values()].find((p) => p.name === b.board && p.by.startsWith('placed')) ?? [...places.values()].find((p) => p.name === a.board && p.by.startsWith('placed'));
+    out.push({
+      code: 'ASM.CABLE_SHORT',
+      severity: 'error',
+      entities: [ra, rb],
+      at: a.on,
+      message: `${what} but ${m.kind === 'wire' ? 'their' : 'its'} connectors stand ${n} mm apart in the assembly: make it at least ${n} mm (mate length_mm)${move ? ` or move "${move.name}" (set_board placement3d)` : ' or move the boards'}.`,
+    });
+  }
+  return out;
+}

@@ -257,6 +257,11 @@ every design) is `ASM.CLEARANCE`, a warning with the gap, never both. The two co
 joining the boards are left out, and so are parts without a 3D body (not checked, not reported).
 Where the height is assumed (no `height_mm`) it is a warning that says so. Boxes over-report at
 the corners of a round body.
+A `cable` or `wire` mate with `length_mm` whose two boards both have a place (not beside the
+others) is `ASM.CABLE_SHORT`, an error, when the straight distance between its connectors' mating
+points (the centre of each body outline, at its board's surface raised by the 3D body's height) is
+more than the length, rounded up to whole mm; no length or a board beside the others: no check. Bend
+radius and the route along the enclosure are not checked.
 
 The enclosure library (built, [enclosure](enclosure.md) §3): as sketched below, but `at` is the
 point of the script's frame where a board's own origin is, with `rot` and `flipped`; `parts_info`

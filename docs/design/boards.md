@@ -129,7 +129,9 @@ The nets do not change, only the parts and the mate:
    it really goes, e.g. a front-panel board 40 mm in front of the main board, turned 90°:
    `set_board board: "LED board" placement3d: { x, y, z, rot, flipped }` in the first board's frame
    (`get_board` without a board shows each board's `assembly`; `null` puts it beside again). The 3D
-   view, the STEP export, the enclosure script and the `ASM.*` checks then see it there. A stacked
+   view, the STEP export, the enclosure script and the `ASM.*` checks then see it there. Give the
+   cable mate its `length_mm`: `ASM.CABLE_SHORT` flags a cable shorter than the straight distance
+   between its connectors as placed. A stacked
    board cannot be placed: its stack decides. The enclosure needs a place for it (`get_guide
    mechanics`, §4.1).
 
