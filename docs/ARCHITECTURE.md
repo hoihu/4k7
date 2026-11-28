@@ -296,7 +296,8 @@ the decisions, the kernel owns geometry and truth, and the UI owns review.
 ## 7. Roadmap
 
 What is built is below. What comes next, package by package, is in [ROADMAP.md](ROADMAP.md) (a proposal
-of 2026-11-26), with the agent's side in [agent-workflows](design/agent-workflows.md).
+of 2026-11-26), with the agent's side in [agent-workflows](design/agent-workflows.md). The market review behind it,
+its items mapped to the roadmap's ids, is [MARKET_REVIEW.md](MARKET_REVIEW.md).
 
 | Milestone | Scope | Exit criteria |
 |---|---|---|

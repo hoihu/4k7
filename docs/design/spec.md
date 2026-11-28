@@ -241,8 +241,8 @@ board's:
 So a brief that is not met can still be proposed, but not as if it were met. In Auto mode a changeset with
 `spec_open` commits as today and the line stays in the conversation.
 
-This refines decision D4 of the roadmap: a violated item blocks `propose` unless it is waived or the agent
-says so in `spec_open`.
+This refines decision D4 of the roadmap (decided 2026-11-28, as proposed): a violated item blocks `propose`
+unless it is waived or the agent says so in `spec_open`.
 
 ## 6. The list of checks
 
@@ -303,9 +303,9 @@ The spec:
   reason (a later step of the plan; cannot be met because …).
 ```
 
-Built so far without the last bullet's `spec_open`: it waits for decision D4 (what a violated item does to
-`propose`), and until then the guide says "Before propose, design_query get_spec. A violated item is either
-fixed or named in your message with the reason."
+D4 is decided (2026-11-28), so the `spec_open` gate of §5 is built as described. The gate and the guide's
+sentence on `spec_open` above come together in the gate's pull request (§11, pull request 2): until then the
+guide does not mention `spec_open`, since `propose` would not know it.
 
 ## 9. The eval
 

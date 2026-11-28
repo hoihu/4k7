@@ -163,6 +163,7 @@ The server binds to `127.0.0.1` and requires the access key in `~/.4k7/server.js
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System overview, principles, components, roadmap, risks |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What comes next (a proposal): the goal, the market, the gaps, packages and their order |
+| [docs/MARKET_REVIEW.md](docs/MARKET_REVIEW.md) | Market review of 2026-11-24: competitors, gaps, ten ranked items, each mapped to a roadmap id with its state |
 | [docs/design/agent-workflows.md](docs/design/agent-workflows.md) | Proposal for the agent's side of the roadmap: requirements, reviewers, explorations, gates, bench and revisions |
 | [docs/design/spec.md](docs/design/spec.md), [scorecard.md](docs/design/scorecard.md), [kicad-export.md](docs/design/kicad-export.md) | Designs for the roadmap's first packages, not built yet: the spec (what the board is for, and how the kernel tells), the scorecard, export to KiCad |
 | [docs/design/data-model.md](docs/design/data-model.md) | Design graph, constraints, native file format |
