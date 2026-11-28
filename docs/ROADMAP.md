@@ -3,7 +3,7 @@
 > Status: proposal, 2026-11-26, written against `main` at 5ac8cdc (0.7.0 plus Unreleased: designs of
 > several boards). [ARCHITECTURE.md §7](ARCHITECTURE.md#7-roadmap) says what is built; this says what comes
 > next, in which order, and when each piece counts as done. The agent side is worked out in
-> [design/agent-workflows.md](design/agent-workflows.md). Section 8 lists what the owner still has to decide.
+> [design/agent-workflows.md](design/agent-workflows.md). Section 8 lists the owner's decisions.
 > Designs written so far: [spec](design/spec.md) (A1, A2), [scorecard](design/scorecard.md) (Q1),
 > [kicad-export](design/kicad-export.md) (X1, X2).
 
@@ -224,11 +224,11 @@ without a spec has nothing to assert, and explorations without a scorecard have 
 |---|---|---|---|
 | D1 | The segment of §1 | As written | decided 2026-11-27: as written |
 | D2 | KiCad export and import, against the non-goal in ARCHITECTURE.md §1 | Yes; the non-goal is rewritten in X1's last pull request | decided 2026-11-27: yes |
-| D3 | Simulation in the core (an ngspice build in the download) instead of only through a user's MCP server | In the core, loaded on first use. The licences of what the WebAssembly build bundles are checked in P3 | open |
-| D4 | What a violated spec item does to `propose` | It is refused unless the item is waived or the agent names it and the reason in `spec_open`, as for open connections ([spec](design/spec.md) §5) | open |
-| D5 | When reviewers run, since they cost tokens | At gates and on request, not on every change; cost shown per run | open |
-| D6 | Pull request #260 cites a `MARKET_REVIEW.md` with items such as C5 that is not in the repository | Add it, and map its items to the ids here, so there is one plan | open |
-| D7 | The order of §6 | As written; milestone 3 can move first if leaving matters more to early users than reviewing | open |
+| D3 | Simulation in the core (an ngspice build in the download) instead of only through a user's MCP server | In the core, loaded on first use. The licences of what the WebAssembly build bundles are checked in P3 | decided 2026-11-28: as proposed |
+| D4 | What a violated spec item does to `propose` | It is refused unless the item is waived or the agent names it and the reason in `spec_open`, as for open connections ([spec](design/spec.md) §5) | decided 2026-11-28: as proposed |
+| D5 | When reviewers run, since they cost tokens | At gates and on request, not on every change; cost shown per run | decided 2026-11-28: as proposed |
+| D6 | Pull request #260 cites a `MARKET_REVIEW.md` with items such as C5 that is not in the repository | Add it, and map its items to the ids here, so there is one plan | decided 2026-11-28: as proposed; added as [MARKET_REVIEW.md](MARKET_REVIEW.md), its items mapped at its top |
+| D7 | The order of §6 | As written; milestone 3 can move first if leaving matters more to early users than reviewing | decided 2026-11-28: as proposed |
 
 ## 9. Working this plan
 
