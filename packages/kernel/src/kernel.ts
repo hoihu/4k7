@@ -56,7 +56,7 @@ import { describeConstraint } from './netops.ts';
 import { descriptionView } from './sheetops.ts';
 import { diagKey, runChecks, sortDiagnostics } from './checks.ts';
 import { crossChecks } from './xcheck.ts';
-import { stackCollisions } from './stackfit.ts';
+import { cableLengths, stackCollisions } from './stackfit.ts';
 import { computeHunks, mergeHunks } from './diff.ts';
 import { RejectError, applyWaivers, cardOf, clone, closest, componentsSorted, findComponent, findNet, gcNets, gcParts, isGroundNet, isPowerNet, natCmp, netMembers, paramsOf, queryError, valueOf, workCopy } from './doc.ts';
 import { Memo, drawingInputs, specInputs } from './derive.ts';
@@ -297,7 +297,7 @@ export class Kernel {
     if (!d.spec) return null;
     const stack = Object.values(d.spec).some((it) => it.verify.some((v) => v.kind === 'check' && v.code.startsWith('ASM.')));
     const facts = specFacts(d, {
-      findings: () => [...this.analyse(d).diagnostics, ...(stack ? stackCollisions(d, new Map(boardList(d).map((b) => [b.id, placedOf(this.focus(d, b.id))]))) : [])],
+      findings: () => [...this.analyse(d).diagnostics, ...(stack ? this.assemblyChecks(d) : [])],
       placed: (id) => placedOf(this.focus(d, id)),
       routed: (id) => this.routedFor(d, id),
     });
@@ -1032,7 +1032,13 @@ export class Kernel {
    */
   diagnostics(): Diagnostic[] {
     const d = this.draft;
-    return [...this.findings(d), ...this.copperShorts(d), ...stackCollisions(d, new Map(boardList(d).map((b) => [b.id, placedOf(this.focus(d, b.id))])))];
+    return [...this.findings(d), ...this.copperShorts(d), ...this.assemblyChecks(d)];
+  }
+
+  /** The assembly's checks (ASM.*, docs/design/multi-board.md §6): the stack fit and the cable lengths. */
+  private assemblyChecks(d: Design): Diagnostic[] {
+    const views = new Map(boardList(d).map((b) => [b.id, placedOf(this.focus(d, b.id))]));
+    return [...stackCollisions(d, views), ...cableLengths(d, views)];
   }
 
   /**
